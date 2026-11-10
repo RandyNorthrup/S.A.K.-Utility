@@ -9,19 +9,39 @@
 
 #include "sak/advanced_uninstall_types.h"
 
+#include <QFileInfo>
+#include <QPair>
 #include <QSet>
 #include <QStringList>
 #include <QVector>
 
 #include <atomic>
 #include <functional>
+#include <optional>
 #include <type_traits>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 namespace sak {
+
+/// @brief Per-phase reliability for the Advanced (system-object) leftover phases.
+///
+/// scanServices / scanScheduledTasks / scanFirewallRules each shell out (sc / schtasks / netsh);
+/// scanStartupEntries reads the registry Run keys. A nonzero exit, a spawn block (AppLocker/SRP),
+/// the phase timeout, or a registry read failure (e.g. ERROR_ACCESS_DENIED) yields an EMPTY item
+/// vector that is indistinguishable from an honest "nothing found" -- the endemic fail-open. A
+/// caller passes this to scan() so a FAILED enumeration surfaces as scan_complete=false instead of
+/// a dishonest empty-success. Moderate scans (no system-object phases) leave every flag true.
+struct LeftoverScanReliability {
+    bool services_ok{true};         ///< sc.exe query succeeded
+    bool scheduled_tasks_ok{true};  ///< schtasks.exe /query succeeded
+    bool firewall_ok{true};         ///< netsh advfirewall show rule succeeded (both directions)
+    bool startup_ok{true};   ///< Run-key registry reads succeeded (absent key is NOT failure)
+    bool registry_ok{true};  ///< post-uninstall registry snapshot fully enumerated (not partial)
+    [[nodiscard]] bool allOk() const {
+        return services_ok && scheduled_tasks_ok && firewall_ok && startup_ok && registry_ok;
+    }
+};
 
 /// @brief Scans for leftover files, folders, registry keys, services, and tasks
 ///
@@ -33,6 +53,13 @@ public:
     explicit LeftoverScanner(const ProgramInfo& program,
                              ScanLevel level,
                              const QSet<QString>& registryBefore = {});
+    /// @brief As above, with the programs still installed given rather than read from the
+    ///        registry when the scan decides whether a name-only match may be used (see
+    ///        nameOnlyNameRefusal). For tests.
+    LeftoverScanner(const ProgramInfo& program,
+                    ScanLevel level,
+                    const QSet<QString>& registryBefore,
+                    const QVector<ProgramInfo>& stillInstalled);
     ~LeftoverScanner() = default;
 
     LeftoverScanner(const LeftoverScanner&) = delete;
@@ -40,71 +67,281 @@ public:
     LeftoverScanner(LeftoverScanner&&) = default;
     LeftoverScanner& operator=(LeftoverScanner&&) = default;
 
+    /// @param reliability Optional out-param. When non-null and the scan is Advanced, its flags
+    ///        record whether each shell-out system-object phase ACTUALLY completed (vs failed and
+    ///        returned empty). Null (the GUI default) preserves the original behavior exactly.
     [[nodiscard]] QVector<LeftoverItem> scan(
         const std::atomic<bool>& stopRequested,
-        std::function<void(const QString&, int)> progressCallback = {});
+        std::function<void(const QString&, int)> progressCallback = {},
+        LeftoverScanReliability* reliability = nullptr);
+
+    /// @brief Syntactic screen for a registry-supplied InstallLocation, BEFORE that value
+    ///        is allowed to name anything a cleanup deletes.
+    ///
+    /// InstallLocation lives in the Uninstall subtree, which any user can write under
+    /// HKCU, yet a whole-directory leftover built from it is handed to a recursive delete
+    /// run by an administrator. The value must therefore pin exactly one literal local
+    /// directory: shares the windows_path_policy dialect with the sibling UninstallString
+    /// screen, so a relative, drive-relative, UNC, traversal-bearing, "%VAR%"-carrying or
+    /// volume-root value is refused, as is any directory in @p criticalRoots (the Windows
+    /// / Program Files / ProgramData / AppData / TEMP roots, the profiles container and
+    /// every user profile root -- see criticalInstallRoots()).
+    ///
+    /// @return an empty string when the value may proceed to the filesystem and ownership
+    ///         checks, otherwise a human-readable refusal reason. Pure; unit-testable.
+    [[nodiscard]] static QString installLocationSyntaxRefusal(const QString& rawLocation,
+                                                              const QStringList& criticalRoots);
+
+    /// @brief Proof that @p canonicalLocation really is THIS program's directory rather
+    ///        than an arbitrary path a registry value merely claims is.
+    ///
+    /// Derived ONLY from the program's own identity -- never from the install location
+    /// itself, which would be circular. The directory leaf, or the "Publisher\\Product"
+    /// pair formed with its parent, must fold to @p displayName or @p packageFamilyName
+    /// once case and non-alphanumerics are removed (installer display names routinely
+    /// carry a version/architecture suffix the directory omits, and vice versa). Pure;
+    /// unit-testable.
+    [[nodiscard]] static bool installLocationMatchesProgram(const QString& canonicalLocation,
+                                                            const QString& displayName,
+                                                            const QString& packageFamilyName);
+
+    /// @brief Directories that must NEVER become a deletion target however a registry
+    ///        value names them. Read from the live environment (so a machine whose system
+    ///        drive is not C: is protected too) plus every user profile root present on
+    ///        the machine. Volume roots need no entry: the syntactic screen already
+    ///        refuses them.
+    [[nodiscard]] static QStringList criticalInstallRoots();
+
+    /// @brief Where this machine keeps the folders kProtectedPaths names for a C: install.
+    struct SystemFolders {
+        QString windows;               ///< FOLDERID_Windows, e.g. D:\Windows
+        QString program_files;         ///< FOLDERID_ProgramFiles
+        QString program_files_common;  ///< FOLDERID_ProgramFilesCommon
+        QString program_data;          ///< FOLDERID_ProgramData
+        QString user_profiles;         ///< FOLDERID_UserProfiles, e.g. D:\Users
+        QString public_profile;        ///< FOLDERID_Public
+    };
+
+    /// @brief kProtectedPaths' file-system entries rebased onto @p folders, in native form. An
+    ///        unresolved (empty) folder contributes nothing. Pure; unit-testable.
+    [[nodiscard]] static QStringList protectedPathsFor(const SystemFolders& folders);
+
+    /// @brief This machine's folders, from the Windows known-folder API rather than the
+    ///        environment (which a user can set to anything). Empty where the API fails.
+    [[nodiscard]] static SystemFolders liveSystemFolders();
+
+    /// @brief Whether @p path is one of @p roots or inside one, unless it lies inside the
+    ///        program's own (trusted) install folder that is itself strictly below that root.
+    ///        Pure; unit-testable. isProtectedPath() applies it to kProtectedPaths plus this
+    ///        machine's own folders (protectedPathsFor(liveSystemFolders())).
+    [[nodiscard]] static bool pathUnderProtectedRoot(const QString& path,
+                                                     const QStringList& roots,
+                                                     const QString& trusted_install_location);
+
+    /// @brief True when @p path's LEAF directory name is a shared OS/vendor container
+    /// (windows / system32 / programdata / program files / ...), matched case-insensitively on
+    /// ANY drive. This is the DRIVE-AGNOSTIC half of the risk classifier; the other half,
+    /// isProtectedPath(), protects the whole subtree of each system folder both where a C:
+    /// install keeps it and where this machine keeps it.
+    [[nodiscard]] static bool isSharedContainerPath(const QString& path);
+
+    /// @brief @p displayName without a trailing architecture tag, lower-case: "Notepad++ (x64)"
+    ///        and "Notepad++ (64-bit x64)" give "notepad++". The tag is a parenthesized run of
+    ///        x64, x86, 64-bit and 32-bit. Empty when the name carries no such tag. Pure.
+    [[nodiscard]] static QString architectureStrippedName(const QString& displayName);
+
+    /// @brief Why @p strippedName (architectureStrippedName of @p program's display name) may
+    ///        not be used to find @p program's leftovers by name alone; empty when it may.
+    ///
+    /// Refused when it is shorter than four letters or digits, when it is the program's
+    /// publisher, a well-known vendor or a shared folder name, or when any program in
+    /// @p stillInstalled other than @p program itself (same Uninstall key) has that name: its
+    /// display name, its display name without the architecture tag, its install folder or the
+    /// folder its uninstaller sits in. A 32-bit copy that is still installed shares the 64-bit
+    /// copy's settings folder. Pure.
+    [[nodiscard]] static QString nameOnlyNameRefusal(const QString& strippedName,
+                                                     const ProgramInfo& program,
+                                                     const QVector<ProgramInfo>& stillInstalled);
+
+    /// @brief The folder Windows Installer's component paths put the program in: for each
+    ///        file or folder path (registry key paths such as "02:\SOFTWARE\..." are skipped),
+    ///        the nearest enclosing folder that installLocationMatchesProgram ties to
+    ///        @p displayName; of those, the one that holds the most components. Nearest, so a
+    ///        "Google\Chrome" install never widens to the vendor's "Google" folder. Empty when
+    ///        no path lies in such a folder. Pure.
+    [[nodiscard]] static QString installFolderFromComponentPaths(const QStringList& componentPaths,
+                                                                 const QString& displayName);
+
+    /// @brief @p program with its install location filled from Windows Installer when the
+    ///        Uninstall entry records none and the entry is a Windows Installer product (an
+    ///        MsiExec uninstall string, or an Uninstall key named by a product code): the
+    ///        product's InstallLocation, else installFolderFromComponentPaths over its
+    ///        installed components. Must run BEFORE the uninstall, while Windows Installer
+    ///        still knows the product. The filled location is screened like any other.
+    [[nodiscard]] static ProgramInfo withWindowsInstallerLocation(const ProgramInfo& program);
 
 private:
+    /// How a leftover's name was tied to the program.
+    enum class NameMatch {
+        None,
+        Exact,    ///< one of m_exactNames
+        NameOnly  ///< only m_nameOnlyName: reported Risky, never pre-selected or auto-cleaned
+    };
+    /// @brief Outcome of screening the registry-supplied InstallLocation.
+    struct ScreenedInstallLocation {
+        /// Native, separator-normalized location that passed the SYNTACTIC screen only.
+        /// Safe to derive matching NAMES from and to stat; empty when even the syntax was
+        /// refused. Carries no deletion authority on its own.
+        QString syntactic;
+        /// Canonical native location that MAY authorize deletion: additionally exists, is
+        /// a directory, is no reparse point, and is proven to belong to this program.
+        QString trusted;
+        /// Why `trusted` is empty. Empty when the location was accepted, and also when the
+        /// program records no install location at all (nothing to refuse).
+        QString refusal;
+    };
+
     ProgramInfo m_program;
     ScanLevel m_level;
     QSet<QString> m_registryBefore;
+
+    /// Syntactically-screened install location (see ScreenedInstallLocation::syntactic).
+    QString m_screenedInstallLocation;
+    /// Install location that may authorize deletion (ScreenedInstallLocation::trusted).
+    /// EVERY use of the install location as authority reads THIS, never m_program.
+    QString m_trustedInstallLocation;
+    /// Refusal reason shown on the report-only install-location item.
+    QString m_installLocationRefusal;
 
     QStringList m_exactNames;     ///< Exact names for directory/file matching (lowercase)
     QString m_installDirName;     ///< Last component of install path (lowercase)
     QString m_installParentName;  ///< Parent dir of install path (lowercase)
     QString m_concatenatedName;   ///< Display name without separators (lowercase)
+    /// Display name without its architecture tag (lowercase), when nameOnlyNameRefusal allowed
+    /// it at the start of scan(); empty otherwise. Anything matched only by it is Risky.
+    QString m_nameOnlyName;
+    /// Programs still installed, when the caller gave them; read from the registry otherwise.
+    std::optional<QVector<ProgramInfo>> m_stillInstalled;
 
     void buildExactNames();
+    /// Decide m_nameOnlyName (called by scan(), after the uninstall).
+    void resolveNameOnlyName();
+    [[nodiscard]] NameMatch matchName(const QString& nameLower) const;
+    /// Mark @p item Risky and say why when it was found only through m_nameOnlyName.
+    void markIfNameOnly(LeftoverItem& item, NameMatch match) const;
+
+    /// @brief Run both screening tiers over @p program's recorded install location.
+    [[nodiscard]] static ScreenedInstallLocation screenInstallLocation(const ProgramInfo& program);
+
+    /// @brief Filesystem + ownership tier. Returns the canonical location, or an empty
+    ///        string with @p refusalOut set to the reason it may not authorize a delete.
+    [[nodiscard]] static QString provenInstallLocation(const QString& screenedLocation,
+                                                       const ProgramInfo& program,
+                                                       QString& refusalOut);
+
+    /// @brief Visibility-only item for an install location that passed the syntax screen
+    ///        but could not be proven to belong to this program. Empty when there is
+    ///        nothing safe to report.
+    [[nodiscard]] QVector<LeftoverItem> reportOnlyInstallLocation() const;
 
     // Phase 1: Remaining files at known install location
     QVector<LeftoverItem> scanInstallLocation(const std::atomic<bool>& stopRequested);
 
     // Phase 2: Known application directories
-    QVector<LeftoverItem> scanKnownPaths(const std::atomic<bool>& stopRequested);
+    QVector<LeftoverItem> scanKnownPaths(const std::atomic<bool>& stopRequested) const;
     QVector<LeftoverItem> scanStandardDirs(const QString& basePath,
-                                           const std::atomic<bool>& stopRequested);
+                                           const std::atomic<bool>& stopRequested) const;
     QVector<LeftoverItem> scanStandardFiles(const QString& basePath,
-                                            const std::atomic<bool>& stopRequested);
+                                            const std::atomic<bool>& stopRequested) const;
+    [[nodiscard]] LeftoverItem folderLeftover(const QFileInfo& folder,
+                                              const QString& description,
+                                              NameMatch match,
+                                              const std::atomic<bool>& stopRequested) const;
 
     // Phase 3: Registry (snapshot diff + known paths)
-#ifdef Q_OS_WIN
-    QVector<LeftoverItem> scanRegistryDiff(const std::atomic<bool>& stopRequested);
+    QVector<LeftoverItem> scanRegistryDiff(const std::atomic<bool>& stopRequested, bool& ok);
     QVector<LeftoverItem> scanKnownRegistryPaths(const std::atomic<bool>& stopRequested);
-    [[nodiscard]] bool registryKeyMatchesProgram(const QString& keyPath) const;
-#endif
+    [[nodiscard]] NameMatch registryKeyMatchesProgram(const QString& keyPath) const;
 
-    // Phase 4: System objects (Advanced only)
-    QVector<LeftoverItem> scanServices(const std::atomic<bool>& stopRequested);
-    QVector<LeftoverItem> scanScheduledTasks(const std::atomic<bool>& stopRequested);
-    QVector<LeftoverItem> scanFirewallRules(const std::atomic<bool>& stopRequested);
-    QVector<LeftoverItem> scanStartupEntries(const std::atomic<bool>& stopRequested);
+    // Phase 4: System objects (Advanced only). The shell-out phases take an out bool& set FALSE if
+    // the underlying process failed (so an empty result is not misread as an honest "none found").
+    QVector<LeftoverItem> scanServices(const std::atomic<bool>& stopRequested, bool& ok) const;
+    QVector<LeftoverItem> scanScheduledTasks(const std::atomic<bool>& stopRequested,
+                                             bool& ok) const;
+    QVector<LeftoverItem> scanFirewallRules(const std::atomic<bool>& stopRequested, bool& ok);
+    QVector<LeftoverItem> scanStartupEntries(const std::atomic<bool>& stopRequested,
+                                             bool& ok) const;
 
     void scanFirewallDirection(const QStringList& netsh_args,
                                const QString& description,
                                const std::atomic<bool>& stopRequested,
-                               QVector<LeftoverItem>& items);
-#ifdef Q_OS_WIN
-    void scanRunKey(HKEY hive,
-                    const wchar_t* subkey,
-                    const QString& hive_name,
-                    const std::atomic<bool>& stopRequested,
-                    QVector<LeftoverItem>& items);
-#endif
-    void scanStartupFolder(const std::atomic<bool>& stopRequested, QVector<LeftoverItem>& items);
+                               QVector<LeftoverItem>& items,
+                               bool& ok) const;
+    /// Append a FirewallRule item for a matched "Rule Name:" header line. Returns the
+    /// new item's index in @p items, or -1 when the rule name does not match this
+    /// program (so the caller ignores that rule's subsequent field lines).
+    [[nodiscard]] int appendFirewallRule(const QString& headerLine,
+                                         const QString& description,
+                                         QVector<LeftoverItem>& items) const;
+    /// Read one Run key. Returns TRUE if the enumeration was reliable (key read OK, or the key was
+    /// simply absent -- an honest "no entries"), FALSE on a real read failure (e.g.
+    /// ERROR_ACCESS_DENIED) so the caller can flag the startup phase incomplete.
+    [[nodiscard]] bool scanRunKey(HKEY hive,
+                                  const wchar_t* subkey,
+                                  const QString& hive_name,
+                                  const std::atomic<bool>& stopRequested,
+                                  QVector<LeftoverItem>& items) const;
+    /// Match + append a single Run-key value (nesting/complexity split out of scanRunKey). Returns
+    /// TRUE when the value was READ reliably (whether or not it matched this program), FALSE when
+    /// the read itself failed (a genuine error or the grow ceiling) so the caller can flag the
+    /// whole startup phase incomplete instead of silently dropping the entry and reporting "none
+    /// here".
+    [[nodiscard]] bool appendRunKeyValue(HKEY key,
+                                         DWORD index,
+                                         const QString& hive_name,
+                                         const wchar_t* subkey,
+                                         QVector<LeftoverItem>& items) const;
+    void scanStartupFolder(const std::atomic<bool>& stopRequested,
+                           QVector<LeftoverItem>& items) const;
 
     // Classification and matching
     LeftoverItem::RiskLevel classifyRisk(const QString& path, LeftoverItem::Type type) const;
     LeftoverItem::RiskLevel classifyFileRisk(const QString& path_lower) const;
-    LeftoverItem::RiskLevel classifyTypeRisk(LeftoverItem::Type type) const;
+    static LeftoverItem::RiskLevel classifyTypeRisk(LeftoverItem::Type type);
     void extractInstallDirNames();
+
+public:
+    /// The lower-case name of the folder the program's uninstaller (or icon) sits in, when that
+    /// folder is named for the program; empty otherwise. For a program that records no
+    /// InstallLocation.
+    [[nodiscard]] static QString uninstallerFolderName(const ProgramInfo& program);
+
+private:
     [[nodiscard]] bool isProtectedPath(const QString& path) const;
     [[nodiscard]] bool matchesProgramExact(const QString& nameLower) const;
     [[nodiscard]] bool matchesProgramStrict(const QString& text) const;
     [[nodiscard]] bool isPublisherDir(const QString& dirNameLower) const;
 
     static const QStringList kProtectedPaths;
-    [[nodiscard]] static qint64 calculateSize(const QString& path);
+    /// @brief Sum the sizes of all files under @p path. Polls @p stopRequested inside the walk (and
+    ///        caps the entry count) so a cooperative cancel / deadline actually interrupts a huge
+    ///        subtree, rather than running to completion after the outer scan was told to stop.
+    [[nodiscard]] static qint64 calculateSize(const QString& path,
+                                              const std::atomic<bool>& stopRequested);
 };
+
+/// @brief Build service leftover items from an enumerated (serviceName, displayName) list.
+///
+/// Keeps only the services the @p matches predicate accepts (applied to BOTH the key name and the
+/// display name), tagging each as a Risky Service leftover. Polls @p stopRequested so a cooperative
+/// cancel interrupts the walk. This is the locale-independent successor to the old sc.exe console
+/// parse: the (name, display) pairs come from the SCM API (EnumServicesStatusExW), whose fields are
+/// language-neutral, so it no longer keys off English "SERVICE_NAME:"/"DISPLAY_NAME:" labels that
+/// were empty on non-English Windows. Pure + unit-testable (no SCM handle required).
+[[nodiscard]] QVector<LeftoverItem> buildServiceLeftoverItems(
+    const QVector<QPair<QString, QString>>& services,
+    const std::function<bool(const QString&)>& matches,
+    const std::atomic<bool>& stopRequested);
 
 // -- Compile-Time Invariants -------------------------------------------------
 

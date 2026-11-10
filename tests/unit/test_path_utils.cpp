@@ -7,11 +7,16 @@
 #include "sak/error_codes.h"
 #include "sak/path_utils.h"
 
+#include <QDir>
 #include <QFile>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <cstdint>
 #include <filesystem>
+#include <limits>
+#include <system_error>
 
 class PathUtilsTests : public QObject {
     Q_OBJECT
@@ -28,6 +33,7 @@ private Q_SLOTS:
     void isSafePath_caseInsensitiveOnWindows();
     void isSafePath_outsideBase();
     void isSafePath_absolutePathDifferentDrive();
+    void isSafePath_emptyInputsRejected();  // R5-G10-9
 
     // matchesPattern
     void matchesPattern_starWildcard();
@@ -38,6 +44,9 @@ private Q_SLOTS:
     void matchesPattern_multiplePatterns();
 
     // getDirectorySizeAndCount
+    void dirSizeAndCount_saturatesOnOverflow();                  // R5-G10-9
+    void dirSizeAndCount_doesNotFollowJunction();                // R5-G10-9
+    void dirSizeWalk_permissionDeniedSkipsAndFlagsIncomplete();  // R5-G10-9
     void dirSizeAndCount_normalDir();
     void dirSizeAndCount_emptyDir();
     void dirSizeAndCount_nonExistentDir();
@@ -50,6 +59,7 @@ private Q_SLOTS:
     // makeRelative
     void makeRelative_validSubpath();
     void makeRelative_sameDir();
+    void makeRelative_emptyInputsRejected();  // R5-G10-9
 
 private:
     QTemporaryDir m_tempDir;
@@ -103,22 +113,21 @@ void PathUtilsTests::isSafePath_exactBase() {
 void PathUtilsTests::isSafePath_traversalDotDot() {
     auto maliciousPath = m_basePath / "subdir" / ".." / ".." / "etc" / "passwd";
     auto result = sak::path_utils::isSafePath(maliciousPath, m_basePath);
-    if (result.has_value()) {
-        QVERIFY2(!result.value(), "Path traversal via .. should be rejected");
-    }
-    // error_code is also acceptable
+    // <base>/subdir exists, so weakly_canonical always anchors this path and
+    // isSafePath must give a real answer -- accepting an error here would let a
+    // regression that stopped answering pass silently.
+    QVERIFY(result.has_value());
+    QVERIFY2(!result.value(), "Path traversal via .. should be rejected");
 }
 
 void PathUtilsTests::isSafePath_embeddedTraversal() {
     auto path = m_basePath / "subdir" / ".." / ".." / "Windows" / "System32";
     auto result = sak::path_utils::isSafePath(path, m_basePath);
-    if (result.has_value()) {
-        QVERIFY(!result.value());
-    }
+    QVERIFY(result.has_value());
+    QVERIFY(!result.value());
 }
 
 void PathUtilsTests::isSafePath_caseInsensitiveOnWindows() {
-#ifdef _WIN32
     // On Windows, paths should be case-insensitive
     auto upperBase = std::filesystem::path(m_tempDir.path().toUpper().toStdWString());
     auto lowerSub = m_basePath / "subdir" / "file2.log";
@@ -126,31 +135,55 @@ void PathUtilsTests::isSafePath_caseInsensitiveOnWindows() {
     // Should still consider it safe on Windows (case-insensitive comparison)
     QVERIFY(result.has_value());
     QVERIFY(result.value());
-#else
-    QSKIP("Case-insensitive path test is Windows-only");
-#endif
 }
 
 void PathUtilsTests::isSafePath_outsideBase() {
     auto outsidePath = std::filesystem::path("C:\\Windows\\System32\\cmd.exe");
     auto result = sak::path_utils::isSafePath(outsidePath, m_basePath);
-    if (result.has_value()) {
-        QVERIFY(!result.value());
-    }
+    // Both operands exist, so canonicalization cannot fail: demand the answer.
+    QVERIFY(result.has_value());
+    QVERIFY(!result.value());
 }
 
 void PathUtilsTests::isSafePath_absolutePathDifferentDrive() {
-#ifdef _WIN32
     // A path on D: should not be safe under a C: base
     auto baseDriveC = std::filesystem::path("C:\\TestBase");
     auto pathDriveD = std::filesystem::path("D:\\SomeFile.txt");
     auto result = sak::path_utils::isSafePath(pathDriveD, baseDriveC);
+    // Unlike the cases above, whether D: is reachable is a property of the
+    // running machine (an empty optical drive answers ERROR_NOT_READY, which
+    // weakly_canonical turns into a hard error). Both outcomes are legitimate,
+    // so assert on both: a real answer must be "not contained", and a refusal
+    // must be the fail-closed invalid_path -- never a silent pass.
     if (result.has_value()) {
-        QVERIFY(!result.value());
+        QVERIFY2(!result.value(), "A D: path must not be contained by a C: base");
+    } else {
+        QCOMPARE(result.error(), sak::error_code::invalid_path);
     }
-#else
-    QSKIP("Drive letter test is Windows-only");
-#endif
+}
+
+// R5-G10-9: containment has no meaning without both operands, and this answer gates
+// path-traversal decisions, so an empty path or base must fail closed with invalid_path rather
+// than return a guessed bool that a caller would read as "safe". This locks the observable
+// fail-closed CONTRACT, which is enforced in depth -- by isSafePath's explicit empty-operand guard
+// AND, redundantly, by normalize() rejecting the non-absolute weakly_canonical("") -- so it is a
+// contract regression test (it catches a refactor that made empty inputs pass), not an isolation
+// of one specific guard. (makeRelative_emptyInputsRejected below IS guard-specific: relative("","")
+// yields "." which its guard alone rejects.)
+void PathUtilsTests::isSafePath_emptyInputsRejected() {
+    const auto emptyPath = sak::path_utils::isSafePath(std::filesystem::path(), m_basePath);
+    QVERIFY(!emptyPath.has_value());
+    QCOMPARE(emptyPath.error(), sak::error_code::invalid_path);
+
+    const auto emptyBase = sak::path_utils::isSafePath(m_basePath / "subdir",
+                                                       std::filesystem::path());
+    QVERIFY(!emptyBase.has_value());
+    QCOMPARE(emptyBase.error(), sak::error_code::invalid_path);
+
+    // Non-vacuity: a real subpath under a real base still yields an answer, so the empty-input
+    // reject is the contract, not a function that errors on everything.
+    QVERIFY(
+        sak::path_utils::isSafePath(m_basePath / "subdir" / "file2.log", m_basePath).has_value());
 }
 
 // ============================================================================
@@ -198,12 +231,122 @@ void PathUtilsTests::matchesPattern_multiplePatterns() {
 // getDirectorySizeAndCount Tests
 // ============================================================================
 
+void PathUtilsTests::dirSizeAndCount_saturatesOnOverflow() {
+    // The recursive size walk accumulates entry.file_size(), which is the LOGICAL size:
+    // a few attacker-created sparse files can each claim exabytes. If the running total
+    // WRAPPED past UINTMAX it would report a small number, under-reporting the space a set
+    // needs and letting an oversized set be judged to fit (fail open). The accumulate must
+    // saturate at UINTMAX instead.
+    constexpr auto kMax = std::numeric_limits<std::uintmax_t>::max();
+
+    // Non-vacuity: a below-cap sum is exact (the guard is the overflow clamp, not a
+    // constant, and not an always-saturate).
+    QCOMPARE(sak::path_utils::saturatingAddSizeForTesting(5, 7), std::uintmax_t{12});
+    QCOMPARE(sak::path_utils::saturatingAddSizeForTesting(1000, 2000), std::uintmax_t{3000});
+
+    // Exact boundary: total + size == UINTMAX does not overflow and is returned as-is.
+    QCOMPARE(sak::path_utils::saturatingAddSizeForTesting(kMax - 10, 10), kMax);
+
+    // Overflow by one: an unguarded add would WRAP to 0; the guard clamps to UINTMAX. The
+    // "== kMax" (never 0) is what proves it saturated rather than wrapped.
+    QCOMPARE(sak::path_utils::saturatingAddSizeForTesting(kMax - 10, 11), kMax);
+
+    // Extreme overflow: kMax + kMax would wrap to kMax-1; it must clamp to kMax.
+    QCOMPARE(sak::path_utils::saturatingAddSizeForTesting(kMax, kMax), kMax);
+}
+
+void PathUtilsTests::dirSizeAndCount_doesNotFollowJunction() {
+    // A directory junction planted INSIDE the scanned tree must NOT be followed: the
+    // recursive size walk uses is_symlink to skip reparse-point directories, so a junction
+    // pointing OUTSIDE the tree cannot inflate the count or let the walk escape the intended
+    // subtree (and cannot form a symlink cycle). A junction is used because mklink /J needs
+    // no privilege, unlike a directory symlink (SeCreateSymbolicLink).
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString root = dir.filePath(QStringLiteral("scanRoot"));
+    const QString realSub = root + QStringLiteral("/realsub");
+    const QString outside = dir.filePath(QStringLiteral("outsideTarget"));
+    QVERIFY(QDir().mkpath(realSub));
+    QVERIFY(QDir().mkpath(outside));
+
+    const auto writeFile = [](const QString& path, const QByteArray& bytes) {
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write(bytes) == bytes.size();
+    };
+    // Two real files inside the tree: 5 + 7 = 12 bytes across 2 files.
+    QVERIFY(writeFile(root + QStringLiteral("/top.txt"), QByteArray("Hello")));
+    QVERIFY(writeFile(realSub + QStringLiteral("/deep.txt"), QByteArray("World!!")));
+    // A large file behind the junction target that must NOT be counted.
+    QVERIFY(writeFile(outside + QStringLiteral("/huge.bin"), QByteArray(100, 'x')));
+
+    // Plant scanRoot/junc -> outsideTarget (no privilege required).
+    const QString junc = root + QStringLiteral("/junc");
+    QProcess mklink;
+    mklink.start(QStringLiteral("cmd"),
+                 {QStringLiteral("/c"),
+                  QStringLiteral("mklink"),
+                  QStringLiteral("/J"),
+                  QDir::toNativeSeparators(junc),
+                  QDir::toNativeSeparators(outside)});
+    QVERIFY(mklink.waitForFinished(10'000));
+    QCOMPARE(mklink.exitCode(), 0);
+    QVERIFY(std::filesystem::exists(std::filesystem::path(junc.toStdWString())));
+
+    const auto result =
+        sak::path_utils::getDirectorySizeAndCount(std::filesystem::path(root.toStdWString()));
+    QVERIFY(result.has_value());
+    // Only the 2 real files (12 bytes) are counted; the junction's 100-byte target is not
+    // followed. Were the junction followed, this would be 3 files / 112 bytes. The count of
+    // 2 also proves the walk DID descend the real subdirectory (realsub/deep.txt), so the
+    // junction's exclusion is the symlink guard -- not a walk that never recurses at all.
+    QCOMPARE(result.value().file_count, std::uintmax_t{2});
+    QCOMPARE(result.value().total_bytes, std::uintmax_t{12});
+    // The junction is refused inside shouldRecurse before any open, so no skip is flagged: the
+    // capacity-gate flags stay complete/0 (a regression routing it through skip-and-flag would
+    // flip these while leaving the counts, and the bare count check would still pass).
+    QVERIFY(result.value().complete);
+    QCOMPARE(result.value().skipped_dirs, std::uintmax_t{0});
+}
+
+void PathUtilsTests::dirSizeWalk_permissionDeniedSkipsAndFlagsIncomplete() {
+    // A permission-denied subtree during a recursive size walk must be SKIPPED (the scan
+    // continues) and FLAGGED (complete=false, one skipped dir) so a caller gating a capacity
+    // decision treats the under-reported size as "unknown", never "fits" -- while any OTHER
+    // enumeration error fails the WHOLE scan closed rather than being silently flagged-and-skipped.
+    // A directory that denies enumeration is not a deterministic Windows fixture (a self-DENY ACL
+    // is bypassable by an elevated runner and breaks QTemporaryDir cleanup), so drive the REAL
+    // classify + record chain the walk uses via the seam with an injected error_code.
+    using Step = sak::path_utils::DirectoryOpenStepForTesting;
+
+    // permission_denied -> a non-fatal skip that flags the result partial.
+    const Step denied = sak::path_utils::applyDirectoryOpenErrorForTesting(
+        std::make_error_code(std::errc::permission_denied));
+    QVERIFY2(denied.continued, "a permission-denied subtree must not abort the whole scan");
+    QVERIFY2(!denied.complete_after, "a skipped subtree must flag the size result incomplete");
+    QCOMPARE(denied.skipped_dirs_after, static_cast<std::uintmax_t>(1));
+
+    // Guard-isolation control: any OTHER enumeration error must fail the whole scan closed and must
+    // NOT be recorded as a flagged-partial skip -- proving the skip-and-flag path is scoped to
+    // permission_denied, not applied to every open error.
+    for (const std::errc other :
+         {std::errc::io_error, std::errc::too_many_files_open, std::errc::not_a_directory}) {
+        const Step failed =
+            sak::path_utils::applyDirectoryOpenErrorForTesting(std::make_error_code(other));
+        QVERIFY2(!failed.continued, "a genuine read error must fail the scan closed");
+        QVERIFY2(failed.complete_after,
+                 "a fail-closed error must not be recorded as a flagged-partial skip");
+        QCOMPARE(failed.skipped_dirs_after, static_cast<std::uintmax_t>(0));
+    }
+}
+
 void PathUtilsTests::dirSizeAndCount_normalDir() {
     auto result = sak::path_utils::getDirectorySizeAndCount(m_basePath);
     QVERIFY(result.has_value());
     // We created 3 files: "Hello"(5), "World!!"(7), "DeepData123"(11) = 23 bytes
     QCOMPARE(result.value().file_count, std::uintmax_t{3});
     QCOMPARE(result.value().total_bytes, std::uintmax_t{23});
+    QVERIFY(result.value().complete);  // a clean runner-owned walk keeps the trust-this-number flag
+    QCOMPARE(result.value().skipped_dirs, std::uintmax_t{0});
 }
 
 void PathUtilsTests::dirSizeAndCount_emptyDir() {
@@ -213,6 +356,8 @@ void PathUtilsTests::dirSizeAndCount_emptyDir() {
     QVERIFY(result.has_value());
     QCOMPARE(result.value().file_count, std::uintmax_t{0});
     QCOMPARE(result.value().total_bytes, std::uintmax_t{0});
+    QVERIFY(result.value().complete);  // empty dir: one clean open, no skip
+    QCOMPARE(result.value().skipped_dirs, std::uintmax_t{0});
 }
 
 void PathUtilsTests::dirSizeAndCount_nonExistentDir() {
@@ -238,12 +383,13 @@ void PathUtilsTests::availableSpace_validPath() {
 }
 
 void PathUtilsTests::availableSpace_invalidPath() {
-    auto result =
-        sak::path_utils::getAvailableSpace(std::filesystem::path("Z:\\NonExistent\\Path"));
-    // May fail with error on most systems (Z: doesn't exist)
-    if (!result.has_value()) {
-        QVERIFY(true);  // Expected failure
-    }
+    // file1.txt is owned by this test and is a regular file. A child under that
+    // file can never be a directory, regardless of which host drives are mounted.
+    const auto invalid_path = m_basePath / "file1.txt" / "no-child";
+    QVERIFY(std::filesystem::is_regular_file(m_basePath / "file1.txt"));
+    const auto result = sak::path_utils::getAvailableSpace(invalid_path);
+    QVERIFY(!result.has_value());
+    QCOMPARE(result.error(), sak::error_code::read_error);
 }
 
 // ============================================================================
@@ -261,6 +407,24 @@ void PathUtilsTests::makeRelative_sameDir() {
     auto result = sak::path_utils::makeRelative(m_basePath / "file1.txt", m_basePath);
     QVERIFY(result.has_value());
     QCOMPARE(result.value(), std::filesystem::path("file1.txt"));
+}
+
+// R5-G10-9: std::filesystem::relative("", "") yields "." (the caller's working directory), so
+// makeRelative must reject an empty path or base rather than hand back that CWD-resolving ".".
+void PathUtilsTests::makeRelative_emptyInputsRejected() {
+    QCOMPARE(sak::path_utils::makeRelative(std::filesystem::path(), m_basePath).error(),
+             sak::error_code::invalid_path);
+    QCOMPARE(
+        sak::path_utils::makeRelative(m_basePath / "file1.txt", std::filesystem::path()).error(),
+        sak::error_code::invalid_path);
+    const auto bothEmpty = sak::path_utils::makeRelative(std::filesystem::path(),
+                                                         std::filesystem::path());
+    QVERIFY(!bothEmpty.has_value());  // must not be the "." that relative("","") would yield
+    QCOMPARE(bothEmpty.error(), sak::error_code::invalid_path);
+
+    // Non-vacuity: a real subpath under a real base still makes a relative path.
+    QVERIFY(
+        sak::path_utils::makeRelative(m_basePath / "subdir" / "file2.log", m_basePath).has_value());
 }
 
 QTEST_GUILESS_MAIN(PathUtilsTests)

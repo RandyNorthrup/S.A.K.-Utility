@@ -17,7 +17,7 @@
 namespace sak {
 
 // ===========================================================================
-// Named Constants (TigerStyle)
+// Named Constants
 // ===========================================================================
 
 namespace netdiag {
@@ -42,6 +42,27 @@ constexpr int kDefaultConnRefreshMs = 2000;
 constexpr int kBannerGrabTimeoutMs = 2000;
 constexpr int kBannerMaxBytes = 512;
 
+// -- Connectivity-test config bounds (ping / traceroute / MTR) --
+// Callers (incl. headless tools and IPC) can supply arbitrary config; these
+// clamp every field to a sane range so a hostile/typo'd value cannot spin an
+// unbounded loop, overflow a WORD/UCHAR cast, or request a giant allocation.
+constexpr int kMinPingCount = 1;
+constexpr int kMaxPingCount = 100'000;
+constexpr int kMinIntervalMs = 0;
+constexpr int kMaxIntervalMs = 60'000;
+constexpr int kMinPingTimeoutMs = 1;
+constexpr int kMaxPingTimeoutMs = 60'000;
+constexpr int kMinPacketSizeBytes = 0;
+constexpr int kMaxPacketSizeBytes = 65'500;  // fits the WORD size passed to IcmpSendEcho
+constexpr int kMinTtl = 1;
+constexpr int kMaxTtl = 255;                 // TTL is a UCHAR
+constexpr int kMinHops = 1;
+constexpr int kMaxHops = 255;                // hop == TTL, so same UCHAR ceiling
+constexpr int kMinProbesPerHop = 1;
+constexpr int kMaxProbesPerHop = 10;
+constexpr int kMinMtrCycles = 1;
+constexpr int kMaxMtrCycles = 100'000;
+
 // -- WiFi frequency boundaries (kHz) --
 constexpr uint32_t kFreq2GHzStart = 2'412'000;
 constexpr uint32_t kFreq2GHzEnd = 2'484'000;
@@ -61,6 +82,12 @@ constexpr int kSignalWeak = -80;
 // ===========================================================================
 // Network Adapter Types
 // ===========================================================================
+
+/// @brief An adapter type as a person reads it: "Wi-Fi" for the "WiFi" the data keeps (the JSON
+///        exports and the AI tools carry the type as it always was). Review 4, Y11.
+[[nodiscard]] inline QString adapterTypeLabel(const QString& adapter_type) {
+    return adapter_type == QStringLiteral("WiFi") ? QStringLiteral("Wi-Fi") : adapter_type;
+}
 
 /// @brief Complete network adapter information
 struct NetworkAdapterInfo {
@@ -261,6 +288,12 @@ struct BandwidthTestResult {
     double downloadMbps = 0.0;
     double uploadMbps = 0.0;
 
+    /// @brief A stopped or failed run completes with an empty result; only a real one has a speed.
+    [[nodiscard]] bool hasMeasurement() const { return downloadMbps > 0.0 || uploadMbps > 0.0; }
+
+    // HTTP speed test specific. Negative means the probe could not measure one.
+    double latencyMs = -1.0;
+
     // iPerf3 specific
     double tcpWindowSize = 0.0;
     double retransmissions = 0.0;
@@ -374,7 +407,8 @@ struct FirewallRule {
         UDP,
         ICMPv4,
         ICMPv6,
-        Any
+        Any,
+        Other
     };
     Protocol protocol = Protocol::Any;
 
@@ -394,6 +428,12 @@ struct FirewallRule {
     int profiles = 0;
 
     QString grouping;
+
+    /// False when at least one COM getter failed while reading this rule, so its
+    /// remaining fields hold DEFAULTS (e.g. Allow/Inbound/Any/empty) that would
+    /// misrepresent the rule's real security posture. The auditor surfaces this
+    /// rather than presenting a defaulted rule as fact (B9-10).
+    bool complete = true;
 };
 
 /// @brief Firewall rule conflict
@@ -511,7 +551,7 @@ Q_DECLARE_METATYPE(QVector<sak::NetworkShareInfo>)
 Q_DECLARE_METATYPE(sak::LanTransferResult)
 
 // ===========================================================================
-// Compile-Time Invariants (TigerStyle)
+// Compile-Time Invariants
 // ===========================================================================
 
 static_assert(std::is_default_constructible_v<sak::NetworkAdapterInfo>,

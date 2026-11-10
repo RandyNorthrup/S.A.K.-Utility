@@ -6,7 +6,7 @@
     "gate_name":  "OS migration target boot and firmware-order proof",
     "status":  "Passed",
     "manifest":  "artifacts/partition-manager-certification/vm-lab/external-evidence.imported.json",
-    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "certification_matrix":  "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
     "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.os-migration-reboot/report.json",
     "safety_contract":  [
                             "disposable_vm_or_lab_disk",

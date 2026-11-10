@@ -30,6 +30,8 @@ enum class FileExplorerCommandId {
     ClearSelection,
     InvertSelection,
     NewFolder,
+    // "CreateFile" itself collides with the Win32 CreateFileA/W macro.
+    CreateEmptyFile,
     WriteFile,
     Rename,
     Delete,
@@ -43,6 +45,45 @@ enum class FileExplorerCommandId {
     ViewAdaptive,
     TogglePreviewPane,
     ToggleDualPane,
+    DuplicateTab,
+    ReopenClosedTab,
+    Hash,
+    CopyOut,
+    CopyItems,
+    Paste,
+    CopyToOtherPane,
+    ComparePanes,
+    ToggleSelect,
+    CopyItemPathQuoted,
+    IncreaseSize,
+    DecreaseSize,
+    FocusOtherPane,
+    CutItems,
+    PasteIntoSelection,
+    DeletePermanently,
+    CreateFolderWithSelection,
+    RemoveTags,
+    OpenInTerminal,
+    EditInNotepad,
+    CompressIntoZip,
+    ExtractFiles,
+    ExtractHere,
+    ExtractHereSmart,
+    ExtractToChildFolder,
+    Undo,
+    Redo,
+    FlattenFolder,
+};
+
+/// Command-palette section a command belongs to. Palette rows render grouped
+/// under these headers, in declaration order.
+enum class FileExplorerCommandGroup {
+    Navigation,
+    File,
+    View,
+    Pane,
+    Target,
+    Safety,
 };
 
 struct FileExplorerCommand {
@@ -51,6 +92,7 @@ struct FileExplorerCommand {
     QString accessible_name;
     QString status_text;
     QString shortcut;
+    FileExplorerCommandGroup group{FileExplorerCommandGroup::Navigation};
     bool destructive{false};
     bool selection_required{false};
     bool write_operation{false};
@@ -61,6 +103,14 @@ struct FileExplorerCommandContext {
     FileExplorerPaneState pane;
     bool can_create_tabs{false};
     bool can_use_dual_pane{false};
+    bool has_closed_tab{false};       ///< True when a recently closed tab can be reopened.
+    bool clipboard_has_files{false};  ///< True when the clipboard holds pasteable file items.
+    bool selection_has_tags{false};   ///< True when any selected item carries app-level tags.
+    bool dual_pane_active{false};     ///< True when a second pane is currently shown.
+    /// Files ShowFlattenOptions (experimental, default off): gates FlattenFolder.
+    bool show_flatten_options{false};
+    /// Target shown in the INACTIVE pane while dual pane is active (cross-pane destination).
+    FileManagementTarget other_pane_target;
 };
 
 struct FileExplorerCommandState {
@@ -77,6 +127,9 @@ public:
     [[nodiscard]] static FileExplorerCommandState state(FileExplorerCommandId id,
                                                         const FileExplorerCommandContext& context);
     [[nodiscard]] static QString commandIdName(FileExplorerCommandId id);
+    [[nodiscard]] static FileExplorerCommandGroup group(FileExplorerCommandId id);
+    [[nodiscard]] static QString groupName(FileExplorerCommandGroup group);
+    [[nodiscard]] static QVector<FileExplorerCommandGroup> groupOrder();
 };
 
 }  // namespace sak

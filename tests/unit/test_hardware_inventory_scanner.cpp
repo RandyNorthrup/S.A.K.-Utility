@@ -7,7 +7,9 @@
 #include "sak/diagnostic_types.h"
 #include "sak/hardware_inventory_scanner.h"
 
+#include <QJsonDocument>
 #include <QSignalSpy>
+#include <QTimeZone>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -26,13 +28,29 @@ private Q_SLOTS:
     void gpuInfo_defaults();
     void motherboardInfo_defaults();
     void batteryInfo_defaults();
+    void uptimeReadsTheBootTimeInEitherForm();
+    void storageTypeIsTheBusWindowsReports();
     void cancel_doesNotCrash();
     void scanCpu_returnsRealCpuInfo();
+    void volumeDiskMap_parsesArray();
+    void volumeDiskMap_parsesSingleObject();
+    void volumeDiskMap_dropsNullDiskIndex();
+    void volumeDiskMap_dropsNegativeDiskIndex();
+    void volumeDiskMap_dropsEmptyLetter();
+    void volumeDiskMap_handlesMalformed();
+    // B5-12: WMI failure must not read as an empty-but-successful result.
+    void wmiFailure_successAndEmptyAreNotFailures();
+    void wmiFailure_timeoutExitParseAreFailures();
+    void wmiFailure_cancelIsNotFailure();
+    void jsonDocToVariantMaps_arrayObjectAndSkips();
+    void jsonDocToVariantMaps_scalarYieldsEmpty();
 };
 
 void TestHardwareInventoryScanner::construction_default() {
     HardwareInventoryScanner scanner;
-    QVERIFY(dynamic_cast<QObject*>(&scanner) != nullptr);
+    // The dynamic_cast upcast was compile-time-guaranteed (vacuous); pin a real constructed-state
+    // fact instead: the default ctor forwards a null parent to QObject.
+    QCOMPARE(scanner.parent(), static_cast<QObject*>(nullptr));
 }
 
 void TestHardwareInventoryScanner::construction_nonCopyable() {
@@ -64,10 +82,13 @@ void TestHardwareInventoryScanner::cpuInfo_fieldAssignment() {
     info.l3_cache_kb = 32'768;
 
     QCOMPARE(info.name, QStringLiteral("Test CPU"));
+    QCOMPARE(info.manufacturer, QStringLiteral("TestCorp"));
     QCOMPARE(info.cores, 8u);
     QCOMPARE(info.threads, 16u);
     QCOMPARE(info.base_clock_mhz, 3600u);
     QCOMPARE(info.max_clock_mhz, 5000u);
+    QCOMPARE(info.l2_cache_kb, 4096u);
+    QCOMPARE(info.l3_cache_kb, 32'768u);
 }
 
 void TestHardwareInventoryScanner::memorySummary_defaults() {
@@ -97,6 +118,11 @@ void TestHardwareInventoryScanner::storageDeviceInfo_defaults() {
     QVERIFY(dev.interface_type.isEmpty());
     QVERIFY(dev.media_type.isEmpty());
     QCOMPARE(dev.disk_number, 0u);
+    // temperature is never assigned anywhere in queryStorage
+    // (hardware_inventory_scanner.cpp:620-635), yet serializeStorageDevice ships it as
+    // "temperature_celsius" for every disk (app_readonly_actions.cpp:2293), so this
+    // struct default IS the reported value on every machine.
+    QCOMPARE(dev.temperature, 0.0);
     QVERIFY(dev.partitions.isEmpty());
 }
 
@@ -124,17 +150,88 @@ void TestHardwareInventoryScanner::batteryInfo_defaults() {
     QVERIFY(!info.present);
     QVERIFY(info.status.isEmpty());
     QCOMPARE(info.current_charge, 0u);
+    // queryBattery returns this struct untouched when no battery is present
+    // (hardware_inventory_scanner.cpp:910-912) and leaves the capacities/health at their
+    // defaults when Win32_Battery returns no row (922-933). health_percent is serialized
+    // unconditionally (app_readonly_actions.cpp:2324) and drives the degraded-battery
+    // warning (diagnostic_controller.cpp:792-796), and the health computation (928-932)
+    // is gated on the capacities being 0 -- so a lost or wrong member initialiser here
+    // surfaces as a fabricated battery health.
+    QCOMPARE(info.design_capacity, 0u);
+    QCOMPARE(info.full_charge_capacity, 0u);
+    QCOMPARE(info.health_percent, 0.0);
+    QVERIFY(!info.health_known);
+}
+
+// Windows PowerShell's ConvertTo-Json writes LastBootUpTime as "/Date(ms)/", which the CIM-only
+// parse read as nothing, so every PC showed "Uptime: 0 min".
+// Review 3 (testpc1): Storage Health typed the internal SK hynix BC501 NVMe as SATA
+// (Win32_DiskDrive says "SCSI" for NVMe) and the USB enclosure as NVMe (its model carries "NVME").
+// The type is the bus MSFT_PhysicalDisk reports; without one, Win32_DiskDrive's own word, never a
+// guess.
+void TestHardwareInventoryScanner::storageTypeIsTheBusWindowsReports() {
+    using sak::HardwareInventoryScanner;
+    QCOMPARE(HardwareInventoryScanner::storageBusName(17), QStringLiteral("NVMe"));
+    QCOMPARE(HardwareInventoryScanner::storageBusName(7), QStringLiteral("USB"));
+    QCOMPARE(HardwareInventoryScanner::storageBusName(11), QStringLiteral("SATA"));
+    QCOMPARE(HardwareInventoryScanner::storageBusName(10), QStringLiteral("SAS"));
+    QCOMPARE(HardwareInventoryScanner::storageBusName(8), QStringLiteral("RAID"));
+    QVERIFY(HardwareInventoryScanner::storageBusName(0).isEmpty());
+    QVERIFY(HardwareInventoryScanner::storageBusName(99).isEmpty());
+
+    QCOMPARE(HardwareInventoryScanner::storageInterfaceName(QStringLiteral("NVMe"),
+                                                            QStringLiteral("SCSI")),
+             QStringLiteral("NVMe"));
+    QCOMPARE(HardwareInventoryScanner::storageInterfaceName(QStringLiteral("USB"),
+                                                            QStringLiteral("SCSI")),
+             QStringLiteral("USB"));
+    QCOMPARE(HardwareInventoryScanner::storageInterfaceName(QString(), QStringLiteral(" SCSI ")),
+             QStringLiteral("SCSI"));
+}
+
+void TestHardwareInventoryScanner::uptimeReadsTheBootTimeInEitherForm() {
+    const QDateTime boot = QDateTime::fromMSecsSinceEpoch(1'793'000'000'000, QTimeZone::UTC);
+    const QDateTime now = boot.addSecs(3 * 3600 + 120);
+    QCOMPARE(HardwareInventoryScanner::uptimeSecondsSinceBoot(
+                 QStringLiteral("/Date(1793000000000)/"), now),
+             static_cast<uint64_t>(3 * 3600 + 120));
+    const QDateTime local_boot = QDateTime(QDate(2026, 11, 5), QTime(8, 30, 0));
+    QCOMPARE(HardwareInventoryScanner::uptimeSecondsSinceBoot(
+                 QStringLiteral("20261105083000.500000+480"), local_boot.addSecs(60)),
+             static_cast<uint64_t>(60));
+    QCOMPARE(HardwareInventoryScanner::uptimeSecondsSinceBoot(QStringLiteral("soon"), now), 0U);
+    QCOMPARE(HardwareInventoryScanner::uptimeSecondsSinceBoot(QString(), now), 0U);
 }
 
 void TestHardwareInventoryScanner::cancel_doesNotCrash() {
     HardwareInventoryScanner scanner;
+    QSignalSpy started_spy(&scanner, &HardwareInventoryScanner::scanStarted);
+    QSignalSpy progress_spy(&scanner, &HardwareInventoryScanner::scanProgress);
+    QSignalSpy error_spy(&scanner, &HardwareInventoryScanner::errorOccurred);
+    QSignalSpy complete_spy(&scanner, &HardwareInventoryScanner::scanComplete);
+    QVERIFY(started_spy.isValid());
+    QVERIFY(progress_spy.isValid());
+    QVERIFY(error_spy.isValid());
+    QVERIFY(complete_spy.isValid());
+
     scanner.cancel();
-    QVERIFY(dynamic_cast<QObject*>(&scanner) != nullptr);
+    scanner.cancel();  // a repeat cancel is still just a flag store
+
+    // cancel() only raises the cancel flag (hardware_inventory_scanner.cpp:329-332); the
+    // terminal signals belong to the scan checkpoints (225-233) and finishScan (417-430).
+    // DiagnosticController calls cancel() on the GUI thread (diagnostic_controller.cpp:338,
+    // 414) with scanComplete/errorOccurred connected (84-93), so a cancel() that emitted
+    // them itself would deliver a "finished" hardware scan over an unread inventory.
+    QCOMPARE(started_spy.count(), 0);
+    QCOMPARE(progress_spy.count(), 0);
+    QCOMPARE(error_spy.count(), 0);
+    QCOMPARE(complete_spy.count(), 0);
 }
 
 void TestHardwareInventoryScanner::scanCpu_returnsRealCpuInfo() {
     HardwareInventoryScanner scanner;
     QSignalSpy complete_spy(&scanner, &HardwareInventoryScanner::scanComplete);
+    QVERIFY(complete_spy.isValid());
 
     scanner.scanCpu();
 
@@ -144,6 +241,149 @@ void TestHardwareInventoryScanner::scanCpu_returnsRealCpuInfo() {
     QVERIFY(inventory.cpu.cores > 0);
     QVERIFY(inventory.cpu.threads > 0);
     QVERIFY(inventory.cpu.threads >= inventory.cpu.cores);
+    // queryCpu deliberately never fabricates a base clock from MaxClockSpeed
+    // (hardware_inventory_scanner.cpp:488-491), so base_clock_mhz stays 0 (unknown) on
+    // every host -- and that value is printed as a spec by the reports
+    // (diagnostic_report_generator.cpp:236, 396, 565) and the hardware_scan action
+    // (app_readonly_actions.cpp:2275), so a fabricated base clock would ship as fact.
+    QCOMPARE(inventory.cpu.base_clock_mhz, 0u);
+    // Architecture is a mapped catalog with a mandatory default arm (473-486) and lands in
+    // the report (diagnostic_report_generator.cpp:240): never the raw WMI code, never empty.
+    const QString arch = inventory.cpu.architecture;
+    QVERIFY2(arch == QLatin1String("x86") || arch == QLatin1String("x64") ||
+                 arch == QLatin1String("ARM64") || arch == QLatin1String("Unknown"),
+             qPrintable(QStringLiteral("architecture outside catalog: ") + arch));
+}
+
+// P07-22: an array of {Letter, DiskIndex} maps each drive letter to its disk.
+void TestHardwareInventoryScanner::volumeDiskMap_parsesArray() {
+    const QByteArray json = R"([{"Letter":"C:","DiskIndex":0},{"Letter":"D:","DiskIndex":2}])";
+    const auto map = HardwareInventoryScanner::parseVolumeDiskMap(json);
+    QCOMPARE(map.size(), 2);
+    QCOMPARE(map.value(QStringLiteral("C:")), 0u);
+    QCOMPARE(map.value(QStringLiteral("D:")), 2u);
+}
+
+// A lone mapping is emitted by ConvertTo-Json as an object, not an array.
+void TestHardwareInventoryScanner::volumeDiskMap_parsesSingleObject() {
+    const QByteArray json = R"({"Letter":"C:","DiskIndex":0})";
+    const auto map = HardwareInventoryScanner::parseVolumeDiskMap(json);
+    QCOMPARE(map.size(), 1);
+    QCOMPARE(map.value(QStringLiteral("C:")), 0u);
+}
+
+// A partition with no matching disk yields DiskIndex=null; it must be dropped
+// so the volume is never silently attributed to disk 0.
+void TestHardwareInventoryScanner::volumeDiskMap_dropsNullDiskIndex() {
+    const QByteArray json = R"([{"Letter":"C:","DiskIndex":0},{"Letter":"E:","DiskIndex":null}])";
+    const auto map = HardwareInventoryScanner::parseVolumeDiskMap(json);
+    QCOMPARE(map.size(), 1);
+    QVERIFY(map.contains(QStringLiteral("C:")));
+    QVERIFY(!map.contains(QStringLiteral("E:")));
+}
+
+// A negative DiskIndex is out-of-range garbage; it must be dropped rather than
+// wrapped into a huge uint32_t disk number (codex-review-3).
+void TestHardwareInventoryScanner::volumeDiskMap_dropsNegativeDiskIndex() {
+    const QByteArray json = R"([{"Letter":"C:","DiskIndex":0},{"Letter":"F:","DiskIndex":-1}])";
+    const auto map = HardwareInventoryScanner::parseVolumeDiskMap(json);
+    QCOMPARE(map.size(), 1);
+    QVERIFY(map.contains(QStringLiteral("C:")));
+    QVERIFY(!map.contains(QStringLiteral("F:")));
+}
+
+void TestHardwareInventoryScanner::volumeDiskMap_dropsEmptyLetter() {
+    const QByteArray json = R"([{"Letter":"","DiskIndex":1}])";
+    const auto map = HardwareInventoryScanner::parseVolumeDiskMap(json);
+    QVERIFY(map.isEmpty());
+}
+
+void TestHardwareInventoryScanner::volumeDiskMap_handlesMalformed() {
+    QVERIFY(HardwareInventoryScanner::parseVolumeDiskMap(QByteArray()).isEmpty());
+    QVERIFY(HardwareInventoryScanner::parseVolumeDiskMap("not json").isEmpty());
+    QVERIFY(HardwareInventoryScanner::parseVolumeDiskMap("[]").isEmpty());
+
+    // A non-numeric DiskIndex hits the !disk.isDouble() half of the guard
+    // (hardware_inventory_scanner.cpp:136) -- the one arm no other case reaches: the null
+    // case trips isNull() first and the -1 case trips the range check. It is a documented
+    // contract of this public API (hardware_inventory_scanner.h:71, "null/non-numeric
+    // DiskIndex dropped"): without the check, QJsonValue::toInt() defaults to 0 and G: is
+    // silently attributed to physical disk 0.
+    const auto typed = HardwareInventoryScanner::parseVolumeDiskMap(
+        R"([{"Letter":"G:","DiskIndex":"2"},{"Letter":"H:","DiskIndex":4}])");
+    QCOMPARE(typed.size(), 1);
+    QVERIFY(!typed.contains(QStringLiteral("G:")));
+    QCOMPARE(typed.value(QStringLiteral("H:")), 4u);
+}
+
+// B5-12: a successful query (including a legitimately empty result set) is NOT a
+// failure -- the scan must not falsely flag the inventory as incomplete.
+void TestHardwareInventoryScanner::wmiFailure_successAndEmptyAreNotFailures() {
+    // timedOut=false, cancelled=false, exit=0, parse ok -> success.
+    QVERIFY(!HardwareInventoryScanner::wmiQueryIsReportableFailure(false, false, 0, false));
+}
+
+// A timeout, a non-zero exit, or a JSON parse error are all genuine failures
+// that must be surfaced rather than swallowed as "no data".
+void TestHardwareInventoryScanner::wmiFailure_timeoutExitParseAreFailures() {
+    QVERIFY(
+        HardwareInventoryScanner::wmiQueryIsReportableFailure(true, false, 0, false));   // timeout
+    QVERIFY(
+        HardwareInventoryScanner::wmiQueryIsReportableFailure(false, false, 1, false));  // exit!=0
+    QVERIFY(
+        HardwareInventoryScanner::wmiQueryIsReportableFailure(false, false, 0, true));   // bad JSON
+    // A NEGATIVE exit code is a real production value: ProcessResult defaults exit_code to
+    // -1 (process_runner.h:20) and runProcess returns it verbatim when the interpreter
+    // never launches (process_runner.cpp:164-165, 177-179); wmiQuery passes result.exit_code
+    // straight through (hardware_inventory_scanner.cpp:382-383). The guard is
+    // `exitCode != 0` (line 397) -- pin the negative side of it too.
+    QVERIFY(HardwareInventoryScanner::wmiQueryIsReportableFailure(false, false, -1, false));
+}
+
+// A user cancellation is not a data-integrity failure, even if the process was
+// torn down with a non-zero exit code.
+void TestHardwareInventoryScanner::wmiFailure_cancelIsNotFailure() {
+    QVERIFY(!HardwareInventoryScanner::wmiQueryIsReportableFailure(false, true, 1, false));
+    QVERIFY(!HardwareInventoryScanner::wmiQueryIsReportableFailure(true, true, 0, false));
+}
+
+void TestHardwareInventoryScanner::jsonDocToVariantMaps_arrayObjectAndSkips() {
+    // Array of two objects -> two maps.
+    const auto arr = HardwareInventoryScanner::jsonDocToVariantMaps(
+        QJsonDocument::fromJson(R"([{"A":1},{"B":2}])"));
+    QCOMPARE(arr.size(), 2);
+    QCOMPARE(arr.at(0).value("A").toInt(), 1);
+    QCOMPARE(arr.at(1).value("B").toInt(), 2);
+    // Each instance map holds ONLY its own row's properties: one fresh map per JSON object
+    // (hardware_inventory_scanner.cpp:405-409). One key per map cannot see properties
+    // leaking across instances, and every consumer reads these maps per instance
+    // (queryStorage 620-635, queryGpu 782-787, queryCpu 460), so a merged map would
+    // attribute one disk's serial or one GPU's driver to a different device.
+    QCOMPARE(arr.at(0).size(), 1);
+    QVERIFY(!arr.at(0).contains(QStringLiteral("B")));
+    QCOMPARE(arr.at(1).size(), 1);
+    QVERIFY(!arr.at(1).contains(QStringLiteral("A")));
+
+    // Single object -> one map.
+    const auto obj =
+        HardwareInventoryScanner::jsonDocToVariantMaps(QJsonDocument::fromJson(R"({"X":9})"));
+    QCOMPARE(obj.size(), 1);
+    QCOMPARE(obj.at(0).value("X").toInt(), 9);
+
+    // Non-object array entries are skipped.
+    const auto mixed = HardwareInventoryScanner::jsonDocToVariantMaps(
+        QJsonDocument::fromJson(R"([{"A":1},7,"str"])"));
+    QCOMPARE(mixed.size(), 1);
+}
+
+// A syntactically valid but scalar top-level JSON (neither object nor array)
+// yields no instances. wmiQuery treats this unexpected shape as a failure so it
+// is never mistaken for a clean empty inventory (codex-review-3).
+void TestHardwareInventoryScanner::jsonDocToVariantMaps_scalarYieldsEmpty() {
+    QVERIFY(
+        HardwareInventoryScanner::jsonDocToVariantMaps(QJsonDocument::fromJson("42")).isEmpty());
+    QVERIFY(HardwareInventoryScanner::jsonDocToVariantMaps(QJsonDocument::fromJson(R"("hi")"))
+                .isEmpty());
 }
 
 QTEST_MAIN(TestHardwareInventoryScanner)

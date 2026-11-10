@@ -1,0 +1,83 @@
+{
+  "tool": "partition-manager-row-report",
+  "schema_version": 1,
+  "scenario_id": "external.boot-repair-uefi",
+  "status": "Passed",
+  "failure": "",
+  "run_id": "e5c0149f-235f-4f2e-841c-f83e201f2cc5",
+  "started_utc": "2026-11-10T16:57:41.0833962Z",
+  "completed_utc": "2026-11-10T17:01:45.7287951Z",
+  "code": {
+    "digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "commit": "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+    "dirty": false
+  },
+  "binaries": {
+    "client_sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
+    "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+    "app_sha256": "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+  },
+  "rig": {
+    "machine_manufacturer": "innotek GmbH",
+    "machine_model": "VirtualBox",
+    "firmware": "UEFI",
+    "os_caption": "Microsoft Windows 11 Pro",
+    "os_build": "26200",
+    "consent_prompt_answered_by_policy": true
+  },
+  "media": {
+    "class": "virtual_machine",
+    "kind": "Windows on a VirtualBox VDI",
+    "model": "VBOX HARDDISK",
+    "bus_type": "SATA",
+    "media_type": "Unspecified",
+    "rotation_rate_rpm": 0,
+    "size_bytes": "343597383680",
+    "serial_sha256": "7cde3be6f4dfb79abe2a729d856df5242f0507480b3d9dfe6b9517613ca7b5cb"
+  },
+  "steps": [
+    {
+      "id": "repair",
+      "operation": "RepairBoot",
+      "expect": "success",
+      "report": "repair.client.json",
+      "observed": {
+        "client_pid": 8348,
+        "exit_code": 0,
+        "client_token_elevated": false,
+        "helper_pid": 5616,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "helper_path": "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+        "helper_token_elevated": true
+      }
+    }
+  ],
+  "independent_file": "independent.json",
+  "artifacts": [
+    {
+      "path": "efi-after.json",
+      "sha256": "d9f64c83f38f3ffc68780fa06fa0a0abb4ad4659d75f0f0f68f453b31d421c28",
+      "bytes": 240
+    },
+    {
+      "path": "efi-before.json",
+      "sha256": "da1c1fb8af4036c78d4aa5a57b57d825d4d12ed062eaea260aaeec808e4e761a",
+      "bytes": 241
+    },
+    {
+      "path": "efi-broken.json",
+      "sha256": "ce34734deca3e80ceff81c8ba62734a72e67c650cec86a7f4d924d124973d767",
+      "bytes": 199
+    },
+    {
+      "path": "independent.json",
+      "sha256": "e7cbe21f524e270695bbb129b45ca8cf9867ed782978c31753dbe0ab1684a332",
+      "bytes": 822
+    },
+    {
+      "path": "repair.client.json",
+      "sha256": "32e47ecc24ec362e77ab1c6e57442c580efa25ba3bf872e51e369fda0155f9fd",
+      "bytes": 3473
+    }
+  ]
+}

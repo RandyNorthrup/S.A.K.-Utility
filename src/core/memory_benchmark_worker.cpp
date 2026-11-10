@@ -18,12 +18,7 @@
 #include <random>
 #include <vector>
 
-#ifdef SAK_PLATFORM_WINDOWS
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <Windows.h>
-#endif
 
 namespace sak {
 
@@ -58,6 +53,8 @@ constexpr double kMemoryScoreScale = 1000.0;
 constexpr int kCommittedFillByte = 0xAA;
 constexpr int kZeroFillByte = 0x00;
 constexpr size_t kBandwidthUnrollFactor = 8;
+/// A copy moves each byte twice (one read + one write), so effective traffic is 2x buffer size.
+constexpr double kCopyTrafficFactor = 2.0;
 constexpr uint64_t kWriteBandwidthPattern = 0xDE'AD'BE'EF'CA'FE'BA'BEULL;
 constexpr uint64_t kLatencyShuffleSeed = 0xC0'FF'EE;
 constexpr size_t kLatencyWarmupChases = 1000;
@@ -89,6 +86,12 @@ auto MemoryBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
         return status;
     }
 
+    // A cancel requested during the final (allocation) phase must not surface as a
+    // successful benchmarkComplete: fail closed before scoring and emitting completion.
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+
     calculateScore();
     m_result.timestamp = QDateTime::currentDateTime();
     emitCompletion();
@@ -101,6 +104,12 @@ auto MemoryBenchmarkWorker::runBandwidthBenchmarks() -> std::expected<void, sak:
         return std::unexpected(sak::error_code::operation_cancelled);
     }
     m_result.read_bandwidth_gbps = runReadBandwidth();
+    // A non-positive bandwidth means the streaming buffer could not be allocated (the
+    // run*Bandwidth 0.0 sentinel). Fail closed instead of reporting a fabricated 0 GB/s
+    // as a real measurement, mirroring the latency guard below.
+    if (m_result.read_bandwidth_gbps <= 0.0) {
+        return std::unexpected(sak::error_code::out_of_memory);
+    }
 
     // Write bandwidth
     reportProgress(kMemoryProgressWrite, kMemoryBenchmarkStepTotal, "Measuring write bandwidth...");
@@ -108,6 +117,9 @@ auto MemoryBenchmarkWorker::runBandwidthBenchmarks() -> std::expected<void, sak:
         return std::unexpected(sak::error_code::operation_cancelled);
     }
     m_result.write_bandwidth_gbps = runWriteBandwidth();
+    if (m_result.write_bandwidth_gbps <= 0.0) {
+        return std::unexpected(sak::error_code::out_of_memory);
+    }
 
     // Copy bandwidth
     reportProgress(kMemoryProgressCopy, kMemoryBenchmarkStepTotal, "Measuring copy bandwidth...");
@@ -115,6 +127,9 @@ auto MemoryBenchmarkWorker::runBandwidthBenchmarks() -> std::expected<void, sak:
         return std::unexpected(sak::error_code::operation_cancelled);
     }
     m_result.copy_bandwidth_gbps = runCopyBandwidth();
+    if (m_result.copy_bandwidth_gbps <= 0.0) {
+        return std::unexpected(sak::error_code::out_of_memory);
+    }
     return {};
 }
 
@@ -127,6 +142,12 @@ auto MemoryBenchmarkWorker::runLatencyAndAllocationBenchmarks()
         return std::unexpected(sak::error_code::operation_cancelled);
     }
     m_result.random_latency_ns = runRandomLatency();
+    // A non-positive latency means the pointer-chase buffer could not be allocated
+    // (see runRandomLatency's 0.0 sentinel). Fail closed instead of feeding a 0 ns
+    // latency into calculateScore, which would massively inflate the score.
+    if (m_result.random_latency_ns <= 0.0) {
+        return std::unexpected(sak::error_code::out_of_memory);
+    }
 
     // Allocation stress
     reportProgress(kMemoryProgressAllocation,
@@ -135,7 +156,9 @@ auto MemoryBenchmarkWorker::runLatencyAndAllocationBenchmarks()
     if (checkStop()) {
         return std::unexpected(sak::error_code::operation_cancelled);
     }
-    runAllocationStress();
+    if (auto status = runAllocationStress(); !status) {
+        return status;
+    }
     return {};
 }
 
@@ -171,7 +194,7 @@ void MemoryBenchmarkWorker::emitCompletion() {
 // ============================================================================
 
 double MemoryBenchmarkWorker::runReadBandwidth() {
-    VirtualBuffer buf(kBandwidthBufferSize);
+    const VirtualBuffer buf(kBandwidthBufferSize);
     if (!buf.valid()) {
         logError("Failed to allocate {} MB for read bandwidth test",
                  kBandwidthBufferSize / sak::kBytesPerMB);
@@ -198,12 +221,13 @@ double MemoryBenchmarkWorker::runReadBandwidth() {
             }
         }
 
-        const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+        const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
+                                   kNanosecondsPerSecond;
         const double gbps = static_cast<double>(buf.size()) / sak::kBytesPerGBf / elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
 
         // Prevent optimization from eliding reads
-        volatile uint64_t sink = sum;
+        const volatile uint64_t sink = sum;
         (void)sink;
     }
 
@@ -212,8 +236,10 @@ double MemoryBenchmarkWorker::runReadBandwidth() {
 }
 
 double MemoryBenchmarkWorker::runWriteBandwidth() {
-    VirtualBuffer buf(kBandwidthBufferSize);
+    const VirtualBuffer buf(kBandwidthBufferSize);
     if (!buf.valid()) {
+        logError("Failed to allocate {} MB for write bandwidth test",
+                 kBandwidthBufferSize / sak::kBytesPerMB);
         return 0.0;
     }
 
@@ -235,7 +261,8 @@ double MemoryBenchmarkWorker::runWriteBandwidth() {
             }
         }
 
-        const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+        const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
+                                   kNanosecondsPerSecond;
         const double gbps = static_cast<double>(buf.size()) / sak::kBytesPerGBf / elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
     }
@@ -245,9 +272,11 @@ double MemoryBenchmarkWorker::runWriteBandwidth() {
 }
 
 double MemoryBenchmarkWorker::runCopyBandwidth() {
-    VirtualBuffer src(kBandwidthBufferSize);
-    VirtualBuffer dst(kBandwidthBufferSize);
+    const VirtualBuffer src(kBandwidthBufferSize);
+    const VirtualBuffer dst(kBandwidthBufferSize);
     if (!src.valid() || !dst.valid()) {
+        logError("Failed to allocate {} MB x2 for copy bandwidth test",
+                 kBandwidthBufferSize / sak::kBytesPerMB);
         return 0.0;
     }
 
@@ -263,9 +292,11 @@ double MemoryBenchmarkWorker::runCopyBandwidth() {
 
         std::memcpy(dst.data(), src.data(), src.size());
 
-        const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+        const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
+                                   kNanosecondsPerSecond;
         // Copy touches both read and write = 2x buffer size
-        const double gbps = static_cast<double>(src.size()) / sak::kBytesPerGBf / elapsed_sec;
+        const double gbps = kCopyTrafficFactor * static_cast<double>(src.size()) /
+                            sak::kBytesPerGBf / elapsed_sec;
         best_gbps = std::max(best_gbps, gbps);
     }
 
@@ -283,8 +314,14 @@ double MemoryBenchmarkWorker::runRandomLatency() {
     // prefetchers cannot predict the next access -> measures true latency.
 
     const size_t element_count = kLatencyArrayElements;
-    VirtualBuffer buf(element_count * sizeof(size_t));
+    const VirtualBuffer buf(element_count * sizeof(size_t));
     if (!buf.valid()) {
+        // Return 0.0 as a failure sentinel: a real pointer-chase always measures a
+        // positive latency. runLatencyAndAllocationBenchmarks fails the benchmark on
+        // this rather than scoring an (impossible) 0 ns latency, which would inflate
+        // the score.
+        logError("Failed to allocate {} MB for random latency test",
+                 (element_count * sizeof(size_t)) / sak::kBytesPerMB);
         return 0.0;
     }
 
@@ -292,7 +329,7 @@ double MemoryBenchmarkWorker::runRandomLatency() {
 
     // Create a random permutation for the chase sequence
     std::vector<size_t> indices(element_count);
-    std::iota(indices.begin(), indices.end(), 0);
+    std::ranges::iota(indices, 0);
 
     // Fisher-Yates shuffle with fixed seed
     std::mt19937_64 rng(kLatencyShuffleSeed);
@@ -325,7 +362,7 @@ double MemoryBenchmarkWorker::runRandomLatency() {
     const double latency_ns = elapsed_ns / static_cast<double>(kLatencyChases);
 
     // Prevent optimization
-    volatile size_t sink = idx;
+    const volatile size_t sink = idx;
     (void)sink;
 
     logInfo("Memory random latency: {:.1f} ns", latency_ns);
@@ -336,7 +373,7 @@ double MemoryBenchmarkWorker::runRandomLatency() {
 // Allocation Stress
 // ============================================================================
 
-void MemoryBenchmarkWorker::runAllocationStress() {
+auto MemoryBenchmarkWorker::runAllocationStress() -> std::expected<void, sak::error_code> {
     // Test how fast the system can allocate and free memory blocks
 
     QElapsedTimer timer;
@@ -346,20 +383,25 @@ void MemoryBenchmarkWorker::runAllocationStress() {
 
     for (int i = 0; i < kAllocOps; ++i) {
         void* ptr = std::malloc(kAllocBlockSize);
-        if (ptr) {
-            std::memset(ptr, kZeroFillByte, kAllocBlockSize);
-            std::free(ptr);
+        if (ptr == nullptr) {
+            // A failed fixed-size stress allocation is a genuine out-of-memory condition.
+            // Fail closed instead of dividing kAllocOps by the elapsed time of the ops that
+            // did run, which would report a fabricated throughput as a successful benchmark.
+            logError("Allocation stress failed: could not allocate {} bytes", kAllocBlockSize);
+            return std::unexpected(sak::error_code::out_of_memory);
         }
+        std::memset(ptr, kZeroFillByte, kAllocBlockSize);
+        std::free(ptr);
     }
 
-    const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+    const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) / kNanosecondsPerSecond;
     m_result.alloc_dealloc_ops_per_sec = static_cast<double>(kAllocOps) / elapsed_sec;
 
     // Find max contiguous allocation
     size_t test_size = sak::kBytesPerGB;  // Start at 1 GB
     while (test_size >= sak::kBytesPerMB) {
         void* ptr = std::malloc(test_size);
-        if (ptr) {
+        if (ptr != nullptr) {
             max_contiguous = test_size / sak::kBytesPerMB;
             std::free(ptr);
             break;
@@ -372,6 +414,7 @@ void MemoryBenchmarkWorker::runAllocationStress() {
     logInfo("Allocation stress: {:.0f} ops/s, max contiguous: {} MB",
             m_result.alloc_dealloc_ops_per_sec,
             max_contiguous);
+    return {};
 }
 
 }  // namespace sak

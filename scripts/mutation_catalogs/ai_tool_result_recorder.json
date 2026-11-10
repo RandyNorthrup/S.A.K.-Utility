@@ -1,0 +1,56 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_tool_result_recorder",
+  "ctest_regex": "^test_ai_tool_result_recorder$",
+  "mutants": [
+    {
+      "id": "default-credential-redaction-removed",
+      "file": "src/ai/ai_tool_result_recorder.cpp",
+      "find": "    const QString credential_safe = CredentialStore::redactSecrets(text);",
+      "replace": "    const QString credential_safe = text;",
+      "expect": "killed",
+      "why": "summaryUsesCredentialRedactionByDefault requires recognized credentials to be removed even when the caller supplies no optional redactor."
+    },
+    {
+      "id": "tiny-output-cap-ignored",
+      "file": "src/ai/ai_tool_result_recorder.cpp",
+      "find": "            return marker.left(max_chars);",
+      "replace": "            return marker;",
+      "expect": "killed",
+      "why": "clippedTextHonorsTinyPositiveLimit requires the result length to stay within an eight-character caller cap."
+    },
+    {
+      "id": "invalid-exit-code-coerced-to-zero",
+      "file": "src/ai/ai_tool_result_recorder.cpp",
+      "find": "    const double raw_exit_code = exit_code.toDouble(std::numeric_limits<double>::quiet_NaN());",
+      "replace": "    const_cast<QJsonValue&>(exit_code) = exit_code.toDouble();\n    const double raw_exit_code = exit_code.toDouble(std::numeric_limits<double>::quiet_NaN());",
+      "expect": "killed",
+      "why": "summaryDoesNotCoerceInvalidStatusValues requires a string exit code to render invalid rather than success code zero."
+    },
+    {
+      "id": "fractional-exit-code-accepted",
+      "file": "src/ai/ai_tool_result_recorder.cpp",
+      "find": "        std::trunc(raw_exit_code) == raw_exit_code &&",
+      "replace": "        raw_exit_code == raw_exit_code &&",
+      "expect": "killed",
+      "why": "summaryDoesNotCoerceInvalidStatusValues requires a fractional exit code to render invalid rather than be truncated."
+    },
+    {
+      "id": "out-of-range-exit-code-accepted",
+      "file": "src/ai/ai_tool_result_recorder.cpp",
+      "find": "        raw_exit_code <= static_cast<double>(std::numeric_limits<int>::max());",
+      "replace": "        raw_exit_code <= std::numeric_limits<double>::max();",
+      "expect": "killed",
+      "why": "summaryDoesNotCoerceInvalidStatusValues rejects an exit value outside the process exit-code integer contract."
+    },
+    {
+      "id": "invalid-success-coerced-to-false",
+      "file": "src/ai/ai_tool_result_recorder.cpp",
+      "find": "    if (!success.isBool()) {",
+      "replace": "    if (success.isBool()) {",
+      "expect": "killed",
+      "why": "summaryDoesNotCoerceInvalidStatusValues requires a string success value to render invalid rather than no."
+    }
+  ]
+}

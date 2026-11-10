@@ -10,6 +10,7 @@
 #include "sak/email_types.h"
 
 #include <QDialog>
+#include <QHash>
 
 class QLabel;
 class QLineEdit;
@@ -19,6 +20,7 @@ class QTableWidget;
 class QTextBrowser;
 class QTimer;
 class QVBoxLayout;
+class EmailToolsViewsTests;
 
 namespace sak {
 
@@ -29,6 +31,7 @@ namespace sak {
 /// detail in a side panel. Export to VCF or CSV is built in.
 class EmailContactsDialog : public QDialog {
     Q_OBJECT
+    friend class ::EmailToolsViewsTests;
 
 public:
     explicit EmailContactsDialog(::EmailInspectorController* controller,
@@ -42,7 +45,10 @@ private Q_SLOTS:
     void onExportVcfClicked();
     void onExportCsvClicked();
     void onItemsLoaded(uint64_t folder_id, QVector<sak::PstItemSummary> items, int total);
-    void onDetailLoaded(sak::PstItemDetail detail);
+    void onDetailLoaded(const sak::PstItemDetail& detail);
+    /// Read every listed contact's record, for the table's columns.
+    void loadContactDetails();
+    void onControllerError(const QString& error);
 
 private:
     void setupUi();
@@ -73,7 +79,14 @@ private:
 
     // Data
     QVector<sak::PstItemSummary> m_all_contacts;
+    /// Each contact's full record. A contents table holds only a contact's display name, so the
+    /// address, company and phone shown in the list come from here.
+    QHash<uint64_t, sak::PstItemDetail> m_contact_details;
+    bool m_loading_contact_details{false};
     int m_folders_loaded{0};
+    // Set when a folder was capped, or the global contact ceiling was hit, so the
+    // "N contacts" status can honestly signal that the list was truncated.
+    bool m_truncated{false};
 };
 
 }  // namespace sak

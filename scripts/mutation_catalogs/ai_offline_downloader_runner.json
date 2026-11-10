@@ -1,0 +1,16 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_offline_downloader_tool_runner",
+  "ctest_regex": "^test_ai_offline_downloader_tool_runner$",
+  "mutants": [
+    {
+      "id": "process-wide-operation-claim-does-not-set",
+      "file": "src/ai/ai_offline_downloader_tool_runner.cpp",
+      "find": "expected, true, std::memory_order_acq_rel, std::memory_order_acquire",
+      "replace": "expected, false, std::memory_order_acq_rel, std::memory_order_acquire",
+      "expect": "killed",
+      "why": "A check-only busy flag recreates the TOCTOU race: two callers both enter run_operation. serializesConcurrentRunOperationsProcessWide blocks the first callback, requires the contender refused without callback entry, then proves a later call succeeds after release."
+    }
+  ]
+}

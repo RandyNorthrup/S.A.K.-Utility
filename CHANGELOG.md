@@ -6,15 +6,1388 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## Unreleased
+## v0.9.3 (2026-11-10)
 
-- **Full driver-level APFS + HFS+/HFSX write - Apple-certified (milestones A1-A8, H1-H8, I1, I2)** - S.A.K.'s APFS and HFS+/HFSX write support reached full driver-level parity, each capability proven by Apple's own validators (`fsck_apfs` / `fsck_hfs`) and macOS-kernel mount in the qemu/KVM macOS Sequoia VMs, and the two track gates (A8, H8) proven by physical-USB destructive + crash-interruption + rollback on disposable media (2026-06-28). **APFS (A1-A8):** multi-CIB / CAB space manager to a 32 TiB cap; crash-safe in-place copy-on-write checkpoint mutation of files and directories (create/delete/write/rename/cross-directory move/object-id-preserving byte-range patch); snapshots (create/delete/revert); multi-volume containers; inline zlib `com.apple.decmpfs` compression; credential-gated FileVault encryption (the secret is never persisted and never appears in generated script text); and file clones / sparse files / hard-links / xattr-ACL / in-chunk container resize. **HFS+/HFSX (H1-H8):** streaming catalog, attributes, and extents-overflow B-trees of arbitrary depth/width with split + underflow merge/rebalance; the fragmenting allocator with multi-leaf extents; hard-links, symlinks, and complex/hard-linked delete; inline/broad attribute growth with overflow records; little- and big-endian journal replay; the embedded HFS-wrapper write edge; and decmpfs read+write of all types. **I1 (production wiring):** every certified capability is reachable through the Partition Manager queue -> safety validation -> Apply review -> exact-target identity -> explicit confirmation -> operation report (16/16), with the FileVault secret materialized to an owner-scoped temp credential file at execution and shred-deleted, never on a command line. **I2 (docs/release gate):** the driver-capability matrix in `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` is the single owner; the cross-filesystem plan, File Explorer plan, README, and certification/readiness docs are synced to it, with every claim bounded to its evidence ID. **Fail-closed by design (not defects):** APFS Fusion/Tier2 multi-device is out of scope (no certification rig); encrypted volumes require the user credential; sealed/signed system-volume writes need a typed seal-invalidation confirmation; APFS container shrink and chunk-adding grow are documented follow-ons; arbitrary non-generated Apple-media mutation stays fail-closed at the Apply layer (the COW engine is certified, the production exposure is generated-layout-only); XFS/Btrfs stay read-only metadata. This entry supersedes the earlier in-development "remains blocked" / "64-128 MiB one-spaceman-chunk" / "Apple-native validation pending" notes in the bullets below, which were accurate at the time each was written.
+The first release with three-part version numbers; it follows v0.9.2.0. Among the changes below: Partition
+Manager's certification now drives the app itself, and
+[docs/PARTITION_MANAGER_CERTIFICATION.md](docs/PARTITION_MANAGER_CERTIFICATION.md) says what its final run covered;
+a Windows install USB is FAT32 and starts UEFI PCs; Email Inspector reads whole Outlook files, NST files included;
+Reset Network keeps settings typed in by hand; Cancel no longer calls work Windows carries on with "cancelled"; the
+theme follows Windows; one S.A.K. Utility runs per folder; Qt 6.12 LTS and security updates to what ships; and a
+smaller download.
+
+- **A cancelled step reads as cancelled** - The Log window's report listed a step a Cancel had stopped as "Failed:".
+  It now reads "Cancelled:", in the report text, its HTML and its JSON, for a cancel from the Cancel button, a close,
+  or one before anything was sent; a step stopped while Windows carries its work on still reads "May still be running
+  in Windows". A step's output no longer keeps the empty lines that stood around the markers taken out of it.
+- **Wipe Disk works on a new drive** - A disk with no partition table failed at once with "Clear-Disk : The disk has
+  not been initialized." Wipe Disk now clears only a disk that has a table, and on a new one starts from initializing
+  it; the rest of the wipe is unchanged.
+- **The close prompt reads right and follows the work** - It asked "Partition changes is running. Exit anyway?". Every
+  close and restart prompt now reads "Still running: <names>." followed by "Cancel and exit?", "Cancel and restart as
+  administrator?", "Exit anyway?" or "Restart as administrator anyway?", whatever the names are. While it is open it
+  follows the work it asks about: when a step Windows was carrying out ends, its note goes; when the work ends, the
+  prompt closes before the work's result appears, so "complete" never opens over a prompt still saying "running".
+- **No internal lines in the log** - The lines Partition Manager's scripts write for the application (the markers of a
+  step Windows carries out, and the cleanup's) no longer reach the Log window, a result or a report.
+- **A stopped step's leftovers are removed** - Cancelling or closing kills a step's script, and the cleanup at its
+  end never ran: a step that backs a volume up first (Allocate Free Space, Change Cluster Size, Move, Primary/Logical,
+  Volume Serial, Dynamic-to-Basic) left its VSS shadow copy and that copy's link in the temp folder, and Wipe Free
+  Space left cipher's EFSTMPWP folder of fill files on the volume. Each script now names what it makes the moment it
+  exists, and after a stop S.A.K. Utility removes exactly those: a shadow copy only by its own ID, its link only while
+  it is still a link, and cipher's folder only when it was not there before the wipe started and holds nothing but
+  plain files. The result says what was removed and what could not be, with why.
+- **Cancel no longer calls work Windows goes on with "cancelled"** - A full format (Wipe Disk, Wipe Partition, and
+  Format or Create with a full format), a defrag, an SSD ReTrim, a partition shrink (Resize, Split) and a file system
+  scan are carried out by Windows, which finishes them after S.A.K. Utility stops the step's script: a Wipe Disk's
+  full format kept writing for half an hour after the app and its helper were gone, while the app said "Partition
+  operation batch cancelled". While Windows has such a step, Partition Manager's Cancel is off and the panel says the
+  step cannot be stopped once it has started and that Windows continues it even if S.A.K. Utility is closed, with
+  when it started and that no time estimate is available. Closing then asks "Exit anyway?" and says closing will not
+  stop it, instead of offering "Exit after cancelling". A batch stopped while such a step ran names that step as
+  possibly still running in Windows, and a Check Disk Errors run stopped during a drive's scan says Windows may still
+  finish that read-only scan. The Optimize Drives dialog no longer calls the defrag and the ReTrim "cancellable".
+- **Reset Network keeps settings typed in by hand** - Windows' TCP/IP reset clears an adapter's static IPv4 setup,
+  and on a stock Windows 11 the adapter came back with only a self-assigned 169.254.x.x address, no gateway and no
+  working DNS, before and after the restart, with no warning. Reset Network now reads every adapter first and names,
+  in its question, each one with settings typed in by hand (addresses, gateways and DNS, IPv4 and IPv6) and what will
+  happen to them, and any turned-off adapter whose settings Windows does not show. Before it changes anything it saves
+  them to data\network-backups beside the program, and it refuses to run if it cannot. After the reset it puts them
+  back, each gateway with the metric it had (one Windows chose stays Windows' choice), turns DHCP back on where it was
+  on, and checks that every adapter that was up has DHCP or an address that is not self-assigned; an adapter that does
+  not is a failure that names the saved file.
+- **A static gateway no longer jumps the queue** - Set Static IP pinned the gateway's route metric at 1, and Restore
+  Settings at 0, so on a PC with more than one network that adapter took over the default route. Both now leave the
+  metric to Windows, as its own adapter dialog does: the address is set, then the gateway is added as a route with no
+  metric.
+- **Reset Network no longer reports a reset that worked as failed** - `netsh int ip reset` and `int ipv6 reset` exit 1
+  on a stock Windows 11 when Windows refuses one protected item, although every other item resets and netsh asks for a
+  restart. S.A.K. reads netsh's answer: that case is a reset that needs a restart, and any other failure is still a
+  failure (on a Windows in another language netsh's text is not recognised, so a non-zero exit stays a failure). The
+  check afterwards waits, within a limit, for the adapters to finish restarting instead of failing after 5 seconds; if
+  they are still restarting at the limit, the result says so and asks for a check after the restart. What the check
+  prints and the verdict now come from the same reading.
+- **A self-assigned address reads as one** - The adapter list showed an adapter with only a 169.254.x.x address as
+  "Connected". It now reads "No valid address", and its tooltip says Windows assigned it because no DHCP server
+  answered and nothing is set by hand.
+- **Restore Settings starts on the right adapter** - From the toolbar, the adapter list starts on the adapter the
+  backup was made from, then one of the same type, and only then the first; it started on the first (a Bluetooth
+  adapter, for an Ethernet backup). Backups now record the adapter's type. A right-click restore still starts on the
+  adapter clicked.
+- **Elevated quick actions log how long they took** - Verify System Files, Check Disk Errors, Reset Network and the
+  other actions that run through the elevated helper logged "(0s)"; they now log the time from the request to the
+  helper's answer.
+- **Windows ISO builds newest first** - The build list is in Windows' release order, newest first (26H2, 26H1, 25H2,
+  24H2, 23H2), and builds of one version keep their order. The line under the list says "No build selected." until a
+  build is chosen, instead of a blank band.
+- **Refresh Disks in dark** - Partition Manager's Refresh Disks icon is drawn white on its blue button, as the
+  caption is; it had all but vanished in the dark theme.
+
+- **A slow PC no longer reads as having no disks** - Partition Manager's disk scan stopped after 30 seconds and then
+  said "The disk scan found no disks". It now keeps going while it is still moving, says "Scanning disk N of M" as it
+  goes, and stops only after 30 seconds with no progress or 5 minutes in all. A scan that stops says "The disk scan did
+  not finish" and the last step it reached, and Apply refuses on it as before. A volume or partition list that does not
+  answer within 20 seconds is that volume's or that disk's error, and the other disks still list. Apply's own re-read
+  works the same way. The scan no longer loads the BitLocker module, or compiles its dynamic-disk probe, when it has no
+  use for them.
+- **USB hard disks can be defragmented** - Windows often cannot see through a USB bridge and reports the drive's
+  media type as Unspecified, so Disk Defrag refused the hard disk behind it. S.A.K. now asks the drive itself: when
+  Windows reports Unspecified and the drive reports a rotation rate, it counts as a hard disk. A standard scan cannot
+  ask, so Media type and Optimization mode say "Unknown until Apply" and Queue Defrag is on; Apply asks the drive and
+  refuses if it reports no rate. Windows reporting SSD always wins.
+- **Cancel a flash from its page** - Image Flasher's Step 3 page shows a red Cancel while it writes and while it
+  waits for Windows to see a new Windows USB, and no Back. Cancel asks first, then says "Stopping the write..." until
+  the writer stops, and the page that follows says "Flash cancelled" and what the drive holds now: nothing was
+  written and it is as it was, or writing had started and it needs flashing again or formatting. The status bar keeps
+  each step's line ("Writing to 1 drive...") for the whole write.
+- **The Windows ISO dialog fits small screens** - On a 1366x768 or 1600x900 screen the dialog fits, its groups
+  scroll, and its Download, Cancel and Close buttons stay in view.
+- **Readable progress bars in light** - Progress bars in the light theme fill in a lighter blue, so their dark
+  percentage reads over the fill; the AI workflow bar uses the same fill.
+- **Clear button icons** - The AI page's Close, Stop, Send, Rename Chat and Attach buttons have plain one-colour
+  icons, so Close shows its X instead of a blank square and a disabled Send or Rename Chat looks like the other
+  disabled buttons.
+- **Disk icons in dark** - Partition Manager's disk icon in the table, the action list, the menus and the disk map
+  uses the dark theme's drawing in dark.
+- **Whole columns in the backup** - The backup's Installed Applications shows the publisher whole, and App Data
+  shows each path whole (the list scrolls sideways when a path is wider than the page).
+- **System partitions named everywhere** - Partition Manager's table and disk map name a partition with no letter
+  "EFI", "MSR", "Recovery" or "Partition N" (they said "*:"); the Copy Disk and Migrate OS bars give every partition
+  room for its name and a line between neighbours (in the wizards too, where the line had drawn nothing), and free
+  space is one grey on the map and the bars.
+- **Page icons at one weight** - In the light theme the page icons of File Explorer, Advanced Search, Duplicate
+  Finder, Advanced Uninstall, the Vulnerability Scanner, Network Adapters, Wi-Fi Manager and Benchmarks are drawn as
+  dark as the other pages' (most of them had been too pale to read on the page); the dark theme keeps their drawings.
+- **Dark tables** - In the dark theme a table's header is set apart from its rows and a selected row is a clear blue.
+- **One filled button per page** - Advanced Uninstall, Network Adapters, Advanced Search, Offline Deploy, the
+  bandwidth and LAN transfer tests, Wi-Fi Manager, the AI page's browser extension, the Windows ISO dialog and the
+  backup and restore wizards keep one filled button for their work; Reset Network is red, as a destructive action is.
+- **Store apps by name** - Advanced Uninstall lists Store apps by the name Settings shows ("Windows Calculator"),
+  not by their package identity.
+- **File Explorer** - The Type column names a file's type as Windows does ("Text Document", "PNG File", "File
+  folder"); the Name column takes the room the others leave, and a pane too narrow for all of them, as each is side by
+  side with the details pane open, leaves out Tags, then Modified, then Size until it widens again, so no column sits
+  past its edge; the two panes end at one height. A selected file's icon stays visible on the light selection, the preview's caption sits one gap below the
+  Details/Preview switch, the View menu's "Item size" reads as the menu does, and the command palette is opaque and
+  as tall as its results.
+- **Smaller fixes** - A finished restore shows only Finish, and its summary uses round bullets; Benchmarks' Run
+  buttons sit one gap below their bars with the result lines evenly spaced; Image Flasher's and the other tools' Log
+  rows sit on the page colour; the AI status line puts Context first, names the access mode as its box does, gives
+  the last turn and the session in one form and says "none" until there is a turn, so it fits the status bar; the AI chips share one fill and their close X follows the theme;
+  Advanced Uninstall's leftovers are a "Leftover Items" group and "Loading installed programs..." shows only over an
+  empty list; Email Inspector's page arrows sit together and its list starts unsorted; Advanced Search's wrapped
+  preview lines go on under their text; the Vulnerability Scanner gives its findings most of the room; Screenshot
+  Settings names its Wi-Fi file "Wi-Fi_Settings"; Check Disk's summary is one sentence a line; and a USB stick whose
+  SMART data cannot be read is logged as a warning, as the SMART table shows it.
+
+- **One way to show a size** - Every size the app shows uses one style: "512 B", "1.5 KB", "4.88 GB", "7.28 TB".
+  The AI page said "(3 KB)" for 3.5 KB, the backup wizard "4.9 GB" and "0.0 GB" for profiles the restore showed as
+  "4.88 GB" and "252.1 KB", and Advanced Search's file details "242 bytes" beside its list's "242 B". Messages,
+  progress bars and the log give sizes the same way.
+- **Greyed menu entries look greyed** - A menu entry that cannot be used now shows its label in the disabled colour
+  in every menu and context menu (Partition Manager's "Convert Dynamic Disk to Basic" on a basic disk looked as
+  usable as its neighbours), and so does a row of a list, table or tree that cannot be used (File Explorer's
+  command palette listed "Compare Panes - Enable dual pane first." as dark as the commands that run).
+- **Drop-down lists show their entries whole** - The AI page's pickers open as wide as their longest entry and
+  stay inside the window, and a name too long for the field ends in "...".
+- **Every tab icon reads on its tab** - In the light theme, AI Assistant, Help and Support, About, Partition
+  Manager, Email Tools and Network Management are drawn in darker tones, Help's question mark and About's "i" are
+  bolder, and Network Management's outline is a whole pixel wide. In the dark theme, Partition Manager and Network
+  Management are lighter, Backup and Restore's arrowhead is a lighter blue and Benchmark and Diagnostics'
+  stethoscope tube is drawn in light grey. Panel headers follow the theme too.
+- **Readable download line** - The Windows and Linux ISO downloads' "Downloading..." line is the app's success
+  green, readable in both themes.
+- **"Wi-Fi" and "network adapters"** - Wi-Fi is spelled one way everywhere (the Network Management tabs, the
+  adapter list and the restore wizard said "WiFi"). The backup and restore pages that keep every adapter's settings
+  say "network adapters", not "ethernet adapters", and the backup's button is "Scan Adapters". The restore's plan
+  no longer counts Wi-Fi and Bluetooth adapters as "Ethernet adapters", and its welcome page, the backup's log and
+  the restore's messages say "network adapter settings" for the same settings.
+- **Columns size to what they hold** - Names are no longer cut beside half-empty columns in the backup and restore
+  wizards, Advanced Uninstall's Publisher, the SMART table and the Vulnerability Scanner; check-box columns are
+  narrow. The Vulnerability Scanner shows the published day ("2009-04-24") and its recommendations whole.
+- **Store apps name their publisher** - Advanced Uninstall names a Store app's publisher as the Store does instead
+  of its certificate ID ("CN=5699BA41-...").
+- **One primary button per page** - File Organizer, Duplicate Finder, Application Management, Quick Partition and
+  the email file scan have one strong button, the one that does the page's work. Image Flasher's Settings and Back
+  are secondary, its steps have a row of their own above the Log switch, its pages are only as tall as they need,
+  and the erase confirmation's Yes is red.
+- **File Explorer** - The details pane's text, headings and preview start at one inset. A path wraps after a
+  backslash rather than inside "SAK-Samples", and copying it still gives the path as it is. Only the active pane's
+  footer says "Active pane". Advanced Search's preview is set in a fixed-width font so its line numbers line up.
+  Compare Panes lists only what differs. The view menu's Dual Pane shows a tick while two panes are open (its
+  icon used to stand where the tick goes, so it read the same on and off).
+- **Partition Manager** - The Copy Disk and Migrate OS bars name partitions without a letter ("EFI", "MSR",
+  "Recovery", "Partition 5") instead of "*:", and the review names disks `Disk 1 (\\.\PhysicalDrive1)`.
+  Resize/Move says what a move does once. Space Analyzer hides a Type column that says the same on every row.
+  Copy Partition's review says a raw device or image target is "as large as the source", not "custom/unknown".
+- **One inset on every page** - Benchmark and Diagnostics, the network adapters and tools, Wi-Fi Manager, File
+  Organizer, the Vulnerability Scanner and App Installation's two tabs now start their group boxes and tables 12 px
+  inside the page, as the other pages do.
+- **Smaller fixes** - Check Disk says one sentence per drive. Power settings name Windows' "High performance"
+  plan as Windows does. The AI status bar says "Last turn" and "Session". The workflow pane names a workflow once.
+  The ISO builds list always shows four whole rows. The flasher settings have one field column and give each unit
+  once. The restore's last step has its two options one width. Benchmark scores name their baseline one way, CPU
+  lists its results one a line, and a score bar is blank until there is a score. Diagnostics says a drive's
+  temperature is "not read yet" until Scan SMART has run. A finished backup leaves only Finish. Email search says
+  "results" as its list does, and the backup's Wi-Fi scan says "Found 1 saved Wi-Fi profile" without a stray full
+  stop. The File Explorer sub-tab no longer posts to the status bar while another sub-tab shows.
+
+- **Counts read as words** - "1 drive(s)", "9 package(s)", "3 item(s)" and about 260 more messages now say
+  "1 drive", "9 packages", "3 items", across every panel, the AI assistant's results and the log. Labels with no
+  count say what they mean ("Target drives", "Export formats").
+- **File Explorer's Details wrap long paths** - A long Path or Capability line was cut at the pane's edge behind a
+  scroll bar. Each line now wraps where it must, a path included, and selecting and copying it gives the path
+  exactly as it is.
+- **The BitLocker key picker opens on This PC** - It opened in the app's own folder, showing its Qt folders first.
+  It now opens on This PC, the drives side by side, and takes only a folder on a disk.
+- **One way to place dialog buttons** - The Wi-Fi QR dialogs put Cancel last, as every other dialog does, and their
+  Browse buttons are secondary, so the action is the one primary button. Batch Uninstall's Remove Selected and
+  Clear Queue are secondary beside Start Batch Uninstall, and its header says "1 program".
+- **Lighter tab icons are easier to see** - In the light theme, the Benchmark and Diagnostics, Application
+  Management, Image Flasher and Backup and Restore tab icons are drawn in darker tones so they read on the tab, and
+  Benchmark and Diagnostics' stethoscope and Backup and Restore's arrow are drawn thicker so their lines do not fade
+  at tab size. The dark theme keeps its drawings.
+- **Partition Manager** - Resize/Move grows to fit its Support line when it wraps, so its second line is no longer
+  cut. Copy Disk's Target bar names the copy ("Copy of Disk 1") when the target is much larger than the source,
+  instead of a sliver with no name.
+- **Map Users shows whole names** - A table's rows are as tall as the combo boxes in them, so "Morgan" and "Merge"
+  keep their descenders.
+
+- **File Explorer no longer deletes its View menu while you use it** - Every selection change rebuilt the View
+  menu, deleting its entries and the item size slider even while one of them was running (a selection change
+  during a View choice, or a listing arriving while the slider was dragged). That is the cause of a heap
+  corruption crash a test run caught. The menu is now built once and kept up to date. Clicking a breadcrumb segment
+  or a collapsed-path entry no longer deletes the button being clicked, and the Sort menu no longer keeps a hidden
+  copy of its "Group by" menu each time it opens.
+- **Storage Health names every drive** - A drive smartctl cannot read (a USB-bridged drive, or a standard user's
+  run) shows its model and bus even when no hardware scan has run, and every drive's bus is spelled as the hardware
+  inventory spells it ("NVMe").
+- **Diagnostics** - Temperatures use the degree sign everywhere (the SMART table and stress results said "degC").
+  CPU Benchmark has a Score line like Disk and Memory. The Disk I/O drive box says "Run Scan Hardware first" before
+  a scan. A running stress test says so in the status bar.
+- **AI Assistant** - Disabled button icons look disabled in both themes (some vanished, some looked enabled). Its
+  drop-down lists are as wide as their entries and no longer run past the window. The workflow pane's headings are
+  the pane's size, its Close button is the secondary colour, and the workflow picker has the pane's width. The AI
+  status in the status bar ends in "..." when squeezed, with the whole text in its tooltip.
+- **Network Management** - "Disconnected" reads whole in the adapter list. A finished port scan says so in the
+  status bar.
+- **Backup and restore wizards** - "Select Users to Back Up". Map Users shows "Merge Into Destination" whole. Sizes
+  use one format on each page and in the summaries. The restore Wi-Fi page says once that a backup has no saved
+  Wi-Fi profiles, and spells Wi-Fi one way. The last step's two options sit beside their labels. Installed
+  Applications names a Store app's publisher ("Microsoft Corporation", not its certificate subject). Ethernet
+  settings show addresses whole.
+- **Image Flasher** - A raw flash shows its step in the status bar, and its progress bar ends with the run. The
+  Windows ISO download bar shows tenths below 1%. "1 drive available". The settings dialog has one primary button.
+- **Vulnerability Scanner** - The Findings table fits the window, wraps long recommendations, and says what to do
+  while it is empty.
+- **File Explorer and Advanced Search** - The file list and sidebar select in the same colour as every other list.
+  The preview caption gives sizes as the list does ("242 B"). Advanced Search shows metadata dates as
+  "2026-11-06 18:02" and an incomplete search's message fits the status bar.
+- **Partition Manager** - Convert MBR/GPT names the disk and its present partition style and starts on the other
+  style. The optimize and BitLocker dialogs have one primary button. Quick Partition's count reads "Partition
+  count". The operations list no longer hides its last entry behind a scroll bar.
+- **Smaller wording** - Package confirmations, Space Analyzer and the drive list say "1 package", "1 file",
+  "1 drive". Administrator prompts no longer say the requirement twice. Email Tools' file scan gives sizes as the
+  rest of Email Tools does.
+- **A restore that ran to its end says so, step by step** - A restore that brought back every file and could not
+  apply one network setting read "Restore failed" and "Restore Stopped". It now reads "Restore Finished with
+  Problems", says how many files and network settings were not restored or applied, and its summary lists the
+  network settings on lines of their own instead of counting them as file errors. When netsh refuses a setting,
+  the log gives netsh's own words. A console program the app runs no longer fails because the console host Windows
+  starts for it is still closing (on a slow PC that made netsh fail after doing its work).
+- **The back arrow is gone from every wizard page in the light theme** - Partition Manager, backup and restore
+  wizards drew a grey back arrow over the page title in light. The earlier fix looked for the arrow by a class
+  name it does not carry, so it never found it.
+- **Partition Recovery refuses a place that holds a partition now** - The Candidate Restore page says in red why
+  an offset and size cannot be written back (it overlaps a partition the disk has now, or runs past the disk's
+  end) and keeps Next off, before the queue and the helper check it again.
+- **Convert Dynamic Disk to Basic only for a dynamic disk** - On a basic disk it is grayed out in the ribbon and
+  the disk's menu, and says the disk is basic; its window no longer opens and talks about a dynamic volume.
+- **Offline Deploy fits its window again** - A failed package's reason, with its download address, made the page
+  about 2200 px wide and pushed its buttons off screen; it wraps now. Offline bundles take adobereader again: its
+  script names a checksum variable in another letter case, which PowerShell ignores and S.A.K. did not, so every
+  bundle refused the installer as altered.
+- **Public Release lists public Windows releases** - The Download Windows ISO window's Public Release list showed
+  Insider Preview builds first, and with one picked the Edition list could start on "Microsoft Store Inbox Apps".
+  It lists only the public releases, and Edition starts on Pro, else Home, else on nothing.
+- **Drive types are the bus Windows reports** - Storage Health typed an internal NVMe drive as SATA and an NVMe
+  drive in a USB enclosure as NVMe; Erase SSD called that USB drive "ATA/SATA SSD". They read NVMe, USB and
+  "SSD behind a USB adapter".
+- **Leftovers of programs that record no install folder** - Notepad++ records none, and its uninstaller's kept
+  settings folder was not found, so no Leftover Items list appeared. The folder its own uninstaller sits in now
+  names it.
+- **Leftovers of programs installed from an MSI** - Notepad++'s MSI build ("Notepad++ (x64)") records no install
+  folder either and is removed by msiexec, so after uninstalling it the scan found nothing. Before the uninstall
+  the app now asks Windows Installer where the program put its files. A folder named like the program without
+  "(x64)", "(x86)", "(64-bit)" or "(32-bit)" is also listed, as Risky for you to check, never ticked or cleaned
+  automatically, and not at all while another installed program has that name.
+- **The log reaches its file as it is written** - The session log stayed at 0 bytes until the app closed, so a
+  crash or a forced close lost it.
+- **Smaller fixes** - A stress test you stop reads "STOPPED", not "FAILED", and every finished run shows its whole
+  length and ends the status-bar bar. A disk scan that found no disks says why on the page and the status bar. The
+  Windows USB waits three minutes for Windows to show its new partition, shows the wait, and says what to do when
+  it never comes. A command-palette match that cannot run yet is listed greyed with what it needs, and Dual Pane
+  shows a check while two panes are open. The Log switch is a named check box for screen readers. System Inventory
+  Report says in the status bar when no folder was chosen. Email Inspector's item list is wider. Advanced Search's
+  preview and File Explorer's dual-pane status use backslashes. Actions that move no bytes no longer end "(0 bytes
+  in 169s)". The backup summary says "Items skipped (filters and Windows links)", which is what it counts. Resize/Move
+  no longer shows an empty Status row. Download & Build asks UUP dump for its file list once more after a passing
+  service error (HTTP 400, 429 or 5xx). The Apply review and Copy Disk bars draw no partition narrower than 24 px.
+
+- **Screenshot Settings saves each page as itself, captures Installed apps and Gaming, and says when a PC has no
+  Wi-Fi** - On a slow PC most of its pictures were of the wrong page: a page drawn half way was taken as drawn, and
+  the rest of it was saved under the next page's name (in a test virtual machine, 2 of 14 pictures showed their
+  page). Each page is now opened in a Settings window of its own, from Settings' About page, and saved once it has
+  stayed the same for 8 seconds; About is checked in two windows before the first page. The run does not start while
+  Settings is open, and says so. Two of its Settings links were not pages, so Installed apps and Gaming failed after
+  three tries: every link is now one Microsoft publishes for Windows 10 and 11, with Windows 11's other name tried
+  next, and Gaming captures Game Mode. A page that Settings never opens is reported as one this Windows does not
+  have, and nothing is saved for it. On a PC with no Wi-Fi adapter the WiFi page is left out and the result says so;
+  neither counts as a failure. "1 monitors" reads "1 monitor", and the report names its folder with backslashes.
+- **One look for buttons and cards** - Close, Cancel and No, which only leave a dialog or message, are the plain
+  secondary colour everywhere, as are a wizard's Back and Cancel; the button that does the work keeps the blue. The
+  Backup and Restore, Image Flasher and Help cards share one layout: a centred title under a 48 px picture.
+- **Tab icons read in both themes** - The File Management and Email Tools tab icons were faint, and in the dark
+  theme File Management's lines all but vanished; both are drawn again, with a dark-theme drawing where the light
+  one does not show. Selected, the Help and About icons keep their question mark and "i" instead of becoming plain
+  discs. The Linux ISO card's black penguin is drawn in light grey in the dark theme. Icons follow a theme change
+  at once.
+- **SMART and the hardware list name each drive** - The SMART table names each drive by its number and model
+  ("PhysicalDrive0 (VBOX HARDDISK)"), so drives of one model can be told apart, takes an unreadable drive's model and
+  bus from the hardware scan, and each warning under it starts with the drive it is about. The Battery row no
+  longer shows a virtual machine's battery index as a name ("1 - health unknown").
+- **Smaller fixes** - Calendar chips show the subject first, then the time. Email Tools' item count is on a line of
+  its own, so the Folders pane keeps its width whatever the count says.
+- **Checks that read back what was written read the drive, not Windows' memory** - Straight after a copy, Windows
+  still holds the file in its cache, and a check that reads it from there proves only what was written. On a test
+  PC the Windows install USB's check read a 2.8 GB part back in 0.5 s from the cache, against 44 s from the stick.
+  The Windows install USB's final check, the backup's check of each stored file, the restore's check of each
+  restored file, and the read-back after copying a disk, cloning a partition or making or restoring an image now
+  read with Windows' file cache bypassed, so a slow or failing drive shows as one. Image flashing already did.
+  On the test PC's stick the Windows USB's check now takes under 3 minutes for both parts.
+- **Property lists show their whole labels and values** - Inspect, Properties, Disk Defrag, Manage BitLocker and
+  Erase SSD cut their labels and values ("Raw target ...", "Optimizatio...", "This is not an ATA Secure ..."). The
+  label column now takes its longest label, values wrap, and each value's tooltip holds it whole.
+- **Reports in the log keep their columns** - The power plan and Check Disk reports, and a dry run's script, came
+  out in a proportional font wrapped to the window, so their borders fell apart; they are set in a fixed-width font
+  that does not wrap. Quick action lines no longer carry a second timestamp.
+- **Smaller fixes from the screenshot review** - A Linux ISO download shows tenths of a percent below 1%. The
+  partition table's header reaches the edge. Copy Disk's bars draw no broken label in a sliver, and Create
+  Partition's handle no longer splits its label. File Explorer's Properties, Safety and Evidence scroll as one
+  column, and its paths, Advanced Search's results and File Organizer's target read with backslashes. The Address
+  Book shows its Company column. The duplicate summary uses one size unit. Benchmark groups share one layout, and
+  the suite's steps line up. A finished search leaves no busy bar. Several forms line up their fields. Empty lists
+  say what goes in them. A Store app's publisher reads as a name, not a certificate subject. Uninstall's program
+  colours have a key, its Uninstall button is the danger colour like Force Uninstall, and a registry key shows
+  whole. SMART says one thing for every drive it cannot judge, and why. Today's week header, a workflow's name and
+  the Wi-Fi Password row read as they should.
+- **A Windows install USB starts UEFI PCs** - The USB was one NTFS partition, and UEFI firmware reads FAT32, so a
+  Windows 11 PC with Secure Boot did not start from it, while the app reported success. The USB is now one FAT32
+  partition (32 GB at most on a larger drive, active for BIOS PCs too). An install.wim of 4 GB or more is split by
+  Windows' own DISM into install.swm parts, which Windows Setup reads; an install.esd that large is refused. The
+  final check reads the drive back: FAT32, the UEFI boot file, and every part's hash.
+- **Partition Recovery never offers a partition that is there now** - The scan reported any boot sector at a
+  1 MiB step that did not start a live partition, so one stored inside a live partition, or a lost volume that would
+  run into one, read as a candidate. Each finding now says whether it is a live partition, inside one, running into
+  one, or a real candidate, with the size its boot sector gives. A live BitLocker volume is named BitLocker: its boot
+  sector is shaped like FAT32 and was logged as FAT32. Writing a candidate back over a live partition was already
+  refused when it was queued and again before the write; both checks now have tests.
+- **A Windows install USB no longer fails at once on a busy PC** - Its check that the target disk is safe to erase
+  gave Windows 5 seconds to describe the disk, and a cold PowerShell took 5.9 s on a busy PC. It waits 30 s, and
+  when it cannot answer the message says why (no answer in time, or what Windows said) and that the drive was not
+  changed, instead of warning that the drive may be left unusable.
+- **Verify System Files gives DISM time, and shows how far it has got** - DISM's component store scan had 10 minutes
+  and timed out on a slow disk after SFC had passed, and the run said it failed. It has 30 minutes and shows its
+  percent. If it still does not finish, the result says SFC's verdict and that the DISM scan did not finish, as
+  incomplete rather than failed. When DISM finds damage it cannot repair without a source, the result says so and
+  quotes DISM's error; it said DISM "did not complete a component store assessment".
+- **The status bar keeps a running job's message** - A message about work in progress ran out after 5 seconds and
+  left "Ready" beside a progress bar at 5%. It now stays until the work ends. A Windows install USB's steps reach the
+  status bar too; they showed only on the page, and the status bar read "Ready" for the whole run.
+- **Dark theme: AI context chips and search matches are readable** - A colour already chosen for the theme went
+  through the light-theme aliases a second time, so the chips' labels took their own fill colour. Advanced Search
+  marked matches with a yellow or orange fill under light text; the text on a match is dark now.
+- **Cancelling a Linux ISO download removes the partial file** - The .iso and its .aria2 file stayed if the dialog
+  closed before the download's end was processed. Answering Yes to overwrite an existing file now replaces it.
+- **BitLocker Key Backup and Screenshot Settings say what they saved** - The result was only in the log. A box now
+  says what was saved and where, or what failed.
+- **A killed disk benchmark leaves no test file** - The benchmark's file is removed by Windows if the app is killed,
+  and a file an earlier killed run left is removed at the next run.
+- **Smaller fixes** - Network adapters with no link show no speed instead of 18446744073709 Mbps, and "Disconnected"
+  fits its column. The Benchmark Drive list names a volume by its own size. The restore page's header and Cancel
+  buttons show that it ended. Close Programs First names the program to close and says when it runs in the
+  background with no window. A package whose installer no longer matches its declared checksum says the upstream
+  package is at fault. Application data paths use backslashes.
+
+- **The Backup Wizard backs up again** - Its Backup Settings page showed Finish, which closed the wizard with nothing
+  backed up. It shows Next, to the page with Start Backup. A backup no longer calls itself incomplete because of the
+  hidden links Windows makes in every profile, such as Documents\My Music: every backup on every PC did. Any other
+  link is still not followed and still counts as left out. The log no longer shows the start and the outcome twice.
+- **Partition Manager scans a PC with many drive letters without administrator rights** - Windows makes a normal app
+  wait about 5 seconds per volume before refusing to say whether it is BitLocker-locked, so a PC with five or more
+  drive letters ran past the scan's time limit and listed no disks. A scan without administrator rights no longer
+  asks, and those details say "Unknown until Apply" as before.
+- **Disks are listed in number order, and each one's media type is its own** - A dynamic disk was listed last, below
+  the others. Disks with the same model name all took the first one's media type, so an SSD could read as
+  "Unspecified" and Erase SSD refused it.
+- **Manage BitLocker shows whether a volume is protected or locked** - Without administrator rights it said "Unknown
+  until Apply" and could not offer Unlock. Opening it now reads the volume with administrator rights, which is one
+  Windows prompt, and then shows its state.
+- **Restore Disk Image works** - It stopped every time with "Target disk size is unknown". The disk table now carries
+  each disk's size.
+- **A Windows install USB gets a drive letter** - When Windows gave the new NTFS volume no letter, the build stopped
+  with "No drive letter appeared". The app now assigns one.
+- **Flashing an image leaves the stick usable** - Taking a stick offline before locking its volumes made the flash
+  fail with "Failed to delete mount point" and left the stick without its letter; the volumes are now locked first.
+  After a flash, the stick could stay offline because the app tried to bring it back while it still had it open; it
+  now lets go first and tries again, and Flash Complete says how to bring a stick back if it is still offline. The
+  write speed no longer reads "0.0 KB/s".
+- **Download Linux ISO downloads GParted and SystemRescue, and shows its progress** - SourceForge refused the download
+  because the app said it was a web browser; it now names itself. Progress stayed at 0% with no size or speed for the
+  whole download, because the app could not read aria2's progress lines.
+- **Partition Manager fixes** - Browsing an ext partition no longer fails with "Unable to read ext inode". The
+  recovery scan's findings go to the log, not the status bar, and it no longer lists a partition that exists as a
+  lost one. Data Recovery, Disk Benchmark and Make Bootable Media no longer need a disk selected first. The Migrate OS
+  wizard no longer picks a target that is too small. A disk's partitions and free space are listed in the order they
+  lie on the disk. The Partition Recovery wizard's write-back cannot finish until its "I understand" box is ticked,
+  like the migrate and copy wizards.
+- **Check Disk Errors names what it did not check** - A FAT32 drive, which Windows cannot scan this way, was reported
+  as a failed scan with no detail. It is now listed as not checked, with the read-only command to check it.
+- **Fixes the review capture found** - Advanced Uninstall keeps your ticks when you change the search, and marks an
+  app that is only provisioned for new accounts. An offline bundle names each package that failed and why, and its
+  progress bar finishes. Screenshot Settings captures the Settings window a person sees, not a blank picture, waits for
+  each page to be drawn, where every page after the first was a picture of the page before, and calls a blank
+  picture a failure. Advanced Search names each file it could not read, and its folder tree starts
+  closed. File Explorer selects the drive or folder in the sidebar that holds a path you type. A SMART warning names
+  the drive, and one behind a USB adapter says so. Hardware inventory shows uptime, and says "Unknown" for battery
+  health Windows did not report. A temperature or SMART value nobody read says "N/A", not 0 degrees or "--". A port
+  scan reports an open port's connect time, which no longer exceeds the timeout.
+- **A stress test ends on time, Stop ends it at once, and the window keeps answering** - A 1-minute run took 266 s
+  to stop or never stopped, Full Suite's stress step never finished, and on a real PC the window stopped answering
+  while it ran. The stress jobs ran on Windows' shared thread pool and filled it. Windows also delivers incoming
+  calls such as UI Automation's through that pool, and Qt reads a child process's output through it, so the
+  temperature reading the run's clock waited for every 5 seconds never returned. Each stress job now has a thread of
+  its own, and the temperature is read on its own thread, so nothing the run's clock does waits on a process. The
+  CPU benchmark's parallel pass no longer fills the pool either. A memory pass still checks every 8 MiB. The stress
+  threads now run at idle priority, never boosted, as burn-in tools do: on a lab PC Windows ran the below-normal
+  ones 2 steps higher while the app was in front, above every below-normal process, and a program started from one
+  took 19 to 35 seconds. The run still uses every cycle nothing else wants.
+- **SMART says FAIL only when the drive does** - A drive with 16 pending sectors read FAIL while its own check
+  passed. FAIL now means the drive's own verdict: its SMART self-assessment failed, a value is past the threshold the
+  drive sets, or an NVMe SSD's spare is below its own threshold. Sectors, wear and errors the drive counts read WARN.
+  Point at the Health value to see the reason, which the JSON report also carries.
+- **Thermal Monitor reads the sensors a PC has, and says why it has no reading** - On a lab PC it said a bare N/A
+  for every sensor. One USB NVMe enclosure took 12 to 17 seconds to answer a request for its counters, with no
+  temperature, so every reading ran out of time, even for the two drives that report 36 and 43 C. Each request now
+  has a 2 second limit, and a drive that gives no reading is not asked again until a drive arrives or leaves or a
+  hardware or SMART scan runs. It is remembered by its unique ID, not its disk number, so a drive plugged in under
+  the same number is asked. Asking that enclosure again on every reading also slowed a disk benchmark on it about
+  13 times, past 9 minutes. A sensor without a reading now says on its bar "needs administrator rights", "not
+  reported by this PC", "did not answer in time" or "could not be read". A thermal zone Windows calls "not supported" reads as
+  not reported, not as a failure. Without administrator rights it also reads the PC's thermal zone through the
+  counters any account may read. A disk that refused a standard user blanked every reading, CPU and GPU too; it now
+  has its own line. A drive temperature Windows does not report comes from the last SMART scan.
+- **Partition Manager's disk map is whole again** - The Log switch's row took the map's height, cutting the last
+  disk's tile. The legend now shares that row, and the map gets more of the window. Size-bar labels take the colour
+  that reads on their fill, where a dark label sat on the green and orange bars at 3.5:1. The wizards lost a grey
+  back arrow that sat on the first letter of each page title, and every page has a subtitle, as in the backup and
+  restore wizards. The Migrate OS review scrolls instead of cutting off its last lines, such as a "Blocked:" reason.
+  The resize preview shows its "Max online" row, and both wipe dialogs start their acknowledgement at one indent.
+- **Manage BitLocker offers only the action that applies** - A protected volume offered Suspend and Resume together.
+  Suspend is offered while protection is on, Unlock while the volume is locked, and Resume while protection is
+  suspended, which now reads "Protection suspended". A suspended volume could not be managed at all before.
+- **Check Disk Errors counts the drives it names** - The summary said "0 could not be checked" under a FAT32 drive
+  it had just named as not checked. It now counts it, and the result names it, such as "(U: is FAT32)".
+- **Backup and restore show their end** - The restore log printed its summary twice, its file bar stopped part way,
+  and "Current:" never moved; the backup's current-operation bar kept moving after it finished. Both now fill their
+  bars, say Done, and their subtitles say the run finished.
+- **Smaller fixes** - Advanced Search's previous and next match buttons show their arrows. Editors in table cells
+  (Quick Partition's labels and sizes, the restore wizard's user mapping, saved Wi-Fi passwords) and the AI
+  assistant's context chips get their whole cell instead of being cut through the middle, and a chip names a
+  workflow's instruction once. Input prompts are wide enough for an API key or a GUID, and wrap their question.
+  Advanced Uninstall no longer leaves a 0% bar in the status bar. A status message leaves with the sub-tab that sent
+  it. The calendar's status filters read at AA contrast in both themes. Traceroute says "1 hop", and the About page
+  uses one dash style. The saved Wi-Fi networks table has no row numbers, the attachments browser's and the item
+  list's headers fit their columns, the Windows and Linux ISO save paths use backslashes, and the Linux ISO download
+  says it is ready once a distribution is chosen.
+- **Check boxes show a tick, and the theme draws every state readably in light and dark** - A checked box was a
+  filled square with no tick, the Windows picture of "partly checked"; it now has a white tick, a partly checked box a
+  dash, and a chosen option a white dot. Selected text in a box is readable, disabled boxes look disabled,
+  placeholder text and status colours reach WCAG AA contrast, a selected row is one shade in every list and table, and
+  spin boxes are as tall as the combo beside them. In dark, plain buttons keep their blue fill, progress bars and the
+  calendar use dark surfaces, and status, error and accent colours have their own dark shades.
+- **The Log switch is in one place on every tab** - At the bottom left of the tab, under the sub-tabs where a tab has
+  them. Image Flasher's Settings, Back, Next and Flash! stay in view at any window height.
+- **Plain text in the window** - One dash style, no stand-in tags such as "[x]" or "(!)", counts that agree with
+  their noun ("1 hop"), and dates such as "November 4, 2026" in About.
+- **Fixes the review found** - The email calendar no longer fills later days blue or hides its grid in work hours;
+  Space Analyzer sorts sizes by bytes; the format dialog hides whole rows and shows its whole confirmation; Quick
+  Partition rows fit their editors; the disk map legend and the before-and-after bars use the map's colours; the
+  Email Inspector shows one header; Run Details reads as text; Wi-Fi's Delete Selected needs a selected row; Image
+  Details values sit next to their labels; a listening connection's state no longer draws black in dark; File
+  Explorer lists drives as "Local Disk (C:)", folders you pick show with backslashes, and install dates read as dates;
+  the Partition Manager wizards keep one look in light and dark, the one the backup and restore wizards use; and the
+  email ribbon's Attachments button no longer shares its screen-reader name with the Attachments tab.
+- **Partition Manager works from an app that is not running as administrator** - Windows lets only an
+  administrator ask whether a volume is locked by BitLocker or marked as needing repair, so from a normal app
+  every volume read as unknown and every Apply stopped. Scanning disks now never asks for approval, and those
+  details say "Unknown until Apply". Pressing Apply raises the one Windows prompt, reads every disk again right
+  before writing, and refuses there with the reason in a "Not Applied" window. Say no to the prompt and nothing
+  changes, and the queue stays as it was.
+- **Move, Allocate Free Space, Change Cluster Size, Primary/Logical, Volume Serial and Dynamic to Basic work on NTFS
+  again** - Each backs a volume up first, from a Volume Shadow Copy. Since 2026-07-22 the copy tool could not open
+  the path it was given, and the check after it stopped at a folder an administrator may not list. Every one of them
+  stopped on NTFS before changing anything.
+- **Dynamic disks show in Partition Manager, and can be converted** - Windows' Get-Disk does not list a dynamic disk,
+  so one was missing from the table and Convert Dynamic Disk to Basic could never be reached. It now shows, marked
+  Dynamic, with its volumes. It stays read-only to everything but that conversion, which refuses a volume that also
+  lies on another disk.
+- **A locked BitLocker volume no longer stops every Apply** - One locked volume anywhere on the PC stopped every
+  batch, including the one that would unlock it.
+- **Copy Partition works on a mounted volume, and holds it still** - It read a live volume, and always failed at the
+  end of an NTFS one, because a file system hides its last sectors. It now locks the volume first and reads all of
+  it, as Create Image does. A volume that cannot be locked, such as the one Windows runs from, stops with the reason.
+  A read-only partition can now be copied.
+- **Restore Recovered Partition leaves a partition you can read** - Windows blanks the start of a partition it
+  creates, where the boot sector is, so a restored partition read as empty. The start now goes back as it was.
+- **Data Recovery finds and restores from a drive or volume** - It called every complete scan of one partial, it
+  could not restore anything from one because a device reads only in whole sectors, and on any NTFS volume it lost
+  the first JPEG inside a false start in Windows' own tables. A whole-disk path now says why it cannot restore, and
+  what to scan instead.
+- **Convert MBR/GPT works on an empty disk in both directions** - An empty GPT disk was refused because of the small
+  reserved partition Windows makes on it, and an empty MBR disk stopped with an error.
+- **Copy Disk turns off the disk this PC runs from** - The wizard listed it as a target and refused it only after
+  Finish. It now stays in the list, turned off, with the reason beside it, and with no other disk to copy to, Finish
+  stays off and says why.
+- **HDD defrag works on a hard drive whose name does not say so, and an SSD wipe warns again** - Partition
+  Manager read every disk's media type from a place that has none, so no disk was known to be an SSD or a hard
+  drive. Defrag was refused on a hard drive such as a Seagate Expansion Desk, an SSD wipe never said that a
+  software clear is not a purge, and the SSD and HDD modes guessed from the drive's name.
+- **Wiping or fully formatting a virtual disk file says why it cannot** - Windows does not allow a full format on a
+  thin-provisioned disk, and said only "Not Supported" after the disk had been cleared. S.A.K. now checks first and
+  nothing changes.
+- **Tool buttons return before their dialog opens, on every panel** - 128 more buttons and menu actions now do what
+  round 6 did for Partition Manager's sidebar, and a check stops a new one being added.
+- **Partition Manager's certification now tests the app** - Its rows used to run Windows and VirtualBox commands, so
+  they tested those. Each row now goes through the app's own request building, controller and elevated helper, from
+  a client running as a standard user, and a separate tool reads the disk back. The result says what each row ran on,
+  and the old rows and their evidence no longer count. The final run on these rows passed on 2026-11-10;
+  `docs/PARTITION_MANAGER_CERTIFICATION.md` says what it ran on and what that covers.
+- **Migrate OS works from a snapshot and fits the new drive** - It used to copy a running Windows disk byte
+  for byte, so files could change under the copy, and it refused any drive smaller than the old disk. Each
+  volume is now read from a Volume Shadow Copy snapshot taken at the start, and the EFI, reserved and
+  recovery partitions are copied directly. The new drive gets a new partition table with its own identity,
+  so both disks can stay attached, and its Windows partition grows or shrinks to fit. A larger drive gets
+  the used blocks and then an extended volume. A smaller one gets a new volume filled by Windows' own DISM
+  through a temporary image on that drive, and must hold the data, some room and that image; the wizard gives
+  the number if it does not. The boot files, for UEFI or BIOS, and Windows' list of drive letters are rebuilt
+  for the new drive, and this PC's boot order is left alone. BitLocker on the source is refused with the
+  reason. If Windows cannot take a snapshot it stops and says so before writing anything, and a new check box
+  on the Options page lets a technician copy the running disk anyway. Every snapshot is released, on failure
+  too, and on Cancel Windows releases it within about ten minutes. Windows Recovery stays off on the new drive
+  until `reagentc /enable` is run once there.
+- **Boot Repair repairs the disk you select** - It only ever repaired the Windows that was running. Select
+  any other disk, such as one pulled from a PC that will not start, and it now finds that disk's Windows and
+  system partition, in either firmware mode, gives them temporary letters, rebuilds the boot files, sets that
+  Windows' drive letter, and takes the letters away. This PC's boot order is left alone. It refuses the disk
+  Windows runs from, a disk with two Windows installs, and a disk whose partition style does not match the
+  mode, each with its reason. Selecting the disk Windows runs from still repairs the running Windows.
+- **A failed Partition Manager job says why** - A script that stopped reported "Command exited with code
+  1", with the reason only in the log. The message now gives the script's own words, so a refusal that wrote
+  nothing reads differently from a copy that failed halfway.
+- **Dialog buttons show whether they are on** - Every plain button in a dialog, such as Next, Cancel, OK and
+  Finish, drew in the disabled grey whether it was on or not, so a Finish that was still off looked the same as
+  a Cancel that was on. They now draw in the theme's button colour, and in grey only when they are off.
+- **A screen reader can read what Partition Manager's actions open** - Pressing a sidebar action, a context
+  menu item or Apply through Windows' UI Automation, as a screen reader does, held every later UI Automation
+  request until the dialog it opened was closed, so that dialog could not be read. The action now runs after
+  the press returns.
+- **Administrator tasks run from an unelevated app again** - Since 2026-08-02 each end of the connection
+  between the app and its administrator helper checked which program was on the other end, and compared
+  a path written with forward slashes against one written with backslashes. They never matched, so
+  every task handed to the helper failed with a connection error. A run in a VM found it; no test had
+  ever connected the two for real. The check now compares the file, and still refuses any other program.
+- **Long partition jobs are no longer cut off** - Partition Manager stopped any one job after an hour,
+  and most others after 10 to 30 minutes, whatever it was doing. A large wipe, clone, move or full
+  format died midway, which left a wipe part done or a copy's target offline. Anything that scales with
+  a drive or the data on it now runs as long as it needs, up to 23 days, and Cancel ends it. Jobs that
+  only change a disk's layout keep a short limit, because running past it can only mean something is
+  stuck.
+- **The disk copy wizard offers only what the copy does** - Layout, Align partitions to 1 MB and Prefer
+  GPT were read by nothing, though Layout changed the picture of the result. They are gone, and the
+  page says the copy is byte for byte.
+- **Data Recovery reads the whole source and keeps what it finds** - An image over 512 MB, or a scan
+  reaching 2,048 files, ended with "scan cancelled" and threw away what it had found, and only the first
+  512 MB of a volume was ever read. It now reads the whole source a piece at a time, stops at 100,000
+  files, and gives you the list with a line saying why if it did not cover everything. Cancel keeps what
+  was found so far. A source that will not open says so, rather than reading as nothing found.
+- **A refused Partition Manager operation says why** - The status bar said only that a batch failed
+  validation. A message now gives the reasons.
+- **The log shows Partition Manager's results as text** - It showed raw HTML, cut to 4,000 characters
+  per step. It now shows each step's result and its whole output, so a Dry Run shows the whole script.
+- **Boot Repair finds its own drive letter** - BIOS repair named S: and never assigned it, so it failed
+  on nearly every PC. UEFI repair did not check S: was free: bcdboot could write to whatever already had
+  that letter, and the clean-up then took the letter away from it. Both now use a free letter, and BIOS
+  repair gives it to the active partition and takes it away again.
+- **Convert to NTFS answers its own prompts** - convert.exe stops to ask for the volume's label, and for
+  leave to dismount, and no one was there to answer, so a labeled volume could not be converted.
+- **Defrag agrees with itself** - The queue accepted a drive whose model name says it is a hard disk, and
+  then the script refused it unless Windows reported it as HDD. Both now take either. SSD and NVMe are
+  still refused.
+- **Split puts the new partition next to the original** - It went in the largest free area on the disk,
+  wherever that was.
+- **Partition recovery scan finds Windows-formatted FAT** - It read only the OEM name, which Windows sets
+  to MSDOS5.0 on FAT, so it missed them. It also checks for a boot signature, so stray text no longer
+  counts.
+- **Other Partition Manager fixes** - Create no longer offers GPT Apple APFS, which could never be queued.
+  APFS encryption over 128 MiB is refused when you queue it, not when it runs. A read-only check's button
+  says Check Now. Create Image over an existing file works after the save dialog's question. OS migration
+  warns that it copies a running disk with no snapshot. Extend Partition Wizard is Extend Partition, since
+  it is one dialog, and the wipe and full format text says what they do instead of "secure".
+- **No more "certified" in Partition Manager and File Explorer** - Messages, capability lists and the About
+  tab said certified. They now say what was done, or say nothing. No claim changed.
+- **BitLocker keys can go to a FAT32 or exFAT drive, after a warning** - These were refused outright,
+  which got in the way of a technician carrying keys across to another device. BitLocker Key Backup
+  now says what such a drive means: it cannot restrict who reads files, so anyone with the drive can
+  read the keys, and they should be moved somewhere secure and deleted from it. Cancel is the
+  default and writes nothing. If you go on, the result and the log say the keys were saved and are
+  not protected. The AI Assistant has no one to show this to, so it still refuses these drives.
+- **A PST in Outlook's folder is backed up by default** - The one Outlook Data row in the backup wizard
+  was unticked because an OST can run to tens of gigabytes and the mail server still has it. A PST
+  kept in the same folder could be the only copy of that mail, and it stayed behind with the OST. There
+  are now two rows: Outlook Archives (PST), ticked, and Outlook Cache (OST), unticked, each with its
+  own size. The restore wizard lists them apart too. Older backups keep their one row.
+- **The converter says what it left out, by message class** - Converting a store counted what was not
+  mail as contacts, calendar items, tasks, notes and "other". The report now has a table of each
+  class name and how many items had it, for each file, and the log has the same counts, so a smaller
+  mailbox can be explained. Nothing from the items themselves is listed.
+- **BitLocker Key Backup says where it saved through the helper** - Run through the elevated helper,
+  its completion line left out the folder. It now names it, and any warning with it.
+- **Distribution lists show who is on them** - Email Inspector read a distribution list's name and nothing else, so its
+  card had an empty heading and no members, and exporting it to vCard counted as a failure. The card now shows the
+  list's name and members, and the vCard carries them in its note.
+- **Contact pictures reach the vCard** - A contact's picture was never read from the mailbox, so an exported vCard had
+  none. It now does.
+- **Notes, tasks and journal entries export clean** - The text of each ended in an invisible NUL character that went
+  into every export of it. It no longer does.
+- **Pictures stay in the message in exported mail** - In a converted MBOX or an exported EML, a picture
+  the message's body shows sat beside the body, where a mail program could not find it. Checking a
+  converted mailbox in Thunderbird showed the picture's alt text in the message, a warning about remote
+  content, and the picture again after the message. It now sits with the body, so it shows where it
+  belongs and is not listed as an attachment. An EML with attachments also kept its plain and HTML text
+  side by side, so a mail program could show the message twice; it now shows one.
+- **Restore Settings aims at the adapter you right-clicked** - On a PC with more than one network
+  adapter, Restore Settings asked which adapter to apply the backup to with the first one in the list
+  already chosen, whichever adapter you had right-clicked. It now starts on the one you right-clicked.
+- **Long assistant chats and activity logs read faster** - Reading each line of a saved chat or activity
+  log set aside 4 MB. They now read through one buffer per file, as the mailbox index does.
+- **Non-English subjects in an MBOX** - Email Inspector read an MBOX's encoded headers as they stand in
+  the file, so a subject or sender in another language showed as `=?UTF-8?B?...?=` and a search for the
+  real words missed it. Subjects, senders, recipients and attachment names now show and search as their
+  real text, in any character set Windows knows. A header that cannot be decoded shows as it is in the
+  file. The raw headers view still shows the file's own text.
+- **A large MBOX opens far faster** - Counting the messages in a 1.8 GB mailbox took over five minutes,
+  because each line of the file set aside 100 MB to read into. It now takes about six seconds.
+- **Has attachments in an MBOX** - The tooltip in the message list called nearly all mail attached,
+  because it went by the headers alone. It now looks at the parts of the message, and agrees with what
+  opening the message lists. The Has attachment filter uses the same answer.
+- **Attachments and pictures in exported mail** - The MBOX and EML writers marked any attachment with a
+  Content-ID as inline, which real stores give to ordinary files, so a mail program could hide it. An
+  attachment is inline only when the message's HTML shows it.
+- **All-day events on the right day** - Outlook stores an all-day event as midnight where it was made,
+  in UTC, so an event made east of UTC with no time zone stored showed the day before and exported as a
+  timed event. All-day events now show on their own date in the Calendar window, the item view, CSV and
+  searches, and always export to ICS as a date.
+- **Screen readers read status text** - Many status lines and captions told a screen reader their
+  purpose in place of what they said: it heard "Access mode status" and not the status. They now read
+  their text, with the purpose as their description. Pictures keep a name and gained a description.
+  Controls in the dialogs that had no name for a screen reader now have one.
+- **Email search filters** - Email Inspector's search has a Filters button, with From and To dates,
+  Has attachment, and a type of item: Email, Calendar, Contact, Task, Note or Journal. They start off,
+  and a search with none set works as before. They apply to the search box and to Search in This
+  Folder, and with one set the text can be left empty to list what it matches. An MBOX holds only
+  email, and says so if asked for anything else. The 10,000 result limit counts results after the
+  filters, so a filter reaches items a plain search stopped short of, and the count now says when the
+  limit was reached.
+- **Attendees and repeating events** - Calendar items now read their recipient table, and the Calendar
+  window lists each attendee with their address, part and reply. Repeating events read their pattern:
+  the window says how an event repeats and marks it, and ICS export writes ATTENDEE, ORGANIZER,
+  RRULE, EXDATE for deleted occurrences and a RECURRENCE-ID event for each changed one, in the time
+  zone the series was made in. A pattern that cannot be read exactly is never guessed at: the event
+  says so, and it exports as one event with a note in the log. The right-click Export Event as ICS
+  now goes through the same writer, so it has the UID and DTSTAMP that RFC 5545 requires, and no longer
+  doubles its line endings. The calendar CSV gains Repeats and Attendees columns.
+- **Every real email converts** - The converter looked at folders, so email in Outlook's system folders
+  was left out while a contact or appointment filed in Deleted Items was written out as mail. It now
+  looks at what each item is, in every folder: real email converts wherever it lives, and everything
+  else is left out and counted. Those system folders appear in Email Inspector's tree when they hold
+  real email, and stay hidden when they do not. Export ALL Mail Folders takes the same emails.
+- **NST files open and convert** - NST files, Outlook's cache of Microsoft 365 group mail, are
+  accepted by Email Inspector, the Scan window and the converter, the same as an OST. A file with no
+  messages says so rather than looking broken.
+- **Journal entries** - Journal folders are listed and open like tasks and notes, with their type,
+  start, end and length, and export to CSV by right-click.
+- **Stop while a mailbox is being counted** - A Stop in the moment before counting began was forgotten,
+  so the whole mailbox was counted and then announced as open while it was being closed. It now stops.
+
+- **MBOX attachments read correctly** - A text file attached with a Content-ID was read as the
+  message itself, replacing its real text, and was never listed as an attachment. Real mail has these:
+  153 of one mailbox's 793 messages with attachments. A part that names a file is now an attachment. A
+  name with non-English letters now reads back instead of coming out blank.
+- **Speed test results stay on screen** - The result was written and wiped in the same moment, so
+  the Log had the numbers and the Bandwidth tab was blank. iPerf3 had the same fault. A test you stop,
+  or one that could not finish, now says No result instead of 0.00 Mbps, and a latency that could not
+  be measured says unknown. A finished speed test now reaches the network report, which listed it as
+  not run.
+- **Reset Network says a reboot is required** - The status bar replaced the action's message with one
+  that left that out.
+- **Backup and Restore Settings work on non-English Windows** - The restore list read netsh's English
+  words, so it found no adapters. They also stop saying Ethernet, since they work on any adapter.
+- **Bridge Connections is gone** - It only opened the window Open Adapter Settings opens. Flush Cache
+  no longer claims it needs an administrator. Diagnose opens Settings, Troubleshoot where Windows has
+  removed its troubleshooter, and says so. F5 and Esc work on the Network Adapters tab.
+- **The log opens beside the main window when it can fit** - Opening it moves a main window that
+  leaves no room to the left, and narrows the log if that is enough. A maximized window stays put,
+  and the log overlaps it.
+- **The assistant refuses to write a Windows install ISO raw** - That does not boot. It points at the
+  Image Flasher tab, which builds Windows install media.
+- **Unattended Full Access asks first** - It is not in force until you agree, and declining goes back
+  to the mode you had.
+- **Workflows in Chat and Research say why a step is refused** - Send names the steps that need local
+  tools before the workflow starts, and they no longer report that you declined them.
+- **Exported AI reports are titled AI Session Report** - They all said PC Health Report, whatever the
+  chat was about.
+- **A healthy PC on non-English Windows is no longer told SFC failed** - SFC's verdict can only be read
+  in English. The result now reads as unknown, quotes SFC's own words, and says it is not a failure.
+- **Check Disk Errors says it skipped network drives** - It names each one it can see, and the report
+  always says network drives are not checked.
+- **Button names for screen readers and voice control** - 85 buttons had accessible names that did not
+  contain the words on the button. Each now does, and the start-up accessibility check holds that.
+
+- **Email Inspector now reads a whole Outlook file** - Tested on real archives, the reader hid every
+  folder behind a block reference with a reserved bit set, which Outlook does write. On a 1.1 GB PST
+  that was its two largest folders and about one message in seven. Those messages now list and open.
+- **Calendar, tasks and contacts show their real details** - Events now go on the day they happen,
+  with their end time and location, instead of the day the invitation arrived. Tasks show their real
+  status and due date. The Address Book shows each contact's email, company and phone.
+- **Tasks and notes can be browsed and exported** - Their folders appear in the Email Inspector tree.
+  Right-click to export tasks as CSV or notes as text. The header always promised this.
+- **Messages with only an RTF body now show their text** - This covers most calendar items, which
+  previewed blank and could not be converted.
+- **Attached emails are saved as real .eml files** - An email attached to another email, and an
+  embedded object, used to come out as four meaningless bytes under the attachment's name.
+- **A message's attachments keep one order** - They were listed in a different order, with different
+  numbers, each time the app started.
+- **MBOX mailboxes show their real count and size** - A six-message mailbox read as 65 messages and
+  0 B. Contacts and Calendar stay off for an MBOX, Per page works, and the Attachments Browser finds
+  its attachments. Scan finds Thunderbird's mailboxes, which have no file extension, and they open.
+- **HTML, PDF and EML exports keep a message's pictures** - Inline pictures were dropped, leaving
+  blanks. They now stay in the message and are not repeated as attachments.
+- **The OST Converter converts a real mailbox cleanly** - It now converts the folders Email Inspector
+  lists as mail. Contacts, calendar items, tasks, notes and system folders are left out and counted,
+  not reported as failures. Unsent drafts convert. A partly failed file now reads Failed instead of
+  Complete. Deep recovery works on its own. The date filter includes the whole end day. The Skip
+  corrupt blocks box and the Items column are gone, because neither did anything useful.
+- **NST files are refused with a clear message** - Both the Inspector and the converter say so. The
+  converter used to accept one and report Complete with nothing in it.
+- **A failed vulnerability feed no longer reads as a clean scan** - The status says Incomplete and
+  Details lists the sources. A CISA match is dropped when NVD proves the installed version is not
+  affected. The header now says what each button checks, since Scan Installed Apps never used GitHub
+  or OSV.
+- **Thin Bundles install from the app** - Install from Bundle demanded a packages folder that a Thin
+  Bundle never has. The bundle's README also names the real place to install from.
+- **Add to Batch Queue works** - It now ticks the program, which is what Batch reads. The scan level no
+  longer mentions shell extensions, which the scanner does not look for.
+
+- **GZ, BZ2 and XZ images really flash** - Every one of them was refused with "its uncompressed
+  size could not be determined". The app now reads the compressed file all the way through before
+  it touches the drive, which finds the real size and can take a few minutes on a large image. A
+  damaged file or a compressed tar archive is refused at that stage, with nothing written. Quick
+  verification also works on these images; it could never pass before.
+
+- **Verify System Files reads SFC's answer** - A healthy PC reported "SFC did not complete a
+  verification run" and Failed, because SFC's output was read in the wrong encoding. It now reports
+  what SFC found. On a non-English Windows the app cannot read SFC's wording, so the run still
+  counts as failed, and the message quotes what SFC said.
+
+- **Check Disk Errors reports what the scan found** - It ignored the scan's result, so errors could
+  read as clean. Each drive's entry now says no errors, fixed by Windows, repair recommended, or no
+  answer. A drive gets 30 minutes instead of 30 seconds, and mapped network drives are left out.
+
+- **Every quick action's detail reaches the Log** - The per-drive disk report, the Reset Network
+  backup paths and per-step errors, the CBS log path and the power plan report were produced and
+  never shown.
+
+- **"All tests passed" means all of them** - The report's banner could say ALL TESTS PASSED after one
+  hardware scan, or when no drive could be read. Fewer steps now read WARNINGS DETECTED, and the
+  warnings name each step with no result.
+
+- **Stress test says when its thermal limit is not working** - With no CPU sensor the screen showed
+  -1.0 degC and gave no warning. It now says the limit is not being enforced, and the report says so
+  too. The tooltip now says what the limit does: the test stops and reports FAILED. It watches the
+  CPU only.
+
+- **Windows install media is recognized by what is inside it** - A label containing WIN, or an image
+  built with Microsoft's tools, was enough to erase the drive with the Windows writer and then fail
+  on a rescue disc. The app now looks for the Windows install image inside the ISO. An ISO without
+  one is written raw, and the confirmation says so. The final status no longer says "verified
+  bootable", which nothing tested.
+
+- **Clonezilla Live and Ventoy LiveCD download** - Both were listed and always refused. Clonezilla
+  now reads its current release from its project's mirror. Ventoy's release-wide checksum file is
+  accepted. ShredOS gets a default file name, and a download saved under any name now verifies; a
+  different name used to fail after the whole download.
+
+- **Drive health shows a drive it cannot read** - A SATA or USB drive that Windows refuses without
+  administrator rights now gets a row, N/A health, and a line saying to run as administrator, where
+  the table used to stay empty.
+
+- **Disk benchmark and disk stress work on C: without administrator rights** - They wrote their test
+  file to the root of the drive, which Windows refuses. On the Windows drive they now use the temp
+  folder, on the same disk.
+
+- **Smaller Image Flasher and diagnostics fixes** - Buffer Size starts at 64 MB, as its tip says; the
+  old default was 4096 meant as bytes and read as megabytes, and older settings holding it are
+  corrected. A refusal before writing says nothing was written, instead of warning that the drive may
+  be unusable. A built ISO no longer adds a third dialog that always said Windows 11. A denied CPU
+  temperature no longer blanks the GPU and disk rows, and the row showing the hottest drive is named
+  Hottest disk. Export Scan Report writes the HTML it says it writes. The inventory report no longer
+  prints two percent signs. WIC is no longer called Windows Imaging, and the Linux category reads
+  Security & Pen-Testing.
+
+- **Backups really hold application data** - The backup wizard's Application Data step recorded
+  your choices and copied nothing, so browser profiles were not saved. They are now: each source
+  you leave ticked is copied, compressed and encrypted like any other folder, and comes back on
+  restore. Outlook signatures are on the list. Caches are left out, and sizes show what will
+  really be stored. Saved browser passwords and sign-ins are protected by Windows for the old
+  account and usually do not work elsewhere, so the page says to export them first. Both wizards
+  ask you to close a program that holds this data open. A file still locked is named in the log,
+  and the backup says it did not copy everything. A backup from an older version says it holds no
+  copy instead of offering one. SSH keys are now something you tick yourself.
+
+- **Restore wizard no longer crashes** - It crashed on the Select Folders page, on any backup with
+  a folder ticked. Unticking a folder there also made the restore refuse the backup as damaged.
+
+- **Restore verification works on compressed and encrypted backups** - It failed every file on
+  these backups and put back what it had just replaced, so the restore reported failure. It is on
+  by default. Keep Newer and Keep Larger also read the wrong date and size on these backups, and a
+  restored file now keeps its original date.
+
+- **Replace Destination and Merge Into Destination differ** - They did the same thing. Replace now
+  overwrites files that are already there, and Merge follows your conflict setting. Neither removes
+  a file the backup does not have. Picking an account now starts on Merge.
+
+- **A restore has a last step** - It used to start on Next. The last page now lists what will
+  happen to each person's files, and the button reads Start Restore. Anything that could stop the
+  restore is settled there: the password (a wrong one is refused before anything changes),
+  administrator rights, and programs left running. The Merge Configuration page is gone: its only
+  control did nothing, and neither did Prompt User. The conflict setting on the last page is the
+  one that works.
+
+- **"Create New User" says what it does** - It makes a folder and no Windows account, so it now
+  reads New Folder, No Account.
+
+- **Backup wizard controls that did nothing now work** - Verify files after backup checks each
+  stored file against its original, using SHA-256 rather than the MD5 the label promised. Warn if
+  folder exceeds warns in the log. The three Exclude boxes on Smart Filters really keep or drop
+  those files. The Next button no longer keeps saying Skip on pages with nothing to skip.
+
+- **Backup destination starts empty** - The suggested folder was inside your own profile, which the
+  same page refused. Browse now adds a dated folder inside the one you choose. A custom folder
+  outside the profile is refused when you add it, not when the backup runs.
+
+- **BitLocker Key Backup refuses FAT32 and exFAT** - Those drives cannot limit who reads a file, yet
+  the permission step reported success and the keys were written open to anyone, with a log saying
+  they were restricted. It now stops before writing and says why, and its prompt no longer suggests
+  any USB drive. Its refusals now say the reason in the log rather than only that it refused.
+
+- **File Organizer does what its buttons say** - Organize Files moved nothing until a setting was
+  turned off, and Preview turned it back on. Now Preview previews and Organize Files organizes. A
+  file that will not move no longer stops the others, and the result lists what moved and what did
+  not.
+
+- **Names in any alphabet** - A folder, a file or a person whose name uses characters outside the
+  PC's language setting stopped File Organizer and Duplicate Finder with an error, and made the
+  restore wizard refuse the whole backup as invalid. These now work.
+
+- **Duplicate Finder shows every group** - It showed ten groups and file names without folders. It
+  now lists every group with full paths, most wasted space first, up to 2,000 groups.
+
+- **Advanced Search** - The Cache size setting did nothing and is gone.
+
+- **File Explorer labels** - "Write certified" and "Certification Targets" now read "Writable,
+  validated" and "Writable Mac Disks". Nothing about what the app can write changed.
+
+- **Scan Users asks for less** - It requested account details it never read, which Windows can
+  refuse without administrator rights. It now asks only for names.
+
+- **Restore can reinstall applications** - The backup's installed-application scan now records a
+  Chocolatey package for the applications it recognizes, and the restore wizard's Restore
+  Applications page offers those installs. Before, every row said "(no match)". Recognition uses a
+  built-in list and makes no network calls, so a backup on an offline PC records the same matches;
+  an application the list does not know stays "(no match)". Installing asks to restart as
+  administrator first, as App Installation does.
+
+- **Image Flasher offers only what it can flash** - The file picker no longer lists ZIP or DMG. A
+  ZIP archive or an Apple .dmg chosen another way is refused when you select it, with a message
+  saying what to do, rather than after you pick a drive. A real .dmg used to be written raw, which
+  left an unusable drive.
+
+- **Network reports** - Network Diagnostics has a Generate Report button. It asks for technician,
+  ticket and notes, then saves the results of the diagnostics you ran as HTML or JSON.
+
+- **Email Inspector search shows its results** - A search used to report only a count. The matches
+  now fill the item list and open like any other message; clicking a folder goes back to it.
+  "Search in This Folder..." now really searches just that folder, and search also looks in
+  recipients and attachment names.
+
+- **APFS statements agree** - Partition Manager's properties said Apple-created APFS containers
+  could not be written, while File Explorer writes them. It now says what the writer does. A Fusion
+  or multi-device container, which the app had said it refused without checking, is now refused.
+
+- **Help Wiki** - The Open Help Wiki button now opens https://sakutility.com/wiki.
+
+- **About and release notes** - About no longer describes features the app does not have: reboot
+  scheduling for locked files, converter output other than MBOX. The release notes are a short
+  summary with links to the wiki and this changelog.
+
+- **Shorter version numbers** - Versions now have three parts, so this release is v0.9.3. Older
+  releases keep their four-part names.
+- **Smaller download** - The package no longer carries files the app never loads: Mesa's
+  software OpenGL renderer (20 MB), the Direct3D shader compiler, Qt's touch-input,
+  network-information and certificate-only TLS plugins, and two unused Visual C++ runtime DLLs.
+  The folder is 176 MB instead of 200 MB, the ZIP 89 MB instead of 99 MB.
+
+- **User Migration's Settings button is gone** - Its thread count, MD5 verification and backup
+  location were saved but never used by a backup. Settings that no longer exist are removed from
+  `Utility.ini` when the app starts.
+
+- **Two reports, two names** - The Diagnostics panel had two features called "Generate Report".
+  The one that saves the results of the scans you ran (HTML, JSON or CSV) is now the Scan Report,
+  with an Export Scan Report button. The one-click action that collects a live inventory of the
+  PC into a text file is now the System Inventory Report (the assistant knows it as
+  `action.system_inventory_report`). The Full Suite step that only gathers results is called
+  Aggregate Results; it never wrote a report.
+
+- **System Inventory Report asks where to save** - It used to write to a fixed `C:\SAK_Backups`
+  without saying so. It now asks for a folder each time, starting in Documents, and the
+  completion message gives the full path of the file it saved. Cancelling the folder choice runs
+  nothing. The assistant saves it to the chat session's artifacts, as before.
+
+- **One quick-action runner for the whole app** - Backup and Restore's Quick Tools, the
+  Diagnostics panel's System Maintenance buttons, Reset Network and the assistant's built-in
+  actions now run one at a time on one runner. A quick action started while another is running
+  waits its turn and says so ("Queued: ... - waits for ... to finish"); each panel shows only its
+  own actions' progress and results. Administrator quick actions share one elevated helper, so
+  several in a row ask for administrator approval once while the helper is still running (it
+  closes itself after five idle minutes and when S.A.K. exits) instead of once per action. A
+  cancelled action says "Cancelled", a failure is reported once instead of twice, and warnings an
+  action logs now reach the panel's log.
+
+- **Screenshot Settings asks where to save** - Backup and Restore's Screenshot Settings wrote to
+  a fixed `C:\SAK_Backups` without saying so. It now asks for a folder each time, starting in
+  Documents, saves the screenshots and their report in a `SettingsScreenshots` folder there, and
+  the completion message gives the folder's full path. Cancelling the folder choice runs nothing,
+  and a folder it cannot create stops the run before any Settings page opens. BitLocker Key
+  Backup's completion message names its folder too.
+
+- **No more assumptions that Windows is on C:** - Leftover cleanup protects the system folders
+  where this PC keeps them (a Windows, ProgramData or Users folder on another drive is protected
+  like a C: install's). Partition Manager's Rebuild MBR / Boot Repair rebuilds the boot files of
+  the Windows that is running instead of a fixed `C:\Windows`. The email file scanner now also
+  looks in `C:\Backups` and `C:\Email Backups`, which it used to skip.
+
+- **The theme follows Windows** - One setting, Light / Dark / System, in the status bar's Theme
+  button, saved in the portable `data/config/Utility.ini` and set to System on first run. System
+  follows the Windows app theme while S.A.K. runs, title bar included. The Dark switch that sat
+  beside every panel's Log switch is gone.
+
+- **Borders instead of drop shadows** - Group boxes, cards and the (i) popups are outlined by
+  1px borders; the drop shadow the app added to every group box, card and rounded panel is gone.
+
+- **Shortcuts work inside the File Explorer** - Its own Ctrl+1..9, Ctrl+Tab, Ctrl+Shift+Tab and
+  Ctrl+Shift+1 (Details view) did nothing because the main window bound the same keys; inside
+  the explorer its keys act, everywhere else the main window's do.
+
+- **The mouse wheel works like Windows** - The wheel scrolls the page under the pointer: a combo
+  box, spin box or slider without focus no longer swallows it and changes its value, a tab bar
+  no longer switches tabs, and the wheel never moves keyboard focus.
+
+- **One S.A.K. Utility per folder** - Starting S.A.K. Utility while it is already running from
+  the same folder brings the open window to the front instead of starting a second copy that
+  shares its settings and data. Copies in different folders still run side by side, and Run as
+  Admin still relaunches elevated: the administrator copy waits for the one that started it to
+  close.
+
+- **Windows ISO build messages match the converter** - The patched UUP converter never
+  provisions AppX packages, so S.A.K. no longer blames AppX provisioning when it asks for
+  Administrator or offers AppX workarounds when a conversion fails. It still needs
+  Administrator: the converter mounts a virtual disk to service the Windows images with DISM,
+  and the message now says so. The About box lists wimlib as LGPL v2.1+, the license of the
+  wimlib 1.14.5 it ships.
+
+- **Security updates to what ships** - Qt 6.10.3 is now Qt 6.12.0 LTS (6.10's support ended 2026-10-07). zlib
+  1.3.1 is now 1.3.2 and liblzma 5.8.2 is 5.8.4, at the versions `vcpkg.json` pins, so local and CI builds link the
+  same ones. The bundled Chocolatey 2.7.2 is now 2.7.5 (log4net 3.3.1 and 7-Zip 26.05), and iPerf3 3.21 is 3.22,
+  which fixes a server use-after-free (CVE-2026-101283), authentication heap overflows (CVE-2026-101276) and a
+  denial-of-service loop (CVE-2026-102253); the app runs iperf3 as a server. hfsprogs no longer carries an OpenSSL
+  3.6 runtime, whose support ended 2026-11-01: `newfs_hfs` used it only for SHA-1, and `msys-crypto-3.dll` (5.4 MB)
+  left the package.
+
+- **aria2c built from source with current libraries** - The bundled downloader is still aria2
+  1.37.0, now built here from its source with zlib 1.3.2, c-ares 1.34.9, Expat 2.9.0, SQLite
+  3.54.1 and libssh2 1.11.1 instead of the 2023 official build's older copies. It keeps using
+  Windows' own TLS and certificate store and needs no extra DLLs. The sources, the build recipe
+  and the license texts ship in `tools/uup/aria2/`; `scripts/build_aria2.ps1` rebuilds it.
+
+- **UUP converter on .NET 10, rebuilt from source in the repo** - The patched UUPMediaConverter
+  is now built from current upstream UUPMediaCreator with its patch kept in
+  `tools/uup/uupmc/`, by `scripts/build_uup_media_converter.ps1`, which reproduces the shipped
+  executable bit for bit. It runs on .NET 10 (supported to 2028-11-14) instead of .NET 8, whose
+  support ends 2026-11-10, and carries wimlib 1.14.5.
+
+- **Windows ISO builds can finish** - The UUP converter looks for its ISO writer at
+  `CDImage\cdimage.exe` beside itself, but the bundle had it one folder deeper, so the last step
+  of every conversion failed. It also read an older `Settings.ini` that left six setup files off
+  the media. Both are where the converter reads them now, and the unused `UUPDownload.exe` and
+  .NET Framework `.dll.config` files are gone. `scripts/bundle_uup_tools.ps1` checks every bundled
+  UUP file against a pinned SHA-256 instead of only checking that it exists.
+
+- **Partition Manager names say what each disk tool does** - "Surface Test" is now "Scan File
+  Systems" (it reads reliability counters and scans file systems; it never read the disk
+  surface), "Partition Alignment" is "TRIM SSD Volume" (it runs Optimize-Volume -ReTrim on one
+  volume), "SSD Secure Erase" is "Erase SSD (TRIM + Overwrite)" (it is not an ATA/NVMe sanitize),
+  and "Change Serial Number" is "Reformat for New Serial Number". Check File System and Scan File
+  Systems run immediately instead of waiting in the Apply queue. The erase dialog no longer shows
+  the certification lab's evidence checklist or its Copy button, and the non-Windows metadata
+  check says its results come from the last disk scan. A non-Windows file-system repair is no
+  longer labelled "Read-only" in the Apply review.
+
+- **R5 Wave 31 local integration passed** - Partition operations now bind reviewed source and raw
+  target identities, validate atomic Quick Partition batches against projected layouts, and use a
+  locked Restore Image source handle. AI workflow recovery now authenticates and binds snapshots
+  to one-use generations, preserves instruction/data roles, and refuses silent context truncation.
+  Shared metadata downloads enforce HTTPS, status, size, deadline, and cancellation contracts.
+  Complete Release build and all 276 CTests pass. R5 retains explicit recovery-tool, review-ledger,
+  naming and app-driven VM certification work; this entry does not claim campaign completion.
+
+- **Removed an unused global analyzer suppression** - Whole-project analysis without
+  `unknownMacro` passes with 183/186 active checkers and no findings. The obsolete global exception
+  is removed. Remaining exceptions continue under direct-fix review, not permanent grandfathering.
+
+- **Mutation tests cannot wait indefinitely or pass on build errors** - The runner now retains
+  per-command logs, bounds child execution, requires actual CTest results, rejects infrastructure
+  failures, and verifies the restored build. Panel dialog callbacks close on failed assertions;
+  overdue dialog cleanup records a failure. Sixteen runner tests pass, including real timeout and
+  child-process cleanup cases, and seven isolated negative drills prove the guards. Unconfirmed
+  child termination retains the source snapshot and blocks recovery/build overlap. This addresses
+  the Change Cluster Size test that previously waited for manual interaction.
+
+- **R5 review coverage includes previously omitted source languages** - The ledger now enumerates
+  the first-party C shim, C/Python/PowerShell tests, and Windows command launchers. New entries start
+  pending. Seven classifier tests pass, and five omission cases each fail against the previous
+  implementation.
+
+- **Partition preview scaling uses exact bounded arithmetic** - Replaced an unsupported Windows
+  clang-analysis division intrinsic with one exact unsigned implementation. Fifteen boundary
+  controls and seven focused mutations cover full-width products, carries, quotient bits and
+  saturation; all 70 panel cases pass after restoration. No compiler branch or silence was added.
+
+- **AI access policy is one closed typed value** - A single `AiAccessMode` now flows from strict
+  combo-box item data through panel snapshots, prompt assembly, tool policy, and Responses request
+  validation. Localized/display text and contradictory booleans cannot select policy. Wrong-typed,
+  out-of-domain, missing, or invalid values fail closed to no local execution and block payload,
+  network, and token-count work. Ten new mutants close three test holes; the three affected
+  catalogs now kill all 25 relevant mutants.
+
+- **AI tool errors use one strict schema** - Five duplicate builders in offline, workflow,
+  provider, and panel paths now use one `toolError` helper. Every canonical failure has exactly
+  boolean `success:false` and a non-empty string `error_message`; nonblank source text is preserved
+  and blank text becomes a stable fail-closed diagnostic. True nonduplicates with richer or
+  caller-specific envelopes remain separate. The remaining duplicated provider access predicates
+  are also unified as enum-owned constexpr helpers. The helper catalog kills 2/2 mutants and
+  dead-code analysis confirms one production error-builder definition.
+
+- **Advanced Uninstall controller review converged to zero** - Repeated blob-bound xhigh review
+  passes fixed batch admission/cancellation terminals, cleanup lifecycle ordering, deferred report
+  totals, stale-worker generations, protected/typed cleanup identity, error-code propagation,
+  duplicate/bounded queue admission, auto-clean preference UI, truthful enumeration state, and
+  dead or misleading APIs. Distinct leftovers updates no longer masquerade as scan completion.
+  Automatic cleanup is deduplicated by full typed identity, preserves generic lifecycle terminals,
+  and cannot trigger premature panel refresh. Seven follow-up reviews converged from 10, 9, 5, 4,
+  3, 4, and 3 confirmed findings to a final zero-finding pass; one signal-tense lead was refuted by
+  live convention and the stale style prose was corrected. A post-naming exact-blob refresh then
+  closed two functional leads and five signal parameter names before returning another zero-finding
+  pass. All 66 controller cases and 58 separate functional convergence drills pass after
+  restoration. Wave 30 closes with all whole-tree hooks green, a clean Release build, and all 273
+  CTests passing.
+
+- **Local TruffleHog proof completed without an ignore** - The official v3.97.2 Windows x64 asset
+  is cached under ignored `temp/tools`, matched its published SHA-256 before execution, and was
+  placed on PATH only for the scan process. Regex/path scan, full-history gitleaks, and TruffleHog
+  all report zero findings; the wrapper exits 0, parent PATH is unchanged, and no scanner process
+  remains.
+
+- **AI memory and steering are structurally untrusted** - Prompt assembly now returns separate
+  trusted instructions and untrusted user context. Workflow/skill catalogs, selected context,
+  ConversationStore memory and stored tool output, and queued steering never enter top-level
+  Responses instructions. Initial and tool-continuation requests serialize them only as validated
+  `user` messages; forged roles and blank structured messages fail before payload creation, token
+  counting, or network work. Fifteen prompt/Responses/panel mutants are killed and restored.
+
+- **Profile backup and restore byte progress is live and accessible** - Removed both discarded
+  byte-progress silences and the duplicate restore lambda. Backup and restore workers now emit
+  initial, throttled, and completed-user byte progress with accurate selected-user totals. A shared
+  overflow-safe presentation seam uses bytes when totals are known, user completion when they are
+  not, and an indeterminate accessible state when neither total exists. Both wizard pages expose
+  accessible names, descriptions, label buddies, real processed-byte completion, and cancellation
+  that never fabricates 100 percent. Four old-value/omitted-emission drills are red.
+
+- **Cleanup deletion fallbacks removed and controller state closed** - Permanent leftover removal
+  now uses one Windows 10/11 handle-bound seam for files, empty directories, and reparse links. The
+  same handle verifies final path and object type before deletion. Legacy disposition, pathname
+  file/directory removal, permission retry, and reboot-time pathname scheduling are removed; a
+  locked or unverifiable object remains and produces an actionable GUI/headless error. Disposable
+  tests preserve junction targets and hard-link peers. The uninstall controller now has terminal
+  enumeration/cleanup signals, wired early cancellation, distinct persisted/per-operation cleanup
+  policy, checked settings health/sync, validated scan levels, truthful leftover-scan state, queue
+  errors, safe enumeration-thread retirement, no dead filter/temp state, and consistent member
+  naming. Twenty-three cleanup/controller drills are red and restored. Wave 29 closes with all
+  whole-tree hooks green, a clean Release build, and all 273 CTests passing.
+
+- **AI command-guard result cannot bypass approval** - Guard state is private and constructible
+  only by evaluation. `allowed()` now means no block and no pending approval; separate accessors
+  expose blocked and approval-required decisions without permitting callers to fabricate an
+  inconsistent result. The expanded command-guard catalog kills all 20 mutants.
+
+- **AI command guard closed over executable inputs** - Preview and manifest prose can no longer
+  alter command authorization. The guard now evaluates the command/program/argument request once,
+  scopes registry recursion, binary-content reads, and cached-installer checks to the executable
+  clause, and distinguishes quoted data from PowerShell call-operator and interpolated execution.
+  Broad HKLM/HKCU recursion is blocked through drive and Registry-provider syntax, including
+  accepted `-Rec` through `-Recurse` abbreviations while explicit false remains non-recursive.
+  Chocolatey cache approval covers environment, expanded temp, quarantine, cache, and temp paths.
+  Four caller-level suites pass, and the new permanent catalog kills all 18 guard mutants.
+
+- **First-party LZFSE shim removed from the vendor warning silence** - The S.A.K.-authored C shim
+  now lives under `src/core` and builds as its own object target with `/W4 /WX`; only byte-identical
+  upstream LZFSE sources retain `/w`. Build-system lint rejects first-party or unresolved sources
+  inside a warning-disabled target. Clang-format, lizard, cppcheck, the pre-commit filters, and the
+  whole-project suppression reveal now include first-party `.c` files. A real C fixture prevents
+  cppcheck from silently forcing C through C++ mode. Separate drills prove the lint boundary, the
+  warnings-as-errors boundary, and real HFS decompression behavior.
+
+- **File Explorer terminal launch fails closed** - Open in Terminal now launches only qualified
+  System32 `cmd.exe /D` with the browsed folder as its working directory. The user-writable
+  WindowsApps `wt.exe` route and its fallback chain are removed. Every launch result is checked;
+  failure is logged and surfaced through accessible status and warning feedback. Fault-injection,
+  structural, menu-order, focused GUI, and process-runner tests cover the path. Wave 28 closes with
+  all whole-tree hooks green, a clean Release build, and all 273 CTests passing.
+
+- **AI persistence and MCP contracts hardened** - Human-gate persistence now requires an error
+  sink, returns generated ids/timestamps to its caller, and carries read warnings into generated
+  reports. Mutation leases are process-wide across every manager instance and never time-expire;
+  only the exact bearer release or process restart can unblock another mutation. MCP HTTP is
+  non-instantiable and self-contained; redundant test-only payload wrappers and the unused model
+  default helper are removed. Persistent stdio discovery now validates every tool descriptor,
+  follows bounded cursor pagination, reports live server state, keys sub-minimum timeouts by their
+  effective value, rejects inherited mutable environments, and refuses empty tool names before
+  allocating a pool slot. The legacy one-shot stdio fallback, transport, test, and unsupported-
+  platform branches are removed; missing pool wiring fails closed. Separate old-code drills cover
+  generated gate state, mandatory non-null error sinks, time-based lease APIs, multi-manager
+  overlap, pool validation/keying, malformed discovery, first-page-only discovery, resource/cursor
+  limits, null cursors, and stale process liveness.
+
+- **Detached GUI launch failures surfaced** - Advanced Search Explorer-open, File Explorer
+  Notepad-edit, Partition Manager BitLocker/Optimize, and Space Analyzer location launches now
+  check the existing trusted detached-tool seam. Immediate launch failure produces a plain-text,
+  accessible warning and a logged failure; Advanced Search and File Explorer also publish status
+  feedback. The process fault injector now covers detached tools, and one structural test pins all
+  five GUI guards. Five separate old-code drills turn that test red.
+
+- **Staged VM certification capture batch unified** - File Recovery, destructive ext filesystem
+  VM proof, and offline BIOS BCD-break native commands now use the shared ProcessStartInfo seam.
+  Existing command records, accepted exit codes, cleanup decisions, destructive identity guards,
+  and indefinite waits remain unchanged; process-start failure terminates. Their local launchers
+  stage `process_capture.ps1` beside each runner, and File Recovery now hash-verifies both required
+  helpers before UAC while pinning `fsutil.exe` to System32. File Recovery no longer retries the
+  obsolete fsutil form without the NTFS argument: setup failure terminates, and restore failure is
+  recorded as an explicit cleanup error. Three separate capture drills plus the fallback drill
+  went red under Windows PowerShell 5.1; the complete contract passes under both PowerShell hosts.
+
+- **Analyzer and review-ledger failures now propagate** - Standalone clang-tidy runs return real
+  analyzer/tool failures; the naming health gate opts into a narrowly bounded findings-measurement
+  mode while still rejecting non-finding tool exits. Review units now hash filtered local
+  working-tree bytes, refresh dirty targets during `next` and `status`, preserve invalidated review
+  evidence, reject missing targets, and bind each mark to the exact post-review blob. Clean units
+  reuse one batch index inventory while only dirty units are rehashed. Batch reviews also hash the
+  exact target before and after Codex, permit unrelated concurrent edits, stop on target mutation
+  or any ledger failure, resolve npm PowerShell launchers through the current host, reject
+  unsupported command types, and use bounded shared duplex process capture with standard input.
+  Clang-tidy analysis now prunes deleted-source entries from a stale compilation database instead
+  of failing on a file no longer in the product. Runtime skip audit derives its expected Qt logs
+  from CTest JSON registration, ignores stale removed-test logs, and fails if any current log is
+  missing.
+  Registered PS7/PS5.1 tests pin clean, findings-only, analyzer-failure, ledger-success/failure,
+  dirty-target invalidation, same-status-row mutation, missing-target, exact-blob, batch hashing,
+  launcher resolution, large duplex pipes, stdin, success, and timeout paths.
+
+- **R5 direct skip tail closed and review ledger advanced** - All 15 remaining directly fixable
+  QSKIP sites are replaced by deterministic seams/fixtures. The 25 surviving sites are the proven
+  external, privileged, destructive, paid, or live-service interlocks; static inventory is 25
+  sites across 10 files and the runtime audit is 5,094 passed functions / 28 reviewed skips (0.55
+  percent). Four AI headers gained stored blob-bound briefs and ConversationStore was re-reviewed;
+  the live ledger is 1,064 units / 635 pending / 39 self-verifying reviews. Combined Wave 26 gates
+  passed: changed-file hooks, healthy naming, full clang-cl coverage build, Release build, and full
+  CTest 272/272 in 655.99 seconds.
+
+- **Filesystem and adapter host-state skips removed** - Removed eight QSKIP false greens from
+  permission, file-scanner, email-profile, and Ethernet suites. Controlled unprivileged NTFS
+  junction/hard-link fixtures now hard-fail when unavailable; file traversal accepts an injected
+  canonical resolver; SDDL primary-group coverage uses the real parse/apply-plan collector without
+  requiring WRITE_OWNER; and MAC lookup accepts injected adapter identities. Static QSKIP inventory
+  falls from 33 sites across 14 files to 25 across 10; the observed audit records 5,094 passed
+  functions and 28 reviewed skips (0.55 percent).
+
+- **Next native certification capture batch unified** - OS-migration VBox command and screenshot
+  capture, Linux XFS/Btrfs metadata validation, and VM data-media external gates now use the shared
+  ProcessStartInfo seam. Existing allowed-failure and accepted-exit-code rules, command records,
+  durations, boot polling, screenshot status, output content, and indefinite native waits remain
+  explicit; child-start failure terminates. The VM-data launcher stages `process_capture.ps1`
+  beside its runner. Four independently selectable old-block drills went red under Windows
+  PowerShell 5.1, and the complete registered contract passes under both PowerShell hosts.
+
+- **AI host-state skips replaced with deterministic fixtures** - Read-only installed-program and
+  drive actions accept scoped test inventories, ConversationStore exposes an exact manifest-write
+  failure hook, and both junction tests now require their unprivileged Windows fixture. Seven
+  QSKIP sites are removed while the file-symlink privilege and three live/destructive interlocks
+  remain. Static QSKIP inventory falls from 40 sites across 15 files to 33 across 14 files.
+
+- **Automation VM plaintext credentials hardened** - Password staging now creates an empty
+  no-share file, applies and verifies an exact current-owner ACL, and only then writes and flushes
+  the password. Existing password files must already have the same owner-only DACL and bounded
+  non-empty size. Reparse paths and overwrites are refused; failed creation removes only files this
+  invocation created, preserves race-planted files, and surfaces cleanup failure. VBoxManage and
+  System32 icacls now use reliable cross-PowerShell native exit capture. Registered PS7/PS5.1 tests
+  cover positive, ACL/native failure, cleanup, reuse, size, lossless-ASCII refusal,
+  overwrite/race, and reparse paths.
+
+- **Native certification capture unified across PowerShell hosts** - File Management live
+  certification, Allocate Free Space external proof, and both raw/sanitized BitLocker mutation
+  command paths now use the shared ProcessStartInfo capture seam. Standard output, standard error,
+  integer exit codes, indefinite-wait behavior, redaction, and caller-specific allowed-exit logic
+  remain explicit; process-start failure terminates the gate instead of becoming plausible output.
+  The local BitLocker launcher now stages both required helpers with the runner. Registered PS7 and
+  Windows PowerShell 5.1 tests pin all three migrations, and each old scoped capture block was
+  independently drilled red before replacement. File Management disk auto-discovery also replaces
+  its last `SilentlyContinue` with explicit ObjectNotFound classification; every other partition
+  enumeration failure terminates with the disk identity and real error.
+
+- **Elevation host-state test skips removed** - Removed nine QSKIP false greens across elevation UX,
+  elevation hardening, and mixed-tier operations. Banner creation accepts an authoritative injected
+  elevation state, elevation-gate dialog bypass uses a pure preflight, and ownership elevation uses
+  a pure refusal seam, so standard and administrator decisions execute on every host. Windows stock
+  shield availability is now a hard product requirement instead of a passing skip. Static QSKIP
+  inventory falls from 49 sites across 18 files to 40 across 15; the observed audit records 5,092
+  passed functions and 30 reviewed skips (0.59 percent).
+
+- **R5 AI plan contracts and review ledger advanced** - AiAppActionPlan validity now requires the
+  body that matches its exact powershell/cli/win32_gui method; custom output budgets with
+  nonpositive, inverted, over-broker or out-of-range defaults fail closed instead of being silently
+  repaired. Six isolated old-code tests went red. Corrected the async runner's reusable-token
+  contract and completed stored blob-bound reviews for four AI headers plus three VM-security
+  scripts. The live ledger is 1,064 units / 639 pending / 35 self-verifying reviews. Combined Wave
+  25 gates passed: changed-file hooks, healthy naming, full clang-cl coverage build, Release build,
+  and full CTest 272/272 in 641.28 seconds.
+
+- **Coverage evidence now fails closed** - Line and branch coverage runners delete stale outputs
+  before execution, accept output only after successful CTest and coverage-tool exits, reject empty
+  reports, require both fresh Cobertura XML and HTML, publish branch reports only after both
+  llvm-cov passes succeed, and restore process environment changes. Output is restricted to
+  non-reparse descendants of the selected build tree, so cleanup cannot recurse through an
+  arbitrary, outside, build-root, or redirected directory. One hermetic fake-tool harness runs
+  under PowerShell 7 and Windows PowerShell 5.1 and proves stale output, OpenCppCoverage, child
+  CTest, llvm-profdata, llvm-cov report/show, empty/missing output, unsafe-path, and preserved-filter
+  behavior.
+
+- **Post-opt-in live-test false greens removed** - Removed 15 QSKIP paths that converted an
+  already-requested or already-running external operation into a passing test. Chocolatey bundle,
+  Linux ISO network, opted-in UUP dump, and opted-in OpenAI tests now fail on service timeouts,
+  API errors, empty results, or missing credentials. Initial paid/live opt-outs remain for all four
+  families so default CTest never depends on third-party services. Static QSKIP inventory falls
+  from 62 sites across 18 files to 49 across 18; the observed audit records 5,084 passed functions
+  and 32 reviewed initial/live interlock skips (0.63 percent).
+
+- **Superseded production audit archived** - Moved the completed June production-grade audit out
+  of the live docs bucket after its v0.9.1.9 publication handoff and 263-test status were
+  superseded by VERSION 0.9.2.0 and the 272-test suite. Removed it from current Partition Manager
+  and Apple filesystem claim-document sets instead of making historical prose a live gate
+  dependency. Commercial feature checks now require the same hardware-wipe and queued-operation
+  evidence from current certification and changelog owners. A registered structural regression
+  rejects restoration of the old live path or either script dependency.
+
+- **Advanced Search default and R5 review fail closed** - SearchConfig now skips file links by
+  default, so GUI and other ordinary callers apply QDir::NoSymLinks before a planted UNC target can
+  resolve; an exact default test and the production filter-helper test pin both the policy and its
+  QDirIterator input. Removed write-only uninstall report/header-label state. Seven header/script
+  units gained stored blob-bound review briefs; the live ledger is now 1,062 units / 644 pending /
+  28 self-verifying reviews. Combined Wave 24 gates passed: changed-file hooks, healthy naming,
+  full clang-cl coverage build, Release build, and full CTest 270/270 in 742.15 seconds.
+
+- **R5 deterministic-fixture, mutation, naming, and action-contract wave** - Removed 20
+  deterministic QSKIP sites with generated PST/OST/NST stores, synthetic EXIF/ISO matrices,
+  isolated profile/AppData/shortcut fixtures, and hard requirements for bundled UUP and catalog
+  resources. The static inventory is now 62 sites across 18 files; the fresh runtime audit records
+  5,085 passed functions and 30 reviewed skips (0.59 percent). Added three mutation catalogs with
+  15 compile-valid, test-killed mutants; the ratchet is now 49 catalogs / 390 mutants (384 killed,
+  six equivalent). Cleared eight more core naming TUs and ratcheted 16 clean units while keeping the
+  measured 5,266-finding backlog open. Completed ten blob-bound R5 reviews across action headers and
+  metadata tests, removing dead constants/state and correcting public action contracts to shipped
+  Windows behavior. The live ledger is 1,061 units / 648 pending / 21 self-verifying reviews.
+  Changed-file hooks and the healthy naming gate pass; full clang-cl coverage build exit 0; Release
+  build exit 0; full CTest 268/268, zero failures, 724.64 seconds.
+
+- **Avoidable `maybe_unused`/`Q_UNUSED` silences removed and dispatcher health made trustworthy** - Re-audited all 34 `[[maybe_unused]]` attributes and 69 production `Q_UNUSED` sites. Thirty-three avoidable attributes are gone through unnamed callback parameters, exact platform guards, stronger assertions, or explicit live-workload calls; only the environment-gated PST smoke result remains because either a readable detail or fail-closed refusal is valid. Six direct `Q_UNUSED` leftovers are removed through narrower signatures, platform-local declarations, emitted-path use, and dead-parameter/local deletion. The 25 macros that expose six real cross-platform implementation gaps remain open in R5, not accepted. The dispatcher now derives bounded provider health keys only from the canonical operation target, parses object/string gateway envelopes consistently, rejects missing/wrong/contradictory handler success fields, excludes cancellation/invalid/user/policy failures from circuit-breaker poisoning, logs thrown handlers/checkers, keeps operation in missing-handler results, and clears both registration maps through an accurately named API. Seven mutation drills kill each guard removal. A provider-envelope control test also exposed target-dependent bundled-command state; it now uses a deterministic temporary provider fixture in both normal and coverage builds. Changed-file hooks and complete coverage build pass; affected coverage tests pass. Final Release build exit 0; full CTest 267/267, zero failures, 719.17 seconds.
+
+- **Three more coverage warning silences removed and fail-closed AI stores hardened** - Removed `-Wno-missing-field-initializers`, `-Wno-unused-variable`, and `-Wno-unused-function` from the clang-cl coverage tree and forbade their return in build-system lint. The complete fresh rebuild, not the earlier syntax probe, was authoritative: 37 aggregate initializers now state every field, two dead helpers and one separately `[[maybe_unused]]` dead helper are deleted, 35 dead constants are gone, two POSIX-only constants are scoped off Windows, and one ignored KeepAwake result is asserted. The rebuilt compile database contains zero removed flags; full coverage build exit 0 and 21 affected instrumented tests passed. Run-state snapshots now use a required schema, bounded reads/writes, exact I/O errors, and no corrupt-to-default fallback; all nine mutation drills fail when a guard is removed. Skill Markdown now requires strict UTF-8 and frontmatter with explicit identity/description, removes filename/paragraph legacy fallbacks, and passed nine isolated red drills. Subagent tool policy now receives the originating human request, enforces its 1 MiB limit on encoded JSON bytes, and distinguishes parse errors from non-object roots; three mutation drills pass. A full `[[maybe_unused]]` and `Q_UNUSED` necessity audit is recorded in R5: direct cleanups and six supported-path implementation gaps remain open, including non-Windows APFS crypto, POSIX cleanup/raw-device/process-tree handling, MBOX separator validation, and indexed-icon extraction. Changed-file hooks pass. Final Release build exit 0; full CTest 267/267, zero failures, 886.81 seconds.
+
+- **Two more coverage warning silences removed** - Re-enabled `unused-lambda-capture` and `unused-parameter` across the clang-cl coverage tree. The former revealed one unused test capture, which is removed; the latter was stale, with zero findings across 558 first-party and 264 generated TUs. The flags and their CMake commentary are gone, the coverage compile database contains zero removed-flag references, and build-system lint rejects these two flags plus the earlier trigraph silence if reintroduced; a planted flag made the lint gate red and restoration returned it green. Rebuilding every coverage target with `/WX` exposed two unrelated cross-compiler defects that had been hidden by stale objects: an `ActiveConnectionsMonitor` nested-config `{}` default argument rejected in generated MOC and three self-referential `using StubAction::...` declarations. Both are fixed directly with an explicit overload and correct base-class using declarations. The complete coverage build then finished with exit 0, and the three affected instrumented tests passed. Five coverage-only warning flags remain open. Changed-file hooks and two-pass whole-tree cppcheck pass with 183/186 active checks, zero normal findings, and zero stale inline suppressions. Final Release build exit 0; full CTest 267/267, zero failures, 1328.01 seconds.
+
+- **PartitionExecutor broker lifetime made exception-safe** - Re-auditing the last non-tool-limit inline suppression found a real use-after-free path: an exception after publishing a stack `ElevationBroker` skipped both manual clears, destroyed the broker, and left `cancel()` a dangling pointer. The active broker is now shared owned state, conditionally cleared by an unwind-safe scope guard so an older run cannot clear a newer broker; cancellation keeps the existing lock order and broker destruction remains on the execution thread. A private friend-only post-registration hook drives the exact exception window. The new test fails when the scope guard is mutated to a no-op and passes when restored; full Partition Manager core coverage passes. Inline suppressions fell 22 -> 21, and all remaining markers are currently reveal-proven analyzer limitations. Changed-file and two-pass whole-tree cppcheck gates pass with 183/186 active checks, zero normal findings, and zero stale inline suppressions. Final Release build exit 0; full CTest 267/267, zero failures, 1027.78 seconds.
+
+- **Inline suppression tail reduced and changed-header cppcheck repaired** - Removed six more exact `knownConditionTrueFalse` markers by deleting dead boolean plumbing: stale assistant gates now return explicitly, directory traversal returns totals by value, HFS valence/record scans expose their intentional warning/soft-skip contracts as `void`, and APFS relocation preserves blockers without a never-failing bool. Inline cppcheck markers fell 28 -> 22; the STL reveal also fell 295 -> 294. Removing the global `unusedStructMember` suppression exposed a changed-file gate defect: headers were analyzed alone, so live members used from `.cpp` files appeared dead. Header-containing batches now expand to whole first-party source/include/test context, source-only batches stay narrow, and headers outside those roots fail closed. Eleven scope/classifier tests and the actual previously failing pre-commit invocation pass; whole-tree cppcheck reports 183/186 active checks, zero normal findings, and zero stale inline suppressions. The remaining `danglingLifetime` marker was re-audited and exposes a real PartitionExecutor exception-unwind lifetime bug, now tracked for owned-lifetime repair rather than accepted as a tool limit. Final Release build exit 0; full CTest 267/267, zero failures, 902.64 seconds.
+
+- **Suppression direct-fix wave continued** - Removed 20 more `useStlAlgorithm` findings through equivalent standard algorithms across two production files and six test suites, taking the whole-tree backlog from 315 to 295 (236 production, 59 tests). Replaced three individually suppressed raw loops with short-circuit/order-preserving ranges algorithms, reducing inline cppcheck markers from 31 to 28. Removed the coverage-only `-Wno-trigraphs` silence by splitting one RFC 2047 fallback literal into byte-identical adjacent literals and adding an exact Unicode MIME golden test. The clang-cl coverage tree reconfigured and built that test with the warning active; coverage-target CTest passed. Changed-file hooks and the two-pass whole-tree cppcheck gate pass with 183/186 active checkers, zero normal findings, and zero stale inline suppressions. Final Release build exit 0; full CTest 267/267, zero failures, 923.00 seconds.
+
+- **Global `unusedStructMember` suppression removed** - Re-audited the supposedly permanent single-TU limitation by revealing that diagnostic alone. It produced exactly one production finding and zero findings across 252 test sources: `ApfsInPlaceCheckpointResult::ok` was written positionally but never read, while the function's bool return already carries success. Removed the dead field, its initializer value, and the global suppression. Changed-file hooks and the two-pass whole-tree cppcheck gate pass with 183/186 active checkers, zero normal findings, and zero stale inline suppressions. Final Release build exit 0; full CTest 267/267, zero failures, 744.35 seconds.
+
+- **`useStlAlgorithm` direct-fix wave expanded** - Replaced 20 analyzer-identified raw loops with equivalent standard algorithms across 11 production files and one directly related Ethernet test, preserving first-match, early-exit, logging, rollback, and fail-safe behavior. The whole-tree reveal fell from 335 to 315 findings (238 production, 77 tests), with no new suppression or silence. The two-pass cppcheck gate ran with 183/186 checkers, reported zero actionable normal findings, classified exactly 58 Qt slots, and found zero stale inline suppressions. Existing condition and COM-lifetime suppressions touched by this wave were revealed separately and still match their documented constraints. Final Release build exit 0; full CTest 267/267, zero failures, 666.05 seconds.
+
+- **Broad cppcheck test suppressions removed** - Removed `knownConditionTrueFalse:*tests*` after fixing all 12 current findings across six suites. Removed `functionStatic:*tests*` after fixing 4 real helpers and replacing the broad silence with a live-source classifier that recognizes only exact, unique Qt methods declared under `Q_SLOTS`; ambiguity, stale lines, ordinary helpers, non-test paths, missing Python, and classifier failure remain actionable. Seven registered adversarial tests pass, and a real all-files cppcheck run classified the expected 58 Qt callbacks in two batches with zero actionable findings. The `useStlAlgorithm` backlog started down 340 -> 335 through five direct adapter-loop fixes; its global suppression remains until zero. Also moved build-integrated clang-tidy/cppcheck setup before target creation: it previously printed enabled after every target already existed, so it could instrument nothing. Build-system lint now enforces analyzer-before-target ordering. Two-pass whole-project cppcheck passed with 183/186 checkers and zero stale inline suppressions. Final Release build exit 0; full CTest 267/267, zero failures, 898.60 seconds.
+
+- **Failure-silencing PowerShell paths removed** - Storage inventory now carries explicit volume-lookup, BitLocker-state, reliability-query, and per-metric known/error fields; safety blocks mutations whose volume or BitLocker authority is unknown, while UI/headless output reports Unknown/null instead of false/zero. Generated system reports and thermal polling distinguish unsupported, no-data, and query-failed states. Partition Manager cache refreshes, temporary payload/script/staged-image cleanup, VSS cleanup, diskpart volume lookup, SMART queries, and access-path mutations now stop or report failure. Provisioned-package discovery stops on query failure, SFC cleanup is enforced, BitLocker backup records whether label/size metadata is known, and restore-point warnings remain visible while still converting the throttle warning to failure. Production source now has zero error/failure-silencing `SilentlyContinue`, empty-catch, NOLINT, or stderr-null patterns. Its one remaining `SilentlyContinue` suppresses only non-error progress records that would corrupt the inventory's JSON stdout; all command errors remain active. Six combined targeted tests pass. Final Release build exit 0; full CTest 266/266, zero failures, 760.35 seconds.
+
+- **Suppressions and silences re-audited, first direct-fix waves landed** - Added the owner rule that suppressions are last-resort, never grandfathered, and must be re-proven. The clang naming gate previously printed PASS while all 147 translation units failed processing; it now removes only proven driver-only flags from the analysis database, builds generated MOC inputs under the VS developer environment, keeps compiler diagnostics enabled, and rejects processing errors, compiler errors, zero/incomplete TU coverage, and naming findings. Seven PS5.1/PS7 regression cases pass. Two compiler waves cleared 16 unused/dead-constant diagnostics, 3 parse-recovery parameters, all 68 logged/newly-exposed missing aggregate fields, 2 local naming violations, and the nested default-config construction errors without silence. The real non-core gate now passes 150/150 TUs with zero compiler/processing errors and zero naming findings; core's measured 5,271-name style program remains open. All four audited NOLINT sites are gone through direct fixes. Runtime fixes make screenshot evidence deterministic, expose deadline callback failures, stop DHCP capture on query failure, represent dirty-bit query failure as unknown, and fail destructive partition scripts closed on provider/dismount/offline/online/media/ReTrim and same-disk-guard failures while still permitting exact no-volume/no-partition results. Remaining broad suppression classes stay open in R5-IDX-33. Direct-fix wave 1 Release build exit 0 and full CTest 266/266 in 820.46 seconds; non-core clang-health wave 2 Release build exit 0 and full CTest 266/266 in 878.41 seconds.
+
+- **Cppcheck hooks made concurrency-safe** - Full-tree pre-commit execution exposed parallel cppcheck hook batches truncating the same `build/cppcheck_errors.txt`, producing NUL-corrupted output and unexplained failures while hiding actionable findings. The dead-code wrapper had the same defect in its shared generated suppression/findings files and failed with `Stream was not readable`. Both hooks now run serially, all default/generated artifacts are PID-local under the system temp directory, and temporary capture/file-list artifacts are removed after each run. The repaired full-tree hook then exposed and cleared a SearchConfig copy-independence test gap plus an inherited-worker call false-positive through explicit base qualification; serialized all-files cppcheck passes, and the planted-probe dead-code gate passes all 306 source files with zero candidates. Final Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
+
+- **Active-document references now fail closed** - Added a pre-commit, CI, and registered CTest gate for tracked top-level `docs/*.md` references. It rejects missing, untracked, case-mismatched, repository-escaping, and incorrectly relative local targets while keeping `docs/future/` parked and allowing active docs to cite archived or future records. Eleven adversarial tests cover both status buckets, fenced/external references, repository-relative code spans, reference definitions, and vacuous scans. The first live run found and fixed one stale AI-plan path. Gate parity is now 44 custom / 8 generic / 44 CI routes; registered CTest count is 265.
+
+- **First safe clang-tidy style slice** - Converted all three positional `Row` aggregate initializers in `optimize_power_settings_action.cpp` to named designated initializers. The exact `modernize-use-designated-initializers` finding count for that file is now zero; formatter, lizard, target build, and target CTest pass. The full-tree cppcheck run also exposed and then cleared two const-correctness findings in the OST/PST integration slots; targeted build and CTest prove Qt MOC invocation still works. The measured whole-tree style program remains open.
+
+- **Completed APFS/HFS driver plan archived** - Moved the fully realized and certified APFS/HFS driver plan into `docs/archive/`, repointed 23 tracked references, repaired archive-relative source/document links, and replaced an ignored build-tree `hfs_format.h` link with the tracked upstream source archive. The live status owner remains `certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`; the archived plan is its narrative realization record. Future plans remain parked.
+
+- **R5 self-verifying AI review batch resumed** - Ran five pending `src/ai` review units through xhigh Codex with stored blob-bound briefs, independently verified every lead, and fixed 14 confirmed defects in this batch. Package selection no longer authorizes lossy normalized IDs, rewrites unsafe IDs, accepts unbounded queries/metadata, skips malformed later aliases, hides version conflicts, or drops mixed-response rejection counts. Offline downloader run operations now use a process-wide atomic claim. OpenAI model thread-launch failure returns immediately without leaking a worker or impersonating model timeout, and cancellation remains canonical. Chat prompts no longer advertise absent local tools; desktop automation and app-action risk text now match shipped capabilities and access-mode policy; Win32 MCP approvals use a neutral identity. Added one test target and 33-catalog mutation coverage (289 mutants: 282 killed, 7 proven equivalent).
+
+- **Apple capability status made machine-readable** - Added `certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json` as the status owner for 17 HFS+/APFS capability rows and the two physical full-driver track gates. Sixteen rows carry dated certified evidence references; Fusion/Tier2 remains an explicit fail-closed design decision. A new pre-commit and CI gate validates the exact row set, evidence contracts, owner-table mirror, and four release-facing citations. Six registered adversarial tests prove missing rows/evidence, prose drift, missing citations, and a forged Fusion certification all fail. R5-IDX-7 and G21-2 are closed; current gate parity is 44 custom / 8 generic / 44 CI routes.
+
+- **WS3c mutation proofs made permanent** - Added registered mutation catalogs for the genuine-Apple foreign COW allocator and image-resize CLI binding. Real serial rebuild-and-test execution killed all six mutants: relocated generated-ring misclassification, foreign provenance loss, wrong IP queue aging, omitted far-chunk live bitmaps, discarded rebuilt IP free queue, and current-size reuse in `commit-image-resize`. The ratchet now validates 33 catalogs / 289 mutants with 282 killed and 7 proven equivalent; these six have zero survivors.
+
+- **Genuine Apple multi-CIB COW and shrink certified** - Completed APFS follow-ons WS3c and WS3c-2. In-place insert/patch/create-or-replace/delete now adopt a genuine Apple scattered internal pool, allocate CIB/bitmap/CAB/spill copies from its real IP bitmap and two-checkpoint free queue, rebuild that queue, and exclude every authenticated live CAB, CIB, and chunk bitmap. Hermetic genuine-byte fixtures cover the 256 MiB chain and the post-insert 135-chunk/two-CIB state. Host `apfsck -cw` and macOS 26.6 `fsck_apfs -n` passed every xid 4->8 checkpoint before mount and after kernel continuation; kernel read-back matched each operation. The chained foreign result also shrank 18,043,854,848 -> 17,179,869,184 bytes (135 -> 128 chunks, still multi-CIB), with host/Apple fsck and kernel read-back clean. Certification caught and fixed persistent foreign-layout misclassification plus a live far-chunk bitmap collision. The full gate also caught and fixed a generated >1.35 TiB relocated multi-block ring being misrouted into the one-block foreign path. Evidence: `external.apfs-foreign-multicib-cow`.
+
+- **APFS image-resize CLI binding fixed** - `sak_apfs_writer_cli commit-image-resize` parsed `--new-size-bytes` but passed the current `--size-bytes` to the writer, so every image resize became current-to-current and failed. The command and JSON report now use the requested new size. The CLI self-test grows by one APFS block, shrinks back, and requires exact output sizes; mutating the binding back turns that test red.
+
+- **Browser JavaScript complexity debt closed** - Reduced every remaining privileged extension function below the repository's unchanged CCN, parameter and length limits; `scripts/lizard_js_baseline.txt` now has zero debt rows instead of 12. The shipped-worker Node harness grew from 79 to 116 tests and now covers attachment errors, atomic drag/select/media decisions, page-value caps, trustworthy box/screenshot geometry, origin-scoped permissions and HTTP auth, fail-closed occlusion, debugger-event routing, navigation invalidation and one-shot dialog policy. The work also fixed absent drag coordinates becoming `(0,0)`, malformed viewport metrics being reported as a definite out-of-view result, non-finite or silently substituted media values, unbounded full-page capture when device scale/layout was untrustworthy, missing hit-test node ids being treated as unoccluded, and malformed Fetch events throwing without a recorded cause. Every new guard was mutation-drilled separately. The signed extension advanced to 0.3.22 with its pinned id unchanged.
+
+- **Deterministic network-report file test** - Fixed `generateJson_writesValidJsonAndEmitsSignal` comparing a just-written report timestamp against a second independently generated timestamp. The correct implementation failed whenever those calls straddled a one-second boundary; the full Release gate and `ctest --repeat` reproduced it. The test now requires a valid generated timestamp in the written JSON and compares every stable field independently. The previously red repeat passed 100 consecutive runs.
+
+- **Machine-enforced pre-commit to CI gate parity** - Added `scripts/check_gate_parity.ps1` and a registered four-case regression suite. The live audit disproved R5's prose closure: `check_test_registration.ps1` had no CI route, CI's inline tool list was weaker than `check_tool_preflight.ps1` and omitted Node/Git, and eight generic pre-commit hygiene hooks had no CI twin. Build CI now installs pinned pre-commit 4.5.1, runs the same tool preflight and test-registration scripts, executes all eight generic hooks whole-tree through `check_repository_hygiene.ps1`, and runs the parity checker itself. The checker also verifies cppcheck's documented indirect wrapper and full-history gitleaks with `fetch-depth: 0`; tests delete one custom, built-in, and secret-history route in turn and require rejection.
+
+- **Reliable startup performance gate** - Replaced `check_startup_budget.ps1`'s redirected `Start-Process -PassThru` path and shared fixed temp file with the cross-PowerShell `Invoke-CapturedProcess` seam. The gate now drains both streams, records a real integer exit code, terminates timeouts, reports stderr, and cannot collide with a concurrent run. Added a manual pre-commit route and registered `test_startup_budget`: it statically forbids `Start-Process`, requires the shared seam, proves a 1 ms budget turns red, then boots the real Release app under a 30 second control budget.
+
+- **Reverse CI/local parity and portable packaging repair** - Added manual routes for every CI grading script and extended `check_gate_parity.ps1` to enforce both directions (42 custom scripts, 8 generic hooks, 42 CI routes). Local execution then found two real release failures: DbgHelp, a serviced Windows System32 dependency deliberately linked by CrashReporter, was misclassified as a missing redistributable DLL; and `stage_portable_release.ps1` passed child named parameters through array splatting, which binds positionally, so the package path became an invalid vcpkg triplet. DbgHelp is now explicit system policy with a built-app regression; stage helper uses hashtable splatting with a real package-staging regression. Local CI rehearsal now passes stage, archive, clean static smoke, portable startup E2E, release readiness, and full-history gitleaks. CI-matched curated coverage was refreshed to 5,179/7,745 lines (66.87%). Signed-release route resolves current `VERSION` and fails closed until Azure signing.
+
+- **Fresh-clone rehearsal made executable** - `rehearse_ci_locally.ps1 -FreshClone` no longer turns an absent `VCPKG_ROOT` into `/scripts/buildsystems/vcpkg.cmake` and then tries to build an unconfigured tree. It resolves explicit roots authoritatively, otherwise uses environment/existing Qt and vcpkg installs, verifies the toolchain file, and stops before build on clone/configure failure. A registered fast path test proves automatic resolution and invalid explicit-root refusal. The full committed-only scratch clone then configured and built all application/test targets successfully; full-history gitleaks remained clean.
+
+- **R5 dead-source cleanup and enforceable scanner** - Removed 16 owner-approved dead source functions after caller, history and replacement-path adjudication, plus the helper/style constants they alone kept alive. The set covered obsolete APFS pre-COW allocation/checksum helpers, never-wired initial AI timeline/report/workflow utilities, a vCard date formatter no exporter used, an unused filesystem capability factory, and a WiFi header-state getter. `scripts/check_dead_code.ps1` now runs cppcheck `unusedFunction` single-process, self-plants a dead probe so a disabled checker cannot pass, and rejects only source definitions whose exact identifier has no declaration, caller, connect expression or test reference. The hook blocks changed `src/*.cpp`; CI runs all 306 first-party source files. A planted production function turns it red, and the cleaned tree reports zero source candidates. The 17 header-only candidates were then individually checked against live references, backing-state use, tests, feature flows, and introducing history; all were dead and removed. This included a never-populated restore-app wizard cache, while the working page-owned app-install flow remains intact. Exact-reference re-scan reports zero for the full header set.
+
+- **Browser wait-for and JavaScript ratchet hardening** - Extracted `waitForRequest` from the CDP polling shell so exactly-one condition selection and bounded `timeout_ms`/`idle_ms` are pure and tested; `handleWaitFor` is now below the project complexity limit. A second pass found lizard measuring the 21-line `downloadOptions` as 159 lines because its JavaScript tokenizer swallowed seven later top-level functions after a rooted-path regex. The equivalent character checks remove that trigger, and `run_lizard.py` now rejects any JavaScript function span containing another top-level definition so swallowed code cannot pass unmeasured. The pre-commit hook itself was also filtering to C/C++ and printed `Skipped` for `background.js`; it now includes JavaScript in both its type and filename filters, with a structural regression test and an executed-hook proof. The JS baseline shrank 14 -> 12 and the signed extension advanced to 0.3.21 with the pinned id unchanged. Earlier work also fixed two false-green paths: scoped scans never checked for stale baseline rows, and an explicit missing JS path exited 0 after analyzing nothing. Paths are canonical repo-relative keys, scoped runs prune rows for files they actually scanned, and every explicit path must be a real source. The registered Python suite now pins six contracts, the shipped-worker Node suite remains 79/79, and test registration covers `test_*.py` alongside C++, PowerShell and JavaScript.
+
+- **Doc sweep completed: 15 new findings, 18 confirmed, 11 cleared** - The claim sweep that hit the account's weekly limit was finished once it reset: the two batches that never ran (release-readiness, field-notes) plus an independent re-check of all 43 findings that had been reported but never verified. Eleven were CLEARED - the original finder was wrong - which is why the second pass exists; two of those were misidentified line numbers, since the file grew +93 lines mid-sweep and findings had to be re-located by content. Corrected: `PRODUCTION_GRADE_AUDIT` described the gitleaks allowlist as "exact false-positive fingerprints" when entry 4 is an accepted REAL credential that `.gitleaksignore` itself calls "not" a false positive; `RELEASE_READINESS` closed its APFS UI/queue/apply list with "only" while the APFS Container dialog also reaches snapshot create/delete/revert and container resize (certified under A1-A8, so doc rot rather than a policy breach - but a readiness doc understating which destructive operations are UI-reachable is wrong in the direction that matters); three driver-plan rows described dialogs that commit 0ec54a64 removed, though the capabilities remain wired through the operation types, script builder and CLI; the audit named seven APFS writer APIs of which five do not exist, recorded 136/136 CTest against a 254-test suite, and cited metadata block 6 where the runner's default is 199; `RELEASE_READINESS` recorded 142/142 CTest and a 0.9.1.9 package proof against `VERSION` 0.9.2.0; the QA runbook expected the assistant to refuse SUPERAntiSpyware actions its own manifest marks `supported: true`; `APFS_HFS_FULL_DRIVER_WRITE_PLAN` linked two archived docs and anchored the HFS writer to a TU containing zero occurrences of it; and `e2fsprogs/BUILD-NOTES.md` still said ext shrink was blocked pending a certification path that exists and ran. Editing that last file tripped the bundled-tool manifest hash gate - the gate working as designed - so the recorded sha256 was re-derived from the edited bytes.
+
+- **Doc-accuracy gate now checks the remediation tally** - `scripts/check_doc_accuracy.ps1` verified exactly one file (`tests/README.md`). It now also verifies that `docs/CODEX_REVIEW_5_REMEDIATION.md`'s own "N [x] / M [~] / K [ ]" summary line matches the markers actually in that file. That line is the first thing a reader uses to judge how much work is left, and it is hand-carried: on 2026-08-30 it went stale twice in one session - once when an item closed, once when one was reopened - while its date stamp stayed current. Drilled 4/4 red, including the realistic case (a marker flipped without the tally being re-run).
+- **Doc-accuracy sweep: measured what the docs asserted, and corrected what the tree contradicted** - Two recorded backlog figures were re-measured and both were wrong. The clang-tidy backlog is 5,624 unique findings across 301 first-party translation units, not the "~995" recorded; the cppcheck suppressions file holds 10 file-level entries, not "26". All 26 inline cppcheck suppressions were re-checked by running cppcheck with inline suppressions disabled: 5 suppress nothing and are removed. Triaging every non-style cppcheck finding (13) and every bug-shaped clang-tidy finding (46) with an adversarial second pass found ZERO real defects - including the flagged "swapped KEK/plaintext-key" in the APFS FileVault wrap path, which is correct. It did find dead code: `FileExplorerTransferEngine::removeReplacedDestination` was declared, defined, documented and never called (it implements the pre-B8-06 replace design), and the `replace_destination` doc comment still described that removed design; both fixed. The parameter-name class (40 cppcheck `funcArgNamesDifferent` + 51 clang-tidy `inconsistent-declaration-parameter-name`, all header camelCase vs definition snake_case) was fixed across 9 headers, taking the whole-project cppcheck count from 84 to 48 - one substantively, since `pst_parser.h` declared `readContentsTable(folder_nid)` while the definition and its only caller both say `contents_nid`.
+- **README and docs: corrected claims the code contradicts** - The APFS capability cap is 24 TiB (`kMaximumApfsGeneratedContainerBytes`, and what `apfsCapacityRangeText()` prints), not the 32 TiB asserted in 9 places across 6 docs; 32 TiB is `kApfsInPlaceCommitMaxBytes`, an internal ceiling deliberately set above the certified range and documented as unreachable, and the two lines that name that constant were left alone. README also claimed the OST converter has "8 output formats including IMAP cloud upload" with a supported-formats table listing PST/EML/MSG/MBOX/DBX/HTML/PDF/IMAP, plus PST splitting and XOAUTH2 - none of which exists; the converter produces MBOX only. It claimed MD5 duplicate detection where the worker uses SHA-256 and explicitly rejects MD5, a 142-test badge against 254 registered tests, a 10-tool network suite against 11 registered tabs, and that APFS writes are gated to S.A.K.-generated containers with foreign media fail-closed (the bridge gates on container SIZE and write-enables known-size foreign media). A certification record was citing evidence that says something else: four docs state the APFS physical file proof read `/Fonts/00TT.TTF` at 25056 bytes with SHA-256 `d075a134...`, while the `report.json` they cite records `/.fseventsd/0000000000d34037` at 34163 bytes with SHA-256 `d5b58364...` - - and that file and hash are the HFS+ proof's, recorded against HFS+ in `hfs-read-00tt.json` in the same evidence directory, so an HFS+ read had been attributed to APFS. `/Fonts/00TT.TTF` does exist on the APFS partition (the operator copied files to both Apple partitions) but was never READ there with a recorded hash, and the `/Fonts` export figures appear in no artifact at all. The APFS proof selects its subject by bounded candidate search, so the final run picked `/.fseventsd` instead. Both proofs record Passed, so the certification stands and the figures were unsupported; corrected in all four with the lesson attached. `tools/filesystem/README.md` listed shipped capabilities as blocked six times (APFS write, HFS+ file writes, HFS+ attribute-value writes) - all three ship, and in a file about bundled third-party tools the point is that they needed no third-party tool at all. Also corrected: `CODING_STANDARDS.md` said portable mode is detected by `portable.ini`, which nothing reads (it is a writable `data/` directory beside the exe); `AGENTS.md` said the commit-time secret scan is regex-only, which stopped being true when the `gitleaks-staged` hook was added; `CONTRIBUTING.md` credited the naming gate with catching single-letter variables, which `readability-identifier-length` (disabled) would have done; `browser/README.md` and `register_native_host.ps1` still named a `sak_win32_mcp` target and exe that no longer exist, so the registration script's default path could only ever reach its not-found error.
+
+- **Naming gate: two static regex constants renamed** - `optimize_power_settings_action.cpp` carried `guid_re` and `hex_re`, which the readability-identifier-naming gate requires to be `kGuidRe` / `kHexRe` (the `k` prefix is reserved for constexpr/static/global constants and these are function-local statics). Unrelated to the explorer work; found while running the gates and fixed rather than left.
+
+- **File Management Explorer - closed the last thirteen plan items, six real defects found** - Drove `docs/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md` to zero (7 open + 6 partial -> 0) and archived it. Two items were stale doc rather than open work: the local-file Properties lane was already covered end to end, and progress/cancel had shipped as a full Files StatusCenter clone (per-card byte/item progress, 100ms throttled reporting with derived speeds, cancel token) with four tests. Four GUI lanes were marked "needs a live/local target"; none did, since a QTemporaryDir is a local target and the Add Raw/Image dialog synthesizes a target for any file system, with the APFS range gate driven by the image file's own size. Fixes: a raw target rendered its file system in two different spellings at once (`applyCapabilities` passed the normalized lowercase name to `displayFileSystem`, so the Safety pane and blocker text said "xfs" while the same target's label said "XFS"); a press on empty space in the inactive pane activated nothing, so the next command ran against the other pane's folder, and the pane losing focus kept its selection (Files ShellPanesPage Pane_PointerPressed / Pane_GotFocus); the ExtraLarge Details/List/Columns icon was 48px where upstream `LayoutSizeKindHelper` returns `Constants.ShellIconSizes.Large` = 32, filling the 48px row edge to edge; and sidebar rows carried a second text line that Qt's item view never draws, collapsing into an ellipsis so every badge read as truncated (now single-line per `SidebarStyles.xaml`, with the detail in the tooltip). The visual QA pass also found bad EVIDENCE rather than a bad product: the baseline screenshot captures showed clipped status text the shipped UI never had, because they were grabbed before the first listing landed. New: `scripts/check_files_icon_parity.ps1` re-derives all 26 bundled Files icons from an upstream clone and compares each SVG path to the source XAML `OutlineIconData` (26/26 byte-identical, against a clone HEAD newer than the manifest's recorded commit) - the repeatable script the plan's icon import rules required and lacked. New tests: `previewPaneShowsLocalTextFileContents`, `safetyPaneNamesBlockerForEachRawFileSystem`, `openFolderInSecondPaneListsThatFolderInPaneB`, `commandsActOnTheActivePaneOnly`, `explorerIconsAndShellFollowTheApplicationPalette`, `commandBarIconsAndLabelsAreConsistent`, `statusRowLabelsRenderWithoutClipping`, `sidebarTargetRowsAreSingleLineWithTheDetailInTheTooltip`, `targetKeepsOneSpellingOfItsFileSystem`. Twelve mutation drills, all RED. Screenshot artifacts captured on the native platform (the offscreen plugin ships no fonts, so its captures are unreadable tofu): desktop, narrow, desktop-light, desktop-dark, dual-pane, details-pane, icon-comparison.
+
+- **File Management Explorer functional Files clone - C8 certification (raw + physical + Apple kernel + A/B)** - Certified the finished clone end to end (record: `docs/archive/FILE_EXPLORER_FILES_CLONE_PLAN.md` section 13). Closed the last four parity-audit gaps (create-file command, folder sort placement radios, favorites reorder dialog, sidebar compact rail) with tests. Raw proof: the full explorer transfer matrix ran against foreign `mkapfs` APFS images (`apfsck -cw` EXIT 0 post-mutation) and against an Apple `hdiutil`-created raw HFS+ image that a live Mac then kernel-mounted with `fsck_hfs` "appears to be OK" EXIT 0. Physical destructive proof: a disposable 8TB USB drive's data partition was retyped to the Apple APFS GPT type, a foreign 8 GiB container written to the raw partition device, and the matrix run directly against the `GLOBALROOT` partition path through the production raw-device rule - device readback passed `apfsck -cw` EXIT 0 and the mutated container kernel-mounted on macOS 15.7.7 with `fsck_apfs` EXIT 0 and byte-exact file readback. A screenshot A/B pass against Files 4.1.1 on a virtual monitor (same fixture, same window rect) matched row order and shell anatomy and exposed four real defects that offscreen tests could not catch, all fixed with regressions: an application-wide Ctrl+L log-toggle shortcut made the explorer's Files EditPath binding ambiguous so Qt fired neither (log toggle moved to Ctrl+Shift+L); the adaptive narrow-width collapse never restored the sidebar/info pane on widening; panes started unsorted instead of the Files Name-ascending default; and committing the omnibar path editor with Enter left the editable field active instead of restoring the breadcrumb. Behavior tests also fixed a dead-hotkey defect earlier in the wave (persistent-flyout menu actions shadowing panel shortcuts). Explorer sweep 6/6 green; panel suite 76 tests.
+- **File Management Explorer functional Files clone - C4-C7 (context menus, layout fidelity, omnibar modes, status center)** - Continued the Files functional clone (plan: `docs/archive/FILE_EXPLORER_FILES_CLONE_PLAN.md`), every feature derived from the Files source with citations and working identically on mounted local volumes and non-mounted raw APFS/HFS+ targets. **C4 context menus + archives:** background and item context menus rebuilt to the exact `ContentPageContextFlyoutFactory` order (grouped submenus, primary icon row, LOCAL-ONLY and EXCLUDED entries documented), zip Compress ("Create {name}.zip" with the Files selection-naming rule) and all four Extract legs (dialog, here, smart single-root flatten, to-subfolder) with raw targets staged through the certified readers/writers, a Files-anatomy Properties window on Alt+Enter, Remove tags, and Edit in Notepad / Open in terminal (LOCAL-ONLY). **C5 layout fidelity:** the Files per-layout size-kind tables (Details/List/Cards/Grid/Columns row heights and icon sizes with per-layout sliders), group-by with section headers (None/Name/Date Y-M-D/Size/Type/Tags/Path, ascending/descending), the item-checkboxes setting, Columns-blade polish (folder chevrons, blade widths), undo/redo through a storage-history journal (rename/move/copy/create inverse operations; raw deletes stay permanent like Files), Flatten folder, and sidebar drag-pin/reorder dialog/eject plus drag-to-tag. **C6 omnibar modes + settings:** the three-mode omnibar inline (path mode with breadcrumb crumb dropdowns, command-palette mode on Ctrl+Shift+P with fuzzy matching and hotkey chips, search mode on Ctrl+F with live results and recent searches), the toolbar filter header, and the explorer settings surface. **C7 status center (Files StatusCenter clone):** a full card model with the Files two-card lifecycle (in-progress card with live progress swapped for a terminal Success/Failed/Canceled card), discovery ladder ("Discovering items..." / "Discovered N items" / "Processing items..."), 100 ms-sampled byte/item speeds with the collapsed progress bar and expanded speed graph, per-card cancel, the "N of M processed" footer switch per operation family, and the toolbar button with progress ring plus the Files info-badge state matrix; every explorer file operation now runs off the GUI thread - paste copy/move, same-target move, Copy Out/Export, Delete/Recycle, and zip compress/extract all run on workers (a shared transfer engine serves the async worker and the synchronous undo/cross-pane/staging paths; archive cards are indeterminate because the zip codec reports no progress), byte-level progress streams through a bridge transfer observer on local streams and raw reads with whole-file deltas on certified APFS/HFS+ writes (certified engines untouched), a canceled copy removes its partial destination, collisions resolve up front on the GUI thread like the Files pre-operation conflict dialog, undo/redo post their own terminal cards, and the Files "Show the status center" visibility setting (Always / During ongoing operations) landed in the settings dialog. Raw proof: observer byte-delta and cancel assertions run inside the env-gated foreign-`mkapfs` APFS transfer matrix, and the C8 rerun of that matrix left both mutated images `apfsck -cw` EXIT 0 clean.
+- **File Management Explorer functional Files clone - C1-C3 (shell, interactions, transfer engine)** - Rebuilt the explorer as a functional clone of files-community/Files derived from the Files source (plan: `docs/archive/FILE_EXPLORER_FILES_CLONE_PLAN.md`), with every file operation working identically on mounted local volumes and non-mounted raw APFS/HFS+ targets through the bridge. **C1 shell:** full-width address row with history flyouts, exact command-toolbar order with New/Selection/Sort/Layout flyouts, in-column status bar counts, tab-actions button + full tab context menu, settings-gated sidebar sections, and an InfoPane-clone details/preview pane (segmented Details|Preview pill, aspect-driven orientation, persisted selected tab). **C2 interactions:** the full Files hotkey map (corrected layout hotkeys, Ctrl+Shift+S dual pane, Ctrl+Space toggle-select, Ctrl+Alt+C quoted paths, Ctrl+= / Ctrl+- zoom, tab/pane accelerators), inline rename everywhere (F2, slow double-click, menu; extension-excluded base-name selection, live restricted-character stripping, reserved-name blocking on local only), the Enter activation matrix (Ctrl+Enter new tabs, Ctrl+Shift+Enter other pane, Alt+Enter properties), mouse4/5 back-forward, middle-click folder to new tab, double-click-empty Up, Ctrl+wheel zoom, and header auto-fit. **C3 transfer engine:** cut with dimmed rows and move-on-paste (same-target moves are real renameEntry reparents through the certified COW writers - directories included; cross-target moves copy then delete only after a whole landing), paste-into-selection (Ctrl+Shift+V), same-folder duplicate with Files incremental naming, the Generate/Replace/Skip conflict dialog with apply-to-all (Replace removes the occupying entry first so raw and local semantics match), recursive folder transfer through new bridge `importDirectoryFromHost`/`deleteDirectoryTree` seams, raw-to-raw transfers staged through a scratch host folder, Delete to the Windows Recycle Bin on local volumes with Shift+Del permanent (raw targets stay permanent-only; shared `sendPathToRecycleBin` helper extracted from CleanupWorker), drag and drop with the Files modifier cascade (Ctrl copy, Shift move, unmodified same-target move / cross copy), 1300 ms spring-open, and lazy drag-out materialization for raw sources, all routed through one per-item transfer kernel. The folder-into-own-subtree guard applies to paste, move, and cross-pane copy. **Raw proof (C3e):** an env-gated bridge test drove every transfer leg against two foreign `mkapfs`-created APFS images - file/dir import, byte-exact export, file and whole-directory COW moves, staged cross-container dir transfer, depth-first raw tree delete - and apfsprogs `apfsck -cw` returned EXIT 0 on both mutated images; the bridge now derives its raw-target opt-in from the engine's own classification (`PartitionApfsWriter::acceptsRawDeviceTargetPath`) so the two can never drift. GUI suites run fully headless (offscreen platform plugin deployed for tests) and this work fixed a real rename bug (editor Return/Escape bubbling into the view activation matrix could open the preview dialog mid-rename).
+- **File Management Explorer Files-community UI refactor (R1-R6)** - Rebuilt the explorer shell to the Files-community anatomy after review flagged the old chrome as unlike Files. Layout order is now tab strip on top, a navigation/address row (sidebar toggle, back/forward/up/refresh, breadcrumb address bar, search box, command palette), a subtle icon command bar (labeled New Folder/Write File, icon-only Open/Copy Path/Rename/Delete, right-aligned View + details-pane toggle), a sectioned sidebar with per-row icons and a Scan Disks / Add Raw-Image footer, and a full-width bottom status row (also fixing the previously invisible white-on-light summary text). The address bar is a clickable breadcrumb: one button per path segment with chevron separators, an overflow menu for deep paths, and click-empty-area inline path editing over the same `fileExplorerPathEdit` (Escape or focus loss returns to the breadcrumb). A new explorer-scoped style sheet (`file_explorer_style.cpp`) drives all chrome from `palette()` references so one sheet serves light and dark; a palette-tinting `QIconEngine` recolors every explorer SVG at paint time so icons stay legible in dark mode; and new hand-drawn Fluent-style glyphs (`resources/icons/fluent/`) cover navigation, sidebar rows (home/drive/image/shield/tag/warning), and file rows (folder/file/image via an injected, GUI-free model `IconProvider`). The details view drops grid lines and the vertical header and defaults to the Files-style column set (Name/Type/Size/Modified/Tags) with Created/ID/Attributes/Path opt-in through a new header context menu (persisted). New GUI tests cover the breadcrumb (mirroring, ancestor navigation, overflow, edit-mode swap), search-box Enter prefill, the first-run column set, the icon provider, and an extended shell-region audit.
+- **File Management Explorer M7-M12 completion + foreign-media and HFS+ command-route live certification** - Finished the Files-like plan end to end. **Transfers (M9):** clipboard Copy/Paste import of local files into any writable target (typed WRITE confirmation naming the target identity for raw destinations, identity validated immediately before the write), recursive folder copy-out to a local destination (`FileManagementFileSystemBridge::exportDirectoryToHost`, per-file SHA-256, symlink skip, depth/entry bounds), cross-pane Copy to Other Pane (F6) and Compare Panes, and raw-source-to-local copy with a fail-closed read-window size check. **Search (M10):** the search button opens a scoped omnibar search dialog with a target badge, a persisted 20-entry query history, a deduplicated result list, and Clear / Open Result / Open Location routing driven by an `AdvancedSearchWorker` under the current folder. **Detail (M7):** the Properties pane shows file-system-specific storage detail where the reader provides it (APFS Object ID + compressed/sparse flags, HFS+ Catalog ID + resource-fork size), and the Evidence pane links live-certification reports whose target path matches. **Tags/polish (M11):** an in-row Tags column backed by a decoupled provider callback, plus favorites/recent/tags persistence tests. **Foreign-media writes:** the bridge now derives an APFS container's size from its block-0 superblock and write-enables any APFS raw/image target of a known size in the certified engine range - S.A.K.-generated **and** real Apple-created (foreign) media alike - with honest blockers for unknown-size/out-of-range targets; the certified in-place COW engine already handles foreign volumes (macOS-kernel cert commits `8b1ac27`/`efaf07e`/`e851740`). **Live certification (all 2026-07-12, physical + WSL):** foreign-APFS destructive command route on a 7.45 TB real Apple container (create/write/byte-exact read-back/dup-finder/adv-search/delete/read-after-delete/delete-dir all Passed, then Apple-derived `apfsck -cw` EXIT 0 clean); HFS+ destructive command route on a 256 MiB Apple-HFS partition (add rename/read-after-rename, `fsck_hfs` and probe `--hfs-check` Passed before and after); ext4 read-only browse + byte-exact sample read; XFS/Btrfs metadata-only read-only blockers. **Robustness fixes (from independent review):** sidebar rebuilds no longer reset navigation to the target root; dual-pane arrangement now round-trips through the tab session; a stale offline favorite is removable; `copyFileToHost` writes through `QSaveFile` (atomic commit surfaces flush errors, a failed copy never truncates an existing destination) and no longer mislabels an exactly-cap-sized raw source as "capped". New/updated tests: cross-pane and paste enablement matrices, clipboard round trip, folder export, evidence-report matching, Tags column, favorites/recent persistence, and the six review-fix regressions.
+## v0.9.2.0 (2026-06-30)
+
+- **Full driver-level APFS + HFS+/HFSX write - Apple-certified (milestones A1-A8, H1-H8, I1, I2)** - S.A.K.'s APFS and HFS+/HFSX write support reached full driver-level parity, each capability proven by Apple's own validators (`fsck_apfs` / `fsck_hfs`) and macOS-kernel mount in the qemu/KVM macOS Sequoia VMs, and the two track gates (A8, H8) proven by physical-USB destructive + crash-interruption + rollback on disposable media (2026-06-28). **APFS (A1-A8):** multi-CIB / CAB space manager to a 24 TiB cap; crash-safe in-place copy-on-write checkpoint mutation of files and directories (create/delete/write/rename/cross-directory move/object-id-preserving byte-range patch); snapshots (create/delete/revert); multi-volume containers; inline zlib `com.apple.decmpfs` compression; credential-gated FileVault encryption (the secret is never persisted and never appears in generated script text); and file clones / sparse files / hard-links / xattr-ACL / in-chunk container resize. **HFS+/HFSX (H1-H8):** streaming catalog, attributes, and extents-overflow B-trees of arbitrary depth/width with split + underflow merge/rebalance; the fragmenting allocator with multi-leaf extents; hard-links, symlinks, and complex/hard-linked delete; inline/broad attribute growth with overflow records; little- and big-endian journal replay; the embedded HFS-wrapper write edge; and decmpfs read+write of all types. **I1 (production wiring):** every certified capability is reachable through the Partition Manager queue -> safety validation -> Apply review -> exact-target identity -> explicit confirmation -> operation report (16/16), with the FileVault secret materialized to an owner-scoped temp credential file at execution and shred-deleted, never on a command line. **I2 (docs/release gate):** `certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json` is the machine-readable status owner and `docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` its narrative realization record; the cross-filesystem plan, File Explorer plan, README, and certification/readiness docs are synced to it, with every claim bounded to its evidence ID. **Fail-closed by design (not defects):** APFS Fusion/Tier2 multi-device is out of scope (no certification rig); encrypted volumes require the user credential; sealed/signed system-volume writes need a typed seal-invalidation confirmation; APFS container shrink and chunk-adding grow are documented follow-ons; arbitrary non-generated Apple-media mutation stays fail-closed at the Apply layer (the COW engine is certified, the production exposure is generated-layout-only); XFS/Btrfs stay read-only metadata. This entry supersedes the earlier in-development "remains blocked" / "64-128 MiB one-spaceman-chunk" / "Apple-native validation pending" notes in the bullets below, which were accurate at the time each was written.
 - **File Management cross-filesystem target bridge and explorer** - Added a shared File Management target bridge for mounted volumes, scanned disk/partition inventory targets, and manual raw/image targets. The File Organizer now exposes the selected file-system target and blocks raw/non-native generic moves with explicit safety text; Duplicate Finder can scan supported ext2/ext3/ext4, HFS+/HFSX, and APFS raw/image targets read-only through existing S.A.K. readers; Advanced Search can search supported raw/image targets; and a new File Explorer tab provides target selection, path navigation, directory listing, copy path, text preview, and explicit create folder/write file/rename/delete actions for supported HFS+/HFSX and 64-128 MiB one-spaceman-chunk generated-layout APFS targets. Added the destructive `file_management_live_certifier` lane plus `scripts/run_file_management_live_filesystem_certification.ps1`; the public script now captures native certifier stderr under relaxed native-command error handling so informational worker logs do not false-fail the run. Current live proof covers APFS raw create/write/read/duplicate-search/advanced-search/delete/delete-folder on JMicron serial `DD56419883A5B`, Disk 2 Partition 2, and HFS+ raw create/write/read/duplicate-search/advanced-search/rename/delete/delete-folder on Best Buy serial `DD564198838A8`, Disk 3 Partition 3.
 - **File Management Explorer Files-like foundation** - Added `FileExplorerTargetId`, normalized explorer locations, pane/tab state, view settings, selection summaries, and a UI-independent command registry. Target identity now requires bridge-provided explicit IDs and never derives synthetic IDs. The registry centralizes command text, shortcuts, destructive/write metadata, feature gates for tabs and dual pane, selection requirements, target capability checks, and exact raw write blockers.
 - **File Management Explorer shell refactor** - Replaced the target-combo form layout with a Files-inspired shell: grouped sidebar target navigation, command bar, back/forward/up path row, editable path omnibar, model/view details table, bottom status strip, table/sidebar context menus, command shortcuts, and persistent Preview/Properties/Safety/Evidence tabs. Existing open, copy path, preview, create folder, write file, rename, and delete actions remain wired, while button/menu enabled states, status blockers, tooltips, and safety-pane text now use the shared command registry. The shell is now split into dedicated Qt widgets for sidebar, command bar, omnibar, main pane, and details pane so later M5-M12 work can evolve each area without re-growing `FileManagementExplorerPanel`. The sidebar now exposes Home, Favorites, This PC, Mounted Volumes, Disks and Partitions, Raw Images, Recent, and Certification Targets, with persisted favorites/recent/last-target state, target properties, text badges, and stale pane-target write guards. The details table now supports safe multi-select: rename/open/preview/properties stay single-item, while copy path and delete handle multiple selected items. Added `test_file_management_explorer_panel`, `test_file_explorer_item_model`, and expanded `test_file_explorer_types` coverage for shell creation, responsive collapse, sidebar groups, target selection, command blockers, omnibar load, context-menu actions, target-type command states, extended selection, and shortcut smoke coverage.
 - **File Management Explorer details view hardening** - Added `FileExplorerSortFilterModel` and `FileExplorerDetailsView` for folder-first proxy sorting/filtering, attributes/capability summary column, persisted column widths/order, loading/empty/error state text, stale async listing result discard, and `QtConcurrent` directory listing so large local/raw target folders do not block the UI thread. GUI coverage now includes pane states, column persistence, and the open route for directory activation.
 - **File Management Explorer Files parity correction** - Added a functional command-bar View/layout picker that switches Details/List/Grid/Cards/Adaptive views, exposes a Columns view with current-folder and lazy selected-directory child preview columns, controls item size, hidden items, and file-extension display, and persists view settings per target/path through the new File Explorer settings path only. View modes share one model, one selection model, and one command registry; unsupported future commands such as dual pane and new tab still show product-grade blockers. Search and command buttons execute real current-folder filtering and a registry-backed command palette instead of nonfunctional status-only handlers. The Files-like plan now explicitly moves deeper multi-level Columns polish, tabs/dual pane, and richer search ahead of preview polish so the explorer does not drift into a generic table UI.
 - **File Management Explorer Files icon registry** - Added a `FileExplorerIconRegistry` backed by bundled MIT Files Community SVG assets for mapped command, layout, pane, Open, Copy Path, New Folder, Write File, Rename, Delete, Refresh, and dual-pane surfaces. The imported icons are traced to `files-community/Files` commit `8ea6d30` in `resources/icons/files/manifest.json`, registered in `THIRD_PARTY_LICENSES.md`, loaded through `resources/icons.qrc`, and covered by GUI tests that verify registry metadata and non-null toolbar/menu icons.
+- **File Management Explorer daily-use completion (M7/M8/M10/M11) + APFS live command-route certification** - Closed the remaining Files-like daily-use gaps: the command palette now groups commands into registry-defined Navigation/File/View/Pane/Target/Safety sections; dual pane gained a stacked (horizontal) split, per-pane view-mode re-application, and an active-pane status summary; explorer tabs persist across app restarts through the new `FileExplorerSessionStore`; the Properties/Safety panes now label an entry's identifier per file system (Object ID / Catalog ID / Inode) and state the real per-file-system reason writes are blocked (`FileManagementFileSystemBridge::identifierLabel`/`safetyNotes`); favorites can be reordered and show an offline row when disconnected, and the recent list has a clear command; app-level item tags ship through `FileExplorerTagStore` (tag/untag, sidebar Tags group, per-folder tag filter) stored only as S.A.K. metadata, never in raw HFS/APFS; and a new Copy Out command (`FileManagementFileSystemBridge::copyFileToHost`) exports a selected file to a local destination with a SHA-256 read-back on a worker thread. Certified on physical hardware: read/browse/sample-read plus Duplicate Finder and Advanced Search passed against two real Apple APFS drives, and both correctly fail closed on writes with the arbitrary-media blocker (2026-07-11); and the full destructive command-route lane (create-directory / write-file / byte-exact read-after-write / delete-file / read-after-delete / delete-directory) passed on a 128 MiB S.A.K.-generated APFS container on a disposable USB flash (2026-07-12, `file_management_live_certifier --destructive`, EXIT 0). New unit/GUI coverage: `test_file_explorer_session_store`, `test_file_explorer_tag_store`, plus registry/panel/model/bridge tests for groups, stacked split, stale favorites, tag filtering, fs-specific labels, and copy-out.
 - **Partition Manager APFS generated-layout size guard** - Apple kernel validation in the Sonoma recovery VM rejected the previous 51 GB generated APFS raw target with `spaceman_sanity_check` checkpoint/container corruption even though the Windows-side verifier accepted it. Generated APFS format, repair, File Management writes, and Apply scripts now fail closed outside the certified one-spaceman-chunk 64-128 MiB envelope; the detector now ignores inconsistent APFS spaceman free-space counters when chunk/CIB geometry does not cover the container. Windows destructive APFS raw-format proof now passes on the 128 MiB JMicron slice at `artifacts/file-management-live-certification/disk2-apfs-128mb-raw-format/report.json`; Apple-native validation of that small slice remains pending.
 - **Windows raw-device write alignment** - The shared raw-device `QIODevice` now handles unaligned logical writes with aligned read/patch/write cycles and flushes writable raw handles on close, fixing physical HFS+ catalog/data writes that previously failed on `GLOBALROOT` targets with `The parameter is incorrect`.
 
@@ -31,7 +1404,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 - **Partition Manager HFS+ decmpfs compressed-file round trips** - `readFile` now transparently decompresses `com.apple.decmpfs` type-3 (inline zlib or raw-marker) and type-4 (resource-fork chunked zlib) compressed files with read-cap enforcement, and the new `replaceCompressedFileContent` writer API plus `replace-compressed-image` CLI command rewrite compressed content in the same compression type behind the explicit compressed-file mutation opt-in with decompression read-back proof. Type-4 resource forks are rebuilt with the documented 64 KiB chunk table and resource-map trailer layout. decmpfs types 7/8 (lzvn) and 11/12 (lzfse) fail closed with structured blockers. Compressed replacement is exposed at the core-API and helper-CLI level only (same exposure model as generated-image APFS root-file writes); it is not a Partition Manager panel action until a dedicated UI milestone adds its own queue operation, safety validation, and Apply review. Coverage: unit round trips for both types plus unsupported-type and no-opt-in blockers, and a CLI fail-closed proof against non-compressed targets.
 - **Partition Manager APFS snapshot/encryption structural pinning** - The generated-layout verifier used by every generated-layout APFS mutation route now pins snapshot, revert, and encryption state to zero: the volume superblock must carry no snapshot-metadata tree OID, no revert XID/superblock OID, zero snapshots, and zero volume flags, and both the container and volume object maps must carry no snapshot or pending-revert state. Tampered images fail closed with explicit snapshot/revert/encryption blockers. The read-only detector's APFS object-map snapshot field offsets were corrected to the on-disk `omap_phys` layout (`om_tree_oid` 0x30, snapshot tree OID 0x38, most-recent snapshot XID 0x40, pending revert 0x48/0x50), so snapshot-risk gating now reads the real fields. Coverage: unit tamper tests for all five pinned states; large physical raw APFS destructive lane evidence is retained as Windows-side only until rerun inside the 64-128 MiB one-spaceman-chunk envelope and Apple-validated.
 - **Partition Manager panel UX** - Disk inventory no longer starts on panel display. The ribbon action starts as **Scan Disks**, changes to **Refresh Disks** after the first scan, and routes disk-count/layout summaries through the main status bar. Sidebar actions now enable only for valid disk, partition, or unallocated selections; Windows-native file-system actions are disabled with clear reasons on non-native HFS+/HFSX/APFS/XFS/Btrfs partitions while Inspect/Browse/Check Non-Windows actions stay available where supported; table and disk-map right-click menus resolve the selected disk, partition, or unallocated target without duplicating ribbon/Pending Operations commands; the disk map highlights a selected whole disk row with the matching layout color; and explicitly painted legend/map colors keep unallocated space dark gray instead of a near-white swatch.
-- **Partition Manager inventory and cross-filesystem planning** - Hidden EFI/MSR partitions now get resilient file-system labeling when Windows does not return a mapped volume, inventory lookup tries direct partition, drive-letter, and access-path volume resolution before using protected-partition fallbacks, and missing file-system labels get a small read-only raw signature probe for NTFS, exFAT, FAT12/16/32, ext2/ext3/ext4, XFS, Btrfs, Linux swap, direct or HFS-wrapper HFS+, HFSX, and APFS when raw read access is available. ext2/ext3/ext4 raw detection now parses superblock block size, total/free block counts and bytes, inode counts, group sizing, journal flag, feature flags, and volume label. Linux swap raw detection now parses signature page size, header version, last page, bad-page count, UUID, and label. XFS and Btrfs raw detection parses read-only superblock metadata with sanity notes/warnings, and APFS raw detection parses read-only container metadata with block-geometry sanity notes/warnings. HFS+/HFSX raw detection now parses direct and classic-wrapper volume-header version, journal flag, file/folder counts, block size, and total/free byte counts when the header's block math is valid. Raw detector metadata is persisted into the partition table tooltip and Properties dialog, an Inspect Non-Windows File System sidebar/context action opens a copyable metadata report, a Check Non-Windows File System action opens an original read-only metadata consistency report for XFS/Btrfs/APFS when captured sanity data exists, Check Non-Windows File System also opens an original read-only HFS+/HFSX catalog consistency and attributes B-tree key scan report, and a Browse Non-Windows File System action lists ext2/ext3/ext4, HFS+/HFSX, and APFS directory entries, extracts selected regular files, and exports ext/HFS+/APFS folders recursively through original read-only parser code without mounting or writing source volumes. Added `docs/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md`, `PartitionFileSystemRegistry`, `PartitionExtFileSystemReader`, `PartitionHfsFileSystemReader`, `PartitionApfsFileSystemReader`, `PartitionFileSystemToolManifest`, `PartitionFileSystemToolRunner`, `scripts/check_partition_filesystem_tool_manifest.ps1`, and a CMake-required `tools/filesystem/manifest.json` approval gate for portable Linux/HFS+ detection, read, format, and repair support using original code or bundled open-source tools with no runtime installs. The approved e2fsprogs 1.47.4 bundle now includes `e2fsck`, `mke2fs`, and `resize2fs` under `tools/filesystem/e2fsprogs/`, with upstream source archive, local MinGW patch, notice, build notes, binary hashes, source hash, and companion artifact hashes. ext2/ext3/ext4 now supports read-only check, confirmed format, confirmed repair, confirmed grow, and confirmed shrink through Pending Operations, safety validation, Apply review, elevated PowerShell execution, manifest/hash verification, and explicit confirmation. Linux swap now supports confirmed original SWAPSPACE2 v1 format through Pending Operations, raw target identity, Apply review, generated UUID/label metadata, page-size selection, and explicit confirmation. Non-native write payloads must now target the exact selected `\\?\GLOBALROOT\Device\HarddiskN\PartitionM` raw partition alias; forged, missing, or mismatched target paths are blocked by both safety validation and script generation. The Non-Windows File System check action runs read-only `e2fsck -n -f`, opens original metadata/consistency reports for XFS/Btrfs/APFS/HFS+, or queues confirmed ext repair, sparse-staged HFS repair, and generated-layout APFS checksum repair for Apply. HFS+/HFSX format and repair use bundled hfsprogs through sparse staging after confirmation; APFS browse/extract/export is read-only and follows the APFS checkpoint/object-map path; APFS generated create/format, generated checksum repair, generated-layout root-file write/patch/delete, generated-layout empty root-directory create/delete, generated-layout root-directory child-file write/patch/delete, and generated-layout volume-label change use `sak_apfs_writer_cli.exe` through the same queue/apply safety model, while generated-image root-file create/replace/byte-range patch/delete, generated-image empty root-directory create/delete, generated-image root-directory child-file write/patch/delete, and generated-image volume-label change are helper-exposed with payload/read-back, directory-empty, old/new-label, or negative-read-back hashes. Inline/broad HFS+ attribute growth that requires record expansion, B-tree split, or extents-overflow attribute records, unbounded HFS+ folder-tree delete, complex HFS+ file delete, HFS+ B-tree split/rebalance, broad HFS+ allocation growth beyond the bounded initial-extent slice, recursive extents-overflow-file overflow, deep XFS/Btrfs tool checks, XFS/Btrfs writes, APFS arbitrary Apple-media mutation, non-generated APFS file writes, APFS resize, and APFS encrypted/compressed files remain blocked.
+- **Partition Manager inventory and cross-filesystem planning** - Hidden EFI/MSR partitions now get resilient file-system labeling when Windows does not return a mapped volume, inventory lookup tries direct partition, drive-letter, and access-path volume resolution before using protected-partition fallbacks, and missing file-system labels get a small read-only raw signature probe for NTFS, exFAT, FAT12/16/32, ext2/ext3/ext4, XFS, Btrfs, Linux swap, direct or HFS-wrapper HFS+, HFSX, and APFS when raw read access is available. ext2/ext3/ext4 raw detection now parses superblock block size, total/free block counts and bytes, inode counts, group sizing, journal flag, feature flags, and volume label. Linux swap raw detection now parses signature page size, header version, last page, bad-page count, UUID, and label. XFS and Btrfs raw detection parses read-only superblock metadata with sanity notes/warnings, and APFS raw detection parses read-only container metadata with block-geometry sanity notes/warnings. HFS+/HFSX raw detection now parses direct and classic-wrapper volume-header version, journal flag, file/folder counts, block size, and total/free byte counts when the header's block math is valid. Raw detector metadata is persisted into the partition table tooltip and Properties dialog, an Inspect Non-Windows File System sidebar/context action opens a copyable metadata report, a Check Non-Windows File System action opens an original read-only metadata consistency report for XFS/Btrfs/APFS when captured sanity data exists, Check Non-Windows File System also opens an original read-only HFS+/HFSX catalog consistency and attributes B-tree key scan report, and a Browse Non-Windows File System action lists ext2/ext3/ext4, HFS+/HFSX, and APFS directory entries, extracts selected regular files, and exports ext/HFS+/APFS folders recursively through original read-only parser code without mounting or writing source volumes. Added `docs/archive/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md`, `PartitionFileSystemRegistry`, `PartitionExtFileSystemReader`, `PartitionHfsFileSystemReader`, `PartitionApfsFileSystemReader`, `PartitionFileSystemToolManifest`, `PartitionFileSystemToolRunner`, `scripts/check_partition_filesystem_tool_manifest.ps1`, and a CMake-required `tools/filesystem/manifest.json` approval gate for portable Linux/HFS+ detection, read, format, and repair support using original code or bundled open-source tools with no runtime installs. The approved e2fsprogs 1.47.4 bundle now includes `e2fsck`, `mke2fs`, and `resize2fs` under `tools/filesystem/e2fsprogs/`, with upstream source archive, local MinGW patch, notice, build notes, binary hashes, source hash, and companion artifact hashes. ext2/ext3/ext4 now supports read-only check, confirmed format, confirmed repair, confirmed grow, and confirmed shrink through Pending Operations, safety validation, Apply review, elevated PowerShell execution, manifest/hash verification, and explicit confirmation. Linux swap now supports confirmed original SWAPSPACE2 v1 format through Pending Operations, raw target identity, Apply review, generated UUID/label metadata, page-size selection, and explicit confirmation. Non-native write payloads must now target the exact selected `\\?\GLOBALROOT\Device\HarddiskN\PartitionM` raw partition alias; forged, missing, or mismatched target paths are blocked by both safety validation and script generation. The Non-Windows File System check action runs read-only `e2fsck -n -f`, opens original metadata/consistency reports for XFS/Btrfs/APFS/HFS+, or queues confirmed ext repair, sparse-staged HFS repair, and generated-layout APFS checksum repair for Apply. HFS+/HFSX format and repair use bundled hfsprogs through sparse staging after confirmation; APFS browse/extract/export is read-only and follows the APFS checkpoint/object-map path; APFS generated create/format, generated checksum repair, generated-layout root-file write/patch/delete, generated-layout empty root-directory create/delete, generated-layout root-directory child-file write/patch/delete, and generated-layout volume-label change use `sak_apfs_writer_cli.exe` through the same queue/apply safety model, while generated-image root-file create/replace/byte-range patch/delete, generated-image empty root-directory create/delete, generated-image root-directory child-file write/patch/delete, and generated-image volume-label change are helper-exposed with payload/read-back, directory-empty, old/new-label, or negative-read-back hashes. Inline/broad HFS+ attribute growth that requires record expansion, B-tree split, or extents-overflow attribute records, unbounded HFS+ folder-tree delete, complex HFS+ file delete, HFS+ B-tree split/rebalance, broad HFS+ allocation growth beyond the bounded initial-extent slice, recursive extents-overflow-file overflow, deep XFS/Btrfs tool checks, XFS/Btrfs writes, APFS arbitrary Apple-media mutation, non-generated APFS file writes, APFS resize, and APFS encrypted/compressed files remain blocked.
 - **Partition Manager ext browser polish** - ext2/ext3/ext4 read-only browsing now displays symlink targets, includes them in copied listings, and exports symlinks as `.symlink.txt` sidecars instead of following or creating links.
 - **Partition Manager HFS+ tool support** - Added a source-pinned hfsprogs 540.1.linux3-6+sak-msys bundle under `tools/filesystem/hfsprogs/` with `newfs_hfs`, `fsck_hfs`, runtime DLL notices, Debian source archives, a local portability patch, manifest hashes, license coverage, and image-level validation. HFS+/HFSX format and repair now use sparse staging for raw partition targets, with the same raw-target identity, safety validation, Apply review, manifest/hash verification, operation-report, and explicit-confirmation model as the existing ext tool path.
 - **Partition Manager non-native create support** - Create Partition now exposes certified non-native create+format choices for ext2/ext3/ext4, HFS+/HFSX, Linux swap, and generated APFS. These paths create the partition without a Windows drive letter, derive the new `\\?\GLOBALROOT\Device\HarddiskN\PartitionM` alias during Apply, then run the same manifest/hash-validated `mke2fs`, sparse-staged `newfs_hfs`, original SWAPSPACE2 writer, or `sak_apfs_writer_cli.exe` generated APFS formatter used by Format Partition. XFS and Btrfs write/create paths remain blocked.
@@ -184,8 +1557,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **Offline deployment - Direct Download mode** - Downloads the actual installer binary (EXE/MSI) for each package instead of just the .nupkg wrapper. Supports three package patterns: URL-based downloads (`Install-ChocolateyPackage`), embedded-binary packages (`Install-ChocolateyInstallPackage` with EXE/MSI files inside the nupkg's `tools/` directory), and meta-packages (follows `.install` dependency chain via nuspec parsing). Primary installer selection ensures only the main resource is downloaded per package, avoiding patches and secondary resources. Tested with Office PC preset (10 packages, all succeeding).
 - **Install script parser improvements** - Splatting regex now matches any variable name (not just `$packageArgs`) with line-anchored closing brace to handle `${variable}` syntax in URLs. `extractHashtableValue` uses two-pass parsing (quoted first, unquoted fallback). `resolveVariables` handles both `$varName` and `${varName}` references.
-- **TigerStyle reframed** - Updated copilot-instructions.md to position TigerStyle as a guiding philosophy and best-practice target rather than a hard blocker. Release hooks (zero build warnings, zero build errors, all tests passing) are the hard gates.
-- **Documentation accuracy audit** - Corrected file counts across all documentation (135 headers, 138 source files, 99 test files, 75 CTest tests), updated CONTRIBUTING.md TigerStyle section, refreshed tests/README.md structure.
+- **Quality rules reframed** - Updated the coding-standards doc to position the style rules as best-practice targets rather than hard blockers.
+- **Documentation accuracy audit** - Corrected file counts across all documentation (135 headers, 138 source files, 99 test files, 75 CTest tests), updated the CONTRIBUTING.md code-quality section, refreshed tests/README.md structure.
 - **Build quality** - Clean MSVC `/W4 /WX` build, 75 automated tests (all passing), 138 source files, 135 headers.
 
 ## v0.9.0.7
@@ -214,7 +1587,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## v0.9.0.3
 
-- **Codebase-wide assertion audit** - Removed ~170+ incorrect assertions left behind by the scrapped TigerStyle linter across 22 source files. Eliminated three dangerous patterns: assert-before-create (asserting a member exists at the top of the function that creates it), contradictory assert+guard (asserting non-null then immediately null-checking), and incorrect state assertions (asserting non-empty on legitimately empty data). 1,487 legitimate assertions verified and retained.
+- **Codebase-wide assertion audit** - Removed ~170+ incorrect assertions left behind by the scrapped assertion-density linter across 22 source files. Eliminated three dangerous patterns: assert-before-create (asserting a member exists at the top of the function that creates it), contradictory assert+guard (asserting non-null then immediately null-checking), and incorrect state assertions (asserting non-empty on legitimately empty data). 1,487 legitimate assertions verified and retained.
 - **Error logging completeness** - Added ~15 missing `sak::logWarning`/`sak::logError` calls alongside `QMessageBox` displays across backup wizards, restore wizards, organizer panel, and settings dialogs.
 - **Silent error elimination** - Fixed 7 unchecked `QFile::remove()` calls in critical data paths (encryption cleanup, transfer checksum failures, conflict resolution) and 1 unchecked `waitForFinished()` in service removal.
 - **Build quality** - Clean MSVC `/W4 /WX` build, 91 automated tests (all passing).
@@ -275,7 +1648,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 - **Advanced Search panel** - Enterprise-grade grep-style file content search with a three-panel interface (file explorer, results tree, preview pane). Supports text, regex, image metadata (EXIF/GPS), file metadata (PDF/Office/audio/video), archive content (ZIP/EPUB with deflate decompression), and binary/hex search modes. Includes a regex pattern library with 8 built-in patterns and custom user-defined patterns with JSON persistence.
 - **Modernized About panel** - Rebuilt as a multi-tab view (About, License, Credits, System) with styled HTML, full dependency attribution (12 third-party components), and live runtime info. Removed dead `AboutDialog` class.
 - **Unified UI polish** - Glass-effect 3-stop rgba button gradients, transparent widget backgrounds eliminating patchy gray/white artifacts, harmonized margins and border-radii via style tokens, centered quick-action labels, consistent UUP progress bar height.
-- **TigerStyle philosophy (ongoing)** - Code quality tooling (Lizard complexity, cppcheck) and a compliance plan are in place. Current status is tracked and addressed as part of the enterprise hardening work.
+- **Code quality discipline (ongoing)** - Code quality tooling (Lizard complexity, cppcheck) and a compliance plan are in place. Current status is tracked and addressed as part of the enterprise hardening work.
 
 ## v0.6.3
 

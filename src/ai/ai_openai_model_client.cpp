@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <memory>
+#include <utility>
 
 namespace sak::ai {
 
@@ -18,13 +19,19 @@ namespace {
 
 constexpr int kModelInvokeTimeoutMs = 300'000;
 constexpr int kCancellationPollIntervalMs = sak::kTimerPollingFastMs;
+// Grace added to the semaphore wait beyond the invoke timeout. The worker's own timeout timer
+// releases the semaphore within kModelInvokeTimeoutMs on every normal path; the grace only
+// matters if the worker thread failed to START (QThread::start can fail under resource
+// exhaustion), in which case an unconditional acquire would deadlock forever.
+constexpr int kSemaphoreWaitGraceMs = 30'000;
+constexpr auto kThreadStartFailure = "Model invocation worker thread failed to start";
 
 struct ModelInvokeState {
-    OpenAIResponseResult result;
-    QString error;
-    bool got_response{false};
-    bool got_failure{false};
-    bool timed_out{false};
+    OpenAIResponseResult m_result;
+    QString m_error;
+    bool m_got_response{false};
+    bool m_got_failure{false};
+    bool m_timed_out{false};
 };
 
 bool tokenCancelled(const CancellationToken& token) {
@@ -42,17 +49,23 @@ QString combinedInput(const IAiModelClient::Request& request) {
     return input;
 }
 
-OpenAIResponseRequest openAiRequestFromModelRequest(const IAiModelClient::Request& request,
-                                                    bool enable_web_search) {
+OpenAIResponseRequest buildOpenAiRequest(const IAiModelClient::Request& request,
+                                         bool enable_web_search) {
     OpenAIResponseRequest req;
     req.api_key = request.api_key;
     req.model = request.model;
     req.instructions = request.system_instructions;
     req.input = combinedInput(request);
+    for (const auto& message : request.untrusted_user_messages) {
+        req.untrusted_input_messages.append(
+            {.role = OpenAIInputMessageRole::User, .text = message});
+    }
     req.reasoning_effort = request.reasoning_effort;
     req.safety_identifier = request.safety_identifier;
     req.enable_web_search = enable_web_search;
-    req.enable_local_tools = false;
+    // Local tools are only offered when the subagent opted in (an executor is
+    // wired and its policy permits execution); the runner sets this per task.
+    req.enable_local_tools = request.enable_local_tools;
     return req;
 }
 
@@ -63,17 +76,24 @@ IAiModelClient::Response modelResponseFromState(const ModelInvokeState& state,
         response.error_message = token.cancelReason();
         return response;
     }
-    if (state.got_response) {
+    if (state.m_got_response) {
         response.success = true;
-        response.text = state.result.output_text;
-        response.usage = state.result.usage;
+        response.text = state.m_result.output_text;
+        response.usage = state.m_result.usage;
+        response.response_id = state.m_result.id;
+        response.tool_calls.reserve(state.m_result.function_calls.size());
+        for (const auto& call : state.m_result.function_calls) {
+            response.tool_calls.append({.call_id = call.call_id,
+                                        .name = call.name,
+                                        .arguments_json = call.arguments_json});
+        }
         return response;
     }
-    if (state.got_failure) {
-        response.error_message = state.error;
+    if (state.m_got_failure) {
+        response.error_message = state.m_error;
         return response;
     }
-    if (state.timed_out) {
+    if (state.m_timed_out) {
         response.error_message =
             QStringLiteral("Model invocation timed out after %1 ms").arg(kModelInvokeTimeoutMs);
         return response;
@@ -82,9 +102,88 @@ IAiModelClient::Response modelResponseFromState(const ModelInvokeState& state,
     return response;
 }
 
+void joinWorkerAndRecordTimeout(QThread& network_thread,
+                                QSemaphore& done,
+                                ModelInvokeState& state) {
+    // Timed acquire so a failed thread start (finish() never runs) cannot deadlock forever.
+    const bool signalled = done.tryAcquire(1, kModelInvokeTimeoutMs + kSemaphoreWaitGraceMs);
+    network_thread.quit();
+    network_thread.wait();  // SAK-ALLOW-BLOCKING: stack QThread, quit() sent; join mandatory
+
+    // Record the acquire-timeout ONLY after the join. Writing `state` from this thread while
+    // a worker handler might still be writing the same fields would be a data race; once
+    // wait() returns no worker code can run, so this write is ordered after every worker
+    // write. Guard on the terminal flags so a result that landed at the boundary still wins.
+    if (!signalled && !state.m_got_response && !state.m_got_failure && !state.m_timed_out) {
+        state.m_timed_out = true;
+    }
+}
+
+void startNetworkThread(QThread& thread) {
+    thread.start();
+}
+
+void beginResponseRequest(QThread& network_thread,
+                          QSemaphore& done,
+                          ModelInvokeState& state,
+                          const OpenAIResponseRequest& request,
+                          const CancellationToken& token) {
+    auto* worker = new QObject;
+    QObject::connect(&network_thread, &QThread::finished, worker, &QObject::deleteLater);
+    auto* client = new OpenAIResponsesClient(worker);
+    auto* cancel_timer = new QTimer(worker);
+    auto* timeout_timer = new QTimer(worker);
+    cancel_timer->setInterval(kCancellationPollIntervalMs);
+    timeout_timer->setSingleShot(true);
+    const auto completed = std::make_shared<std::atomic_bool>(false);
+    const auto finish = [&network_thread, &done, client, completed]() {
+        bool expected = false;
+        if (!completed->compare_exchange_strong(expected, true)) {
+            return;
+        }
+        client->cancel();
+        done.release();
+        network_thread.quit();
+    };
+    QObject::connect(client,
+                     &OpenAIResponsesClient::responseReady,
+                     worker,
+                     [&state, finish](const OpenAIResponseResult& result) {
+                         state.m_result = result;
+                         state.m_got_response = true;
+                         finish();
+                     });
+    QObject::connect(client,
+                     &OpenAIResponsesClient::requestFailed,
+                     worker,
+                     [&state, finish](const QString& error_message) {
+                         state.m_error = error_message;
+                         state.m_got_failure = true;
+                         finish();
+                     });
+    QObject::connect(cancel_timer, &QTimer::timeout, worker, [&token, finish]() {
+        if (tokenCancelled(token)) {
+            finish();
+        }
+    });
+    QObject::connect(timeout_timer, &QTimer::timeout, worker, [&state, finish]() {
+        state.m_timed_out = true;
+        finish();
+    });
+    cancel_timer->start();
+    timeout_timer->start(kModelInvokeTimeoutMs);
+    client->createResponse(request);
+}
+
 }  // namespace
 
-OpenAIResponsesModelClient::OpenAIResponsesModelClient(QObject* parent) : QObject(parent) {}
+OpenAIResponseRequest openAiRequestFromModelRequest(const IAiModelClient::Request& request,
+                                                    bool enable_web_search) {
+    return buildOpenAiRequest(request, enable_web_search);
+}
+
+OpenAIResponsesModelClient::OpenAIResponsesModelClient(QObject* parent)
+    : QObject(parent), m_thread_starter(startNetworkThread) {}
 
 OpenAIResponsesModelClient::~OpenAIResponsesModelClient() = default;
 
@@ -92,73 +191,64 @@ void OpenAIResponsesModelClient::setEnableWebSearch(bool enabled) {
     m_enable_web_search = enabled;
 }
 
-IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& request,
-                                                            const CancellationToken& token) {
+#ifdef SAK_AI_TEST_HOOKS
+void OpenAIResponsesModelClient::setThreadStarterForTesting(std::function<void(QThread&)> starter) {
+    m_thread_starter = starter ? std::move(starter) : startNetworkThread;
+}
+#endif  // SAK_AI_TEST_HOOKS
+
+IAiModelClient::Response OpenAIResponsesModelClient::runResponseRequest(
+    const OpenAIResponseRequest& request, const CancellationToken& token) const {
     if (tokenCancelled(token)) {
         Response response;
         response.error_message = token.cancelReason();
         return response;
     }
 
-    const OpenAIResponseRequest req = openAiRequestFromModelRequest(request, m_enable_web_search);
     ModelInvokeState state;
     QSemaphore done;
     QThread network_thread;
-    QObject* worker = new QObject;
-    worker->moveToThread(&network_thread);
-    QObject::connect(&network_thread, &QThread::finished, worker, &QObject::deleteLater);
-    QObject::connect(&network_thread, &QThread::started, worker, [&, worker, req]() {
-        auto* client = new OpenAIResponsesClient(worker);
-        auto* cancel_timer = new QTimer(worker);
-        auto* timeout_timer = new QTimer(worker);
-        cancel_timer->setInterval(kCancellationPollIntervalMs);
-        timeout_timer->setSingleShot(true);
-        const auto completed = std::make_shared<std::atomic_bool>(false);
-        const auto finish = [&, client, completed]() {
-            bool expected = false;
-            if (!completed->compare_exchange_strong(expected, true)) {
-                return;
-            }
-            client->cancel();
-            done.release();
-            network_thread.quit();
-        };
-        QObject::connect(client,
-                         &OpenAIResponsesClient::responseReady,
-                         worker,
-                         [&, finish](const OpenAIResponseResult& result) {
-                             state.result = result;
-                             state.got_response = true;
-                             finish();
-                         });
-        QObject::connect(client,
-                         &OpenAIResponsesClient::requestFailed,
-                         worker,
-                         [&, finish](const QString& error_message) {
-                             state.error = error_message;
-                             state.got_failure = true;
-                             finish();
-                         });
-        QObject::connect(cancel_timer, &QTimer::timeout, worker, [&, finish]() {
-            if (tokenCancelled(token)) {
-                state.error = token.cancelReason();
-                finish();
-            }
-        });
-        QObject::connect(timeout_timer, &QTimer::timeout, worker, [&, finish]() {
-            state.timed_out = true;
-            finish();
-        });
-        cancel_timer->start();
-        timeout_timer->start(kModelInvokeTimeoutMs);
-        client->createResponse(req);
-    });
-    network_thread.start();
-    done.acquire();
-    network_thread.quit();
-    network_thread.wait();
+    std::atomic_bool start_observed{false};
+    QObject::connect(
+        &network_thread,
+        &QThread::started,
+        &network_thread,
+        [&]() {
+            start_observed.store(true, std::memory_order_release);
+            beginResponseRequest(network_thread, done, state, request, token);
+        },
+        Qt::DirectConnection);
+    m_thread_starter(network_thread);
+    if (!network_thread.isRunning() && !start_observed.load(std::memory_order_acquire)) {
+        state.m_error = QString::fromLatin1(kThreadStartFailure);
+        state.m_got_failure = true;
+        return modelResponseFromState(state, token);
+    }
+    joinWorkerAndRecordTimeout(network_thread, done, state);
 
     return modelResponseFromState(state, token);
+}
+
+IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& request,
+                                                            const CancellationToken& token) {
+    return runResponseRequest(openAiRequestFromModelRequest(request, m_enable_web_search), token);
+}
+
+IAiModelClient::Response OpenAIResponsesModelClient::continueWithToolOutputs(
+    const Request& request,
+    const QString& response_id,
+    const QVector<AiSubagentToolOutput>& outputs,
+    const CancellationToken& token) {
+    // Resume the same server-side turn: reference the prior response and submit
+    // the executed tool outputs, without re-sending the original input.
+    OpenAIResponseRequest req = openAiRequestFromModelRequest(request, m_enable_web_search);
+    req.input.clear();
+    req.previous_response_id = response_id;
+    req.function_outputs.reserve(outputs.size());
+    for (const auto& output : outputs) {
+        req.function_outputs.append({.call_id = output.call_id, .output = output.output_json});
+    }
+    return runResponseRequest(req, token);
 }
 
 }  // namespace sak::ai

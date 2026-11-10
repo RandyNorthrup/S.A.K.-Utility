@@ -3,14 +3,29 @@
     Runs clang-format with repository defaults.
 
 .DESCRIPTION
-    Locates clang-format from PATH, a local virtual environment, standalone LLVM,
-    or Visual Studio's bundled LLVM tools. This avoids hardcoding one Visual
-    Studio edition in pre-commit while keeping formatting strict.
+    Locates clang-format from the repository .venv (the version pinned in
+    requirements-gates.txt), then PATH, standalone LLVM, or Visual Studio's bundled
+    LLVM tools. This avoids hardcoding one Visual Studio edition in pre-commit while
+    keeping formatting strict.
 #>
 
+# PositionalBinding=$false + ValueFromRemainingArguments: `-File run_clang_format.ps1 -Check
+# a.cpp b.cpp` binds ONLY a.cpp to a plain [string[]] parameter and silently drops the rest,
+# which is how pre-commit calls this. Measured, and proven end to end on the sibling syntax
+# gate: a deliberately broken file in SECOND position passed. See the long note in
+# scripts/run_cppcheck.ps1 for the full measurement. The hook entry must not pass `-Files`.
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [switch]$Check,
-    [string[]]$Files
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Files,
+    # Fail closed when the resolved file list is EMPTY. Pre-commit hands this script the staged
+    # files, so an empty list there legitimately means "nothing C++ was staged" and exiting 0 is
+    # correct. A whole-tree caller (CI) is the opposite case: an empty list means the file
+    # discovery broke, and reporting a green gate that formatted nothing is exactly the
+    # false-green this repo has been burned by twice (the cppcheck -Files comma-join, and this
+    # script invoked with no arguments at all). CI passes -RequireFiles so that cannot happen.
+    [switch]$RequireFiles
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,13 +37,20 @@ if ($args.Count -gt 0) {
 }
 
 function Find-ClangFormat {
+    # The pinned wheel (requirements-gates.txt) in the repository .venv comes first, so a
+    # different LLVM on PATH cannot change what "formatted" means on this machine. CI has no
+    # .venv and installs the same pin onto PATH.
+    $venvClangFormat = Join-Path $ProjectRoot ".venv\Scripts\clang-format.exe"
+    if (Test-Path -LiteralPath $venvClangFormat -PathType Leaf) {
+        return $venvClangFormat
+    }
+
     $fromPath = Get-Command clang-format.exe -ErrorAction SilentlyContinue
     if ($fromPath) {
         return $fromPath.Source
     }
 
     $candidatePaths = @(
-        (Join-Path $ProjectRoot ".venv\Scripts\clang-format.exe"),
         "$env:ProgramFiles\LLVM\bin\clang-format.exe",
         "${env:ProgramFiles(x86)}\LLVM\bin\clang-format.exe"
     )
@@ -49,7 +71,7 @@ function Find-ClangFormat {
     throw "clang-format.exe was not found. Install LLVM or Visual Studio Build Tools."
 }
 
-$cppExtensions = @(".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx")
+$cppExtensions = @(".c", ".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx")
 $cppFiles = @()
 foreach ($file in $Files) {
     $extension = [System.IO.Path]::GetExtension($file).ToLowerInvariant()
@@ -60,19 +82,45 @@ foreach ($file in $Files) {
 }
 
 if ($cppFiles.Count -eq 0) {
-    Write-Host "No C++ files to format."
+    if ($RequireFiles) {
+        Write-Error ("No C/C++ files resolved, but -RequireFiles was specified. A whole-tree run " +
+                     "that finds nothing is a BROKEN gate, not a passing one.")
+        exit 1
+    }
+    Write-Host "No C/C++ files to format."
     exit 0
 }
 
+# Require the repository .clang-format so the gate cannot pass against clang-format's
+# built-in fallback style when the config is absent.
+$clangFormatConfig = Join-Path $ProjectRoot ".clang-format"
+if (-not (Test-Path -LiteralPath $clangFormatConfig -PathType Leaf)) {
+    throw "Repository .clang-format configuration not found at $clangFormatConfig; refusing to format with clang-format's built-in fallback style."
+}
+
 $clangFormat = Find-ClangFormat
-if ($Check) {
-    & $clangFormat --dry-run -Werror -- $cppFiles
-} else {
-    & $clangFormat -i -- $cppFiles
+
+# Batch the file list. A whole-tree run passes ~900 paths, which overruns the Windows
+# command-line limit and fails with "The filename or extension is too long" -- a failure that
+# looks nothing like a formatting violation and would have to be diagnosed from scratch on a CI
+# runner. Batching keeps every invocation well inside the limit, and the worst exit code across
+# the batches is what the gate reports, so a violation in ANY batch still fails the run.
+$batchSize = 100
+$worstExit = 0
+for ($offset = 0; $offset -lt $cppFiles.Count; $offset += $batchSize) {
+    $batch = $cppFiles[$offset..([Math]::Min($offset + $batchSize - 1, $cppFiles.Count - 1))]
+    if ($Check) {
+        & $clangFormat -style=file -fallback-style=none --dry-run -Werror -- $batch
+    } else {
+        & $clangFormat -style=file -fallback-style=none -i -- $batch
+    }
+    if ($LASTEXITCODE -ne 0) {
+        $worstExit = $LASTEXITCODE
+    }
 }
 
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+if ($worstExit -ne 0) {
+    exit $worstExit
 }
 
-Write-Host "clang-format passed."
+Write-Host "clang-format passed ($($cppFiles.Count) file(s))."

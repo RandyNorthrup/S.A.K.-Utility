@@ -3,20 +3,74 @@
 
 #include "sak/user_profile_types.h"
 
+#include <QCryptographicHash>
+#include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 
 #include <algorithm>
 
 namespace sak {
+
+namespace {
+
+QStringList arrayToStringList(const QJsonArray& arr) {
+    QStringList list;
+    list.reserve(arr.size());
+    for (const auto& val : arr) {
+        list << val.toString();
+    }
+    return list;
+}
+// Streaming read size for directory-tree hashing (B7-13).
+constexpr qint64 kDirHashChunkBytes = 64 * 1024;
+
+// The groups behind the Smart Filters page's tick boxes. Everything else in the default lists
+// always applies.
+const QStringList& cacheFolderNames() {
+    static const QStringList names = {
+        "Cache", "GPUCache", "Code Cache", "Service Worker", "Session Storage", "WebCache"};
+    return names;
+}
+
+const QStringList& temporaryFolderNames() {
+    static const QStringList names = {"Temp", "temp"};
+    return names;
+}
+
+const QStringList& temporaryFilePatterns() {
+    static const QStringList patterns = {
+        ".*\\.tmp$", ".*\\.temp$", ".*\\.cache$", ".*~$", ".*\\.crdownload$", ".*\\.part$"};
+    return patterns;
+}
+
+const QStringList& lockFilePatterns() {
+    static const QStringList patterns = {".*\\.lock$", ".*\\.lck$"};
+    return patterns;
+}
+
+void removeAllOf(QStringList& list, const QStringList& entries) {
+    for (const QString& entry : entries) {
+        list.removeAll(entry);
+    }
+}
+
+bool containsAllOf(const QStringList& list, const QStringList& entries) {
+    return std::ranges::all_of(entries,
+                               [&list](const QString& entry) { return list.contains(entry); });
+}
+}  // namespace
 
 // Helper function to safely convert JSON number to qint64
 static qint64 qint64FromJson(const QJsonObject& json, const QString& key, qint64 defaultValue = 0) {
     if (!json.contains(key)) {
         return defaultValue;
     }
-    QJsonValue value = json[key];
+    const QJsonValue value = json[key];
     if (value.isDouble()) {
         return static_cast<qint64>(value.toDouble());
     }
@@ -47,15 +101,19 @@ InstalledAppInfo InstalledAppInfo::fromJson(const QJsonObject& json) {
 }
 
 
+QStringList SmartFilter::mandatoryDangerousFiles() {
+    return {"NTUSER.DAT",
+            "NTUSER.DAT.LOG1",
+            "NTUSER.DAT.LOG2",
+            "ntuser.ini",
+            "UsrClass.dat",
+            "UsrClass.dat.LOG1",
+            "UsrClass.dat.LOG2"};
+}
+
 void SmartFilter::initializeDefaults() {
     // Dangerous files that MUST be excluded
-    dangerous_files = {"NTUSER.DAT",
-                       "NTUSER.DAT.LOG1",
-                       "NTUSER.DAT.LOG2",
-                       "ntuser.ini",
-                       "UsrClass.dat",
-                       "UsrClass.dat.LOG1",
-                       "UsrClass.dat.LOG2"};
+    dangerous_files = mandatoryDangerousFiles();
 
     // Pattern exclusions (case-insensitive)
     exclude_patterns = {".*\\.tmp$",
@@ -87,6 +145,41 @@ void SmartFilter::initializeDefaults() {
         "__pycache__",
         "Packages"  // UWP apps
     };
+
+    exclude_cache_paths = true;
+}
+
+void SmartFilter::setExclusionGroups(bool cache, bool temporary, bool lock_files) {
+    const SmartFilter defaults;
+    exclude_patterns = defaults.exclude_patterns;
+    exclude_folders = defaults.exclude_folders;
+    exclude_cache_paths = cache;
+    if (!cache) {
+        removeAllOf(exclude_folders, cacheFolderNames());
+    }
+    if (!temporary) {
+        removeAllOf(exclude_folders, temporaryFolderNames());
+        removeAllOf(exclude_patterns, temporaryFilePatterns());
+    }
+    if (!lock_files) {
+        removeAllOf(exclude_patterns, lockFilePatterns());
+    }
+}
+
+bool SmartFilter::excludesTemporaryFiles() const {
+    return containsAllOf(exclude_patterns, temporaryFilePatterns());
+}
+
+bool SmartFilter::excludesLockFiles() const {
+    return containsAllOf(exclude_patterns, lockFilePatterns());
+}
+
+SmartFilter SmartFilter::forApplicationData() const {
+    SmartFilter rules = *this;
+    for (const char* name : {"Packages", "node_modules", ".git", ".svn", "__pycache__"}) {
+        rules.exclude_folders.removeAll(QString::fromLatin1(name));
+    }
+    return rules;
 }
 
 QJsonObject SmartFilter::toJson() const {
@@ -98,28 +191,46 @@ QJsonObject SmartFilter::toJson() const {
     obj["exclude_patterns"] = QJsonArray::fromStringList(exclude_patterns);
     obj["exclude_folders"] = QJsonArray::fromStringList(exclude_folders);
     obj["dangerous_files"] = QJsonArray::fromStringList(dangerous_files);
+    if (!exclude_cache_paths) {
+        obj["exclude_cache_paths"] = false;
+    }
     return obj;
 }
 
 SmartFilter SmartFilter::fromJson(const QJsonObject& json) {
-    Q_ASSERT(!json.isEmpty());
+    // No assert on empty: a missing/malformed "filter_rules" object must degrade to
+    // the safe defaults (which the ctor already seeded), never abort or clear the
+    // mandatory exclusions (B7-14).
     SmartFilter filter;
     filter.enable_file_size_limit = json.value("enable_file_size_limit").toBool(false);
     filter.enable_folder_size_limit = json.value("enable_folder_size_limit").toBool(false);
-    filter.max_single_file_size_bytes = qint64FromJson(json, "max_single_file_size");
-    filter.max_folder_size_bytes = qint64FromJson(json, "max_folder_size");
+    // Preserve the seeded default when the key is absent, rather than zeroing it.
+    filter.max_single_file_size_bytes =
+        qint64FromJson(json, "max_single_file_size", filter.max_single_file_size_bytes);
+    filter.max_folder_size_bytes =
+        qint64FromJson(json, "max_folder_size", filter.max_folder_size_bytes);
+    filter.exclude_cache_paths = json.value("exclude_cache_paths").toBool(true);
 
-    auto arrayToStringList = [](const QJsonArray& arr) {
-        QStringList list;
-        for (const auto& val : arr) {
-            list << val.toString();
+    // Only override a list when the JSON actually carries an array for it; a missing
+    // or non-array value keeps the default so partial/legacy manifests don't clear
+    // the exclusion rules.
+    auto loadListIfPresent = [&](const char* key, QStringList& target) {
+        const QJsonValue value = json.value(QLatin1String(key));
+        if (value.isArray()) {
+            target = arrayToStringList(value.toArray());
         }
-        return list;
     };
+    loadListIfPresent("exclude_patterns", filter.exclude_patterns);
+    loadListIfPresent("exclude_folders", filter.exclude_folders);
+    loadListIfPresent("dangerous_files", filter.dangerous_files);
 
-    filter.exclude_patterns = arrayToStringList(json["exclude_patterns"].toArray());
-    filter.exclude_folders = arrayToStringList(json["exclude_folders"].toArray());
-    filter.dangerous_files = arrayToStringList(json["dangerous_files"].toArray());
+    // dangerous_files are mandatory: re-add any built-in the supplied list omitted so
+    // a hand-edited/hostile manifest can never expose a live registry hive.
+    for (const QString& mandatory : mandatoryDangerousFiles()) {
+        if (!filter.dangerous_files.contains(mandatory, Qt::CaseInsensitive)) {
+            filter.dangerous_files.append(mandatory);
+        }
+    }
 
     return filter;
 }
@@ -138,7 +249,7 @@ QJsonObject FolderSelection::toJson() const {
 }
 
 FolderSelection FolderSelection::fromJson(const QJsonObject& json) {
-    Q_ASSERT(!json.isEmpty());
+    // No assert on empty: a malformed entry degrades to defaults, never aborts (B7-14).
     FolderSelection sel;
     sel.type = stringToFolderType(json["type"].toString());
     sel.display_name = json["display_name"].toString();
@@ -146,14 +257,6 @@ FolderSelection FolderSelection::fromJson(const QJsonObject& json) {
     sel.selected = json["selected"].toBool();
     sel.size_bytes = qint64FromJson(json, "size_bytes");
     sel.file_count = json["file_count"].toInt();
-
-    auto arrayToStringList = [](const QJsonArray& arr) {
-        QStringList list;
-        for (const auto& val : arr) {
-            list << val.toString();
-        }
-        return list;
-    };
 
     sel.include_patterns = arrayToStringList(json["include_patterns"].toArray());
     sel.exclude_patterns = arrayToStringList(json["exclude_patterns"].toArray());
@@ -167,6 +270,7 @@ QJsonObject UserProfile::toJson() const {
     obj["sid"] = sid;
     obj["profile_path"] = profile_path;
     obj["is_current_user"] = is_current_user;
+    obj["is_selected"] = is_selected;  // UI selection state was lost on round-trip (B7-34)
     obj["total_size_estimated"] = static_cast<double>(total_size_estimated);
 
     QJsonArray selections;
@@ -184,9 +288,10 @@ UserProfile UserProfile::fromJson(const QJsonObject& json) {
     profile.sid = json["sid"].toString();
     profile.profile_path = json["profile_path"].toString();
     profile.is_current_user = json["is_current_user"].toBool();
+    profile.is_selected = json["is_selected"].toBool();
     profile.total_size_estimated = qint64FromJson(json, "total_size_estimated");
 
-    QJsonArray selections = json["folder_selections"].toArray();
+    const QJsonArray selections = json["folder_selections"].toArray();
     for (const auto& val : selections) {
         profile.folder_selections.append(FolderSelection::fromJson(val.toObject()));
     }
@@ -215,26 +320,27 @@ QJsonObject BackupUserData::toJson() const {
 }
 
 BackupUserData BackupUserData::fromJson(const QJsonObject& json) {
-    Q_ASSERT(!json.isEmpty());
+    // No assert on empty: a malformed entry degrades to defaults, never aborts (B7-14).
     BackupUserData data;
     data.username = json["username"].toString();
     data.sid = json["sid"].toString();
     data.profile_path = json["profile_path"].toString();
 
-    QJsonArray folders = json["backed_up_folders"].toArray();
+    const QJsonArray folders = json["backed_up_folders"].toArray();
     for (const auto& val : folders) {
         data.backed_up_folders.append(FolderSelection::fromJson(val.toObject()));
     }
 
     // Parse permission mode
-    QString permMode = json["permissions_mode"].toString();
+    const QString permMode = json["permissions_mode"].toString();
     if (permMode == "PreserveOriginal") {
         data.permissions_mode = PermissionMode::PreserveOriginal;
     } else if (permMode == "AssignToDestination") {
         data.permissions_mode = PermissionMode::AssignToDestination;
-    } else if (permMode == "Hybrid") {
-        data.permissions_mode = PermissionMode::Hybrid;
     } else {
+        // Legacy manifests can carry "Hybrid". That mode stripped, so read it as StripAll
+        // rather than dropping to the same default silently by accident - the mapping is
+        // deliberate and matches what those backups actually did.
         data.permissions_mode = PermissionMode::StripAll;
     }
 
@@ -265,6 +371,8 @@ QJsonObject BackupManifest::toJson() const {
     obj["filter_rules"] = filter_rules.toJson();
     obj["total_backup_size_bytes"] = static_cast<double>(total_backup_size_bytes);
     obj["manifest_checksum"] = manifest_checksum;
+    obj["compressed"] = compressed;
+    obj["encrypted"] = encrypted;
 
     QJsonArray wifiArray;
     for (const auto& w : wifi_profiles) {
@@ -294,7 +402,8 @@ QJsonObject BackupManifest::toJson() const {
 }
 
 BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
-    Q_ASSERT(!json.isEmpty());
+    // No assert on empty: loadFromFile of a truncated/corrupt manifest yields an
+    // empty object; degrade to an all-default manifest instead of aborting (B7-14).
     BackupManifest manifest;
 
     QJsonObject metadata = json["backup_metadata"].toObject();
@@ -304,7 +413,7 @@ BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
     manifest.sak_version = metadata["sak_utility_version"].toString();
     manifest.backup_type = metadata["backup_type"].toString();
 
-    QJsonArray usersArray = json["users"].toArray();
+    const QJsonArray usersArray = json["users"].toArray();
     for (const auto& val : usersArray) {
         manifest.users.append(BackupUserData::fromJson(val.toObject()));
     }
@@ -312,16 +421,20 @@ BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
     manifest.filter_rules = SmartFilter::fromJson(json["filter_rules"].toObject());
     manifest.total_backup_size_bytes = qint64FromJson(json, "total_backup_size_bytes");
     manifest.manifest_checksum = json["manifest_checksum"].toString();
+    // Absent in manifests written before per-file transforms existed, which were always
+    // verbatim copies - so false is the correct reading of an older backup, not a guess.
+    manifest.compressed = json["compressed"].toBool(false);
+    manifest.encrypted = json["encrypted"].toBool(false);
 
-    QJsonArray wifiArray = json["wifi_profiles"].toArray();
+    const QJsonArray wifiArray = json["wifi_profiles"].toArray();
     for (const auto& val : wifiArray) {
         manifest.wifi_profiles.append(WifiProfileInfo::fromJson(val.toObject()));
     }
-    QJsonArray ethArray = json["ethernet_configs"].toArray();
+    const QJsonArray ethArray = json["ethernet_configs"].toArray();
     for (const auto& val : ethArray) {
         manifest.ethernet_configs.append(EthernetConfigInfo::fromJson(val.toObject()));
     }
-    QJsonArray appDataArray = json["app_data_sources"].toArray();
+    const QJsonArray appDataArray = json["app_data_sources"].toArray();
     for (const auto& val : appDataArray) {
         manifest.app_data_sources.append(AppDataSourceInfo::fromJson(val.toObject()));
     }
@@ -330,13 +443,13 @@ BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
 }
 
 bool BackupManifest::saveToFile(const QString& path) const {
-    Q_ASSERT(!path.isEmpty());
+    // An empty path fails the open below and returns false. No assert.
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         return false;
     }
 
-    QJsonDocument doc(toJson());
+    const QJsonDocument doc(toJson());
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
     if (file.write(json_bytes) != json_bytes.size()) {
         return false;
@@ -347,12 +460,78 @@ bool BackupManifest::saveToFile(const QString& path) const {
 BackupManifest BackupManifest::loadFromFile(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return BackupManifest();
+        // Fail closed: a missing/unreadable manifest must not masquerade as a valid
+        // default manifest. The default ctor seeds version "1.0", which passes a
+        // caller's version.isEmpty() validity gate; clear it so an open failure is
+        // rejected exactly as a malformed-JSON parse already is (fromJson of an empty
+        // object leaves version empty).
+        BackupManifest invalid;
+        invalid.version.clear();
+        return invalid;
     }
 
-    QByteArray data = file.readAll();
-    QJsonDocument doc = QJsonDocument::fromJson(data);
+    const QByteArray data = file.readAll();
+    const QJsonDocument doc = QJsonDocument::fromJson(data);
     return fromJson(doc.object());
+}
+
+QString BackupManifest::checksumOfManifestJson(QJsonObject obj) {
+    // Never let the digest cover itself: drop the checksum field before hashing so
+    // save-side (field absent) and load-side (field present, then removed) agree.
+    obj.remove(QStringLiteral("manifest_checksum"));
+    const QByteArray canonical = QJsonDocument(obj).toJson(QJsonDocument::Compact);
+    return QString::fromLatin1(
+        QCryptographicHash::hash(canonical, QCryptographicHash::Sha256).toHex());
+}
+
+QString BackupManifest::computeManifestChecksum() const {
+    return checksumOfManifestJson(toJson());
+}
+
+bool BackupManifest::verifyManifestChecksum() const {
+    // A legacy backup with no stored checksum is unverifiable, not corrupt.
+    if (manifest_checksum.isEmpty()) {
+        return true;
+    }
+    return computeManifestChecksum() == manifest_checksum;
+}
+
+QString BackupManifest::hashDirectoryTree(const QString& dir_path) {
+    const QDir root(dir_path);
+    if (!root.exists()) {
+        return QString();
+    }
+
+    // Collect every regular file as a forward-slash relative path, then hash in a
+    // stable sorted order so the digest is independent of filesystem enumeration
+    // order (which differs between the backup source and the restored copy).
+    QStringList relative_files;
+    QDirIterator it(dir_path,
+                    QDir::Files | QDir::Hidden | QDir::System,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        relative_files.append(root.relativeFilePath(it.filePath()));
+    }
+    relative_files.sort();
+
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    for (const QString& rel : relative_files) {
+        QFile file(root.filePath(rel));
+        if (!file.open(QIODevice::ReadOnly)) {
+            // An unreadable file is folded in by path + a sentinel so it still
+            // affects the digest (and a later readable/unreadable flip is caught).
+            hasher.addData(rel.toUtf8());
+            hasher.addData(QByteArrayLiteral("\0<unreadable>"));
+            continue;
+        }
+        hasher.addData(rel.toUtf8());
+        hasher.addData(QByteArrayLiteral("\0"));
+        while (!file.atEnd()) {
+            hasher.addData(file.read(kDirHashChunkBytes));
+        }
+    }
+    return QString::fromLatin1(hasher.result().toHex());
 }
 
 QString OperationResult::getSummary() const {
@@ -374,25 +553,26 @@ struct FolderTypeEntry {
 };
 
 static constexpr FolderTypeEntry kFolderTypes[] = {
-    {FolderType::Documents, "Documents"},
-    {FolderType::Desktop, "Desktop"},
-    {FolderType::Pictures, "Pictures"},
-    {FolderType::Videos, "Videos"},
-    {FolderType::Music, "Music"},
-    {FolderType::Downloads, "Downloads"},
-    {FolderType::AppData_Roaming, "AppData_Roaming"},
-    {FolderType::AppData_Local, "AppData_Local"},
-    {FolderType::Favorites, "Favorites"},
-    {FolderType::StartMenu, "StartMenu"},
-    {FolderType::Custom, "Custom"},
+    {.type = FolderType::Documents, .name = "Documents"},
+    {.type = FolderType::Desktop, .name = "Desktop"},
+    {.type = FolderType::Pictures, .name = "Pictures"},
+    {.type = FolderType::Videos, .name = "Videos"},
+    {.type = FolderType::Music, .name = "Music"},
+    {.type = FolderType::Downloads, .name = "Downloads"},
+    {.type = FolderType::AppData_Roaming, .name = "AppData_Roaming"},
+    {.type = FolderType::AppData_Local, .name = "AppData_Local"},
+    {.type = FolderType::Favorites, .name = "Favorites"},
+    {.type = FolderType::StartMenu, .name = "StartMenu"},
+    {.type = FolderType::Custom, .name = "Custom"},
+    {.type = FolderType::ApplicationData, .name = "ApplicationData"},
 };
 
 }  // namespace
 
 QString folderTypeToString(FolderType type) {
-    auto it = std::find_if(std::begin(kFolderTypes),
-                           std::end(kFolderTypes),
-                           [type](const auto& entry) { return entry.type == type; });
+    const auto* it = std::ranges::find_if(kFolderTypes,
+
+                                          [type](const auto& entry) { return entry.type == type; });
     if (it != std::end(kFolderTypes)) {
         return QString::fromLatin1(it->name);
     }
@@ -400,10 +580,13 @@ QString folderTypeToString(FolderType type) {
 }
 
 FolderType stringToFolderType(const QString& str) {
-    Q_ASSERT(!str.isEmpty());
-    auto it = std::find_if(std::begin(kFolderTypes),
-                           std::end(kFolderTypes),
-                           [&str](const auto& entry) { return str == QLatin1String(entry.name); });
+    // Parses a name out of persisted JSON, so an empty or unrecognised value is
+    // data and maps to Custom. The BackupManifest, FolderSelection and
+    // BackupUserData fromJson asserts were removed for exactly this reason; this
+    // one was missed and still aborted every Debug run.
+    const auto* it = std::ranges::find_if(kFolderTypes, [&str](const auto& entry) {
+        return str == QLatin1String(entry.name);
+    });
     if (it != std::end(kFolderTypes)) {
         return it->type;
     }
@@ -418,8 +601,6 @@ QString permissionModeToString(PermissionMode mode) {
         return "PreserveOriginal";
     case PermissionMode::AssignToDestination:
         return "AssignToDestination";
-    case PermissionMode::Hybrid:
-        return "Hybrid";
     }
     return "StripAll";
 }
@@ -427,29 +608,13 @@ QString permissionModeToString(PermissionMode mode) {
 QString mergeModeToString(MergeMode mode) {
     switch (mode) {
     case MergeMode::ReplaceDestination:
-        return "Replace";
+        return QStringLiteral("Replace Destination");
     case MergeMode::MergeIntoDestination:
-        return "Merge";
+        return QStringLiteral("Merge Into Destination");
     case MergeMode::CreateNewUser:
-        return "Create New";
+        return QStringLiteral("New Folder Only");
     }
-    return "Replace";
-}
-
-QString conflictResolutionToString(ConflictResolution mode) {
-    switch (mode) {
-    case ConflictResolution::SkipDuplicate:
-        return "Skip";
-    case ConflictResolution::RenameWithSuffix:
-        return "Rename";
-    case ConflictResolution::KeepNewer:
-        return "Keep Newer";
-    case ConflictResolution::KeepLarger:
-        return "Keep Larger";
-    case ConflictResolution::PromptUser:
-        return "Ask Me";
-    }
-    return "Rename";
+    return QStringLiteral("Merge Into Destination");
 }
 
 QJsonObject WifiProfileInfo::toJson() const {
@@ -498,6 +663,69 @@ EthernetConfigInfo EthernetConfigInfo::fromJson(const QJsonObject& json) {
     return info;
 }
 
+QString EthernetConfigInfo::prefixLengthToSubnetMask(int prefixLength) {
+    constexpr int kIpv4BitCount = 32;
+    constexpr int kBitsPerOctet = 8;
+    constexpr int kOctetCount = 4;
+    constexpr quint32 kOctetMask = 0xFFu;
+    if (prefixLength < 0 || prefixLength > kIpv4BitCount) {
+        return {};
+    }
+    // The top `prefixLength` bits set. Shifting a 32-bit value by 32 is undefined behaviour, so
+    // the all-zero (prefix 0) mask is produced explicitly rather than via ~0u << 32.
+    const quint32 mask = (prefixLength == 0) ? 0u : (~0u << (kIpv4BitCount - prefixLength));
+    QStringList octets;
+    octets.reserve(kOctetCount);
+    for (int i = kOctetCount - 1; i >= 0; --i) {
+        octets << QString::number((mask >> (i * kBitsPerOctet)) & kOctetMask);
+    }
+    return octets.join(QLatin1Char('.'));
+}
+
+QVector<EthernetConfigInfo> EthernetConfigInfo::parseNetIpConfigJson(const QString& json) {
+    QVector<EthernetConfigInfo> configs;
+
+    const QJsonDocument doc = QJsonDocument::fromJson(json.trimmed().toUtf8());
+    QJsonArray adapters;
+    if (doc.isArray()) {
+        adapters = doc.array();
+    } else if (doc.isObject()) {
+        // ConvertTo-Json emits a bare object, not a one-element array, for a single adapter.
+        adapters.append(doc.object());
+    } else {
+        return configs;  // empty / null / unparseable: no adapters captured
+    }
+
+    for (const QJsonValue& value : adapters) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject obj = value.toObject();
+        EthernetConfigInfo info;
+        info.adapter_name = obj["Name"].toString();
+        if (info.adapter_name.isEmpty()) {
+            continue;
+        }
+        info.dhcp_enabled = obj["Dhcp"].toString() == QLatin1String("Enabled");
+        info.ip_address = obj["IPv4"].toString();
+        const QJsonValue prefix = obj["Prefix"];
+        if (prefix.isDouble()) {
+            info.subnet_mask = prefixLengthToSubnetMask(prefix.toInt());
+        }
+        info.default_gateway = obj["Gateway"].toString();
+        const QJsonArray dns = obj["Dns"].toArray();
+        if (!dns.isEmpty()) {
+            info.dns_primary = dns.at(0).toString();
+        }
+        if (dns.size() > 1) {
+            info.dns_secondary = dns.at(1).toString();
+        }
+        configs.append(info);
+    }
+
+    return configs;
+}
+
 QJsonObject AppDataSourceInfo::toJson() const {
     QJsonObject obj;
     obj["name"] = name;
@@ -506,6 +734,13 @@ QJsonObject AppDataSourceInfo::toJson() const {
     obj["size_bytes"] = static_cast<double>(size_bytes);
     obj["exists"] = exists;
     obj["selected"] = selected;
+    // Only when set, so a manifest from before these existed still matches its checksum.
+    if (!include_patterns.isEmpty()) {
+        obj["include_patterns"] = QJsonArray::fromStringList(include_patterns);
+    }
+    if (!exclude_patterns.isEmpty()) {
+        obj["exclude_patterns"] = QJsonArray::fromStringList(exclude_patterns);
+    }
     return obj;
 }
 
@@ -517,6 +752,8 @@ AppDataSourceInfo AppDataSourceInfo::fromJson(const QJsonObject& json) {
     info.size_bytes = qint64FromJson(json, "size_bytes");
     info.exists = json["exists"].toBool(false);
     info.selected = json["selected"].toBool(true);
+    info.include_patterns = arrayToStringList(json["include_patterns"].toArray());
+    info.exclude_patterns = arrayToStringList(json["exclude_patterns"].toArray());
     return info;
 }
 

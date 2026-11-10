@@ -6,7 +6,11 @@
 
 #pragma once
 
+// EthernetConfigInfo: the parsed shape scanEthernetConfigs returns.
+#include "sak/user_profile_types.h"
+
 #include <QJsonObject>
+#include <QList>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -20,6 +24,9 @@ struct EthernetConfigSnapshot {
     QString adapterName;  ///< Windows adapter name (e.g. "Ethernet")
     QString description;  ///< Adapter description (e.g. "Intel I219-V")
     QString macAddress;   ///< Physical address for identification
+    /// The adapter's type as the adapter list names it ("Ethernet", "WiFi", "Bluetooth", ...), so a
+    /// restore can start on an adapter of the same kind. Empty in backups made before it existed.
+    QString adapterType;
 
     // IPv4 settings
     bool dhcpEnabled = false;
@@ -42,11 +49,33 @@ struct EthernetConfigSnapshot {
     [[nodiscard]] bool isValid() const;
 };
 
+/// @brief An adapter a backup could be restored to.
+struct RestoreCandidate {
+    QString name;
+    /// As the adapter list names it; empty when the list does not know it.
+    QString type;
+};
+
+/// @brief Adapter identity fields needed for deterministic MAC lookup.
+struct EthernetAdapterIdentity {
+    QString humanReadableName;
+    QString systemName;
+    QString hardwareAddress;
+};
+
+/// @brief Scan every adapter's IPv4 configuration, language-neutrally.
+/// @param scan_ok Optional out: true only when the scan RAN and succeeded. A succeeded scan that
+///        found nothing and a failed scan both return an empty list, and they call for opposite
+///        next actions, so a caller that shows "no adapters found" must check this first.
+/// @note This is the only place an adapter scan is launched. The backup wizard used to launch its
+///       own copy -- same PowerShell script, but a different resolver, argument list and timeout.
+[[nodiscard]] QVector<EthernetConfigInfo> scanEthernetConfigs(bool* scan_ok = nullptr);
+
 /// @brief Manages backup and restore of Ethernet adapter settings
 ///
-/// Uses `netsh interface ip show config` to capture settings and
-/// `netsh interface ip set` commands to restore them. Backups are
-/// stored as JSON files for portability across machines.
+/// Captures settings with a language-neutral Get-NetIPConfiguration scan (see
+/// scanEthernetConfigs) and restores them through the shared netsh command builders in
+/// network_adapter_admin.h. Backups are stored as JSON files for portability across machines.
 class EthernetConfigManager : public QObject {
     Q_OBJECT
 
@@ -64,6 +93,15 @@ public:
     /// @return Snapshot of the adapter's IP configuration, or invalid snapshot on failure
     [[nodiscard]] EthernetConfigSnapshot captureSettings(const QString& adapterName);
 
+    /// @brief Resolve an adapter's MAC address ("AA:BB:CC:DD:EE:FF") via QNetworkInterface,
+    ///        matched by human-readable or system name. Empty if the adapter is not found.
+    ///        Static and side-effect-free so it can be unit-tested.
+    [[nodiscard]] static QString lookupAdapterMac(const QString& adapterName);
+
+    /// @brief Resolve a MAC from injected adapter identities.
+    [[nodiscard]] static QString lookupAdapterMac(const QString& adapterName,
+                                                  const QList<EthernetAdapterIdentity>& interfaces);
+
     /// @brief Save a snapshot to a JSON file
     /// @param snapshot  The configuration to save
     /// @param filePath  Destination file path
@@ -78,12 +116,46 @@ public:
     /// @brief Restore adapter settings from a snapshot
     /// @param snapshot     The configuration to apply
     /// @param adapterName  Target adapter name (may differ from snapshot's original)
-    /// @return true if all netsh commands succeeded
+    /// @param dnsApplied   Optional out: on the DHCP path, set to whether DNS was
+    ///        also switched to automatic (previously discarded). Lets a caller
+    ///        report the ACTUAL DNS outcome instead of implying it always worked.
+    /// @return On the STATIC path, true only when every netsh command (IP and DNS) succeeded.
+    ///        On the DHCP path, switching IPv4 to DHCP is the authoritative success; the
+    ///        DNS-to-automatic step is reported through @p dnsApplied and does NOT by itself
+    ///        fail the restore, so a caller that needs the DNS outcome must pass @p dnsApplied.
     [[nodiscard]] bool restoreSettings(const EthernetConfigSnapshot& snapshot,
-                                       const QString& adapterName);
+                                       const QString& adapterName,
+                                       bool* dnsApplied = nullptr);
+
+    /// @brief Set an adapter's IPv4 DNS servers to a static list, leaving the
+    /// adapter's IP configuration (DHCP or static) untouched.
+    /// @param adapterName    Target adapter name
+    /// @param dnsServers     Ordered IPv4 DNS server addresses (first = primary)
+    /// @param primaryApplied Out: set true once the primary DNS is live, so a
+    ///        caller can tell a nothing-applied failure (primary set failed) from
+    ///        a partial one (primary live, a secondary add failed)
+    /// @return true if every netsh dnsservers command succeeded
+    [[nodiscard]] bool setDnsServers(const QString& adapterName,
+                                     const QStringList& dnsServers,
+                                     bool& primaryApplied);
 
     /// @brief List available Ethernet adapter names for backup
     [[nodiscard]] QStringList listEthernetAdapters();
+
+    /// @brief The names in the JSON array listEthernetAdapters reads. Empty for anything else.
+    [[nodiscard]] static QStringList adapterNamesFromJson(const QString& json);
+
+    /// @brief Which of @p candidates a restore of a backup from @p backup_name should start on:
+    ///        the adapter of that name (case-insensitive), else the first of @p backup_type, else
+    ///        the first candidate. Returns -1 only when there are no candidates.
+    [[nodiscard]] static int preferredRestoreTarget(const QList<RestoreCandidate>& candidates,
+                                                    const QString& backup_name,
+                                                    const QString& backup_type);
+
+    /// @brief Select @p adapterName out of a Get-NetIPConfiguration JSON scan and map it into a
+    ///        snapshot. Language-neutral, unlike the netsh label scrape it replaced.
+    [[nodiscard]] static EthernetConfigSnapshot snapshotFromNetIpConfig(const QString& json,
+                                                                        const QString& adapterName);
 
 Q_SIGNALS:
     /// @brief Emitted with status messages during backup/restore
@@ -92,19 +164,27 @@ Q_SIGNALS:
     /// @brief Emitted on errors
     void errorOccurred(const QString& error);
 
+
 private:
-    [[nodiscard]] bool restoreDhcpMode(const QString& adapterName);
+    /// @param dnsApplied Optional out: whether the DNS-to-automatic (source=dhcp)
+    ///        step succeeded. IPv4 DHCP is the authoritative success; the DNS
+    ///        result is surfaced here instead of being discarded.
+    [[nodiscard]] bool restoreDhcpMode(const QString& adapterName, bool* dnsApplied = nullptr);
     [[nodiscard]] bool restoreStaticIp(const EthernetConfigSnapshot& snapshot,
                                        const QString& adapterName);
+    /// @param primaryApplied Optional out: set true once the primary DNS command
+    ///        succeeds (so a partial failure -- primary live, a secondary add
+    ///        failed -- is distinguishable from a nothing-applied failure).
     [[nodiscard]] bool restoreDnsServers(const EthernetConfigSnapshot& snapshot,
-                                         const QString& adapterName);
+                                         const QString& adapterName,
+                                         bool* primaryApplied = nullptr);
 
-    /// @brief Run a netsh command and return stdout
-    [[nodiscard]] QString runNetsh(const QStringList& args);
+    /// @brief Run a netsh command and return stdout. Used only by the adapter ENUMERATION below;
+    ///        every netsh command that MUTATES an adapter lives in network_adapter_admin.h.
+    [[nodiscard]] QString runNetsh(const QStringList& args, bool* ok = nullptr);
 
-    /// @brief Parse the output of `netsh interface ip show config` for an adapter
-    [[nodiscard]] static EthernetConfigSnapshot parseNetshConfig(const QString& output,
-                                                                 const QString& adapterName);
+    /// @brief Run a PowerShell scan from System32, failing closed if it cannot be resolved.
+    [[nodiscard]] QString runPowerShellCapture(const QString& script);
 };
 
 // -- Compile-Time Invariants -------------------------------------------------

@@ -5,6 +5,7 @@
 
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -16,7 +17,6 @@
 namespace sak {
 
 namespace {
-constexpr int kBackupSizeGbDisplayPrecision = 2;
 
 QString restoreWelcomeInfoHtml() {
     return QStringLiteral(
@@ -33,15 +33,16 @@ QString restoreWelcomeInfoHtml() {
                 "<b>User Mapping</b>: Map backup users to destination users"),
             QCoreApplication::translate(
                 "UserProfileRestoreWelcomePage",
-                "<b>Merge Options</b>: Choose how to handle existing files"),
+                "<b>Existing Files</b>: Choose how to handle files already there"),
             QCoreApplication::translate("UserProfileRestoreWelcomePage",
                                         "<b>Folder Selection</b>: Select which folders to restore"),
             QCoreApplication::translate(
                 "UserProfileRestoreWelcomePage",
                 "<b>App Data & Apps</b>: Restore application data and reinstall apps (optional)"),
-            QCoreApplication::translate("UserProfileRestoreWelcomePage",
-                                        "<b>Networks & Ethernet</b>: Restore WiFi profiles and "
-                                        "adapter settings (optional)"));
+            QCoreApplication::translate(
+                "UserProfileRestoreWelcomePage",
+                "<b>Wi-Fi & Network Adapters</b>: Restore Wi-Fi profiles and "
+                "adapter settings (optional)"));
 }
 }  // namespace
 
@@ -70,22 +71,23 @@ void UserProfileRestoreWelcomePage::setupUi() {
 
     layout->addSpacing(sak::ui::kMarginXLarge);
 
-    auto* selectGroup = new QWidget(this);
-    auto* selectLayout = new QHBoxLayout(selectGroup);
-    selectLayout->setContentsMargins(
+    auto* select_group = new QWidget(this);
+    auto* select_layout = new QHBoxLayout(select_group);
+    select_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
-    auto* backupLabel = new QLabel(tr("Backup Location:"), selectGroup);
-    m_backupPathEdit = new QLineEdit(selectGroup);
+    auto* backup_label = new QLabel(tr("Backup Location:"), select_group);
+    m_backupPathEdit = new QLineEdit(select_group);
+    m_backupPathEdit->setAccessibleName(tr("Backup location"));
     m_backupPathEdit->setPlaceholderText(tr("Select backup directory or manifest.json file..."));
 
-    m_browseButton = new QPushButton(tr("Browse..."), selectGroup);
+    m_browseButton = new QPushButton(tr("Browse..."), select_group);
 
-    selectLayout->addWidget(backupLabel);
-    selectLayout->addWidget(m_backupPathEdit, 1);
-    selectLayout->addWidget(m_browseButton);
+    select_layout->addWidget(backup_label);
+    select_layout->addWidget(m_backupPathEdit, 1);
+    select_layout->addWidget(m_browseButton);
 
-    layout->addWidget(selectGroup);
+    layout->addWidget(select_group);
 
     m_manifestInfoLabel = new QLabel(this);
     m_manifestInfoLabel->setWordWrap(true);
@@ -101,7 +103,8 @@ void UserProfileRestoreWelcomePage::setupUi() {
     connect(m_browseButton,
             &QPushButton::clicked,
             this,
-            &UserProfileRestoreWelcomePage::onBrowseBackup);
+            &UserProfileRestoreWelcomePage::onBrowseBackup,
+            Qt::QueuedConnection);
     connect(m_backupPathEdit,
             &QLineEdit::textChanged,
             this,
@@ -112,11 +115,11 @@ void UserProfileRestoreWelcomePage::setupUi() {
 
 void UserProfileRestoreWelcomePage::onBrowseBackup() {
     Q_ASSERT(m_backupPathEdit);
-    QString path = QFileDialog::getExistingDirectory(this,
-                                                     tr("Select Backup Directory"),
-                                                     QDir::homePath(),
-                                                     QFileDialog::ShowDirsOnly |
-                                                         QFileDialog::DontResolveSymlinks);
+    const QString path = QFileDialog::getExistingDirectory(this,
+                                                           tr("Select Backup Directory"),
+                                                           QDir::homePath(),
+                                                           QFileDialog::ShowDirsOnly |
+                                                               QFileDialog::DontResolveSymlinks);
 
     if (!path.isEmpty()) {
         m_backupPathEdit->setText(path);
@@ -126,24 +129,36 @@ void UserProfileRestoreWelcomePage::onBrowseBackup() {
 void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     Q_ASSERT(m_backupPathEdit);
     Q_ASSERT(m_manifestInfoLabel);
-    QString path = m_backupPathEdit->text();
+    const QString path = m_backupPathEdit->text();
+
+    // Drop any backup/manifest previously stored in the wizard. A path that is empty,
+    // invalid, or fails to load must not leave a stale valid manifest from an earlier
+    // selection behind for the later pages to restore.
+    auto clear_stored_backup = [this]() {
+        if (auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard())) {
+            wiz->setBackupPath(QString());
+            wiz->setManifest(BackupManifest{});
+        }
+    };
 
     if (path.isEmpty()) {
+        clear_stored_backup();
         m_manifestInfoLabel->hide();
         Q_EMIT completeChanged();
         return;
     }
 
     // Try to load manifest
-    QFileInfo fileInfo(path);
-    QString manifestPath;
+    const QFileInfo file_info(path);
+    QString manifest_path;
 
-    if (fileInfo.isDir()) {
-        manifestPath = path + "/manifest.json";
-    } else if (fileInfo.fileName() == "manifest.json") {
-        manifestPath = path;
-        m_backupPathEdit->setText(fileInfo.absolutePath());
+    if (file_info.isDir()) {
+        manifest_path = path + "/manifest.json";
+    } else if (file_info.fileName() == "manifest.json") {
+        manifest_path = path;
+        m_backupPathEdit->setText(file_info.absolutePath());
     } else {
+        clear_stored_backup();
         m_manifestInfoLabel->setText(
             tr("[X] Invalid backup path. Please select a backup directory "
                "or manifest.json file."));
@@ -153,8 +168,9 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
     }
 
     // Load manifest
-    BackupManifest manifest = BackupManifest::loadFromFile(manifestPath);
+    const BackupManifest manifest = BackupManifest::loadFromFile(manifest_path);
     if (manifest.version.isEmpty()) {
+        clear_stored_backup();
         m_manifestInfoLabel->setText(
             tr("[X] Failed to load backup manifest. The backup may be "
                "corrupted."));
@@ -163,28 +179,32 @@ void UserProfileRestoreWelcomePage::onBackupPathChanged() {
         return;
     }
 
-    // Display manifest info
-    QString info = QString(
-                       "<b>[OK] Valid Backup Found</b><br>"
-                       "<b>Version:</b> %1<br>"
-                       "<b>Created:</b> %2<br>"
-                       "<b>Source Machine:</b> %3<br>"
-                       "<b>Users:</b> %4<br>"
-                       "<b>Total Size:</b> %5 GB")
-                       .arg(manifest.version,
-                            manifest.created.toString("yyyy-MM-dd hh:mm:ss"),
-                            manifest.source_machine,
-                            QString::number(manifest.users.size()),
-                            QString::number(manifest.total_backup_size_bytes / sak::kBytesPerGBf,
-                                            'f',
-                                            kBackupSizeGbDisplayPrecision));
+    showLoadedManifest(manifest);
+}
+
+void UserProfileRestoreWelcomePage::showLoadedManifest(const BackupManifest& manifest) {
+    // version/source_machine are read straight out of the selected backup's manifest.json, which
+    // anyone who can hand the technician a .sakbackup controls. This label is explicitly
+    // Qt::RichText (setupUi), so both must be escaped before they enter the template.
+    const QString info = QString(
+                             "<b>Valid Backup Found</b><br>"
+                             "<b>Version:</b> %1<br>"
+                             "<b>Created:</b> %2<br>"
+                             "<b>Source Machine:</b> %3<br>"
+                             "<b>Users:</b> %4<br>"
+                             "<b>Total Size:</b> %5")
+                             .arg(manifest.version.toHtmlEscaped(),
+                                  manifest.created.toString("yyyy-MM-dd hh:mm:ss"),
+                                  manifest.source_machine.toHtmlEscaped(),
+                                  QString::number(manifest.users.size()),
+                                  sak::formatBytes(manifest.total_backup_size_bytes));
 
     m_manifestInfoLabel->setText(info);
     m_manifestInfoLabel->show();
 
     // Store manifest in wizard
     auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (wiz) {
+    if (wiz != nullptr) {
         wiz->setBackupPath(m_backupPathEdit->text());
         wiz->setManifest(manifest);
     }
@@ -203,14 +223,13 @@ UserProfileRestoreWizard::UserProfileRestoreWizard(QWidget* parent)
     , m_verifyFiles(true)
     , m_createBackup(false) {
     setWindowTitle(tr("Restore User Profiles"));
-    setWizardStyle(QWizard::ModernStyle);
+    useAppWizardStyle(this);
     setOption(QWizard::HaveHelpButton, false);
     setOption(QWizard::NoCancelButton, false);
 
     // Add pages
     addPage(new UserProfileRestoreWelcomePage(this));
     addPage(new UserProfileRestoreUserMappingPage(this));
-    addPage(new UserProfileRestoreMergeConfigPage(this));
     addPage(new UserProfileRestoreFolderSelectionPage(this));
     addPage(new UserProfileRestoreAppDataPage(this));
     addPage(new UserProfileRestoreAppRestorePage(this));

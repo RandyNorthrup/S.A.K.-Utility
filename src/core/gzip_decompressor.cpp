@@ -21,10 +21,10 @@ GzipDecompressor::~GzipDecompressor() {
 }
 
 bool GzipDecompressor::initStream() {
-    int ret = inflateInit2(&m_zstream, kZlibMaxWindowBits + kZlibGzipDetectionWindowBits);
+    const int ret = inflateInit2(&m_zstream, kZlibMaxWindowBits + kZlibGzipDetectionWindowBits);
     if (ret != Z_OK) {
         m_lastError = QString("Failed to initialize zlib: %1")
-                          .arg(m_zstream.msg ? m_zstream.msg : "unknown error");
+                          .arg((m_zstream.msg != nullptr) ? m_zstream.msg : "zlib gave no message");
         return false;
     }
     m_zstream.avail_in = 0;
@@ -41,9 +41,9 @@ void GzipDecompressor::setInputFromBuffer(size_t bytes) {
     m_zstream.avail_in = static_cast<unsigned int>(bytes);
 }
 
-void GzipDecompressor::setOutput(char* data, size_t maxSize) {
+void GzipDecompressor::setOutput(char* data, size_t max_size) {
     m_zstream.next_out = reinterpret_cast<unsigned char*>(data);
-    m_zstream.avail_out = static_cast<unsigned int>(maxSize);
+    m_zstream.avail_out = static_cast<unsigned int>(max_size);
 }
 
 size_t GzipDecompressor::outputRemaining() const {
@@ -55,17 +55,30 @@ bool GzipDecompressor::inputEmpty() const {
 }
 
 GzipDecompressor::StepResult GzipDecompressor::decompressStep() {
-    int ret = inflate(&m_zstream, Z_NO_FLUSH);
+    const int ret = inflate(&m_zstream, Z_NO_FLUSH);
     if (ret == Z_STREAM_END) {
         return StepResult::stream_end;
     }
     if (ret != Z_OK) {
         m_lastError = QString("Decompression error: %1 (%2)")
-                          .arg(m_zstream.msg ? m_zstream.msg : "unknown error")
+                          .arg((m_zstream.msg != nullptr) ? m_zstream.msg : "zlib gave no message")
                           .arg(ret);
         return StepResult::error;
     }
     return StepResult::ok;
+}
+
+bool GzipDecompressor::resetStreamForNextMember() {
+    // inflateReset restarts the inflate state for a new gzip member without freeing
+    // the allocated window, and leaves next_in/avail_in/next_out/avail_out untouched
+    // so the bytes after the previous member feed the next one (B8-12).
+    const int ret = inflateReset(&m_zstream);
+    if (ret != Z_OK) {
+        m_lastError = QString("Failed to reset zlib for the next member: %1")
+                          .arg((m_zstream.msg != nullptr) ? m_zstream.msg : "zlib gave no message");
+        return false;
+    }
+    return true;
 }
 
 }  // namespace sak

@@ -6,13 +6,18 @@
 
 #include "sak/conversion_report_generator.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/report_style_constants.h"
 
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QTextStream>
+
+#include <algorithm>
+#include <limits>
 
 namespace sak {
 
@@ -20,7 +25,8 @@ namespace {
 constexpr int kSecondsPerHour = 3600;
 constexpr int kSha256PreviewChars = 16;
 constexpr qsizetype kReportHtmlReserveChars = 8192;
-constexpr int kGigabyteDisplayPrecision = 2;
+constexpr char16_t kEmDashCodePoint = 0x2014;    // Unicode em dash (U+2014)
+constexpr char16_t kEllipsisCodePoint = 0x2026;  // Unicode horizontal ellipsis (U+2026)
 }  // namespace
 
 // ======================================================================
@@ -29,26 +35,73 @@ constexpr int kGigabyteDisplayPrecision = 2;
 
 QString ConversionReportGenerator::generateHtmlReport(const OstConversionBatchResult& batch,
                                                       const QString& output_directory) {
-    QString html = buildReportHtml(batch);
+    if (output_directory.trimmed().isEmpty()) {
+        logError("ConversionReport: refusing to write report to a blank output directory");
+        return {};
+    }
+    const QString html = buildReportHtml(batch);
     QString report_path = output_directory + QStringLiteral("/conversion_report.html");
 
-    QDir dir(output_directory);
-    if (!dir.exists()) {
-        dir.mkpath(QStringLiteral("."));
-    }
-
-    QFile file(report_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        logError("ConversionReport: failed to write report to {}", report_path.toStdString());
+    const QDir dir(output_directory);
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        logError("ConversionReport: failed to create output directory {}",
+                 output_directory.toStdString());
         return {};
     }
 
-    QTextStream out(&file);
-    out << html;
-    file.close();
+    // QSaveFile writes to a temporary sibling and atomically renames on commit(), so a
+    // short or failed write can never truncate a previously good report.
+    QSaveFile file(report_path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        logError("ConversionReport: failed to open report {} for writing: {}",
+                 report_path.toStdString(),
+                 file.errorString().toStdString());
+        return {};
+    }
+
+    {
+        QTextStream out(&file);
+        out << html;
+        out.flush();
+        if (out.status() != QTextStream::Ok) {
+            logError("ConversionReport: stream error writing report {}", report_path.toStdString());
+            file.cancelWriting();
+            return {};
+        }
+    }
+
+    if (!file.commit()) {
+        logError("ConversionReport: failed to finalize report {}: {}",
+                 report_path.toStdString(),
+                 file.errorString().toStdString());
+        return {};
+    }
 
     logInfo("ConversionReport: report saved to {}", report_path.toStdString());
     return report_path;
+}
+
+QString ConversionReportGenerator::csvSafeCell(const QString& value) {
+    QString cell = value;
+
+    // Formula-injection guard: email subjects/senders/message-ids are attacker-controlled. A cell
+    // a spreadsheet would evaluate as a formula (leading = + - @, or a leading tab/CR that some
+    // parsers strip to reveal one) gets a single-quote prefix so Excel/Calc treat it as text.
+    static const QString kFormulaLeads = QStringLiteral("=+-@\t\r\n");
+    if (!cell.isEmpty() && kFormulaLeads.contains(cell.at(0))) {
+        cell.prepend(QLatin1Char('\''));
+    }
+
+    // RFC 4180 quoting: wrap and double internal quotes if the cell contains a comma, quote,
+    // newline, or carriage return.
+    static const QString kMustQuote = QStringLiteral(",\"\n\r");
+    const bool needs_quote = std::ranges::any_of(cell,
+                                                 [](QChar c) { return kMustQuote.contains(c); });
+    if (needs_quote) {
+        cell.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+        return QStringLiteral("\"%1\"").arg(cell);
+    }
+    return cell;
 }
 
 int ConversionReportGenerator::writeCsvDataRows(
@@ -56,23 +109,22 @@ int ConversionReportGenerator::writeCsvDataRows(
     const QVector<PstItemDetail>& items,
     const QVector<QVector<MapiProperty>>& all_properties,
     const QList<QString>& sorted_names) {
-    auto csvEscape = [](const QString& str) -> QString {
-        if (str.contains(QLatin1Char(',')) || str.contains(QLatin1Char('"')) ||
-            str.contains(QLatin1Char('\n'))) {
-            QString escaped = str;
-            escaped.replace(QLatin1Char('"'), QStringLiteral("\"\""));
-            return QStringLiteral("\"%1\"").arg(escaped);
-        }
-        return str;
-    };
-
-    int count = qMin(items.size(), all_properties.size());
-    for (int i = 0; i < count; ++i) {
+    if (items.size() != all_properties.size()) {
+        // items[i] and all_properties[i] are parallel; a size mismatch means the manifest
+        // request is inconsistent. Surface it rather than silently emitting a truncated
+        // manifest for the common prefix.
+        logError(
+            "ConversionReport: CSV item/property count mismatch ({} items vs {} property sets)",
+            std::to_string(items.size()),
+            std::to_string(all_properties.size()));
+    }
+    const qsizetype count = qMin(items.size(), all_properties.size());
+    for (qsizetype i = 0; i < count; ++i) {
         const auto& item = items[i];
 
-        out << item.node_id << "," << csvEscape(item.subject) << "," << csvEscape(item.sender_name)
-            << "," << csvEscape(item.sender_email) << ","
-            << csvEscape(item.date.toString(Qt::ISODate)) << "," << csvEscape(item.message_id);
+        out << item.node_id << "," << csvSafeCell(item.subject) << ","
+            << csvSafeCell(item.sender_name) << "," << csvSafeCell(item.sender_email) << ","
+            << csvSafeCell(item.date.toString(Qt::ISODate)) << "," << csvSafeCell(item.message_id);
 
         const auto& props = all_properties[i];
         QHash<QString, QString> prop_map;
@@ -81,38 +133,24 @@ int ConversionReportGenerator::writeCsvDataRows(
         }
 
         for (const auto& name : sorted_names) {
-            out << "," << csvEscape(prop_map.value(name));
+            out << "," << csvSafeCell(prop_map.value(name));
         }
 
         out << "\n";
     }
 
-    return count;
+    return static_cast<int>(qMin<qsizetype>(count, std::numeric_limits<int>::max()));
 }
 
-QString ConversionReportGenerator::generateCsvManifest(
-    const QVector<PstItemDetail>& items,
-    const QVector<QVector<MapiProperty>>& all_properties,
-    const QString& output_directory) {
-    QString csv_path = output_directory + QStringLiteral("/properties_manifest.csv");
-
-    QDir dir(output_directory);
-    if (!dir.exists()) {
-        dir.mkpath(QStringLiteral("."));
-    }
-
-    QFile file(csv_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        logError("ConversionReport: failed to write CSV to {}", csv_path.toStdString());
-        return {};
-    }
-
-    QTextStream out(&file);
-
-    // Header row
-    out << "NodeId,Subject,SenderName,SenderEmail,Date,MessageClass";
-
-    // Collect all unique property names across all items
+namespace {
+// The sorted, bounded set of property names that become pivot columns for the manifest.
+//
+// Bound the pivot width: a hostile mail file can declare an unbounded number of distinct
+// property names, and each becomes a column emitted for every item (O(items x names)).
+// Legitimate manifests use far fewer; cap fail-closed so a crafted store cannot force
+// quadratic CPU/disk use.
+QList<QString> collectManifestPropertyColumns(
+    const QVector<QVector<MapiProperty>>& all_properties) {
     QSet<QString> prop_names;
     for (const auto& props : all_properties) {
         for (const auto& prop : props) {
@@ -120,18 +158,78 @@ QString ConversionReportGenerator::generateCsvManifest(
         }
     }
     QList<QString> sorted_names = prop_names.values();
-    std::sort(sorted_names.begin(), sorted_names.end());
+    std::ranges::sort(sorted_names);
 
-    for (const auto& name : sorted_names) {
-        out << "," << name;
+    constexpr qsizetype kMaxPropertyColumns = 4096;
+    if (sorted_names.size() > kMaxPropertyColumns) {
+        logWarning(
+            "ConversionReport: {} distinct property names exceeds column cap {} -- truncating",
+            std::to_string(sorted_names.size()),
+            std::to_string(kMaxPropertyColumns));
+        sorted_names = sorted_names.mid(0, kMaxPropertyColumns);
     }
-    out << "\n";
+    return sorted_names;
+}
+}  // namespace
 
-    int count = writeCsvDataRows(out, items, all_properties, sorted_names);
+QString ConversionReportGenerator::generateCsvManifest(
+    const QVector<PstItemDetail>& items,
+    const QVector<QVector<MapiProperty>>& all_properties,
+    const QString& output_directory) {
+    if (output_directory.trimmed().isEmpty()) {
+        logError("ConversionReport: refusing to write CSV to a blank output directory");
+        return {};
+    }
+    QString csv_path = output_directory + QStringLiteral("/properties_manifest.csv");
 
-    file.close();
+    const QDir dir(output_directory);
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        logError("ConversionReport: failed to create output directory {}",
+                 output_directory.toStdString());
+        return {};
+    }
 
-    logInfo("ConversionReport: CSV manifest saved — {} items", std::to_string(count));
+    // Atomic write: a short/failed write never truncates a previously good manifest.
+    QSaveFile file(csv_path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        logError("ConversionReport: failed to open CSV {} for writing: {}",
+                 csv_path.toStdString(),
+                 file.errorString().toStdString());
+        return {};
+    }
+
+    int count = 0;
+    {
+        QTextStream out(&file);
+
+        // Header row. The final fixed column carries item.message_id (see writeCsvDataRows),
+        // so name it MessageId to match the value written (P10-47).
+        out << "NodeId,Subject,SenderName,SenderEmail,Date,MessageId";
+
+        const QList<QString> sorted_names = collectManifestPropertyColumns(all_properties);
+        for (const auto& name : sorted_names) {
+            out << "," << csvSafeCell(name);  // property names come from data -> escape them too
+        }
+        out << "\n";
+
+        count = writeCsvDataRows(out, items, all_properties, sorted_names);
+
+        out.flush();
+        if (out.status() != QTextStream::Ok) {
+            logError("ConversionReport: stream error writing CSV {}", csv_path.toStdString());
+            file.cancelWriting();
+            return {};
+        }
+    }
+
+    if (!file.commit()) {
+        logError("ConversionReport: failed to finalize CSV {}: {}",
+                 csv_path.toStdString(),
+                 file.errorString().toStdString());
+        return {};
+    }
+
+    logInfo("ConversionReport: CSV manifest saved -- {} items", std::to_string(count));
     return csv_path;
 }
 
@@ -142,27 +240,61 @@ QString ConversionReportGenerator::generateCsvManifest(
 QString ConversionReportGenerator::buildSummaryStatsHtml(const OstConversionBatchResult& batch,
                                                          qint64 duration_ms) {
     QString html;
-    auto addStat = [&](const QString& value, const QString& label) {
+    auto add_stat = [&](const QString& value, const QString& label) {
         html += QStringLiteral(
                     "<div class='stat'><div class='stat-value'>%1</div>"
                     "<div class='stat-label'>%2</div></div>")
                     .arg(value, label);
     };
 
-    addStat(QString::number(batch.files_total), QStringLiteral("Files"));
-    addStat(QString::number(batch.files_succeeded), QStringLiteral("Succeeded"));
+    add_stat(QString::number(batch.files_total), QStringLiteral("Files"));
+    add_stat(QString::number(batch.files_succeeded), QStringLiteral("Succeeded"));
     if (batch.files_failed > 0) {
-        addStat(QStringLiteral("<span class='error'>%1</span>").arg(batch.files_failed),
-                QStringLiteral("Failed"));
+        add_stat(QStringLiteral("<span class='error'>%1</span>").arg(batch.files_failed),
+                 QStringLiteral("Failed"));
     }
-    addStat(QString::number(batch.total_items_converted), QStringLiteral("Items Converted"));
+    add_stat(QString::number(batch.total_items_converted), QStringLiteral("Items Converted"));
+    if (batch.total_items_skipped > 0) {
+        add_stat(QString::number(batch.total_items_skipped), QStringLiteral("Not Mail, Left Out"));
+    }
     if (batch.total_items_recovered > 0) {
-        addStat(QString::number(batch.total_items_recovered), QStringLiteral("Items Recovered"));
+        add_stat(QString::number(batch.total_items_recovered), QStringLiteral("Items Recovered"));
     }
-    addStat(formatBytes(batch.total_bytes_written), QStringLiteral("Total Output"));
-    addStat(formatDuration(duration_ms), QStringLiteral("Duration"));
+    add_stat(formatBytes(batch.total_bytes_written), QStringLiteral("Total Output"));
+    add_stat(formatDuration(duration_ms), QStringLiteral("Duration"));
     return html;
 }
+
+namespace {
+// Render a SHA-256 digest as a short, HTML-safe preview. The digest is app-computed hex; a value
+// that is empty or not pure hex is treated as absent (em-dash) rather than emitted -- this both
+// validates it as hex and keeps it consistent with the other escaped columns (P10-48).
+QString sha256PreviewHtml(const QString& sha256) {
+    const auto is_hex = [](QChar c) {
+        const char16_t u = c.unicode();
+        return (u >= u'0' && u <= u'9') || (u >= u'a' && u <= u'f') || (u >= u'A' && u <= u'F');
+    };
+    if (sha256.isEmpty() || !std::ranges::all_of(sha256, is_hex)) {
+        return QString(QChar(kEmDashCodePoint));
+    }
+    return sha256.left(kSha256PreviewChars) + QString(QChar(kEllipsisCodePoint));
+}
+
+// The CSS status class for one file-result row.
+QString fileResultRowStatusClass(const OstConversionResult& result) {
+    if (result.items_failed > 0 && result.items_converted == 0) {
+        // A truncated deleted-item scan left items OUT of this output, so the row must not
+        // read as a clean run just because nothing that WAS enumerated failed to write.
+        return QStringLiteral("error");
+    }
+    if (result.items_failed > 0 || !result.recovery_complete || !result.errors.isEmpty()) {
+        // A file with logged errors is not a clean success even when no item was
+        // individually marked failed (e.g. a checksum/open/finalization error).
+        return QStringLiteral("warn");
+    }
+    return QStringLiteral("success");
+}
+}  // namespace
 
 QString ConversionReportGenerator::buildFileResultsTableHtml(
     const OstConversionBatchResult& batch) {
@@ -185,36 +317,26 @@ QString ConversionReportGenerator::buildFileResultsTableHtml(
             file_dur = result.started.msecsTo(result.finished);
         }
 
-        QString status_class;
-        if (result.items_failed > 0 && result.items_converted == 0) {
-            status_class = QStringLiteral("error");
-        } else if (result.items_failed > 0) {
-            status_class = QStringLiteral("warn");
-        } else {
-            status_class = QStringLiteral("success");
-        }
+        const QString status_class = fileResultRowStatusClass(result);
 
-        html +=
-            QStringLiteral(
-                "<tr><td>%1</td>"
-                "<td class='%2'>%3</td>"
-                "<td class='%4'>%5</td>"
-                "<td>%6</td>"
-                "<td>%7</td>"
-                "<td>%8</td>"
-                "<td class='hash-preview'>%9</td>"
-                "</tr>")
-                .arg(result.source_path.toHtmlEscaped())
-                .arg(status_class)
-                .arg(result.items_converted)
-                .arg(result.items_failed > 0 ? QStringLiteral("error") : QString())
-                .arg(result.items_failed)
-                .arg(result.items_recovered)
-                .arg(formatBytes(result.bytes_written))
-                .arg(formatDuration(file_dur))
-                .arg(result.source_sha256.isEmpty()
-                         ? QStringLiteral("—")
-                         : result.source_sha256.left(kSha256PreviewChars) + QStringLiteral("…"));
+        html += QStringLiteral(
+                    "<tr><td>%1</td>"
+                    "<td class='%2'>%3</td>"
+                    "<td class='%4'>%5</td>"
+                    "<td>%6</td>"
+                    "<td>%7</td>"
+                    "<td>%8</td>"
+                    "<td class='hash-preview'>%9</td>"
+                    "</tr>")
+                    .arg(result.source_path.toHtmlEscaped())
+                    .arg(status_class)
+                    .arg(result.items_converted)
+                    .arg(result.items_failed > 0 ? QStringLiteral("error") : QString())
+                    .arg(result.items_failed)
+                    .arg(result.items_recovered)
+                    .arg(formatBytes(result.bytes_written))
+                    .arg(formatDuration(file_dur))
+                    .arg(sha256PreviewHtml(result.source_sha256));
     }
 
     html += QStringLiteral("</table>");
@@ -222,14 +344,10 @@ QString ConversionReportGenerator::buildFileResultsTableHtml(
 }
 
 QString ConversionReportGenerator::buildErrorLogHtml(const OstConversionBatchResult& batch) {
-    bool has_errors = false;
-    for (const auto& result : batch.file_results) {
-        if (!result.errors.isEmpty()) {
-            has_errors = true;
-            break;
-        }
-    }
-
+    const bool has_errors = std::ranges::any_of(batch.file_results,
+                                                [](const OstConversionResult& result) {
+                                                    return !result.errors.isEmpty();
+                                                });
     if (!has_errors) {
         return {};
     }
@@ -241,12 +359,18 @@ QString ConversionReportGenerator::buildErrorLogHtml(const OstConversionBatchRes
 
     constexpr int kMaxReportErrors = 500;
     int error_count = 0;
+    bool truncated = false;
     for (const auto& result : batch.file_results) {
+        if (truncated) {
+            break;
+        }
         for (const auto& err : result.errors) {
             if (error_count >= kMaxReportErrors) {
-                html += QStringLiteral(
-                    "<tr><td colspan='2' class='warn'>"
-                    "... truncated (more errors omitted)</td></tr>");
+                // More errors remain than we will render. Flag it so the truncation notice
+                // is emitted exactly once below: the previous inner+outer break could exit
+                // at an exact-cap boundary WITHOUT emitting it, silently dropping later
+                // results' errors.
+                truncated = true;
                 break;
             }
             html += QStringLiteral("<tr><td>%1</td><td class='error'>%2</td></tr>")
@@ -254,13 +378,36 @@ QString ConversionReportGenerator::buildErrorLogHtml(const OstConversionBatchRes
                         .arg(err.toHtmlEscaped());
             ++error_count;
         }
-        if (error_count >= kMaxReportErrors) {
-            break;
-        }
+    }
+    if (truncated) {
+        html += QStringLiteral(
+            "<tr><td colspan='2' class='warn'>"
+            "... truncated (more errors omitted)</td></tr>");
     }
 
     html += QStringLiteral("</table>");
     return html;
+}
+
+QString ConversionReportGenerator::buildLeftOutHtml(const OstConversionBatchResult& batch) {
+    QString rows;
+    for (const auto& result : batch.file_results) {
+        for (auto it = result.left_out_by_class.cbegin(); it != result.left_out_by_class.cend();
+             ++it) {
+            rows += QStringLiteral("<tr><td>%1</td><td>%2</td><td>%3</td></tr>")
+                        .arg(result.source_path.toHtmlEscaped(), it.key().toHtmlEscaped())
+                        .arg(it.value());
+        }
+    }
+    if (rows.isEmpty()) {
+        return {};
+    }
+    return QStringLiteral(
+               "<h2>Left Out, by Message Class</h2>"
+               "<p>An MBOX holds mail. These are not mail, so they were not converted and are not "
+               "failures.</p>"
+               "<table><tr><th>Source File</th><th>Message Class</th><th>Items</th></tr>%1</table>")
+        .arg(rows);
 }
 
 QString ConversionReportGenerator::buildReportHtml(const OstConversionBatchResult& batch) {
@@ -273,7 +420,7 @@ QString ConversionReportGenerator::buildReportHtml(const OstConversionBatchResul
     html.reserve(kReportHtmlReserveChars);
 
     html += QString::fromLatin1(report::kEnterpriseReportDocumentOpen)
-                .arg(QStringLiteral("S.A.K. Utility ??? Conversion Report"),
+                .arg(QStringLiteral("S.A.K. Utility - Conversion Report"),
                      report::enterpriseReportStyleSheet());
 
     html += QStringLiteral("<h1>Conversion Report</h1>");
@@ -285,6 +432,7 @@ QString ConversionReportGenerator::buildReportHtml(const OstConversionBatchResul
     html += QStringLiteral("</div>");
 
     html += buildFileResultsTableHtml(batch);
+    html += buildLeftOutHtml(batch);
     html += buildErrorLogHtml(batch);
 
     html += QStringLiteral(
@@ -301,36 +449,28 @@ QString ConversionReportGenerator::formatDuration(qint64 ms) {
         return QStringLiteral("%1 ms").arg(ms);
     }
 
-    qint64 total_sec = ms / kMillisecondsPerSecond;
+    const qint64 total_sec = ms / kMillisecondsPerSecond;
 
     if (total_sec < kSecondsPerMinute) {
         return QStringLiteral("%1 s").arg(total_sec);
     }
 
     qint64 minutes = total_sec / kSecondsPerMinute;
-    qint64 seconds = total_sec % kSecondsPerMinute;
+    const qint64 seconds = total_sec % kSecondsPerMinute;
 
     if (minutes < kSecondsPerMinute) {
         return QStringLiteral("%1 min %2 s").arg(minutes).arg(seconds);
     }
 
-    qint64 hours = total_sec / kSecondsPerHour;
+    const qint64 hours = total_sec / kSecondsPerHour;
     minutes = (total_sec % kSecondsPerHour) / kSecondsPerMinute;
     return QStringLiteral("%1 h %2 min").arg(hours).arg(minutes);
 }
 
 QString ConversionReportGenerator::formatBytes(qint64 bytes) {
-    if (bytes < kBytesPerKB) {
-        return QStringLiteral("%1 B").arg(bytes);
-    }
-    if (static_cast<double>(bytes) < kBytesPerMBf) {
-        return QStringLiteral("%1 KB").arg(bytes / kBytesPerKB);
-    }
-    if (static_cast<double>(bytes) < kBytesPerGBf) {
-        return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / kBytesPerMBf, 0, 'f', 1);
-    }
-    return QStringLiteral("%1 GB").arg(
-        static_cast<double>(bytes) / kBytesPerGBf, 0, 'f', kGigabyteDisplayPrecision);
+    // KB now renders to one decimal instead of truncating with integer division, which is what
+    // every other compact caller already did. 1536 bytes reads "1.5 KB" rather than "1 KB".
+    return sak::formatBytes(bytes);
 }
 
 }  // namespace sak

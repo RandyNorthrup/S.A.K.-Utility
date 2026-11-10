@@ -7,7 +7,6 @@
 #define SAK_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
 #define SAK_VERSION_MINOR @PROJECT_VERSION_MINOR@
 #define SAK_VERSION_PATCH @PROJECT_VERSION_PATCH@
-#define SAK_VERSION_TWEAK @PROJECT_VERSION_TWEAK@
 
 #define SAK_VERSION_STRING "@PROJECT_VERSION@"
 #define SAK_VERSION_STRING_SHORT "@PROJECT_VERSION_MAJOR@.@PROJECT_VERSION_MINOR@"
@@ -15,7 +14,6 @@
 // Build configuration
 #define SAK_BUILD_DATE __DATE__
 #define SAK_BUILD_TIME __TIME__
-#define SAK_BUILD_TYPE "@SAK_RESOLVED_BUILD_TYPE@"
 #define SAK_COMPILER_ID "@CMAKE_CXX_COMPILER_ID@"
 #define SAK_COMPILER_VERSION "@CMAKE_CXX_COMPILER_VERSION@"
 
@@ -55,11 +53,6 @@ constexpr int get_version_minor() noexcept {
 /// @brief Get the patch version number
 constexpr int get_version_patch() noexcept {
     return SAK_VERSION_PATCH;
-}
-
-/// @brief Get the tweak version number
-constexpr int get_version_tweak() noexcept {
-    return SAK_VERSION_TWEAK;
 }
 
 /// @brief Get the product name

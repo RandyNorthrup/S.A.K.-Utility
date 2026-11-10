@@ -96,11 +96,44 @@ bool FileExplorerSortFilterModel::showHiddenItems() const {
     return m_show_hidden_items;
 }
 
+void FileExplorerSortFilterModel::setTagFilter(const QSet<QString>& paths) {
+    m_tag_filter_paths = paths;
+    m_tag_filter_active = true;
+    invalidate();
+}
+
+void FileExplorerSortFilterModel::clearTagFilter() {
+    if (!m_tag_filter_active) {
+        return;
+    }
+    m_tag_filter_active = false;
+    m_tag_filter_paths.clear();
+    invalidate();
+}
+
+bool FileExplorerSortFilterModel::tagFilterActive() const {
+    return m_tag_filter_active;
+}
+
+void FileExplorerSortFilterModel::setFolderSortPlacement(
+    const FileExplorerFolderSortPlacement placement) {
+    if (m_folder_placement == placement) {
+        return;
+    }
+    m_folder_placement = placement;
+    invalidate();
+}
+
 bool FileExplorerSortFilterModel::lessThan(const QModelIndex& source_left,
                                            const QModelIndex& source_right) const {
     const bool left_directory = directoryAt(source_left);
-    if (left_directory != directoryAt(source_right)) {
-        return sortOrder() == Qt::DescendingOrder ? !left_directory : left_directory;
+    if (m_folder_placement != FileExplorerFolderSortPlacement::Together &&
+        left_directory != directoryAt(source_right)) {
+        // Pre-inverted so the placement holds visually under either order.
+        const bool prefer_left = m_folder_placement == FileExplorerFolderSortPlacement::FoldersFirst
+                                     ? left_directory
+                                     : !left_directory;
+        return sortOrder() == Qt::DescendingOrder ? !prefer_left : prefer_left;
     }
     if (const auto by_size = sizeLessThan(source_left, source_right)) {
         return *by_size;
@@ -121,7 +154,20 @@ bool FileExplorerSortFilterModel::filterAcceptsRow(const int source_row,
     const QModelIndex name_index =
         sourceModel()->index(source_row, FileExplorerItemModel::NameColumn, source_parent);
     const QString entry_name = name_index.data(FileExplorerItemModel::EntryNameRole).toString();
-    if (!m_show_hidden_items && entry_name.startsWith(QLatin1Char('.'))) {
+    if (!m_show_hidden_items) {
+        // Hidden = the leading-dot convention OR the host file system's hidden
+        // attribute (Windows FILE_ATTRIBUTE_HIDDEN files are not dotfiles and
+        // otherwise leaked into the listing with hidden items turned off).
+        const bool attribute_hidden =
+            name_index.data(FileExplorerItemModel::EntryHiddenRole).toBool();
+        if (entry_name.startsWith(QLatin1Char('.')) || attribute_hidden) {
+            return false;
+        }
+    }
+
+    if (m_tag_filter_active &&
+        !m_tag_filter_paths.contains(
+            name_index.data(FileExplorerItemModel::EntryPathRole).toString())) {
         return false;
     }
 

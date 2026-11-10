@@ -1,0 +1,22 @@
+# Static QSKIP inventory.
+#
+# One line per source file containing QSKIP:
+#   <repo-relative path> = <exact static site count> | <bounded reason/category>
+#
+# scripts/check_test_skips.ps1 -StaticOnly fails on a new file, changed count, missing file,
+# missing reason, or QSKIP nested inside an unsupported-platform preprocessor arm. Runtime
+# tests/skip_baseline.txt remains separate: it records which functions actually skipped in the
+# latest complete suite. This file inventories dormant branches that runtime logs cannot see.
+
+tests/support/test_hardware_guard.h = 1 | a test that reaches real drives or the application runs only where SAK_TEST_ALLOW_REAL_HARDWARE=1, which is CI
+tests/integration/test_offline_package_builder.cpp = 1 | initial opt-out for live Chocolatey service/CDN integration
+tests/unit/test_ai_assistant_panel_tool_dispatch.cpp = 4 | file-symlink privilege and destructive certification
+tests/unit/test_elevated_helper_connection.cpp = 1 | standard-user token: starting the helper needs a consent prompt nobody can answer; an elevated CI step runs it
+tests/unit/test_file_management_file_system.cpp = 2 | external raw APFS/HFS certification images
+tests/unit/test_linux_iso_downloader.cpp = 1 | initial opt-out for live Linux ISO network tests
+tests/unit/test_openai_responses_client.cpp = 2 | initial opt-out for paid live OpenAI requests
+tests/unit/test_partition_manager_core.cpp = 10 | external Apple certification inputs, disk, and time budget
+tests/unit/test_quick_action_controller.cpp = 5 | elevated test process: administrator actions skip the elevated-helper route these cases drive
+tests/unit/test_quick_action_panels.cpp = 1 | elevated test process: administrator actions skip the elevated-helper route these cases drive
+tests/unit/test_user_profile_app_restore_flow.cpp = 1 | elevated test process: no gate to show, and the case would really run choco install
+tests/unit/test_windows_iso_downloader.cpp = 1 | initial opt-out for live UUP dump API

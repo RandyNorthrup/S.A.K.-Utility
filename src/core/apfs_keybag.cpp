@@ -10,7 +10,9 @@
 
 #include <QtEndian>
 
+#include <cstdint>
 #include <cstring>
+#include <limits>
 
 namespace sak::apfs_keybag {
 
@@ -41,7 +43,7 @@ struct DerField {
 /// @brief Decode a big-endian DER INTEGER value into a uint64.
 uint64_t derBigEndianU64(const QByteArray& value) {
     uint64_t v = 0;
-    for (char c : value) {
+    for (const char c : value) {
         v = (v << 8) | static_cast<uint8_t>(c);
     }
     return v;
@@ -60,7 +62,13 @@ void assignKeyBlobField(KeyBlobParams* out, uint8_t tag, const QByteArray& value
         out->wrappedKey = value;
         break;
     case 0x84:
-        out->iterations = derBigEndianU64(value);
+        // A DER INTEGER wider than 8 bytes cannot be a real PBKDF2 iteration count and would
+        // silently overflow the uint64 accumulator in derBigEndianU64. Treat an over-wide
+        // value as out-of-range (UINT64_MAX) so the downstream iteration cap fails the unlock
+        // closed instead of deriving against a wrapped, attacker-chosen count.
+        out->iterations = value.size() <= static_cast<qsizetype>(sizeof(uint64_t))
+                              ? derBigEndianU64(value)
+                              : std::numeric_limits<uint64_t>::max();
         break;
     case 0x85:
         out->salt = value;
@@ -73,21 +81,38 @@ void assignKeyBlobField(KeyBlobParams* out, uint8_t tag, const QByteArray& value
 /// @brief Parse a flat sequence of DER TLV fields (short + long-form lengths).
 QList<DerField> derParse(const QByteArray& buf) {
     QList<DerField> out;
-    int i = 0;
+    qsizetype i = 0;
     while (i + 2 <= buf.size()) {
         const uint8_t tag = static_cast<uint8_t>(buf.at(i++));
-        int len = static_cast<uint8_t>(buf.at(i++));
+        qint64 len = static_cast<uint8_t>(buf.at(i++));
         if ((len & 0x80) != 0) {
-            int n = len & 0x7f;
+            const int n = static_cast<int>(len & 0x7f);
             len = 0;
-            for (int k = 0; k < n && i < buf.size(); ++k) {
-                len = (len << 8) | static_cast<uint8_t>(buf.at(i++));
+            // Reject the indefinite form (n==0), a length that cannot fit qint64 (n>8), or one
+            // whose length bytes run off the buffer -- accumulating them unchecked overflowed
+            // the old signed int to a NEGATIVE len that slipped past the i+len bound and drove
+            // buf.at(i) to a negative (out-of-bounds) index.
+            if (n == 0 || n > 8 || i + n > buf.size()) {
+                break;
             }
+            // Accumulate UNSIGNED. An 8-byte length with bit 63 set overflows a signed qint64
+            // shift, which is undefined behaviour before the len<0 test below ever sees it --
+            // the check was relying on the wrap it is not entitled to assume. Bounding the
+            // unsigned value against the bytes actually remaining also removes the i+len
+            // overflow the later test would otherwise have to survive.
+            quint64 accumulated = 0;
+            for (int k = 0; k < n; ++k) {
+                accumulated = (accumulated << 8) | static_cast<uint8_t>(buf.at(i++));
+            }
+            if (accumulated > static_cast<quint64>(buf.size() - i)) {
+                break;
+            }
+            len = static_cast<qint64>(accumulated);
         }
-        if (i + len > buf.size()) {
+        if (len < 0 || i + len > buf.size()) {
             break;
         }
-        out.append({tag, buf.mid(i, len)});
+        out.append({.tag = tag, .value = buf.mid(i, len)});
         i += len;
     }
     return out;
@@ -113,7 +138,7 @@ QByteArray derIntegerBytes(uint64_t value) {
 
 }  // namespace
 
-QList<KeybagEntry> parseKeybagBlock(const QByteArray& block) {
+QList<KeybagEntry> parseKeybagBlock(const QByteArray& block, bool align16) {
     QList<KeybagEntry> out;
     if (block.size() < 0x30) {
         return out;
@@ -135,13 +160,18 @@ QList<KeybagEntry> parseKeybagBlock(const QByteArray& block) {
         if (p + 0x18 + klen > block.size()) {
             break;
         }
-        out.append({block.mid(p, 16), getLe16(block, p + 0x10), block.mid(p + 0x18, klen)});
-        p += (0x18 + klen + 15) & ~15;
+        out.append({.uuid = block.mid(p, 16),
+                    .tag = getLe16(block, p + 0x10),
+                    .keydata = block.mid(p + 0x18, klen)});
+        p += align16 ? ((0x18 + klen + 15) & ~15) : (0x18 + klen);
     }
     return out;
 }
 
 bool parseKeyBlob(const QByteArray& blob, KeyBlobParams* out) {
+    if (out == nullptr) {
+        return false;
+    }
     const QList<DerField> top = derParse(blob);
     if (top.isEmpty() || top.first().tag != 0x30) {
         return false;
@@ -257,6 +287,44 @@ QByteArray buildKeybagBlock(
     putLe16(b, 0x22, static_cast<uint16_t>(entries.size()));
     // kl_nbytes covers the 16-byte kb_locker header + the packed entry region.
     putLe32(b, 0x24, static_cast<uint32_t>(0x10 + (p - 0x30)));
+    return b;
+}
+
+QByteArray buildApfsckContainerKeybagBlock(
+    uint32_t magic, uint64_t oid, uint64_t xid, const QList<KeybagEntry>& entries, int blockSize) {
+    constexpr int kLockerEntries = 0x30;  // obj_phys(32) + kb_locker header(16)
+    constexpr int kEntryHeader = 0x18;    // ke_uuid(16) + ke_tag(2) + ke_keylen(2) + padding(4)
+    int packed = 0;
+    for (const auto& e : entries) {
+        if (e.uuid.size() != 16) {
+            return {};
+        }
+        packed += kEntryHeader + static_cast<int>(e.keydata.size());  // no 16-byte alignment
+    }
+    // apfsck requires a trailing null entry (one kEntryHeader of zeros) after the
+    // packed entries, and reports the leftover byte count against sizeof(entry).
+    if (kLockerEntries + packed + kEntryHeader > blockSize) {
+        return {};
+    }
+    QByteArray b(blockSize, '\0');
+    putLe64(b, 0x08, oid);
+    putLe64(b, 0x10, xid);
+    putLe32(b, 0x18, magic);
+    int p = kLockerEntries;
+    for (const auto& e : entries) {
+        const int klen = static_cast<int>(e.keydata.size());
+        std::memcpy(b.data() + p, e.uuid.constData(), 16);
+        putLe16(b, p + 0x10, e.tag);
+        putLe16(b, p + 0x12, static_cast<uint16_t>(klen));
+        std::memcpy(b.data() + p + kEntryHeader, e.keydata.constData(), static_cast<size_t>(klen));
+        p += kEntryHeader + klen;
+    }
+    putLe16(b, 0x20, kApfsKeybagVersion);
+    putLe16(b, 0x22, static_cast<uint16_t>(entries.size()));
+    // kl_nbytes = the packed entries + the trailing null entry (no locker header),
+    // matching apfsck's entry walk (which subtracts keylen + sizeof(entry) each step
+    // and expects a final leftover of exactly one null entry).
+    putLe32(b, 0x24, static_cast<uint32_t>(packed + kEntryHeader));
     return b;
 }
 

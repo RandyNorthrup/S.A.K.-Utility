@@ -6,15 +6,87 @@
 
 #include "sak/logger.h"
 
+#include "sak/path_utils.h"
+
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
-#include <iomanip>
 #include <iostream>
-#include <sstream>
 #include <vector>
 
 namespace sak {
+
+namespace {
+
+// C0 control characters and DEL, escaped so an attacker-controlled substring
+// (filename, disk path, PST field, model tool argument) cannot embed a raw
+// newline and forge a separate, well-formed log record (CWE-117). Any byte at
+// or above this ceiling, other than DEL, passes through untouched -- including
+// every UTF-8 lead/continuation byte.
+constexpr unsigned char kControlCeiling = 0x20;
+constexpr unsigned char kDelByte = 0x7F;
+
+// Render one C0/DEL control byte as a printable escape.
+void appendEscapedControl(std::string& out, unsigned char byte) {
+    switch (byte) {
+    case '\n':
+        out += "\\n";
+        return;
+    case '\r':
+        out += "\\r";
+        return;
+    case '\t':
+        out += "\\t";
+        return;
+    default:
+        break;
+    }
+    static constexpr char kHexDigits[] = "0123456789abcdef";
+    constexpr unsigned kNibbleBits = 4;
+    constexpr unsigned kNibbleMask = 0x0FU;
+    out += "\\x";
+    out.push_back(kHexDigits[(byte >> kNibbleBits) & kNibbleMask]);
+    out.push_back(kHexDigits[byte & kNibbleMask]);
+}
+
+// Return a copy of text with CR/LF and every other C0/DEL control character
+// escaped, so a message can never inject a line break into the log stream.
+std::string sanitizeLogText(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (const char raw : text) {
+        const auto byte = static_cast<unsigned char>(raw);
+        if (byte >= kControlCeiling && byte != kDelByte) {
+            out.push_back(raw);
+            continue;
+        }
+        appendEscapedControl(out, byte);
+    }
+    return out;
+}
+
+// Build a uniquely named rotated log path. A bare second-resolution timestamp
+// collides when two rotations (or an init immediately followed by a rotation)
+// land in the same wall-clock second: reopening the SAME file in append mode
+// while resetting the byte counter lets it grow past MAX_LOG_SIZE. A sub-second
+// millisecond field plus a process-monotonic sequence keeps every name distinct
+// so rotation never appends onto an existing log.
+std::filesystem::path buildRotatedLogPath(const std::filesystem::path& dir,
+                                          std::string_view prefix) {
+    static std::atomic<std::uint64_t> rotate_seq{0};
+    const auto seq = rotate_seq.fetch_add(1, std::memory_order_relaxed);
+    const auto now = std::chrono::system_clock::now();
+    const auto since_epoch = now.time_since_epoch();
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(since_epoch);
+    const auto millis =
+        std::chrono::duration_cast<std::chrono::milliseconds>(since_epoch - secs).count();
+    const auto stamp = std::format("{:%Y-%m-%d_%H-%M-%S}", now);
+    return dir / std::format("{}_{}-{:03}-{}.log", prefix, stamp, millis, seq);
+}
+
+}  // namespace
 
 logger& logger::instance() noexcept {
     static logger instance;
@@ -27,8 +99,9 @@ logger::~logger() {
 
 auto logger::initialize(const std::filesystem::path& log_dir, std::string_view prefix)
     -> std::expected<void, error_code> {
+    std::string init_log_path;
     {
-        std::lock_guard lock(m_mutex);
+        const std::lock_guard lock(m_mutex);
 
         // Ensure log directory exists
         if (auto result = ensureLogDirectory(log_dir); !result) {
@@ -38,22 +111,40 @@ auto logger::initialize(const std::filesystem::path& log_dir, std::string_view p
         m_log_dir = log_dir;
         m_prefix = prefix;
 
+        // A log per launch, forever: prune old sessions before this one adds its file.
+        pruneSessionLogs();
+
         // Generate log file path with timestamp
         auto timestamp = std::format("{:%Y-%m-%d_%H-%M-%S}", std::chrono::system_clock::now());
         m_log_file = m_log_dir / std::format("{}_{}.log", m_prefix, timestamp);
 
-        // Open log file
+        // Close any stream from a previous initialize() BEFORE reopening. std::ofstream::open
+        // on an already-open stream fails and leaves the stream attached to the old file, so
+        // the is_open() check below would still be true: initialize() would report success,
+        // and the "Logger initialized: <path>" line would name the NEW file while every
+        // subsequent write went to the OLD one. Closing first makes a re-initialize actually
+        // move the log, and makes a genuine open failure reachable by the check.
+        if (m_file_stream.is_open()) {
+            m_file_stream.flush();
+            m_file_stream.close();
+        }
+        m_file_stream.clear();  // drop any failbit from a previous close
+
         m_file_stream.open(m_log_file, std::ios::out | std::ios::app);
         if (!m_file_stream.is_open()) {
+            m_initialized.store(false, std::memory_order_release);
             return std::unexpected(error_code::write_error);
         }
 
         m_initialized.store(true, std::memory_order_release);
         m_bytes_written.store(0, std::memory_order_relaxed);
+        init_log_path = pathAsUtf8(m_log_file);
     }
 
-    // Write initialization message (outside lock -- writeEntryToFile acquires it)
-    logInfo("Logger initialized: {}", m_log_file.string());
+    // Write initialization message (outside lock -- writeEntryToFile acquires it). Use the
+    // path captured UNDER the lock, never the shared m_log_file member: reading it unlocked
+    // here races a concurrent initialize() that may be mutating it (torn read of a path).
+    logInfo("Logger initialized: {}", init_log_path);
 
     return {};
 }
@@ -71,14 +162,14 @@ void logger::setConsoleOutput(bool enable) noexcept {
 }
 
 void logger::flush() noexcept {
-    std::lock_guard lock(m_mutex);
+    const std::lock_guard lock(m_mutex);
     if (m_file_stream.is_open()) {
         m_file_stream.flush();
     }
 }
 
 std::filesystem::path logger::getLogFile() const noexcept {
-    std::lock_guard lock(m_mutex);
+    const std::lock_guard lock(m_mutex);
     return m_log_file;
 }
 
@@ -90,9 +181,15 @@ void logger::logInternal(log_level level,
                          std::string_view message,
                          const std::source_location& loc) noexcept {
     if (!isInitialized()) {
-        // Fallback to console if not initialized
+        // Fallback to console if not initialized. std::println can throw (bad_alloc, I/O
+        // failure); this runs BEFORE the try below in a noexcept function, so an escaping
+        // exception would terminate the process. Guard it.
         if (m_console_output.load(std::memory_order_relaxed)) {
-            std::println(std::cerr, "[{}] {}", to_string(level), message);
+            try {
+                std::println(std::cerr, "[{}] {}", to_string(level), sanitizeLogText(message));
+            } catch (...) {
+                (void)std::fprintf(stderr, "SAK Logger: console write failed\n");
+            }
         }
         return;
     }
@@ -102,6 +199,10 @@ void logger::logInternal(log_level level,
         auto timestamp = getTimestamp();
         auto level_str = to_string(level);
         auto filename = std::filesystem::path(loc.file_name()).filename().string();
+        // Neutralize CR/LF and other control characters in the (potentially
+        // attacker-controlled) message so it cannot forge a separate log
+        // record (CWE-117). The trailing '\n' below is the ONE intended break.
+        auto safe_message = sanitizeLogText(message);
 
         auto log_entry = std::format("[{}] [{}] [{}:{}:{}] {}\n",
                                      timestamp,
@@ -109,22 +210,22 @@ void logger::logInternal(log_level level,
                                      filename,
                                      loc.line(),
                                      loc.function_name(),
-                                     message);
+                                     safe_message);
 
-        writeEntryToFile(log_entry, level);
+        writeEntryToFile(log_entry);
         writeEntryToConsole(log_entry, level);
 
     } catch (const std::exception& e) {
         // Logger itself cannot recurse -- fall back to stderr
-        std::fprintf(stderr, "SAK Logger: logInternal failed: %s\n", e.what());
+        (void)std::fprintf(stderr, "SAK Logger: logInternal failed: %s\n", e.what());
     } catch (...) {
         // Intentional: final safety net in noexcept function
-        std::fprintf(stderr, "SAK Logger: logInternal failed with unknown exception\n");
+        (void)std::fprintf(stderr, "SAK Logger: logInternal failed with unknown exception\n");
     }
 }
 
-void logger::writeEntryToFile(std::string_view log_entry, log_level level) noexcept {
-    std::lock_guard lock(m_mutex);
+void logger::writeEntryToFile(std::string_view log_entry) noexcept {
+    const std::lock_guard lock(m_mutex);
 
     if (needsRotation()) {
         rotateLog();
@@ -135,12 +236,36 @@ void logger::writeEntryToFile(std::string_view log_entry, log_level level) noexc
     }
 
     m_file_stream << log_entry;
-    m_bytes_written.fetch_add(log_entry.size(), std::memory_order_relaxed);
 
-    // Flush immediately for error and critical messages
-    if (level >= log_level::error) {
-        m_file_stream.flush();
+    // Every line reaches the file as it is written. Flushing only errors kept a session's log at
+    // 0 bytes until exit on testpc1 and the VM (review 3), so a crash or a kill lost it all, and a
+    // Windows USB run's verification line reached the file only when the app closed.
+    m_file_stream.flush();
+
+    // Fail closed: only charge bytes against the rotation counter when the
+    // stream is still good. A failed write/flush (full disk, revoked handle)
+    // must not advance m_bytes_written -- otherwise rotation math drifts and
+    // the loss is invisible -- and must surface via a one-shot notice.
+    const bool stream_good = m_file_stream.good();
+    m_bytes_written.fetch_add(bytesToCommit(stream_good, log_entry.size()),
+                              std::memory_order_relaxed);
+    if (!stream_good) {
+        noteWriteFailure();
     }
+}
+
+std::size_t logger::bytesToCommit(bool stream_good, std::size_t entry_size) noexcept {
+    return stream_good ? entry_size : 0;
+}
+
+void logger::noteWriteFailure() noexcept {
+    // Announce the first failure only (persistent failures would otherwise spam
+    // stderr). Clear the stream error bits so a later recovered write can resume
+    // instead of the stream staying wedged in a failed state forever.
+    if (!m_write_failed.exchange(true, std::memory_order_relaxed)) {
+        (void)std::fprintf(stderr, "SAK Logger: file log write failed (log entries may be lost)\n");
+    }
+    m_file_stream.clear();
 }
 
 void logger::writeEntryToConsole(std::string_view log_entry, log_level level) noexcept {
@@ -148,11 +273,18 @@ void logger::writeEntryToConsole(std::string_view log_entry, log_level level) no
         return;
     }
 
-    if (level >= log_level::error) {
-        std::print(std::cerr, "{}", log_entry);
-        return;
+    // This function is noexcept but std::print can throw (bad_alloc, I/O failure). Without
+    // this guard an escaping exception would cross the noexcept boundary and terminate the
+    // process just because a console write failed -- catch and note instead.
+    try {
+        if (level >= log_level::error) {
+            std::print(std::cerr, "{}", log_entry);
+        } else {
+            std::print("{}", log_entry);
+        }
+    } catch (...) {
+        (void)std::fprintf(stderr, "SAK Logger: console write failed\n");
     }
-    std::print("{}", log_entry);
 }
 
 auto logger::ensureLogDirectory(const std::filesystem::path& dir)
@@ -166,9 +298,21 @@ auto logger::ensureLogDirectory(const std::filesystem::path& dir)
             return std::unexpected(error_code::not_a_directory);
         }
 
-        // Check write permission
-        auto test_file = dir / ".test_write";
-        std::ofstream test(test_file);
+        // Check write permission with an unpredictable, exclusively-created probe
+        // file. The old fixed ".test_write" name was guessable, so a pre-planted
+        // file or symlink at that path would be truncated (default ofstream) and
+        // then deleted -- destructive when this runs elevated. A unique name plus
+        // std::ios::noreplace (exclusive create: fails if the name already exists,
+        // including a planted link) means we never clobber or follow into a
+        // victim file.
+        static std::atomic<std::uint64_t> probe_counter{0};
+        const auto seq = probe_counter.fetch_add(1, std::memory_order_relaxed);
+        const auto stamp = static_cast<unsigned long long>(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+        const auto probe_name = ".sak_log_probe_" + std::to_string(stamp) + "_" +
+                                std::to_string(seq);
+        auto test_file = dir / probe_name;
+        std::ofstream test(test_file, std::ios::out | std::ios::noreplace);
         if (!test.is_open()) {
             return std::unexpected(error_code::permission_denied);
         }
@@ -181,7 +325,8 @@ auto logger::ensureLogDirectory(const std::filesystem::path& dir)
         return std::unexpected(error_code::permission_denied);
     } catch (...) {
         // Intentional: final safety net in noexcept function
-        std::fprintf(stderr, "SAK Logger: ensureLogDirectory failed with unknown exception\n");
+        (void)std::fprintf(stderr,
+                           "SAK Logger: ensureLogDirectory failed with unknown exception\n");
         return std::unexpected(error_code::unknown_error);
     }
 }
@@ -192,7 +337,7 @@ std::string logger::getTimestamp() noexcept {
         return std::format("{:%Y-%m-%d %H:%M:%S}", now);
     } catch (...) {
         // Intentional: final safety net in noexcept function
-        std::fprintf(stderr, "SAK Logger: getTimestamp failed\n");
+        (void)std::fprintf(stderr, "SAK Logger: getTimestamp failed\n");
         return "TIMESTAMP_ERROR";
     }
 }
@@ -212,7 +357,7 @@ void logger::rotateLog() noexcept {
         auto log_files = collectRotationCandidates();
 
         // Sort by modification time (oldest first)
-        std::sort(log_files.begin(), log_files.end(), [](const auto& a, const auto& b) {
+        std::ranges::sort(log_files, [](const auto& a, const auto& b) {
             return std::filesystem::last_write_time(a) < std::filesystem::last_write_time(b);
         });
 
@@ -222,22 +367,75 @@ void logger::rotateLog() noexcept {
             log_files.erase(log_files.begin());
         }
 
-        // Create new log file
-        auto timestamp = std::format("{:%Y-%m-%d_%H-%M-%S}", std::chrono::system_clock::now());
-        m_log_file = m_log_dir / std::format("{}_{}.log", m_prefix, timestamp);
+        // Create a NEW, uniquely named log file -- never reopen the just-closed one. A bare
+        // same-second timestamp would reopen it in append mode and reset m_bytes_written,
+        // defeating rotation; buildRotatedLogPath adds a sub-second + monotonic-sequence token
+        // so the name is always distinct.
+        m_log_file = buildRotatedLogPath(m_log_dir, m_prefix);
 
         m_file_stream.open(m_log_file, std::ios::out | std::ios::app);
         m_bytes_written.store(0, std::memory_order_relaxed);
+        // Fail loud, not silent: if the post-rotation file could not be reopened, file
+        // logging is now disabled while isInitialized() still reports true, and every later
+        // entry would be dropped by writeEntryToFile's is_open() guard with no trace. Surface
+        // it once via the write-failure notice.
+        if (!m_file_stream.is_open()) {
+            noteWriteFailure();
+        }
 
     } catch (const std::exception& e) {
         // Logger cannot use logError (infinite recursion), fall back to stderr
-        std::fprintf(stderr, "SAK Logger: Log rotation failed: %s\n", e.what());
+        (void)std::fprintf(stderr, "SAK Logger: Log rotation failed: %s\n", e.what());
     } catch (...) {
         // Intentional: final safety net in noexcept function
-        std::fprintf(stderr, "SAK Logger: Log rotation failed with unknown exception\n");
+        (void)std::fprintf(stderr, "SAK Logger: Log rotation failed with unknown exception\n");
     }
 }
 
+std::vector<std::filesystem::path> logger::sessionLogsToPrune(std::vector<SessionLogFile> logs,
+                                                              std::size_t keep_newest,
+                                                              std::uintmax_t max_total_bytes) {
+    std::ranges::sort(logs, [](const SessionLogFile& a, const SessionLogFile& b) {
+        return a.modified > b.modified;  // newest first
+    });
+    // One slot is the session about to start.
+    const std::size_t keep_existing = keep_newest > 0 ? keep_newest - 1 : 0;
+    std::vector<std::filesystem::path> prune;
+    std::size_t kept = 0;
+    std::uintmax_t kept_bytes = 0;
+    for (const SessionLogFile& entry : logs) {
+        if (kept < keep_existing && kept_bytes + entry.size_bytes <= max_total_bytes) {
+            ++kept;
+            kept_bytes += entry.size_bytes;
+        } else {
+            prune.push_back(entry.path);
+        }
+    }
+    return prune;
+}
+
+void logger::pruneSessionLogs() const noexcept {
+    // Called under m_mutex from initialize(): report problems on stderr, never through log().
+    try {
+        std::vector<SessionLogFile> logs;
+        for (const auto& path : collectRotationCandidates()) {
+            std::error_code ec;
+            const auto modified = std::filesystem::last_write_time(path, ec);
+            const auto size = std::filesystem::file_size(path, ec);
+            if (!ec) {
+                logs.push_back({.path = path, .modified = modified, .size_bytes = size});
+            }
+        }
+        for (const auto& path : sessionLogsToPrune(logs, kMaxSessionLogs, kMaxSessionLogBytes)) {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);  // a log another instance holds open stays
+        }
+    } catch (const std::exception& e) {
+        (void)std::fprintf(stderr, "SAK Logger: pruning old session logs failed: %s\n", e.what());
+    } catch (...) {
+        (void)std::fprintf(stderr, "SAK Logger: pruning old session logs failed\n");
+    }
+}
 std::vector<std::filesystem::path> logger::collectRotationCandidates() const {
     std::vector<std::filesystem::path> log_files;
     for (const auto& entry : std::filesystem::directory_iterator(m_log_dir)) {
@@ -247,7 +445,7 @@ std::vector<std::filesystem::path> logger::collectRotationCandidates() const {
         if (entry.path().extension() != ".log") {
             continue;
         }
-        if (!entry.path().stem().string().starts_with(m_prefix)) {
+        if (!pathAsUtf8(entry.path().stem()).starts_with(m_prefix)) {
             continue;
         }
         log_files.push_back(entry.path());
@@ -263,8 +461,10 @@ void logger::log(log_level level,
         return;
     }
 
-    // For no-args, just log the format string directly
-    logInternal(level, std::string(format), loc);
+    // For no-args, log the format string_view directly. Constructing a std::string here (an
+    // allocation) inside this noexcept function, outside any try, would terminate the process
+    // on bad_alloc; logInternal reads the view synchronously, so no owning copy is needed.
+    logInternal(level, format, loc);
 }
 
 }  // namespace sak

@@ -1,0 +1,29 @@
+{
+    "boot_sector_serial_before":  "F6F0BA05",
+    "boot_sector_serial_after":  "4EFA498A",
+    "volume_after":  {
+                         "drive_letter":  "T",
+                         "file_system":  "NTFS",
+                         "label":  "SAKSERIAL",
+                         "size_bytes":  402649088,
+                         "free_bytes":  379871232,
+                         "cluster_bytes":  4096,
+                         "health":  "Healthy",
+                         "serial_number":  "4EFA498A"
+                     },
+    "files_before":  {
+                         "root":  "T:\\fixture",
+                         "file_count":  8,
+                         "digest":  "b6edf4d19e80af4659846462efe2ab9260c5c90cbfac51845a6228d4c84c393f"
+                     },
+    "files_after":  {
+                        "root":  "T:\\fixture",
+                        "file_count":  8,
+                        "digest":  "b6edf4d19e80af4659846462efe2ab9260c5c90cbfac51845a6228d4c84c393f"
+                    },
+    "health":  {
+                   "repair_scan":  "NoErrorsFound",
+                   "chkdsk_exit_code":  0,
+                   "dirty":  false
+               }
+}

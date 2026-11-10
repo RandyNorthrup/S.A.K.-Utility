@@ -41,6 +41,10 @@ public:
     /// @brief Format link speed to human-readable string
     [[nodiscard]] static QString formatLinkSpeed(uint64_t bps);
 
+    /// @brief The link speed an adapter reports, or 0 when it reports none (Windows gives a
+    ///        disconnected adapter the largest 64-bit value).
+    [[nodiscard]] static uint64_t knownLinkSpeed(uint64_t reported_bps);
+
     /// @brief Format MAC address bytes to colon-separated string
     [[nodiscard]] static QString formatMacAddress(const unsigned char* addr, unsigned long length);
 
@@ -49,7 +53,11 @@ Q_SIGNALS:
     void errorOccurred(QString error);
 
 private:
-    [[nodiscard]] QVector<NetworkAdapterInfo> enumerateAdapters();
+    /// @param ok Set true only when GetAdaptersAddresses succeeded; false (with an
+    ///        errorOccurred already emitted) when enumeration failed. scan() emits
+    ///        scanComplete only on success so a failed enumeration is never reported as a
+    ///        complete "0 adapters" scan.
+    [[nodiscard]] QVector<NetworkAdapterInfo> enumerateAdapters(bool& ok);
 };
 
 }  // namespace sak

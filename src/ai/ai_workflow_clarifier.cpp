@@ -7,6 +7,8 @@
 #include <QRegularExpression>
 #include <QStringList>
 
+#include <algorithm>
+
 namespace sak::ai {
 
 namespace {
@@ -21,16 +23,41 @@ bool hasValue(const QJsonValue& value) {
     if (value.isArray()) {
         return !value.toArray().isEmpty();
     }
-    return !value.isNull() && !value.isUndefined();
+    // A number or bool renders through workflowInputValue (scalarJsonValueToString) and so
+    // counts as supplied. A plain object has no text/list rendering -- it would substitute to
+    // an empty value -- so it is treated as absent, forcing clarification rather than letting
+    // a required input silently resolve to blank. null/undefined are likewise absent.
+    return value.isDouble() || value.isBool();
+}
+
+bool containsAny(const QString& haystack, const QStringList& needles) {
+    return std::ranges::any_of(needles, [&haystack](const QString& needle) {
+        return haystack.contains(needle);
+    });
 }
 
 bool isAppLikeInput(const WorkflowRequiredInput& input) {
     const QString id = input.id.trimmed().toLower();
     const QString label = input.label.trimmed().toLower();
-    return id.contains(QStringLiteral("app")) || id.contains(QStringLiteral("package")) ||
-           id.contains(QStringLiteral("product")) || id.contains(QStringLiteral("query")) ||
-           id.contains(QStringLiteral("name")) || label.contains(QStringLiteral("app")) ||
-           label.contains(QStringLiteral("package")) || label.contains(QStringLiteral("product"));
+    // The id carries two extra tokens the label does not: a "query"/"name" field names
+    // a destructive target here even when its label never says "app".
+    static const QStringList kIdTerms{
+        QStringLiteral("app"),
+        QStringLiteral("package"),
+        QStringLiteral("product"),
+        QStringLiteral("query"),
+        QStringLiteral("name"),
+        QStringLiteral("software"),
+        QStringLiteral("target"),
+    };
+    static const QStringList kLabelTerms{
+        QStringLiteral("app"),
+        QStringLiteral("package"),
+        QStringLiteral("product"),
+        QStringLiteral("software"),
+        QStringLiteral("target"),
+    };
+    return containsAny(id, kIdTerms) || containsAny(label, kLabelTerms);
 }
 
 QString firstTextValue(const QJsonValue& value) {
@@ -49,18 +76,8 @@ QString firstTextValue(const QJsonValue& value) {
     return {};
 }
 
-}  // namespace
-
-bool AiWorkflowClarifier::looksAmbiguousAppValue(const QString& value,
-                                                 const QString& user_message) {
-    const QString text = value.trimmed().toLower();
-    if (text.isEmpty()) {
-        return true;
-    }
-    if (text.size() < kMinimumSpecificAppValueChars) {
-        return true;
-    }
-    static const QStringList generic_terms{
+const QStringList& genericAppTerms() {
+    static const QStringList kTerms{
         QStringLiteral("app"),
         QStringLiteral("application"),
         QStringLiteral("program"),
@@ -73,14 +90,82 @@ bool AiWorkflowClarifier::looksAmbiguousAppValue(const QString& value,
         QStringLiteral("that"),
         QStringLiteral("this"),
     };
-    if (generic_terms.contains(text)) {
+    return kTerms;
+}
+
+QStringList significantWords(const QStringList& raw_words) {
+    // Vague qualifiers carry no target identity of their own ("the app", "some
+    // software", "any package", "whatever"). Strip them and any surrounding
+    // punctuation, then the value is ambiguous when nothing specific remains or
+    // every remaining word is itself a generic placeholder. An exact-token check
+    // alone lets multi-word and trailing-punctuation forms ("app.", "the app")
+    // slip through as if they were specific destructive targets.
+    static const QStringList kQualifierTerms{
+        QStringLiteral("the"),
+        QStringLiteral("a"),
+        QStringLiteral("an"),
+        QStringLiteral("some"),
+        QStringLiteral("any"),
+        QStringLiteral("my"),
+        QStringLiteral("your"),
+        QStringLiteral("our"),
+        QStringLiteral("that"),
+        QStringLiteral("this"),
+        QStringLiteral("these"),
+        QStringLiteral("those"),
+        QStringLiteral("other"),
+        QStringLiteral("another"),
+        QStringLiteral("default"),
+        QStringLiteral("whatever"),
+        QStringLiteral("just"),
+    };
+    QStringList significant;
+    for (const QString& raw : raw_words) {
+        QString word = raw;
+        while (!word.isEmpty() && !word.front().isLetterOrNumber()) {
+            word.remove(0, 1);
+        }
+        while (!word.isEmpty() && !word.back().isLetterOrNumber()) {
+            word.chop(1);
+        }
+        if (word.isEmpty() || kQualifierTerms.contains(word)) {
+            continue;
+        }
+        significant.append(word);
+    }
+    return significant;
+}
+
+bool allTermsGeneric(const QStringList& words) {
+    return std::ranges::all_of(words, [](const QString& word) {
+        return genericAppTerms().contains(word);
+    });
+}
+
+}  // namespace
+
+bool AiWorkflowClarifier::looksAmbiguousAppValue(const QString& value,
+                                                 const QString& user_message) {
+    const QString text = value.trimmed().toLower();
+    if (text.isEmpty()) {
         return true;
     }
-    if (text.split(QRegularExpression(QStringLiteral(R"(\s+)")), Qt::SkipEmptyParts).size() == 1 &&
-        user_message.trimmed()
-                .split(QRegularExpression(QStringLiteral(R"(\s+)")), Qt::SkipEmptyParts)
-                .size() <= kGenericUserMessageWordLimit &&
-        generic_terms.contains(user_message.trimmed().toLower())) {
+    if (text.size() < kMinimumSpecificAppValueChars) {
+        return true;
+    }
+    const QRegularExpression whitespace(QStringLiteral(R"(\s+)"));
+    const QStringList raw_words = text.split(whitespace, Qt::SkipEmptyParts);
+    const QStringList significant = significantWords(raw_words);
+    if (significant.isEmpty()) {
+        return true;
+    }
+    if (allTermsGeneric(significant)) {
+        return true;
+    }
+    if (raw_words.size() == 1 &&
+        user_message.trimmed().split(whitespace, Qt::SkipEmptyParts).size() <=
+            kGenericUserMessageWordLimit &&
+        genericAppTerms().contains(user_message.trimmed().toLower())) {
         return true;
     }
     return false;

@@ -13,7 +13,9 @@ $repo = (Resolve-Path -LiteralPath $Root).Path
 $allowedFiles = @(
     "include/sak/color_constants.h",
     "include/sak/style_constants.h",
-    "include/sak/report_style_constants.h"
+    "include/sak/report_style_constants.h",
+    "include/sak/file_explorer_style_constants.h",
+    "include/sak/rich_text_constants.h"
 )
 
 function Convert-ToRepoPath([string]$Path) {
@@ -32,22 +34,39 @@ function Convert-ToRepoPath([string]$Path) {
 
 Push-Location $repo
 try {
-    $files = Get-ChildItem -Path "src", "include" -Recurse -File -Include *.cpp, *.h |
+    $files = @(Get-ChildItem -Path "src", "include" -Recurse -File -Include *.cpp, *.h |
         Where-Object {
             $repoPath = Convert-ToRepoPath $_.FullName
             $allowedFiles -notcontains $repoPath
-        }
+        })
 
+    # Fail CLOSED on an empty discovery. src/ and include/ always hold hundreds of sources, so
+    # zero files means the walk broke (wrong working directory, a renamed tree, a bad -Include),
+    # and printing "check passed" for a scan that examined nothing is a false green.
+    if ($files.Count -eq 0) {
+        Write-Error ("No src/include sources found to scan. A style gate that examines zero " +
+                     "files is BROKEN, not passing.")
+        exit 1
+    }
+
+    # The property:value patterns require a real, semicolon-terminated CSS declaration
+    # (`prop: value;` with no intervening quote or brace) rather than a bare `prop:`.
+    # A bare colon match flagged prose that merely mentions a CSS word -- an error
+    # message ("...for padding: %1") or a tool description ("Group color: grey, blue,
+    # red, ...") -- neither of which is a style literal. A genuine QSS/CSS declaration
+    # always terminates its value with `;`, so requiring it removes those false
+    # positives without letting real inline styles through. style=/<style>/rgba()/
+    # qlineargradient stay bare: they are unambiguous style markers on their own.
     $rawStyleLiteralPatterns = @(
         'style\s*=',
         '<style\b',
         '</style>',
-        'background(?:-color)?\s*:',
-        'border(?:-(?:radius|color|bottom|top|left|right))?\s*:',
-        'color\s*:',
-        'font-(?:size|family|weight)\s*:',
-        'padding(?:-(?:left|right|top|bottom))?\s*:',
-        'margin(?:-(?:left|right|top|bottom))?\s*:',
+        'background(?:-color)?\s*:\s*[^;{}"]*;',
+        'border(?:-(?:radius|color|bottom|top|left|right))?\s*:\s*[^;{}"]*;',
+        '(?<![-a-zA-Z])color\s*:\s*[^;{}"]*;',
+        'font-(?:size|family|weight)\s*:\s*[^;{}"]*;',
+        'padding(?:-(?:left|right|top|bottom))?\s*:\s*[^;{}"]*;',
+        'margin(?:-(?:left|right|top|bottom))?\s*:\s*[^;{}"]*;',
         'qlineargradient',
         'rgba?\s*\('
     )
@@ -64,7 +83,11 @@ try {
 
     foreach ($file in $files) {
         $repoPath = Convert-ToRepoPath $file.FullName
-        $lines = Get-Content -LiteralPath $file.FullName
+        # @(...) is load-bearing: Get-Content returns a SCALAR string for a single-line file,
+        # and indexing a string yields CHARACTERS -- so the loop below would scan that file one
+        # character at a time and see a violation on no line but the first. Forcing an array
+        # makes a one-line file exactly one iteration.
+        $lines = @(Get-Content -LiteralPath $file.FullName)
         $inRawLiteral = $false
         $rawLiteralStart = 0
         for ($i = 0; $i -lt $lines.Count; ++$i) {

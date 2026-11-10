@@ -1,24 +1,57 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/app_data_program_prompt.h"
+#include "sak/backup_destination_guard.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/running_operations.h"
 #include "sak/style_constants.h"
+#include "sak/thread_custody.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_backup_worker.h"
+#include "sak/user_profile_progress.h"
 
 #include <QDateTime>
-#include <QFile>
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include <QVBoxLayout>
+
+#include <memory>
 
 namespace sak {
 
 namespace {
-constexpr int kCompressionFastMaxLevel = 3;
-constexpr int kCompressionBalancedMaxLevel = 6;
+
+// How long closing the page waits for a cancelled backup to reach its next file boundary before
+// handing the still-copying worker to thread custody.
+constexpr int kWorkerReleaseMs = 5000;
+
+// Write JSON to `path` atomically: QSaveFile stages a temp file and only renames
+// it into place on commit(), so a short or interrupted write never leaves a
+// truncated sidecar behind. `error` is set on failure.
+bool writeJsonSidecarAtomic(const QString& path, const QJsonDocument& doc, QString& error) {
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        error = file.errorString();
+        return false;
+    }
+    const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+    if (file.write(json_bytes) != json_bytes.size()) {
+        error = QStringLiteral("incomplete write");
+        file.cancelWriting();
+        return false;
+    }
+    if (!file.commit()) {
+        error = file.errorString();
+        return false;
+    }
+    return true;
+}
 }  // namespace
 
 // ============================================================================
@@ -27,16 +60,45 @@ constexpr int kCompressionBalancedMaxLevel = 6;
 
 UserProfileBackupExecutePage::UserProfileBackupExecutePage(BackupManifest& manifest,
                                                            const QVector<UserProfile>& users,
-                                                           const QString& destinationPath,
+                                                           const QString& destination_path,
                                                            QWidget* parent)
     : QWizardPage(parent)
     , m_manifest(manifest)
     , m_users(users)
-    , m_destinationPath(destinationPath) {
+    , m_destinationPath(destination_path) {
     setTitle(tr("Execute Backup"));
     setSubTitle(tr("Backup in progress..."));
 
     setupUi();
+    RunningOperations::add(
+        this,
+        tr("Profile backup"),
+        [this]() { return isBackupRunning(); },
+        [this]() { cancelBackup(); });
+}
+
+UserProfileBackupExecutePage::~UserProfileBackupExecutePage() {
+    // The worker is this page's child, so ~QObject would destroy it while a copy is running. A
+    // large in-flight copy cannot observe cancellation, so release it instead: joined within the
+    // bound, or reported and retained until that copy finishes. Never terminated, never an
+    // unbounded wait on the GUI thread.
+    if (m_worker != nullptr) {
+        UserProfileBackupWorker* const worker = m_worker;
+        m_worker = nullptr;
+        ThreadCustody::release(
+            std::unique_ptr<QThread>(worker), [worker]() { worker->cancel(); }, kWorkerReleaseMs);
+    }
+}
+
+bool UserProfileBackupExecutePage::isBackupRunning() const {
+    return m_worker != nullptr && m_worker->isRunning();
+}
+
+void UserProfileBackupExecutePage::cancelBackup() {
+    if (isBackupRunning()) {
+        m_worker->cancel();
+        appendLog(tr("[WARNING] Cancelling backup..."));
+    }
 }
 
 void UserProfileBackupExecutePage::setupUi() {
@@ -54,20 +116,26 @@ void UserProfileBackupExecutePage::setupUi() {
     layout->addWidget(m_currentUserLabel);
 
     // Overall progress
-    layout->addWidget(new QLabel(tr("Overall Progress:"), this));
+    auto* overall_label = new QLabel(tr("Overall Progress:"), this);
+    layout->addWidget(overall_label);
     m_overallProgress = new QProgressBar(this);
-    m_overallProgress->setFormat("%v / %m (%p%)");
+    m_overallProgress->setAccessibleName(tr("Backup overall byte progress"));
+    overall_label->setBuddy(m_overallProgress);
     layout->addWidget(m_overallProgress);
 
     // Current file/folder progress
-    layout->addWidget(new QLabel(tr("Current Operation:"), this));
+    auto* current_label = new QLabel(tr("Current Operation:"), this);
+    layout->addWidget(current_label);
     m_currentProgress = new QProgressBar(this);
+    m_currentProgress->setAccessibleName(tr("Backup file progress"));
     m_currentProgress->setFormat("%v / %m (%p%)");
+    current_label->setBuddy(m_currentProgress);
     layout->addWidget(m_currentProgress);
 
     // Log output
     layout->addWidget(new QLabel(tr("Log:"), this));
     m_logEdit = new QTextEdit(this);
+    m_logEdit->setAccessibleName(tr("Backup log"));
     m_logEdit->setReadOnly(true);
     m_logEdit->setMaximumHeight(sak::kLogAreaSmallMaxH);
     layout->addWidget(m_logEdit);
@@ -85,9 +153,31 @@ void UserProfileBackupExecutePage::setupUi() {
     Q_ASSERT(m_statusLabel);
 }
 
+void UserProfileBackupExecutePage::setRunInputs(const QVector<UserProfile>& users,
+                                                const QString& destination_path) {
+    m_users = users;
+    m_destinationPath = destination_path;
+}
+
 void UserProfileBackupExecutePage::initializePage() {
     m_statusLabel->setText(tr("Ready to start backup. Click Start Backup to begin."));
     m_startButton->setEnabled(true);
+    m_startButton->show();
+    if (QWizard* owner = wizard()) {
+        owner->setOption(QWizard::NoCancelButton, false);
+    }
+    m_lastProcessedBytes = 0;
+    m_overallProgress->setRange(0, 0);
+    m_overallProgress->setFormat(tr("Waiting for backup size..."));
+    m_overallProgress->setAccessibleDescription(tr("Waiting for backup size."));
+}
+
+// Going back from a finished run gives the earlier pages their Cancel again.
+void UserProfileBackupExecutePage::cleanupPage() {
+    QWizardPage::cleanupPage();
+    if (QWizard* owner = wizard()) {
+        owner->setOption(QWizard::NoCancelButton, false);
+    }
 }
 
 bool UserProfileBackupExecutePage::isComplete() const {
@@ -105,79 +195,168 @@ void UserProfileBackupExecutePage::onStartBackup() {
     m_startButton->setEnabled(false);
     m_statusLabel->setText(tr("Backup in progress..."));
 
-    appendLog(tr("=== Backup Started ==="));
-    appendLog(tr("Destination: %1").arg(m_destinationPath));
-    appendLog(tr("Users to backup: %1").arg(m_users.size()));
+    // The worker logs the start, the destination and the users. Written here too, each appeared
+    // twice. The outcome and its summary are this page's, below in onBackupComplete.
 
     // Get smart filter and permission mode from wizard
     auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
-    if (!wiz) {
+    if (wiz == nullptr) {
         appendLog(tr("ERROR: Could not access wizard"));
         return;
     }
 
-    SmartFilter smartFilter = wiz->getSmartFilter();
-    PermissionMode permissionMode = PermissionMode::StripAll;
+    const SmartFilter smart_filter = wiz->getSmartFilter();
+    const PermissionMode permission_mode = wiz->getPermissionMode();
 
-    int compressionLevel = wiz->getCompressionLevel();
-    bool encrypt = wiz->isEncryptionEnabled();
-    QString password = wiz->getEncryptionPassword();
-
-    appendLog(tr("Compression: %1")
-                  .arg(compressionLevel == 0                              ? tr("None")
-                       : compressionLevel <= kCompressionFastMaxLevel     ? tr("Fast")
-                       : compressionLevel <= kCompressionBalancedMaxLevel ? tr("Balanced")
-                                                                          : tr("Maximum")));
-
-    if (encrypt) {
-        appendLog(tr("Encryption: Enabled (AES-256)"));
-    }
-
-    saveInstalledAppsToBackup(wiz->installedApps());
-    saveWifiProfilesToBackup(wiz->wifiProfiles());
-    saveEthernetConfigsToBackup(wiz->ethernetConfigs());
-    saveAppDataSourcesToBackup(wiz->appDataSources());
-    connectAndStartBackupWorker(smartFilter, permissionMode, compressionLevel, encrypt, password);
-}
-
-void UserProfileBackupExecutePage::saveInstalledAppsToBackup(
-    const QVector<InstalledAppInfo>& installedApps) {
-    if (installedApps.isEmpty()) {
+    if (!askToCloseProgramsHolding(this, wiz->appDataSources())) {
+        failBackupPreflight(tr("Backup not started: close the programs listed, then try again."));
         return;
     }
 
-    QJsonArray appsArray;
-    for (const auto& app : installedApps) {
-        QJsonObject appObj;
-        appObj["name"] = app.name;
-        appObj["version"] = app.version;
-        appObj["publisher"] = app.publisher;
-        appObj["choco_package"] = app.choco_package;
-        appObj["category"] = app.category;
-        appsArray.append(appObj);
+    // The sidecars are written into the destination directory, so it must exist
+    // and be writable before anything is saved (previously they were written
+    // first and silently failed when the directory did not yet exist).
+    QString destination_error;
+    if (!ensureDestinationDirectory(destination_error)) {
+        failBackupPreflight(destination_error);
+        return;
     }
 
-    QJsonDocument doc(appsArray);
-    QFile appsFile(m_destinationPath + "/installed_apps.json");
-    if (appsFile.open(QIODevice::WriteOnly)) {
-        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
-        if (appsFile.write(json_bytes) != json_bytes.size()) {
-            sak::logError("Incomplete write of installed apps list");
-            appendLog(tr("WARNING: Incomplete write of installed applications list"));
+    // Save every metadata sidecar atomically; if any fails, do not start the
+    // backup -- a missing WiFi/Ethernet/app sidecar must not be reported as a
+    // successful backup.
+    if (!saveAllSidecars(wiz)) {
+        failBackupPreflight(
+            tr("Failed to write one or more backup metadata files; backup not started."));
+        return;
+    }
+
+    connectAndStartBackupWorker(smart_filter, permission_mode);
+}
+
+
+bool UserProfileBackupExecutePage::saveAllSidecars(const UserProfileBackupWizard* wiz) {
+    // Every sidecar is attempted (left operand runs first) so all failures are
+    // logged, but any single failure makes the whole set fail.
+    bool ok = saveInstalledAppsToBackup(wiz->installedApps());
+    ok = saveWifiProfilesToBackup(wiz->wifiProfiles()) && ok;
+    ok = saveEthernetConfigsToBackup(wiz->ethernetConfigs()) && ok;
+    ok = saveAppDataSourcesToBackup(wiz->appDataSources()) && ok;
+    // Also embed the selections in the manifest (checksum-protected); the sidecars
+    // written above are not integrity-protected and are ignored by restore.
+    recordNetworkSelectionsInManifest(wiz);
+    return ok;
+}
+
+void UserProfileBackupExecutePage::recordNetworkSelectionsInManifest(
+    const UserProfileBackupWizard* wiz) {
+    m_manifest.wifi_profiles.clear();
+    for (const auto& profile : wiz->wifiProfiles()) {
+        if (profile.selected) {
+            m_manifest.wifi_profiles.append(profile);
         }
-        appsFile.close();
-        appendLog(tr("Saved %1 installed application(s) to backup").arg(installedApps.size()));
-    } else {
-        sak::logError("Could not save installed apps list: {}",
-                      appsFile.errorString().toStdString());
-        appendLog(tr("WARNING: Could not save installed applications list"));
+    }
+    m_manifest.ethernet_configs.clear();
+    for (const auto& config : wiz->ethernetConfigs()) {
+        if (config.selected) {
+            m_manifest.ethernet_configs.append(config);
+        }
+    }
+    m_manifest.app_data_sources.clear();
+    for (const auto& source : wiz->appDataSources()) {
+        if (source.selected) {
+            m_manifest.app_data_sources.append(source);
+        }
     }
 }
 
-void UserProfileBackupExecutePage::saveWifiProfilesToBackup(
+QString UserProfileBackupExecutePage::screenRunDestination() const {
+    QStringList source_roots;
+    QStringList folder_names;
+    for (const auto& user : m_users) {
+        if (user.is_selected && !user.profile_path.trimmed().isEmpty()) {
+            source_roots.append(user.profile_path);
+            folder_names.append(user.username);
+        }
+    }
+
+    const BackupDestinationCheck check =
+        screenBackupDestination(m_destinationPath, source_roots, folder_names);
+    if (!check.accepted) {
+        return check.refusal;
+    }
+    if (check.path != m_destinationPath) {
+        // Screening accepted only the trimmed form. Creating the untrimmed one would use a path
+        // that was never checked, so refuse rather than quietly substituting a different folder.
+        return tr(
+            "The backup destination has leading or trailing whitespace. Go back and "
+            "re-select the destination folder.");
+    }
+    return {};
+}
+
+bool UserProfileBackupExecutePage::ensureDestinationDirectory(QString& error) {
+    // Last gate before anything touches the filesystem. The settings page already refused a
+    // blank, relative, or source-overlapping destination, but this page is constructed with a
+    // path it does not own, so it re-screens instead of trusting it: a relative path would be
+    // created under the process working directory, and a destination inside a selected profile
+    // would make the copy recurse into its own growing output.
+    error = screenRunDestination();
+    if (!error.isEmpty()) {
+        sak::logError("Backup destination refused: {}", error.toStdString());
+        return false;
+    }
+
+    const QDir dir(m_destinationPath);
+    if (dir.exists()) {
+        return true;
+    }
+    if (!QDir().mkpath(m_destinationPath)) {
+        sak::logError("Could not create backup destination: {}", m_destinationPath.toStdString());
+        error = tr("Destination directory could not be created: %1").arg(m_destinationPath);
+        return false;
+    }
+    return true;
+}
+
+void UserProfileBackupExecutePage::failBackupPreflight(const QString& message) {
+    sak::logError("Backup preflight failed: {}", message.toStdString());
+    appendLog(tr("ERROR: %1").arg(message));
+    m_statusLabel->setText(tr("Backup failed to start"));
+    // Allow the user to fix the problem and retry; do not mark the page complete.
+    m_started = false;
+    m_startButton->setEnabled(true);
+}
+
+bool UserProfileBackupExecutePage::saveInstalledAppsToBackup(
+    const QVector<InstalledAppInfo>& installed_apps) {
+    if (installed_apps.isEmpty()) {
+        return true;
+    }
+
+    QJsonArray apps_array;
+    for (const auto& app : installed_apps) {
+        apps_array.append(app.toJson());
+    }
+
+    QString error;
+    if (!writeJsonSidecarAtomic(
+            m_destinationPath + "/installed_apps.json", QJsonDocument(apps_array), error)) {
+        sak::logError("Could not save installed apps list: {}", error.toStdString());
+        appendLog(tr("ERROR: Could not save installed applications list: %1").arg(error));
+        return false;
+    }
+    appendLog(tr("Saved %1 to backup")
+                  .arg(countOf(installed_apps.size(),
+                               tr("installed application"),
+                               tr("installed applications"))));
+    return true;
+}
+
+bool UserProfileBackupExecutePage::saveWifiProfilesToBackup(
     const QVector<WifiProfileInfo>& profiles) {
     if (profiles.isEmpty()) {
-        return;
+        return true;
     }
 
     QJsonArray arr;
@@ -187,29 +366,25 @@ void UserProfileBackupExecutePage::saveWifiProfilesToBackup(
         }
     }
     if (arr.isEmpty()) {
-        return;
+        return true;
     }
 
-    QJsonDocument doc(arr);
-    QFile file(m_destinationPath + "/wifi_profiles.json");
-    if (file.open(QIODevice::WriteOnly)) {
-        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
-        if (file.write(json_bytes) != json_bytes.size()) {
-            sak::logError("Incomplete write of WiFi profiles");
-            appendLog(tr("WARNING: Incomplete write of WiFi profiles"));
-        }
-        file.close();
-        appendLog(tr("Saved %1 WiFi profile(s) to backup").arg(arr.size()));
-    } else {
-        sak::logError("Could not save WiFi profiles: {}", file.errorString().toStdString());
-        appendLog(tr("WARNING: Could not save WiFi profiles"));
+    QString error;
+    if (!writeJsonSidecarAtomic(
+            m_destinationPath + "/wifi_profiles.json", QJsonDocument(arr), error)) {
+        sak::logError("Could not save Wi-Fi profiles: {}", error.toStdString());
+        appendLog(tr("ERROR: Could not save Wi-Fi profiles: %1").arg(error));
+        return false;
     }
+    appendLog(tr("Saved %1 to backup")
+                  .arg(countOf(arr.size(), tr("Wi-Fi profile"), tr("Wi-Fi profiles"))));
+    return true;
 }
 
-void UserProfileBackupExecutePage::saveEthernetConfigsToBackup(
+bool UserProfileBackupExecutePage::saveEthernetConfigsToBackup(
     const QVector<EthernetConfigInfo>& configs) {
     if (configs.isEmpty()) {
-        return;
+        return true;
     }
 
     QJsonArray arr;
@@ -219,29 +394,26 @@ void UserProfileBackupExecutePage::saveEthernetConfigsToBackup(
         }
     }
     if (arr.isEmpty()) {
-        return;
+        return true;
     }
 
-    QJsonDocument doc(arr);
-    QFile file(m_destinationPath + "/ethernet_configs.json");
-    if (file.open(QIODevice::WriteOnly)) {
-        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
-        if (file.write(json_bytes) != json_bytes.size()) {
-            sak::logError("Incomplete write of Ethernet configs");
-            appendLog(tr("WARNING: Incomplete write of Ethernet configurations"));
-        }
-        file.close();
-        appendLog(tr("Saved %1 Ethernet configuration(s) to backup").arg(arr.size()));
-    } else {
-        sak::logError("Could not save Ethernet configs: {}", file.errorString().toStdString());
-        appendLog(tr("WARNING: Could not save Ethernet configurations"));
+    QString error;
+    if (!writeJsonSidecarAtomic(
+            m_destinationPath + "/ethernet_configs.json", QJsonDocument(arr), error)) {
+        sak::logError("Could not save network adapter settings: {}", error.toStdString());
+        appendLog(tr("ERROR: Could not save network adapter settings: %1").arg(error));
+        return false;
     }
+    appendLog(tr("Saved %1 to backup")
+                  .arg(countOf(
+                      arr.size(), tr("network adapter setting"), tr("network adapter settings"))));
+    return true;
 }
 
-void UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
+bool UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
     const QVector<AppDataSourceInfo>& sources) {
     if (sources.isEmpty()) {
-        return;
+        return true;
     }
 
     QJsonArray arr;
@@ -251,31 +423,26 @@ void UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
         }
     }
     if (arr.isEmpty()) {
-        return;
+        return true;
     }
 
-    QJsonDocument doc(arr);
-    QFile file(m_destinationPath + "/app_data_sources.json");
-    if (file.open(QIODevice::WriteOnly)) {
-        const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
-        if (file.write(json_bytes) != json_bytes.size()) {
-            sak::logError("Incomplete write of app data sources");
-            appendLog(tr("WARNING: Incomplete write of application data sources"));
-        }
-        file.close();
-        appendLog(tr("Saved %1 application data source(s) to backup").arg(arr.size()));
-    } else {
-        sak::logError("Could not save app data sources: {}", file.errorString().toStdString());
-        appendLog(tr("WARNING: Could not save application data sources"));
+    QString error;
+    if (!writeJsonSidecarAtomic(
+            m_destinationPath + "/app_data_sources.json", QJsonDocument(arr), error)) {
+        sak::logError("Could not save app data sources: {}", error.toStdString());
+        appendLog(tr("ERROR: Could not save application data sources: %1").arg(error));
+        return false;
     }
+    appendLog(tr("Saved %1 to backup")
+                  .arg(countOf(
+                      arr.size(), tr("application data source"), tr("application data sources"))));
+    return true;
 }
 
-void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smartFilter,
-                                                               PermissionMode permissionMode,
-                                                               int compressionLevel,
-                                                               bool encrypt,
-                                                               const QString& password) {
-    auto worker = new UserProfileBackupWorker(this);
+void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart_filter,
+                                                               PermissionMode permission_mode) {
+    auto* worker = new UserProfileBackupWorker(this);
+    m_worker = worker;
 
     connect(worker,
             &UserProfileBackupWorker::overallProgress,
@@ -284,8 +451,8 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
     connect(worker,
             &UserProfileBackupWorker::logMessage,
             this,
-            [this](const QString& message, bool isWarning) {
-                appendLog(isWarning ? QString("[WARNING] %1").arg(message) : message);
+            [this](const QString& message, bool is_warning) {
+                appendLog(is_warning ? QString("[WARNING] %1").arg(message) : message);
             });
     connect(worker,
             &UserProfileBackupWorker::statusUpdate,
@@ -301,29 +468,59 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
                 worker->deleteLater();
             });
 
-    const UserProfileBackupWorker::BackupOptions backup_options{
-        permissionMode, compressionLevel, encrypt, password};
-    worker->startBackup(m_manifest, m_users, m_destinationPath, smartFilter, backup_options);
+    UserProfileBackupWorker::BackupOptions backup_options;
+    backup_options.permission_mode = permission_mode;
+    if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
+        const BackupCodecOptions codec = wiz->getCodecOptions();
+        backup_options.compress = codec.compress;
+        backup_options.compression_level = codec.compression_level;
+        backup_options.encrypt = codec.encrypt;
+        backup_options.password = codec.password;
+        backup_options.verify = wiz->verifyAfterBackup();
+    }
+    worker->startBackup(m_manifest, m_users, m_destinationPath, smart_filter, backup_options);
 
-    m_overallProgress->setRange(0, m_users.size());
+    m_overallProgress->setRange(0, 0);
     m_currentProgress->setRange(0, 0);
 }
 
-void UserProfileBackupExecutePage::onBackupProgress(int current,
-                                                    int total,
-                                                    qint64 bytes,
-                                                    qint64 totalBytes) {
-    (void)bytes;
-    (void)totalBytes;
-    m_overallProgress->setMaximum(total);
-    m_overallProgress->setValue(current);
+void UserProfileBackupExecutePage::onBackupProgress(int completed_users,
+                                                    int total_users,
+                                                    qint64 processed_bytes,
+                                                    qint64 total_bytes) {
+    const UserProfileProgressState progress =
+        userProfileProgressState(completed_users, total_users, processed_bytes, total_bytes);
+    m_lastProcessedBytes = progress.processed_bytes;
+    m_overallProgress->setRange(progress.minimum, progress.maximum);
+    m_overallProgress->setValue(progress.value);
+    m_overallProgress->setFormat(progress.format);
+    m_overallProgress->setAccessibleDescription(progress.accessible_description);
 }
 
 void UserProfileBackupExecutePage::onBackupComplete(bool success, const QString& message) {
     m_completed = true;
-    m_statusLabel->setText(success ? tr("Backup completed successfully!") : tr("Backup failed!"));
+    m_statusLabel->setText(success ? tr("Backup completed successfully!")
+                                   : message.section(QLatin1Char('\n'), 0, 0));
+    setSubTitle(success ? tr("The backup finished.") : tr("The backup did not finish."));
+    // Nothing is running now: the current-operation bar was left in its busy animation.
+    m_currentProgress->setRange(0, kPercentMax);
+    m_currentProgress->setValue(success ? kPercentMax : 0);
+    m_currentProgress->setFormat(success ? tr("Done") : tr("Stopped"));
+    if (success) {
+        m_overallProgress->setRange(0, kPercentMax);
+        m_overallProgress->setValue(kPercentMax);
+        m_overallProgress->setFormat(
+            tr("Backup complete - %1 processed").arg(formatBytes(m_lastProcessedBytes)));
+        m_overallProgress->setAccessibleDescription(m_overallProgress->format());
+    }
     appendLog(success ? tr("=== Backup Complete ===") : tr("=== Backup Failed ==="));
     appendLog(message);
+    // Done, either way: Finish closes the wizard. A spent Start Backup and a Cancel with nothing
+    // left to cancel stood beside it (review 4, Y27).
+    m_startButton->hide();
+    if (QWizard* owner = wizard()) {
+        owner->setOption(QWizard::NoCancelButton, true);
+    }
     Q_EMIT completeChanged();
 }
 
@@ -332,7 +529,7 @@ void UserProfileBackupExecutePage::onLogMessage(const QString& message) {
 }
 
 void UserProfileBackupExecutePage::appendLog(const QString& message) {
-    QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
+    const QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
     m_logEdit->append(QString("[%1] %2").arg(timestamp, message));
 }
 

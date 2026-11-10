@@ -1,0 +1,144 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_nuget_version_range",
+  "ctest_regex": "^test_nuget_version_range$",
+  "mutants": [
+    {
+      "id": "lower-bound-drop-exclusivity",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "return cmp > 0 || (cmp == 0 && inclusive);",
+      "replace": "return cmp >= 0 || (cmp == 0 && inclusive);",
+      "expect": "killed",
+      "why": "an EXCLUSIVE lower bound must reject a version equal to the bound; relaxing > to >= makes '(1.0,)' accept 1.0. range_halfOpenLowerUpper asserts !gt.satisfies(v(\"1.0\"))"
+    },
+    {
+      "id": "upper-bound-drop-exclusivity",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "return cmp < 0 || (cmp == 0 && inclusive);",
+      "replace": "return cmp <= 0 || (cmp == 0 && inclusive);",
+      "expect": "killed",
+      "why": "an EXCLUSIVE upper bound must reject a version equal to the bound; relaxing < to <= makes '(,2.0)' accept 2.0. range_halfOpenLowerUpper asserts !lt.satisfies(v(\"2.0\"))"
+    },
+    {
+      "id": "release-compare-count-min-not-max",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "const qsizetype count = std::max(a.size(), b.size());",
+      "replace": "const qsizetype count = std::min(a.size(), b.size());",
+      "expect": "killed",
+      "why": "comparing only the shorter component count treats 1.0 and 1.0.1 as equal (the trailing .1 is never examined). compare_ordersReleaseNumericallyWithZeroPadding asserts v(\"1.0\") < v(\"1.0.1\")"
+    },
+    {
+      "id": "release-compare-zero-pad-default",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "const long long lhs = (i < a.size()) ? a.at(i) : 0;",
+      "replace": "const long long lhs = (i < a.size()) ? a.at(i) : 1;",
+      "expect": "killed",
+      "why": "a missing trailing release component is value 0 (SemVer zero-pad); defaulting it to 1 makes 1.0 differ from 1.0.0. compare_ordersReleaseNumericallyWithZeroPadding asserts v(\"1.0.0\") == v(\"1.0\")"
+    },
+    {
+      "id": "release-compare-direction-inverted",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "return (lhs < rhs) ? -1 : 1;",
+      "replace": "return (lhs > rhs) ? -1 : 1;",
+      "expect": "killed",
+      "why": "inverting the release ordering makes a higher release compare as lower. compare_ordersReleaseNumericallyWithZeroPadding asserts v(\"2.0\") > v(\"1.9.9\")"
+    },
+    {
+      "id": "no-prerelease-outranks-inverted",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "return a.isEmpty() ? 1 : -1;",
+      "replace": "return a.isEmpty() ? -1 : 1;",
+      "expect": "killed",
+      "why": "a plain release outranks any prerelease of the same core (1.0.0 > 1.0.0-beta); inverting makes the prerelease win. compare_prereleaseSortsBelowRelease asserts v(\"1.0.0-beta\") < v(\"1.0.0\")"
+    },
+    {
+      "id": "numeric-prerelease-below-alpha-inverted",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "return a_num ? -1 : 1;",
+      "replace": "return a_num ? 1 : -1;",
+      "expect": "killed",
+      "why": "a numeric prerelease identifier ranks BELOW an alphanumeric one (SemVer); inverting flips that precedence. compare_prereleaseIdentifierRules asserts v(\"1.0.0-1\") < v(\"1.0.0-alpha\")"
+    },
+    {
+      "id": "numeric-identifier-length-order-inverted",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "return (na.size() < nb.size()) ? -1 : 1;",
+      "replace": "return (na.size() > nb.size()) ? -1 : 1;",
+      "expect": "killed",
+      "why": "for equal-radix numeric identifiers, fewer significant digits is the smaller value; inverting the length test makes 10 compare below 2. compare_prereleaseIdentifierRules asserts v(\"1.0.0-2\") < v(\"1.0.0-10\")"
+    },
+    {
+      "id": "longer-prerelease-prefix-order-inverted",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "return (a.size() < b.size()) ? -1 : 1;",
+      "replace": "return (a.size() > b.size()) ? -1 : 1;",
+      "expect": "killed",
+      "why": "a longer prerelease with a shared prefix has HIGHER precedence (alpha < alpha.1); inverting makes the shorter one larger. compare_prereleaseIdentifierRules asserts v(\"1.0.0-alpha\") < v(\"1.0.0-alpha.1\")"
+    },
+    {
+      "id": "prerelease-identifier-case-sensitive",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "return QString::compare(a, b, Qt::CaseInsensitive);",
+      "replace": "return QString::compare(a, b, Qt::CaseSensitive);",
+      "expect": "killed",
+      "why": "prerelease identifiers compare case-insensitively; a case-sensitive compare makes Beta != beta. compare_prereleaseIdentifierRules asserts v(\"1.0.0-Beta\").compare(v(\"1.0.0-beta\")) == 0"
+    },
+    {
+      "id": "release-component-cap-off-by-one",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "if (segments.size() > kMaxReleaseComponents) {",
+      "replace": "if (segments.size() >= kMaxReleaseComponents) {",
+      "expect": "killed",
+      "why": "NuGet allows up to four release components; >= rejects the legal 4-part release 4.8.0.1 as malformed. parse_acceptsReleaseAndPrerelease asserts parse(\"4.8.0.1\").has_value()"
+    },
+    {
+      "id": "interval-lower-inclusivity-inverted",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "m_lower_inclusive = (open == QLatin1Char('['));",
+      "replace": "m_lower_inclusive = (open != QLatin1Char('['));",
+      "expect": "killed",
+      "why": "'[' opens an INCLUSIVE lower bound; inverting makes '[1.0,2.0]' exclude its own lower endpoint. range_closedAndExclusiveIntervals asserts closed.satisfies(v(\"1.0\"))"
+    },
+    {
+      "id": "interval-upper-inclusivity-inverted",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "m_upper_inclusive = (close == QLatin1Char(']'));",
+      "replace": "m_upper_inclusive = (close != QLatin1Char(']'));",
+      "expect": "killed",
+      "why": "']' closes an INCLUSIVE upper bound; inverting makes '[1.0,2.0]' exclude its own upper endpoint. range_closedAndExclusiveIntervals asserts closed.satisfies(v(\"2.0\"))"
+    },
+    {
+      "id": "bare-version-sets-wrong-bound",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "m_lower = minimum;",
+      "replace": "m_upper = minimum;",
+      "expect": "killed",
+      "why": "a bare version is a minimum-inclusive LOWER bound; storing it as the upper bound turns '1.0' into '(,1.0]' so 2.5 fails. range_bareVersionIsMinimumInclusive asserts r.satisfies(v(\"2.5\"))"
+    },
+    {
+      "id": "satisfies-fail-closed-to-fail-open",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "if (!m_valid || !version.isValid()) {",
+      "replace": "if (!m_valid && !version.isValid()) {",
+      "expect": "killed",
+      "why": "a malformed range must satisfy NOTHING (fail closed); with && a malformed range whose bounds are unset falls through and matches every version. range_malformedRejectsAll asserts !r.satisfies(v(\"1.0\"))"
+    },
+    {
+      "id": "select-prerelease-eligibility-and-not-or",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "boundIsPrerelease(m_lower) || boundIsPrerelease(m_upper)",
+      "replace": "boundIsPrerelease(m_lower) && boundIsPrerelease(m_upper)",
+      "expect": "killed",
+      "why": "prerelease candidates become eligible when EITHER bound is a prerelease; requiring BOTH makes a half-open '[2.0.0-alpha,)' exclude all prereleases. select_excludesPrereleaseUnlessRangeTargetsIt asserts targeted.has_value()"
+    },
+    {
+      "id": "strip-leading-zeros-keep-one-digit",
+      "file": "src/core/nuget_version_range.cpp",
+      "find": "while (i < s.size() - 1 && s.at(i) == QLatin1Char('0')) {",
+      "replace": "while (i < s.size() && s.at(i) == QLatin1Char('0')) {",
+      "expect": "equivalent",
+      "why": "the '- 1' keeps at least one digit so an all-zeros identifier strips to \"0\" rather than \"\". stripLeadingZeros is called ONLY from compareNumericIdentifiers on all-digit strings, and the bound only matters for an all-zeros identifier (a non-zero digit stops the loop before size-1 regardless). Both \"\" and \"0\" represent value 0: two all-zeros identifiers still compare equal (both \"\" or both \"0\"), and an all-zeros identifier still sorts below any non-zero one -- size 0 precedes any size>=1, and at equal size the leading '0' compares below any non-zero digit. The compare result is identical for every input"
+    }
+  ]
+}

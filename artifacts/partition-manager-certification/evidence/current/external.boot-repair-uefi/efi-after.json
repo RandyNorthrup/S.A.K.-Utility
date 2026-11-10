@@ -1,0 +1,10 @@
+{
+  "reached_sign_in": true,
+  "firmware": "UEFI",
+  "system_drive": "C:",
+  "repair_scan": "NoErrorsFound",
+  "only_disk_attached": true,
+  "source_marker_present": false,
+  "shot": "sakcert-efi-after.png",
+  "source_marker": ""
+}

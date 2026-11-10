@@ -23,8 +23,19 @@ private Q_SLOTS:
     void rewrite_emptyFilenameMap_returnsOriginal();
     void rewrite_emptyScript_succeeds();
 
+    // Fail-closed: an incomplete rewrite must NOT report success
+    void rewrite_resourcesButNoUrlReplaced_fails();
+
     // Replacement tracking
     void rewrite_tracksReplacements();
+
+    // Injection safety
+    void rewrite_filenameWithQuote_isEscaped();
+
+    // Quote-swallowing (B10-16)
+    void urlReplacementSpan_swallowsMatchedQuotes();
+    void urlReplacementSpan_keepsBareOrMismatched();
+    void rewrite_quotedUrl_producesBareExpressionNotLiteral();
 
     // File output
     void rewriteToFile_writesContent();
@@ -52,8 +63,8 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     auto result = rewriter.rewrite(parsed, filenames);
 
     QVERIFY(result.success);
-    QVERIFY(result.script_content.contains("$toolsDir"));
-    QVERIFY(result.script_content.contains("setup.exe"));
+    // Pin the exact internalized form, not just that "$toolsDir"/"setup.exe" appear somewhere.
+    QVERIFY(result.script_content.contains(QStringLiteral("(Join-Path $toolsDir 'setup.exe')")));
     QVERIFY(!result.script_content.contains("https://example.com/setup.exe"));
 }
 
@@ -97,8 +108,9 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     auto result = rewriter.rewrite(parsed, filenames);
 
     QVERIFY(result.success);
-    QVERIFY(result.script_content.contains("x86.exe"));
-    QVERIFY(result.script_content.contains("x64.exe"));
+    // Pin the exact internalized Join-Path form for each URL slot.
+    QVERIFY(result.script_content.contains(QStringLiteral("(Join-Path $toolsDir 'x86.exe')")));
+    QVERIFY(result.script_content.contains(QStringLiteral("(Join-Path $toolsDir 'x64.exe')")));
 }
 
 // ============================================================================
@@ -138,6 +150,36 @@ void TestScriptRewriter::rewrite_emptyScript_succeeds() {
     QVERIFY(result.replacements.isEmpty());
 }
 
+void TestScriptRewriter::rewrite_resourcesButNoUrlReplaced_fails() {
+    // The script declares a download URL, but the filename map keys a DIFFERENT
+    // URL, so nothing is internalized. Formerly this returned success with zero
+    // replacements -- a script that still hits the network at install time. It
+    // must now FAIL closed so the caller never ships an un-internalized script.
+    sak::InstallScriptParser parser;
+    QString script = R"(
+Install-ChocolateyPackage -PackageName 'testpkg' `
+    -FileType 'exe' `
+    -Url 'https://example.com/real.exe'
+)";
+    auto parsed = parser.parse(script);
+    QVERIFY(!parsed.resources.isEmpty());  // a resource WAS declared
+
+    QHash<QString, QString> filenames;     // non-empty, but keyed to a URL not present
+    filenames["https://example.com/other.exe"] = "other.exe";
+
+    sak::ScriptRewriter rewriter;
+    auto result = rewriter.rewrite(parsed, filenames);
+
+    QVERIFY(!result.success);
+    // Fail closed: the rejected result names the un-internalized download URL and
+    // carries NO script content -- never a half-rewritten script reported as done.
+    QCOMPARE(result.error_message,
+             QStringLiteral("Declared download URL with no internalized local file: "
+                            "https://example.com/real.exe"));
+    QVERIFY(result.replacements.isEmpty());
+    QVERIFY(result.script_content.isEmpty());
+}
+
 // ============================================================================
 // Replacement Tracking
 // ============================================================================
@@ -160,7 +202,98 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     QVERIFY(result.success);
     QCOMPARE(result.replacements.size(), 1);
     QCOMPARE(result.replacements.first().original_url, QString("https://example.com/tracked.exe"));
-    QVERIFY(result.replacements.first().local_path.contains("tracked.exe"));
+    QCOMPARE(result.replacements.first().local_path,
+             QString("(Join-Path $toolsDir 'tracked.exe')"));
+}
+
+// ============================================================================
+// Injection Safety
+// ============================================================================
+
+void TestScriptRewriter::rewrite_filenameWithQuote_isEscaped() {
+    sak::InstallScriptParser parser;
+    QString script = R"(
+Install-ChocolateyPackage -PackageName 'testpkg' `
+    -FileType 'exe' `
+    -Url 'https://example.com/evil.zip'
+)";
+    auto parsed = parser.parse(script);
+
+    // A %27-decoded URL filename carrying a single quote + injection payload.
+    QHash<QString, QString> filenames;
+    filenames["https://example.com/evil.zip"] = "a';Start-Process calc;'.zip";
+
+    sak::ScriptRewriter rewriter;
+    auto result = rewriter.rewrite(parsed, filenames);
+
+    QVERIFY(result.success);
+    QCOMPARE(result.replacements.size(), 1);
+    // Every single quote is doubled so the payload stays an inert literal.
+    QCOMPARE(result.replacements.first().local_path,
+             QString("(Join-Path $toolsDir 'a'';Start-Process calc;''.zip')"));
+    QVERIFY(!result.script_content.contains("calc;'.zip')"));
+}
+
+// ============================================================================
+// Quote-swallowing (B10-16)
+// ============================================================================
+
+void TestScriptRewriter::urlReplacementSpan_swallowsMatchedQuotes() {
+    const QString url = QStringLiteral("http://x/f.exe");
+    const int len = static_cast<int>(url.length());
+
+    const QString sq = QStringLiteral("-Url 'http://x/f.exe' `");
+    const int p1 = static_cast<int>(sq.indexOf(url));
+    auto s1 = sak::ScriptRewriter::urlReplacementSpan(sq, p1, len);
+    QCOMPARE(s1.start, p1 - 1);    // opening single quote consumed
+    QCOMPARE(s1.length, len + 2);  // ...and the closing one
+
+    const QString dq = QStringLiteral("-Url \"http://x/f.exe\"\n");
+    const int p2 = static_cast<int>(dq.indexOf(url));
+    auto s2 = sak::ScriptRewriter::urlReplacementSpan(dq, p2, len);
+    QCOMPARE(s2.start, p2 - 1);
+    QCOMPARE(s2.length, len + 2);
+}
+
+void TestScriptRewriter::urlReplacementSpan_keepsBareOrMismatched() {
+    const QString url = QStringLiteral("http://x/f.exe");
+    const int len = static_cast<int>(url.length());
+
+    // Bare (unquoted) URL: span is exactly the URL.
+    const QString bare = QStringLiteral("-OutFile http://x/f.exe more");
+    const int p1 = static_cast<int>(bare.indexOf(url));
+    auto s1 = sak::ScriptRewriter::urlReplacementSpan(bare, p1, len);
+    QCOMPARE(s1.start, p1);
+    QCOMPARE(s1.length, len);
+
+    // Mismatched quotes are NOT a wrapping pair.
+    const QString mis = QStringLiteral("x'http://x/f.exe\"y");
+    const int p2 = static_cast<int>(mis.indexOf(url));
+    auto s2 = sak::ScriptRewriter::urlReplacementSpan(mis, p2, len);
+    QCOMPARE(s2.start, p2);
+    QCOMPARE(s2.length, len);
+}
+
+void TestScriptRewriter::rewrite_quotedUrl_producesBareExpressionNotLiteral() {
+    sak::InstallScriptParser parser;
+    QString script = R"(
+Install-ChocolateyPackage -PackageName 'testpkg' `
+    -FileType 'exe' `
+    -Url 'https://example.com/setup.exe'
+)";
+    auto parsed = parser.parse(script);
+
+    QHash<QString, QString> filenames;
+    filenames["https://example.com/setup.exe"] = "setup.exe";
+
+    sak::ScriptRewriter rewriter;
+    auto result = rewriter.rewrite(parsed, filenames);
+
+    QVERIFY(result.success);
+    // The wrapping quotes are gone: the Join-Path expression stands on its own,
+    // NOT embedded in a '(...)' string literal (which would be inert).
+    QVERIFY(result.script_content.contains("-Url (Join-Path $toolsDir 'setup.exe')"));
+    QVERIFY(!result.script_content.contains("'(Join-Path"));
 }
 
 // ============================================================================
@@ -203,13 +336,26 @@ void TestScriptRewriter::rewriteToFile_invalidPath_failsGracefully() {
     sak::InstallScriptParser parser;
     auto parsed = parser.parse("# empty");
 
+    // A non-empty map with a resource-free script makes rewrite() itself succeed,
+    // so failure can ONLY come from the file used as an output parent below -- otherwise
+    // rewrite() bails on the empty map and the invalid-path branch is never reached.
     QHash<QString, QString> filenames;
+    filenames["https://example.com/x.exe"] = "x.exe";
+
+    QTemporaryDir owned;
+    QVERIFY(owned.isValid());
+    const QString blocker_path = owned.filePath(QStringLiteral("blocker"));
+    QFile blocker(blocker_path);
+    QVERIFY(blocker.open(QIODevice::WriteOnly));
+    QCOMPARE(blocker.write(QByteArrayLiteral("x")), qint64{1});
+    blocker.close();
+    const QString output_path = blocker_path + QStringLiteral("/script.ps1");
 
     sak::ScriptRewriter rewriter;
-    auto result = rewriter.rewriteToFile(parsed, filenames, "Z:\\nonexistent\\path\\script.ps1");
+    auto result = rewriter.rewriteToFile(parsed, filenames, output_path);
 
     QVERIFY(!result.success);
-    QVERIFY(!result.error_message.isEmpty());
+    QCOMPARE(result.error_message, QStringLiteral("Cannot write to: %1").arg(output_path));
 }
 
 QTEST_GUILESS_MAIN(TestScriptRewriter)

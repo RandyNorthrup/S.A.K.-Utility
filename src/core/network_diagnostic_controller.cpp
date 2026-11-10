@@ -12,6 +12,7 @@
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/ethernet_config_manager.h"
 #include "sak/firewall_rule_auditor.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/network_adapter_inspector.h"
 #include "sak/network_diagnostic_report_generator.h"
@@ -27,6 +28,7 @@
 #include <QThread>
 #include <QTimer>
 
+#include <atomic>
 #include <utility>
 
 namespace sak {
@@ -41,23 +43,64 @@ constexpr unsigned char kBytePatternMask = 0xFF;
 constexpr int kLanUploadPumpIntervalMs = 20;
 constexpr int kLanUploadConnectTimeoutMs = sak::kTimeoutProcessShortMs;
 constexpr int kLanSocketQueueBlocks = 64;
-constexpr int kDefaultLanDurationSec = 10;
-constexpr int kDefaultLanBlockSizeKb = 64;
+// Upper bounds for LAN transfer parameters. A non-GUI API caller (the GUI spinboxes are
+// already bounded) must not pass values that overflow the int block buffer
+// (blockSizeKB * 1024), the int socket-queue threshold (blockSize * kLanSocketQueueBlocks),
+// or the int duration-ms (durationSec * 1000). These caps keep every product well inside
+// INT_MAX: 8192 KB * 1024 * 64 blocks == 536'870'912 < 2^31, 3600 s * 1000 == 3'600'000.
+constexpr int kMaxLanDurationSec = 3600;
+constexpr int kMaxLanBlockSizeKb = 8192;
+// A silent (idle) LAN client socket is closed after this long so an unauthenticated peer
+// cannot hold the single accepted slot open indefinitely without sending data.
+constexpr int kLanIdleTimeoutMs = 30'000;
+// Cap the per-session speed-sample history so a long-lived transfer cannot grow the sample
+// vector without bound; once reached, further samples are measured but not retained.
+constexpr int kLanMaxSpeedSamples = 100'000;
+// Absolute per-session ceiling for a received transfer, independent of activity. The idle
+// timeout closes a silent peer; this additionally bounds a peer that streams continuously, so an
+// unauthenticated client cannot hold the single accepted slot indefinitely (and the received
+// total is bounded by link-speed times this ceiling). Sized well above the longest legitimate
+// client run (kMaxLanDurationSec == 3600 s) so a full-length test never trips it.
+constexpr int kLanReceiveMaxSessionSec = 7200;
+constexpr int kLanReceiveMaxSessionMs = kLanReceiveMaxSessionSec *
+                                        static_cast<int>(kNetworkMillisecondsPerSecond);
+
+// Set true by NetworkDiagnosticController::cancel() to abort an in-flight LAN upload
+// cooperatively; the upload worker polls this in pump() and finishes fail-closed. Only one LAN
+// upload runs at a time (State::RunningLanTransfer is a single-instance worker group), so one
+// TU-local flag suffices; runLanUpload() clears it before each new transfer.
+std::atomic<bool> g_lanUploadCancelled{false};
+
+// Drain and drop any client sockets queued behind the one already being served, enforcing the
+// single-client cap even if several peers connect within one event-loop turn.
+void rejectExtraPendingClients(QTcpServer* server) {
+    for (auto* extra = server->nextPendingConnection(); extra != nullptr;
+         extra = server->nextPendingConnection()) {
+        extra->abort();
+        extra->deleteLater();
+    }
+}
 }  // namespace
 
-NetworkDiagnosticController::NetworkDiagnosticController(QObject* parent) : QObject(parent) {
-    // Create all worker objects -- they live in this thread initially
-    // Long-running operations use runOnThread() to execute on a worker thread.
-    m_adapterInspector = std::make_unique<NetworkAdapterInspector>();
-    m_connectivityTester = std::make_unique<ConnectivityTester>();
-    m_dnsTool = std::make_unique<DnsDiagnosticTool>();
-    m_portScanner = std::make_unique<PortScanner>();
-    m_bandwidthTester = std::make_unique<BandwidthTester>();
-    m_wifiAnalyzer = std::make_unique<WiFiAnalyzer>();
-    m_connectionMonitor = std::make_unique<ActiveConnectionsMonitor>();
-    m_firewallAuditor = std::make_unique<FirewallRuleAuditor>();
-    m_shareBrowser = std::make_unique<NetworkShareBrowser>();
-    m_reportGenerator = std::make_unique<NetworkDiagnosticReportGenerator>();
+// The worker objects live in this thread initially; long-running operations use runOnThread()
+// to execute on a worker thread. They are listed here in member declaration order.
+NetworkDiagnosticController::NetworkDiagnosticController(QObject* parent)
+    : QObject(parent)
+    , m_adapterInspector(std::make_unique<NetworkAdapterInspector>())
+    , m_connectivityTester(std::make_unique<ConnectivityTester>())
+    , m_dnsTool(std::make_unique<DnsDiagnosticTool>())
+    , m_portScanner(std::make_unique<PortScanner>())
+    , m_bandwidthTester(std::make_unique<BandwidthTester>())
+    , m_wifiAnalyzer(std::make_unique<WiFiAnalyzer>())
+    , m_connectionMonitor(std::make_unique<ActiveConnectionsMonitor>())
+    , m_firewallAuditor(std::make_unique<FirewallRuleAuditor>())
+    , m_shareBrowser(std::make_unique<NetworkShareBrowser>())
+    , m_reportGenerator(std::make_unique<NetworkDiagnosticReportGenerator>()) {
+    // Left in the body deliberately, and NOT because the init list could not take it: this is
+    // the last unique_ptr member declared, so an init-list entry would construct at exactly the
+    // same point. It is the one worker with a QObject parent, and moving a `this`-parented
+    // construction into an init list hands the child a partially constructed parent. cppcheck
+    // does not flag it, and the useInitializationList findings above were all parentless.
     m_ethernetConfigManager = std::make_unique<EthernetConfigManager>(this);
 
     connectWorkerSignals();
@@ -137,11 +180,20 @@ bool NetworkDiagnosticController::isWorkerGroupBusy(State op) const {
     }
 }
 
-void NetworkDiagnosticController::runOnThread(std::function<void()> work, State operationState) {
+void NetworkDiagnosticController::runOnThread(std::function<void()> work,
+                                              State operationState,
+                                              std::function<void()> afterFinished) {
     if (isWorkerGroupBusy(operationState)) {
         Q_EMIT errorOccurred(QStringLiteral("That operation is already in progress"));
         return;
     }
+
+    // Drop any prior cached result for this op BEFORE it runs: if this run fails or is
+    // cancelled, the stale prior-run data must not remain eligible for the next report.
+    clearCacheFor(operationState);
+    // Record that this diagnostic was attempted so the report can render an explicit
+    // "not run" marker if the run fails or yields nothing, instead of silently omitting it.
+    m_attemptedOps.insert(operationState);
 
     cleanupThread(operationState);
     addOperation(operationState);
@@ -150,15 +202,22 @@ void NetworkDiagnosticController::runOnThread(std::function<void()> work, State 
     m_workerThreads.insert(operationState, thread);
 
     // NOTE: No context object -> DirectConnection -> runs in emitting thread (worker).
-    // Capture thread pointer locally to avoid racing with cleanupThread().
+    // Capture thread pointer locally to avoid racing with cleanupThread(). By design the
+    // worker QObject keeps its controller-thread affinity while work() runs synchronously
+    // and blocking on the worker thread; results cross back via queued AutoConnection
+    // signals. This is an intentional blocking-synchronous invocation, not an off-affinity
+    // event-driven use, so the affinity boundary is safe here.
     QObject::connect(thread, &QThread::started, [thread, work]() {
         work();
         thread->quit();  // Exit event loop so thread finishes
     });
 
-    // Auto-cleanup when thread finishes
-    QObject::connect(thread, &QThread::finished, this, [this, operationState]() {
+    // Auto-cleanup when thread finishes, then the caller's continuation (on this thread).
+    QObject::connect(thread, &QThread::finished, this, [this, operationState, afterFinished]() {
         removeOperation(operationState);
+        if (afterFinished) {
+            afterFinished();
+        }
     });
 
     thread->start();
@@ -172,12 +231,17 @@ void NetworkDiagnosticController::cleanupThread(State op) {
     QThread* thread = it.value();
     if (thread->isRunning()) {
         thread->quit();
-        constexpr int kThreadQuitTimeoutMs = 5000;
-        if (!thread->wait(kThreadQuitTimeoutMs)) {
-            thread->terminate();
-            constexpr int kThreadTermTimeoutMs = 2000;
-            thread->wait(kThreadTermTimeoutMs);
-        }
+        // We MUST join the worker before returning: the worker's work() lambda dereferences
+        // this controller's unique_ptr members (m_connectivityTester, m_dnsTool, ...), which
+        // are freed immediately after ~NetworkDiagnosticController returns. Detaching a still-
+        // running thread would leave it executing on freed workers (use-after-free). cancel()
+        // is issued before teardown and every worker has a bounded internal timeout, so the
+        // cooperative stop is guaranteed to return; blocking here is the fail-closed choice
+        // (a bounded shutdown delay) over a UAF. terminate() is never used -- it would kill a
+        // worker mid-syscall and corrupt shared state or leak held locks.
+        // SAK-ALLOW-BLOCKING: cancel is issued before teardown and every worker has a
+        // bounded internal timeout, so the cooperative stop is guaranteed to return.
+        thread->wait();
     }
     thread->deleteLater();
     m_workerThreads.erase(it);
@@ -188,6 +252,53 @@ void NetworkDiagnosticController::cleanupAllThreads() {
     for (auto op : states) {
         cleanupThread(op);
     }
+}
+
+void NetworkDiagnosticController::clearCacheFor(State op) {
+    switch (op) {
+    case State::ScanningAdapters:
+        m_cachedAdapters.clear();
+        break;
+    case State::RunningPing:
+        m_cachedPing = PingResult{};
+        break;
+    case State::RunningTraceroute:
+        m_cachedTraceroute = TracerouteResult{};
+        break;
+    case State::ScanningPorts:
+        m_cachedPortScan.clear();
+        break;
+    case State::RunningBandwidthTest:
+        m_cachedBandwidth = BandwidthTestResult{};
+        break;
+    case State::ScanningWiFi:
+        m_cachedWifi.clear();
+        break;
+    case State::AuditingFirewall:
+        m_cachedFirewallRules.clear();
+        m_cachedFirewallConflicts.clear();
+        m_cachedFirewallGaps.clear();
+        break;
+    case State::MonitoringConnections:
+        m_cachedConnections.clear();
+        break;
+    case State::BrowsingShares:
+        m_cachedShares.clear();
+        break;
+    default:
+        // RunningDnsQuery deliberately accumulates across queries (append-on-success), and
+        // Idle/report/LAN ops own no result cache -- nothing to clear.
+        break;
+    }
+}
+
+bool NetworkDiagnosticController::canGenerateReport() const {
+    for (auto op : m_activeOps) {
+        if (op != State::MonitoringConnections) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void NetworkDiagnosticController::connectWorkerSignals() {
@@ -205,6 +316,7 @@ void NetworkDiagnosticController::connectWorkerSignals() {
 }
 
 void NetworkDiagnosticController::connectAdapterInspectorSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_adapterInspector);
     connect(
         m_adapterInspector.get(),
@@ -224,6 +336,7 @@ void NetworkDiagnosticController::connectAdapterInspectorSignals() {
 }
 
 void NetworkDiagnosticController::connectConnectivityTesterSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_connectivityTester);
     connect(m_connectivityTester.get(),
             &ConnectivityTester::pingReply,
@@ -280,6 +393,7 @@ void NetworkDiagnosticController::connectConnectivityTesterSignals() {
 }
 
 void NetworkDiagnosticController::connectDnsToolSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_dnsTool);
     connect(
         m_dnsTool.get(), &DnsDiagnosticTool::queryComplete, this, [this](DnsQueryResult result) {
@@ -318,6 +432,7 @@ void NetworkDiagnosticController::connectDnsToolSignals() {
 }
 
 void NetworkDiagnosticController::connectPortScannerSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_portScanner);
     connect(m_portScanner.get(),
             &PortScanner::portScanned,
@@ -351,6 +466,7 @@ void NetworkDiagnosticController::connectPortScannerSignals() {
 }
 
 void NetworkDiagnosticController::connectBandwidthTesterSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_bandwidthTester);
     connect(m_bandwidthTester.get(),
             &BandwidthTester::serverStarted,
@@ -367,12 +483,10 @@ void NetworkDiagnosticController::connectBandwidthTesterSignals() {
     connect(m_bandwidthTester.get(),
             &BandwidthTester::testComplete,
             this,
-            [this](BandwidthTestResult result) {
+            [this](const BandwidthTestResult& result) {
                 m_cachedBandwidth = result;
                 Q_EMIT bandwidthComplete(result);
-                Q_EMIT logOutput(QStringLiteral("Bandwidth test: DL %1 Mbps, UL %2 Mbps")
-                                     .arg(result.downloadMbps, 0, 'f', kNetworkMetricPrecision)
-                                     .arg(result.uploadMbps, 0, 'f', kNetworkMetricPrecision));
+                Q_EMIT logOutput(iperfLogLine(result));
                 removeOperation(State::RunningBandwidthTest);
             });
     connect(m_bandwidthTester.get(),
@@ -380,20 +494,65 @@ void NetworkDiagnosticController::connectBandwidthTesterSignals() {
             this,
             [this](double dl, double ul, double latency) {
                 Q_EMIT httpSpeedComplete(dl, ul, latency);
-                Q_EMIT logOutput(QStringLiteral("HTTP speed test: DL %1 Mbps, UL %2 Mbps, "
-                                                "latency %3 ms")
-                                     .arg(dl, 0, 'f', kNetworkMetricPrecision)
-                                     .arg(ul, 0, 'f', kNetworkMetricPrecision)
-                                     .arg(latency, 0, 'f', 1));
+                Q_EMIT logOutput(httpSpeedLogLine(dl, ul, latency));
                 removeOperation(State::RunningBandwidthTest);
             });
+    // Connected to the public signal so a speed test's numbers reach the report by the same route
+    // they reach the panel. Without this the report listed a finished test as not run.
+    connect(this,
+            &NetworkDiagnosticController::httpSpeedComplete,
+            this,
+            &NetworkDiagnosticController::cacheHttpSpeedResult);
     connect(m_bandwidthTester.get(),
             &BandwidthTester::errorOccurred,
             this,
             &NetworkDiagnosticController::errorOccurred);
 }
 
+QString NetworkDiagnosticController::iperfLogLine(const BandwidthTestResult& result) {
+    // A stopped or failed run completes with an empty result. Never log that as a speed.
+    if (!result.hasMeasurement()) {
+        return QStringLiteral("Bandwidth test ended without a result");
+    }
+    return QStringLiteral("Bandwidth test: DL %1 Mbps, UL %2 Mbps")
+        .arg(result.downloadMbps, 0, 'f', kNetworkMetricPrecision)
+        .arg(result.uploadMbps, 0, 'f', kNetworkMetricPrecision);
+}
+
+QString NetworkDiagnosticController::httpSpeedLogLine(double downloadMbps,
+                                                      double uploadMbps,
+                                                      double latencyMs) {
+    // A stopped or failed run completes with zeros. Never log those as a speed.
+    if (downloadMbps <= 0.0 && uploadMbps <= 0.0) {
+        return QStringLiteral("HTTP speed test ended without a result");
+    }
+    // A negative latency means the probe could not measure one. Say so rather than printing it as
+    // a number: it used to arrive here coerced to 0.0 and was logged as "latency 0.0 ms", which
+    // reads as an ideal connection.
+    const QString latency_text = latencyMs < 0.0
+                                     ? QStringLiteral("unknown")
+                                     : QStringLiteral("%1 ms").arg(latencyMs, 0, 'f', 1);
+    return QStringLiteral("HTTP speed test: DL %1 Mbps, UL %2 Mbps, latency %3")
+        .arg(downloadMbps, 0, 'f', kNetworkMetricPrecision)
+        .arg(uploadMbps, 0, 'f', kNetworkMetricPrecision)
+        .arg(latency_text);
+}
+
+void NetworkDiagnosticController::cacheHttpSpeedResult(double downloadMbps,
+                                                       double uploadMbps,
+                                                       double latencyMs) {
+    BandwidthTestResult result;
+    result.mode = BandwidthTestResult::TestMode::WanHttp;
+    result.target = QString::fromLatin1(BandwidthTester::kHttpSpeedTestHost);
+    result.downloadMbps = downloadMbps;
+    result.uploadMbps = uploadMbps;
+    result.latencyMs = latencyMs;
+    result.timestamp = QDateTime::currentDateTime();
+    m_cachedBandwidth = result;
+}
+
 void NetworkDiagnosticController::connectWifiAnalyzerSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_wifiAnalyzer);
     connect(m_wifiAnalyzer.get(),
             &WiFiAnalyzer::scanComplete,
@@ -406,7 +565,7 @@ void NetworkDiagnosticController::connectWifiAnalyzerSignals() {
                 Q_EMIT wifiChannelUtilization(channels);
 
                 Q_EMIT logOutput(
-                    QStringLiteral("WiFi scan complete: %1 networks found").arg(networks.size()));
+                    QStringLiteral("Wi-Fi scan complete: %1 networks found").arg(networks.size()));
                 removeOperation(State::ScanningWiFi);
             });
     connect(m_wifiAnalyzer.get(),
@@ -430,6 +589,7 @@ void NetworkDiagnosticController::connectConnectionMonitorSignals() {
 }
 
 void NetworkDiagnosticController::connectFirewallAuditorSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_firewallAuditor);
     connect(m_firewallAuditor.get(),
             &FirewallRuleAuditor::auditComplete,
@@ -454,6 +614,7 @@ void NetworkDiagnosticController::connectFirewallAuditorSignals() {
 }
 
 void NetworkDiagnosticController::connectShareBrowserSignals() {
+    // The constructor make_unique's every worker before it calls connectWorkerSignals().
     Q_ASSERT(m_shareBrowser);
     connect(m_shareBrowser.get(),
             &NetworkShareBrowser::discoveryComplete,
@@ -463,6 +624,21 @@ void NetworkDiagnosticController::connectShareBrowserSignals() {
                 Q_EMIT sharesDiscovered(shares);
                 Q_EMIT logOutput(
                     QStringLiteral("Share discovery: %1 shares found").arg(shares.size()));
+                removeOperation(State::BrowsingShares);
+            });
+    // A discovery that did NOT complete must not populate the share cache: m_cachedShares feeds
+    // the report, which would then present a truncated list as this host's share inventory. The
+    // cache was already dropped by clearCacheFor() when the run started, so leaving it untouched
+    // is the fail-closed action -- surface the reason and end the operation.
+    connect(m_shareBrowser.get(),
+            &NetworkShareBrowser::discoveryFailed,
+            this,
+            [this](QVector<NetworkShareInfo> partialShares, QString reason) {
+                Q_EMIT errorOccurred(reason);
+                Q_EMIT logOutput(QStringLiteral("Share discovery incomplete: %1 (%2 partial "
+                                                "entries discarded)")
+                                     .arg(reason)
+                                     .arg(partialShares.size()));
                 removeOperation(State::BrowsingShares);
             });
     connect(m_shareBrowser.get(),
@@ -699,20 +875,48 @@ void NetworkDiagnosticController::runHttpSpeedTest() {
 }
 
 void NetworkDiagnosticController::scanWiFi() {
-    Q_EMIT statusMessage(QStringLiteral("Scanning WiFi networks..."), 0);
+    Q_EMIT statusMessage(QStringLiteral("Scanning Wi-Fi networks..."), 0);
 
     runOnThread([this]() { m_wifiAnalyzer->scan(); }, State::ScanningWiFi);
 }
 
 void NetworkDiagnosticController::startContinuousWiFiScan(int intervalMs) {
+    // The one-shot scanWiFi() runs WiFiAnalyzer::scan() on a WORKER thread, while this continuous
+    // path and its GUI-thread timer write the same (unsynchronized) WiFiAnalyzer::m_lastScan and
+    // drive the same WLAN handle. Register ScanningWiFi and gate on the shared-worker busy check so
+    // the two are mutually exclusive: an in-flight one-shot scan blocks starting continuous, and an
+    // active continuous scan blocks a one-shot (scanWiFi already routes through the same gate).
+    // Without this the two threads race the QVector d-pointer -> double-free / use-after-free.
+    if (isWorkerGroupBusy(State::ScanningWiFi)) {
+        Q_EMIT errorOccurred(QStringLiteral("A Wi-Fi scan is already in progress"));
+        return;
+    }
     Q_EMIT logOutput(
-        QStringLiteral("Starting continuous WiFi scan (interval: %1 ms)").arg(intervalMs));
-    m_wifiAnalyzer->startContinuousScan(intervalMs);
+        QStringLiteral("Starting continuous Wi-Fi scan (interval: %1 ms)").arg(intervalMs));
+    // The first scan is a full WlanScan plus a wait for the driver's completion notification, so
+    // it runs on the worker exactly like a one-off scanWiFi(); it used to run inline here, on the
+    // GUI thread. The periodic refresh (a quick cached-list read) starts only once it has landed,
+    // so the worker and the GUI-thread timer never touch the analyzer at the same time.
+    m_continuousWiFiIntervalMs = intervalMs;
+    m_continuousWiFiRequested = true;
+    runOnThread([this]() { m_wifiAnalyzer->scan(); },
+                State::ScanningWiFi,
+                [this]() { beginContinuousWiFiRefresh(); });
+}
+
+void NetworkDiagnosticController::beginContinuousWiFiRefresh() {
+    if (!m_continuousWiFiRequested) {
+        return;  // stopped while the first scan was still running
+    }
+    addOperation(State::ScanningWiFi);
+    m_wifiAnalyzer->startContinuousScan(m_continuousWiFiIntervalMs);
 }
 
 void NetworkDiagnosticController::stopContinuousWiFiScan() {
+    m_continuousWiFiRequested = false;
     m_wifiAnalyzer->stopContinuousScan();
-    Q_EMIT logOutput(QStringLiteral("Continuous WiFi scan stopped"));
+    removeOperation(State::ScanningWiFi);
+    Q_EMIT logOutput(QStringLiteral("Continuous Wi-Fi scan stopped"));
 }
 
 bool NetworkDiagnosticController::isWiFiAvailable() const {
@@ -729,6 +933,12 @@ void NetworkDiagnosticController::startConnectionMonitor(
     config.filterPort = portFilter;
 
     Q_EMIT logOutput(QStringLiteral("Starting connection monitor (refresh: %1 ms)").arg(refreshMs));
+    // Drop any stale prior-run connections so a monitor that yields nothing this run cannot
+    // surface a previous run's connections in a report.
+    clearCacheFor(State::MonitoringConnections);
+    // The monitor does not run through runOnThread(); record its attempt here so an empty
+    // result renders a "not run" marker in the report rather than being omitted.
+    m_attemptedOps.insert(State::MonitoringConnections);
     setState(State::MonitoringConnections);
     m_connectionMonitor->startMonitoring(config);
 }
@@ -747,6 +957,7 @@ void NetworkDiagnosticController::auditFirewall() {
 }
 
 void NetworkDiagnosticController::discoverShares(const QString& hostname) {
+    // The constructor make_unique's m_shareBrowser and nothing ever resets it.
     Q_ASSERT(m_shareBrowser);
     if (hostname.trimmed().isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Share discovery hostname cannot be empty"));
@@ -768,10 +979,11 @@ void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
         return;
     }
 
-    if (!m_lanTransferServer) {
+    if (m_lanTransferServer == nullptr) {
         m_lanTransferServer = new QTcpServer(this);
     }
 
+    m_lanTransferServer->setMaxPendingConnections(1);
     if (!m_lanTransferServer->listen(QHostAddress::Any, port)) {
         Q_EMIT errorOccurred(QStringLiteral("Failed to start LAN transfer server "
                                             "on port %1: %2")
@@ -781,19 +993,27 @@ void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
     }
 
     m_lanTransferServerRunning.store(true, std::memory_order_release);
-    Q_EMIT lanTransferServerStarted(port);
-    Q_EMIT logOutput(QStringLiteral("LAN transfer server listening on port %1").arg(port));
+    // Report the actual bound port, not the caller's request: a port==0 request binds an
+    // ephemeral port the OS chooses, and the peer must be told the real port to connect to.
+    const uint16_t bound_port = m_lanTransferServer->serverPort();
+    Q_EMIT lanTransferServerStarted(bound_port);
+    Q_EMIT logOutput(QStringLiteral("LAN transfer server listening on port %1").arg(bound_port));
 
     connect(m_lanTransferServer, &QTcpServer::newConnection, this, [this]() {
         auto* socket = m_lanTransferServer->nextPendingConnection();
         if (!socket) {
             return;
         }
+        // Single-client cap: stop accepting new peers while one transfer is in flight (the
+        // socket is re-opened for accepting on disconnect) and drop any that already queued.
+        m_lanTransferServer->pauseAccepting();
+        rejectExtraPendingClients(m_lanTransferServer);
         handleLanClientConnection(socket);
     });
 }
 
 void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) {
+    // The sole caller (the newConnection lambda above) returns early on a null socket.
     Q_ASSERT(socket);
     Q_EMIT logOutput(QStringLiteral("LAN transfer: peer connected from %1")
                          .arg(socket->peerAddress().toString()));
@@ -801,24 +1021,53 @@ void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) 
     auto* ctx = new LanClientContext();
     ctx->timer.start();
 
-    connect(socket, &QTcpSocket::readyRead, this, [this, socket, ctx]() {
-        qint64 bytes = socket->bytesAvailable();
-        QByteArray received_data = socket->read(bytes);
+    // Idle-timeout: an unauthenticated peer that connects but goes silent must not hold the
+    // single accepted slot open forever. The timer (parented to the socket, so it dies with
+    // it) aborts a socket that sends nothing for kLanIdleTimeoutMs; each read resets it.
+    auto* idle_timer = new QTimer(socket);
+    idle_timer->setSingleShot(true);
+    connect(idle_timer, &QTimer::timeout, this, [this, socket]() {
+        Q_EMIT logOutput(QStringLiteral("LAN transfer: closing idle peer %1")
+                             .arg(socket->peerAddress().toString()));
+        socket->abort();
+    });
+    idle_timer->start(kLanIdleTimeoutMs);
+
+    // Absolute-session cap: unlike the idle timer (reset on every read), this one is never
+    // restarted, so even a peer that streams continuously cannot hold the single accepted slot
+    // past kLanReceiveMaxSessionMs. Parented to the socket, so it dies with it.
+    auto* session_timer = new QTimer(socket);
+    session_timer->setSingleShot(true);
+    connect(session_timer, &QTimer::timeout, this, [this, socket]() {
+        Q_EMIT logOutput(QStringLiteral("LAN transfer: session limit reached, closing peer %1")
+                             .arg(socket->peerAddress().toString()));
+        socket->abort();
+    });
+    session_timer->start(kLanReceiveMaxSessionMs);
+
+    connect(socket, &QTcpSocket::readyRead, this, [this, socket, ctx, idle_timer]() {
+        idle_timer->start(kLanIdleTimeoutMs);
+        const qint64 bytes = socket->bytesAvailable();
+        const QByteArray received_data = socket->read(bytes);
         ctx->total_received += received_data.size();
 
-        qint64 elapsed = ctx->timer.elapsed();
+        const qint64 elapsed = ctx->timer.elapsed();
         if (elapsed - ctx->last_report_time >= kLanReportIntervalMs) {
-            qint64 deltaBytes = ctx->total_received - ctx->last_report_bytes;
-            double deltaSec = (elapsed - ctx->last_report_time) / kNetworkMillisecondsPerSecond;
-            double currentMbps = deltaSec > 0 ? (deltaBytes * kBitsPerByte / (deltaSec * kMegabit))
-                                              : 0.0;
+            const qint64 deltaBytes = ctx->total_received - ctx->last_report_bytes;
+            const double deltaSec = static_cast<double>(elapsed - ctx->last_report_time) /
+                                    kNetworkMillisecondsPerSecond;
+            const double currentMbps = deltaSec > 0 ? (static_cast<double>(deltaBytes) *
+                                                       kBitsPerByte / (deltaSec * kMegabit))
+                                                    : 0.0;
             ctx->peak_mbps = std::max(ctx->peak_mbps, currentMbps);
-            ctx->speed_samples.append(currentMbps);
+            if (ctx->speed_samples.size() < kLanMaxSpeedSamples) {
+                ctx->speed_samples.append(currentMbps);
+            }
             ctx->last_report_time = elapsed;
             ctx->last_report_bytes = ctx->total_received;
 
             Q_EMIT lanTransferProgress(currentMbps,
-                                       elapsed / kNetworkMillisecondsPerSecond,
+                                       static_cast<double>(elapsed) / kNetworkMillisecondsPerSecond,
                                        ctx->total_received);
         }
     });
@@ -830,18 +1079,22 @@ void NetworkDiagnosticController::handleLanClientConnection(QTcpSocket* socket) 
 
 void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket,
                                                               LanClientContext* ctx) {
+    // Both come from handleLanClientConnection(): the socket it was handed was already
+    // null-checked by its caller, and ctx is its own `new` (which throws, never returns null).
     Q_ASSERT(socket);
     Q_ASSERT(ctx);
 
-    double elapsed_sec = ctx->timer.elapsed() / kNetworkMillisecondsPerSecond;
+    const double elapsed_sec = static_cast<double>(ctx->timer.elapsed()) /
+                               kNetworkMillisecondsPerSecond;
 
     LanTransferResult result;
     result.remoteAddress = socket->peerAddress().toString();
     result.port = socket->localPort();
     result.bytesTransferred = ctx->total_received;
     result.durationSec = elapsed_sec;
-    result.avgSpeedMbps =
-        elapsed_sec > 0 ? (ctx->total_received * kBitsPerByte / (elapsed_sec * kMegabit)) : 0.0;
+    result.avgSpeedMbps = elapsed_sec > 0 ? (static_cast<double>(ctx->total_received) *
+                                             kBitsPerByte / (elapsed_sec * kMegabit))
+                                          : 0.0;
     result.peakSpeedMbps = ctx->peak_mbps;
     result.isUpload = false;
     result.timestamp = QDateTime::currentDateTime();
@@ -849,18 +1102,33 @@ void NetworkDiagnosticController::handleLanClientDisconnected(QTcpSocket* socket
 
     Q_EMIT lanTransferComplete(result);
     Q_EMIT logOutput(QStringLiteral("LAN transfer receive complete: "
-                                    "%1 MB in %2s (%3 Mbps avg)")
-                         .arg(ctx->total_received / sak::kBytesPerMBf, 0, 'f', 1)
+                                    "%1 in %2s (%3 Mbps avg)")
+                         .arg(sak::formatBytes(static_cast<qint64>(ctx->total_received)))
                          .arg(elapsed_sec, 0, 'f', 1)
                          .arg(result.avgSpeedMbps, 0, 'f', 1));
 
     delete ctx;
     socket->deleteLater();
+
+    // The single served client is gone: re-open the server for the next peer.
+    if ((m_lanTransferServer != nullptr) && m_lanTransferServer->isListening()) {
+        m_lanTransferServer->resumeAccepting();
+    }
 }
 
 void NetworkDiagnosticController::stopLanTransferServer() {
-    if (m_lanTransferServer && m_lanTransferServer->isListening()) {
-        m_lanTransferServer->close();
+    if (m_lanTransferServer != nullptr) {
+        // Abort any in-flight served client (nextPendingConnection() parents the socket to the
+        // server) so a stop/cancel tears the transfer down at once instead of waiting for the
+        // idle/session timeout. abort() emits disconnected -> handleLanClientDisconnected, which
+        // deleteLater()s the socket; the isListening() guard below then skips its resumeAccepting.
+        const auto served = m_lanTransferServer->findChildren<QTcpSocket*>();
+        for (auto* socket : served) {
+            socket->abort();
+        }
+        if (m_lanTransferServer->isListening()) {
+            m_lanTransferServer->close();
+        }
     }
     m_lanTransferServerRunning.store(false, std::memory_order_release);
     Q_EMIT lanTransferServerStopped();
@@ -908,18 +1176,23 @@ public:
     LanUploadWorker(LanUploadRequest request, LanUploadSinks sinks)
         : m_request(std::move(request))
         , m_sinks(sinks)
+        , m_socket(new QTcpSocket(this))
+        , m_connectTimer(new QTimer(this))
+        , m_durationTimer(new QTimer(this))
+        , m_pumpTimer(new QTimer(this))
         , m_sendBuffer(createPatternBuffer(m_request.block_size_kb))
-        , m_blockSize(m_request.block_size_kb * static_cast<int>(sak::kBytesPerKB)) {}
+        , m_blockSize(m_request.block_size_kb * static_cast<int>(sak::kBytesPerKB)) {
+        m_connectTimer->setSingleShot(true);
+        m_durationTimer->setSingleShot(true);
+        m_pumpTimer->setInterval(kLanUploadPumpIntervalMs);
+    }
 
     void start() {
-        m_socket = new QTcpSocket(this);
-        m_connectTimer = new QTimer(this);
-        m_connectTimer->setSingleShot(true);
-        m_durationTimer = new QTimer(this);
-        m_durationTimer->setSingleShot(true);
-        m_pumpTimer = new QTimer(this);
-        m_pumpTimer->setInterval(kLanUploadPumpIntervalMs);
         connectSignals();
+        // Run the pump timer from the start (not just post-connect): pump() polls the cancel
+        // flag and returns early until the socket is connected, so a cancel during the connect
+        // window is honored within one pump interval instead of waiting on the connect timeout.
+        m_pumpTimer->start();
         m_connectTimer->start(kLanUploadConnectTimeoutMs);
         m_socket->connectToHost(m_request.target_addr, m_request.port);
     }
@@ -948,20 +1221,36 @@ private:
             return;
         }
         const qint64 deltaBytes = m_totalSent - m_lastReportBytes;
-        const double deltaSec = (elapsed - m_lastReportTime) / kNetworkMillisecondsPerSecond;
+        const double deltaSec = static_cast<double>(elapsed - m_lastReportTime) /
+                                kNetworkMillisecondsPerSecond;
         const double currentMbps =
-            deltaSec > 0 ? (deltaBytes * kBitsPerByte / (deltaSec * kMegabit)) : 0.0;
+            deltaSec > 0 ? (static_cast<double>(deltaBytes) * kBitsPerByte / (deltaSec * kMegabit))
+                         : 0.0;
         m_peakMbps = std::max(m_peakMbps, currentMbps);
-        m_speedSamples.append(currentMbps);
+        if (m_speedSamples.size() < kLanMaxSpeedSamples) {
+            m_speedSamples.append(currentMbps);
+        }
         m_lastReportTime = elapsed;
         m_lastReportBytes = m_totalSent;
         if (m_request.progress) {
-            m_request.progress(currentMbps, elapsed / kNetworkMillisecondsPerSecond, m_totalSent);
+            m_request.progress(currentMbps,
+                               static_cast<double>(elapsed) / kNetworkMillisecondsPerSecond,
+                               m_totalSent);
         }
     }
 
     void pump() {
-        if (m_finished || m_socket->state() != QAbstractSocket::ConnectedState) {
+        if (m_finished) {
+            return;
+        }
+        // Cooperative cancel: controller cancel()/teardown sets this so an in-flight upload
+        // aborts promptly instead of blocking on the duration timer (up to kMaxLanDurationSec).
+        // The transfer never reached its measured duration, so finish fail-closed.
+        if (g_lanUploadCancelled.load(std::memory_order_acquire)) {
+            finish(false, QStringLiteral("LAN transfer test cancelled"));
+            return;
+        }
+        if (m_socket->state() != QAbstractSocket::ConnectedState) {
             return;
         }
         while (m_socket->bytesToWrite() < m_blockSize * kLanSocketQueueBlocks) {
@@ -970,6 +1259,11 @@ private:
                 finish(false,
                        QStringLiteral("LAN transfer write error: %1").arg(m_socket->errorString()));
                 return;
+            }
+            if (written == 0) {
+                // The socket accepted no bytes this iteration; break rather than spin. The
+                // pump/bytesWritten timers resume the transfer once the buffer drains.
+                break;
             }
             m_totalSent += written;
             report();
@@ -988,6 +1282,15 @@ private:
         QObject::connect(m_pumpTimer, &QTimer::timeout, this, [this]() { pump(); });
         QObject::connect(m_socket, &QTcpSocket::bytesWritten, this, [this](qint64) { pump(); });
         QObject::connect(m_socket, &QTcpSocket::connected, this, [this]() { onConnected(); });
+        QObject::connect(m_socket, &QTcpSocket::disconnected, this, [this]() {
+            // The peer closed before the duration elapsed (we close ourselves from finish()).
+            // A premature close means the measured transfer never completed -- fail closed.
+            finish(false,
+                   QStringLiteral("LAN transfer failed: %1:%2 closed the connection before the "
+                                  "test completed")
+                       .arg(m_request.target_addr)
+                       .arg(m_request.port));
+        });
         QObject::connect(m_socket,
                          &QTcpSocket::errorOccurred,
                          this,
@@ -999,12 +1302,15 @@ private:
         m_timer.start();
         m_durationTimer->start(m_request.duration_sec *
                                static_cast<int>(kNetworkMillisecondsPerSecond));
-        m_pumpTimer->start();
+        // m_pumpTimer is already running (started in start()); pump once now to begin sending.
         pump();
     }
 
-    void onSocketError(QAbstractSocket::SocketError error) {
-        if (m_finished || error == QAbstractSocket::RemoteHostClosedError) {
+    void onSocketError(QAbstractSocket::SocketError) {
+        // Every pre-finish socket error (including RemoteHostClosedError -- a peer that closed
+        // early) is a real failure: the transfer never reached its measured duration. Once
+        // finish() has run, m_finished short-circuits the errors our own disconnect emits.
+        if (m_finished) {
             return;
         }
         finish(false, m_socket->errorString());
@@ -1027,11 +1333,14 @@ private:
     bool m_finished{false};
 };
 
-LanUploadOutcome runLanUpload(const QString& targetAddr,
-                              uint16_t port,
-                              int durationSec,
-                              int blockSizeKB,
-                              const std::function<void(double, double, qint64)>& progress) {
+static LanUploadOutcome runLanUpload(const QString& targetAddr,
+                                     uint16_t port,
+                                     int durationSec,
+                                     int blockSizeKB,
+                                     const std::function<void(double, double, qint64)>& progress) {
+    // Clear any cancel request left from a prior transfer so this run starts uncancelled; only
+    // one LAN upload runs at a time, so this cannot race a concurrent transfer.
+    g_lanUploadCancelled.store(false, std::memory_order_release);
     LanUploadOutcome outcome;
     QThread thread;
     QSemaphore done;
@@ -1047,23 +1356,30 @@ LanUploadOutcome runLanUpload(const QString& targetAddr,
     QObject::connect(&thread, &QThread::started, worker, [worker]() { worker->start(); });
     thread.start();
     done.acquire();
+    // SAK-ALLOW-BLOCKING: `thread` is a stack local destroyed on return, and ~QThread on
+    // a live thread aborts the process, so this join is not optional. The upload worker
+    // has already released `done`, so nothing is left to run.
     thread.wait();
     return outcome;
 }
 
 void NetworkDiagnosticController::finalizeLanTransfer(const LanTransferData& data) {
+    // Both are guaranteed by the sole caller, runLanTransferTest(): it rejects an empty
+    // targetAddr before starting the upload, and LanUploadWorker::pump() only ever adds
+    // non-negative write() returns to the total it reports back.
     Q_ASSERT(data.total_sent >= 0);
     Q_ASSERT(!data.target_addr.isEmpty());
 
-    double elapsed_sec = data.elapsed_ms / kNetworkMillisecondsPerSecond;
+    const double elapsed_sec = static_cast<double>(data.elapsed_ms) / kNetworkMillisecondsPerSecond;
 
     LanTransferResult result;
     result.remoteAddress = data.target_addr;
     result.port = data.port;
     result.bytesTransferred = data.total_sent;
     result.durationSec = elapsed_sec;
-    result.avgSpeedMbps =
-        elapsed_sec > 0 ? (data.total_sent * kBitsPerByte / (elapsed_sec * kMegabit)) : 0.0;
+    result.avgSpeedMbps = elapsed_sec > 0 ? (static_cast<double>(data.total_sent) * kBitsPerByte /
+                                             (elapsed_sec * kMegabit))
+                                          : 0.0;
     result.peakSpeedMbps = data.peak_mbps;
     result.isUpload = true;
     result.timestamp = QDateTime::currentDateTime();
@@ -1071,8 +1387,8 @@ void NetworkDiagnosticController::finalizeLanTransfer(const LanTransferData& dat
 
     Q_EMIT lanTransferComplete(result);
     Q_EMIT logOutput(QStringLiteral("LAN transfer complete: "
-                                    "%1 MB in %2s (%3 Mbps avg)")
-                         .arg(data.total_sent / sak::kBytesPerMBf, 0, 'f', 1)
+                                    "%1 in %2s (%3 Mbps avg)")
+                         .arg(sak::formatBytes(static_cast<qint64>(data.total_sent)))
                          .arg(elapsed_sec, 0, 'f', 1)
                          .arg(result.avgSpeedMbps, 0, 'f', 1));
     Q_EMIT statusMessage(QStringLiteral("LAN transfer test complete"), sak::kTimerStatusDefaultMs);
@@ -1086,11 +1402,18 @@ void NetworkDiagnosticController::runLanTransferTest(const QString& targetAddr,
         Q_EMIT errorOccurred(QStringLiteral("Target address cannot be empty"));
         return;
     }
-    if (durationSec < 1) {
-        durationSec = kDefaultLanDurationSec;
+    // Fail closed on out-of-range parameters (surface the real error) rather than coercing
+    // to a default: an oversized value would overflow the int block/queue/duration math.
+    if (durationSec < 1 || durationSec > kMaxLanDurationSec) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("LAN transfer duration must be between 1 and %1 seconds")
+                .arg(kMaxLanDurationSec));
+        return;
     }
-    if (blockSizeKB < 1) {
-        blockSizeKB = kDefaultLanBlockSizeKb;
+    if (blockSizeKB < 1 || blockSizeKB > kMaxLanBlockSizeKb) {
+        Q_EMIT errorOccurred(QStringLiteral("LAN transfer block size must be between 1 and %1 KB")
+                                 .arg(kMaxLanBlockSizeKb));
+        return;
     }
 
     Q_EMIT logOutput(QStringLiteral("Starting LAN transfer test to %1:%2 (%3s, %4 KB blocks)")
@@ -1114,12 +1437,12 @@ void NetworkDiagnosticController::runLanTransferTest(const QString& targetAddr,
                 Q_EMIT errorOccurred(outcome.error);
                 return;
             }
-            finalizeLanTransfer({targetAddr,
-                                 port,
-                                 outcome.total_sent,
-                                 outcome.elapsed_ms,
-                                 outcome.peak_mbps,
-                                 outcome.speed_samples});
+            finalizeLanTransfer({.target_addr = targetAddr,
+                                 .port = port,
+                                 .total_sent = outcome.total_sent,
+                                 .elapsed_ms = outcome.elapsed_ms,
+                                 .peak_mbps = outcome.peak_mbps,
+                                 .speed_samples = outcome.speed_samples});
         },
         State::RunningLanTransfer);
 }
@@ -1130,6 +1453,33 @@ NetworkDiagnosticController::populateReportSections() {
     QSet<S> sections;
     populateBasicReportSections(sections);
     populateAdvancedReportSections(sections);
+    return sections;
+}
+
+QSet<NetworkDiagnosticReportGenerator::Section>
+NetworkDiagnosticController::attemptedReportSections() const {
+    using S = NetworkDiagnosticReportGenerator::Section;
+    // Table (not a switch) so this stays well under the lizard CCN limit. Ops with no report
+    // section (MTR, LAN transfer, report generation) simply have no entry and are skipped.
+    static const QHash<State, S> kOpToSection = {
+        {State::ScanningAdapters, S::AdapterConfig},
+        {State::RunningPing, S::PingResults},
+        {State::RunningTraceroute, S::TracerouteResults},
+        {State::RunningDnsQuery, S::DnsResults},
+        {State::ScanningPorts, S::PortScanResults},
+        {State::RunningBandwidthTest, S::BandwidthResults},
+        {State::ScanningWiFi, S::WiFiAnalysis},
+        {State::AuditingFirewall, S::FirewallAudit},
+        {State::MonitoringConnections, S::ActiveConnections},
+        {State::BrowsingShares, S::NetworkShares},
+    };
+    QSet<S> sections;
+    for (auto op : m_attemptedOps) {
+        const auto it = kOpToSection.constFind(op);
+        if (it != kOpToSection.constEnd()) {
+            sections.insert(it.value());
+        }
+    }
     return sections;
 }
 
@@ -1163,7 +1513,7 @@ void NetworkDiagnosticController::populateAdvancedReportSections(
     QSet<NetworkDiagnosticReportGenerator::Section>& sections) {
     using S = NetworkDiagnosticReportGenerator::Section;
 
-    if (m_cachedBandwidth.downloadMbps > 0 || m_cachedBandwidth.uploadMbps > 0) {
+    if (m_cachedBandwidth.hasMeasurement()) {
         sections.insert(S::BandwidthResults);
         m_reportGenerator->setBandwidthData(m_cachedBandwidth);
     }
@@ -1192,8 +1542,19 @@ void NetworkDiagnosticController::generateReport(const QString& outputPath,
                                                  const QString& technician,
                                                  const QString& ticket,
                                                  const QString& notes) {
-    if (m_state != State::Idle && m_state != State::MonitoringConnections) {
+    if (!canGenerateReport()) {
         Q_EMIT errorOccurred(QStringLiteral("Another operation is in progress"));
+        return;
+    }
+
+    // Fail closed on an unrecognized format rather than silently defaulting to HTML: an
+    // unsupported request must surface an error, not produce a wrong-format report.
+    const bool is_json = (format.compare(QStringLiteral("json"), Qt::CaseInsensitive) == 0);
+    const bool is_html = (format.compare(QStringLiteral("html"), Qt::CaseInsensitive) == 0);
+    if (!is_json && !is_html) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Unsupported report format '%1' (expected 'html' or 'json')")
+                .arg(format));
         return;
     }
 
@@ -1201,11 +1562,16 @@ void NetworkDiagnosticController::generateReport(const QString& outputPath,
     m_reportGenerator->setTicketNumber(ticket);
     m_reportGenerator->setNotes(notes);
 
-    m_reportGenerator->setIncludedSections(populateReportSections());
+    // Sections with data render fully; sections whose diagnostic was attempted but produced
+    // nothing (failed / empty) render an explicit "not run" marker instead of vanishing.
+    const auto withData = populateReportSections();
+    auto notRun = attemptedReportSections();
+    notRun.subtract(withData);
+    m_reportGenerator->setIncludedSections(withData);
+    m_reportGenerator->setNotRunSections(notRun);
 
     Q_EMIT statusMessage(QStringLiteral("Generating report..."), 0);
 
-    const bool is_json = (format.compare(QStringLiteral("json"), Qt::CaseInsensitive) == 0);
     runOnThread(
         [this, outputPath, is_json]() {
             if (is_json) {
@@ -1220,7 +1586,8 @@ void NetworkDiagnosticController::generateReport(const QString& outputPath,
 // -- Ethernet Config Backup/Restore ------------------------------------------
 
 void NetworkDiagnosticController::backupEthernetSettings(const QString& adapterName,
-                                                         const QString& filePath) {
+                                                         const QString& filePath,
+                                                         const QString& adapterType) {
     if (adapterName.isEmpty() || filePath.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Adapter name and file path are required for backup"));
         return;
@@ -1234,10 +1601,11 @@ void NetworkDiagnosticController::backupEthernetSettings(const QString& adapterN
             QStringLiteral("Failed to capture settings for adapter: %1").arg(adapterName));
         return;
     }
+    snapshot.adapterType = adapterType;
 
     if (m_ethernetConfigManager->saveToFile(snapshot, filePath)) {
         Q_EMIT ethernetBackupComplete(filePath);
-        Q_EMIT statusMessage(QStringLiteral("Ethernet settings backed up to: %1").arg(filePath),
+        Q_EMIT statusMessage(QStringLiteral("Adapter settings backed up to: %1").arg(filePath),
                              sak::kTimerStatusDefaultMs);
     } else {
         Q_EMIT errorOccurred(QStringLiteral("Failed to save backup to: %1").arg(filePath));
@@ -1261,11 +1629,11 @@ void NetworkDiagnosticController::restoreEthernetSettings(const QString& filePat
         return;
     }
 
-    bool success = m_ethernetConfigManager->restoreSettings(snapshot, targetAdapter);
+    const bool success = m_ethernetConfigManager->restoreSettings(snapshot, targetAdapter);
     Q_EMIT ethernetRestoreComplete(success);
 
     if (success) {
-        Q_EMIT statusMessage(QStringLiteral("Ethernet settings restored successfully"),
+        Q_EMIT statusMessage(QStringLiteral("Adapter settings restored successfully"),
                              sak::kTimerStatusDefaultMs);
     } else {
         Q_EMIT statusMessage(QStringLiteral(
@@ -1274,11 +1642,19 @@ void NetworkDiagnosticController::restoreEthernetSettings(const QString& filePat
     }
 }
 
+QPair<QString, QString> NetworkDiagnosticController::ethernetBackupIdentity(
+    const QString& filePath) {
+    const EthernetConfigSnapshot snapshot = m_ethernetConfigManager->loadFromFile(filePath);
+    return {snapshot.adapterName, snapshot.adapterType};
+}
+
 QStringList NetworkDiagnosticController::listEthernetAdapters() const {
     return m_ethernetConfigManager->listEthernetAdapters();
 }
 
 void NetworkDiagnosticController::cancel() {
+    // Both are make_unique'd by the constructor and are never reset, so they outlive every
+    // call to cancel() (including the one in the destructor body).
     Q_ASSERT(m_connectivityTester);
     Q_ASSERT(m_dnsTool);
     m_connectivityTester->cancel();
@@ -1289,6 +1665,10 @@ void NetworkDiagnosticController::cancel() {
     m_shareBrowser->cancel();
     m_wifiAnalyzer->stopContinuousScan();
     m_connectionMonitor->stopMonitoring();
+    // Signal any in-flight LAN upload worker to abort promptly (it polls this in pump());
+    // otherwise teardown would block on cleanupThread()'s join until the duration timer fires
+    // (up to kMaxLanDurationSec). runLanUpload() clears the flag before the next transfer.
+    g_lanUploadCancelled.store(true, std::memory_order_release);
     if (m_lanTransferServerRunning.load(std::memory_order_acquire)) {
         stopLanTransferServer();
     }

@@ -3,48 +3,102 @@
 
 #include "sak/ai/ai_package_selection.h"
 
+#include "sak/format_utils.h"
+
+#include <QHash>
 #include <QJsonValue>
 #include <QRegularExpression>
 #include <QSet>
-
-#include <algorithm>
 
 namespace sak::ai {
 namespace {
 
 constexpr qsizetype kPackageDescriptionPreviewChars = 500;
 
-QString firstStringValue(const QJsonObject& object, std::initializer_list<const char*> keys) {
+// Presentation-only key. This intentionally lossy transform may hide a redundant title in a
+// candidate label, but it must never authorize package selection.
+QString packageDisplayKey(const QString& value) {
+    QString normalized = value.trimmed().toLower();
+    normalized.replace(QStringLiteral("++"), QStringLiteral("plusplus"));
+    normalized.replace(QStringLiteral("+"), QStringLiteral("plus"));
+    normalized.replace(QStringLiteral("#"), QStringLiteral("sharp"));
+    normalized.replace(QStringLiteral("&"), QStringLiteral("and"));
+    normalized.remove(QRegularExpression(QStringLiteral(R"([^a-z0-9])")));
+    return normalized;
+}
+
+// Fail closed: a key that is PRESENT but holds a non-string value is MALFORMED input, not a
+// reason to fall through to the next alias -- silently taking a different field could turn a
+// wrong-typed package_id into an installable id lifted from a display name. Absent (or JSON
+// null) genuinely means "not provided" and moves on to the next alias. Returns false when a
+// present value is not a string, so the caller can drop the whole record.
+bool firstStringValue(const QJsonObject& object,
+                      std::initializer_list<const char*> keys,
+                      qsizetype max_chars,
+                      QString* out) {
+    out->clear();
     for (const char* key : keys) {
-        const QString value = object.value(QString::fromLatin1(key)).toString().trimmed();
-        if (!value.isEmpty()) {
-            return value;
+        const QJsonValue value = object.value(QString::fromLatin1(key));
+        if (value.isUndefined() || value.isNull()) {
+            continue;
+        }
+        if (!value.isString()) {
+            return false;
+        }
+        const QString raw = value.toString();
+        if (raw.size() > max_chars) {
+            return false;
+        }
+        if (out->isEmpty() && !raw.trimmed().isEmpty()) {
+            *out = raw;
         }
     }
-    return {};
+    return true;
 }
 
+// Fail closed: validate a candidate id rather than rewrite it. Deleting disallowed
+// characters could turn one package id into a DIFFERENT valid id and select the wrong
+// package, so an id that is not already well-formed is rejected (returns empty ->
+// candidate is dropped by packageCandidatesFromJson). Case is normalized only.
 QString safePackageIdToken(const QString& value) {
-    QString out = value.trimmed().toLower();
-    out.remove(QRegularExpression(QStringLiteral(R"([^a-z0-9_.+-])")));
-    return out;
+    const QString trimmed = value.trimmed();
+    if (value != trimmed || trimmed.size() > kMaxPackageIdChars ||
+        trimmed.compare(QLatin1String("all"), Qt::CaseInsensitive) == 0 ||
+        trimmed == QLatin1String(".") || trimmed == QLatin1String("..")) {
+        return {};
+    }
+    const QString out = trimmed.toLower();
+    static const QRegularExpression kValid(QStringLiteral(R"(^[a-z0-9][a-z0-9._-]*$)"));
+    return kValid.match(out).hasMatch() ? out : QString();
 }
 
-AiPackageCandidate candidateFromJson(const QJsonObject& object) {
-    AiPackageCandidate candidate;
-    candidate.package_id =
-        safePackageIdToken(firstStringValue(object, {"package_id", "id", "package", "name"}));
-    candidate.version = firstStringValue(object, {"version"});
-    candidate.title = firstStringValue(object, {"title", "display_name", "name"});
-    candidate.description = firstStringValue(object, {"description", "summary"});
-    candidate.source = object;
-    return candidate;
+// Returns false when the record is malformed (any present field that is not a string). The
+// caller drops such a record outright rather than selecting from a half-parsed candidate.
+bool candidateFromJson(const QJsonObject& object, AiPackageCandidate* candidate) {
+    QString raw_id;
+    QString raw_version;
+    QString raw_title;
+    QString raw_description;
+    if (!firstStringValue(
+            object, {"package_id", "id", "package", "name"}, kMaxPackageIdChars, &raw_id) ||
+        !firstStringValue(object, {"version"}, kMaxPackageVersionChars, &raw_version) ||
+        !firstStringValue(
+            object, {"title", "display_name", "name"}, kMaxPackageTitleChars, &raw_title) ||
+        !firstStringValue(
+            object, {"description", "summary"}, kMaxPackageDescriptionChars, &raw_description)) {
+        return false;
+    }
+    candidate->package_id = safePackageIdToken(raw_id);
+    candidate->version = raw_version.trimmed();
+    candidate->title = raw_title.trimmed();
+    candidate->description = raw_description.trimmed();
+    return true;
 }
 
 QString candidateSummary(const AiPackageCandidate& candidate) {
     QString label = candidate.package_id;
-    if (!candidate.title.isEmpty() && normalizePackageQueryKey(candidate.title) !=
-                                          normalizePackageQueryKey(candidate.package_id)) {
+    if (!candidate.title.isEmpty() &&
+        packageDisplayKey(candidate.title) != packageDisplayKey(candidate.package_id)) {
         label += QStringLiteral(" (%1)").arg(candidate.title);
     }
     if (!candidate.version.isEmpty()) {
@@ -53,18 +107,13 @@ QString candidateSummary(const AiPackageCandidate& candidate) {
     return label;
 }
 
-bool isExactCandidateMatch(const QString& query_key, const AiPackageCandidate& candidate) {
-    if (query_key.isEmpty() || candidate.package_id.isEmpty()) {
+bool isExactCandidateMatch(const QString& clean_query, const AiPackageCandidate& candidate) {
+    if (clean_query.isEmpty() || candidate.package_id.isEmpty()) {
         return false;
     }
-    if (normalizePackageQueryKey(candidate.package_id) == query_key) {
-        return true;
-    }
-    if (!candidate.title.isEmpty() && normalizePackageQueryKey(candidate.title) == query_key) {
-        return true;
-    }
-    const QString source_name = firstStringValue(candidate.source, {"name", "display_name"});
-    return !source_name.isEmpty() && normalizePackageQueryKey(source_name) == query_key;
+    return candidate.package_id.compare(clean_query, Qt::CaseInsensitive) == 0 ||
+           (!candidate.title.isEmpty() &&
+            candidate.title.compare(clean_query, Qt::CaseInsensitive) == 0);
 }
 
 QJsonArray candidatesToJson(const QVector<AiPackageCandidate>& candidates) {
@@ -75,21 +124,39 @@ QJsonArray candidatesToJson(const QVector<AiPackageCandidate>& candidates) {
     return array;
 }
 
-QVector<AiPackageCandidate> packageCandidatesFromJson(const QJsonArray& packages) {
-    QVector<AiPackageCandidate> candidates;
-    QSet<QString> seen_ids;
+struct ParsedPackages {
+    QVector<AiPackageCandidate> m_candidates;
+    int m_rejected_entries{0};
+    QSet<QString> m_conflicting_ids;
+};
+
+ParsedPackages packageCandidatesFromJson(const QJsonArray& packages) {
+    ParsedPackages parsed;
+    QHash<QString, QString> version_by_id;
     for (const auto& value : packages) {
-        if (!value.isObject()) {
+        AiPackageCandidate candidate;
+        if (!value.isObject() || !candidateFromJson(value.toObject(), &candidate) ||
+            candidate.package_id.isEmpty()) {
+            // Counted, not hidden: the caller reports how many records were refused so a
+            // wholly malformed response cannot masquerade as an honest "nothing found".
+            ++parsed.m_rejected_entries;
             continue;
         }
-        const AiPackageCandidate candidate = candidateFromJson(value.toObject());
-        if (candidate.package_id.isEmpty() || seen_ids.contains(candidate.package_id)) {
+        const auto existing = version_by_id.constFind(candidate.package_id);
+        if (existing != version_by_id.constEnd()) {
+            // Two records claim the same id. Keeping the first silently would install a
+            // version the human never saw, so remember the conflict and refuse to
+            // auto-select that id below.
+            if (*existing != candidate.version) {
+                parsed.m_conflicting_ids.insert(candidate.package_id);
+                parsed.m_candidates.append(candidate);
+            }
             continue;
         }
-        seen_ids.insert(candidate.package_id);
-        candidates.append(candidate);
+        version_by_id.insert(candidate.package_id, candidate.version);
+        parsed.m_candidates.append(candidate);
     }
-    return candidates;
+    return parsed;
 }
 
 QVector<AiPackageCandidate> limitedCandidates(const QVector<AiPackageCandidate>& candidates,
@@ -104,34 +171,64 @@ QVector<AiPackageCandidate> limitedCandidates(const QVector<AiPackageCandidate>&
     return limited;
 }
 
-QVector<AiPackageCandidate> exactPackageMatches(const QString& query_key,
+QVector<AiPackageCandidate> exactPackageMatches(const QString& clean_query,
                                                 const QVector<AiPackageCandidate>& candidates) {
     QVector<AiPackageCandidate> matches;
-    QSet<QString> seen_ids;
     for (const auto& candidate : candidates) {
-        if (!isExactCandidateMatch(query_key, candidate) ||
-            seen_ids.contains(candidate.package_id)) {
+        if (!isExactCandidateMatch(clean_query, candidate)) {
             continue;
         }
         matches.append(candidate);
-        seen_ids.insert(candidate.package_id);
     }
     return matches;
 }
 
-AiPackageSelectionResult noPackageCandidatesResult(const QString& clean_query) {
+AiPackageSelectionResult noPackageCandidatesResult(const QString& clean_query, int rejected) {
     AiPackageSelectionResult result;
+    result.rejected_entries = rejected;
     result.error_message =
         clean_query.isEmpty()
             ? QStringLiteral("Package search returned no usable candidates")
             : QStringLiteral("Package search returned no candidates for '%1'").arg(clean_query);
+    if (rejected > 0) {
+        result.error_message += QStringLiteral(" (%1 rejected)")
+                                    .arg(countOf(rejected,
+                                                 QStringLiteral("malformed search result"),
+                                                 QStringLiteral("malformed search results")));
+    }
     return result;
 }
 
-AiPackageSelectionResult selectedPackageResult(const AiPackageCandidate& candidate) {
+AiPackageSelectionResult refusedPackageSelection(const QString& message) {
+    AiPackageSelectionResult result;
+    result.error_message = message;
+    return result;
+}
+
+AiPackageSelectionResult selectedPackageResult(const AiPackageCandidate& candidate, int rejected) {
     AiPackageSelectionResult result;
     result.success = true;
     result.selected = candidate;
+    result.rejected_entries = rejected;
+    return result;
+}
+
+AiPackageSelectionResult conflictingPackageResult(const QString& id,
+                                                  const QVector<AiPackageCandidate>& candidates,
+                                                  int limit,
+                                                  int rejected) {
+    AiPackageSelectionResult result;
+    result.ambiguous = true;
+    result.rejected_entries = rejected;
+    for (const auto& candidate : candidates) {
+        if (candidate.package_id == id && result.candidates.size() < limit) {
+            result.candidates.append(candidate);
+        }
+    }
+    result.error_message = QStringLiteral(
+                               "Package search returned conflicting versions for package_id '%1'; "
+                               "selection is refused until package metadata is refreshed")
+                               .arg(id);
     return result;
 }
 
@@ -159,7 +256,9 @@ QString AiPackageCandidate::displayName() const {
 }
 
 QJsonObject AiPackageCandidate::toJson() const {
-    QJsonObject object = source;
+    // Canonical members are the sole serialization authority. Optional empty values are absent;
+    // no retained source object can resurrect stale aliases or metadata.
+    QJsonObject object;
     object[QStringLiteral("package_id")] = package_id;
     if (!version.isEmpty()) {
         object[QStringLiteral("version")] = version;
@@ -179,6 +278,7 @@ QJsonObject AiPackageSelectionResult::toJson() const {
     object[QStringLiteral("success")] = success;
     object[QStringLiteral("ambiguous")] = ambiguous;
     object[QStringLiteral("requires_human")] = requires_human;
+    object[QStringLiteral("rejected_entries")] = rejected_entries;
     object[QStringLiteral("error_message")] = error_message;
     object[QStringLiteral("question_for_human")] = question_for_human;
     if (!selected.package_id.isEmpty()) {
@@ -188,40 +288,56 @@ QJsonObject AiPackageSelectionResult::toJson() const {
     return object;
 }
 
-QString normalizePackageQueryKey(const QString& value) {
-    QString normalized = value.trimmed().toLower();
-    normalized.replace(QStringLiteral("++"), QStringLiteral("plusplus"));
-    normalized.replace(QStringLiteral("+"), QStringLiteral("plus"));
-    normalized.replace(QStringLiteral("#"), QStringLiteral("sharp"));
-    normalized.replace(QStringLiteral("&"), QStringLiteral("and"));
-    normalized.remove(QRegularExpression(QStringLiteral(R"([^a-z0-9])")));
-    return normalized;
-}
-
 AiPackageSelectionResult selectPackageForWorkflow(const QString& query,
                                                   const QJsonArray& packages,
                                                   int candidate_limit) {
     AiPackageSelectionResult result;
+    if (candidate_limit <= 0) {
+        return refusedPackageSelection(
+            QStringLiteral("Package candidate limit must be greater than zero (received %1)")
+                .arg(candidate_limit));
+    }
+    if (query.size() > kMaxPackageQueryChars) {
+        return refusedPackageSelection(
+            QStringLiteral("Package query is too long (%1 characters, limit %2)")
+                .arg(query.size())
+                .arg(kMaxPackageQueryChars));
+    }
     const QString clean_query = query.trimmed();
-    const QString query_key = normalizePackageQueryKey(clean_query);
-    const int limit = std::max(1, candidate_limit);
+    const int limit = candidate_limit;
 
-    const QVector<AiPackageCandidate> all_candidates = packageCandidatesFromJson(packages);
-    result.candidates = limitedCandidates(all_candidates, limit);
-
-    if (all_candidates.isEmpty()) {
-        return noPackageCandidatesResult(clean_query);
+    // Fail closed on over-sized input rather than traversing and retaining it. Reject, never
+    // truncate: a truncated scan could drop the real package and auto-select a different one.
+    if (packages.size() > kMaxPackagesConsidered) {
+        return refusedPackageSelection(
+            QStringLiteral("Package search returned too many results to evaluate (%1, limit %2)")
+                .arg(packages.size())
+                .arg(kMaxPackagesConsidered));
     }
 
-    if (all_candidates.size() == 1) {
-        return selectedPackageResult(all_candidates.first());
+    const ParsedPackages parsed = packageCandidatesFromJson(packages);
+    result.rejected_entries = parsed.m_rejected_entries;
+    result.candidates = limitedCandidates(parsed.m_candidates, limit);
+
+    if (parsed.m_candidates.isEmpty()) {
+        return noPackageCandidatesResult(clean_query, parsed.m_rejected_entries);
     }
 
-    const QVector<AiPackageCandidate> exact_matches = exactPackageMatches(query_key,
-                                                                          all_candidates);
+    // Fail closed: never auto-select a lone candidate that does not exactly match the
+    // query -- a fuzzy single search hit could install the wrong package. Only an exact
+    // package_id/title/name match is auto-selected below; anything else asks the human.
+    const QVector<AiPackageCandidate> exact_matches = exactPackageMatches(clean_query,
+                                                                          parsed.m_candidates);
+
+    for (const auto& candidate : exact_matches) {
+        if (parsed.m_conflicting_ids.contains(candidate.package_id)) {
+            return conflictingPackageResult(
+                candidate.package_id, parsed.m_candidates, limit, parsed.m_rejected_entries);
+        }
+    }
 
     if (exact_matches.size() == 1) {
-        return selectedPackageResult(exact_matches.first());
+        return selectedPackageResult(exact_matches.first(), parsed.m_rejected_entries);
     }
 
     if (exact_matches.size() > 1) {

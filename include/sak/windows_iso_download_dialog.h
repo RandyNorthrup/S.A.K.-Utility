@@ -14,6 +14,7 @@
 #include <QMap>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QString>
 
 class QVBoxLayout;
@@ -40,11 +41,19 @@ public:
     WindowsISODownloadDialog(const WindowsISODownloadDialog&) = delete;
     WindowsISODownloadDialog& operator=(const WindowsISODownloadDialog&) = delete;
 
+    /// As tall as its groups and buttons need, or @p room when that is less (its groups then
+    /// scroll). The dialog sizes itself to its screen this way when it is made.
+    void fitToHeight(int room);
+
     /**
      * @brief Get the downloaded ISO file path
      * @return Path to downloaded ISO, empty if not complete
      */
     QString downloadedFilePath() const { return m_downloadedFilePath; }
+
+    /// The edition the list starts on: Pro, else Home, else none (-1), so a list whose first entry
+    /// is not an edition ("Microsoft Store Inbox Apps") is not chosen for the person.
+    [[nodiscard]] static int defaultEditionIndex(const QStringList& edition_codes);
 
 Q_SIGNALS:
     void downloadCompleted(const QString& filePath);
@@ -52,14 +61,17 @@ Q_SIGNALS:
 private Q_SLOTS:
     // API result handlers
     void onBuildsFetched(const QList<UupDumpApi::BuildInfo>& builds);
-    void onLanguagesFetched(const QStringList& langCodes, const QMap<QString, QString>& langNames);
-    void onEditionsFetched(const QStringList& editions, const QMap<QString, QString>& editionNames);
+    void onLanguagesFetched(const QStringList& lang_codes,
+                            const QMap<QString, QString>& lang_names);
+    void onEditionsFetched(const QStringList& editions,
+                           const QMap<QString, QString>& edition_names);
 
     // Build progress handlers
     void onPhaseChanged(UupIsoBuilder::Phase phase, const QString& description);
-    void onProgressUpdated(int overallPercent, const QString& detail);
-    void onSpeedUpdated(double downloadSpeedMBps);
-    void onDownloadComplete(const QString& isoPath, qint64 fileSize);
+    void onProgressUpdated(int overall_percent, const QString& detail);
+    void onDownloadBytesUpdated(qint64 downloaded, qint64 total);
+    void onSpeedUpdated(double download_speed_m_bps);
+    void onDownloadComplete(const QString& iso_path, qint64 file_size);
     void onDownloadError(const QString& error);
     void onStatusMessage(const QString& message);
 
@@ -73,13 +85,17 @@ private Q_SLOTS:
 
 private:
     void setupUi();
-    void setupUi_formSections(QVBoxLayout* mainLayout);
-    void setupUi_buildConfig(QVBoxLayout* mainLayout);
-    void setupUi_buildSelection(QVBoxLayout* mainLayout);
-    void setupUi_languageEdition(QVBoxLayout* mainLayout);
-    void setupUi_saveLocation(QVBoxLayout* mainLayout);
-    void setupUi_progressAndButtons(QVBoxLayout* mainLayout);
+    void setupUi_formSections(QVBoxLayout* main_layout);
+    void setupUi_buildConfig(QVBoxLayout* main_layout);
+    void setupUi_buildSelection(QVBoxLayout* main_layout);
+    void setupUi_languageEdition(QVBoxLayout* main_layout);
+    void setupUi_saveLocation(QVBoxLayout* main_layout);
+    void setupUi_progress(QVBoxLayout* main_layout);
+    void setupUi_buttons(QVBoxLayout* main_layout);
+    /// As tall as its content, or the screen's free area when that is less (the groups scroll).
+    void fitToScreen();
     void connectSignals();
+    void connectDownloaderSignals();
     void updateStartButton();
     QString getDefaultSavePath();
     void setInputsEnabled(bool enabled);
@@ -115,6 +131,7 @@ private:
     QPushButton* m_startButton;
     QPushButton* m_cancelButton;
     QPushButton* m_closeButton;
+    QScrollArea* m_formArea{nullptr};
 
     // ---- State ----
     QList<UupDumpApi::BuildInfo> m_builds;

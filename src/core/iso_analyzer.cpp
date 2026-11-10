@@ -6,7 +6,6 @@
 #include "sak/logger.h"
 
 #include <QFile>
-#include <QFileInfo>
 #include <QRegularExpression>
 
 #include <algorithm>
@@ -42,8 +41,6 @@ constexpr char kUdfNsr02[] = "NSR02";
 constexpr char kUdfNsr03[] = "NSR03";
 
 // Primary Volume Descriptor field offsets (within the 2048-byte sector)
-constexpr int kPvdSystemIdOffset = 8;
-constexpr int kPvdSystemIdLength = 32;
 constexpr int kPvdVolumeIdOffset = 40;
 constexpr int kPvdVolumeIdLength = 32;
 constexpr int kPvdVolumeSizeLsbOffset = 80;
@@ -59,7 +56,8 @@ constexpr int kPvdCreationDateOffset = 813;
 constexpr int kElToritoBootCatalogOffset = 71;
 
 // Boot catalog entry boot media type masks
-constexpr uint8_t kBootMediaEfi = 0xEF;
+constexpr int kValidationEntryPlatformOffset = 1;  // Platform ID byte in the Validation Entry
+constexpr uint8_t kBootIndicatorBootable = 0x88;   // Initial/Default Entry Boot Indicator
 constexpr int kDefaultBootCatalogEntryOffset = 32;
 constexpr int kCatalogEntrySize = 32;
 constexpr int kFirstCatalogSectionEntry = 2;
@@ -79,80 +77,80 @@ struct DistroPattern {
 };
 
 constexpr DistroPattern kLinuxDistroPatterns[] = {
-    {"Ubuntu", "Ubuntu"},
-    {"UBUNTU", "Ubuntu"},
-    {"Kubuntu", "Kubuntu"},
-    {"Xubuntu", "Xubuntu"},
-    {"Lubuntu", "Lubuntu"},
-    {"Linux Mint", "Linux Mint"},
-    {"linuxmint", "Linux Mint"},
-    {"Fedora", "Fedora"},
-    {"FEDORA", "Fedora"},
-    {"Debian", "Debian"},
-    {"DEBIAN", "Debian"},
-    {"Arch", "Arch Linux"},
-    {"ARCH", "Arch Linux"},
-    {"Manjaro", "Manjaro"},
-    {"openSUSE", "openSUSE"},
-    {"OPENSUSE", "openSUSE"},
-    {"CentOS", "CentOS"},
-    {"CENTOS", "CentOS"},
-    {"Rocky", "Rocky Linux"},
-    {"AlmaLinux", "AlmaLinux"},
-    {"Pop_OS", "Pop!_OS"},
-    {"Pop!_OS", "Pop!_OS"},
-    {"Kali", "Kali Linux"},
-    {"KALI", "Kali Linux"},
-    {"EndeavourOS", "EndeavourOS"},
-    {"elementary", "elementary OS"},
-    {"Zorin", "Zorin OS"},
-    {"MX-Linux", "MX Linux"},
-    {"MX_Linux", "MX Linux"},
-    {"antiX", "antiX"},
-    {"Tails", "Tails"},
-    {"Solus", "Solus"},
-    {"Void", "Void Linux"},
-    {"Gentoo", "Gentoo"},
-    {"Slackware", "Slackware"},
-    {"NixOS", "NixOS"},
-    {"Garuda", "Garuda Linux"},
-    {"ArcoLinux", "ArcoLinux"},
-    {"Nobara", "Nobara"},
-    {"Parrot", "Parrot OS"},
-    {"BlackArch", "BlackArch"},
-    {"Artix", "Artix Linux"},
-    {"LMDE", "LMDE"},
-    {"Deepin", "Deepin"},
-    {"Peppermint", "Peppermint OS"},
-    {"KaOS", "KaOS"},
-    {"Puppy", "Puppy Linux"},
-    {"Alpine", "Alpine Linux"},
-    {"Clear Linux", "Clear Linux"},
-    {"SteamOS", "SteamOS"},
-    {"Proxmox", "Proxmox VE"},
-    {"TrueNAS", "TrueNAS"},
-    {"pfSense", "pfSense"},
-    {"OPNsense", "OPNsense"},
-    {"Clonezilla", "Clonezilla"},
-    {"GParted", "GParted Live"},
-    {"SystemRescue", "SystemRescue"},
-    {"Hiren", "Hiren's Boot"},
-    {"Ventoy", "Ventoy"},
-    {"Batocera", "Batocera"},
-    {"ChimeraOS", "ChimeraOS"},
-    {"Bazzite", "Bazzite"},
-    {"Vanilla", "Vanilla OS"},
-    {"BlendOS", "BlendOS"},
-    {"Bodhi", "Bodhi Linux"},
-    {"Q4OS", "Q4OS"},
-    {"Sparky", "SparkyLinux"},
-    {"BunsenLabs", "BunsenLabs"},
-    {"Mageia", "Mageia"},
-    {"PCLinuxOS", "PCLinuxOS"},
-    {"Solaris", "Oracle Solaris"},
-    {"FreeBSD", "FreeBSD"},
-    {"OpenBSD", "OpenBSD"},
-    {"NetBSD", "NetBSD"},
+    {.volume_prefix = "Ubuntu", .distro_name = "Ubuntu"},
+    {.volume_prefix = "UBUNTU", .distro_name = "Ubuntu"},
+    {.volume_prefix = "Kubuntu", .distro_name = "Kubuntu"},
+    {.volume_prefix = "Xubuntu", .distro_name = "Xubuntu"},
+    {.volume_prefix = "Lubuntu", .distro_name = "Lubuntu"},
+    {.volume_prefix = "Linux Mint", .distro_name = "Linux Mint"},
+    {.volume_prefix = "linuxmint", .distro_name = "Linux Mint"},
+    {.volume_prefix = "Fedora", .distro_name = "Fedora"},
+    {.volume_prefix = "FEDORA", .distro_name = "Fedora"},
+    {.volume_prefix = "Debian", .distro_name = "Debian"},
+    {.volume_prefix = "DEBIAN", .distro_name = "Debian"},
+    {.volume_prefix = "Arch", .distro_name = "Arch Linux"},
+    {.volume_prefix = "ARCH", .distro_name = "Arch Linux"},
+    {.volume_prefix = "Manjaro", .distro_name = "Manjaro"},
+    {.volume_prefix = "openSUSE", .distro_name = "openSUSE"},
+    {.volume_prefix = "OPENSUSE", .distro_name = "openSUSE"},
+    {.volume_prefix = "CentOS", .distro_name = "CentOS"},
+    {.volume_prefix = "CENTOS", .distro_name = "CentOS"},
+    {.volume_prefix = "Rocky", .distro_name = "Rocky Linux"},
+    {.volume_prefix = "AlmaLinux", .distro_name = "AlmaLinux"},
+    {.volume_prefix = "Pop_OS", .distro_name = "Pop!_OS"},
+    {.volume_prefix = "Pop!_OS", .distro_name = "Pop!_OS"},
+    {.volume_prefix = "Kali", .distro_name = "Kali Linux"},
+    {.volume_prefix = "KALI", .distro_name = "Kali Linux"},
+    {.volume_prefix = "EndeavourOS", .distro_name = "EndeavourOS"},
+    {.volume_prefix = "elementary", .distro_name = "elementary OS"},
+    {.volume_prefix = "Zorin", .distro_name = "Zorin OS"},
+    {.volume_prefix = "MX-Linux", .distro_name = "MX Linux"},
+    {.volume_prefix = "MX_Linux", .distro_name = "MX Linux"},
+    {.volume_prefix = "antiX", .distro_name = "antiX"},
+    {.volume_prefix = "Tails", .distro_name = "Tails"},
+    {.volume_prefix = "Solus", .distro_name = "Solus"},
+    {.volume_prefix = "Void", .distro_name = "Void Linux"},
+    {.volume_prefix = "Gentoo", .distro_name = "Gentoo"},
+    {.volume_prefix = "Slackware", .distro_name = "Slackware"},
+    {.volume_prefix = "NixOS", .distro_name = "NixOS"},
+    {.volume_prefix = "Garuda", .distro_name = "Garuda Linux"},
+    {.volume_prefix = "ArcoLinux", .distro_name = "ArcoLinux"},
+    {.volume_prefix = "Nobara", .distro_name = "Nobara"},
+    {.volume_prefix = "Parrot", .distro_name = "Parrot OS"},
+    {.volume_prefix = "BlackArch", .distro_name = "BlackArch"},
+    {.volume_prefix = "Artix", .distro_name = "Artix Linux"},
+    {.volume_prefix = "LMDE", .distro_name = "LMDE"},
+    {.volume_prefix = "Deepin", .distro_name = "Deepin"},
+    {.volume_prefix = "Peppermint", .distro_name = "Peppermint OS"},
+    {.volume_prefix = "KaOS", .distro_name = "KaOS"},
+    {.volume_prefix = "Puppy", .distro_name = "Puppy Linux"},
+    {.volume_prefix = "Alpine", .distro_name = "Alpine Linux"},
+    {.volume_prefix = "Clear Linux", .distro_name = "Clear Linux"},
+    {.volume_prefix = "SteamOS", .distro_name = "SteamOS"},
+    {.volume_prefix = "Proxmox", .distro_name = "Proxmox VE"},
+    {.volume_prefix = "TrueNAS", .distro_name = "TrueNAS"},
+    {.volume_prefix = "pfSense", .distro_name = "pfSense"},
+    {.volume_prefix = "OPNsense", .distro_name = "OPNsense"},
+    {.volume_prefix = "Clonezilla", .distro_name = "Clonezilla"},
+    {.volume_prefix = "GParted", .distro_name = "GParted Live"},
+    {.volume_prefix = "SystemRescue", .distro_name = "SystemRescue"},
+    {.volume_prefix = "Hiren", .distro_name = "Hiren's Boot"},
+    {.volume_prefix = "Ventoy", .distro_name = "Ventoy"},
+    {.volume_prefix = "Batocera", .distro_name = "Batocera"},
+    {.volume_prefix = "ChimeraOS", .distro_name = "ChimeraOS"},
+    {.volume_prefix = "Bazzite", .distro_name = "Bazzite"},
+    {.volume_prefix = "Vanilla", .distro_name = "Vanilla OS"},
+    {.volume_prefix = "BlendOS", .distro_name = "BlendOS"},
+    {.volume_prefix = "Bodhi", .distro_name = "Bodhi Linux"},
+    {.volume_prefix = "Q4OS", .distro_name = "Q4OS"},
+    {.volume_prefix = "Sparky", .distro_name = "SparkyLinux"},
+    {.volume_prefix = "BunsenLabs", .distro_name = "BunsenLabs"},
+    {.volume_prefix = "Mageia", .distro_name = "Mageia"},
+    {.volume_prefix = "PCLinuxOS", .distro_name = "PCLinuxOS"},
+    {.volume_prefix = "Solaris", .distro_name = "Oracle Solaris"},
+    {.volume_prefix = "FreeBSD", .distro_name = "FreeBSD"},
+    {.volume_prefix = "OpenBSD", .distro_name = "OpenBSD"},
+    {.volume_prefix = "NetBSD", .distro_name = "NetBSD"},
 };
 
 constexpr int kLinuxDistroPatternCount =
@@ -168,7 +166,7 @@ struct BootCatalogFlags {
 };
 
 bool containsAny(const QString& text, std::initializer_list<const char*> needles) {
-    return std::any_of(needles.begin(), needles.end(), [&text](const char* needle) {
+    return std::ranges::any_of(needles, [&text](const char* needle) {
         return text.contains(QString::fromLatin1(needle));
     });
 }
@@ -186,8 +184,15 @@ bool readSectorAt(QIODevice& device, qint64 offset, std::array<char, kSectorSize
 }
 
 void applyDefaultBootEntry(const std::array<char, kSectorSize>& catalog, BootCatalogFlags& flags) {
-    const auto default_media = static_cast<uint8_t>(catalog[kDefaultBootCatalogEntryOffset]);
-    if (default_media == kBootMediaEfi) {
+    // Offset 32 is the Initial/Default Entry's Boot Indicator (0x88 = bootable), NOT a platform ID.
+    // The platform is declared in the Validation Entry at offset 1; reading offset 32 as the media
+    // type misclassified every EFI-only default entry (0x88 != 0xEF) as legacy BIOS.
+    const auto boot_indicator = static_cast<uint8_t>(catalog[kDefaultBootCatalogEntryOffset]);
+    if (boot_indicator != kBootIndicatorBootable) {
+        return;
+    }
+    const auto platform_id = static_cast<uint8_t>(catalog[kValidationEntryPlatformOffset]);
+    if (platform_id == kBootCatalogPlatformEfi) {
         flags.has_efi = true;
     } else {
         flags.has_legacy = true;
@@ -218,6 +223,13 @@ void scanBootCatalogSections(const std::array<char, kSectorSize>& catalog,
     }
 }
 
+// A boot-record volume descriptor is present but its catalog is absent, unreadable,
+// or carries no recognizable bootable entry: that is not proof of a bootable image, so
+// it is reported distinctly from the recognized boot types below (read-only analyzer).
+QString unknownBootType() {
+    return QStringLiteral("Unknown/Invalid");
+}
+
 QString bootTypeFromFlags(const BootCatalogFlags& flags) {
     if (flags.has_efi && flags.has_legacy) {
         return QStringLiteral("UEFI + Legacy BIOS");
@@ -225,13 +237,19 @@ QString bootTypeFromFlags(const BootCatalogFlags& flags) {
     if (flags.has_efi) {
         return QStringLiteral("UEFI");
     }
-    return QStringLiteral("Legacy BIOS");
+    if (flags.has_legacy) {
+        return QStringLiteral("Legacy BIOS");
+    }
+    // No bootable entry recognized in the catalog.
+    return unknownBootType();
 }
 
 bool hasWindowsMetadata(const QString& label, const QString& app) {
-    return containsAny(
-               label,
-               {"WIN", "CCCOMA", "J_CCSA", "SSS_X64", "CPBA_", "CCSA_", "CPRA_", "GSP1RM"}) ||
+    // "WIN" only at the start of a word: WIN10, WIN11_25H2, WINDOWS, but not DARWIN or TWIN.
+    static const QRegularExpression kWinWord(QStringLiteral("(^|[^A-Z0-9])WIN"));
+    return kWinWord.match(label).hasMatch() ||
+           containsAny(label,
+                       {"CCCOMA", "J_CCSA", "SSS_X64", "CPBA_", "CCSA_", "CPRA_", "GSP1RM"}) ||
            containsAny(app, {"MICROSOFT", "CDIMAGE"});
 }
 
@@ -369,8 +387,8 @@ void applyGenericLinuxMetadata(sak::IsoInfo& info, const QString& label) {
 /// Try to extract a version number (e.g. "24.04", "41", "12.8") from text
 QString extractVersionFromText(const QString& text) {
     // Match patterns like 24.04.1, 24.04, 41, 12
-    static const QRegularExpression version_rx(QString::fromLatin1(kVersionPattern));
-    auto match = version_rx.match(text);
+    static const QRegularExpression kVersionRx(QString::fromLatin1(kVersionPattern));
+    auto match = kVersionRx.match(text);
     if (match.hasMatch()) {
         return match.captured(1);
     }
@@ -379,7 +397,7 @@ QString extractVersionFromText(const QString& text) {
 
 /// Try to extract architecture from text
 QString extractArchFromText(const QString& text) {
-    QString lower = text.toLower();
+    const QString lower = text.toLower();
     if (lower.contains("amd64") || lower.contains("x86_64") || lower.contains("x64")) {
         return QStringLiteral("x64");
     }
@@ -401,28 +419,31 @@ namespace sak {
 // ============================================================================
 
 IsoInfo IsoAnalyzer::analyze(const QString& file_path) {
-    Q_ASSERT(!file_path.isEmpty());
-    Q_ASSERT(QFileInfo::exists(file_path));
-
-    IsoInfo info;
-    info.file_size = QFileInfo(file_path).size();
-
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
         logWarning("IsoAnalyzer: Could not open file: " + file_path.toStdString());
-        return info;
+        return {};
     }
+    // Parse from the handle we actually opened. analyzeDevice sizes the media from the
+    // device itself, not a separate QFileInfo stat of the path: a second path resolution
+    // can race a reparse/target swap and size a file we never read.
+    return analyzeDevice(file);
+}
 
-    // Need at least system area + one sector for any ISO 9660
+IsoInfo IsoAnalyzer::analyzeDevice(QIODevice& device) {
+    IsoInfo info;
+    info.file_size = device.size();
+
+    // Need at least system area + one sector for any ISO 9660.
     constexpr qint64 kMinIsoSize = kPrimaryVolumeDescriptorOffset + kSectorSize;
     if (info.file_size < kMinIsoSize) {
-        logInfo("IsoAnalyzer: File too small for ISO 9660: " + file_path.toStdString());
+        logInfo("IsoAnalyzer: stream too small for ISO 9660");
         return info;
     }
 
-    readPrimaryVolumeDescriptor(file, info);
-    readElToritoBootRecord(file, info);
-    detectUdf(file, info);
+    readPrimaryVolumeDescriptor(device, info);
+    readElToritoBootRecord(device, info);
+    detectUdf(device, info);
 
     // Set filesystem type based on what we found
     if (info.filesystem.isEmpty()) {
@@ -450,20 +471,22 @@ IsoInfo IsoAnalyzer::analyze(const QString& file_path) {
 // ============================================================================
 
 void IsoAnalyzer::readPrimaryVolumeDescriptor(QIODevice& device, IsoInfo& info) {
+    // Private helper: analyze() is the only caller and reaches it only after its own
+    // QFile::open(QIODevice::ReadOnly) succeeded.
     Q_ASSERT(device.isOpen());
     Q_ASSERT(device.isReadable());
 
     // Scan volume descriptor set starting at LBA 16
     constexpr int kMaxDescriptors = 16;
     for (int descriptor_index = 0; descriptor_index < kMaxDescriptors; ++descriptor_index) {
-        qint64 offset = kPrimaryVolumeDescriptorOffset + (descriptor_index * kSectorSize);
+        const qint64 offset = kPrimaryVolumeDescriptorOffset + (descriptor_index * kSectorSize);
 
         if (!device.seek(offset)) {
             return;
         }
 
         std::array<char, kSectorSize> sector{};
-        qint64 bytes_read = device.read(sector.data(), kSectorSize);
+        const qint64 bytes_read = device.read(sector.data(), kSectorSize);
         if (bytes_read < kSectorSize) {
             return;
         }
@@ -505,49 +528,49 @@ void IsoAnalyzer::readPrimaryVolumeDescriptor(QIODevice& device, IsoInfo& info) 
 // ============================================================================
 
 void IsoAnalyzer::readElToritoBootRecord(QIODevice& device, IsoInfo& info) {
+    // Private helper: analyze() only calls this after its QFile::open() succeeded.
     Q_ASSERT(device.isOpen());
 
-    // Boot record is at LBA 17 (sector 17)
-    constexpr qint64 kBootRecordOffset = 17 * kSectorSize;
-    if (!device.seek(kBootRecordOffset)) {
-        return;
-    }
-
-    std::array<char, kSectorSize> sector{};
-    qint64 bytes_read = device.read(sector.data(), kSectorSize);
-    if (bytes_read < kSectorSize) {
-        return;
-    }
-
-    // Check for boot record volume descriptor
-    if (static_cast<uint8_t>(sector[0]) != kVdTypeBoot) {
-        return;
-    }
-    if (std::memcmp(sector.data() + 1, kIso9660Magic, kIso9660MagicLength) != 0) {
-        return;
-    }
-
-    // Check El Torito identifier at bytes 7-29
+    // The Boot Record volume descriptor is NOT always at LBA 17: it lives
+    // somewhere in the VD sequence that starts at LBA 16 and ends at a type-255
+    // terminator, and a supplementary VD before it shifts it later. Scan the set
+    // (bounded by kMaxDescriptors) for the boot record instead of a fixed LBA.
     constexpr int kElToritoIdentifierOffset = 7;
     constexpr int kElToritoIdLength = 23;
-    if (std::memcmp(sector.data() + kElToritoIdentifierOffset, kElToritoId, kElToritoIdLength) !=
-        0) {
+    constexpr int kMaxDescriptors = 16;
+
+    for (int descriptor_index = 0; descriptor_index < kMaxDescriptors; ++descriptor_index) {
+        const qint64 offset = kPrimaryVolumeDescriptorOffset + (descriptor_index * kSectorSize);
+        if (!device.seek(offset)) {
+            return;
+        }
+        std::array<char, kSectorSize> sector{};
+        if (device.read(sector.data(), kSectorSize) < kSectorSize) {
+            return;
+        }
+        if (std::memcmp(sector.data() + 1, kIso9660Magic, kIso9660MagicLength) != 0) {
+            return;  // not an ISO 9660 volume descriptor
+        }
+        const auto descriptor_type = static_cast<uint8_t>(sector[0]);
+        if (descriptor_type == kVdTypeTerminator) {
+            return;  // end of the descriptor set: no boot record
+        }
+        if (descriptor_type != kVdTypeBoot || std::memcmp(sector.data() + kElToritoIdentifierOffset,
+                                                          kElToritoId,
+                                                          kElToritoIdLength) != 0) {
+            continue;  // some other VD, or a boot record that is not El Torito
+        }
+
+        // A boot-record VD alone does not make an image bootable: El Torito requires a
+        // boot catalog with at least one valid entry. Read the pointer and classify; a
+        // zero/unreadable/malformed catalog stays non-bootable and reports Unknown/Invalid.
+        uint32_t catalog_lba = 0;
+        std::memcpy(&catalog_lba, sector.data() + kElToritoBootCatalogOffset, sizeof(catalog_lba));
+        info.boot_type = (catalog_lba == 0) ? unknownBootType()
+                                            : classifyBootCatalog(device, catalog_lba);
+        info.is_bootable = (info.boot_type != unknownBootType());
         return;
     }
-
-    info.is_bootable = true;
-
-    // Read boot catalog pointer (LE 32-bit at offset 71)
-    uint32_t catalog_lba = 0;
-    std::memcpy(&catalog_lba, sector.data() + kElToritoBootCatalogOffset, sizeof(catalog_lba));
-
-    if (catalog_lba == 0) {
-        info.boot_type = QStringLiteral("Legacy BIOS");
-        return;
-    }
-
-    // Read and classify boot catalog entries
-    info.boot_type = classifyBootCatalog(device, catalog_lba);
 }
 
 // ============================================================================
@@ -555,13 +578,15 @@ void IsoAnalyzer::readElToritoBootRecord(QIODevice& device, IsoInfo& info) {
 // ============================================================================
 
 QString IsoAnalyzer::classifyBootCatalog(QIODevice& device, uint32_t catalog_lba) {
+    // Private helper: the device came open from analyze(), and the sole caller
+    // (readElToritoBootRecord) routes catalog_lba == 0 to Unknown/Invalid without calling here.
     Q_ASSERT(device.isOpen());
     Q_ASSERT(catalog_lba > 0);
 
     std::array<char, kSectorSize> catalog{};
     const qint64 catalog_offset = static_cast<qint64>(catalog_lba) * kSectorSize;
     if (!readSectorAt(device, catalog_offset, catalog)) {
-        return QStringLiteral("Legacy BIOS");
+        return unknownBootType();  // catalog pointer past EOF or unreadable: not bootable
     }
 
     BootCatalogFlags flags;
@@ -575,6 +600,7 @@ QString IsoAnalyzer::classifyBootCatalog(QIODevice& device, uint32_t catalog_lba
 // ============================================================================
 
 void IsoAnalyzer::detectUdf(QIODevice& device, IsoInfo& info) {
+    // Private helper: analyze() only calls this after its QFile::open() succeeded.
     Q_ASSERT(device.isOpen());
 
     // UDF uses Extended Area Descriptor at sector 16+n
@@ -583,13 +609,13 @@ void IsoAnalyzer::detectUdf(QIODevice& device, IsoInfo& info) {
     constexpr int kUdfSearchEnd = 48;
 
     for (int sector_index = kUdfSearchStart; sector_index < kUdfSearchEnd; ++sector_index) {
-        qint64 offset = static_cast<qint64>(sector_index) * kSectorSize;
+        const qint64 offset = static_cast<qint64>(sector_index) * kSectorSize;
         if (!device.seek(offset)) {
             return;
         }
 
         std::array<char, kSectorSize> sector{};
-        qint64 bytes_read = device.read(sector.data(), kSectorSize);
+        const qint64 bytes_read = device.read(sector.data(), kSectorSize);
         if (bytes_read < kSectorSize) {
             return;
         }
@@ -611,7 +637,16 @@ void IsoAnalyzer::detectUdf(QIODevice& device, IsoInfo& info) {
 // Windows Identification
 // ============================================================================
 
+bool IsoAnalyzer::isWindowsInstallMedia(const IsoInfo& info) {
+    // os_family and windows_editions are set only when the volume label /
+    // application ID match Windows install patterns, so this reports what the image says
+    // about itself, unlike a filename check that trips on Linux "server" images.
+    return info.os_family == QLatin1String("Windows") || !info.windows_editions.isEmpty();
+}
+
 void IsoAnalyzer::identifyWindows(IsoInfo& info) {
+    // Private helper: analyze() default-constructs the IsoInfo, and the three readers that run
+    // before this one (PVD, El Torito, UDF) never write os_family or os_name.
     Q_ASSERT(info.os_family.isEmpty());
     Q_ASSERT(info.os_name.isEmpty());
 
@@ -631,11 +666,9 @@ void IsoAnalyzer::identifyWindows(IsoInfo& info) {
 // Linux Identification
 // ============================================================================
 
-QString IsoAnalyzer::detectDesktopEnvironment(const QString& label_upper) {
-    return desktopEnvironmentFromLabel(label_upper);
-}
-
 void IsoAnalyzer::identifyLinux(IsoInfo& info) {
+    // Private helper: analyze() calls this only inside if (info.os_family.isEmpty()), and
+    // distro_name is written nowhere but this function's own helpers.
     Q_ASSERT(info.os_family.isEmpty());
     Q_ASSERT(info.distro_name.isEmpty());
 
@@ -662,6 +695,8 @@ void IsoAnalyzer::identifyLinux(IsoInfo& info) {
 // ============================================================================
 
 QString IsoAnalyzer::parseIsoDateTime(const char* raw) {
+    // Private helper: the sole caller passes an interior pointer into its own
+    // std::array<char, kSectorSize> sector buffer, which is never null.
     Q_ASSERT(raw);
 
     // ISO 9660 date format: 17 bytes
@@ -689,19 +724,30 @@ QString IsoAnalyzer::parseIsoDateTime(const char* raw) {
     // Parse: YYYY-MM-DD HH:MM:SS
     constexpr int kYearLength = 4;
     constexpr int kFieldLength = 2;
-    QString year = readFixedAscii(raw, kYearLength);
-    QString month = readFixedAscii(raw + kYearLength, kFieldLength);
-    QString day = readFixedAscii(raw + kIsoDateDayOffset, kFieldLength);
-    QString hour = readFixedAscii(raw + kIsoDateHourOffset, kFieldLength);
-    QString minute = readFixedAscii(raw + kIsoDateMinuteOffset, kFieldLength);
-    QString second = readFixedAscii(raw + kIsoDateSecondOffset, kFieldLength);
+    const QString year = readFixedAscii(raw, kYearLength);
+    const QString month = readFixedAscii(raw + kYearLength, kFieldLength);
+    const QString day = readFixedAscii(raw + kIsoDateDayOffset, kFieldLength);
+    const QString hour = readFixedAscii(raw + kIsoDateHourOffset, kFieldLength);
+    const QString minute = readFixedAscii(raw + kIsoDateMinuteOffset, kFieldLength);
+    const QString second = readFixedAscii(raw + kIsoDateSecondOffset, kFieldLength);
 
     return QString("%1-%2-%3 %4:%5:%6").arg(year, month, day, hour, minute, second);
 }
 
 QString IsoAnalyzer::readFixedAscii(const char* data, int length) {
+    // Private helper: every caller (readPrimaryVolumeDescriptor, parseIsoDateTime) passes an
+    // interior pointer into a fixed sector buffer plus a positive compile-time field length.
     Q_ASSERT(data);
     Q_ASSERT(length > 0);
+
+    // Fail closed if the private contract is ever violated: QString::fromLatin1(data, <0)
+    // reinterprets a negative length as "read until NUL", which would run off the fixed
+    // sector field. Callers pass compile-time-constant positive lengths, so this is
+    // defensive only, but it removes the out-of-bounds read the header's raw-pointer
+    // signature cannot otherwise preclude.
+    if (data == nullptr || length <= 0) {
+        return {};
+    }
 
     // Copy the fixed-width field and trim trailing spaces/nulls
     QString result = QString::fromLatin1(data, length).trimmed();

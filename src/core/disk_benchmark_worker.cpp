@@ -12,22 +12,27 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
+#include <QRegularExpression>
 #include <QStorageInfo>
 #include <QtGlobal>
 
 #include <algorithm>
+#include <atomic>
+#include <functional>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <vector>
 
-#ifdef SAK_PLATFORM_WINDOWS
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <Windows.h>
-#endif
 
 namespace sak {
 
@@ -35,8 +40,12 @@ namespace {
 
 /// Alignment required for FILE_FLAG_NO_BUFFERING (sector size)
 constexpr size_t kSectorAlignment = 4096;
-constexpr size_t kSequentialBlockSize = sak::kBytesPerMB;  // 1 MB
-constexpr size_t kRandomBlockSize = 4096;                  // 4 KB
+// Sane bounds for the configurable I/O block sizes (KiB). effectiveBlockBytes()
+// clamps DiskBenchmarkConfig values into these ranges and fails closed below 1.
+constexpr int kSeqBlockMinKb = 4;     // 4 KiB (one sector)
+constexpr int kSeqBlockMaxKb = 8192;  // 8 MiB
+constexpr int kRandBlockMinKb = 4;    // 4 KiB (one sector)
+constexpr int kRandBlockMaxKb = 64;   // 64 KiB
 constexpr int kDiskBenchmarkStepTotal = 8;
 constexpr int kDiskProgressSequentialRead = 1;
 constexpr int kDiskProgressSequentialWrite = 2;
@@ -50,11 +59,29 @@ constexpr unsigned int kCreateFileSeed = 789;
 constexpr unsigned int kSequentialWriteSeed = 321;
 constexpr unsigned int kRandomReadOffsetSeed = 654;
 constexpr unsigned int kRandomWriteOffsetSeed = 876;
+// Seed for the latency-reservoir RNG (Algorithm R downsampling of retained samples).
+constexpr uint64_t kLatencyReservoirSeed = 424'242;
 constexpr double kNanosecondsPerSecond = 1'000'000'000.0;
 constexpr double kNanosecondsPerMicrosecond = 1000.0;
 constexpr int kBenchmarkMillisecondsPerSecond = 1000;
 constexpr size_t kLatencySampleReserve = 100'000;
 constexpr double kP99Percentile = 0.99;
+// Smallest sane test-file size. Below this the random-I/O offset math
+// (file_size / random_block - 1) underflows to a huge value at 0, and there are
+// too few block slots for a meaningful random benchmark. The 16 MiB floor also
+// stays well above the 64 KiB max random block so the slot count is never < 1.
+constexpr uint64_t kMinTestFileSizeMb = 16;
+// Upper bound on the test-file size. Without a maximum, total_bytes =
+// test_file_size_mb * 1 MiB could (for absurd ~2^44 MB inputs) wrap size_t and
+// underflow the offset math; cap at 1 TiB, far above any real benchmark file.
+constexpr uint64_t kMaxTestFileSizeMb = 1024ULL * 1024;  // 1 TiB
+// A non-positive pass count would skip the measurement loop entirely and report a
+// bogus 0 MB/s "success"; an unbounded duration would overflow duration_sec * 1000.
+constexpr int kMaxSequentialPasses = 1000;
+constexpr int kMaxRandomDurationSec = 3600;  // 1 hour; * 1000 stays within int range
+// Upper bound for both configured queue depths. The random-I/O paths allocate an aligned
+// buffer of block_bytes * queue_depth, so an unbounded depth is an unbounded allocation.
+constexpr int kMaxQueueDepth = 1024;
 constexpr double kSeqReadScoreWeight = 0.20;
 constexpr double kSeqWriteScoreWeight = 0.20;
 constexpr double kRandReadScoreWeight = 0.30;
@@ -67,15 +94,115 @@ constexpr double kRefSeqWriteMbps = 5000.0;
 constexpr double kRefRand4KReadIops = 800000.0;
 constexpr double kRefRand4KWriteIops = 1000000.0;
 
-#ifdef SAK_PLATFORM_WINDOWS
+// A createTestFile() failure is a disk read error UNLESS the user cancelled during the
+// (potentially multi-hundred-GB) fill, in which case the fill was aborted on request and
+// the correct verdict is a cancellation, not a disk error.
+sak::error_code createTestFileFailureCode(bool stopped) {
+    return stopped ? sak::error_code::operation_cancelled : sak::error_code::read_error;
+}
+
+// Classify a sequential-write pass. A short transfer is a disk error unless the user
+// cancelled mid-pass (report that as a cancellation); a failed FlushFileBuffers means the
+// writes never reached the device, so the pass fails closed rather than scoring a
+// non-durable flush as a good result.
+std::expected<void, sak::error_code> classifyWritePass(size_t written_total,
+                                                       size_t total_bytes,
+                                                       bool flush_ok,
+                                                       bool stopped) {
+    if (written_total < total_bytes) {
+        if (stopped) {
+            return std::unexpected(sak::error_code::operation_cancelled);
+        }
+        logError("Sequential write: short write ({} of {} bytes) -- disk I/O error",
+                 written_total,
+                 total_bytes);
+        return std::unexpected(sak::error_code::write_error);
+    }
+    if (!flush_ok) {
+        logError("Sequential write: FlushFileBuffers failed -- durability not guaranteed");
+        return std::unexpected(sak::error_code::write_error);
+    }
+    return {};
+}
+
+// Fail closed if a freshly-opened handle resolved to a reparse point (a symlink or
+// junction planted at the guessable temp path between subtests) or to a file with
+// more than one hard link (a same-name hard-link swap onto an unrelated target).
+// createTestFile() claimed a unique regular file via CREATE_NEW, so our file always
+// has exactly one link and no reparse attribute. Closes @p h and returns
+// INVALID_HANDLE_VALUE on any mismatch or info-query failure.
+HANDLE rejectReparseOrLinkedFile(HANDLE h) {
+    if (h == INVALID_HANDLE_VALUE) {
+        return INVALID_HANDLE_VALUE;
+    }
+    BY_HANDLE_FILE_INFORMATION info{};
+    if ((GetFileInformationByHandle(h, &info) == 0) ||
+        (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 || info.nNumberOfLinks != 1) {
+        CloseHandle(h);
+        return INVALID_HANDLE_VALUE;
+    }
+    return h;
+}
+
+// All benchmark reopens of the claimed temp file open the NAME itself with
+// FILE_FLAG_OPEN_REPARSE_POINT and then verify (via rejectReparseOrLinkedFile) that
+// it is still our unique regular file, never following a symlink/junction/hard-link
+// swapped in at the guessable path between subtests.
+// The run holds a delete-on-close handle on its test file (see createTestFile), and Windows opens
+// such a file again only for a caller that shares delete with it. Nothing else is shared that was
+// not before.
+constexpr DWORD kShareWithTheRunsHandle = FILE_SHARE_DELETE;
+
 HANDLE openRandomWriteFile(const std::wstring& path) {
-    return CreateFileW(path.c_str(),
-                       GENERIC_WRITE,
-                       0,
-                       nullptr,
-                       OPEN_EXISTING,
-                       FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_RANDOM_ACCESS,
-                       nullptr);
+    HANDLE h = CreateFileW(path.c_str(),
+                           GENERIC_WRITE,
+                           kShareWithTheRunsHandle,
+                           nullptr,
+                           OPEN_EXISTING,
+                           FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH |
+                               FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_OPEN_REPARSE_POINT,
+                           nullptr);
+    return rejectReparseOrLinkedFile(h);
+}
+
+HANDLE openRandomReadFile(const std::wstring& path) {
+    HANDLE h =
+        CreateFileW(path.c_str(),
+                    GENERIC_READ,
+                    FILE_SHARE_READ | kShareWithTheRunsHandle,
+                    nullptr,
+                    OPEN_EXISTING,
+                    FILE_FLAG_NO_BUFFERING | FILE_FLAG_RANDOM_ACCESS | FILE_FLAG_OPEN_REPARSE_POINT,
+                    nullptr);
+    return rejectReparseOrLinkedFile(h);
+}
+
+HANDLE openSequentialReadFile(const std::wstring& path) {
+    HANDLE h = CreateFileW(path.c_str(),
+                           GENERIC_READ,
+                           FILE_SHARE_READ | kShareWithTheRunsHandle,
+                           nullptr,
+                           OPEN_EXISTING,
+                           FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN |
+                               FILE_FLAG_OPEN_REPARSE_POINT,
+                           nullptr);
+    return rejectReparseOrLinkedFile(h);
+}
+
+// Reopen the already-claimed benchmark file for overwriting WITHOUT traversing a
+// reparse point. createTestFile() exclusively claimed a unique file via CREATE_NEW;
+// reopening the guessable path with CREATE_ALWAYS would follow a symlink or junction
+// swapped in between subtests and truncate/create an unrelated target.
+HANDLE openBenchmarkFileForOverwrite(const std::wstring& path) {
+    HANDLE h =
+        CreateFileW(path.c_str(),
+                    GENERIC_WRITE,
+                    kShareWithTheRunsHandle,
+                    nullptr,
+                    OPEN_EXISTING,
+                    FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_OPEN_REPARSE_POINT,
+                    nullptr);
+    return rejectReparseOrLinkedFile(h);
 }
 
 void fillRandomWriteBuffer(AlignedBuffer& buffer) {
@@ -94,7 +221,96 @@ void setRandomWriteResults(uint64_t total_ops,
     iops = static_cast<double>(total_ops) / elapsed_sec;
     write_mbps = static_cast<double>(total_bytes) / sak::kBytesPerMBf / elapsed_sec;
 }
-#endif
+
+// A random-I/O phase is only scoreable if at least one op completed AND completed
+// ops outnumber failures. Zero completed ops means every op in the window failed;
+// more failures than successes means a mostly-broken drive whose IOPS would be
+// garbage. Either way, fail closed rather than report a misleading number.
+bool randomIoResultUsable(uint64_t total_ops, uint64_t total_failures) {
+    // Completed ops must strictly OUTNUMBER failures: failures == completed (a 50%
+    // failure rate) is a mostly-broken drive whose IOPS would be garbage, so reject it.
+    return total_ops > 0 && total_failures < total_ops;
+}
+
+// Compute the average latency and optionally hand the raw samples to the caller. Shared by the
+// random read and write subtests.
+void finalizeLatencies(std::vector<double>& latencies,
+                       double& avg_latency_us,
+                       std::vector<double>* latencies_out) {
+    if (!latencies.empty()) {
+        avg_latency_us = std::accumulate(latencies.begin(), latencies.end(), 0.0) /
+                         static_cast<double>(latencies.size());
+    }
+    if (latencies_out != nullptr) {
+        *latencies_out = std::move(latencies);
+    }
+}
+
+// Bound the retained latency samples with reservoir sampling (Algorithm R): an unbounded
+// push_back would grow this vector into the GBs at high IOPS over a long duration. Keep
+// every sample until kLatencySampleReserve are held; after that the incoming (samples_seen-th,
+// 0-based) sample replaces a uniformly-random existing slot with probability
+// kLatencySampleReserve/(samples_seen+1). The retained set stays a uniform random sample of
+// the full stream, so the average and P99 derived from it remain representative while memory
+// stays capped.
+void recordLatencySample(std::vector<double>& latencies, uint64_t samples_seen, double sample_us) {
+    if (latencies.size() < kLatencySampleReserve) {
+        latencies.push_back(sample_us);
+        return;
+    }
+    // thread_local: each benchmark worker runs its I/O loop on its own thread, so this RNG is
+    // never shared between concurrent runs.
+    static thread_local std::mt19937_64 reservoir_rng(kLatencyReservoirSeed);
+    std::uniform_int_distribution<uint64_t> slot(0, samples_seen);
+    const uint64_t index = slot(reservoir_rng);
+    if (index < kLatencySampleReserve) {
+        latencies[index] = sample_us;
+    }
+}
+
+// Fill a freshly-created benchmark file with @p total_bytes of reproducible
+// pseudo-random data via direct, sector-aligned writes of @p block_bytes. Aborts on a
+// cancellation request (@p stop_requested) so a multi-hundred-GB fill is interruptible.
+// Closes @p h on failure or cancellation.
+bool fillTestFileWithRandom(HANDLE h,
+                            size_t total_bytes,
+                            size_t block_bytes,
+                            const std::function<bool()>& stop_requested) {
+    const AlignedBuffer buf(block_bytes, kSectorAlignment);
+    if (!buf.valid()) {
+        CloseHandle(h);
+        return false;
+    }
+
+    std::mt19937 rng(kCreateFileSeed);
+    auto* data32 = reinterpret_cast<uint32_t*>(buf.data());
+    const size_t count32 = buf.size() / sizeof(uint32_t);
+    for (size_t i = 0; i < count32; ++i) {
+        data32[i] = rng();
+    }
+
+    size_t written_total = 0;
+    while (written_total < total_bytes) {
+        // Fail closed on cancellation rather than run an uninterruptible fill to the end.
+        if (stop_requested()) {
+            CloseHandle(h);
+            return false;
+        }
+        DWORD bytes_written = 0;
+        const DWORD to_write =
+            static_cast<DWORD>(std::min(buf.size(), total_bytes - written_total));
+        // A TRUE WriteFile that advanced 0 bytes would spin here forever; treat a
+        // zero-byte (or failed) write as a hard error.
+        if (WriteFile(h, buf.data(), to_write, &bytes_written, nullptr) == 0 ||
+            bytes_written == 0) {
+            logError("Failed to write test file at offset {}", written_total);
+            CloseHandle(h);
+            return false;
+        }
+        written_total += bytes_written;
+    }
+    return true;
+}
 
 }  // anonymous namespace
 
@@ -104,12 +320,17 @@ void setRandomWriteResults(uint64_t total_ops,
 
 DiskBenchmarkWorker::DiskBenchmarkWorker(QObject* parent) : WorkerBase(parent) {}
 
+DiskBenchmarkWorker::~DiskBenchmarkWorker() {
+    stopAndJoin();
+    cleanupTestFile();
+}
+
 // ============================================================================
 // WorkerBase Override
 // ============================================================================
 
 auto DiskBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
-    sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Disk benchmark");
+    const sak::KeepAwakeGuard keep_awake(sak::KeepAwake::PowerRequest::System, "Disk benchmark");
 
     // Validate drive path before starting
     if (m_config.drive_path.isEmpty()) {
@@ -117,25 +338,49 @@ auto DiskBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
         return std::unexpected(sak::error_code::invalid_path);
     }
 
+    // Fail closed on a test-file size outside the sane range. Below the minimum the
+    // random-I/O offset math (file_size / block - 1) underflows to a huge value at 0;
+    // above the maximum total_bytes could wrap size_t. Validate before any arithmetic.
+    if (auto status = validateTestFileSize(); !status) {
+        return status;
+    }
+
+    // Wire the configured block sizes into the actual I/O; fail closed on a
+    // nonpositive size before any benchmark phase runs.
+    if (auto status = resolveBlockSizes(); !status) {
+        return status;
+    }
+
     logInfo("Starting disk benchmark on {}", m_config.drive_path.toStdString());
     m_result = DiskBenchmarkResult{};
     m_result.drive_path = m_config.drive_path;
 
-    // Resolve drive info
-    QStorageInfo storage(m_config.drive_path);
-    if (storage.isValid()) {
-        m_result.drive_capacity_bytes = static_cast<uint64_t>(storage.bytesTotal());
+    // Resolve drive info and fail closed on an unusable target or insufficient space.
+    if (auto status = validateDriveAndSpace(); !status) {
+        return status;
     }
 
     // Create test file
     reportProgress(sak::progress::kStart, kDiskBenchmarkStepTotal, "Creating test file...");
     if (!createTestFile()) {
-        return std::unexpected(sak::error_code::read_error);
+        // A fill failure or mid-fill cancel leaves a partially-written temp file after
+        // m_test_file_path was recorded; remove it, and report cancel vs disk error.
+        cleanupTestFile();
+        return std::unexpected(createTestFileFailureCode(stopRequested()));
     }
 
     auto benchmark_result = runAllBenchmarks();
     if (!benchmark_result) {
+        // A subtest that failed I/O (not just cancellation) leaves the test file behind; remove
+        // it so the error path does not leak the temp file. cleanupTestFile is idempotent.
+        cleanupTestFile();
         return benchmark_result;
+    }
+
+    // A cancel during the FINAL subtest only breaks its timed loop and still returns
+    // success; catch it here so a truncated run is not scored/reported as complete.
+    if (auto status = continueOrCancelBenchmark(); !status) {
+        return status;
     }
 
     // Cleanup and score
@@ -155,6 +400,97 @@ auto DiskBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     return {};
 }
 
+auto DiskBenchmarkWorker::resolveBlockSizes() -> std::expected<void, sak::error_code> {
+    // effectiveBlockBytes clamps to a sane range and rounds to the sector
+    // boundary; a nonpositive configured size returns 0 and we fail closed rather
+    // than run a benchmark with a degenerate block size.
+    m_seq_block_bytes =
+        effectiveBlockBytes(m_config.sequential_block_size_kb, kSeqBlockMinKb, kSeqBlockMaxKb);
+    m_rand_block_bytes =
+        effectiveBlockBytes(m_config.random_block_size_kb, kRandBlockMinKb, kRandBlockMaxKb);
+    if (m_seq_block_bytes == 0 || m_rand_block_bytes == 0) {
+        logError("Disk benchmark: nonpositive block size (seq {} KB, rand {} KB)",
+                 m_config.sequential_block_size_kb,
+                 m_config.random_block_size_kb);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    return {};
+}
+
+auto DiskBenchmarkWorker::validateTestFileSize() const -> std::expected<void, sak::error_code> {
+    if (m_config.test_file_size_mb < kMinTestFileSizeMb) {
+        logError("Disk benchmark: test_file_size_mb {} below minimum {} MB",
+                 m_config.test_file_size_mb,
+                 kMinTestFileSizeMb);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    if (m_config.test_file_size_mb > kMaxTestFileSizeMb) {
+        logError("Disk benchmark: test_file_size_mb {} above maximum {} MB",
+                 m_config.test_file_size_mb,
+                 kMaxTestFileSizeMb);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    if (m_config.sequential_passes <= 0 || m_config.sequential_passes > kMaxSequentialPasses) {
+        logError("Disk benchmark: sequential_passes {} out of range (1..{})",
+                 m_config.sequential_passes,
+                 kMaxSequentialPasses);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    if (m_config.random_duration_sec <= 0 || m_config.random_duration_sec > kMaxRandomDurationSec) {
+        logError("Disk benchmark: random_duration_sec {} out of range (1..{})",
+                 m_config.random_duration_sec,
+                 kMaxRandomDurationSec);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    return validateQueueDepths();
+}
+
+// The queue depths reach runRandom4KRead/runRandom4KWrite, which size an aligned buffer as
+// block_bytes * queue_depth and then loop queue_depth times. setConfig is public and assigns
+// the whole struct verbatim, so neither field is an invariant of this class: a caller can
+// hand over 0 and get a zero-length buffer and a benchmark that measures nothing while still
+// reporting a figure. Validating here, where there is an error channel, is what lets those
+// two helpers assert instead.
+auto DiskBenchmarkWorker::validateQueueDepths() const -> std::expected<void, sak::error_code> {
+    if (m_config.queue_depth_low <= 0 || m_config.queue_depth_low > kMaxQueueDepth) {
+        logError("Disk benchmark: queue_depth_low {} out of range (1..{})",
+                 m_config.queue_depth_low,
+                 kMaxQueueDepth);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    if (m_config.queue_depth_high <= 0 || m_config.queue_depth_high > kMaxQueueDepth) {
+        logError("Disk benchmark: queue_depth_high {} out of range (1..{})",
+                 m_config.queue_depth_high,
+                 kMaxQueueDepth);
+        return std::unexpected(sak::error_code::invalid_argument);
+    }
+    return {};
+}
+
+auto DiskBenchmarkWorker::validateDriveAndSpace() -> std::expected<void, sak::error_code> {
+    const QStorageInfo storage(m_config.drive_path);
+    if (!storage.isValid() || !storage.isReady()) {
+        logError("Disk benchmark: drive path not valid/ready: {}",
+                 m_config.drive_path.toStdString());
+        return std::unexpected(sak::error_code::invalid_path);
+    }
+    // bytesTotal() is signed and returns -1 on error; only record a real capacity so
+    // a negative value is never cast into a huge uint64 display figure.
+    const qint64 total = storage.bytesTotal();
+    if (total > 0) {
+        m_result.drive_capacity_bytes = static_cast<uint64_t>(total);
+    }
+    const uint64_t required = m_config.test_file_size_mb * static_cast<uint64_t>(sak::kBytesPerMB);
+    const qint64 available = storage.bytesAvailable();
+    if (available < 0 || static_cast<uint64_t>(available) < required) {
+        logError("Disk benchmark: insufficient free space ({} bytes available, {} required)",
+                 available,
+                 required);
+        return std::unexpected(sak::error_code::insufficient_disk_space);
+    }
+    return {};
+}
+
 auto DiskBenchmarkWorker::continueOrCancelBenchmark() -> std::expected<void, sak::error_code> {
     if (checkStop()) {
         cleanupTestFile();
@@ -170,7 +506,9 @@ auto DiskBenchmarkWorker::runSequentialBenchmarks() -> std::expected<void, sak::
     if (auto status = continueOrCancelBenchmark(); !status) {
         return status;
     }
-    runSequentialRead();
+    if (auto status = runSequentialRead(); !status) {
+        return status;
+    }
 
     reportProgress(kDiskProgressSequentialWrite,
                    kDiskBenchmarkStepTotal,
@@ -178,8 +516,7 @@ auto DiskBenchmarkWorker::runSequentialBenchmarks() -> std::expected<void, sak::
     if (auto status = continueOrCancelBenchmark(); !status) {
         return status;
     }
-    runSequentialWrite();
-    return {};
+    return runSequentialWrite();
 }
 
 auto DiskBenchmarkWorker::runRandomQd1Benchmarks() -> std::expected<void, sak::error_code> {
@@ -187,20 +524,22 @@ auto DiskBenchmarkWorker::runRandomQd1Benchmarks() -> std::expected<void, sak::e
     if (auto status = continueOrCancelBenchmark(); !status) {
         return status;
     }
-    runRandom4KRead(m_config.queue_depth_low,
-                    m_result.rand_4k_read_mbps,
-                    m_result.rand_4k_read_iops,
-                    m_result.avg_read_latency_us);
+    if (auto status = runRandom4KRead(m_config.queue_depth_low,
+                                      m_result.rand_4k_read_mbps,
+                                      m_result.rand_4k_read_iops,
+                                      m_result.avg_read_latency_us);
+        !status) {
+        return status;
+    }
 
     reportProgress(kDiskProgressRandomQd1Write, kDiskBenchmarkStepTotal, "Random 4K QD1 write...");
     if (auto status = continueOrCancelBenchmark(); !status) {
         return status;
     }
-    runRandom4KWrite(m_config.queue_depth_low,
-                     m_result.rand_4k_write_mbps,
-                     m_result.rand_4k_write_iops,
-                     m_result.avg_write_latency_us);
-    return {};
+    return runRandom4KWrite(m_config.queue_depth_low,
+                            m_result.rand_4k_write_mbps,
+                            m_result.rand_4k_write_iops,
+                            m_result.avg_write_latency_us);
 }
 
 auto DiskBenchmarkWorker::runRandomQd32Benchmarks() -> std::expected<void, sak::error_code> {
@@ -213,11 +552,14 @@ auto DiskBenchmarkWorker::runRandomQd32Benchmarks() -> std::expected<void, sak::
     if (auto status = continueOrCancelBenchmark(); !status) {
         return status;
     }
-    runRandom4KRead(m_config.queue_depth_high,
-                    m_result.rand_4k_qd32_read_mbps,
-                    m_result.rand_4k_qd32_read_iops,
-                    qd32_avg_read_lat,
-                    &qd32_read_latencies);
+    if (auto status = runRandom4KRead(m_config.queue_depth_high,
+                                      m_result.rand_4k_qd32_read_mbps,
+                                      m_result.rand_4k_qd32_read_iops,
+                                      qd32_avg_read_lat,
+                                      &qd32_read_latencies);
+        !status) {
+        return status;
+    }
     m_result.p99_read_latency_us = calculateP99(qd32_read_latencies);
 
     reportProgress(kDiskProgressRandomQd32Write,
@@ -226,11 +568,14 @@ auto DiskBenchmarkWorker::runRandomQd32Benchmarks() -> std::expected<void, sak::
     if (auto status = continueOrCancelBenchmark(); !status) {
         return status;
     }
-    runRandom4KWrite(m_config.queue_depth_high,
-                     m_result.rand_4k_qd32_write_mbps,
-                     m_result.rand_4k_qd32_write_iops,
-                     qd32_avg_write_lat,
-                     &qd32_write_latencies);
+    if (auto status = runRandom4KWrite(m_config.queue_depth_high,
+                                       m_result.rand_4k_qd32_write_mbps,
+                                       m_result.rand_4k_qd32_write_iops,
+                                       qd32_avg_write_lat,
+                                       &qd32_write_latencies);
+        !status) {
+        return status;
+    }
     m_result.p99_write_latency_us = calculateP99(qd32_write_latencies);
 
     return {};
@@ -250,100 +595,220 @@ auto DiskBenchmarkWorker::runAllBenchmarks() -> std::expected<void, sak::error_c
 // Test File Management
 // ============================================================================
 
+QString DiskBenchmarkWorker::makeUniqueBenchmarkFileName(quint32 pid,
+                                                         qint64 msecs,
+                                                         quint64 counter) {
+    return QStringLiteral("sak_disk_benchmark_%1_%2_%3.tmp").arg(pid).arg(msecs).arg(counter);
+}
+
+size_t DiskBenchmarkWorker::effectiveBlockBytes(int block_kb, int min_kb, int max_kb) {
+    // Fail closed on invalid bounds (min_kb <= 0 or max_kb < min_kb) -- std::clamp is
+    // UB when min > max -- and on an out-of-range request. An out-of-range block size
+    // is REJECTED, not silently coerced to a bound: coercing a wrong input to a
+    // "nearest valid" default is exactly the fallback the standing rule forbids. The
+    // caller treats 0 as an error and aborts the benchmark.
+    if (min_kb <= 0 || max_kb < min_kb) {
+        return 0;
+    }
+    if (block_kb < min_kb || block_kb > max_kb) {
+        return 0;
+    }
+    size_t bytes = static_cast<size_t>(block_kb) * static_cast<size_t>(sak::kBytesPerKB);
+    // Direct I/O (FILE_FLAG_NO_BUFFERING) requires sector-aligned transfers; round
+    // up to the next sector so every read/write stays aligned.
+    const size_t remainder = bytes % kSectorAlignment;
+    if (remainder != 0) {
+        bytes += kSectorAlignment - remainder;
+    }
+    return bytes;
+}
+
 QString DiskBenchmarkWorker::testFilePath() const {
-    return QDir(m_config.drive_path).filePath("sak_disk_benchmark.tmp");
+    return m_test_file_path;
 }
 
 bool DiskBenchmarkWorker::createTestFile() {
-#ifdef SAK_PLATFORM_WINDOWS
-    const QString path = testFilePath();
-    const std::wstring wpath = path.toStdWString();
+    // Claim a UNIQUE per-run file with an exclusive CREATE_NEW: this removes the
+    // old fixed-name TOCTOU (QFile::exists() check then CREATE_ALWAYS), where a
+    // file or symlink planted at the guessable path between the check and the
+    // create would be truncated here and deleted by cleanupTestFile(). CREATE_NEW
+    // fails closed if anything already exists at the name, and the unique name
+    // also keeps concurrent runs from colliding.
+    static std::atomic<quint64> s_counter{0};
+    const quint64 seq = s_counter.fetch_add(1, std::memory_order_relaxed);
+    const QString name = makeUniqueBenchmarkFileName(GetCurrentProcessId(),
+                                                     QDateTime::currentMSecsSinceEpoch(),
+                                                     seq);
+    const QString folder = diskTestFolder(m_config.drive_path);
+    removeAbandonedBenchmarkFiles(folder);
+    const QString path = QDir(folder).filePath(name);
+    const std::wstring wpath = QDir::toNativeSeparators(path).toStdWString();
 
-    // Create with direct I/O flags
-    HANDLE h =
-        CreateFileW(wpath.c_str(),
-                    GENERIC_WRITE,
-                    0,
-                    nullptr,
-                    CREATE_ALWAYS,
-                    FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_SEQUENTIAL_SCAN,
-                    nullptr);
+    // The claim (CREATE_NEW, so there is no check-then-open window) is a delete-on-close handle
+    // the run keeps until its cleanup. A run that is killed, or a PC that loses power before
+    // Windows starts again, leaves no file on the customer's drive: Windows closes the handle and
+    // removes it. testpc1's D: kept a 0-byte file from a killed run.
+    HANDLE anchor = CreateFileW(wpath.c_str(),
+                                DELETE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr,
+                                CREATE_NEW,
+                                FILE_FLAG_DELETE_ON_CLOSE,
+                                nullptr);
+    if (anchor == INVALID_HANDLE_VALUE) {
+        logError("Disk benchmark: failed to exclusively create test file: {}", path.toStdString());
+        return false;
+    }
+    m_test_file_anchor = anchor;
+    // Record the claimed path only after a successful exclusive create, so every
+    // read/write/cleanup targets exactly the file we own.
+    m_test_file_path = path;
 
+    HANDLE h = openBenchmarkFileForOverwrite(wpath);
     if (h == INVALID_HANDLE_VALUE) {
-        logError("Failed to create test file: {}", path.toStdString());
+        logError("Disk benchmark: failed to open the test file it created: {}", path.toStdString());
         return false;
     }
 
     const size_t total_bytes = static_cast<size_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
-    AlignedBuffer buf(kSequentialBlockSize, kSectorAlignment);
-    if (!buf.valid()) {
-        CloseHandle(h);
-        return false;
-    }
-
-    // Fill with pseudo-random data (fixed seed for reproducibility)
-    std::mt19937 rng(kCreateFileSeed);
-    auto* data32 = reinterpret_cast<uint32_t*>(buf.data());
-    const size_t count32 = buf.size() / sizeof(uint32_t);
-    for (size_t i = 0; i < count32; ++i) {
-        data32[i] = rng();
-    }
-
-    size_t written_total = 0;
-    while (written_total < total_bytes) {
-        DWORD bytes_written = 0;
-        const DWORD to_write =
-            static_cast<DWORD>(std::min(buf.size(), total_bytes - written_total));
-
-        if (!WriteFile(h, buf.data(), to_write, &bytes_written, nullptr)) {
-            logError("Failed to write test file at offset {}", written_total);
-            CloseHandle(h);
-            return false;
-        }
-        written_total += bytes_written;
+    if (!fillTestFileWithRandom(h, total_bytes, m_seq_block_bytes, [this] {
+            return stopRequested();
+        })) {
+        return false;  // helper closed the handle (I/O error or cancellation)
     }
 
     CloseHandle(h);
-    logInfo("Test file created: {} ({} MB)", path.toStdString(), m_config.test_file_size_mb);
+    logInfo("Test file created: {} ({} MB)",
+            QDir::toNativeSeparators(path).toStdString(),
+            m_config.test_file_size_mb);
     return true;
-#else
-    return false;
-#endif
+}
+
+#ifdef SAK_CORE_TEST_HOOKS
+QString DiskBenchmarkWorker::claimTestFileForTesting() {
+    m_seq_block_bytes = kSectorAlignment;
+    if (!createTestFile()) {
+        return {};
+    }
+    const QString path = testFilePath();
+    cleanupTestFile();
+    return path;
+}
+#endif  // SAK_CORE_TEST_HOOKS
+
+#ifdef SAK_CORE_TEST_HOOKS
+QString DiskBenchmarkWorker::abandonTestFileForTesting() {
+    m_seq_block_bytes = kSectorAlignment;
+    if (!createTestFile()) {
+        return {};
+    }
+    const QString path = testFilePath();
+    releaseTestFileAnchor();
+    m_test_file_path.clear();
+    return path;
+}
+#endif  // SAK_CORE_TEST_HOOKS
+
+void DiskBenchmarkWorker::releaseTestFileAnchor() {
+    if (m_test_file_anchor != nullptr) {
+        CloseHandle(static_cast<HANDLE>(m_test_file_anchor));
+        m_test_file_anchor = nullptr;
+    }
+}
+
+namespace {
+// Does the process still run? One that cannot be opened for want of rights does; only an id that
+// names no process at all says it is gone, so a file is never taken from a run in progress.
+bool processIsRunning(quint32 pid) {
+    HANDLE process = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (process == nullptr) {
+        return GetLastError() != ERROR_INVALID_PARAMETER;
+    }
+    const bool running = WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
+    CloseHandle(process);
+    return running;
+}
+}  // namespace
+
+bool DiskBenchmarkWorker::isAbandonedBenchmarkFileName(
+    const QString& file_name,
+    quint32 self_pid,
+    const std::function<bool(quint32)>& process_running) {
+    static const QRegularExpression kName(QStringLiteral(
+                                              "^sak_disk_benchmark_(\\d{1,10})_\\d+_\\d+\\.tmp$"),
+                                          QRegularExpression::CaseInsensitiveOption);
+    const auto match = kName.match(file_name);
+    if (!match.hasMatch()) {
+        return false;
+    }
+    bool ok = false;
+    const qulonglong pid = match.captured(1).toULongLong(&ok);
+    if (!ok || pid > std::numeric_limits<quint32>::max() || pid == self_pid) {
+        return false;
+    }
+    return !process_running(static_cast<quint32>(pid));
+}
+
+QStringList DiskBenchmarkWorker::removeAbandonedBenchmarkFiles(const QString& folder) {
+    QStringList removed;
+    const QFileInfoList files = QDir(folder).entryInfoList(
+        {QStringLiteral("sak_disk_benchmark_*.tmp")}, QDir::Files | QDir::Hidden | QDir::System);
+    for (const QFileInfo& file : files) {
+        if (file.isSymLink() || !isAbandonedBenchmarkFileName(
+                                    file.fileName(), GetCurrentProcessId(), processIsRunning)) {
+            continue;
+        }
+        if (QFile::remove(file.absoluteFilePath())) {
+            logInfo("Removed a test file a stopped benchmark left: {}",
+                    file.absoluteFilePath().toStdString());
+            removed << file.absoluteFilePath();
+        } else {
+            logWarning("A test file a stopped benchmark left could not be removed: {}",
+                       file.absoluteFilePath().toStdString());
+        }
+    }
+    return removed;
 }
 
 void DiskBenchmarkWorker::cleanupTestFile() {
     const QString path = testFilePath();
-    if (QFile::exists(path)) {
-        QFile::remove(path);
-        logInfo("Test file removed: {}", path.toStdString());
+    // Closing the run's handle removes the file, now that every other handle on it is closed.
+    releaseTestFileAnchor();
+    if (path.isEmpty()) {
+        return;  // nothing was ever claimed this run
     }
+    if (QFile::exists(path)) {
+        if (QFile::remove(path)) {
+            logInfo("Test file removed: {}", QDir::toNativeSeparators(path).toStdString());
+        } else {
+            // Do not claim success we did not achieve: a locked/permission-denied
+            // delete leaves the temp file behind and the caller/log must reflect that.
+            logError("Test file could not be removed (still present): {}", path.toStdString());
+        }
+    }
+    m_test_file_path.clear();  // do not delete the same path twice
 }
 
 // ============================================================================
 // Sequential Benchmarks
 // ============================================================================
 
-void DiskBenchmarkWorker::runSequentialRead() {
-#ifdef SAK_PLATFORM_WINDOWS
+auto DiskBenchmarkWorker::runSequentialRead() -> std::expected<void, sak::error_code> {
     const std::wstring wpath = testFilePath().toStdWString();
 
-    HANDLE h = CreateFileW(wpath.c_str(),
-                           GENERIC_READ,
-                           FILE_SHARE_READ,
-                           nullptr,
-                           OPEN_EXISTING,
-                           FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN,
-                           nullptr);
+    // Open the claimed name itself and fail closed if it is now a reparse point or
+    // hard-linked target swapped in between subtests. See openSequentialReadFile.
+    HANDLE h = openSequentialReadFile(wpath);
 
     if (h == INVALID_HANDLE_VALUE) {
         logError("Sequential read: Failed to open test file");
-        return;
+        return std::unexpected(sak::error_code::read_error);
     }
 
-    AlignedBuffer buf(kSequentialBlockSize, kSectorAlignment);
+    const AlignedBuffer buf(m_seq_block_bytes, kSectorAlignment);
     if (!buf.valid()) {
         CloseHandle(h);
-        return;
+        return std::unexpected(sak::error_code::out_of_memory);
     }
 
     const size_t total_bytes = static_cast<size_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
@@ -353,9 +818,21 @@ void DiskBenchmarkWorker::runSequentialRead() {
         QElapsedTimer timer;
         timer.start();
 
-        size_t bytes_read_total = readSequentialPass(h, buf.data(), buf.size(), total_bytes);
+        const size_t bytes_read_total = readSequentialPass(h, buf.data(), buf.size(), total_bytes);
 
-        const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+        // A short read means ReadFile failed or hit an early EOF mid-run: a genuine
+        // disk error, not a measurement. Fail closed rather than scoring the partial
+        // transfer as throughput.
+        if (bytes_read_total < total_bytes) {
+            CloseHandle(h);
+            logError("Sequential read: short read ({} of {} bytes) -- disk I/O error",
+                     bytes_read_total,
+                     total_bytes);
+            return std::unexpected(sak::error_code::read_error);
+        }
+
+        const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
+                                   kNanosecondsPerSecond;
         const double mbps = static_cast<double>(bytes_read_total) / sak::kBytesPerMBf / elapsed_sec;
         best_mbps = std::max(best_mbps, mbps);
     }
@@ -363,24 +840,23 @@ void DiskBenchmarkWorker::runSequentialRead() {
     CloseHandle(h);
     m_result.seq_read_mbps = best_mbps;
     logInfo("Sequential read: {:.0f} MB/s", best_mbps);
-#endif
+    return {};
 }
 
-#ifdef SAK_PLATFORM_WINDOWS
 size_t DiskBenchmarkWorker::readSequentialPass(void* file_handle,
                                                uint8_t* buffer,
                                                size_t bufSize,
                                                size_t total_bytes) {
     HANDLE h = static_cast<HANDLE>(file_handle);
-    LARGE_INTEGER zero{};
-    if (!SetFilePointerEx(h, zero, nullptr, FILE_BEGIN)) {
+    LARGE_INTEGER const zero{};
+    if (SetFilePointerEx(h, zero, nullptr, FILE_BEGIN) == 0) {
         return 0;
     }
 
     size_t bytes_read_total = 0;
     while (bytes_read_total < total_bytes) {
         DWORD bytes_read = 0;
-        if (!ReadFile(h, buffer, static_cast<DWORD>(bufSize), &bytes_read, nullptr) ||
+        if ((ReadFile(h, buffer, static_cast<DWORD>(bufSize), &bytes_read, nullptr) == 0) ||
             bytes_read == 0) {
             break;
         }
@@ -388,15 +864,13 @@ size_t DiskBenchmarkWorker::readSequentialPass(void* file_handle,
     }
     return bytes_read_total;
 }
-#endif
 
-void DiskBenchmarkWorker::runSequentialWrite() {
-#ifdef SAK_PLATFORM_WINDOWS
+auto DiskBenchmarkWorker::runSequentialWrite() -> std::expected<void, sak::error_code> {
     const std::wstring wpath = testFilePath().toStdWString();
 
-    AlignedBuffer buf(kSequentialBlockSize, kSectorAlignment);
+    const AlignedBuffer buf(m_seq_block_bytes, kSectorAlignment);
     if (!buf.valid()) {
-        return;
+        return std::unexpected(sak::error_code::out_of_memory);
     }
 
     // Fill buffer with data
@@ -411,38 +885,44 @@ void DiskBenchmarkWorker::runSequentialWrite() {
     double best_mbps = 0.0;
 
     for (int pass = 0; pass < m_config.sequential_passes; ++pass) {
-        HANDLE h = CreateFileW(wpath.c_str(),
-                               GENERIC_WRITE,
-                               0,
-                               nullptr,
-                               CREATE_ALWAYS,
-                               FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH,
-                               nullptr);
+        // Overwrite the file createTestFile() already claimed (which is full-size)
+        // rather than re-creating the guessable path with CREATE_ALWAYS, which would
+        // follow a reparse point swapped in between subtests. See
+        // openBenchmarkFileForOverwrite.
+        HANDLE h = openBenchmarkFileForOverwrite(wpath);
 
         if (h == INVALID_HANDLE_VALUE) {
             logError("Sequential write: Failed to open test file");
-            return;
+            return std::unexpected(sak::error_code::write_error);
         }
 
         QElapsedTimer timer;
         timer.start();
 
-        size_t written_total = writeSequentialPass(h, buf.data(), buf.size(), total_bytes);
+        const size_t written_total = writeSequentialPass(h, buf.data(), buf.size(), total_bytes);
 
-        FlushFileBuffers(h);
-        const double elapsed_sec = timer.nsecsElapsed() / kNanosecondsPerSecond;
+        // Confirm the writes reached the device; an ignored FlushFileBuffers failure would
+        // score a non-durable pass as success.
+        const bool flush_ok = FlushFileBuffers(h) != 0;
+        CloseHandle(h);
+
+        const auto status =
+            classifyWritePass(written_total, total_bytes, flush_ok, stopRequested());
+        if (!status) {
+            return status;
+        }
+
+        const double elapsed_sec = static_cast<double>(timer.nsecsElapsed()) /
+                                   kNanosecondsPerSecond;
         const double mbps = static_cast<double>(written_total) / sak::kBytesPerMBf / elapsed_sec;
         best_mbps = std::max(best_mbps, mbps);
-
-        CloseHandle(h);
     }
 
     m_result.seq_write_mbps = best_mbps;
     logInfo("Sequential write: {:.0f} MB/s", best_mbps);
-#endif
+    return {};
 }
 
-#ifdef SAK_PLATFORM_WINDOWS
 size_t DiskBenchmarkWorker::writeSequentialPass(void* file_handle,
                                                 const uint8_t* buffer,
                                                 size_t bufSize,
@@ -450,102 +930,97 @@ size_t DiskBenchmarkWorker::writeSequentialPass(void* file_handle,
     HANDLE h = static_cast<HANDLE>(file_handle);
     size_t written_total = 0;
     while (written_total < total_bytes) {
+        // Stop promptly on cancellation; the short return fails the pass in the caller.
+        if (stopRequested()) {
+            break;
+        }
         DWORD bytes_written = 0;
         const DWORD to_write = static_cast<DWORD>(std::min(bufSize, total_bytes - written_total));
-        if (!WriteFile(h, buffer, to_write, &bytes_written, nullptr)) {
+        // A TRUE WriteFile that advanced 0 bytes would spin forever; treat a zero-byte
+        // (or failed) write as a stop so the caller fails the pass.
+        if (WriteFile(h, buffer, to_write, &bytes_written, nullptr) == 0 || bytes_written == 0) {
             break;
         }
         written_total += bytes_written;
     }
     return written_total;
 }
-#endif
 
 // ============================================================================
 // Random I/O Benchmarks
 // ============================================================================
 
-void DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
+auto DiskBenchmarkWorker::runRandom4KRead(int queue_depth,
                                           double& read_mbps,
                                           double& iops,
                                           double& avg_latency_us,
-                                          std::vector<double>* latencies_out) {
+                                          std::vector<double>* latencies_out)
+    -> std::expected<void, sak::error_code> {
+    // Guaranteed by validateQueueDepths(), which runs before any benchmark phase.
     Q_ASSERT_X(queue_depth > 0, "runRandom4KRead", "queue_depth must be positive");
-#ifdef SAK_PLATFORM_WINDOWS
     const std::wstring wpath = testFilePath().toStdWString();
 
-    HANDLE h = CreateFileW(wpath.c_str(),
-                           GENERIC_READ,
-                           FILE_SHARE_READ,
-                           nullptr,
-                           OPEN_EXISTING,
-                           FILE_FLAG_NO_BUFFERING | FILE_FLAG_RANDOM_ACCESS,
-                           nullptr);
+    HANDLE h = openRandomReadFile(wpath);
 
     if (h == INVALID_HANDLE_VALUE) {
         logError("Random read: Failed to open test file");
-        return;
+        return std::unexpected(sak::error_code::read_error);
     }
 
-    AlignedBuffer buf(kRandomBlockSize * static_cast<size_t>(queue_depth), kSectorAlignment);
+    AlignedBuffer buf(m_rand_block_bytes * static_cast<size_t>(queue_depth), kSectorAlignment);
     if (!buf.valid()) {
         CloseHandle(h);
-        return;
+        return std::unexpected(sak::error_code::out_of_memory);
     }
 
-    const uint64_t file_size = static_cast<uint64_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
-    const uint64_t max_offset = (file_size / kRandomBlockSize - 1) * kRandomBlockSize;
+    const uint64_t file_size = m_config.test_file_size_mb * sak::kBytesPerMB;
+    const uint64_t max_offset = ((file_size / m_rand_block_bytes) - 1) * m_rand_block_bytes;
     const int duration_ms = m_config.random_duration_sec * kBenchmarkMillisecondsPerSecond;
 
     std::vector<double> latencies;
     latencies.reserve(kLatencySampleReserve);
     uint64_t total_ops = 0;
     uint64_t total_bytes = 0;
-    RandomIoStats stats{latencies, total_ops, total_bytes};
+    uint64_t total_failures = 0;
+    RandomIoStats stats{latencies, total_ops, total_bytes, total_failures};
     const RandomIoLoopConfig loop_config{queue_depth, max_offset, duration_ms};
 
     const double elapsed_sec = runRandom4KReadLoop(h, buf.data(), loop_config, stats);
 
     CloseHandle(h);
 
+    if (!randomIoResultUsable(total_ops, total_failures)) {
+        logError("Random read: {} ops completed, {} failed -- disk error",
+                 total_ops,
+                 total_failures);
+        return std::unexpected(sak::error_code::read_error);
+    }
+
     iops = static_cast<double>(total_ops) / elapsed_sec;
     read_mbps = static_cast<double>(total_bytes) / sak::kBytesPerMBf / elapsed_sec;
 
-    if (!latencies.empty()) {
-        avg_latency_us = std::accumulate(latencies.begin(), latencies.end(), 0.0) /
-                         static_cast<double>(latencies.size());
-    }
+    finalizeLatencies(latencies, avg_latency_us, latencies_out);
 
-    if (latencies_out) {
-        *latencies_out = std::move(latencies);
-    }
-
-    logInfo("Random 4K read QD{}: {:.0f} IOPS, {:.1f} MB/s, {:.0f} us avg",
+    logInfo("Random {}K read QD{}: {:.0f} IOPS, {:.1f} MB/s, {:.0f} us avg",
+            m_rand_block_bytes / static_cast<size_t>(sak::kBytesPerKB),
             queue_depth,
             iops,
             read_mbps,
             avg_latency_us);
-#else
-    logWarning("Random 4K read benchmark requires Windows platform");
-    (void)queue_depth;
-    (void)read_mbps;
-    (void)iops;
-    (void)avg_latency_us;
-    (void)latencies_out;
-#endif
+    return {};
 }
 
-#ifdef SAK_PLATFORM_WINDOWS
 void DiskBenchmarkWorker::processRandomReadOp(
     void* file_handle, uint8_t* buf_data, int queue_index, uint64_t offset, RandomIoStats& stats) {
     HANDLE h = static_cast<HANDLE>(file_handle);
 
     LARGE_INTEGER li;
     li.QuadPart = static_cast<LONGLONG>(offset);
-    if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
-        logWarning("Random 4K read: SetFilePointerEx failed at offset {} (error {})",
+    if (SetFilePointerEx(h, li, nullptr, FILE_BEGIN) == 0) {
+        logWarning("Random read: SetFilePointerEx failed at offset {} (error {})",
                    offset,
                    GetLastError());
+        ++stats.total_failures;
         return;
     }
 
@@ -553,50 +1028,57 @@ void DiskBenchmarkWorker::processRandomReadOp(
     op_timer.start();
 
     DWORD bytes_read = 0;
-    if (!ReadFile(h,
-                  buf_data + queue_index * kRandomBlockSize,
-                  static_cast<DWORD>(kRandomBlockSize),
+    // A short read (bytes_read < block) with NO_BUFFERING and an in-bounds aligned
+    // offset is a real disk error, not a completed op -- count it as a failure so one
+    // success cannot mask many partial/failed reads and report garbage IOPS.
+    if ((ReadFile(h,
+                  buf_data + (queue_index * m_rand_block_bytes),
+                  static_cast<DWORD>(m_rand_block_bytes),
                   &bytes_read,
-                  nullptr)) {
-        logWarning("Random 4K read: ReadFile failed at offset {} (error {})",
+                  nullptr) == 0) ||
+        bytes_read != static_cast<DWORD>(m_rand_block_bytes)) {
+        logWarning("Random read: short/failed ReadFile at offset {} (error {})",
                    offset,
                    GetLastError());
+        ++stats.total_failures;
         return;
     }
 
-    stats.latencies.push_back(op_timer.nsecsElapsed() / kNanosecondsPerMicrosecond);
+    const double latency_us = static_cast<double>(op_timer.nsecsElapsed()) /
+                              kNanosecondsPerMicrosecond;
+    recordLatencySample(stats.latencies, stats.total_ops, latency_us);
     stats.total_bytes += bytes_read;
     ++stats.total_ops;
 }
-#endif
 
-#ifdef SAK_PLATFORM_WINDOWS
 double DiskBenchmarkWorker::runRandom4KReadLoop(void* file_handle,
                                                 uint8_t* buf_data,
                                                 const RandomIoLoopConfig& config,
                                                 RandomIoStats& stats) {
     std::mt19937_64 rng(kRandomReadOffsetSeed);
-    std::uniform_int_distribution<uint64_t> offset_dist(0, config.max_offset / kRandomBlockSize);
+    std::uniform_int_distribution<uint64_t> offset_dist(0, config.max_offset / m_rand_block_bytes);
 
     QElapsedTimer total_timer;
     total_timer.start();
 
+    // NOTE: each op is issued and completed synchronously on one non-overlapped
+    // handle, so a queue_depth > 1 measures serialized (effectively QD1) latency, not
+    // true concurrent queue depth. This is a known benchmark-fidelity limitation, not
+    // a correctness/data bug; true QD would require overlapped/async I/O.
     while (total_timer.elapsed() < config.duration_ms) {
         if (stopRequested()) {
             break;
         }
 
         for (int queue_index = 0; queue_index < config.queue_depth; ++queue_index) {
-            const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
+            const uint64_t offset = offset_dist(rng) * m_rand_block_bytes;
             processRandomReadOp(file_handle, buf_data, queue_index, offset, stats);
         }
     }
 
-    return total_timer.nsecsElapsed() / kNanosecondsPerSecond;
+    return static_cast<double>(total_timer.nsecsElapsed()) / kNanosecondsPerSecond;
 }
-#endif
 
-#ifdef SAK_PLATFORM_WINDOWS
 void DiskBenchmarkWorker::processRandomWriteOp(void* file_handle,
                                                const uint8_t* buf_data,
                                                int queue_index,
@@ -606,10 +1088,11 @@ void DiskBenchmarkWorker::processRandomWriteOp(void* file_handle,
 
     LARGE_INTEGER li;
     li.QuadPart = static_cast<LONGLONG>(offset);
-    if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN)) {
-        logWarning("Random 4K write: SetFilePointerEx failed at offset {} (error {})",
+    if (SetFilePointerEx(h, li, nullptr, FILE_BEGIN) == 0) {
+        logWarning("Random write: SetFilePointerEx failed at offset {} (error {})",
                    offset,
                    GetLastError());
+        ++stats.total_failures;
         return;
     }
 
@@ -617,30 +1100,35 @@ void DiskBenchmarkWorker::processRandomWriteOp(void* file_handle,
     op_timer.start();
 
     DWORD bytes_written = 0;
-    if (!WriteFile(h,
-                   buf_data + queue_index * kRandomBlockSize,
-                   static_cast<DWORD>(kRandomBlockSize),
+    // A short write (bytes_written < block) with NO_BUFFERING and an in-bounds aligned
+    // offset is a real disk error, not a completed op -- count it as a failure so one
+    // success cannot mask many partial/failed writes and report garbage IOPS.
+    if ((WriteFile(h,
+                   buf_data + (queue_index * m_rand_block_bytes),
+                   static_cast<DWORD>(m_rand_block_bytes),
                    &bytes_written,
-                   nullptr)) {
-        logWarning("Random 4K write: WriteFile failed at offset {} (error {})",
+                   nullptr) == 0) ||
+        bytes_written != static_cast<DWORD>(m_rand_block_bytes)) {
+        logWarning("Random write: short/failed WriteFile at offset {} (error {})",
                    offset,
                    GetLastError());
+        ++stats.total_failures;
         return;
     }
 
-    stats.latencies.push_back(op_timer.nsecsElapsed() / kNanosecondsPerMicrosecond);
+    const double latency_us = static_cast<double>(op_timer.nsecsElapsed()) /
+                              kNanosecondsPerMicrosecond;
+    recordLatencySample(stats.latencies, stats.total_ops, latency_us);
     stats.total_bytes += bytes_written;
     ++stats.total_ops;
 }
-#endif
 
-#ifdef SAK_PLATFORM_WINDOWS
 double DiskBenchmarkWorker::runRandom4KWriteLoop(void* file_handle,
                                                  const uint8_t* buf_data,
                                                  const RandomIoLoopConfig& config,
                                                  RandomIoStats& stats) {
     std::mt19937_64 rng(kRandomWriteOffsetSeed);
-    std::uniform_int_distribution<uint64_t> offset_dist(0, config.max_offset / kRandomBlockSize);
+    std::uniform_int_distribution<uint64_t> offset_dist(0, config.max_offset / m_rand_block_bytes);
 
     QElapsedTimer total_timer;
     total_timer.start();
@@ -651,85 +1139,80 @@ double DiskBenchmarkWorker::runRandom4KWriteLoop(void* file_handle,
         }
 
         for (int queue_index = 0; queue_index < config.queue_depth; ++queue_index) {
-            const uint64_t offset = offset_dist(rng) * kRandomBlockSize;
+            const uint64_t offset = offset_dist(rng) * m_rand_block_bytes;
             processRandomWriteOp(file_handle, buf_data, queue_index, offset, stats);
         }
     }
 
-    return total_timer.nsecsElapsed() / kNanosecondsPerSecond;
+    return static_cast<double>(total_timer.nsecsElapsed()) / kNanosecondsPerSecond;
 }
-#endif
 
-void DiskBenchmarkWorker::runRandom4KWrite(int queue_depth,
+// See runRandom4KRead: validateTestFileSize() guarantees the depth before execute() runs.
+auto DiskBenchmarkWorker::runRandom4KWrite(int queue_depth,
                                            double& write_mbps,
                                            double& iops,
                                            double& avg_latency_us,
-                                           std::vector<double>* latencies_out) {
-    Q_ASSERT_X(queue_depth > 0, "runRandom4KWrite", "queue_depth must be positive");
-#ifdef SAK_PLATFORM_WINDOWS
+                                           std::vector<double>* latencies_out)
+    -> std::expected<void, sak::error_code> {
     const std::wstring wpath = testFilePath().toStdWString();
 
     HANDLE h = openRandomWriteFile(wpath);
 
     if (h == INVALID_HANDLE_VALUE) {
         logError("Random write: Failed to open test file");
-        return;
+        return std::unexpected(sak::error_code::write_error);
     }
 
-    AlignedBuffer buf(kRandomBlockSize * static_cast<size_t>(queue_depth), kSectorAlignment);
+    AlignedBuffer buf(m_rand_block_bytes * static_cast<size_t>(queue_depth), kSectorAlignment);
     if (!buf.valid()) {
         CloseHandle(h);
-        return;
+        return std::unexpected(sak::error_code::out_of_memory);
     }
 
     fillRandomWriteBuffer(buf);
 
-    const uint64_t file_size = static_cast<uint64_t>(m_config.test_file_size_mb) * sak::kBytesPerMB;
-    const uint64_t max_offset = (file_size / kRandomBlockSize - 1) * kRandomBlockSize;
+    const uint64_t file_size = m_config.test_file_size_mb * sak::kBytesPerMB;
+    const uint64_t max_offset = ((file_size / m_rand_block_bytes) - 1) * m_rand_block_bytes;
 
     std::vector<double> latencies;
     latencies.reserve(kLatencySampleReserve);
     uint64_t total_ops = 0;
     uint64_t total_bytes = 0;
-    RandomIoStats stats{latencies, total_ops, total_bytes};
+    uint64_t total_failures = 0;
+    RandomIoStats stats{latencies, total_ops, total_bytes, total_failures};
     const RandomIoLoopConfig loop_config{
         queue_depth, max_offset, m_config.random_duration_sec * kBenchmarkMillisecondsPerSecond};
 
     const double elapsed_sec = runRandom4KWriteLoop(h, buf.data(), loop_config, stats);
 
     CloseHandle(h);
+
+    if (!randomIoResultUsable(total_ops, total_failures)) {
+        logError("Random write: {} ops completed, {} failed -- disk error",
+                 total_ops,
+                 total_failures);
+        return std::unexpected(sak::error_code::write_error);
+    }
+
     setRandomWriteResults(total_ops, total_bytes, elapsed_sec, write_mbps, iops);
 
-    if (!latencies.empty()) {
-        avg_latency_us = std::accumulate(latencies.begin(), latencies.end(), 0.0) /
-                         static_cast<double>(latencies.size());
-    }
+    finalizeLatencies(latencies, avg_latency_us, latencies_out);
 
-    if (latencies_out) {
-        *latencies_out = std::move(latencies);
-    }
-
-    logInfo("Random 4K write QD{}: {:.0f} IOPS, {:.1f} MB/s, {:.0f} us avg",
+    logInfo("Random {}K write QD{}: {:.0f} IOPS, {:.1f} MB/s, {:.0f} us avg",
+            m_rand_block_bytes / static_cast<size_t>(sak::kBytesPerKB),
             queue_depth,
             iops,
             write_mbps,
             avg_latency_us);
-#else
-    logWarning("Random 4K write benchmark requires Windows platform");
-    (void)queue_depth;
-    (void)write_mbps;
-    (void)iops;
-    (void)avg_latency_us;
-    (void)latencies_out;
-#endif
+    return {};
 }
 
 double DiskBenchmarkWorker::calculateP99(std::vector<double>& latencies) const {
     if (latencies.empty()) {
         return 0.0;
     }
-    std::sort(latencies.begin(), latencies.end());
-    const size_t idx = static_cast<size_t>(latencies.size() * kP99Percentile);
+    std::ranges::sort(latencies);
+    const size_t idx = static_cast<size_t>(static_cast<double>(latencies.size()) * kP99Percentile);
     return latencies[std::min(idx, latencies.size() - 1)];
 }
 

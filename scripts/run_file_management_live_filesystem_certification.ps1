@@ -10,19 +10,28 @@
 
 [CmdletBinding()]
 param(
+    [ValidateRange(-1, [int]::MaxValue)]
     [int]$DiskNumber = -1,
+    [ValidateRange(-1, [int]::MaxValue)]
     [int]$ApfsPartitionNumber = -1,
+    [ValidateRange(-1, [int]::MaxValue)]
     [int]$HfsPartitionNumber = -1,
     [string]$CertifierPath = "",
     [string]$OutputRoot = "artifacts\file-management-live-certification",
     [string]$ExpectedSerialNumber = "",
     [string]$ExpectedFriendlyNamePattern = "",
+    [ValidateRange(1, [int]::MaxValue)]
     [int]$MaxDepth = 8,
+    [ValidateRange(1, [int]::MaxValue)]
     [int]$MaxDirectories = 512,
+    [ValidateRange(1, [int]::MaxValue)]
     [int]$MaxEntries = 1024,
+    [ValidateRange(1, [uint64]::MaxValue)]
     [uint64]$ReadMaxBytes = 1048576,
+    [ValidateRange(1, [int]::MaxValue)]
     [int]$WorkerTimeoutMs = 180000,
     [switch]$Destructive,
+    [switch]$AllowForeignApfsDestructive,
     [switch]$SkipApfs,
     [switch]$SkipHfs,
     [switch]$AllowBootOrSystemDisk,
@@ -30,6 +39,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+. (Join-Path $PSScriptRoot "process_capture.ps1")
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $AppleHfsGptType = "{48465300-0000-11aa-aa11-00306543ecac}"
@@ -54,8 +65,36 @@ function ConvertTo-QuotedProcessArgument {
     if ($null -eq $Value) {
         return '""'
     }
-    $escaped = $Value -replace '`', '``' -replace '"', '`"'
-    return '"' + $escaped + '"'
+    # Quote with the CommandLineToArgvW rules the elevated child actually parses:
+    # a run of backslashes is doubled only when it precedes a double quote (or the
+    # closing quote), and each embedded double quote is escaped as \". Backtick
+    # substitution would not survive that parse and could split a value (for example
+    # an OutputRoot ending in a backslash) into extra arguments.
+    $builder = [System.Text.StringBuilder]::new()
+    [void]$builder.Append('"')
+    $backslashes = 0
+    foreach ($char in $Value.ToCharArray()) {
+        if ($char -eq '\') {
+            $backslashes++
+        }
+        elseif ($char -eq '"') {
+            [void]$builder.Append([char]'\', ($backslashes * 2) + 1)
+            [void]$builder.Append('"')
+            $backslashes = 0
+        }
+        else {
+            if ($backslashes -gt 0) {
+                [void]$builder.Append([char]'\', $backslashes)
+                $backslashes = 0
+            }
+            [void]$builder.Append($char)
+        }
+    }
+    if ($backslashes -gt 0) {
+        [void]$builder.Append([char]'\', $backslashes * 2)
+    }
+    [void]$builder.Append('"')
+    return $builder.ToString()
 }
 
 function ConvertTo-ProcessArgumentString {
@@ -67,7 +106,11 @@ function Resolve-CertifierPath {
     param([string]$Path)
 
     if (-not [string]::IsNullOrWhiteSpace($Path)) {
-        return (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+        $resolved = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+        if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+            throw "CertifierPath does not resolve to a file: $resolved"
+        }
+        return $resolved
     }
     $candidate = Join-Path $ProjectRoot "build\Release\file_management_live_certifier.exe"
     if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
@@ -106,15 +149,28 @@ function Select-TargetDisk {
     }
 
     $candidates = @($allDisks | Where-Object {
-            $parts = @(Get-Partition -DiskNumber $_.Number -ErrorAction SilentlyContinue)
-            -not $_.IsBoot -and
-            -not $_.IsSystem -and
-            $_.PartitionStyle -eq "GPT" -and
-            @($parts | Where-Object { "$($_.GptType)".ToLowerInvariant() -eq $AppleApfsGptType }).Count -gt 0 -and
-            @($parts | Where-Object { "$($_.GptType)".ToLowerInvariant() -eq $AppleHfsGptType }).Count -gt 0
+            $candidateDisk = $_
+            try {
+                $parts = @(Get-Partition -DiskNumber $candidateDisk.Number -ErrorAction Stop)
+            }
+            catch {
+                if ($_.CategoryInfo.Category -eq 'ObjectNotFound') {
+                    $parts = @()
+                }
+                else {
+                    throw "Partition enumeration failed for disk $($candidateDisk.Number): $($_.Exception.Message). Pass -DiskNumber to target explicitly."
+                }
+            }
+            $hasApfs = @($parts | Where-Object { "$($_.GptType)".ToLowerInvariant() -eq $AppleApfsGptType }).Count -gt 0
+            $hasHfs = @($parts | Where-Object { "$($_.GptType)".ToLowerInvariant() -eq $AppleHfsGptType }).Count -gt 0
+            -not $candidateDisk.IsBoot -and
+            -not $candidateDisk.IsSystem -and
+            $candidateDisk.PartitionStyle -eq "GPT" -and
+            ($SkipApfs -or $hasApfs) -and
+            ($SkipHfs -or $hasHfs)
         })
     if ($candidates.Count -ne 1) {
-        throw "Expected exactly one non-boot GPT disk with APFS and HFS+ partitions; found $($candidates.Count). Pass -DiskNumber."
+        throw "Expected exactly one non-boot GPT disk matching the requested APFS/HFS+ families; found $($candidates.Count). Pass -DiskNumber."
     }
     return $candidates[0]
 }
@@ -168,6 +224,9 @@ if (-not (Test-IsAdmin)) {
     if ($Destructive) {
         $argsList.Add("-Destructive")
     }
+    if ($AllowForeignApfsDestructive) {
+        $argsList.Add("-AllowForeignApfsDestructive")
+    }
     if ($SkipApfs) {
         $argsList.Add("-SkipApfs")
     }
@@ -178,8 +237,15 @@ if (-not (Test-IsAdmin)) {
         $argsList.Add("-AllowBootOrSystemDisk")
     }
 
+    if ([string]::IsNullOrWhiteSpace($env:SystemRoot)) {
+        throw "SystemRoot is not set; refusing to resolve the elevated interpreter by name."
+    }
+    $powerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    if (-not (Test-Path -LiteralPath $powerShellExe -PathType Leaf)) {
+        throw "Windows PowerShell was not found at its system path: $powerShellExe"
+    }
     $startInfo = @{
-        FilePath = "powershell.exe"
+        FilePath = $powerShellExe
         ArgumentList = (ConvertTo-ProcessArgumentString -ArgumentValues $argsList.ToArray())
         Verb = "RunAs"
     }
@@ -191,6 +257,10 @@ if (-not (Test-IsAdmin)) {
     $process = Start-Process @startInfo
     $process.WaitForExit()
     exit $process.ExitCode
+}
+
+if ($NoWait) {
+    Write-Warning "-NoWait applies only when the script must self-elevate; this session is already elevated, so certification runs synchronously."
 }
 
 $certifier = Resolve-CertifierPath -Path $CertifierPath
@@ -234,10 +304,10 @@ if (-not $SkipApfs -and -not $apfs) {
 if (-not $SkipHfs -and -not $hfs) {
     throw "Disk $($disk.Number) has no HFS+ partition."
 }
-if ($Destructive -and $apfs) {
+if ($Destructive -and $apfs -and -not $AllowForeignApfsDestructive) {
     $maxGeneratedSingleChunkBytes = [uint64]134217728
     if ([uint64]$apfs.Size -gt $maxGeneratedSingleChunkBytes) {
-        throw "APFS destructive live certification currently requires a 64-128 MiB S.A.K.-generated one-spaceman-chunk APFS partition; selected partition is $($apfs.Size) bytes."
+        throw "APFS destructive live certification defaults to a 64-128 MiB S.A.K.-generated one-spaceman-chunk APFS partition; selected partition is $($apfs.Size) bytes. Pass -AllowForeignApfsDestructive for real Apple / multi-chunk containers."
     }
 }
 
@@ -270,6 +340,10 @@ if ($hfs) {
 $inventory | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $inventoryPath -Encoding UTF8
 
 $reportPath = Join-Path $output "file-management-live-certification.json"
+if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+    # A fresh run must never inherit a previous run's report as its own evidence.
+    Remove-Item -LiteralPath $reportPath -Force
+}
 $certifierArgs = @(
     "--output", $reportPath,
     "--max-depth", [string]$MaxDepth,
@@ -280,6 +354,9 @@ $certifierArgs = @(
 )
 if ($Destructive) {
     $certifierArgs += "--destructive"
+}
+if ($AllowForeignApfsDestructive) {
+    $certifierArgs += "--allow-foreign-apfs-destructive"
 }
 if ($apfs) {
     $certifierArgs += @(
@@ -294,23 +371,26 @@ if ($hfs) {
     )
 }
 
-$previousErrorActionPreference = $ErrorActionPreference
-try {
-    $ErrorActionPreference = "Continue"
-    $certifierOutput = & $certifier @certifierArgs 2>&1
-    $exitCode = $LASTEXITCODE
-}
-finally {
-    $ErrorActionPreference = $previousErrorActionPreference
-}
-foreach ($line in $certifierOutput) {
-    Write-Host "$line"
+$certifierProcess = Invoke-CapturedProcess -FilePath $certifier -Arguments $certifierArgs
+$exitCode = [int]$certifierProcess.exit_code
+foreach ($stream in @($certifierProcess.stdout, $certifierProcess.stderr)) {
+    if (-not [string]::IsNullOrWhiteSpace($stream)) {
+        foreach ($line in ($stream -split "`r?`n")) {
+            Write-Host $line
+        }
+    }
 }
 $status = if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
     (Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json).status
 }
 else {
     "MissingReport"
+}
+
+if ($status -ne "Passed" -and $exitCode -eq 0) {
+    # The certifier couples exit 0 with a freshly written "Passed" report. Exiting 0
+    # without one means the report is missing or failed -- fail closed.
+    $exitCode = 1
 }
 
 Write-Host "File Management live certification status: $status"

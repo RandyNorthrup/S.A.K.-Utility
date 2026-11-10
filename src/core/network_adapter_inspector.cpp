@@ -9,8 +9,11 @@
 #endif
 #include "sak/network_adapter_inspector.h"
 
+#include "sak/logger.h"
+
 #include <QCoreApplication>
 
+#include <limits>
 #include <memory>
 
 #include <winsock2.h>
@@ -27,7 +30,6 @@
 namespace {
 
 constexpr unsigned long kInitialBufferSize = 15'000;
-constexpr int kMacAddrLen = 6;
 constexpr uint64_t kGigabit = 1'000'000'000ULL;
 constexpr uint64_t kMegabit = 1'000'000ULL;
 constexpr uint64_t kKilobit = 1000ULL;
@@ -39,25 +41,30 @@ constexpr int kIpv4OctetShift1 = 8;
 
 constexpr ULONG kGetAdapterFlags = GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS;
 
-bool tryIpv4String(const sockaddr* sa, QString& out) {
-    if (sa == nullptr || sa->sa_family != AF_INET) {
+// @p sa_len is the SOCKET_ADDRESS::iSockaddrLength that accompanies @p sa. It is validated
+// against the fixed sockaddr the family implies BEFORE the reinterpret_cast, so a short or
+// malformed record can never drive an out-of-bounds read past the supplied buffer.
+bool tryIpv4String(const sockaddr* sa, int sa_len, QString& out) {
+    if (sa == nullptr || sa_len < static_cast<int>(sizeof(sockaddr_in)) ||
+        sa->sa_family != AF_INET) {
         return false;
     }
 
     char ipBuf[INET_ADDRSTRLEN] = {};
-    auto* sa4 = reinterpret_cast<const sockaddr_in*>(sa);
+    const auto* sa4 = reinterpret_cast<const sockaddr_in*>(sa);
     inet_ntop(AF_INET, &sa4->sin_addr, ipBuf, sizeof(ipBuf));
     out = QString::fromLatin1(ipBuf);
     return true;
 }
 
-bool tryIpv6String(const sockaddr* sa, QString& out) {
-    if (sa == nullptr || sa->sa_family != AF_INET6) {
+bool tryIpv6String(const sockaddr* sa, int sa_len, QString& out) {
+    if (sa == nullptr || sa_len < static_cast<int>(sizeof(sockaddr_in6)) ||
+        sa->sa_family != AF_INET6) {
         return false;
     }
 
     char ipBuf[INET6_ADDRSTRLEN] = {};
-    auto* sa6 = reinterpret_cast<const sockaddr_in6*>(sa);
+    const auto* sa6 = reinterpret_cast<const sockaddr_in6*>(sa);
     inet_ntop(AF_INET6, &sa6->sin6_addr, ipBuf, sizeof(ipBuf));
     out = QString::fromLatin1(ipBuf);
     return true;
@@ -96,22 +103,23 @@ QString adapterTypeFromIfType(ULONG ifType) {
     }
 }
 
-bool tryQueryAdapterAddresses(std::unique_ptr<uint8_t[]>& buffer,
-                              PIP_ADAPTER_ADDRESSES& addresses,
-                              ULONG& result) {
+// Populates `result` with the terminal GetAdaptersAddresses status. The caller checks that
+// out-param for success/failure, so this helper reports nothing via its return.
+void queryAdapterAddresses(std::unique_ptr<uint8_t[]>& buffer,
+                           PIP_ADAPTER_ADDRESSES& addresses,
+                           ULONG& result) {
     ULONG bufferSize = kInitialBufferSize;
     buffer = std::make_unique<uint8_t[]>(bufferSize);
     addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.get());
 
     result = GetAdaptersAddresses(AF_UNSPEC, kGetAdapterFlags, nullptr, addresses, &bufferSize);
     if (result != ERROR_BUFFER_OVERFLOW) {
-        return true;
+        return;
     }
 
     buffer = std::make_unique<uint8_t[]>(bufferSize);
     addresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buffer.get());
     result = GetAdaptersAddresses(AF_UNSPEC, kGetAdapterFlags, nullptr, addresses, &bufferSize);
-    return true;
 }
 
 void populateDhcpInfo(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
@@ -121,18 +129,20 @@ void populateDhcpInfo(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo&
     }
 
     QString ip;
-    if (tryIpv4String(addr->Dhcpv4Server.lpSockaddr, ip)) {
+    if (tryIpv4String(addr->Dhcpv4Server.lpSockaddr, addr->Dhcpv4Server.iSockaddrLength, ip)) {
         info.dhcpServer = ip;
     }
 }
 
 void populateUnicastAddresses(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
+    // Sole caller is buildAdapterInfo(), which is itself only reached with a non-null addr.
     Q_ASSERT(addr);
     for (auto* ua = addr->FirstUnicastAddress; ua != nullptr; ua = ua->Next) {
         const auto* sa = ua->Address.lpSockaddr;
+        const int sa_len = ua->Address.iSockaddrLength;
 
         QString ip;
-        if (tryIpv4String(sa, ip)) {
+        if (tryIpv4String(sa, sa_len, ip)) {
             info.ipv4Addresses.append(ip);
 
             const auto maskStr = subnetMaskFromPrefixLength(ua->OnLinkPrefixLength);
@@ -142,7 +152,7 @@ void populateUnicastAddresses(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdap
             continue;
         }
 
-        if (tryIpv6String(sa, ip)) {
+        if (tryIpv6String(sa, sa_len, ip)) {
             info.ipv6Addresses.append(ip);
         }
     }
@@ -151,13 +161,14 @@ void populateUnicastAddresses(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdap
 void populateGateways(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
     for (auto* gw = addr->FirstGatewayAddress; gw != nullptr; gw = gw->Next) {
         const auto* sa = gw->Address.lpSockaddr;
+        const int sa_len = gw->Address.iSockaddrLength;
 
         QString ip;
-        if (tryIpv4String(sa, ip)) {
+        if (tryIpv4String(sa, sa_len, ip)) {
             info.ipv4Gateway = ip;
             continue;
         }
-        if (tryIpv6String(sa, ip)) {
+        if (tryIpv6String(sa, sa_len, ip)) {
             info.ipv6Gateway = ip;
         }
     }
@@ -166,13 +177,14 @@ void populateGateways(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo&
 void populateDnsServers(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInfo& info) {
     for (auto* dns = addr->FirstDnsServerAddress; dns != nullptr; dns = dns->Next) {
         const auto* sa = dns->Address.lpSockaddr;
+        const int sa_len = dns->Address.iSockaddrLength;
 
         QString ip;
-        if (tryIpv4String(sa, ip)) {
+        if (tryIpv4String(sa, sa_len, ip)) {
             info.ipv4DnsServers.append(ip);
             continue;
         }
-        if (tryIpv6String(sa, ip)) {
+        if (tryIpv6String(sa, sa_len, ip)) {
             info.ipv6DnsServers.append(ip);
         }
     }
@@ -181,7 +193,14 @@ void populateDnsServers(const IP_ADAPTER_ADDRESSES* addr, sak::NetworkAdapterInf
 void populateIfStats(ULONG ifIndex, sak::NetworkAdapterInfo& info) {
     MIB_IF_ROW2 ifRow{};
     ifRow.InterfaceIndex = ifIndex;
-    if (GetIfEntry2(&ifRow) != NO_ERROR) {
+    const DWORD status = GetIfEntry2(&ifRow);
+    if (status != NO_ERROR) {
+        // Surface the failed stats read instead of leaving the counters at their zero
+        // defaults, where a failure is indistinguishable from genuine zero traffic. The
+        // NetworkAdapterInfo struct carries no stats-valid field, so report via the log.
+        sak::logWarning("GetIfEntry2 failed for interface index {}: error {}",
+                        static_cast<unsigned long>(ifIndex),
+                        static_cast<unsigned long>(status));
         return;
     }
 
@@ -194,6 +213,7 @@ void populateIfStats(ULONG ifIndex, sak::NetworkAdapterInfo& info) {
 }
 
 sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr) {
+    // Sole caller is enumerateAdapters(), whose loop condition is addr != nullptr.
     Q_ASSERT(addr);
     sak::NetworkAdapterInfo info;
 
@@ -210,15 +230,17 @@ sak::NetworkAdapterInfo buildAdapterInfo(const IP_ADAPTER_ADDRESSES* addr) {
         info.adapterType = QStringLiteral("Bluetooth");
     }
 
-    // MAC
-    if (addr->PhysicalAddressLength > 0) {
+    // MAC. PhysicalAddress is a fixed MAX_ADAPTER_ADDRESS_LENGTH-byte array; clamp the
+    // length against it so a malformed PhysicalAddressLength cannot read past the buffer.
+    if (addr->PhysicalAddressLength > 0 &&
+        addr->PhysicalAddressLength <= MAX_ADAPTER_ADDRESS_LENGTH) {
         info.macAddress = sak::NetworkAdapterInspector::formatMacAddress(
             addr->PhysicalAddress, addr->PhysicalAddressLength);
     }
 
     // -- Status --
     info.isConnected = (addr->OperStatus == IfOperStatusUp);
-    info.linkSpeedBps = addr->TransmitLinkSpeed;
+    info.linkSpeedBps = sak::NetworkAdapterInspector::knownLinkSpeed(addr->TransmitLinkSpeed);
     info.mediaState = info.isConnected ? QStringLiteral("Connected")
                                        : QStringLiteral("Disconnected");
 
@@ -246,12 +268,25 @@ namespace sak {
 NetworkAdapterInspector::NetworkAdapterInspector(QObject* parent) : QObject(parent) {}
 
 void NetworkAdapterInspector::scan() {
-    auto adapters = enumerateAdapters();
+    bool ok = false;
+    auto adapters = enumerateAdapters(ok);
+    if (!ok) {
+        // enumerateAdapters already emitted errorOccurred. Do NOT also emit a
+        // success-shaped scanComplete for a failed enumeration -- that would let a
+        // caller report a failed scan as a complete "0 adapters" result (fail closed).
+        return;
+    }
     Q_EMIT scanComplete(adapters);
 }
 
 void NetworkAdapterInspector::refresh() {
     scan();
+}
+
+uint64_t NetworkAdapterInspector::knownLinkSpeed(uint64_t reported_bps) {
+    // Windows reports a disconnected adapter's speed as the largest 64-bit value, which read
+    // "18446744073709 Mbps" on testpc1's Wi-Fi adapters. It means not known.
+    return reported_bps == std::numeric_limits<uint64_t>::max() ? 0 : reported_bps;
 }
 
 QString NetworkAdapterInspector::formatLinkSpeed(uint64_t bps) {
@@ -286,13 +321,14 @@ QString NetworkAdapterInspector::formatMacAddress(const unsigned char* addr, uns
     return mac;
 }
 
-QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters() {
+QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters(bool& ok) {
+    ok = false;
     QVector<NetworkAdapterInfo> adapters;
 
     std::unique_ptr<uint8_t[]> buffer;
     PIP_ADAPTER_ADDRESSES addresses = nullptr;
     ULONG result = NO_ERROR;
-    tryQueryAdapterAddresses(buffer, addresses, result);
+    queryAdapterAddresses(buffer, addresses, result);
 
     if (result != NO_ERROR) {
         Q_EMIT errorOccurred(
@@ -300,10 +336,11 @@ QVector<NetworkAdapterInfo> NetworkAdapterInspector::enumerateAdapters() {
         return adapters;
     }
 
-    for (auto addr = addresses; addr != nullptr; addr = addr->Next) {
+    for (auto* addr = addresses; addr != nullptr; addr = addr->Next) {
         adapters.append(buildAdapterInfo(addr));
     }
 
+    ok = true;
     return adapters;
 }
 

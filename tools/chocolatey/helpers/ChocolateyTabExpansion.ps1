@@ -463,7 +463,7 @@ else { # PowerShell v5+: use the Register-ArgumentCompleter cmdlet (PowerShell n
         # NOTE:
         # * The stringified form of $commandAst is the command's own command line (irrespective of
         #   whether other statements are on the same line or whether it is part of a pipeline).
-        # * However, trailing whitespace is trimmed in the string representation of $commandAst.
+        # * However, trailing whitespace is trimmed in the string representation of $commandAst. 
         #   Therefore, when the actual command line ends in space(s), they must be added back
         #   so that ChocolateyTabExpansion recognizes the start of a new argument.
         $ownCommandLine = [string] $commandAst

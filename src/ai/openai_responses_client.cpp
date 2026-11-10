@@ -3,9 +3,7 @@
 
 #include "sak/ai/openai_responses_client.h"
 
-#include "sak/ai/ai_credential_store.h"
 #include "sak/layout_constants.h"
-#include "sak/logger.h"
 #include "sak/version.h"
 
 #include <QJsonArray>
@@ -18,6 +16,8 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <optional>
 
 namespace sak::ai {
@@ -32,8 +32,29 @@ constexpr int kPackageToolTimeoutMaxSeconds = 7200;
 constexpr int kSessionSearchMaxResults = kPercentMax;
 constexpr qsizetype kMinimumOpenAiApiKeyLength = 20;
 
+// Hard cap on an OpenAI HTTP response body before it is parsed and copied (JSON DOM,
+// raw_json, joined output). A Responses/models JSON document is at most a few MiB;
+// 64 MiB is generous while bounding a hostile or oversized endpoint (e.g. a MITM or
+// redirected peer) from amplifying memory through repeated copies. Fails closed.
+constexpr qint64 kMaxResponseBodyBytes = 64LL * 1024 * 1024;
+constexpr char kBodyLimitErrorProperty[] = "sakOpenAiBodyLimitError";
+
 [[nodiscard]] QString firstNonEmptyError(const QString& first, const QString& fallback) {
     return first.trimmed().isEmpty() ? fallback : first;
+}
+
+[[nodiscard]] QString bodyLimitRejection(const QNetworkReply* reply) {
+    return reply->property(kBodyLimitErrorProperty).toString();
+}
+
+void rejectReplyForBodyLimit(QNetworkReply* reply, const QString& limit_error) {
+    if (!bodyLimitRejection(reply).isEmpty()) {
+        return;
+    }
+    reply->setProperty(kBodyLimitErrorProperty, limit_error);
+    if (!reply->isFinished()) {
+        reply->abort();
+    }
 }
 
 [[nodiscard]] QString contentTextFromValue(const QJsonValue& value) {
@@ -55,6 +76,13 @@ constexpr qsizetype kMinimumOpenAiApiKeyLength = 20;
             const QString text = item.value(QStringLiteral("text")).toString();
             if (!text.isEmpty()) {
                 parts.append(text);
+            }
+        } else if (type == QLatin1String("refusal")) {
+            // Surface a model refusal as visible output rather than dropping it, which
+            // would otherwise degrade into a misleading "no output text" error.
+            const QString refusal = item.value(QStringLiteral("refusal")).toString();
+            if (!refusal.isEmpty()) {
+                parts.append(refusal);
             }
         }
     }
@@ -87,10 +115,16 @@ void collectCitationsFromValue(const QJsonValue& value, QVector<OpenAIUrlCitatio
 }
 
 std::optional<QJsonObject> responseRootObject(const QByteArray& data, QString* error_message) {
+    if (data.size() > kMaxResponseBodyBytes) {
+        if (error_message != nullptr) {
+            *error_message = QStringLiteral("OpenAI response body exceeds the size limit");
+        }
+        return std::nullopt;
+    }
     QJsonParseError parse_error;
     const auto doc = QJsonDocument::fromJson(data, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = firstNonEmptyError(parse_error.errorString(),
                                                 QStringLiteral("Invalid OpenAI response JSON"));
         }
@@ -98,7 +132,7 @@ std::optional<QJsonObject> responseRootObject(const QByteArray& data, QString* e
     }
     const QString api_error = OpenAIResponsesClient::extractApiError(data);
     if (!api_error.isEmpty()) {
-        if (error_message) {
+        if (error_message != nullptr) {
             *error_message = api_error;
         }
         return std::nullopt;
@@ -106,14 +140,79 @@ std::optional<QJsonObject> responseRootObject(const QByteArray& data, QString* e
     return doc.object();
 }
 
-void appendFunctionCallFromOutputItem(OpenAIResponseResult* result, const QJsonObject& item) {
+// Return a non-empty error if the response is flagged incomplete (e.g. truncated by
+// max_output_tokens), else an empty string.
+[[nodiscard]] QString incompleteResponseError(const QJsonObject& root) {
+    if (root.value(QStringLiteral("status")).toString() != QStringLiteral("incomplete")) {
+        return {};
+    }
+    const QString reason = root.value(QStringLiteral("incomplete_details"))
+                               .toObject()
+                               .value(QStringLiteral("reason"))
+                               .toString();
+    return reason.isEmpty() ? QStringLiteral("OpenAI response is incomplete")
+                            : QStringLiteral("OpenAI response is incomplete: %1").arg(reason);
+}
+
+// Return a non-empty error if the response terminated in a failed state. A status of
+// "failed" carries no usable output and may include partial/dangerous tool calls, so it
+// must fail closed rather than be treated as a normal (empty) completion.
+[[nodiscard]] QString failedResponseError(const QJsonObject& root) {
+    if (root.value(QStringLiteral("status")).toString() != QStringLiteral("failed")) {
+        return {};
+    }
+    const QString reason =
+        root.value(QStringLiteral("error")).toObject().value(QStringLiteral("message")).toString();
+    return reason.isEmpty() ? QStringLiteral("OpenAI response failed")
+                            : QStringLiteral("OpenAI response failed: %1").arg(reason);
+}
+
+// Non-empty when the response reached any non-success state that must fail closed
+// instead of being read as a usable answer.
+[[nodiscard]] QString terminalResponseError(const QJsonObject& root) {
+    const QString incomplete = incompleteResponseError(root);
+    if (!incomplete.isEmpty()) {
+        return incomplete;
+    }
+    const QString failed = failedResponseError(root);
+    if (!failed.isEmpty()) {
+        return failed;
+    }
+    // Fail closed on any other non-success status. The synchronous /v1/responses
+    // endpoint returns a terminal response object; a status that is present but not
+    // "completed" (cancelled, in_progress, queued, or an unrecognized/wrong-typed
+    // value) carries no output that can be trusted, so it must not be read as an
+    // answer. A response with no status field (never produced by the live endpoint,
+    // but used by unit fixtures) is left to the normal output/empty checks.
+    const QJsonValue status_value = root.value(QStringLiteral("status"));
+    if (status_value.isUndefined() || status_value.isNull()) {
+        return {};
+    }
+    if (!status_value.isString()) {
+        return QStringLiteral("OpenAI response status was not a string");
+    }
+    const QString status = status_value.toString();
+    if (status != QStringLiteral("completed")) {
+        return QStringLiteral("OpenAI response is not complete (status: %1)").arg(status);
+    }
+    return {};
+}
+
+// Returns false when the item is a function_call missing its call_id or name -- a
+// structurally-broken tool call. Such an item must poison the whole response rather than
+// be silently dropped: dropping it would let a well-formed sibling call execute from a set
+// the model only partially emitted, defeating atomic batch rejection downstream.
+[[nodiscard]] bool appendFunctionCallFromOutputItem(OpenAIResponseResult* result,
+                                                    const QJsonObject& item) {
     OpenAIFunctionCall call;
     call.call_id = item.value(QStringLiteral("call_id")).toString();
     call.name = item.value(QStringLiteral("name")).toString();
     call.arguments_json = item.value(QStringLiteral("arguments")).toString();
-    if (!call.call_id.isEmpty() && !call.name.isEmpty()) {
-        result->function_calls.append(call);
+    if (call.call_id.isEmpty() || call.name.isEmpty()) {
+        return false;
     }
+    result->function_calls.append(call);
+    return true;
 }
 
 void appendMessageFromOutputItem(OpenAIResponseResult* result,
@@ -127,17 +226,54 @@ void appendMessageFromOutputItem(OpenAIResponseResult* result,
     collectCitationsFromValue(content_value, result->citations);
 }
 
-void appendOutputItem(OpenAIResponseResult* result,
-                      QStringList* output_parts,
-                      const QJsonObject& item) {
+// Returns false only when a function_call item is structurally broken (see
+// appendFunctionCallFromOutputItem); other item types never fail parsing here.
+[[nodiscard]] bool appendOutputItem(OpenAIResponseResult* result,
+                                    QStringList* output_parts,
+                                    const QJsonObject& item) {
     const QString type = item.value(QStringLiteral("type")).toString();
     if (type == QLatin1String("function_call")) {
-        appendFunctionCallFromOutputItem(result, item);
-        return;
+        return appendFunctionCallFromOutputItem(result, item);
     }
     if (type == QLatin1String("message")) {
         appendMessageFromOutputItem(result, output_parts, item);
     }
+    return true;
+}
+
+// Parse the response "output" array into result/output_parts. Returns false (and sets a
+// non-empty error) when any function_call item is structurally broken, so the whole
+// response fails closed instead of dispatching a well-formed sibling from a partially
+// parsed set.
+[[nodiscard]] bool collectResponseOutput(const QJsonObject& root,
+                                         OpenAIResponseResult* result,
+                                         QStringList* output_parts,
+                                         QString* error_message) {
+    const auto output = root.value(QStringLiteral("output")).toArray();
+    for (const auto& output_value : output) {
+        if (!appendOutputItem(result, output_parts, output_value.toObject())) {
+            if (error_message != nullptr) {
+                *error_message = QStringLiteral(
+                    "OpenAI response contained a function call missing its call_id or name");
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+// Report a terminal (non-success) response through the optional error out-parameter.
+// Returns true when the response terminated in a non-success state and the caller must
+// fail closed, dropping any partial output/calls.
+[[nodiscard]] bool reportTerminalResponseError(const QJsonObject& root, QString* error_message) {
+    const QString terminal = terminalResponseError(root);
+    if (terminal.isEmpty()) {
+        return false;
+    }
+    if (error_message != nullptr) {
+        *error_message = terminal;
+    }
+    return true;
 }
 
 QJsonArray functionOutputInputItems(const QVector<OpenAIFunctionOutput>& outputs) {
@@ -157,6 +293,30 @@ QJsonObject textContentItem(const QString& text) {
     item[QStringLiteral("type")] = QStringLiteral("input_text");
     item[QStringLiteral("text")] = text;
     return item;
+}
+
+QString untrustedInputMessageError(const OpenAIResponseRequest& request) {
+    if (!request.validation_error.trimmed().isEmpty()) {
+        return request.validation_error.trimmed();
+    }
+    for (qsizetype index = 0; index < request.untrusted_input_messages.size(); ++index) {
+        const OpenAIInputMessage& message = request.untrusted_input_messages.at(index);
+        if (message.role != OpenAIInputMessageRole::User) {
+            return QStringLiteral("OpenAI untrusted input message %1 has an unsupported role")
+                .arg(index);
+        }
+        if (message.text.trimmed().isEmpty()) {
+            return QStringLiteral("OpenAI untrusted input message %1 is empty").arg(index);
+        }
+    }
+    return {};
+}
+
+QJsonObject userTextInputMessage(const QString& text) {
+    QJsonObject message;
+    message[QStringLiteral("role")] = QStringLiteral("user");
+    message[QStringLiteral("content")] = QJsonArray{textContentItem(text)};
+    return message;
 }
 
 QJsonObject textAttachmentItem(const OpenAIInputAttachment& attachment) {
@@ -214,7 +374,7 @@ QJsonObject attachmentContentItem(const OpenAIInputAttachment& attachment) {
     return item;
 }
 
-QJsonArray attachmentInput(const OpenAIResponseRequest& request) {
+QJsonObject attachmentInputMessage(const OpenAIResponseRequest& request) {
     QJsonArray content;
     content.append(textContentItem(request.input));
     for (const auto& attachment : request.attachments) {
@@ -223,10 +383,9 @@ QJsonArray attachmentInput(const OpenAIResponseRequest& request) {
             content.append(item);
         }
     }
-    QJsonObject message;
-    message[QStringLiteral("role")] = QStringLiteral("user");
+    QJsonObject message = userTextInputMessage(request.input);
     message[QStringLiteral("content")] = content;
-    return QJsonArray{message};
+    return message;
 }
 
 QJsonObject stringParameter(const QString& description) {
@@ -394,8 +553,8 @@ QJsonObject packageTool() {
 }
 
 QJsonObject offlinePackageArrayParameter() {
-    QJsonObject package_id = stringParameter(QStringLiteral("Chocolatey package id."));
-    QJsonObject version =
+    const QJsonObject package_id = stringParameter(QStringLiteral("Chocolatey package id."));
+    const QJsonObject version =
         stringParameter(QStringLiteral("Pinned package version, empty for latest."));
     QJsonObject item_properties;
     item_properties[QStringLiteral("package_id")] = package_id;
@@ -451,18 +610,13 @@ QJsonObject offlineTool() {
 
 QJsonObject providerGatewayTool() {
     QJsonObject operation = stringParameter(QStringLiteral(
-        "Operation to run: providers, provider_status, docs_query, win32_mcp_call, app_manifest, "
-        "app_capabilities, app_run_action_plan, app_run_action."));
+        "Operation to run: providers, provider_status, docs_query, win32_mcp_call."));
     operation[QStringLiteral("enum")] = QJsonArray{QStringLiteral("providers"),
                                                    QStringLiteral("provider_status"),
                                                    QStringLiteral("docs_query"),
-                                                   QStringLiteral("win32_mcp_call"),
-                                                   QStringLiteral("app_manifest"),
-                                                   QStringLiteral("app_capabilities"),
-                                                   QStringLiteral("app_run_action_plan"),
-                                                   QStringLiteral("app_run_action")};
+                                                   QStringLiteral("win32_mcp_call")};
 
-    QJsonObject arguments = stringParameter(
+    const QJsonObject arguments = stringParameter(
         QStringLiteral("JSON object string for provider-specific arguments. Use {} when unused. "
                        "For win32_mcp_call use {\"tool_name\":\"...\",\"tool_arguments\":{...},"
                        "\"timeout_ms\":20000}. For Context7 docs_query use {\"libraryId\":\"...\"} "
@@ -472,30 +626,23 @@ QJsonObject providerGatewayTool() {
     properties[QStringLiteral("operation")] = operation;
     properties[QStringLiteral("provider_id")] =
         stringParameter(QStringLiteral("Provider id, e.g. microsoft_docs, context7, win32_mcp."));
-    properties[QStringLiteral("app_id")] = stringParameter(
-        QStringLiteral("App manifest id, e.g. windows_defender, superantispyware, windows_sfc."));
-    properties[QStringLiteral("action")] =
-        stringParameter(QStringLiteral("Requested app action, e.g. quick_scan or verify_only."));
     properties[QStringLiteral("query")] =
         stringParameter(QStringLiteral("Documentation or provider query; empty when unused."));
     properties[QStringLiteral("arguments")] = arguments;
 
     return functionTool(QStringLiteral("sak_provider_gateway"),
-                        QStringLiteral("Use S.A.K. Utility's bundled provider/app-control "
-                                       "registry. Use this before raw shell probing when checking "
-                                       "MCP providers, app manifests, or whether an app action is "
-                                       "supported. Use operation=docs_query for Microsoft Learn "
-                                       "MCP or Context7 public documentation lookup. Use "
+                        QStringLiteral("Use S.A.K. Utility's bundled provider registry. Use this "
+                                       "before raw shell probing when checking MCP providers. Use "
+                                       "operation=docs_query for Microsoft Learn MCP or Context7 "
+                                       "public documentation lookup. Use "
                                        "operation=win32_mcp_call for bundled Win32 MCP desktop "
-                                       "automation when local tools are enabled. Use "
-                                       "operation=app_run_action only for supported app manifest "
-                                       "actions. Access mode and tool risk determine "
-                                       "confirmation/security profile."),
+                                       "automation when local tools are enabled. Access mode and "
+                                       "tool risk determine confirmation/security profile. App "
+                                       "maintenance such as Microsoft Defender scans runs through "
+                                       "sak_app_action."),
                         properties,
                         QJsonArray{QStringLiteral("operation"),
                                    QStringLiteral("provider_id"),
-                                   QStringLiteral("app_id"),
-                                   QStringLiteral("action"),
                                    QStringLiteral("query"),
                                    QStringLiteral("arguments")});
 }
@@ -514,6 +661,122 @@ QJsonObject sessionSearchTool() {
                                        "current issue against earlier sessions."),
                         properties,
                         QJsonArray{QStringLiteral("query"), QStringLiteral("max_results")});
+}
+
+QJsonObject skillTool() {
+    QJsonObject operation = stringParameter(
+        QStringLiteral("Which action to take: \"list\" returns the skill catalog (id, title, "
+                       "description, when-to-use); \"load\" returns the full guidance body for one "
+                       "skill_id."));
+    operation[QStringLiteral("enum")] = QJsonArray{QStringLiteral("list"), QStringLiteral("load")};
+
+    QJsonObject properties;
+    properties[QStringLiteral("operation")] = operation;
+    properties[QStringLiteral("skill_id")] = stringParameter(
+        QStringLiteral("Skill id to load when operation is \"load\" (taken from the catalog). Pass "
+                       "an empty string when operation is \"list\"."));
+
+    return functionTool(
+        QStringLiteral("sak_skill"),
+        QStringLiteral(
+            "List and load reusable task-guidance skills. Call operation=\"list\" to discover "
+            "available skills (id, description, when to use), then operation=\"load\" with a "
+            "skill_id to read the full guidance before performing a matching task. Read-only "
+            "guidance lookup with no PC, disk, or network access."),
+        properties,
+        QJsonArray{QStringLiteral("operation"), QStringLiteral("skill_id")});
+}
+
+QJsonObject delegateSubagentTool() {
+    QJsonObject tool_policy = stringParameter(QStringLiteral(
+        "Optional capability ceiling for the sub-agent, clamped to this session's access mode (the "
+        "sub-agent can never be more permissive than the session). Omit or use "
+        "\"read_only_pc\" for a read/diagnose sub-agent."));
+    tool_policy[QStringLiteral("enum")] = QJsonArray{QStringLiteral("no_local_execution"),
+                                                     QStringLiteral("read_only_pc"),
+                                                     QStringLiteral("download_only"),
+                                                     QStringLiteral("package_tools_only"),
+                                                     QStringLiteral("mutating_requires_lease"),
+                                                     QStringLiteral("exclusive_mutating_executor")};
+
+    QJsonObject properties;
+    properties[QStringLiteral("objective")] = stringParameter(QStringLiteral(
+        "The single, self-contained task for the sub-agent, written as a complete instruction. "
+        "Include the context it needs; the sub-agent does not see the chat history."));
+    properties[QStringLiteral("tool_policy")] = tool_policy;
+    properties[QStringLiteral("expected_output")] = stringParameter(QStringLiteral(
+        "Short description of the result you want back (e.g. \"root-cause summary + fix steps\"). "
+        "The sub-agent returns a structured JSON result you then use."));
+
+    return functionTool(
+        QStringLiteral("delegate_subagent"),
+        QStringLiteral(
+            "Delegate one scoped sub-task to a focused sub-agent and get its structured result "
+            "back. Use this to parallelize independent investigation, isolate a noisy/large "
+            "sub-task from the main thread, or run a specialist step (diagnose, research, verify) "
+            "without cluttering this conversation. You remain the overseer: delegate concrete, "
+            "self-contained objectives, then synthesize the sub-agent's result. For a large "
+            "multi-step technician procedure, prefer a declared workflow instead."),
+        properties,
+        QJsonArray{QStringLiteral("objective"),
+                   QStringLiteral("tool_policy"),
+                   QStringLiteral("expected_output")});
+}
+
+QJsonObject runWorkflowTool() {
+    QJsonObject properties;
+    properties[QStringLiteral("workflow_id")] = stringParameter(QStringLiteral(
+        "The id of a workflow from the workflow catalog shown in your context (the value in "
+        "brackets, e.g. \"browser_issue_cleanup\")."));
+    properties[QStringLiteral("input_values")] = stringParameter(QStringLiteral(
+        "A JSON object, encoded as a string, mapping each of the workflow's required input ids to "
+        "its value, e.g. {\"app_name\":\"Chrome\"}. Use \"{}\" if it needs none. If you are "
+        "missing "
+        "a required input, ask the user for it before calling this."));
+
+    return functionTool(
+        QStringLiteral("run_workflow"),
+        QStringLiteral(
+            "Run a declared multi-step S.A.K. Utility workflow from the catalog end-to-end and get "
+            "its structured result back. Use this for a full technician procedure that the catalog "
+            "already covers (multi-phase diagnose/repair/verify with its own agents and gates) "
+            "instead of driving each step yourself. Each phase is independently gated as it runs. "
+            "Provide all required inputs; for a single scoped step prefer delegate_subagent."),
+        properties,
+        QJsonArray{QStringLiteral("workflow_id"), QStringLiteral("input_values")});
+}
+
+QJsonObject appActionTool() {
+    QJsonObject operation = stringParameter(QStringLiteral(
+        "\"list\" enumerates S.A.K. Utility's own built-in technician actions (id, title, "
+        "description, category, and risk flags: read_only/mutating/destructive/requires_admin); "
+        "\"run\" executes one action by id."));
+    operation[QStringLiteral("enum")] = QJsonArray{QStringLiteral("list"), QStringLiteral("run")};
+
+    QJsonObject properties;
+    properties[QStringLiteral("operation")] = operation;
+    properties[QStringLiteral("action_id")] = stringParameter(QStringLiteral(
+        "Action id to run when operation is \"run\" (taken from the list). Empty string for "
+        "\"list\"."));
+    properties[QStringLiteral("arguments")] = stringParameter(QStringLiteral(
+        "JSON object of arguments for the action, passed as a string (e.g. \"{}\"). Most actions "
+        "take none; pass \"{}\"."));
+
+    return functionTool(
+        QStringLiteral("sak_app_action"),
+        QStringLiteral(
+            "Enumerate and run S.A.K. Utility's OWN built-in technician actions headless -- the "
+            "same operations the app's panels perform (system file repair, disk checks, network "
+            "reset, power optimization, reports, backups, and more). Call operation=\"list\" first "
+            "to discover actions and their risk flags, then operation=\"run\" with an action_id. "
+            "PREFER these app actions over raw run_powershell when an action already covers the "
+            "task. Assisted Full Access confirms every non-read-only action; Unattended Full "
+            "Access may run non-catastrophic actions without confirmation; Catastrophic actions "
+            "always require explicit confirmation. A restore point is offered when eligible and "
+            "must not be claimed unless creation succeeds."),
+        properties,
+        QJsonArray{
+            QStringLiteral("operation"), QStringLiteral("action_id"), QStringLiteral("arguments")});
 }
 
 QJsonArray localToolDefinitions() {
@@ -541,17 +804,32 @@ QJsonArray localToolDefinitions() {
     tools.append(offlineTool());
     tools.append(providerGatewayTool());
     tools.append(sessionSearchTool());
+    tools.append(skillTool());
+    tools.append(delegateSubagentTool());
+    tools.append(runWorkflowTool());
+    tools.append(appActionTool());
     return tools;
 }
 
 QJsonValue responseInputValue(const OpenAIResponseRequest& request) {
-    if (!request.function_outputs.isEmpty()) {
-        return functionOutputInputItems(request.function_outputs);
+    const bool has_function_outputs = !request.function_outputs.isEmpty();
+    const bool has_untrusted_messages = !request.untrusted_input_messages.isEmpty();
+    const bool has_attachments = !request.attachments.isEmpty();
+    if (!has_function_outputs && !has_untrusted_messages && !has_attachments) {
+        return request.input;
     }
-    if (!request.attachments.isEmpty()) {
-        return attachmentInput(request);
+
+    QJsonArray input_items;
+    if (has_function_outputs) {
+        input_items = functionOutputInputItems(request.function_outputs);
     }
-    return request.input;
+    for (const OpenAIInputMessage& message : request.untrusted_input_messages) {
+        input_items.append(userTextInputMessage(message.text));
+    }
+    if (!has_function_outputs && (!request.input.isEmpty() || has_attachments)) {
+        input_items.append(attachmentInputMessage(request));
+    }
+    return input_items;
 }
 
 QJsonObject reasoningObject(const OpenAIResponseRequest& request) {
@@ -580,11 +858,19 @@ QJsonArray enabledToolDefinitions(const OpenAIResponseRequest& request) {
 void appendResponseOptionalFields(QJsonObject* root, const OpenAIResponseRequest& request) {
     const QString previous_response_id = request.previous_response_id.trimmed();
     const QString safety_identifier = request.safety_identifier.trimmed();
+    const QString truncation = request.truncation.trimmed();
+    const QString prompt_cache_key = request.prompt_cache_key.trimmed();
     if (!previous_response_id.isEmpty()) {
         root->insert(QStringLiteral("previous_response_id"), previous_response_id);
     }
     if (!safety_identifier.isEmpty()) {
         root->insert(QStringLiteral("safety_identifier"), safety_identifier);
+    }
+    if (!truncation.isEmpty()) {
+        root->insert(QStringLiteral("truncation"), truncation);
+    }
+    if (!prompt_cache_key.isEmpty()) {
+        root->insert(QStringLiteral("prompt_cache_key"), prompt_cache_key);
     }
     const QJsonObject reasoning = reasoningObject(request);
     if (!reasoning.isEmpty()) {
@@ -604,12 +890,15 @@ void appendResponseTools(QJsonObject* root, const OpenAIResponseRequest& request
 }  // namespace
 
 OpenAIResponsesClient::OpenAIResponsesClient(QObject* parent) : QObject(parent) {
-    m_network_manager.setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
+    // Fail closed on redirects: only follow a redirect that stays on the same origin as
+    // api.openai.com. A cross-origin redirect from an untrusted/MITM peer could otherwise
+    // carry the Authorization bearer token and the prompt/attachment payload to another
+    // host. The OpenAI JSON endpoints do not redirect cross-origin.
+    m_network_manager.setRedirectPolicy(QNetworkRequest::SameOriginRedirectPolicy);
 }
 
 OpenAIResponsesClient::~OpenAIResponsesClient() {
     cancel();
-    cancelInputTokenCount();
 }
 
 void OpenAIResponsesClient::createResponse(const OpenAIResponseRequest& request) {
@@ -625,7 +914,13 @@ void OpenAIResponsesClient::createResponse(const OpenAIResponseRequest& request)
         Q_EMIT requestFailed(QStringLiteral("OpenAI model is empty"));
         return;
     }
-    if (request.input.trimmed().isEmpty() && request.function_outputs.isEmpty()) {
+    const QString input_message_error = untrustedInputMessageError(request);
+    if (!input_message_error.isEmpty()) {
+        Q_EMIT requestFailed(input_message_error);
+        return;
+    }
+    if (request.input.trimmed().isEmpty() && request.function_outputs.isEmpty() &&
+        request.untrusted_input_messages.isEmpty()) {
         Q_EMIT requestFailed(QStringLiteral("Message is empty"));
         return;
     }
@@ -633,38 +928,7 @@ void OpenAIResponsesClient::createResponse(const OpenAIResponseRequest& request)
     auto network_request = buildRequest(QStringLiteral("/v1/responses"), request.api_key);
     const QByteArray payload = buildResponsePayload(request);
     auto* reply = m_network_manager.post(network_request, payload);
-    setCurrentReply(reply);
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        handleCreateFinished(reply);
-    });
-    Q_EMIT requestStarted();
-}
-
-void OpenAIResponsesClient::countInputTokens(const OpenAIResponseRequest& request,
-                                             const QString& request_id) {
-    if (!hasUsableApiKey(request.api_key)) {
-        Q_EMIT inputTokenCountFailed(request_id,
-                                     QStringLiteral("OpenAI API key is missing or too short"));
-        return;
-    }
-    if (request.model.trimmed().isEmpty()) {
-        Q_EMIT inputTokenCountFailed(request_id, QStringLiteral("OpenAI model is empty"));
-        return;
-    }
-
-    cancelInputTokenCount();
-    auto network_request = buildRequest(QStringLiteral("/v1/responses/input_tokens"),
-                                        request.api_key);
-    auto count_request = request;
-    count_request.safety_identifier.clear();
-    const QByteArray payload = buildResponsePayload(count_request);
-    auto* reply = m_network_manager.post(network_request, payload);
-    m_input_tokens_reply = reply;
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply, request_id]() {
-        handleInputTokenCountFinished(reply, request_id);
-    });
+    attachCreateReply(reply, kMaxResponseBodyBytes);
 }
 
 void OpenAIResponsesClient::listModels(const QString& api_key) {
@@ -685,15 +949,23 @@ void OpenAIResponsesClient::listModels(const QString& api_key) {
         handleModelsFinished(reply);
     });
     Q_EMIT requestStarted();
+    watchReplyBody(reply,
+                   kMaxResponseBodyBytes,
+                   QStringLiteral("OpenAI model list body exceeds the size limit"));
 }
 
 void OpenAIResponsesClient::cancel() {
-    if (!m_current_reply) {
+    if (m_current_reply == nullptr) {
         return;
     }
 
     auto* reply = m_current_reply;
     m_current_reply = nullptr;
+    // Detach our finished handler first: abort() fires finished synchronously, which
+    // would otherwise run handleCreateFinished and emit requestFailed("Operation
+    // canceled") plus a second requestFinished(), making the UI record the user's
+    // deliberate stop as a failed request.
+    reply->disconnect(this);
     reply->abort();
     reply->deleteLater();
     Q_EMIT requestFinished();
@@ -701,7 +973,7 @@ void OpenAIResponsesClient::cancel() {
 
 OpenAIResponseResult OpenAIResponsesClient::parseResponseObject(const QByteArray& data,
                                                                 QString* error_message) {
-    if (error_message) {
+    if (error_message != nullptr) {
         error_message->clear();
     }
 
@@ -716,9 +988,11 @@ OpenAIResponseResult OpenAIResponsesClient::parseResponseObject(const QByteArray
     result.usage = TokenUsageTracker::fromJson(root->value(QStringLiteral("usage")).toObject());
 
     QStringList output_parts;
-    const auto output = root->value(QStringLiteral("output")).toArray();
-    for (const auto& output_value : output) {
-        appendOutputItem(&result, &output_parts, output_value.toObject());
+    // A function_call item missing its call_id or name is structurally broken; fail
+    // closed on the whole response instead of dropping the item, so a well-formed
+    // sibling call can never be dispatched from a partially-parsed set.
+    if (!collectResponseOutput(*root, &result, &output_parts, error_message)) {
+        return {};
     }
 
     result.output_text = output_parts.join(QStringLiteral("\n"));
@@ -726,95 +1000,141 @@ OpenAIResponseResult OpenAIResponsesClient::parseResponseObject(const QByteArray
         result.output_text = root->value(QStringLiteral("output_text")).toString();
     }
 
+    // A non-success status (e.g. "incomplete" from max_output_tokens) can carry a
+    // truncated tool call with invalid JSON arguments; treating it as complete would let
+    // a partial/dangerous call (e.g. a half-formed delete path) reach dispatch. Fail
+    // closed and drop any partial output/calls, regardless of whether the caller asked
+    // for an error string, so a nullptr error_message can never turn a terminal-error
+    // response into a usable partial result.
+    if (reportTerminalResponseError(*root, error_message)) {
+        return {};
+    }
+
     if (result.output_text.trimmed().isEmpty() && result.function_calls.isEmpty() &&
-        error_message) {
+        (error_message != nullptr)) {
         *error_message = QStringLiteral("OpenAI response had no output text");
     }
     return result;
 }
 
-QStringList OpenAIResponsesClient::parseModelsList(const QByteArray& data, QString* error_message) {
-    if (error_message) {
-        error_message->clear();
+namespace {
+
+// Report a models-list failure through the optional out-parameter and fail closed.
+[[nodiscard]] std::optional<QJsonArray> modelsListError(QString* error_message,
+                                                        const QString& text) {
+    if (error_message != nullptr) {
+        *error_message = text;
+    }
+    return std::nullopt;
+}
+
+// Validate a models-list body and return its "data" array, or std::nullopt with a
+// non-empty error describing why the enumeration cannot be trusted: an oversized body,
+// malformed JSON, an API error envelope, or a missing/wrong-typed "data".
+[[nodiscard]] std::optional<QJsonArray> modelsListDataArray(const QByteArray& data,
+                                                            QString* error_message) {
+    if (data.size() > kMaxResponseBodyBytes) {
+        return modelsListError(error_message,
+                               QStringLiteral("OpenAI model list body exceeds the size limit"));
     }
 
     QJsonParseError parse_error;
     const auto doc = QJsonDocument::fromJson(data, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (error_message) {
-            *error_message = firstNonEmptyError(parse_error.errorString(),
-                                                QStringLiteral("Invalid model list JSON"));
-        }
-        return {};
+        return modelsListError(error_message,
+                               firstNonEmptyError(parse_error.errorString(),
+                                                  QStringLiteral("Invalid model list JSON")));
     }
 
-    const QString api_error = extractApiError(data);
+    const QString api_error = OpenAIResponsesClient::extractApiError(data);
     if (!api_error.isEmpty()) {
-        if (error_message) {
-            *error_message = api_error;
-        }
+        return modelsListError(error_message, api_error);
+    }
+
+    // Fail closed on a malformed envelope: a missing or wrong-typed "data" must not be
+    // silently reported as a successful (empty) model enumeration.
+    const QJsonValue data_value = doc.object().value(QStringLiteral("data"));
+    if (!data_value.isArray()) {
+        return modelsListError(error_message,
+                               QStringLiteral("OpenAI model list is missing a data array"));
+    }
+    return data_value.toArray();
+}
+
+}  // namespace
+
+QStringList OpenAIResponsesClient::parseModelsList(const QByteArray& data, QString* error_message) {
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
+
+    const auto data_array = modelsListDataArray(data, error_message);
+    if (!data_array.has_value()) {
         return {};
     }
 
     QStringList models;
-    const auto data_array = doc.object().value(QStringLiteral("data")).toArray();
-    for (const auto& value : data_array) {
+    for (const auto& value : *data_array) {
         const QString id = value.toObject().value(QStringLiteral("id")).toString();
         if (!id.isEmpty()) {
             models.append(id);
         }
     }
     models.removeDuplicates();
-    std::sort(models.begin(), models.end(), [](const QString& left, const QString& right) {
+    std::ranges::sort(models, [](const QString& left, const QString& right) {
         return left.localeAwareCompare(right) < 0;
     });
     return models;
 }
 
+namespace {
+
+// Format the error message carried by a non-empty OpenAI error object.
+[[nodiscard]] QString describeApiErrorObject(const QJsonObject& error) {
+    const QString message = error.value(QStringLiteral("message")).toString();
+    const QString type = error.value(QStringLiteral("type")).toString();
+    if (!message.isEmpty() && !type.isEmpty()) {
+        return QStringLiteral("%1: %2").arg(type, message);
+    }
+    if (!message.isEmpty()) {
+        return message;
+    }
+    // An error object carrying a type/code but no human-readable message must still fail
+    // closed, not be read as a successful response with no error.
+    const QString code = error.value(QStringLiteral("code")).toString();
+    if (!type.isEmpty() || !code.isEmpty()) {
+        return QStringLiteral("OpenAI API error: %1").arg(type.isEmpty() ? code : type);
+    }
+    return QStringLiteral("OpenAI API returned an error");
+}
+
+}  // namespace
+
 QString OpenAIResponsesClient::extractApiError(const QByteArray& data) {
+    if (data.size() > kMaxResponseBodyBytes) {
+        return {};
+    }
     QJsonParseError parse_error;
     const auto doc = QJsonDocument::fromJson(data, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
         return {};
     }
 
-    const auto error = doc.object().value(QStringLiteral("error")).toObject();
+    const QJsonValue error_value = doc.object().value(QStringLiteral("error"));
+    // Absent or explicit null: no error. Anything else present is an error signal that
+    // must fail closed rather than be read as success, even when malformed.
+    if (error_value.isUndefined() || error_value.isNull()) {
+        return {};
+    }
+    if (!error_value.isObject()) {
+        return QStringLiteral("OpenAI API returned an error");
+    }
+
+    const QJsonObject error = error_value.toObject();
     if (error.isEmpty()) {
         return {};
     }
-
-    const QString message = error.value(QStringLiteral("message")).toString();
-    const QString type = error.value(QStringLiteral("type")).toString();
-    if (!message.isEmpty() && !type.isEmpty()) {
-        return QStringLiteral("%1: %2").arg(type, message);
-    }
-    return message;
-}
-
-qint64 OpenAIResponsesClient::parseInputTokenCountObject(const QByteArray& data,
-                                                         QString* error_message) {
-    if (error_message) {
-        error_message->clear();
-    }
-    const auto root = responseRootObject(data, error_message);
-    if (!root.has_value()) {
-        return -1;
-    }
-    const auto value = root->value(QStringLiteral("input_tokens"));
-    if (!value.isDouble()) {
-        if (error_message) {
-            *error_message = QStringLiteral("OpenAI input token count missing input_tokens");
-        }
-        return -1;
-    }
-    const qint64 tokens = static_cast<qint64>(value.toDouble());
-    if (tokens < 0) {
-        if (error_message) {
-            *error_message = QStringLiteral("OpenAI input token count was negative");
-        }
-        return -1;
-    }
-    return tokens;
+    return describeApiErrorObject(error);
 }
 
 bool OpenAIResponsesClient::hasUsableApiKey(const QString& api_key) noexcept {
@@ -823,7 +1143,7 @@ bool OpenAIResponsesClient::hasUsableApiKey(const QString& api_key) noexcept {
 
 QNetworkRequest OpenAIResponsesClient::buildRequest(const QString& path,
                                                     const QString& api_key) const {
-    QUrl url(QString::fromLatin1(kOpenAiBaseUrl) + path);
+    const QUrl url(QString::fromLatin1(kOpenAiBaseUrl) + path);
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setHeader(QNetworkRequest::UserAgentHeader,
@@ -832,7 +1152,7 @@ QNetworkRequest OpenAIResponsesClient::buildRequest(const QString& path,
     request.setRawHeader("Authorization", QStringLiteral("Bearer %1").arg(api_key).toUtf8());
     request.setTransferTimeout(kOpenAiTimeoutMs);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
+                         QNetworkRequest::SameOriginRedirectPolicy);
 
     QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
     ssl.setProtocol(QSsl::TlsV1_2OrLater);
@@ -840,13 +1160,18 @@ QNetworkRequest OpenAIResponsesClient::buildRequest(const QString& path,
     return request;
 }
 
+#ifdef SAK_AI_TEST_HOOKS
 QByteArray OpenAIResponsesClient::buildResponsePayloadForTesting(
     const OpenAIResponseRequest& request) {
-    OpenAIResponsesClient client;
+    const OpenAIResponsesClient client;
     return client.buildResponsePayload(request);
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 QByteArray OpenAIResponsesClient::buildResponsePayload(const OpenAIResponseRequest& request) const {
+    if (!untrustedInputMessageError(request).isEmpty()) {
+        return {};
+    }
     QJsonObject root;
     root[QStringLiteral("model")] = request.model.trimmed();
     root[QStringLiteral("instructions")] = request.instructions;
@@ -857,31 +1182,98 @@ QByteArray OpenAIResponsesClient::buildResponsePayload(const OpenAIResponseReque
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
+void OpenAIResponsesClient::attachCreateReply(QNetworkReply* reply, qint64 max_bytes) {
+    setCurrentReply(reply);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        handleCreateFinished(reply);
+    });
+    Q_EMIT requestStarted();
+    watchReplyBody(reply, max_bytes, QStringLiteral("OpenAI response body exceeds the size limit"));
+}
+
 void OpenAIResponsesClient::setCurrentReply(QNetworkReply* reply) {
+    // Both callers pass a reply straight from QNetworkAccessManager::post/get, which always
+    // returns a live object (errors arrive on the reply, never as a null pointer).
     Q_ASSERT(reply);
     m_current_reply = reply;
 }
 
-void OpenAIResponsesClient::clearCurrentReply(QNetworkReply* reply) {
+void OpenAIResponsesClient::clearCurrentReply(const QNetworkReply* reply) {
     if (m_current_reply == reply) {
         m_current_reply = nullptr;
     }
+}
+
+void OpenAIResponsesClient::watchReplyBody(QNetworkReply* reply,
+                                           qint64 max_bytes,
+                                           const QString& limit_error) {
+    Q_ASSERT(reply);
+    Q_ASSERT(max_bytes > 0 && max_bytes < std::numeric_limits<qint64>::max());
+    reply->setReadBufferSize(max_bytes + 1);
+    connect(reply, &QNetworkReply::readyRead, this, [reply, max_bytes, limit_error]() {
+        if (reply->bytesAvailable() > max_bytes) {
+            rejectReplyForBodyLimit(reply, limit_error);
+        }
+    });
+    connect(reply,
+            &QNetworkReply::downloadProgress,
+            this,
+            [reply, max_bytes, limit_error](qint64 received, qint64 total) {
+                if (received > max_bytes || total > max_bytes) {
+                    rejectReplyForBodyLimit(reply, limit_error);
+                }
+            });
+    bool declared = false;
+    const qint64 content_length =
+        reply->header(QNetworkRequest::ContentLengthHeader).toLongLong(&declared);
+    if (declared && content_length > max_bytes) {
+        rejectReplyForBodyLimit(reply, limit_error);
+    }
+}
+
+std::expected<QByteArray, QString> OpenAIResponsesClient::readBoundedReplyBody(
+    QNetworkReply* reply, qint64 max_bytes, const QString& limit_error) {
+    const QString rejection = bodyLimitRejection(reply);
+    if (!rejection.isEmpty()) {
+        return std::unexpected(rejection);
+    }
+    bool declared = false;
+    const qint64 content_length =
+        reply->header(QNetworkRequest::ContentLengthHeader).toLongLong(&declared);
+    if ((declared && content_length > max_bytes) || reply->bytesAvailable() > max_bytes) {
+        rejectReplyForBodyLimit(reply, limit_error);
+        return std::unexpected(limit_error);
+    }
+    const QByteArray body = reply->readAll();
+    if (body.size() > max_bytes) {
+        rejectReplyForBodyLimit(reply, limit_error);
+        return std::unexpected(limit_error);
+    }
+    return body;
 }
 
 void OpenAIResponsesClient::handleCreateFinished(QNetworkReply* reply) {
     clearCurrentReply(reply);
     reply->deleteLater();
 
-    const QByteArray body = reply->readAll();
+    const auto body =
+        readBoundedReplyBody(reply,
+                             kMaxResponseBodyBytes,
+                             QStringLiteral("OpenAI response body exceeds the size limit"));
+    if (!body) {
+        Q_EMIT requestFailed(body.error());
+        Q_EMIT requestFinished();
+        return;
+    }
     if (reply->error() != QNetworkReply::NoError) {
-        const QString api_error = extractApiError(body);
+        const QString api_error = extractApiError(*body);
         Q_EMIT requestFailed(firstNonEmptyError(api_error, reply->errorString()));
         Q_EMIT requestFinished();
         return;
     }
 
     QString parse_error;
-    const auto result = parseResponseObject(body, &parse_error);
+    const auto result = parseResponseObject(*body, &parse_error);
     if (!parse_error.isEmpty()) {
         Q_EMIT requestFailed(parse_error);
         Q_EMIT requestFinished();
@@ -896,16 +1288,24 @@ void OpenAIResponsesClient::handleModelsFinished(QNetworkReply* reply) {
     clearCurrentReply(reply);
     reply->deleteLater();
 
-    const QByteArray body = reply->readAll();
+    const auto body =
+        readBoundedReplyBody(reply,
+                             kMaxResponseBodyBytes,
+                             QStringLiteral("OpenAI model list body exceeds the size limit"));
+    if (!body) {
+        Q_EMIT requestFailed(body.error());
+        Q_EMIT requestFinished();
+        return;
+    }
     if (reply->error() != QNetworkReply::NoError) {
-        const QString api_error = extractApiError(body);
+        const QString api_error = extractApiError(*body);
         Q_EMIT requestFailed(firstNonEmptyError(api_error, reply->errorString()));
         Q_EMIT requestFinished();
         return;
     }
 
     QString parse_error;
-    const auto models = parseModelsList(body, &parse_error);
+    const auto models = parseModelsList(*body, &parse_error);
     if (!parse_error.isEmpty()) {
         Q_EMIT requestFailed(parse_error);
         Q_EMIT requestFinished();
@@ -914,40 +1314,6 @@ void OpenAIResponsesClient::handleModelsFinished(QNetworkReply* reply) {
 
     Q_EMIT modelsReady(models);
     Q_EMIT requestFinished();
-}
-
-void OpenAIResponsesClient::handleInputTokenCountFinished(QNetworkReply* reply,
-                                                          const QString& request_id) {
-    if (m_input_tokens_reply == reply) {
-        m_input_tokens_reply = nullptr;
-    }
-    reply->deleteLater();
-
-    const QByteArray body = reply->readAll();
-    if (reply->error() != QNetworkReply::NoError) {
-        const QString api_error = extractApiError(body);
-        Q_EMIT inputTokenCountFailed(request_id,
-                                     firstNonEmptyError(api_error, reply->errorString()));
-        return;
-    }
-
-    QString parse_error;
-    const qint64 tokens = parseInputTokenCountObject(body, &parse_error);
-    if (!parse_error.isEmpty()) {
-        Q_EMIT inputTokenCountFailed(request_id, parse_error);
-        return;
-    }
-    Q_EMIT inputTokenCountReady(request_id, tokens);
-}
-
-void OpenAIResponsesClient::cancelInputTokenCount() {
-    if (!m_input_tokens_reply) {
-        return;
-    }
-    auto* reply = m_input_tokens_reply;
-    m_input_tokens_reply = nullptr;
-    reply->abort();
-    reply->deleteLater();
 }
 
 }  // namespace sak::ai

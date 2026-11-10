@@ -2,124 +2,67 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_package_matcher.cpp
-/// @brief Unit tests for package name matching and fuzzy search
+/// @brief Unit tests for matching installed applications to Chocolatey packages
 
 #include "sak/package_matcher.h"
 
-#include <QFile>
-#include <QTemporaryDir>
 #include <QtTest/QtTest>
+
+#include <vector>
 
 class PackageMatcherTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // Constructor
-    void constructor_initializesCommonMappings();
+    // Mapping management
+    void addMapping_isWhatFindMatchFinds();
+    void addMapping_storesNothingBlank();
 
-    // Exact matching
-    void addMapping_canRetrieve();
-    void removeMapping_noLongerFound();
-    void hasMapping_existingKey();
-    void hasMapping_nonExistentKey();
-    void getMappingCount_afterAdd();
-
-    // Mapping export/import
-    void exportImport_roundTrip();
-
-    // Fuzzy matching internal -- via findMatch
+    // findMatch
     void findMatch_exactMapping();
+    void findMatch_caseInsensitive();
     void findMatch_noResult();
+    void findMatch_realDisplayNames_data();
+    void findMatch_realDisplayNames();
+    void normalizeAppName_data();
+    void normalizeAppName();
 
-    // Match config
-    void matchConfig_defaults();
-    void matchConfig_exactOnly();
-
-    // Stats
-    void stats_initiallyZero();
+    // applyMatches
+    void applyMatches_recordsTheTableMatchOnADesktopApp();
+    void applyMatches_leavesAnUnknownAppUnmatched();
+    void applyMatches_keepsTheIdChocolateyReported();
+    void applyMatches_dropsChocolateysOwnPackage();
+    void applyMatches_leavesStoreAppsUnmatched();
 
 private:
-    sak::AppScanner::AppInfo makeAppInfo(const QString& name) const;
+    static sak::AppScanner::AppInfo makeAppInfo(const QString& name);
 };
 
-sak::AppScanner::AppInfo PackageMatcherTests::makeAppInfo(const QString& name) const {
+sak::AppScanner::AppInfo PackageMatcherTests::makeAppInfo(const QString& name) {
     sak::AppScanner::AppInfo info;
     info.name = name;
     return info;
 }
 
 // ============================================================================
-// Constructor
-// ============================================================================
-
-void PackageMatcherTests::constructor_initializesCommonMappings() {
-    sak::PackageMatcher matcher;
-    // Should have some built-in mappings
-    QVERIFY(matcher.getMappingCount() > 0);
-}
-
-// ============================================================================
 // Mapping Management
 // ============================================================================
 
-void PackageMatcherTests::addMapping_canRetrieve() {
+void PackageMatcherTests::addMapping_isWhatFindMatchFinds() {
     sak::PackageMatcher matcher;
+    QVERIFY(!matcher.findMatch(makeAppInfo("Test App")).has_value());
     matcher.addMapping("Test App", "test-app-choco");
-    QVERIFY(matcher.hasMapping("Test App"));
-    QCOMPARE(matcher.getMapping("Test App"), QString("test-app-choco"));
+    const auto result = matcher.findMatch(makeAppInfo("Test App"));
+    QVERIFY(result.has_value());
+    QCOMPARE(result->choco_package, QString("test-app-choco"));
 }
 
-void PackageMatcherTests::removeMapping_noLongerFound() {
+void PackageMatcherTests::addMapping_storesNothingBlank() {
     sak::PackageMatcher matcher;
-    matcher.addMapping("ToRemove", "remove-pkg");
-    QVERIFY(matcher.hasMapping("ToRemove"));
-
-    matcher.removeMapping("ToRemove");
-    QVERIFY(!matcher.hasMapping("ToRemove"));
-}
-
-void PackageMatcherTests::hasMapping_existingKey() {
-    sak::PackageMatcher matcher;
-    matcher.addMapping("ExistingApp", "existing-pkg");
-    QVERIFY(matcher.hasMapping("ExistingApp"));
-}
-
-void PackageMatcherTests::hasMapping_nonExistentKey() {
-    sak::PackageMatcher matcher;
-    QVERIFY(!matcher.hasMapping("NonExistentApp_xyz_12345"));
-}
-
-void PackageMatcherTests::getMappingCount_afterAdd() {
-    sak::PackageMatcher matcher;
-    int initial = matcher.getMappingCount();
-
-    matcher.addMapping("NewApp1", "new-app-1");
-    matcher.addMapping("NewApp2", "new-app-2");
-
-    QCOMPARE(matcher.getMappingCount(), initial + 2);
-}
-
-// ============================================================================
-// Export / Import
-// ============================================================================
-
-void PackageMatcherTests::exportImport_roundTrip() {
-    QTemporaryDir tempDir;
-    QVERIFY(tempDir.isValid());
-    QString exportPath = tempDir.filePath("mappings.json");
-
-    sak::PackageMatcher original;
-    original.addMapping("UniqueTestApp", "unique-test-pkg");
-    [[maybe_unused]] int originalCount = original.getMappingCount();
-
-    original.exportMappings(exportPath);
-    QVERIFY(QFile::exists(exportPath));
-
-    sak::PackageMatcher imported;
-    imported.importMappings(exportPath);
-
-    QVERIFY(imported.hasMapping("UniqueTestApp"));
-    QCOMPARE(imported.getMapping("UniqueTestApp"), QString("unique-test-pkg"));
+    matcher.addMapping("Blank Package App", "");
+    QVERIFY(!matcher.findMatch(makeAppInfo("Blank Package App")).has_value());
+    matcher.addMapping("", "blank-name-package");
+    QVERIFY(!matcher.findMatch(makeAppInfo("")).has_value());
 }
 
 // ============================================================================
@@ -130,65 +73,178 @@ void PackageMatcherTests::findMatch_exactMapping() {
     sak::PackageMatcher matcher;
     matcher.addMapping("My Test Application", "my-test-app");
 
-    sak::PackageMatcher::MatchConfig cfg;
-    cfg.use_exact_mappings = true;
-    cfg.use_fuzzy_matching = false;
-    cfg.use_choco_search = false;
-
-    auto info = makeAppInfo("My Test Application");
-    auto result = matcher.findMatch(info, nullptr, cfg);
+    auto result = matcher.findMatch(makeAppInfo("My Test Application"));
 
     QVERIFY(result.has_value());
     QCOMPARE(result->choco_package, QString("my-test-app"));
-    QVERIFY(result->confidence > 0.9);
+    QCOMPARE(result->match_type, QString("exact"));
+    QCOMPARE(result->matched_name, QString("My Test"));
+    QVERIFY(result->available);
+    // Direct exact-mapping hit returns confidence 1.0 (not the 0.95 case-insensitive path).
+    QCOMPARE(result->confidence, 1.0);
+}
+
+void PackageMatcherTests::findMatch_caseInsensitive() {
+    sak::PackageMatcher matcher;
+
+    auto result = matcher.findMatch(makeAppInfo("Paint.NET"));
+
+    QVERIFY(result.has_value());
+    QCOMPARE(result->choco_package, QString("paint.net"));
+    QCOMPARE(result->confidence, 0.95);
 }
 
 void PackageMatcherTests::findMatch_noResult() {
     sak::PackageMatcher matcher;
+    QVERIFY(!matcher.findMatch(makeAppInfo("CompletelyUnknownApp_xyz_99999")).has_value());
+}
 
-    sak::PackageMatcher::MatchConfig cfg;
-    cfg.use_exact_mappings = true;
-    cfg.use_fuzzy_matching = false;
-    cfg.use_choco_search = false;
+void PackageMatcherTests::findMatch_realDisplayNames_data() {
+    QTest::addColumn<QString>("display_name");
+    QTest::addColumn<QString>("expected_package");
 
-    auto info = makeAppInfo("CompletelyUnknownApp_xyz_99999");
-    auto result = matcher.findMatch(info, nullptr, cfg);
+    // Taken from a real PC's Uninstall keys. An empty expectation means no match is correct.
+    const auto row = [](const char* name, const char* package) {
+        QTest::newRow(name) << QString::fromLatin1(name) << QString::fromLatin1(package);
+    };
+    row("7-Zip 22.01 (x64)", "7zip");
+    row("Mozilla Firefox (x64 en-US)", "firefox");
+    row("Mozilla Thunderbird (x64 en-US)", "thunderbird");
+    row("Notepad++ (32-bit x86)", "notepadplusplus");
+    row("Microsoft Visual Studio Code (User)", "vscode");
+    row("PuTTY release 0.81 (64-bit)", "putty");
+    row("Oracle VirtualBox 7.2.8", "virtualbox");
+    row("OpenVPN 2.7.5-I001 amd64", "openvpn");
+    row("PowerShell 7.6.9.0-x64", "powershell-core");
+    row("Python 3.14.10 (64-bit)", "python");
+    row("Adobe Acrobat (64-bit)", "adobereader");
+    row("Docker Desktop", "docker-desktop");
+    row("GitHub Desktop", "github-desktop");
+    row("GitHub CLI", "gh");
+    row("FileZilla 3.62.2", "filezilla");
+    row("CPUID CPU-Z 2.09", "cpu-z");
+    row("Google Chrome", "googlechrome");
+    row("VLC media player", "vlc");
+    row("Java 8 Update 381 (64-bit)", "javaruntime");
 
-    QVERIFY(!result.has_value());
+    // Components and look-alikes that must not take the product's package.
+    row("Python 3.13.16 Documentation (64-bit)", "");
+    row("Python 3.13.16 Core Interpreter (64-bit)", "");
+    row("Python Launcher", "");
+    row("Microsoft Edge WebView2 Runtime", "");
+    row("Microsoft Teams Meeting Add-in for Microsoft Office", "");
+    row("Git Extensions", "");
+    row("Visual Studio Code Insiders", "");
+    row("(x64)", "");
+}
+
+void PackageMatcherTests::findMatch_realDisplayNames() {
+    QFETCH(QString, display_name);
+    QFETCH(QString, expected_package);
+
+    const sak::PackageMatcher matcher;
+    const auto result = matcher.findMatch(makeAppInfo(display_name));
+
+    if (expected_package.isEmpty()) {
+        QVERIFY2(!result.has_value(), qPrintable(result ? result->choco_package : QString()));
+        return;
+    }
+    QVERIFY(result.has_value());
+    QCOMPARE(result->choco_package, expected_package);
+}
+
+void PackageMatcherTests::normalizeAppName_data() {
+    QTest::addColumn<QString>("raw");
+    QTest::addColumn<QString>("normalized");
+
+    QTest::newRow("bracketed architecture") << "7-Zip 22.01 (x64)" << "7-Zip";
+    QTest::newRow("hyphen in the product survives") << "7-Zip" << "7-Zip";
+    QTest::newRow("bracketed arch and locale") << "Mozilla Firefox (x64 en-US)"
+                                               << "Mozilla Firefox";
+    QTest::newRow("version word") << "Tickr version 0.7.1" << "Tickr";
+    QTest::newRow("release word") << "PuTTY release 0.81 (64-bit)" << "PuTTY";
+    QTest::newRow("version with a suffix") << "OpenVPN 2.7.5-I001 amd64" << "OpenVPN";
+    QTest::newRow("hyphen before arch") << "PowerShell 7-x64" << "PowerShell";
+    QTest::newRow("packaging word") << "Telegram Desktop 5.0.1" << "Telegram";
+    QTest::newRow("word after a version stays") << "Ableton Live 11 Lite" << "Ableton Live 11 Lite";
+    QTest::newRow("trailing space")
+        << "Magic The Gathering Online " << "Magic The Gathering Online";
+    QTest::newRow("only build detail") << "(x64)" << "";
+    QTest::newRow("empty") << "" << "";
+}
+
+void PackageMatcherTests::normalizeAppName() {
+    QFETCH(QString, raw);
+    QFETCH(QString, normalized);
+    QCOMPARE(sak::PackageMatcher::normalizeAppName(raw), normalized);
 }
 
 // ============================================================================
-// Match Config
+// applyMatches
 // ============================================================================
 
-void PackageMatcherTests::matchConfig_defaults() {
-    sak::PackageMatcher::MatchConfig cfg;
-    QVERIFY(cfg.use_exact_mappings);
-    QVERIFY(cfg.use_fuzzy_matching);
-    QVERIFY(cfg.use_choco_search);
-    QVERIFY(cfg.min_confidence >= 0.0 && cfg.min_confidence <= 1.0);
+void PackageMatcherTests::applyMatches_recordsTheTableMatchOnADesktopApp() {
+    std::vector<sak::AppScanner::AppInfo> apps{makeAppInfo("7-Zip 22.01 (x64)")};
+
+    const sak::PackageMatcher matcher;
+    matcher.applyMatches(apps);
+
+    QCOMPARE(apps[0].choco_package, QString("7zip"));
+    QVERIFY(apps[0].choco_available);
+    QCOMPARE(apps[0].match_confidence, sak::AppScanner::AppInfo::Confidence::High);
 }
 
-void PackageMatcherTests::matchConfig_exactOnly() {
-    sak::PackageMatcher::MatchConfig cfg;
-    cfg.use_exact_mappings = true;
-    cfg.use_fuzzy_matching = false;
-    cfg.use_choco_search = false;
+void PackageMatcherTests::applyMatches_leavesAnUnknownAppUnmatched() {
+    std::vector<sak::AppScanner::AppInfo> apps{makeAppInfo("Solar Fire v9")};
 
-    QVERIFY(cfg.use_exact_mappings);
-    QVERIFY(!cfg.use_fuzzy_matching);
-    QVERIFY(!cfg.use_choco_search);
+    const sak::PackageMatcher matcher;
+    matcher.applyMatches(apps);
+
+    QVERIFY(apps[0].choco_package.isEmpty());
+    QVERIFY(!apps[0].choco_available);
+    QCOMPARE(apps[0].match_confidence, sak::AppScanner::AppInfo::Confidence::Unknown);
 }
 
-// ============================================================================
-// Stats
-// ============================================================================
+void PackageMatcherTests::applyMatches_keepsTheIdChocolateyReported() {
+    auto app = makeAppInfo("ripgrep");
+    app.source = sak::AppScanner::AppInfo::Source::Chocolatey;
+    app.choco_package = "ripgrep";
+    app.choco_available = true;
+    std::vector<sak::AppScanner::AppInfo> apps{app};
 
-void PackageMatcherTests::stats_initiallyZero() {
-    sak::PackageMatcher matcher;
-    QCOMPARE(matcher.getExactMatchCount(), 0);
-    QCOMPARE(matcher.getFuzzyMatchCount(), 0);
-    QCOMPARE(matcher.getSearchMatchCount(), 0);
+    const sak::PackageMatcher matcher;
+    matcher.applyMatches(apps);
+
+    QCOMPARE(apps[0].choco_package, QString("ripgrep"));
+    QVERIFY(apps[0].choco_available);
+    QCOMPARE(apps[0].match_confidence, sak::AppScanner::AppInfo::Confidence::High);
+}
+
+// `choco list` always reports Chocolatey itself. Offering it would "install" the bundled tool.
+void PackageMatcherTests::applyMatches_dropsChocolateysOwnPackage() {
+    auto app = makeAppInfo("chocolatey");
+    app.source = sak::AppScanner::AppInfo::Source::Chocolatey;
+    app.choco_package = "chocolatey";
+    app.choco_available = true;
+    std::vector<sak::AppScanner::AppInfo> apps{app};
+
+    const sak::PackageMatcher matcher;
+    matcher.applyMatches(apps);
+
+    QVERIFY(apps[0].choco_package.isEmpty());
+    QVERIFY(!apps[0].choco_available);
+}
+
+void PackageMatcherTests::applyMatches_leavesStoreAppsUnmatched() {
+    // A Store package named exactly like a table entry still does not install through Chocolatey.
+    auto app = makeAppInfo("Spotify");
+    app.source = sak::AppScanner::AppInfo::Source::AppX;
+    std::vector<sak::AppScanner::AppInfo> apps{app};
+
+    const sak::PackageMatcher matcher;
+    matcher.applyMatches(apps);
+
+    QVERIFY(apps[0].choco_package.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(PackageMatcherTests)

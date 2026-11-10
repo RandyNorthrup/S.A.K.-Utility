@@ -12,17 +12,19 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSet>
 #include <QTimer>
 
-#ifdef Q_OS_WIN
+#include <limits>
+
 #include <shellapi.h>
 #pragma comment(lib, "Shell32.lib")
 #pragma comment(lib, "Advapi32.lib")
-#endif
 
 namespace sak {
 
@@ -32,23 +34,70 @@ constexpr int kUwpScanProgress = 75;
 constexpr int kProvisionedScanProgress = 85;
 constexpr int kMetadataScanProgress = 95;
 constexpr int kQuotedPathTrimChars = 2;
+constexpr int kPackageScanTimeoutMs = 30'000;
 
 [[nodiscard]] QString normalizeUninstallExePath(QString uninstallString) {
     QString exePath = std::move(uninstallString);
 
     if (exePath.startsWith('"')) {
-        const int endQuote = exePath.indexOf('"', 1);
+        const int endQuote = static_cast<int>(exePath.indexOf('"', 1));
         if (endQuote > 0) {
             exePath = exePath.mid(1, endQuote - 1);
         }
         return exePath;
     }
 
-    const int space = exePath.indexOf(' ');
+    const int space = static_cast<int>(exePath.indexOf(' '));
     if (space > 0) {
         exePath = exePath.left(space);
     }
     return exePath;
+}
+
+// A registry-supplied program path is untrusted (HKLM needs admin, but HKCU is user-writable).
+// Reject UNC and Win32 device/extended namespaces (\\server\share, \\.\dev, \\?\...) before
+// touching the filesystem: walking or stat-ing such a path can trigger SMB authentication as the
+// (often elevated) caller and unbounded remote I/O, letting an attacker-writable Uninstall value
+// coerce network access. Ordinary local install paths begin with a drive letter, so this only
+// skips remote/device targets -- their size/icon/existence are simply not probed.
+[[nodiscard]] bool isRemoteOrDevicePath(const QString& path) {
+    return path.startsWith(QLatin1String("\\\\")) || path.startsWith(QLatin1String("//"));
+}
+
+struct IconLocation {
+    QString path;
+    int index = 0;
+    bool has_explicit_index = false;
+};
+
+[[nodiscard]] IconLocation parseIconLocation(const QString& value) {
+    IconLocation location{.path = value};
+    const int comma = static_cast<int>(value.lastIndexOf(','));
+    if (comma > 0) {
+        bool ok = false;
+        const int parsed_index = value.mid(comma + 1).trimmed().toInt(&ok);
+        if (ok) {
+            location.path = value.left(comma).trimmed();
+            location.index = parsed_index;
+            location.has_explicit_index = true;
+        }
+    }
+    if (location.path.startsWith('"') && location.path.endsWith('"')) {
+        location.path = location.path.mid(1, location.path.length() - kQuotedPathTrimChars);
+    }
+    return location;
+}
+
+[[nodiscard]] QImage extractIndexedIcon(const QString& path, int icon_index) {
+    HICON small_icon = nullptr;
+    const UINT extracted = ExtractIconExW(
+        reinterpret_cast<LPCWSTR>(path.utf16()), icon_index, nullptr, &small_icon, 1);
+    if (extracted == 0 || small_icon == nullptr) {
+        return {};
+    }
+    QImage image = QImage::fromHICON(small_icon);
+    DestroyIcon(small_icon);
+    return image;
 }
 
 [[nodiscard]] QJsonArray jsonDocToArray(const QJsonDocument& doc) {
@@ -62,9 +111,31 @@ constexpr int kQuotedPathTrimChars = 2;
 }
 
 const auto kUwpPackagesCommand = QStringLiteral(
-    "Get-AppxPackage | Select-Object Name, PackageFamilyName, "
-    "PackageFullName, Publisher, Version, InstallLocation, "
-    "IsFramework, SignatureKind | ConvertTo-Json -Compress");
+    // -ErrorAction Stop: a per-user package-enumeration error must FAIL the scan (non-zero exit)
+    // rather than emit valid JSON for only the packages that did enumerate. Reporting that partial
+    // set as complete is a fail-open; a failed scan instead warns (enumerateAll) or safely refuses
+    // a headless match (enumerateUwpPackagesSync).
+    //
+    // A Store-signed package's certificate names its publisher only by an ID ("CN=5699BA41-..."),
+    // so for a subject with no organisation the manifest's PublisherDisplayName is read too: the
+    // name the Store and Settings show (review 4, N9). It is a label for the list; a manifest that
+    // cannot be read leaves it empty and the list shows the subject.
+    //
+    // A package is named in the list as Settings names it: its display name, resolved from its
+    // resources by Windows' own PackageManager ("Windows Calculator", not
+    // "Microsoft.WindowsCalculator" or "1527c705-..."; review 5, Z8). It is a label too: when
+    // Windows gives none, the list shows the package's name.
+    "$names=@{}; try {$null=[Windows.Management.Deployment.PackageManager,"
+    "Windows.Management.Deployment,ContentType=WindowsRuntime]; foreach ($p in "
+    "(New-Object Windows.Management.Deployment.PackageManager).FindPackagesForUser('')) "
+    "{try {$names[$p.Id.FullName]=[string]$p.DisplayName} catch {}}} catch {}; "
+    "Get-AppxPackage -ErrorAction Stop | Select-Object Name, PackageFamilyName, "
+    "PackageFullName, Publisher, Version, InstallLocation, IsFramework, SignatureKind, "
+    "@{n='DisplayName';e={$names[$_.PackageFullName]}}, "
+    "@{n='PublisherDisplayName';e={if ($_.Publisher -notmatch '(^|,)\\s*O=') "
+    "{try {[string](Get-AppxPackageManifest -Package $_.PackageFullName -ErrorAction Stop)"
+    ".Package.Properties.PublisherDisplayName} catch {''}} else {''}}} | "
+    "ConvertTo-Json -Compress");
 }  // namespace
 
 ProgramEnumerator::ProgramEnumerator(QObject* parent) : QObject(parent) {}
@@ -79,9 +150,10 @@ void ProgramEnumerator::resetCancel() {
     m_cancelRequested.store(false, std::memory_order_release);
 }
 
-void ProgramEnumerator::enumerateAll() {
+void ProgramEnumerator::enumerateAll(int generation) {
+    m_generation = generation;  // stamped on every terminal signal from this run
     if (m_cancelRequested.load(std::memory_order_acquire)) {
-        Q_EMIT enumerationFailed("Enumeration cancelled.");
+        Q_EMIT enumerationFailed(m_generation, "Enumeration cancelled.");
         return;
     }
     Q_EMIT enumerationStarted();
@@ -89,34 +161,35 @@ void ProgramEnumerator::enumerateAll() {
     QVector<ProgramInfo> all_programs;
 
     try {
-#ifdef Q_OS_WIN
         // Phase 1: Win32 registry programs
         auto registry_programs = scanRegistryPrograms();
         if (m_cancelRequested.load(std::memory_order_acquire)) {
-            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            Q_EMIT enumerationFailed(m_generation, "Enumeration cancelled.");
             return;
         }
         all_programs.append(registry_programs);
         Q_EMIT enumerationProgress(kRegistryScanProgress, kPercentMax);
-#endif
 
         // Phase 2: UWP packages
-        auto uwp_programs = scanUwpPackages();
+        bool uwpOk = true;
+        auto uwp_programs = scanUwpPackages(uwpOk);
         if (m_cancelRequested.load(std::memory_order_acquire)) {
-            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            Q_EMIT enumerationFailed(m_generation, "Enumeration cancelled.");
             return;
         }
         all_programs.append(uwp_programs);
         Q_EMIT enumerationProgress(kUwpScanProgress, kPercentMax);
 
         // Phase 3: Provisioned UWP packages
-        auto provisioned = scanProvisionedPackages();
+        bool provisionedOk = true;
+        auto provisioned = scanProvisionedPackages(provisionedOk);
         if (m_cancelRequested.load(std::memory_order_acquire)) {
-            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            Q_EMIT enumerationFailed(m_generation, "Enumeration cancelled.");
             return;
         }
         all_programs.append(provisioned);
         Q_EMIT enumerationProgress(kProvisionedScanProgress, kPercentMax);
+        warnIfAppxIncomplete(uwpOk, provisionedOk);
 
         // Phase 4: Deduplicate
         deduplicatePrograms(all_programs);
@@ -135,10 +208,53 @@ void ProgramEnumerator::enumerateAll() {
 
         Q_EMIT enumerationProgress(kPercentMax, kPercentMax);
         m_cachedPrograms = all_programs;
-        Q_EMIT enumerationFinished(all_programs);
+        Q_EMIT enumerationFinished(m_generation, all_programs);
 
     } catch (const std::exception& e) {
-        Q_EMIT enumerationFailed(QString("Enumeration error: %1").arg(e.what()));
+        Q_EMIT enumerationFailed(m_generation, QString("Enumeration error: %1").arg(e.what()));
+    }
+}
+
+QVector<ProgramInfo> ProgramEnumerator::enumerateUwpPackagesSync(bool& scanOk) {
+    // Reuse the exact Appx scanners enumerateAll uses -- just the UWP phases, deduped, with no
+    // registry/orphan/bloatware/icon/dir-size work.
+    //
+    // scanOk reflects only the PER-USER scan (Get-AppxPackage, no admin) -- the authoritative
+    // list for headless resolution. The provisioned scan (Get-AppxProvisionedPackage -Online)
+    // needs admin and is best-effort: its failure merely OMITS all-users entries from the list,
+    // which -- because resolution is an EXACT display-name match -- can only cause a safe
+    // not-found refusal, never a wrong match. So a provisioned failure does not fail the scan.
+    bool uwp_ok = true;
+    bool provisioned_ok = true;
+    QVector<ProgramInfo> packages = scanUwpPackages(uwp_ok);
+    packages.append(scanProvisionedPackages(provisioned_ok));
+    // Guard the dedup: unlike enumerateAll (which always has registry entries by here),
+    // BOTH Appx scans can legitimately be empty (a scan failure -- the fail-closed case that
+    // the caller handles via scanOk) and deduplicatePrograms asserts on an empty vector.
+    if (!packages.isEmpty()) {
+        deduplicatePrograms(packages);
+    }
+    scanOk = uwp_ok;
+    return packages;
+}
+
+QVector<ProgramInfo> ProgramEnumerator::enumerateRegistryProgramsSync() {
+    // Reuse the exact registry scanner enumerateAll uses -- just the Win32 phase, with no
+    // UWP/orphan/bloatware/icon/dir-size work. Intentionally NOT deduped: the dedup key
+    // (displayName|publisher) can merge two genuinely-distinct same-name programs, which would
+    // hide an ambiguous match from a headless resolver. Callers that need the authoritative
+    // single match must disambiguate themselves (e.g. by the actual uninstall command). The
+    // registry read has no external process to fail (unlike the Appx scans), so no scanOk here.
+    return scanRegistryPrograms();
+}
+
+void ProgramEnumerator::warnIfAppxIncomplete(bool uwpOk, bool provisionedOk) {
+    // Fail closed: a PowerShell failure/timeout/parse error in either Appx scan means the list
+    // may be incomplete. Warn (never silently claim completeness) but keep the registry list.
+    if (!uwpOk || !provisionedOk) {
+        Q_EMIT enumerationWarning(
+            QStringLiteral("Some app packages could not be enumerated; "
+                           "the installed-programs list may be incomplete."));
     }
 }
 
@@ -146,44 +262,61 @@ QVector<ProgramInfo> ProgramEnumerator::programs() const {
     return m_cachedPrograms;
 }
 
+void ProgramEnumerator::resolveProgramIcon(ProgramInfo& program, bool locationIsLocal) {
+    if (!program.displayIcon.isEmpty()) {
+        program.cachedImage = extractIcon(program.displayIcon);
+    }
+
+    // No usable displayIcon: fall back to the first .exe in a LOCAL install dir only
+    // (locationIsLocal is already false for the remote/device paths we must never scan).
+    if (program.cachedImage.isNull() && locationIsLocal) {
+        const QDir dir(program.installLocation);
+        const auto exes = dir.entryList({"*.exe"}, QDir::Files, QDir::Name);
+        const QString exe = exes.value(0);
+        program.cachedImage = exe.isEmpty() ? QImage{} : extractIcon(dir.filePath(exe));
+    }
+}
+
 bool ProgramEnumerator::enrichWithIconsAndSizes(QVector<ProgramInfo>& programs) {
-    Q_ASSERT(!programs.isEmpty());
+    // An empty program list is a legitimate enumeration result (locked-down
+    // machine, or all scans returned nothing); the loop below handles it. Do NOT
+    // assert non-empty -- that aborts a debug build on a valid empty scan.
     for (int i = 0; i < programs.size(); ++i) {
         if (m_cancelRequested.load(std::memory_order_acquire)) {
-            Q_EMIT enumerationFailed("Enumeration cancelled.");
+            Q_EMIT enumerationFailed(m_generation, "Enumeration cancelled.");
             return false;
         }
         auto& prog = programs[i];
 
-        if (!prog.displayIcon.isEmpty()) {
-            prog.cachedImage = extractIcon(prog.displayIcon);
-        }
+        // A remote/device installLocation must never be scanned or stat-ed (SMB auth / remote I/O
+        // from an attacker-writable value); fall back to the estimated size instead.
+        const bool locationIsLocal = !prog.installLocation.isEmpty() &&
+                                     !isRemoteOrDevicePath(prog.installLocation);
 
-        if (prog.cachedImage.isNull() && !prog.installLocation.isEmpty()) {
-            QDir dir(prog.installLocation);
-            const auto exes = dir.entryList({"*.exe"}, QDir::Files, QDir::Name);
-            const QString exe = exes.value(0);
-            prog.cachedImage = exe.isEmpty() ? QImage{} : extractIcon(dir.filePath(exe));
-        }
+        resolveProgramIcon(prog, locationIsLocal);
 
-        if (!prog.installLocation.isEmpty() && QDir(prog.installLocation).exists()) {
-            prog.actualSizeBytes = calculateDirSize(prog.installLocation);
-        } else if (prog.estimatedSizeKB > 0) {
-            prog.actualSizeBytes = prog.estimatedSizeKB * kBytesPerKB;
-        }
+        // The size is what the installer recorded (EstimatedSize). Enumeration does not walk the
+        // install folder: walking every program's tree on each list refresh -- including the one
+        // after every uninstall -- took minutes on a full machine for a figure nothing displayed.
+        // A folder is measured only on demand, for one selected program (measureFolderBytes).
+        prog.actualSizeBytes = prog.estimatedSizeKB > 0 ? prog.estimatedSizeKB * kBytesPerKB : 0;
     }
     return true;
 }
 
 void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs) {
-    Q_ASSERT(!programs.isEmpty());
+    // Empty is valid (see enrichWithIconsAndSizes) -- no non-empty assert.
     for (auto& prog : programs) {
         if (prog.source == ProgramInfo::Source::UWP ||
             prog.source == ProgramInfo::Source::Provisioned) {
             continue;  // UWP apps are always "installed"
         }
 
+        // Never probe a remote/device install path for existence: that stat would trigger SMB
+        // auth / remote I/O as the elevated caller from an attacker-writable Uninstall value. An
+        // unverifiable location is left un-orphaned rather than driving network access.
         const bool installMissing = !prog.installLocation.isEmpty() &&
+                                    !isRemoteOrDevicePath(prog.installLocation) &&
                                     !QDir(prog.installLocation).exists();
         if (installMissing) {
             prog.isOrphaned = true;
@@ -201,13 +334,18 @@ void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs) {
             continue;
         }
 
+        if (isRemoteOrDevicePath(exePath)) {
+            // Cannot verify a remote/device target without remote I/O; do not claim it orphaned.
+            prog.isOrphaned = false;
+            continue;
+        }
+
         prog.isOrphaned = !QFileInfo::exists(exePath);
     }
 }
 
-void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs) {
-    Q_ASSERT(!programs.isEmpty());
-    Q_ASSERT(programs.size() > 0);
+void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs) const {
+    // Empty is valid (see enrichWithIconsAndSizes) -- no non-empty assert.
     // Bloatware patterns from CheckBloatwareAction database
     static const QStringList kBloatwarePatterns = {"CandyCrush",
                                                    "FarmVille",
@@ -261,20 +399,44 @@ void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs) {
     }
 }
 
-qint64 ProgramEnumerator::calculateDirSize(const QString& path) {
-    Q_ASSERT(!path.isEmpty());
+bool ProgramEnumerator::isLocalInstallFolder(const QString& path) {
+    return !path.trimmed().isEmpty() && !isRemoteOrDevicePath(path.trimmed());
+}
+
+qint64 ProgramEnumerator::measureFolderBytes(const QString& path,
+                                             const std::function<bool()>& should_cancel) {
+    if (path.isEmpty()) {
+        // Fail closed: an empty path must size NOTHING. QDirIterator("") walks the CURRENT working
+        // directory, so without this a program with an empty installLocation would report the CWD's
+        // size (and, in the test harness, walk the whole build tree). The old Q_ASSERT was a no-op
+        // in Release.
+        return 0;
+    }
+    if (isRemoteOrDevicePath(path)) {
+        // Never walk a UNC/device tree: it would trigger SMB auth / unbounded remote I/O as the
+        // (often elevated) caller from an attacker-writable Uninstall value.
+        return 0;
+    }
     qint64 total = 0;
     QDirIterator it(path,
                     QDir::Files | QDir::Hidden | QDir::NoSymLinks,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
+        if (should_cancel && should_cancel()) {
+            break;  // honor cancellation instead of walking an arbitrarily large/deep tree
+        }
         it.next();
-        total += it.fileInfo().size();
+        const qint64 sz = it.fileInfo().size();
+        // Saturate rather than let the signed accumulation overflow (undefined behavior): a
+        // crafted tree of large sparse files could otherwise sum past INT64_MAX.
+        if (sz > 0 && total > std::numeric_limits<qint64>::max() - sz) {
+            total = std::numeric_limits<qint64>::max();
+            break;
+        }
+        total += sz;
     }
     return total;
 }
-
-#ifdef Q_OS_WIN
 
 QVector<ProgramInfo> ProgramEnumerator::scanRegistryPrograms() {
     QVector<ProgramInfo> all;
@@ -310,6 +472,34 @@ QString hivePrefix(HKEY hive) {
     return {};
 }
 
+// Shared completeness warning for a registry Uninstall scan that could not be fully read (a
+// denied/erroring hive, or a subkey that could not be counted, enumerated, or opened). Mirrors
+// warnIfAppxIncomplete: the partial list is still returned, but the caller is told it may be
+// incomplete rather than silently reading fewer programs as the whole truth.
+const auto kRegistryIncompleteMessage = QStringLiteral(
+    "Some installed programs could not be read from the registry; "
+    "the installed-programs list may be incomplete.");
+
+// Number of direct subkeys under an opened Uninstall key. @p ok is false when the count could not
+// be read: the hive then enumerates as empty, which is an INCOMPLETE result (surfaced by the
+// caller), never a genuine "no programs installed".
+DWORD registrySubkeyCount(HKEY key, bool& ok) {
+    DWORD count = 0;
+    ok = RegQueryInfoKeyW(key,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          &count,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr,
+                          nullptr) == ERROR_SUCCESS;
+    return count;
+}
+
 }  // namespace
 
 QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
@@ -320,22 +510,22 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
     HKEY uninstall_key = nullptr;
     LONG rc = RegOpenKeyExW(hive, subkey, 0, KEY_READ, &uninstall_key);
     if (rc != ERROR_SUCCESS) {
+        // An ABSENT Uninstall key (ERROR_FILE_NOT_FOUND: no WOW64 view on 32-bit Windows, or no
+        // per-user key on a fresh profile) is a legitimately empty -- but COMPLETE -- hive. Any
+        // other failure (notably ACCESS_DENIED) means the hive could not be read, so the inventory
+        // is incomplete: warn rather than silently returning fewer programs.
+        if (rc != ERROR_FILE_NOT_FOUND) {
+            Q_EMIT enumerationWarning(kRegistryIncompleteMessage);
+        }
         return results;
     }
 
-    DWORD subkey_count = 0;
-    RegQueryInfoKeyW(uninstall_key,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     &subkey_count,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr);
+    // Completeness signal threaded through this hive scan (mirrors the vuln scanner's
+    // scanFastRegistryHive): a failed count/enum/sub-open means an entry may be missing, so the
+    // list is surfaced as possibly-incomplete instead of being read as an authoritative empty.
+    bool count_ok = true;
+    const DWORD subkey_count = registrySubkeyCount(uninstall_key, count_ok);
+    bool complete = count_ok;
 
     const QString hive_name = hivePrefix(hive);
     constexpr DWORD kMaxSubkeyName = 256;
@@ -346,12 +536,14 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
         rc = RegEnumKeyExW(
             uninstall_key, i, subkey_name, &name_len, nullptr, nullptr, nullptr, nullptr);
         if (rc != ERROR_SUCCESS) {
+            complete = false;  // a subkey name could not be read -> an entry was missed
             continue;
         }
 
         HKEY app_key = nullptr;
         rc = RegOpenKeyExW(uninstall_key, subkey_name, 0, KEY_READ, &app_key);
         if (rc != ERROR_SUCCESS) {
+            complete = false;  // this program's subkey could not be opened -> inventory incomplete
             continue;
         }
 
@@ -365,13 +557,16 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
     }
 
     RegCloseKey(uninstall_key);
+    if (!complete) {
+        Q_EMIT enumerationWarning(kRegistryIncompleteMessage);
+    }
     return results;
 }
 
 void ProgramEnumerator::parseRegistryEntry(HKEY app_key,
                                            ProgramInfo::Source source,
                                            const QString& reg_path,
-                                           QVector<ProgramInfo>& results) {
+                                           QVector<ProgramInfo>& results) const {
     if (isSystemComponent(app_key)) {
         ProgramInfo prog;
         prog.isSystemComponent = true;
@@ -389,7 +584,7 @@ void ProgramEnumerator::parseRegistryEntry(HKEY app_key,
         return;
     }
 
-    QString display_name = readRegString(app_key, L"DisplayName");
+    const QString display_name = readRegString(app_key, L"DisplayName");
     if (display_name.isEmpty()) {
         return;
     }
@@ -411,6 +606,7 @@ void ProgramEnumerator::parseRegistryEntry(HKEY app_key,
 }
 
 QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName) {
+    // Every caller (parseRegistryEntry) passes a wide string literal.
     Q_ASSERT(valueName);
     DWORD type = 0;
     DWORD size = 0;
@@ -420,11 +616,24 @@ QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName) {
         return {};
     }
 
+    // Bound the allocation: DisplayName/paths are tiny, but the size comes from an
+    // attacker-writable value, so a hostile multi-hundred-MB REG_SZ must not force an unbounded
+    // allocation (OOM). Reject anything past a generous ceiling.
+    constexpr DWORD kMaxRegStringBytes = 1u << 20;  // 1 MiB
+    if (size > kMaxRegStringBytes) {
+        return {};
+    }
+
     // Allocate buffer
-    std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 1, L'\0');
+    std::vector<wchar_t> buffer((size / sizeof(wchar_t)) + 1, L'\0');
+    DWORD type2 = 0;
+    DWORD size2 = size;
     rc = RegQueryValueExW(
-        key, valueName, nullptr, nullptr, reinterpret_cast<LPBYTE>(buffer.data()), &size);
-    if (rc != ERROR_SUCCESS) {
+        key, valueName, nullptr, &type2, reinterpret_cast<LPBYTE>(buffer.data()), &size2);
+    // Re-validate the type on the second read: the value can be swapped between the two queries,
+    // and a same-sized non-string replacement would otherwise be read as UTF-16. A grown value
+    // makes this call return ERROR_MORE_DATA (rc != SUCCESS), which is also rejected.
+    if (rc != ERROR_SUCCESS || (type2 != REG_SZ && type2 != REG_EXPAND_SZ) || size2 > size) {
         return {};
     }
 
@@ -432,25 +641,26 @@ QString ProgramEnumerator::readRegString(HKEY key, const wchar_t* valueName) {
 }
 
 DWORD ProgramEnumerator::readRegDword(HKEY key, const wchar_t* valueName) {
+    // Every caller (parseRegistryEntry, isSystemComponent) passes a wide string literal.
     Q_ASSERT(valueName);
     DWORD value = 0;
     DWORD size = sizeof(DWORD);
     DWORD type = 0;
 
-    LONG rc =
+    LONG const rc =
         RegQueryValueExW(key, valueName, nullptr, &type, reinterpret_cast<LPBYTE>(&value), &size);
-    if (rc != ERROR_SUCCESS || type != REG_DWORD) {
+    // Require the exact 4-byte REG_DWORD width: a wrong-typed or short value must read as 0, not
+    // as a partially-written DWORD.
+    if (rc != ERROR_SUCCESS || type != REG_DWORD || size != sizeof(DWORD)) {
         return 0;
     }
     return value;
 }
 
 bool ProgramEnumerator::isSystemComponent(HKEY key) {
-    DWORD sys_comp = readRegDword(key, L"SystemComponent");
+    DWORD const sys_comp = readRegDword(key, L"SystemComponent");
     return sys_comp == 1;
 }
-
-#endif  // Q_OS_WIN
 
 void ProgramEnumerator::parseUwpPackage(const QJsonObject& obj, QVector<ProgramInfo>& results) {
     if (obj["IsFramework"].toBool(false)) {
@@ -458,42 +668,133 @@ void ProgramEnumerator::parseUwpPackage(const QJsonObject& obj, QVector<ProgramI
     }
 
     ProgramInfo prog;
-    prog.displayName = obj["Name"].toString();
+    prog.displayName = packageDisplayName(obj["Name"].toString(), obj["DisplayName"].toString());
     prog.packageFamilyName = obj["PackageFamilyName"].toString();
     prog.packageFullName = obj["PackageFullName"].toString();
-    prog.publisher = obj["Publisher"].toString();
+    // The list showed "CN=Microsoft Corporation, O=Micro..." (review 2, N9), and for a
+    // Store-signed package "CN=5699BA41-022E-4..." (review 4, N9).
+    prog.publisher = packagePublisher(obj["Publisher"].toString(),
+                                      obj["PublisherDisplayName"].toString());
     prog.displayVersion = obj["Version"].toString();
     prog.installLocation = obj["InstallLocation"].toString();
     prog.source = ProgramInfo::Source::UWP;
-
-    if (!prog.installLocation.isEmpty() && QDir(prog.installLocation).exists()) {
-        prog.actualSizeBytes = calculateDirSize(prog.installLocation);
-    }
+    // No folder walk here either: Store packages record no EstimatedSize, so their size stays
+    // unknown until measured on demand.
 
     if (!prog.displayName.isEmpty()) {
         results.append(prog);
     }
 }
 
-QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages() {
+namespace {
+
+/// @p value without the quotes an X.500 name puts around a value holding a comma.
+QString unquotedName(QString value) {
+    value = value.trimmed();
+    if (value.size() > 1 && value.startsWith(QLatin1Char('"')) &&
+        value.endsWith(QLatin1Char('"'))) {
+        value.chop(1);
+        value.remove(0, 1);
+    }
+    return value;
+}
+
+/// A certificate subject's names by their upper-cased keys. Relative names are separated by
+/// commas outside quotes; a quoted value may hold a comma.
+QHash<QString, QString> subjectNames(const QString& subject) {
+    QHash<QString, QString> names;
+    const auto take = [&names](const QString& part) {
+        const qsizetype equals = part.indexOf(QLatin1Char('='));
+        if (equals > 0) {
+            names.insert(part.left(equals).trimmed().toUpper(), unquotedName(part.mid(equals + 1)));
+        }
+    };
+    QString current;
+    bool quoted = false;
+    for (const QChar ch : subject) {
+        quoted = ch == QLatin1Char('"') ? !quoted : quoted;
+        if (ch == QLatin1Char(',') && !quoted) {
+            take(current);
+            current.clear();
+        } else {
+            current.append(ch);
+        }
+    }
+    take(current);
+    return names;
+}
+
+}  // namespace
+
+QString ProgramEnumerator::publisherFromSubject(const QString& subject) {
+    const QHash<QString, QString> names = subjectNames(subject);
+    if (const QString org = names.value(QStringLiteral("O")); !org.isEmpty()) {
+        return org;
+    }
+    // A Store-signed package's CN is an ID such as ED346674-0FA1-4272-85CE-3187C9C86E26, which
+    // names no one: the subject is shown as it is rather than dressed up as a name.
+    static const QRegularExpression kIdOnly(QStringLiteral("^[0-9A-Fa-f-]{32,36}$"));
+    if (const QString common = names.value(QStringLiteral("CN"));
+        !common.isEmpty() && !kIdOnly.match(common).hasMatch()) {
+        return common;
+    }
+    return subject;
+}
+
+QString ProgramEnumerator::packagePublisher(const QString& subject, const QString& display_name) {
+    const QString shown = publisherFromSubject(subject);
+    // The subject names no one (a Store ID) when it comes back as it is. A manifest's display name
+    // that is a resource reference ("ms-resource:PublisherDisplayName") names no one either.
+    const QString name = display_name.trimmed();
+    if (shown == subject && !name.isEmpty() &&
+        !name.startsWith(QStringLiteral("ms-resource:"), Qt::CaseInsensitive)) {
+        return name;
+    }
+    return shown;
+}
+
+QString ProgramEnumerator::packageDisplayName(const QString& name, const QString& display_name) {
+    const QString shown = display_name.trimmed();
+    if (shown.isEmpty() || shown.startsWith(QStringLiteral("ms-resource:"), Qt::CaseInsensitive)) {
+        return name;
+    }
+    return shown;
+}
+
+bool ProgramEnumerator::appxScanSucceeded(const ProcessResult& result) {
+    if (!result.succeeded()) {
+        return false;
+    }
+    QJsonParseError error;
+    QJsonDocument::fromJson(result.std_out.toUtf8(), &error);
+    return error.error == QJsonParseError::NoError;
+}
+
+QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages(bool& scanOk) {
     QVector<ProgramInfo> results;
 
-    const auto result = sak::runProcess(QStringLiteral("powershell.exe"),
+    // System32-qualified interpreter, never a bare "powershell.exe": the enumerated
+    // programs feed an elevated uninstall, so a PATH/CWD-planted powershell must not be
+    // able to supply the inventory. Unresolvable -> FAILED scan (scanOk false).
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        scanOk = false;
+        return results;
+    }
+
+    const auto result = sak::runProcess(powershell,
                                         {QStringLiteral("-NoProfile"),
                                          QStringLiteral("-NonInteractive"),
                                          QStringLiteral("-Command"),
                                          kUwpPackagesCommand},
-                                        30'000);
-    if (!result.succeeded()) {
+                                        kPackageScanTimeoutMs);
+    scanOk = appxScanSucceeded(result);
+    if (!scanOk) {
         return results;
     }
 
-    QByteArray output = result.std_out.toUtf8();
-    QJsonParseError error;
-    QJsonDocument doc = QJsonDocument::fromJson(output, &error);
-    if (error.error != QJsonParseError::NoError) {
-        return results;
-    }
+    const QByteArray output = result.std_out.toUtf8();
+    const QJsonDocument doc = QJsonDocument::fromJson(output);
 
     const QJsonArray arr = jsonDocToArray(doc);
     for (const auto& val : arr) {
@@ -503,28 +804,32 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages() {
     return results;
 }
 
-QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages() {
+QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages(bool& scanOk) {
     QVector<ProgramInfo> results;
 
-    const auto result = sak::runProcess(
-        QStringLiteral("powershell.exe"),
-        {QStringLiteral("-NoProfile"),
-         QStringLiteral("-NonInteractive"),
-         QStringLiteral("-Command"),
-         QStringLiteral("Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | "
-                        "Select-Object DisplayName, PackageName, Version | "
-                        "ConvertTo-Json -Compress")},
-        30'000);
-    if (!result.succeeded()) {
+    // Same System32 qualification as scanUwpPackages: unresolvable -> FAILED scan.
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        scanOk = false;
         return results;
     }
 
-    QByteArray output = result.std_out.toUtf8();
-    QJsonParseError error;
-    QJsonDocument doc = QJsonDocument::fromJson(output, &error);
-    if (error.error != QJsonParseError::NoError) {
+    const auto result =
+        sak::runProcess(powershell,
+                        {QStringLiteral("-NoProfile"),
+                         QStringLiteral("-NonInteractive"),
+                         QStringLiteral("-Command"),
+                         QStringLiteral("Get-AppxProvisionedPackage -Online -ErrorAction Stop | "
+                                        "Select-Object DisplayName, PackageName, Version | "
+                                        "ConvertTo-Json -Compress")},
+                        kPackageScanTimeoutMs);
+    scanOk = appxScanSucceeded(result);
+    if (!scanOk) {
         return results;
     }
+
+    const QByteArray output = result.std_out.toUtf8();
+    const QJsonDocument doc = QJsonDocument::fromJson(output);
 
     QJsonArray arr;
     if (doc.isArray()) {
@@ -551,62 +856,48 @@ QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages() {
 }
 
 QImage ProgramEnumerator::extractIcon(const QString& path) {
-    Q_ASSERT(!path.isEmpty());
     if (path.isEmpty()) {
         return {};
     }
 
-#ifdef Q_OS_WIN
-    // Extract path and optional icon index
-    QString icon_path = path;
-    int icon_index = 0;
+    const IconLocation location = parseIconLocation(path);
 
-    // Handle "path,index" format
-    int comma = path.lastIndexOf(',');
-    if (comma > 0) {
-        bool ok = false;
-        int idx = path.mid(comma + 1).trimmed().toInt(&ok);
-        if (ok) {
-            icon_path = path.left(comma).trimmed();
-            icon_index = idx;
-        }
+    if (isRemoteOrDevicePath(location.path)) {
+        // Never resolve an icon from a UNC/device path (SMB auth / remote I/O from an
+        // attacker-writable DisplayIcon value).
+        return {};
     }
 
-    // Strip quotes
-    if (icon_path.startsWith('"') && icon_path.endsWith('"')) {
-        icon_path = icon_path.mid(1, icon_path.length() - kQuotedPathTrimChars);
+
+    if (location.has_explicit_index) {
+        return extractIndexedIcon(location.path, location.index);
     }
 
     SHFILEINFOW sfi{};
-    DWORD_PTR result = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(icon_path.utf16()),
-                                      0,
-                                      &sfi,
-                                      sizeof(sfi),
-                                      SHGFI_ICON | SHGFI_SMALLICON);
+    DWORD_PTR const result = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(location.path.utf16()),
+                                            0,
+                                            &sfi,
+                                            sizeof(sfi),
+                                            SHGFI_ICON | SHGFI_SMALLICON);
 
-    if (result && sfi.hIcon) {
+    if ((result != 0u) && (sfi.hIcon != nullptr)) {
         QImage image = QImage::fromHICON(sfi.hIcon);
         DestroyIcon(sfi.hIcon);
         return image;
     }
 
-    Q_UNUSED(icon_index)
-#else
-    Q_UNUSED(path)
-#endif
-
     return {};
 }
 
-void ProgramEnumerator::deduplicatePrograms(QVector<ProgramInfo>& programs) {
-    Q_ASSERT(!programs.isEmpty());
+void ProgramEnumerator::deduplicatePrograms(QVector<ProgramInfo>& programs) const {
+    // Empty is valid (see enrichWithIconsAndSizes) -- no non-empty assert.
     QSet<QString> seen;
     QVector<ProgramInfo> unique;
     unique.reserve(programs.size());
 
     for (const auto& prog : programs) {
         // Use display name + publisher as dedup key
-        QString key = prog.displayName.toLower() + "|" + prog.publisher.toLower();
+        const QString key = prog.displayName.toLower() + "|" + prog.publisher.toLower();
 
         if (!seen.contains(key)) {
             seen.insert(key);

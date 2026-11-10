@@ -6,6 +6,7 @@
 
 #include "sak/partition_file_system_tool_manifest.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -45,7 +46,7 @@ bool validSha256Hex(const QString& value) {
     if (value.size() != kSha256HexLength) {
         return false;
     }
-    return std::all_of(value.cbegin(), value.cend(), [](QChar ch) {
+    return std::ranges::all_of(value, [](QChar ch) {
         return ch.isDigit() || (ch >= QLatin1Char('a') && ch <= QLatin1Char('f')) ||
                (ch >= QLatin1Char('A') && ch <= QLatin1Char('F'));
     });
@@ -65,9 +66,8 @@ bool safeRelativePath(const QString& path) {
         return false;
     }
     const QStringList parts = clean.split(QLatin1Char('/'), Qt::SkipEmptyParts);
-    return std::none_of(parts.cbegin(), parts.cend(), [](const QString& part) {
-        return part == QStringLiteral("..");
-    });
+    return std::ranges::none_of(parts,
+                                [](const QString& part) { return part == QStringLiteral(".."); });
 }
 
 QString fileSha256Hex(const QString& path) {
@@ -256,6 +256,23 @@ QString PartitionFileSystemToolManifest::defaultRuntimeManifestPath(const QStrin
     return QDir(app_dir).filePath(defaultRuntimeRelativePath());
 }
 
+QString PartitionFileSystemToolManifest::resolveRuntimeManifestPath() {
+    // The manifest declares the elevated filesystem tools (mkfs/fsck/...) and their expected
+    // hashes, so it is the ROOT OF TRUST for what the tool runner is allowed to execute. Resolve
+    // it only from the trusted application directory. A current-working-directory manifest is
+    // never trusted for a shipped build: an attacker who launches the app from a user-writable
+    // folder (a portable extract, a downloads dir) could otherwise plant both the manifest and
+    // the "approved" tool binaries it points at and gain elevated code execution.
+    //
+    // There is no other source, not even behind an environment variable: the build copies the
+    // tools bundle (manifest included) beside every executable it produces, tests included, so a
+    // developer checkout needs no escape hatch. A missing app-dir manifest makes
+    // validateManifestFile report it missing. When the app dir is unknown (no QCoreApplication)
+    // the path is empty, so there is no trusted anchor and the tool runner blocks.
+    const QString appDir = QCoreApplication::applicationDirPath();
+    return appDir.trimmed().isEmpty() ? QString() : defaultRuntimeManifestPath(appDir);
+}
+
 PartitionFileSystemToolManifestResult PartitionFileSystemToolManifest::validateManifestFile(
     const QString& manifest_path, const QString& tools_root) {
     QFile file(manifest_path);
@@ -302,9 +319,9 @@ PartitionFileSystemToolManifestResult PartitionFileSystemToolManifest::validateM
 PartitionFileSystemToolManifestResult PartitionFileSystemToolManifest::validateRequiredTool(
     const QString& manifest_path, const QString& tools_root, const QString& tool_id) {
     auto result = validateManifestFile(manifest_path, tools_root);
-    const auto found = std::any_of(result.tools.cbegin(),
-                                   result.tools.cend(),
-                                   [&](const auto& tool) { return tool.id == tool_id; });
+    const auto found = std::ranges::any_of(result.tools,
+
+                                           [&](const auto& tool) { return tool.id == tool_id; });
     if (!found) {
         result.errors.append(
             QStringLiteral("Required filesystem tool is not manifest-approved: %1").arg(tool_id));

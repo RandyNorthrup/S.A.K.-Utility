@@ -1,0 +1,104 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_uup_dump_api",
+  "ctest_regex": "^test_uup_dump_api$",
+  "mutants": [
+    {
+      "id": "traversal-check-dropped",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "fileName.contains(QLatin1String(\"..\"))",
+      "replace": "false",
+      "expect": "killed",
+      "why": "'..' anywhere is a directory-traversal escape and must be rejected even without a separator; dropping the check accepts 'foo..esd'. isSafeAria2FileEntry_rejectsPathTraversal asserts !isSafeAria2FileEntry({fileName=\"foo..esd\"}) (a name with no '/', '\\\\', or ':' so only this predicate can catch it)"
+    },
+    {
+      "id": "forward-slash-check-dropped",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "fileName.contains(QLatin1Char('/'))",
+      "replace": "false",
+      "expect": "killed",
+      "why": "a '/' in the out= name escapes the download directory; dropping the check accepts 'sub/core.esd'. isSafeAria2FileEntry_rejectsPathSeparators asserts !isSafeAria2FileEntry({fileName=\"sub/core.esd\"}) (contains '/' only, no '..'/'\\\\'/':')"
+    },
+    {
+      "id": "backslash-check-dropped",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "fileName.contains(QLatin1Char('\\\\'))",
+      "replace": "false",
+      "expect": "killed",
+      "why": "a '\\\\' in the out= name escapes the download directory on Windows; dropping the check accepts 'sub\\\\core.esd'. isSafeAria2FileEntry_rejectsPathSeparators asserts !isSafeAria2FileEntry({fileName=\"sub\\\\core.esd\"}) (contains '\\\\' only)"
+    },
+    {
+      "id": "colon-check-dropped",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "fileName.contains(QLatin1Char(':'))",
+      "replace": "false",
+      "expect": "killed",
+      "why": "a ':' selects a drive or NTFS alternate data stream; dropping the check accepts 'core.esd:zone'. isSafeAria2FileEntry_rejectsDriveOrAds asserts !isSafeAria2FileEntry({fileName=\"core.esd:zone\"}) (contains ':' only, ':' is not a control char so nothing else re-catches it)"
+    },
+    {
+      "id": "trailing-dot-check-dropped",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "last == QLatin1Char('.')",
+      "replace": "false",
+      "expect": "killed",
+      "why": "Windows trims a trailing dot so the on-disk name differs from the integrity-checked name; dropping the check accepts 'core.esd.'. isSafeAria2FileEntry_rejectsTrailingDotOrSpace asserts !isSafeAria2FileEntry({fileName=\"core.esd.\"}) (no '..', base 'core' not reserved, only this predicate applies)"
+    },
+    {
+      "id": "trailing-space-check-dropped",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "last == QLatin1Char(' ')",
+      "replace": "false",
+      "expect": "killed",
+      "why": "Windows trims a trailing space so the on-disk name differs from the integrity-checked name; dropping the check accepts 'core.esd '. isSafeAria2FileEntry_rejectsTrailingDotOrSpace asserts !isSafeAria2FileEntry({fileName=\"core.esd \"}) (0x20 is printable so the control-char scan does not re-catch it)"
+    },
+    {
+      "id": "reserved-device-name-check-dropped",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "isReservedDosDeviceName(fileName)",
+      "replace": "false",
+      "expect": "killed",
+      "why": "a reserved DOS device name (CON/NUL/COM1...) makes aria2 open a device instead of a file; dropping the check accepts 'CON.esd'. isSafeAria2FileEntry_rejectsReservedDeviceName asserts !isSafeAria2FileEntry({fileName=\"CON.esd\"}) (and 'nul', 'COM1.txt')"
+    },
+    {
+      "id": "control-char-lower-boundary-relaxed",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "return ch.unicode() < kFirstPrintableCodeUnit || ch.unicode() == kDeleteControlCodeUnit;",
+      "replace": "return ch.unicode() <= kFirstPrintableCodeUnit || ch.unicode() == kDeleteControlCodeUnit;",
+      "expect": "killed",
+      "why": "0x20 (space) is the first PRINTABLE code unit and must be allowed inside a field; relaxing '<' to '<=' misclassifies an internal space as a control char and rejects a legal name. isSafeAria2FileEntry_controlCharBoundary asserts isSafeAria2FileEntry({fileName=\"core update.esd\"}) == true"
+    },
+    {
+      "id": "del-control-char-check-dropped",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "ch.unicode() == kDeleteControlCodeUnit",
+      "replace": "false",
+      "expect": "killed",
+      "why": "0x7f (DEL) is a control char that must be rejected; dropping the '== 0x7f' term (the '< 0x20' term does not cover it) accepts a DEL in the name. isSafeAria2FileEntry_controlCharBoundary asserts !isSafeAria2FileEntry({fileName=\"core\\x7f.esd\"})"
+    },
+    {
+      "id": "filename-control-scan-dropped",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "!hasAria2ControlChar(info.fileName)",
+      "replace": "true",
+      "expect": "killed",
+      "why": "a CR/LF/TAB/NUL in the file name could break out of the aria2 record; forcing this term true stops scanning the name. isSafeAria2FileEntry_rejectsControlCharInFileName asserts !isSafeAria2FileEntry({fileName=\"core\\n.esd\"}) (name is otherwise safe so only the control-char scan rejects it)"
+    },
+    {
+      "id": "url-control-scan-dropped",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "!hasAria2ControlChar(info.url)",
+      "replace": "true",
+      "expect": "killed",
+      "why": "CRLF in the URL could inject an out=/uri directive into the manifest; forcing this term true stops scanning the URL. isSafeAria2FileEntry_rejectsControlCharInUrl asserts !isSafeAria2FileEntry({url=\"...x\\r\\n out=/etc/passwd\"}) with fileName and sha1 safe"
+    },
+    {
+      "id": "sha1-control-scan-dropped",
+      "file": "src/core/uup_dump_api.cpp",
+      "find": "!hasAria2ControlChar(info.sha1)",
+      "replace": "true",
+      "expect": "killed",
+      "why": "a control char in the checksum field is serialized into the manifest too; forcing this term true stops scanning sha1. isSafeAria2FileEntry_rejectsControlCharInSha1 asserts !isSafeAria2FileEntry({sha1=\"da39...afd8\\n0709\"}) with fileName and url safe"
+    }
+  ]
+}

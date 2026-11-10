@@ -1,0 +1,24 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_openai_model_client",
+  "ctest_regex": "^test_ai_openai_model_client$",
+  "mutants": [
+    {
+      "id": "thread-launch-failure-overrides-cancellation",
+      "file": "src/ai/ai_openai_model_client.cpp",
+      "find": "IAiModelClient::Response response;\r\n    if (tokenCancelled(token)) {\r\n        response.error_message = token.cancelReason();",
+      "replace": "IAiModelClient::Response response;\r\n    if (tokenCancelled(token)) {\r\n        response.error_message = state.m_error;",
+      "expect": "killed",
+      "why": "Cancellation is canonical and has higher priority than a simultaneous thread-launch failure. cancellationOutranksThreadStartFailure cancels inside the injected no-op starter and requires the exact immutable token reason, not the launch error."
+    },
+    {
+      "id": "untrusted-user-message-is-promoted-to-instructions",
+      "file": "src/ai/ai_openai_model_client.cpp",
+      "find": "        req.untrusted_input_messages.append(\r\n            {.role = OpenAIInputMessageRole::User, .text = message});",
+      "replace": "        req.instructions += message;",
+      "expect": "killed",
+      "why": "untrustedContextUsesUserRoleNotInstructions requires the adapter to preserve hostile workflow data as a Responses API user-role message."
+    }
+  ]
+}

@@ -10,6 +10,7 @@
 #include "sak/layout_constants.h"
 
 #include <QDateTime>
+#include <QDir>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -122,6 +123,7 @@ struct BatteryInfo {
     uint32_t full_charge_capacity{0};  ///< mWh (current max)
     uint32_t current_charge{0};        ///< mWh (right now)
     double health_percent{0.0};        ///< fullCharge / designCapacity * 100
+    bool health_known{false};          ///< false when either capacity was not reported
     QString status;                    ///< "Charging" / "Discharging" / "Full"
     uint32_t cycle_count{0};           ///< Charge cycles (if available)
     uint32_t estimated_minutes{0};     ///< Remaining runtime
@@ -165,7 +167,7 @@ struct SmartAttribute {
 /// @brief NVMe-specific health log data
 struct NvmeHealthInfo {
     uint8_t percentage_used{0};   ///< Endurance used (0-100+)
-    uint64_t data_units_read{0};  ///< 512-byte units
+    uint64_t data_units_read{0};  ///< NVMe data units read: 1 = 1000 x 512-byte units
     uint64_t data_units_written{0};
     uint64_t power_on_hours{0};
     uint32_t unsafe_shutdowns{0};
@@ -196,6 +198,9 @@ struct SmartReport {
     // Overall assessment
     SmartHealthStatus overall_health{SmartHealthStatus::Unknown};
     QString smart_status;  ///< "PASSED" / "FAILED"
+    /// Why overall_health is what it is, in the drive's own terms: its self-assessment, an
+    /// attribute past the drive's own threshold, or the counts it reports.
+    QString health_reason;
 
     // SATA attributes
     QVector<SmartAttribute> attributes;
@@ -328,7 +333,9 @@ struct StressTestConfig {
     int duration_minutes{kStressTestDefaultDurationMinutes};
     int cpu_threads{0};  ///< 0 = all logical processors
     double memory_usage_percent{kStressTestDefaultMemoryUsagePercent};
-    QString disk_test_drive{"C:\\"};
+    /// The drive a disk stress writes its test file to. No default: the caller names the drive
+    /// the technician picked, and the worker refuses an empty one.
+    QString disk_test_drive;
 
     double thermal_limit_celsius{kStressTestDefaultThermalLimitCelsius};
     bool abort_on_error{true};
@@ -337,6 +344,9 @@ struct StressTestConfig {
 /// @brief Stress test result
 struct StressTestResult {
     bool passed{false};
+    /// Stopped before its time ran out (Stop, or the app closing): not a pass, and not a failure
+    /// either. Closing the app 13 s in was logged "Stress test FAILED" (review 3).
+    bool stopped{false};
     int duration_seconds{0};
     int errors_detected{0};
 
@@ -361,11 +371,46 @@ struct StressTestResult {
     QString abort_reason;        ///< Empty if completed normally
     QDateTime start_time;
     QDateTime end_time;
+
+    /// @brief Whether any CPU temperature was read during the run. With no reading the thermal
+    ///        limit could not be enforced, and max_cpu_temp says nothing.
+    [[nodiscard]] bool cpuTemperatureRead() const { return max_cpu_temp > 0.0; }
 };
+
+/// @brief PASSED, STOPPED or FAILED, as the log and the stress test's line say it.
+[[nodiscard]] inline const char* stressVerdictWord(const StressTestResult& result) {
+    if (result.passed) {
+        return "PASSED";
+    }
+    return result.stopped ? "STOPPED" : "FAILED";
+}
+
+// ============================================================================
+// Where Disk Tests Write
+// ============================================================================
+
+/// @brief The folder a disk benchmark or disk stress test writes its file to on @p drive_path.
+///        Creating a file in the root of the system drive needs administrator rights, so on the
+///        drive that holds the temp folder the test uses that folder: the same disk, and it works
+///        for a normal user. Any other drive uses its root.
+[[nodiscard]] inline QString diskTestFolder(const QString& drive_path) {
+    constexpr qsizetype kDriveLetterLength = 2;  // "C:"
+    const QString temp = QDir::tempPath();
+    return drive_path.left(kDriveLetterLength)
+                       .compare(temp.left(kDriveLetterLength), Qt::CaseInsensitive) == 0
+               ? temp
+               : drive_path;
+}
 
 // ============================================================================
 // Thermal Monitoring Types
 // ============================================================================
+
+/// @brief How often the visible thermal readout re-queries the sensors. Each poll launches one
+///        PowerShell process (WMI ACPI zone, nvidia-smi, storage reliability counters), so it is
+///        deliberately slow for a glanceable readout, and it only runs while the readout is shown.
+///        Its own constant: it used to borrow the peer-discovery broadcast interval (2 s).
+inline constexpr int kThermalReadoutPollIntervalMs = 5000;
 
 /// @brief Single thermal sensor reading
 struct ThermalReading {

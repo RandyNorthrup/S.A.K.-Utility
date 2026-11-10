@@ -1,0 +1,64 @@
+{
+    "tool":  "partition-manager-row-report",
+    "schema_version":  1,
+    "scenario_id":  "external.file-level-data-recovery",
+    "status":  "Passed",
+    "failure":  "",
+    "run_id":  "6dabd3e9-9548-4b37-b588-cd518f92232c",
+    "started_utc":  "2026-11-10T16:32:19.3139498Z",
+    "completed_utc":  "2026-11-10T16:32:48.4493174Z",
+    "code":  {
+                 "digest":  "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+                 "commit":  "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+                 "dirty":  false
+             },
+    "binaries":  {
+                     "client_sha256":  "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
+                     "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                     "app_sha256":  "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+                 },
+    "rig":  {
+                "machine_manufacturer":  "innotek GmbH",
+                "machine_model":  "VirtualBox",
+                "firmware":  "UEFI",
+                "os_caption":  "Microsoft Windows 11 Pro",
+                "os_build":  "26200",
+                "consent_prompt_answered_by_policy":  true
+            },
+    "media":  {
+                  "class":  "virtual_disk",
+                  "kind":  "VHDX in a VM",
+                  "model":  "Msft Virtual Disk",
+                  "bus_type":  "File Backed Virtual",
+                  "media_type":  "Unspecified",
+                  "rotation_rate_rpm":  0,
+                  "size_bytes":  "536870912",
+                  "serial_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+    "steps":  [
+                  {
+                      "id":  "recover",
+                      "operation":  "FileRecovery",
+                      "expect":  "success",
+                      "report":  "recover.client.json",
+                      "observed":  {
+                                       "client_token_elevated":  true,
+                                       "client_pid":  5868,
+                                       "exit_code":  0
+                                   }
+                  }
+              ],
+    "independent_file":  "independent.json",
+    "artifacts":  [
+                      {
+                          "path":  "independent.json",
+                          "sha256":  "a0240ce1988be7a627a671bb13bf832f0146e2105f017fbc0d7f657ad3c718f6",
+                          "bytes":  496
+                      },
+                      {
+                          "path":  "recover.client.json",
+                          "sha256":  "1be9b421db01b723af3ffca57c0cdc74b5cb5e10cc275747f073ede7c8eba620",
+                          "bytes":  1294
+                      }
+                  ]
+}

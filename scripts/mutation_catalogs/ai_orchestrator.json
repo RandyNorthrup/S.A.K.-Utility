@@ -1,0 +1,280 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_orchestrator",
+  "ctest_regex": "^test_ai_orchestrator$",
+  "mutants": [
+    {
+      "id": "resume-allows-one-missing-identity-field",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (options.resume_workflow_id.trimmed().isEmpty() ||\r\n        options.resume_run_id.trimmed().isEmpty()) {",
+      "replace": "    if (options.resume_workflow_id.trimmed().isEmpty() &&\r\n        options.resume_run_id.trimmed().isEmpty()) {",
+      "expect": "killed",
+      "why": "resumeRejectsIdentityHistoryAndOutcomeTampering requires both persisted identity fields before history can skip a phase."
+    },
+    {
+      "id": "resume-allows-one-identity-mismatch",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (options.resume_workflow_id != workflow.id || options.resume_run_id != run_id) {",
+      "replace": "    if (options.resume_workflow_id != workflow.id && options.resume_run_id != run_id) {",
+      "expect": "killed",
+      "why": "resumeRejectsIdentityHistoryAndOutcomeTampering refuses a record from another run even when its workflow id matches."
+    },
+    {
+      "id": "resume-index-does-not-equal-history-length",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "        options.resume_start_phase_index != options.resume_prior_phases.size() ||",
+      "replace": "        options.resume_start_phase_index < options.resume_prior_phases.size() ||",
+      "expect": "killed",
+      "why": "resumeDoesNotSkipPhaseWithoutPriorRecord and the strict resume test require the index to equal the proven prefix length."
+    },
+    {
+      "id": "resume-phase-order-is-not-checked",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (prior.phase_id != declared.id || prior.phase_type != declared.type ||",
+      "replace": "    if ((prior.phase_id != declared.id && phase_index < 0) ||\n        prior.phase_type != declared.type ||",
+      "expect": "killed",
+      "why": "resumeRejectsIdentityHistoryAndOutcomeTampering rejects a valid phase id placed at the wrong prefix position."
+    },
+    {
+      "id": "resume-outcome-consistency-is-reversed",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (prior.ran == prior.skipped || (prior.skipped && prior.success)) {",
+      "replace": "    if (prior.ran != prior.skipped || (prior.skipped && prior.success)) {",
+      "expect": "killed",
+      "why": "resumeRejectsIdentityHistoryAndOutcomeTampering accepts exactly one of ran/skipped and rejects both set."
+    },
+    {
+      "id": "resume-derived-phase-result-is-dropped",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    state->context.phase_results.insert(prior.phase_id, prior.toJson());",
+      "replace": "    if (phase_index < 0) { state->context.phase_results.insert(prior.phase_id, prior.toJson()); }",
+      "expect": "killed",
+      "why": "resumeDerivesFlagsAndResultsFromHistory requires downstream tools to receive the canonical prior phase result."
+    },
+    {
+      "id": "resume-derived-flag-is-dropped",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (prior.ran && !prior.skipped) {\r\n        state->result.flags.insert(QStringLiteral(\"%1_%2\").arg(\r\n            prior.phase_id,\r\n            prior.success ? QStringLiteral(\"succeeded\") : QStringLiteral(\"failed\")));\r\n    }",
+      "replace": "    if (prior.ran && !prior.skipped && phase_index < 0) {\r\n        state->result.flags.insert(QStringLiteral(\"%1_%2\").arg(\r\n            prior.phase_id,\r\n            prior.success ? QStringLiteral(\"succeeded\") : QStringLiteral(\"failed\")));\r\n    }",
+      "expect": "killed",
+      "why": "resumeDerivesFlagsAndResultsFromHistory requires the failed prior phase to enable only its declared fallback condition."
+    },
+    {
+      "id": "direct-model-client-is-marked-concurrent",
+      "file": "src/ai/ai_subagent_runner.cpp",
+      "find": "    return static_cast<bool>(m_model_client_factory) &&",
+      "replace": "    return (m_model_client != nullptr || static_cast<bool>(m_model_client_factory)) &&",
+      "expect": "killed",
+      "why": "serializesReadOnlyDelegatesWithoutIsolatedClients proves a directly injected client is never shared across parallel phases."
+    },
+    {
+      "id": "factory-client-is-created-but-shared-client-is-used",
+      "file": "src/ai/ai_subagent_runner.cpp",
+      "find": "        model_client = owned_client.get();",
+      "replace": "        model_client = m_model_client;",
+      "expect": "killed",
+      "why": "groupsReadOnlyDelegatePhasesInParallel proves factory-created clients, not the configured shared client, service concurrent calls."
+    },
+    {
+      "id": "unsafe-tool-executor-is-marked-concurrent",
+      "file": "src/ai/ai_subagent_runner.cpp",
+      "find": "           (m_tool_executor == nullptr || m_tool_executor->supportsConcurrentCalls());",
+      "replace": "           (m_tool_executor == nullptr || m_tool_executor->supportsConcurrentCalls() ||\n            m_tool_executor != nullptr);",
+      "expect": "killed",
+      "why": "toolExecutorMustOptIntoConcurrentCalls requires explicit executor safety rather than inferring it from presence."
+    },
+    {
+      "id": "missing-guidance-resolver-is-invoked",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (!m_guidance_resolver) {",
+      "replace": "    if (m_guidance_resolver) {",
+      "expect": "killed",
+      "why": "guidancePreflightFailsClosedOnMissingErrorOrEmptyReference refuses declared guidance when no resolver exists."
+    },
+    {
+      "id": "empty-guidance-is-accepted",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "        if (body.isEmpty()) {",
+      "replace": "        if (body.size() < 0) {",
+      "expect": "killed",
+      "why": "guidancePreflightFailsClosedOnMissingErrorOrEmptyReference requires every declared reference to resolve nonempty."
+    },
+    {
+      "id": "missing-software-resolver-is-invoked",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "        if (!m_software_resolver) {",
+      "replace": "        if (m_software_resolver) {",
+      "expect": "killed",
+      "why": "preflightFailsClosedWhenRequiredSoftwareMissing refuses required software when no resolver exists."
+    },
+    {
+      "id": "unknown-software-probe-result-is-accepted",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "        if (!available) {",
+      "replace": "        if (!available && identity.isEmpty()) {",
+      "expect": "killed",
+      "why": "preflightFailsClosedWhenRequiredSoftwareMissing requires resolver errors to terminate before phase execution."
+    },
+    {
+      "id": "child-tool-cancellation-becomes-failure",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (phase_token.isCancellationRequested()) {\r\n        execution.success = false;\r\n        execution.subagent_status = AiSubagentStatus::Cancelled;",
+      "replace": "    if (phase_token.isCancellationRequested()) {\r\n        execution.success = false;\r\n        execution.subagent_status = AiSubagentStatus::Failed;",
+      "expect": "killed",
+      "why": "childToolCancellationCancelsRun requires child-only executor cancellation to become a Cancelled run."
+    },
+    {
+      "id": "delegate-status-is-written-on-non-delegate-phases",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (isDelegatePhaseType(phase_type)) {",
+      "replace": "    if (!isDelegatePhaseType(phase_type)) {",
+      "expect": "killed",
+      "why": "phaseSerializationIsPhaseNeutralAndStrict requires one serializer that omits delegate-only state from tool and overseer phases."
+    },
+    {
+      "id": "phase-start-callback-is-skipped",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "        const QString callback_error = notifyPhaseStarted(m_phase_started_callback, phase);\r\n        if (!callback_error.isEmpty()) {",
+      "replace": "        const QString callback_error;\r\n        if (!callback_error.isEmpty()) {",
+      "expect": "killed",
+      "why": "retry/reassignment and ordering tests require one balanced logical lifecycle callback pair per declared phase."
+    },
+    {
+      "id": "parallel-agent-hard-cap-is-removed",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "        std::clamp(m_options.max_parallel_subagents, 1, kMaxParallelSubagents);",
+      "replace": "        std::max(m_options.max_parallel_subagents, 1);",
+      "expect": "killed",
+      "why": "parallelAgentLimitHasHardUpperCap pins the named independent upper resource bound."
+    },
+    {
+      "id": "invalid-runtime-workflow-is-admitted",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (!workflow.isValid(&validation_errors)) {",
+      "replace": "    if (workflow.phases.isEmpty() && !workflow.isValid(&validation_errors)) {",
+      "expect": "killed",
+      "why": "publicRunRejectsUnsupportedPhaseType requires direct callers to pass full WorkflowTemplate validation before any phase executes."
+    },
+    {
+      "id": "negative-resume-index-is-accepted",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (options.resume_start_phase_index < 0 ||\r\n        options.resume_start_phase_index != options.resume_prior_phases.size() ||",
+      "replace": "    if ((options.resume_start_phase_index >= 0 &&\r\n         options.resume_start_phase_index != options.resume_prior_phases.size()) ||",
+      "expect": "killed",
+      "why": "resumeRejectsNegativeIndexBeforeNormalization requires malformed negative state to remain negative and fail validation."
+    },
+    {
+      "id": "unconditional-resume-phase-may-be-skipped",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (prior.skipped && (declared.condition.trimmed().isEmpty() || condition_met)) {",
+      "replace": "    if (prior.skipped && !declared.condition.trimmed().isEmpty() && condition_met) {",
+      "expect": "killed",
+      "why": "resumeValidatesSkippedAndToolOutcomes refuses a forged skipped record for an unconditional phase."
+    },
+    {
+      "id": "resume-tool-success-may-contradict-result",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "        if (!tool_success.isBool() || tool_success.toBool() != prior.success) {",
+      "replace": "        if (!tool_success.isBool() && tool_success.toBool() != prior.success) {",
+      "expect": "killed",
+      "why": "resumeValidatesSkippedAndToolOutcomes requires the trusted execution success bit to match the tool result."
+    },
+    {
+      "id": "json-duration-uses-rounded-qint64-ceiling",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "duration > kMaxExactJsonInteger ||",
+      "replace": "duration > 9.2233720368547758e18 ||",
+      "expect": "killed",
+      "why": "phaseSerializationIsPhaseNeutralAndStrict rejects doubles outside the exact integer range before narrowing to qint64."
+    },
+    {
+      "id": "missing-overseer-handler-is-called",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (!m_overseer_handler) {\r\n        execution.error_message = QStringLiteral(\"No overseer handler configured\");\r\n        return execution;\r\n    }",
+      "replace": "    if (!m_overseer_handler && phase.id.isEmpty()) {\r\n        execution.error_message = QStringLiteral(\"No overseer handler configured\");\r\n        return execution;\r\n    }",
+      "expect": "killed",
+      "why": "overseerPhaseFailsClosedWithoutValidHandler requires a missing handler to become a visible phase failure."
+    },
+    {
+      "id": "empty-overseer-result-is-treated-as-valid",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (!success.isBool()) {\r\n        execution.error_message = QStringLiteral(\"Overseer handler returned no boolean success\");\r\n        return execution;\r\n    }",
+      "replace": "    if (!success.isBool() && !result.isEmpty()) {\r\n        execution.error_message = QStringLiteral(\"Overseer handler returned no boolean success\");\r\n        return execution;\r\n    }",
+      "expect": "killed",
+      "why": "overseerPhaseFailsClosedWithoutValidHandler pins the typed success contract for empty handler output."
+    },
+    {
+      "id": "phase-exception-escapes-lifecycle",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    } catch (const std::exception& exception) {\r\n        return phaseExceptionExecution(\r\n            phase,\r\n            QStringLiteral(\"Phase execution threw: %1\").arg(QString::fromUtf8(exception.what())));",
+      "replace": "    } catch (const std::exception&) {\r\n        throw;",
+      "expect": "killed",
+      "why": "balancesLifecycleWhenPhaseThrows requires thrown model/tool work to become a terminal phase record with a paired completion callback."
+    },
+    {
+      "id": "completed-callback-exception-escapes-run",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    } catch (const std::exception& exception) {\r\n        return callbackExceptionMessage(QStringLiteral(\"Phase-completed\"), &exception);",
+      "replace": "    } catch (const std::exception&) {\r\n        throw;",
+      "expect": "killed",
+      "why": "callbackExceptionsFailWithoutEscaping requires a throwing completion observer to fail the run without escaping."
+    },
+    {
+      "id": "model-client-factory-invocation-is-not-serialized",
+      "file": "src/ai/ai_subagent_runner.cpp",
+      "find": "        const std::scoped_lock factory_lock(m_model_client_factory_mutex);",
+      "replace": "        const bool factory_lock = false; (void)factory_lock;",
+      "expect": "killed",
+      "why": "groupsReadOnlyDelegatePhasesInParallel measures factory overlap and requires isolated clients to be created under serialized factory invocation."
+    },
+    {
+      "id": "unknown-agent-model-policy-passes-validation",
+      "file": "src/ai/ai_workflow_template.cpp",
+      "find": "        if (!isKnownModelPolicy(agent.model_policy)) {",
+      "replace": "        if (agent.model_policy.isEmpty() && !isKnownModelPolicy(agent.model_policy)) {",
+      "expect": "killed",
+      "why": "agentModelPolicySelectsReasoningEffortTier requires unknown policy text to fail workflow validation before phase execution."
+    },
+    {
+      "id": "workflow-context-is-promoted-to-system-instructions",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    task.untrusted_context_messages.append(*untrusted_context);",
+      "replace": "    task.system_instructions += *untrusted_context;",
+      "expect": "killed",
+      "why": "workflowDataNeverEntersSystemInstructions requires hostile user/input/result data to remain in the explicit untrusted user-message channel."
+    },
+    {
+      "id": "oversized-workflow-context-is-silently-admitted",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (serialized.size() > kMaxWorkflowContextChars) {",
+      "replace": "    if (serialized.size() < 0 && serialized.size() > kMaxWorkflowContextChars) {",
+      "expect": "killed",
+      "why": "oversizedWorkflowContextFailsClosed requires the field-bounded context to fail visibly instead of being cut or sent over budget."
+    },
+    {
+      "id": "recovery-completion-callback-error-is-discarded",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (callback_error.isEmpty()) {\r\n        return;\r\n    }\r\n    state->result.phases.last().metadata.insert(QStringLiteral(\"callback_error\"), callback_error);",
+      "replace": "    if (!callback_error.isEmpty()) {\r\n        return;\r\n    }\r\n    state->result.phases.last().metadata.insert(QStringLiteral(\"callback_error\"), callback_error);",
+      "expect": "killed",
+      "why": "recoveryCompletionCallbackFailureIsSurfaced requires always-run recovery observer failures in the phase metadata and terminal error."
+    },
+    {
+      "id": "runner-promotes-untrusted-context-to-system-instructions",
+      "file": "src/ai/ai_subagent_runner.cpp",
+      "find": "    request.untrusted_user_messages = task.untrusted_context_messages;",
+      "replace": "    request.system_instructions += task.untrusted_context_messages.join(QStringLiteral(\"\\n\"));",
+      "expect": "killed",
+      "why": "untrustedContextStaysSeparateFromSystemInstructions pins the generic runner boundary independently of the OpenAI adapter."
+    },
+    {
+      "id": "oversized-trusted-guidance-is-byte-truncated-and-accepted",
+      "file": "src/ai/ai_orchestrator.cpp",
+      "find": "    if (max_bytes <= 0 || bytes.size() > max_bytes) {",
+      "replace": "    if (max_bytes <= 0 || (reference.isEmpty() && bytes.size() > max_bytes)) {",
+      "expect": "killed",
+      "why": "guidanceRequiresCompleteBoundedBody requires full trusted guidance including its safety tail or an explicit refusal."
+    }
+  ]
+}

@@ -6,7 +6,11 @@
 
 #pragma once
 
+#include "sak/file_explorer_types.h"
+
+#include <QSet>
 #include <QSortFilterProxyModel>
+#include <QString>
 
 namespace sak {
 
@@ -18,8 +22,15 @@ public:
 
     void setNameFilter(const QString& filter_text);
     void setShowHiddenItems(bool show);
+    void setFolderSortPlacement(FileExplorerFolderSortPlacement placement);
     [[nodiscard]] QString nameFilter() const;
     [[nodiscard]] bool showHiddenItems() const;
+
+    /// Restrict visible rows to the given set of item paths (a tag filter). An
+    /// empty active set hides everything; clearTagFilter() disables the filter.
+    void setTagFilter(const QSet<QString>& paths);
+    void clearTagFilter();
+    [[nodiscard]] bool tagFilterActive() const;
 
 protected:
     [[nodiscard]] bool lessThan(const QModelIndex& source_left,
@@ -30,6 +41,10 @@ protected:
 private:
     QString m_name_filter;
     bool m_show_hidden_items{false};
+    FileExplorerFolderSortPlacement m_folder_placement{
+        FileExplorerFolderSortPlacement::FoldersFirst};
+    QSet<QString> m_tag_filter_paths;
+    bool m_tag_filter_active{false};
 };
 
 }  // namespace sak

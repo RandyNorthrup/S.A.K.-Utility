@@ -1,0 +1,16 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "sak_apfs_writer_cli",
+  "ctest_regex": "^test_sak_apfs_writer_cli$",
+  "mutants": [
+    {
+      "id": "image-resize-reuses-current-size",
+      "file": "src/tools/sak_apfs_writer_cli.cpp",
+      "find": ".source_image_path = invocation.m_target_path,\r\n         .written_image_path = invocation.m_output_image_path,\r\n         .new_size_bytes = invocation.m_new_size_bytes,",
+      "replace": ".source_image_path = invocation.m_target_path,\r\n         .written_image_path = invocation.m_output_image_path,\r\n         .new_size_bytes = invocation.m_target_size_bytes,",
+      "expect": "killed",
+      "why": "This is the shipped CLI binding defect found during WS3c-2: --new-size-bytes was parsed but commit-image-resize passed the current --size-bytes value, making every image resize current-to-current. test_sak_apfs_writer_cli grows a generated image by exactly one APFS block, asserts the exact larger size, shrinks it back, and asserts the original size; the mutant fails the grow command before any stale output can satisfy the size checks."
+    }
+  ]
+}

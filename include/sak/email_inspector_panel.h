@@ -17,10 +17,14 @@
 #include <QWidget>
 
 #include <memory>
+#include <optional>
 #include <type_traits>
 
+class EmailInspectorPanelTests;
+class EmailToolsViewsTests;  // unit-test friend (global namespace)
 class QCheckBox;
 class QComboBox;
+class QDateEdit;
 class QGroupBox;
 class QHBoxLayout;
 class QHeaderView;
@@ -40,6 +44,10 @@ class QTreeWidget;
 class QTreeWidgetItem;
 class QVBoxLayout;
 
+namespace sak::ui {
+class ViewEmptyState;
+}
+
 namespace sak {
 
 class LogToggleSwitch;
@@ -53,6 +61,9 @@ class LogToggleSwitch;
 class EmailInspectorPanel : public QWidget {
     Q_OBJECT
 
+    friend class ::EmailInspectorPanelTests;
+    friend class ::EmailToolsViewsTests;
+
 public:
     explicit EmailInspectorPanel(QWidget* parent = nullptr);
     ~EmailInspectorPanel() override;
@@ -64,7 +75,6 @@ public:
     EmailInspectorPanel& operator=(EmailInspectorPanel&&) = delete;
 
     /// Access the log toggle switch for MainWindow connection
-    LogToggleSwitch* logToggle() const { return m_log_toggle; }
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -84,12 +94,10 @@ private Q_SLOTS:
 
     // -- Search ----------------------------------------------------------
     void onSearchClicked();
-    void onSearchTextChanged();
 
     // -- Export ----------------------------------------------------------
     void onExportClicked();
     void onExportAttachmentsClicked();
-    void exportCurrentFolderAs(sak::ExportFormat format);
 
     // -- Modals ----------------------------------------------------------
     void onScanForFilesClicked();
@@ -110,10 +118,12 @@ private Q_SLOTS:
     void onItemPropertiesLoaded(uint64_t item_id, QVector<sak::MapiProperty> properties);
     void onAttachmentContentReady(uint64_t message_id,
                                   int index,
-                                  QByteArray data,
+                                  QByteArray attachment_data,
                                   QString filename);
+    void onAttachmentContentFailed(uint64_t message_id, int index, const QString& error);
     void onSearchHit(sak::EmailSearchHit hit);
     void onSearchComplete(int total_hits);
+    void onSearchCancelled(int partial_hits);
     void onExportStarted(int total);
     void onExportProgress(int done, int total, qint64 bytes);
     void onExportComplete(sak::EmailExportResult result);
@@ -142,10 +152,11 @@ private:
     void addRibbonSearchGroup(QHBoxLayout* layout, QWidget* ribbon);
     void addRibbonActionsGroup(QHBoxLayout* layout, QWidget* ribbon);
     void addRibbonPeopleGroup(QHBoxLayout* layout, QWidget* ribbon);
+    QWidget* createSearchFilterRow();
     QWidget* createFolderTreePanel();
     QWidget* createContentArea();
     QWidget* createItemListPanel();
-    QHBoxLayout* createItemPagingRow(QWidget* group);
+    QVBoxLayout* createItemPagingRow(QWidget* group);
     void configureItemListTable(QWidget* group);
     QWidget* createDetailPanel();
     QWidget* createContentTab();
@@ -159,20 +170,48 @@ private:
     void setOperationRunning(bool running);
     void populateFolderTree(const sak::PstFolderTree& tree);
     void addFolderToTree(QTreeWidgetItem* parent, const sak::PstFolder& folder);
+    /// Real emails outside the mail tree: reachable, and apart from it. Most stores have none.
+    void addFoldersOutsideMailTree(const sak::PstFolderTree& tree);
     [[nodiscard]] static const sak::PstFolder* findIpmSubtree(
         const QVector<sak::PstFolder>& folders);
     [[nodiscard]] static int folderSortOrder(const QString& name, const QString& container_class);
     [[nodiscard]] static QIcon folderIcon(const QString& name);
     [[nodiscard]] static bool isHiddenFolder(const QString& name, const QString& container_class);
+    /// Whether a folder appears in the tree: anything not hidden, and a hidden system folder that
+    /// real emails were found in or under. Empty system folders stay out of the way.
+    [[nodiscard]] static bool showsInTree(const sak::PstFolder& folder);
+    /// The top-level folders to display, in tree order: hidden (non-mail) folders removed,
+    /// the rest sorted by folder priority then case-insensitive name. Returned pointers
+    /// alias into @p source, which must outlive them.
+    [[nodiscard]] static QVector<const sak::PstFolder*> sortedVisibleFolders(
+        const QVector<sak::PstFolder>& source);
     void collectSpecialFolderIds(const sak::PstFolder& folder);
     void populateItemList(const QVector<sak::PstItemSummary>& items);
     void setAllItemListChecks(bool checked);
     void updateItemListHeaderCheckState();
     [[nodiscard]] QVector<uint64_t> checkedItemIds() const;
-    [[nodiscard]] uint64_t itemIdForRow(int row) const;
+    /// Item id stored on a row, or nullopt when the row carries none. Not 0-as-sentinel:
+    /// an MBOX message_index of 0 is a valid first message.
+    [[nodiscard]] std::optional<uint64_t> itemIdForRow(int row) const;
+    /// Export the folder named by @p folder_id. The id is passed in rather than
+    /// read from the selection, because the folder context menu must export the
+    /// folder that was right-clicked and a right-click does not move the
+    /// selection. A nullopt id fails visibly instead of exporting the previously
+    /// selected folder.
+    void exportFolderAs(sak::ExportFormat format, std::optional<uint64_t> folder_id);
+    /// Export EVERY mail folder in the open store in a single pass. This is the
+    /// whole-store export: the OST Converter writes full mailbox files (MBOX), and
+    /// per-message formats belong here, so this is where a technician turns an entire
+    /// store into EML/HTML/Text/PDF/CSV without walking the tree folder by folder.
+    void exportAllMailFoldersAs(sak::ExportFormat format);
+    /// The right-click export entries for a folder, by what it holds.
+    void addFolderExportActions(QMenu& menu,
+                                const sak::PstFolder* folder,
+                                std::optional<uint64_t> folder_id);
     void displayItemDetail(const sak::PstItemDetail& detail);
     void displayTaskDetail(const sak::PstItemDetail& detail);
     void displayNoteDetail(const sak::PstItemDetail& detail);
+    void displayJournalDetail(const sak::PstItemDetail& detail);
     [[nodiscard]] QString buildPreviewHtml(const QString& body_html) const;
     // Resolve image bytes for a `src` value (cid: lookup or cached remote).
     [[nodiscard]] QByteArray resolveInlineImageData(const QString& src,
@@ -196,15 +235,45 @@ private:
     void applyPageSize();
     void reloadCurrentPage();
     void updatePageControls();
+
+    /// @brief What a panel search asks for: every field the worker can look in, in one folder
+    ///        (@p folder_scope is that folder's id; 0 searches the whole store).
+    [[nodiscard]] static sak::EmailSearchCriteria searchCriteria(const QString& query,
+                                                                 uint64_t folder_scope);
+    /// @brief Search in This Folder: ask what to look for, then search that folder only. The scope
+    ///        lasts for this one search, so the ribbon box always means the whole store.
+    void searchInFolder(std::optional<uint64_t> folder_id, const QString& folder_name);
+    /// @brief Start a search and turn the item list over to its results.
+    void startSearch(const QString& query, uint64_t folder_scope, const QString& scope_name);
+    void finishSearchResults(int total_hits);
+    /// Add whatever the filter row has set. Nothing set leaves a plain search exactly as it was.
+    void applySearchFilters(sak::EmailSearchCriteria& criteria) const;
+    [[nodiscard]] bool searchFiltersActive() const;
+    void updateFilterButton();
+    void clearSearchFilters();
     void addPreviewControlRow(QVBoxLayout* root_layout);
     [[nodiscard]] int currentPageSize() const;
     [[nodiscard]] static QString formatBytes(qint64 bytes);
+
+    // -- Attachment Saving -----------------------------------------------
+    /// Both attachment save controls move together; they are locked for the
+    /// duration of a batch so a second batch cannot interleave with it.
+    void setAttachmentSaveControlsEnabled(bool enabled);
+    /// Message a new attachment save must be issued against, or nullopt with the
+    /// refusal already surfaced (a batch is running, or no message identity has
+    /// been committed).
+    [[nodiscard]] std::optional<uint64_t> attachmentSaveSource();
+    /// Begin a batch for @p refs into @p dir and issue the content requests.
+    /// Surfaces its own refusal and issues nothing when the batch cannot start.
+    void startAttachmentBatch(const QString& dir, const QVector<sak::AttachmentRef>& refs);
+    /// Show the summary, clear the batch and unlock the controls once every
+    /// expected attachment has been accounted for.
+    void finishAttachmentBatchIfComplete();
 
     // -- Controller ------------------------------------------------------
     std::unique_ptr<EmailInspectorController> m_controller;
 
     // -- Layout ----------------------------------------------------------
-    PanelHeaderWidgets m_header_widgets;
 
     // -- Ribbon Buttons (QToolButton with icon + text below) -------------
     QToolButton* m_scan_files_button{nullptr};
@@ -217,11 +286,26 @@ private:
     QLineEdit* m_search_edit{nullptr};
     QPushButton* m_search_button{nullptr};
 
+    // Search filters: a row under the ribbon, hidden until asked for
+    QPushButton* m_filter_button{nullptr};
+    QWidget* m_filter_row{nullptr};
+    QCheckBox* m_filter_from_check{nullptr};
+    QDateEdit* m_filter_from_date{nullptr};
+    QCheckBox* m_filter_to_check{nullptr};
+    QDateEdit* m_filter_to_date{nullptr};
+    QCheckBox* m_filter_attachment_check{nullptr};
+    QComboBox* m_filter_type_combo{nullptr};
+    QLabel* m_filter_mbox_note{nullptr};
+    QPushButton* m_filter_clear_button{nullptr};
+
     // Folder Tree
     QTreeWidget* m_folder_tree{nullptr};
 
     // Item List
     QTableWidget* m_item_list{nullptr};
+    /// Empty/loading overlay for the item list. Shows a loading message while a folder
+    /// page is being fetched, and an actionable empty message otherwise.
+    ui::ViewEmptyState* m_item_empty_state{nullptr};
     QLabel* m_item_count_label{nullptr};
     QComboBox* m_page_size_combo{nullptr};
     QToolButton* m_prev_page_button{nullptr};
@@ -248,18 +332,39 @@ private:
     // Status
     QLabel* m_status_label{nullptr};
     QProgressBar* m_progress_bar{nullptr};
+    /// Stop control for the running long operation (open/load/export). Shown and enabled
+    /// only while an operation is in flight (see setOperationRunning): its click asks the
+    /// controller to cooperatively cancel every parser/worker, so a technician is never
+    /// stranded watching an indeterminate progress bar with no way out.
+    QPushButton* m_cancel_operation_button{nullptr};
 
     // Search results
     QTableWidget* m_search_results_table{nullptr};
 
     // -- Log Toggle ------------------------------------------------------
-    LogToggleSwitch* m_log_toggle{nullptr};
 
     // -- State -----------------------------------------------------------
     bool m_dialog_active{false};
+    /// True while the item list shows search hits rather than a folder page.
+    bool m_showing_search_results{false};
+    QString m_search_scope_name;  ///< Folder the last search was limited to; empty = whole store
+    /// True while an MBOX store is open. MBOX has a single synthetic root folder whose
+    /// id is 0, and 0 is otherwise the "no folder selected" sentinel; this flag lets the
+    /// paging path tell the two apart so clicking the MBOX Inbox actually loads messages.
+    bool m_mbox_active{false};
+    /// Remaining QTreeWidgetItem budget while building the folder tree from an untrusted
+    /// PST/OST hierarchy. Reset per load; folders past it are not materialized (a hostile
+    /// store cannot exhaust memory by declaring an unbounded folder breadth/depth).
+    int m_folder_tree_budget{0};
     uint64_t m_current_folder_id{0};
-    uint64_t m_current_item_id{0};
-    uint64_t m_pending_item_id{0};
+    /// Identity of the message the detail view actually holds: committed from the
+    /// id the detail response itself carried, never from the most recently clicked
+    /// row. Not 0-as-sentinel -- an MBOX message_index of 0 is a valid message, so
+    /// "nothing committed" is absence, not zero.
+    std::optional<uint64_t> m_current_item_id;
+    /// Identity of the message whose MAPI properties the properties tab shows.
+    /// Kept separate because properties arrive in their own response.
+    std::optional<uint64_t> m_properties_item_id;
     int m_current_page{0};
     int m_current_total{0};
     sak::PstItemDetail m_current_detail;
@@ -274,7 +379,7 @@ private:
 
     // Remote (http/https) image cache keyed by absolute URL for the current
     // message.  Only populated when the Images toggle is on; consumed the
-    // same way as `m_inline_images` — inlined as `data:` URIs so that
+    // same way as `m_inline_images` -- inlined as `data:` URIs so that
     // `QTextBrowser` (which has no network stack) can render them.
     QHash<QString, QByteArray> m_remote_images;
     class QNetworkAccessManager* m_remote_image_nam{nullptr};
@@ -285,7 +390,7 @@ private:
     // N remote images triggers N full `QTextBrowser::setHtml` parses.
     QTimer* m_redraw_timer{nullptr};
 
-    // Save state — shared batch saver
+    // Save state -- shared batch saver
     sak::AttachmentBatchSave m_batch_save;
 
     // Cached folder IDs for modals
@@ -305,7 +410,7 @@ private:
     };
 };
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 static_assert(std::is_base_of_v<QWidget, EmailInspectorPanel>,
               "EmailInspectorPanel must inherit QWidget.");

@@ -3,16 +3,20 @@
 
 #pragma once
 
-#include <QDateTime>
-#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 
 namespace sak::ai {
 
+/// The assistant's provider catalog: the providers.json compiled into the executable
+/// (resources/ai.qrc). It is the only copy read -- nothing beside the executable can change which
+/// endpoints, tools or MCP commands the assistant uses -- and it is read once, when the registry
+/// is constructed, because an embedded resource cannot change while the process runs.
 class AiProviderRegistry {
 public:
+    /// @param app_dir the folder a stdio provider's relative command resolves against and must
+    ///        stay inside; empty means the executable's own folder.
     explicit AiProviderRegistry(QString app_dir = {});
 
     [[nodiscard]] QJsonObject providersObject(QString* error_message = nullptr) const;
@@ -23,33 +27,19 @@ public:
                                              QString* error_message = nullptr) const;
     [[nodiscard]] QJsonObject providerStatuses(QString* error_message = nullptr) const;
 
-    [[nodiscard]] QJsonObject appManifest(const QString& app_id,
-                                          QString* error_message = nullptr) const;
-    [[nodiscard]] QJsonObject appCapabilities(const QString& app_id,
-                                              const QString& action,
-                                              QString* error_message = nullptr) const;
-    void clearCache() const;
+#ifdef SAK_AI_TEST_HOOKS
+    /// Test-only (compiled only into tests that define SAK_AI_TEST_HOOKS): a registry over
+    /// @p catalog instead of the embedded one, so the status classifier and the gateway can be
+    /// driven with provider entries the shipped catalog does not contain.
+    [[nodiscard]] static AiProviderRegistry withCatalogForTesting(QString app_dir,
+                                                                  QJsonObject catalog);
+#endif
 
 private:
-    struct CachedJsonObject {
-        QString path;
-        QDateTime last_modified_utc;
-        QJsonObject object;
-        bool valid{false};
-    };
-
-    [[nodiscard]] QString providerRegistryPath() const;
-    [[nodiscard]] QString providerRegistryResourcePath() const;
-    [[nodiscard]] QString appManifestPath(const QString& app_id) const;
-    [[nodiscard]] QString appManifestResourcePath(const QString& app_id) const;
-    [[nodiscard]] QJsonObject readCachedJsonObject(const QString& file_path,
-                                                   const QString& resource_path,
-                                                   CachedJsonObject* cache,
-                                                   QString* error_message) const;
-
     QString m_app_dir;
-    mutable CachedJsonObject m_provider_cache;
-    mutable QHash<QString, CachedJsonObject> m_app_manifest_cache;
+    // Declared before m_catalog: the constructor fills both in one read, error first.
+    QString m_catalog_error;  // why the embedded catalog could not be read; empty when it was
+    QJsonObject m_catalog;
 };
 
 }  // namespace sak::ai

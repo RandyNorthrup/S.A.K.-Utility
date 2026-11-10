@@ -51,7 +51,9 @@ void InstallSummaryDialog::setupUi(const AppInstallationWorker::Stats& stats,
     // Summary headline
     QString headline;
     if (stats.failed == 0 && stats.cancelled == 0) {
-        headline = tr("All %1 packages installed successfully.").arg(stats.success);
+        headline = stats.success == 1
+                       ? tr("The package installed successfully.")
+                       : tr("All %1 packages installed successfully.").arg(stats.success);
     } else {
         headline = tr("%1 succeeded, %2 failed, %3 skipped, %4 cancelled")
                        .arg(stats.success)
@@ -65,12 +67,12 @@ void InstallSummaryDialog::setupUi(const AppInstallationWorker::Stats& stats,
     m_summary_label->setStyleSheet(
         ui::fontSizeWeightColorStyle(ui::kFontSizeSection,
                                      ui::kFontWeightBold,
-                                     stats.failed > 0 ? QString::fromLatin1(ui::kColorError)
-                                                      : QString::fromLatin1(ui::kColorSuccess)));
+                                     stats.failed > 0 ? ui::kColorError : ui::kColorSuccess));
     layout->addWidget(m_summary_label);
 
     // Per-package table
     m_job_table = new QTableWidget(this);
+    m_job_table->setAccessibleName(tr("Install results"));
     m_job_table->setColumnCount(ColCount);
     m_job_table->setHorizontalHeaderLabels(
         {tr("Package"), tr("Status"), tr("Duration"), tr("Error")});
@@ -83,9 +85,9 @@ void InstallSummaryDialog::setupUi(const AppInstallationWorker::Stats& stats,
     m_job_table->setColumnWidth(ColDuration, kDurationColumnWidth);
     layout->addWidget(m_job_table, 1);
 
-    // Close button
+    // Close button: secondary, as Close is in every dialog (UI review F27); Enter still closes.
     m_close_button = new QPushButton(tr("Close"), this);
-    m_close_button->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_close_button->setStyleSheet(ui::kSecondaryButtonStyle);
     m_close_button->setDefault(true);
     connect(m_close_button, &QPushButton::clicked, this, &QDialog::accept);
 
@@ -99,13 +101,13 @@ void InstallSummaryDialog::populateJobTable(const QVector<MigrationJob>& jobs) {
     m_job_table->setSortingEnabled(false);
     m_job_table->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_job_table);
-    const int count = jobs.size();
+    const int count = static_cast<int>(jobs.size());
     m_job_table->setRowCount(count);
     for (int row = 0; row < count; ++row) {
         const auto& job = jobs.at(row);
 
         // Package name (prefer display name, fallback to ID)
-        QString display_name = job.appName.isEmpty() ? job.packageId : job.appName;
+        const QString display_name = job.appName.isEmpty() ? job.packageId : job.appName;
         m_job_table->setItem(row, ColPackage, new QTableWidgetItem(display_name));
 
         // Status with color
@@ -134,13 +136,13 @@ void InstallSummaryDialog::populateJobTable(const QVector<MigrationJob>& jobs) {
             break;
         }
         auto* status_item = new QTableWidgetItem(status_text);
-        status_item->setForeground(QColor(status_color));
+        status_item->setForeground(QColor(ui::htmlColor(status_color)));
         m_job_table->setItem(row, ColStatus, status_item);
 
         // Duration
         QString duration_text;
         if (job.startTime.isValid() && job.endTime.isValid()) {
-            qint64 elapsed_sec = job.startTime.secsTo(job.endTime);
+            const qint64 elapsed_sec = job.startTime.secsTo(job.endTime);
             if (elapsed_sec < kSecondsPerMinute) {
                 duration_text = tr("%1s").arg(elapsed_sec);
             } else {

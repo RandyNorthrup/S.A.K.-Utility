@@ -43,6 +43,14 @@ public:
      */
     QVector<FolderSelection> getFolderSelections() const;
 
+    /// @brief Commit the working copy to the caller's profile (OK only)
+    void accept() override;
+
+    /// @brief @p folder_path relative to @p profile_path, or empty when it is not inside it. A
+    /// backup stores each file by where it sits in the profile, so anywhere else has no place.
+    [[nodiscard]] static QString pathInsideProfile(const QString& profile_path,
+                                                   const QString& folder_path);
+
 private Q_SLOTS:
     void onSelectAll();
     void onSelectNone();
@@ -56,33 +64,44 @@ private Q_SLOTS:
 
 private:
     void setupUi();
-    void setupUi_foldersSection(QVBoxLayout* mainLayout);
-    void setupUi_appDataSection(QVBoxLayout* mainLayout);
-    void setupUi_dialogButtons(QVBoxLayout* mainLayout);
+    void setupUi_foldersSection(QVBoxLayout* main_layout);
+    void setupUi_appDataSection(QVBoxLayout* main_layout);
+    void setupUi_dialogButtons(QVBoxLayout* main_layout);
     void populateTree();
     void addFolderToTree(const FolderSelection& selection, QTreeWidgetItem* parent = nullptr);
-    /// @brief Accumulated state for recursive directory tree traversal
-    struct DirTraversalState {
-        qint64& total_size;
-        int& total_files;
+    /// @brief Immutable options for recursive directory tree traversal
+    struct DirTraversalOptions {
         bool checked;
         int depth;
         int max_depth;
     };
+    /// @brief Totals returned by a recursive directory tree traversal
+    struct DirTraversalTotals {
+        qint64 total_size{0};
+        int total_files{0};
+    };
 
-    void addDirectoryContents(const QDir& dir, QTreeWidgetItem* parent, DirTraversalState state);
+    [[nodiscard]] DirTraversalTotals addDirectoryContents(const QDir& dir,
+                                                          QTreeWidgetItem* parent,
+                                                          DirTraversalOptions options);
     void addDirectoryChildItem(const QFileInfo& entry,
                                QTreeWidgetItem* parent,
-                               DirTraversalState& state);
+                               const DirTraversalOptions& options,
+                               DirTraversalTotals& totals);
     static QString formatFileSize(qint64 bytes);
     void calculateDirectorySize(
-        const QDir& dir, qint64& totalSize, int& fileCount, int depth = 0, int maxDepth = 10);
+        const QDir& dir, qint64& total_size, int& file_count, int depth = 0, int max_depth = 10);
     void setChildrenCheckState(QTreeWidgetItem* item, Qt::CheckState state) const;
     void updateParentCheckState(QTreeWidgetItem* item);
     void updateFolderCheckStates(QTreeWidgetItem* item);
     qint64 calculateTotalSize() const;
+    /// @brief Set `selected` on every folder selection in the working copy
+    void setAllFolderSelected(bool selected);
+    /// @brief Reflect the working copy's folder selections into the tree
+    void applyProfileSelectionsToTree();
 
-    UserProfile& m_profile;
+    UserProfile& m_target;  // Caller's live profile; written only on accept()
+    UserProfile m_profile;  // Working copy edited by the dialog
 
     // UI Components
     QLabel* m_usernameLabel{nullptr};

@@ -41,8 +41,6 @@ constexpr uint32_t kFreq2_4GHzCh14 = 2'484'000;
 constexpr uint32_t kFreq5GHzBase = 5'000'000;
 constexpr int kChannel2_4GHzBase = 1;
 constexpr int kChannel14 = 14;
-constexpr int kSignalQualityToDbmBase = -100;
-constexpr double kSignalQualityFactor = 0.5;
 constexpr int kMaxOuiPrefixLen = 8;
 constexpr int kStrongSignalRssiDbm = -50;
 constexpr int kMinimumSignalRssiDbm = -100;
@@ -103,7 +101,138 @@ using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
     return mac;
 }
 
-[[nodiscard]] WiFiNetworkInfo networkFromBssEntry(const WLAN_BSS_ENTRY& bss) {
+// -- Per-BSSID security from 802.11 information elements ----------------------
+constexpr int kIeIdRsn = 48;                     ///< RSN IE (WPA2/WPA3)
+constexpr int kIeIdVendor = 221;                 ///< Vendor-specific IE (holds WPA1)
+constexpr uint16_t kCapabilityPrivacy = 0x0010;  ///< Beacon capability Privacy bit
+constexpr int kIeHeaderLen = 2;                  ///< element id + length octets
+constexpr int kSuiteLen = 4;                     ///< OUI(3) + type(1)
+
+constexpr int kRsnVersion = 1;                   ///< the only RSN IE version defined by 802.11
+
+constexpr int kHighByteShift = 8;       ///< high-octet shift when assembling a 16-bit LE field
+constexpr int kLe16FieldBytes = 2;      ///< a 16-bit little-endian field/count occupies 2 octets
+constexpr int kSuiteOuiByte2Index = 2;  ///< 3rd OUI octet within a 4-byte cipher/AKM suite
+constexpr int kSuiteTypeIndex = 3;      ///< suite type octet, after the 3-octet OUI
+
+// WPA1 vendor-specific IE selector: Microsoft OUI 00:50:F2 followed by type 0x01.
+constexpr int kWpaVendorOui0 = 0x00;
+constexpr int kWpaVendorOui1 = 0x50;
+constexpr int kWpaVendorOui2 = 0xF2;
+constexpr int kWpaVendorType = 0x01;
+
+// SAE AKM suite selector: IEEE OUI 00:0F:AC followed by AKM type 0x08 (=> WPA3).
+constexpr int kSaeAkmOui0 = 0x00;
+constexpr int kSaeAkmOui1 = 0x0F;
+constexpr int kSaeAkmOui2 = 0xAC;
+constexpr int kSaeAkmType = 0x08;
+
+[[nodiscard]] int readLe16(const unsigned char* p) {
+    return static_cast<int>(p[0]) | (static_cast<int>(p[1]) << kHighByteShift);
+}
+
+// A valid RSN IE carries at least the 2-byte Version field, and the only defined
+// RSN version is 1. Reject a zero-length or garbage RSN payload so a malformed
+// beacon is never labelled WPA2-secure on element-id presence alone.
+[[nodiscard]] bool rsnIeIsValid(const unsigned char* d, int len) {
+    return len >= kLe16FieldBytes && readLe16(d) == kRsnVersion;
+}
+
+// WPA1 vendor IE payload begins with OUI 00:50:F2 followed by type 0x01.
+[[nodiscard]] bool isWpaVendorIe(const unsigned char* d, int len) {
+    return len >= kSuiteLen && d[0] == kWpaVendorOui0 && d[1] == kWpaVendorOui1 &&
+           d[kSuiteOuiByte2Index] == kWpaVendorOui2 && d[kSuiteTypeIndex] == kWpaVendorType;
+}
+
+// Scan an RSN IE payload for the SAE AKM suite (00:0F:AC:08) => WPA3.
+[[nodiscard]] bool rsnHasSae(const unsigned char* d, int len) {
+    int pos = kLe16FieldBytes + kSuiteLen;  // version(2) + group cipher suite(4)
+    if (pos + kLe16FieldBytes > len) {
+        return false;
+    }
+    const int pairwise = readLe16(d + pos);
+    pos += kLe16FieldBytes + (kSuiteLen * pairwise);
+    if (pos + kLe16FieldBytes > len) {
+        return false;
+    }
+    const int akm = readLe16(d + pos);
+    pos += kLe16FieldBytes;
+    for (int i = 0; i < akm; ++i) {
+        const int off = pos + (kSuiteLen * i);
+        if (off + kSuiteLen > len) {
+            break;
+        }
+        if (d[off] == kSaeAkmOui0 && d[off + 1] == kSaeAkmOui1 &&
+            d[off + kSuiteOuiByte2Index] == kSaeAkmOui2 &&
+            d[off + kSuiteTypeIndex] == kSaeAkmType) {
+            return true;
+        }
+    }
+    return false;
+}
+
+struct IeSecurityScan {
+    bool rsn = false;
+    bool sae = false;
+    bool wpa1 = false;
+};
+
+[[nodiscard]] IeSecurityScan scanSecurityIes(const unsigned char* ie, int ieLen) {
+    IeSecurityScan scan;
+    if (ie == nullptr) {
+        return scan;
+    }
+    int pos = 0;
+    while (pos + kIeHeaderLen <= ieLen) {
+        const int id = ie[pos];
+        const int len = ie[pos + 1];
+        if (pos + kIeHeaderLen + len > ieLen) {
+            break;
+        }
+        const unsigned char* data = ie + pos + kIeHeaderLen;
+        if (id == kIeIdRsn && rsnIeIsValid(data, len)) {
+            scan.rsn = true;
+            scan.sae = scan.sae || rsnHasSae(data, len);
+        } else if (id == kIeIdVendor && isWpaVendorIe(data, len)) {
+            scan.wpa1 = true;
+        }
+        pos += kIeHeaderLen + len;
+    }
+    return scan;
+}
+
+struct IeSpan {
+    const unsigned char* data = nullptr;
+    int len = 0;
+};
+
+// Validate the driver-reported IE blob location before parsing it. ulIeOffset must clear the fixed
+// WLAN_BSS_ENTRY header and the whole [ulIeOffset, ulIeOffset+ulIeSize) span must lie inside the
+// WlanGetNetworkBssList allocation (@p listBase, @p listSize bytes). A malformed offset/size --
+// ultimately beacon data from a possibly-rogue AP -- yields an empty span so deriveBssSecurity
+// falls back to the beacon Privacy bit instead of walking the IE parser at an out-of-bounds base.
+[[nodiscard]] IeSpan validatedIeSpan(const WLAN_BSS_ENTRY& bss,
+                                     const unsigned char* listBase,
+                                     size_t listSize) {
+    const auto* entryBase = reinterpret_cast<const unsigned char*>(&bss);
+    if (entryBase < listBase) {
+        return {};
+    }
+    const size_t entryStart = static_cast<size_t>(entryBase - listBase);
+    if (listSize < entryStart || listSize - entryStart < sizeof(WLAN_BSS_ENTRY)) {
+        return {};
+    }
+    const size_t room = listSize - entryStart;  // bytes from this entry to the allocation end
+    if (bss.ulIeOffset < sizeof(WLAN_BSS_ENTRY) || bss.ulIeSize == 0 || bss.ulIeOffset > room ||
+        bss.ulIeSize > room - bss.ulIeOffset) {
+        return {};
+    }
+    return {.data = entryBase + bss.ulIeOffset, .len = static_cast<int>(bss.ulIeSize)};
+}
+
+[[nodiscard]] WiFiNetworkInfo networkFromBssEntry(const WLAN_BSS_ENTRY& bss,
+                                                  const unsigned char* listBase,
+                                                  size_t listSize) {
     WiFiNetworkInfo info;
 
     info.ssid = ssidFromDot11Ssid(bss.dot11Ssid);
@@ -117,29 +246,41 @@ using WlanPtr = std::unique_ptr<T, void (*)(void*)>;
     info.band = WiFiAnalyzer::frequencyToBand(info.channelFrequencyKHz);
     info.bssType = bssTypeString(bss.dot11BssType);
 
+    // Authoritative per-BSSID security straight from THIS AP's beacon, so a rogue
+    // AP cannot borrow a sibling BSSID's security label via a shared SSID. The IE
+    // blob location is bounds-checked against the returned allocation first.
+    const bool privacy = (bss.usCapabilityInformation & kCapabilityPrivacy) != 0;
+    const IeSpan ie = validatedIeSpan(bss, listBase, listSize);
+    const WiFiBssSecurity sec = WiFiAnalyzer::deriveBssSecurity(privacy, ie.data, ie.len);
+    info.authentication = sec.authentication;
+    info.encryption = sec.encryption;
+    info.isSecure = sec.isSecure;
+
     info.apVendor = WiFiAnalyzer::lookupVendor(info.bssid);
     return info;
 }
 
 void appendBssNetworks(const WLAN_BSS_LIST& bssList, QVector<WiFiNetworkInfo>& networks) {
+    const auto* listBase = reinterpret_cast<const unsigned char*>(&bssList);
+    const size_t listSize = bssList.dwTotalSize;
     for (DWORD j = 0; j < bssList.dwNumberOfItems; ++j) {
         const auto& bss = bssList.wlanBssEntries[j];
-        networks.append(networkFromBssEntry(bss));
+        networks.append(networkFromBssEntry(bss, listBase, listSize));
     }
 }
 
 struct AuthEntry {
-    DOT11_AUTH_ALGORITHM algo;
-    const char* label;
+    DOT11_AUTH_ALGORITHM algo{};
+    const char* label{};
 };
 
 static constexpr AuthEntry kAuthTable[] = {
-    {DOT11_AUTH_ALGO_80211_OPEN, "Open"},
-    {DOT11_AUTH_ALGO_80211_SHARED_KEY, "Shared Key"},
-    {DOT11_AUTH_ALGO_WPA, "WPA-Enterprise"},
-    {DOT11_AUTH_ALGO_WPA_PSK, "WPA-Personal"},
-    {DOT11_AUTH_ALGO_RSNA, "WPA2-Enterprise"},
-    {DOT11_AUTH_ALGO_RSNA_PSK, "WPA2-Personal"},
+    {.algo = DOT11_AUTH_ALGO_80211_OPEN, .label = "Open"},
+    {.algo = DOT11_AUTH_ALGO_80211_SHARED_KEY, .label = "Shared Key"},
+    {.algo = DOT11_AUTH_ALGO_WPA, .label = "WPA-Enterprise"},
+    {.algo = DOT11_AUTH_ALGO_WPA_PSK, .label = "WPA-Personal"},
+    {.algo = DOT11_AUTH_ALGO_RSNA, .label = "WPA2-Enterprise"},
+    {.algo = DOT11_AUTH_ALGO_RSNA_PSK, .label = "WPA2-Personal"},
 };
 
 constexpr int kWpa3AuthThreshold = 9;
@@ -157,18 +298,18 @@ QString mapAuthAlgorithm(DOT11_AUTH_ALGORITHM algo) {
 }
 
 struct CipherEntry {
-    DOT11_CIPHER_ALGORITHM algo;
-    const char* label;
-    bool secure;
+    DOT11_CIPHER_ALGORITHM algo{};
+    const char* label{};
+    bool secure{};
 };
 
 static constexpr CipherEntry kCipherTable[] = {
-    {DOT11_CIPHER_ALGO_NONE, "None", false},
-    {DOT11_CIPHER_ALGO_WEP40, "WEP", true},
-    {DOT11_CIPHER_ALGO_WEP104, "WEP", true},
-    {DOT11_CIPHER_ALGO_WEP, "WEP", true},
-    {DOT11_CIPHER_ALGO_TKIP, "TKIP", true},
-    {DOT11_CIPHER_ALGO_CCMP, "AES-CCMP", true},
+    {.algo = DOT11_CIPHER_ALGO_NONE, .label = "None", .secure = false},
+    {.algo = DOT11_CIPHER_ALGO_WEP40, .label = "WEP", .secure = true},
+    {.algo = DOT11_CIPHER_ALGO_WEP104, .label = "WEP", .secure = true},
+    {.algo = DOT11_CIPHER_ALGO_WEP, .label = "WEP", .secure = true},
+    {.algo = DOT11_CIPHER_ALGO_TKIP, .label = "TKIP", .secure = true},
+    {.algo = DOT11_CIPHER_ALGO_CCMP, .label = "AES-CCMP", .secure = true},
 };
 
 void mapCipherAlgorithm(DOT11_CIPHER_ALGORITHM algo, QString& encryption, bool& is_secure) {
@@ -179,13 +320,27 @@ void mapCipherAlgorithm(DOT11_CIPHER_ALGORITHM algo, QString& encryption, bool& 
             return;
         }
     }
-    encryption = QStringLiteral("Other");
-    is_secure = true;
+    // An unrecognized cipher must NOT be assumed secure. Fail closed with a
+    // neutral label; the authoritative isSecure comes from the beacon IE and
+    // applyAuthAndEncryption only adopts this label when the two classes agree.
+    encryption = QStringLiteral("Unknown");
+    is_secure = false;
 }
 
 void applyAuthAndEncryption(const WLAN_AVAILABLE_NETWORK& net, WiFiNetworkInfo& info) {
+    // info.isSecure was already set per-BSSID from this AP's own beacon. The
+    // available-network entry is an SSID-wide aggregate, so only adopt its
+    // (typically richer) auth/cipher labels when the aggregate agrees with this
+    // BSSID's security class -- never let it flip isSecure. Otherwise an Open
+    // evil-twin sharing a secured SSID would inherit the secure label.
+    QString aggEncryption;
+    bool aggSecure = false;
+    mapCipherAlgorithm(net.dot11DefaultCipherAlgorithm, aggEncryption, aggSecure);
+    if (aggSecure != info.isSecure) {
+        return;
+    }
     info.authentication = mapAuthAlgorithm(net.dot11DefaultAuthAlgorithm);
-    mapCipherAlgorithm(net.dot11DefaultCipherAlgorithm, info.encryption, info.isSecure);
+    info.encryption = aggEncryption;
 }
 
 void applyAvailableNetwork(const WLAN_AVAILABLE_NETWORK& net, QVector<WiFiNetworkInfo>& networks) {
@@ -211,95 +366,194 @@ void applyAvailableNetworkList(const WLAN_AVAILABLE_NETWORK_LIST& netList,
     }
 }
 
+// Scan one interface. @p readOk is set true ONLY when the BSS-list read succeeds, because that
+// is the sole read that POPULATES `networks` -- the available-network list only annotates entries
+// the BSS read already produced and never adds new ones. Keying readOk on the BSS read means a
+// failed BSS read (e.g. the radio is off, ERROR_NDIS_DOT11_POWER_STATE_INVALID) yields readOk=false
+// even if the available-list read happened to succeed, so the caller surfaces an honest scan
+// failure instead of a misleading empty success.
+constexpr int kScanCompleteTimeoutMs = 4000;  // upper bound on waiting for a scan to finish
+
+// Set within a triggered scan pass when the fresh scan's completion could NOT be confirmed
+// (WlanScan failed, the ACM scan-complete wait timed out, or the completion notification could
+// not be registered) so the BSS-list read returns the driver's possibly-stale cache. scan()
+// reads it to surface the staleness instead of emitting a stale list as a fresh success.
+// thread_local: the whole scan pass runs synchronously on the calling thread, so concurrent
+// WiFiAnalyzer scans on different threads never clobber one another's flag.
+thread_local bool t_freshScanUnconfirmed = false;
+
+void CALLBACK onWlanScanNotification(PWLAN_NOTIFICATION_DATA data, PVOID context) {
+    if (context == nullptr || data == nullptr) {
+        return;
+    }
+    if (data->NotificationSource == WLAN_NOTIFICATION_SOURCE_ACM &&
+        (data->NotificationCode == wlan_notification_acm_scan_complete ||
+         data->NotificationCode == wlan_notification_acm_scan_fail)) {
+        SetEvent(static_cast<HANDLE>(context));
+    }
+}
+
+// Trigger a scan and wait (bounded) for the driver's ACM scan-complete/scan-fail
+// notification instead of blindly sleeping a fixed interval -- a fixed sleep may be
+// too short (the BSS list read then returns STALE cached results) or wastefully long.
+// A failed WlanScan, a wait timeout, or WAIT_FAILED are logged so a subsequent stale
+// cache read is surfaced; the fixed sleep is used only when the scan started but we
+// could not register for the completion notification (no signal to wait on).
+void triggerScanAndWait(HANDLE handle, const GUID& guid) {
+    HANDLE scanDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    DWORD prevSource = 0;
+    const bool registered = scanDone != nullptr &&
+                            WlanRegisterNotification(handle,
+                                                     WLAN_NOTIFICATION_SOURCE_ACM,
+                                                     FALSE,
+                                                     &onWlanScanNotification,
+                                                     scanDone,
+                                                     nullptr,
+                                                     &prevSource) == ERROR_SUCCESS;
+
+    bool confirmed = false;
+    const DWORD scanStatus = WlanScan(handle, &guid, nullptr, nullptr, nullptr);
+    if (scanStatus != ERROR_SUCCESS) {
+        logWarning("Wi-Fi: WlanScan failed ({}); reading the driver's cached BSS list", scanStatus);
+    } else if (registered) {
+        const DWORD waited = WaitForSingleObject(scanDone, kScanCompleteTimeoutMs);
+        if (waited == WAIT_OBJECT_0) {
+            confirmed = true;
+        } else {
+            // WAIT_TIMEOUT / WAIT_FAILED: the completion never signalled, so the BSS
+            // list read below may return stale cached results -- surface that.
+            logWarning("Wi-Fi: scan-complete wait did not signal ({}); results may be stale",
+                       waited);
+        }
+    } else {
+        // Scan started but we could not register for the ACM completion notification;
+        // give the driver a bounded moment to refresh before reading its cache.
+        QThread::msleep(kForcedScanDelayMs);
+    }
+    // Record that this fresh scan could not be confirmed complete so scan() can surface the
+    // resulting stale-cache read rather than passing it off as a fresh success.
+    if (!confirmed) {
+        t_freshScanUnconfirmed = true;
+    }
+
+    if (registered) {
+        WlanRegisterNotification(
+            handle, WLAN_NOTIFICATION_SOURCE_NONE, FALSE, nullptr, nullptr, nullptr, &prevSource);
+    }
+    if (scanDone != nullptr) {
+        CloseHandle(scanDone);
+    }
+}
+
 void scanInterface(HANDLE handle,
                    const WLAN_INTERFACE_INFO& ifInfo,
                    bool triggerScan,
-                   QVector<WiFiNetworkInfo>& networks) {
+                   QVector<WiFiNetworkInfo>& networks,
+                   bool& readOk) {
     if (triggerScan) {
-        WlanScan(handle, &ifInfo.InterfaceGuid, nullptr, nullptr, nullptr);
-        QThread::msleep(kForcedScanDelayMs);
+        triggerScanAndWait(handle, ifInfo.InterfaceGuid);
     }
+
+    readOk = false;
 
     PWLAN_BSS_LIST rawBssList = nullptr;
     DWORD result = WlanGetNetworkBssList(
         handle, &ifInfo.InterfaceGuid, nullptr, dot11_BSS_type_any, FALSE, nullptr, &rawBssList);
 
-    WlanPtr<WLAN_BSS_LIST> bssList(rawBssList, &wlanFreeMemory);
+    const WlanPtr<WLAN_BSS_LIST> bssList(rawBssList, &wlanFreeMemory);
     if (result == ERROR_SUCCESS && bssList != nullptr) {
         appendBssNetworks(*bssList, networks);
+        readOk = true;
     }
 
     PWLAN_AVAILABLE_NETWORK_LIST rawNetList = nullptr;
     result = WlanGetAvailableNetworkList(handle, &ifInfo.InterfaceGuid, 0, nullptr, &rawNetList);
-    WlanPtr<WLAN_AVAILABLE_NETWORK_LIST> netList(rawNetList, &wlanFreeMemory);
+    const WlanPtr<WLAN_AVAILABLE_NETWORK_LIST> netList(rawNetList, &wlanFreeMemory);
 
     if (result == ERROR_SUCCESS && netList != nullptr) {
+        // Annotates existing (BSS-derived) networks only; never adds entries, so it
+        // must NOT mark the read successful on its own -- see the function comment.
         applyAvailableNetworkList(*netList, networks);
     }
 }
 
-/// @brief Cached OUI database for vendor lookups
-[[nodiscard]] const QHash<QString, QString>& ouiDatabase() {
-    static QHash<QString, QString> db;
-    static bool loaded = false;
+// Parse the OUI text database ("AA:BB:CC<tab>Vendor") from the first candidate
+// path that opens; leaves @p db untouched if none is present.
+void loadOuiDatabaseFile(QHash<QString, QString>& db) {
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        appDir + QStringLiteral("/resources/network/oui_database.txt"),
+        appDir + QStringLiteral("/../resources/network/oui_database.txt"),
+    };
 
-    if (!loaded) {
-        loaded = true;
-
-        const QString appDir = QCoreApplication::applicationDirPath();
-        const QStringList candidates = {
-            appDir + QStringLiteral("/resources/network/oui_database.txt"),
-            appDir + QStringLiteral("/../resources/network/oui_database.txt"),
-        };
-
-        for (const auto& path : candidates) {
-            QFile file(path);
-            if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                QTextStream in(&file);
-                while (!in.atEnd()) {
-                    const auto line = in.readLine().trimmed();
-                    if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
-                        continue;
-                    }
-                    // Expected format: "AA:BB:CC<tab>Vendor Name"
-                    const auto parts = line.split(QLatin1Char('\t'));
-                    if (parts.size() >= kOuiDatabaseMinimumFields) {
-                        db.insert(parts[0].toUpper(), parts[1]);
-                    }
-                }
-                break;
+    for (const auto& path : candidates) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            continue;
+        }
+        QTextStream in(&file);
+        while (!in.atEnd()) {
+            const auto line = in.readLine().trimmed();
+            if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
+                continue;
+            }
+            const auto parts = line.split(QLatin1Char('\t'));
+            if (parts.size() >= kOuiDatabaseMinimumFields) {
+                db.insert(parts[0].toUpper(), parts[1]);
             }
         }
-
-        // Fallback common vendors
-        if (db.isEmpty()) {
-            db.insert(QStringLiteral("00:1A:2B"), QStringLiteral("Ayecom Technology"));
-            db.insert(QStringLiteral("00:50:56"), QStringLiteral("VMware"));
-            db.insert(QStringLiteral("00:0C:29"), QStringLiteral("VMware"));
-            db.insert(QStringLiteral("B8:27:EB"), QStringLiteral("Raspberry Pi"));
-            db.insert(QStringLiteral("DC:A6:32"), QStringLiteral("Raspberry Pi"));
-            db.insert(QStringLiteral("00:25:00"), QStringLiteral("Apple"));
-            db.insert(QStringLiteral("3C:22:FB"), QStringLiteral("Apple"));
-            db.insert(QStringLiteral("AC:DE:48"), QStringLiteral("Apple"));
-            db.insert(QStringLiteral("54:60:09"), QStringLiteral("Google"));
-            db.insert(QStringLiteral("F4:F5:D8"), QStringLiteral("Google"));
-            db.insert(QStringLiteral("30:B5:C2"), QStringLiteral("TP-Link"));
-            db.insert(QStringLiteral("50:C7:BF"), QStringLiteral("TP-Link"));
-            db.insert(QStringLiteral("2C:F0:5D"), QStringLiteral("Micro-Star"));
-            db.insert(QStringLiteral("00:14:BF"), QStringLiteral("Linksys"));
-            db.insert(QStringLiteral("C0:56:27"), QStringLiteral("Belkin"));
-            db.insert(QStringLiteral("20:E5:2A"), QStringLiteral("NETGEAR"));
-            db.insert(QStringLiteral("00:1F:33"), QStringLiteral("NETGEAR"));
-            db.insert(QStringLiteral("F8:32:E4"), QStringLiteral("ASUSTek"));
-            db.insert(QStringLiteral("04:D4:C4"), QStringLiteral("ASUSTek"));
-            db.insert(QStringLiteral("00:1E:58"), QStringLiteral("D-Link"));
-            db.insert(QStringLiteral("1C:7E:E5"), QStringLiteral("D-Link"));
-            db.insert(QStringLiteral("E4:F0:42"), QStringLiteral("Google"));
-            db.insert(QStringLiteral("3C:5A:B4"), QStringLiteral("Google"));
-            db.insert(QStringLiteral("88:71:B1"), QStringLiteral("Intel"));
-            db.insert(QStringLiteral("8C:EC:4B"), QStringLiteral("Dell"));
-        }
+        return;
     }
+}
+
+// Minimal built-in vendor set used only when no OUI text database ships.
+void seedFallbackVendors(QHash<QString, QString>& db) {
+    db.insert(QStringLiteral("00:1A:2B"), QStringLiteral("Ayecom Technology"));
+    db.insert(QStringLiteral("00:50:56"), QStringLiteral("VMware"));
+    db.insert(QStringLiteral("00:0C:29"), QStringLiteral("VMware"));
+    db.insert(QStringLiteral("B8:27:EB"), QStringLiteral("Raspberry Pi"));
+    db.insert(QStringLiteral("DC:A6:32"), QStringLiteral("Raspberry Pi"));
+    db.insert(QStringLiteral("00:25:00"), QStringLiteral("Apple"));
+    db.insert(QStringLiteral("3C:22:FB"), QStringLiteral("Apple"));
+    db.insert(QStringLiteral("AC:DE:48"), QStringLiteral("Apple"));
+    db.insert(QStringLiteral("54:60:09"), QStringLiteral("Google"));
+    db.insert(QStringLiteral("F4:F5:D8"), QStringLiteral("Google"));
+    db.insert(QStringLiteral("30:B5:C2"), QStringLiteral("TP-Link"));
+    db.insert(QStringLiteral("50:C7:BF"), QStringLiteral("TP-Link"));
+    db.insert(QStringLiteral("2C:F0:5D"), QStringLiteral("Micro-Star"));
+    db.insert(QStringLiteral("00:14:BF"), QStringLiteral("Linksys"));
+    db.insert(QStringLiteral("C0:56:27"), QStringLiteral("Belkin"));
+    db.insert(QStringLiteral("20:E5:2A"), QStringLiteral("NETGEAR"));
+    db.insert(QStringLiteral("00:1F:33"), QStringLiteral("NETGEAR"));
+    db.insert(QStringLiteral("F8:32:E4"), QStringLiteral("ASUSTek"));
+    db.insert(QStringLiteral("04:D4:C4"), QStringLiteral("ASUSTek"));
+    db.insert(QStringLiteral("00:1E:58"), QStringLiteral("D-Link"));
+    db.insert(QStringLiteral("1C:7E:E5"), QStringLiteral("D-Link"));
+    db.insert(QStringLiteral("E4:F0:42"), QStringLiteral("Google"));
+    db.insert(QStringLiteral("3C:5A:B4"), QStringLiteral("Google"));
+    db.insert(QStringLiteral("88:71:B1"), QStringLiteral("Intel"));
+    db.insert(QStringLiteral("8C:EC:4B"), QStringLiteral("Dell"));
+}
+
+/// @brief Cached OUI database for vendor lookups.
+///
+/// The table is built once into a function-local static; C++11 guarantees the
+/// initializer runs exactly once even under concurrent first calls, so parallel
+/// scans can no longer race the previous hand-rolled `loaded` flag / QHash fill.
+[[nodiscard]] const QHash<QString, QString>& ouiDatabase() {
+    static const QHash<QString, QString> db = [] {
+        QHash<QString, QString> table;
+        loadOuiDatabaseFile(table);
+        if (table.isEmpty()) {
+            // No oui_database.txt shipped/readable beside the app. This is the ONLY
+            // vendor data path that ships, so seed the bundled built-in set (vendor
+            // display is purely cosmetic) -- but surface that the richer file DB was
+            // absent instead of silently substituting it.
+            logInfo("Wi-Fi: OUI text database not found; using the built-in vendor set");
+            seedFallbackVendors(table);
+        }
+        return table;
+    }();
     return db;
 }
 }  // namespace
@@ -345,13 +599,34 @@ bool WiFiAnalyzer::isWiFiAvailable() const {
 
 void WiFiAnalyzer::scan() {
     if (!m_wlanInitialized.load()) {
-        Q_EMIT errorOccurred(QStringLiteral("WiFi adapter not available"));
+        Q_EMIT errorOccurred(QStringLiteral("Wi-Fi adapter not available"));
         Q_EMIT scanComplete({});
         return;
     }
 
-    auto networks = performWlanScan();
+    bool scanError = false;
+    t_freshScanUnconfirmed = false;
+    auto networks = performWlanScan(true, scanError);
     m_lastScan = networks;
+
+    // Fail CLOSED: a driver/radio failure that yields NO data (e.g. the radio is off) is reported
+    // honestly via errorOccurred rather than as a misleading "0 networks" success. A partial scan
+    // (some interface produced data) is still a success.
+    if (scanError && networks.isEmpty()) {
+        Q_EMIT errorOccurred(QStringLiteral(
+            "Wi-Fi scan failed (no data from the adapter -- the radio may be off or there is no "
+            "wireless interface)"));
+        Q_EMIT scanComplete(networks);
+        return;
+    }
+
+    // The scan returned data but its completion could not be confirmed, so the list may be the
+    // driver's cached results. Surface that as an advisory WITHOUT withholding the still-useful
+    // data -- scanComplete is emitted below regardless.
+    if (t_freshScanUnconfirmed) {
+        Q_EMIT errorOccurred(QStringLiteral(
+            "Wi-Fi scan results may be stale: the adapter did not confirm scan completion"));
+    }
 
     Q_EMIT scanComplete(networks);
 
@@ -360,8 +635,10 @@ void WiFiAnalyzer::scan() {
 }
 
 void WiFiAnalyzer::startContinuousScan(int intervalMs) {
-    if (intervalMs < 0) {
-        sak::logWarning("WiFiAnalyzer::startContinuousScan: ignoring negative interval {}",
+    if (intervalMs <= 0) {
+        // Reject 0 too: a 0 ms timer fires every event-loop turn, spinning the CPU
+        // and hammering the driver. A continuous scan needs a positive interval.
+        sak::logWarning("WiFiAnalyzer::startContinuousScan: ignoring non-positive interval {}",
                         intervalMs);
         return;
     }
@@ -373,16 +650,23 @@ void WiFiAnalyzer::startContinuousScan(int intervalMs) {
         if (!m_wlanInitialized.load()) {
             return;
         }
-        auto networks = performWlanScan(false);
+        bool scanError = false;  // background refresh: a transient read error just yields no update
+        auto networks = performWlanScan(false, scanError);
+        if (scanError && networks.isEmpty()) {
+            // Transient driver/radio failure -> keep the last good scan rather than
+            // clobbering it with an empty list and emitting a misleading "0 networks".
+            return;
+        }
         m_lastScan = networks;
         Q_EMIT scanComplete(networks);
         auto channels = calculateChannelUtilization(networks);
         Q_EMIT channelUtilizationUpdated(channels);
     });
     m_scanTimer->start(intervalMs);
-
-    // Perform initial scan immediately
-    scan();
+    // No initial scan here. The first scan triggers a fresh WlanScan and waits for its
+    // completion notification, which must not run on the GUI thread; the caller runs it on a
+    // worker first (NetworkDiagnosticController::startContinuousWiFiScan) and only then starts
+    // this cached-list refresh, so the two never write m_lastScan at the same time.
 }
 
 void WiFiAnalyzer::stopContinuousScan() {
@@ -397,25 +681,34 @@ QVector<WiFiNetworkInfo> WiFiAnalyzer::getLastScanResults() const {
     return m_lastScan;
 }
 
-QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan(bool triggerScan) {
+QVector<WiFiNetworkInfo> WiFiAnalyzer::performWlanScan(bool triggerScan, bool& scanError) {
+    scanError = false;
     QVector<WiFiNetworkInfo> networks;
 
     if (m_wlanHandle == nullptr) {
+        scanError = true;
         return networks;
     }
 
-    auto handle = static_cast<HANDLE>(m_wlanHandle);
+    auto* handle = static_cast<HANDLE>(m_wlanHandle);
 
     PWLAN_INTERFACE_INFO_LIST rawIfList = nullptr;
     const DWORD result = WlanEnumInterfaces(handle, nullptr, &rawIfList);
-    WlanPtr<WLAN_INTERFACE_INFO_LIST> ifList(rawIfList, &wlanFreeMemory);
-    if (result != ERROR_SUCCESS || ifList == nullptr) {
+    const WlanPtr<WLAN_INTERFACE_INFO_LIST> ifList(rawIfList, &wlanFreeMemory);
+    if (result != ERROR_SUCCESS || ifList == nullptr || ifList->dwNumberOfItems == 0) {
+        scanError = true;  // no wireless interface to scan (enum failed or zero adapters)
         return networks;
     }
 
+    bool anyInterfaceOk = false;
     for (DWORD i = 0; i < ifList->dwNumberOfItems; ++i) {
-        scanInterface(handle, ifList->InterfaceInfo[i], triggerScan, networks);
+        bool interfaceOk = false;
+        scanInterface(handle, ifList->InterfaceInfo[i], triggerScan, networks, interfaceOk);
+        anyInterfaceOk = anyInterfaceOk || interfaceOk;
     }
+    // Every interface's list reads errored (e.g. radio off) -> the scan FAILED; distinguish that
+    // from a genuine empty result (a read succeeded with zero networks).
+    scanError = !anyInterfaceOk;
     return networks;
 }
 
@@ -481,16 +774,50 @@ QString WiFiAnalyzer::lookupVendor(const QString& bssid) {
     return {};
 }
 
+WiFiBssSecurity WiFiAnalyzer::deriveBssSecurity(bool privacyBit,
+                                                const unsigned char* ie,
+                                                int ieLen) {
+    WiFiBssSecurity sec;
+    const IeSecurityScan ieScan = scanSecurityIes(ie, ieLen);
+    if (ieScan.rsn) {
+        sec.authentication = ieScan.sae ? QStringLiteral("WPA3") : QStringLiteral("WPA2");
+        sec.encryption = QStringLiteral("AES-CCMP");
+        sec.isSecure = true;
+        return sec;
+    }
+    if (ieScan.wpa1) {
+        sec.authentication = QStringLiteral("WPA");
+        sec.encryption = QStringLiteral("TKIP");
+        sec.isSecure = true;
+        return sec;
+    }
+    if (privacyBit) {
+        // Privacy bit set but no RSN/WPA IE => legacy WEP (encrypted, but weak).
+        sec.authentication = QStringLiteral("WEP");
+        sec.encryption = QStringLiteral("WEP");
+        sec.isSecure = true;
+        return sec;
+    }
+    sec.authentication = QStringLiteral("Open");
+    sec.encryption = QStringLiteral("None");
+    sec.isSecure = false;
+    return sec;
+}
+
 QVector<WiFiChannelUtilization> WiFiAnalyzer::calculateChannelUtilization(
     const QVector<WiFiNetworkInfo>& networks) {
-    QHash<int, WiFiChannelUtilization> channelMap;
+    // Key by band+channel: 2.4/5/6 GHz reuse channel numbers (e.g. 6 GHz ch 1 vs 2.4 GHz ch 1),
+    // so a channel-only key merges different bands into one bogus entry. frequencyToBand only
+    // returns "2.4 GHz"/"5 GHz"/"6 GHz"/"Unknown", none containing '|', so the delimiter is safe.
+    QHash<QString, WiFiChannelUtilization> channelMap;
 
     for (const auto& net : networks) {
         if (net.channelNumber <= 0) {
             continue;
         }
 
-        auto& util = channelMap[net.channelNumber];
+        const QString key = net.band + QLatin1Char('|') + QString::number(net.channelNumber);
+        auto& util = channelMap[key];
         util.channelNumber = net.channelNumber;
         util.band = net.band;
         util.networkCount++;
@@ -515,12 +842,15 @@ QVector<WiFiChannelUtilization> WiFiAnalyzer::calculateChannelUtilization(
         result.append(util);
     }
 
-    // Sort by channel number
-    std::sort(result.begin(),
-              result.end(),
-              [](const WiFiChannelUtilization& a, const WiFiChannelUtilization& b) {
-                  return a.channelNumber < b.channelNumber;
-              });
+    // Sort by channel number, then band so entries sharing a channel across bands are deterministic
+    std::ranges::sort(result,
+
+                      [](const WiFiChannelUtilization& a, const WiFiChannelUtilization& b) {
+                          if (a.channelNumber != b.channelNumber) {
+                              return a.channelNumber < b.channelNumber;
+                          }
+                          return a.band < b.band;
+                      });
 
     return result;
 }

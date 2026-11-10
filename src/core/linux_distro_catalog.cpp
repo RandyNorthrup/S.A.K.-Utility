@@ -18,6 +18,8 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/network_constants.h"
+#include "sak/network_transfer_runner.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -35,12 +37,17 @@ constexpr double kLinuxMintSizeGiB = 2.9;
 constexpr double kFedoraWorkstationSizeGiB = 2.7;
 constexpr double kDebianLiveSizeGiB = 3.6;
 constexpr double kArchLinuxSizeGiB = 1.4;
-constexpr qint64 kClonezillaSizeMiB = 530;
+constexpr qint64 kClonezillaSizeMiB = 482;
 constexpr qint64 kGpartedSizeMiB = 649;
-constexpr qint64 kShredOsSizeMiB = 900;
+constexpr qint64 kShredOsSizeMiB = 342;
 constexpr double kKaliSizeGiB = 4.4;
 constexpr double kSystemRescueSizeGiB = 1.3;
-constexpr qint64 kVentoySizeMiB = 196;
+constexpr qint64 kVentoySizeMiB = 187;
+
+// Upper bound on an untrusted GitHub releases/latest JSON body. A real response is a few
+// hundred KiB at most; anything past this cap is aborted/rejected rather than buffered and
+// parsed unbounded (fail closed on a hostile or MITM'd response).
+constexpr qint64 kMaxGitHubReleaseBytes = 8LL * 1024 * 1024;
 
 qint64 sizeFromGiB(double gib) {
     return static_cast<qint64>(gib * sak::kBytesPerGBf);
@@ -51,217 +58,262 @@ qint64 sizeFromMiB(qint64 mib) {
 }
 
 DistroInfo ubuntuDesktopDistro() {
-    return {/*.id =*/"ubuntu-desktop",
-            /*.name =*/"Ubuntu Desktop",
-            /*.version =*/"26.04",
-            /*.versionLabel =*/"Resolute Raccoon (LTS)",
+    return {.id = "ubuntu-desktop",
+            .name = "Ubuntu Desktop",
+            .version = "26.04",
+            .versionLabel = "Resolute Raccoon (LTS)",
             /*.description =*/
-            "The most popular Linux desktop. Full graphical environment "
-            "with office suite, web browser, and media tools. Ideal for "
-            "setting up client workstations.",
-            /*.category =*/DistroCategory::GeneralPurpose,
-            /*.sourceType =*/DistroSourceType::DirectURL,
+            .description =
+                "The most popular Linux desktop. Full graphical environment "
+                "with office suite, web browser, and media tools. Ideal for "
+                "setting up client workstations.",
+            .category = DistroCategory::GeneralPurpose,
+            .sourceType = DistroSourceType::DirectURL,
             /*.downloadUrl =*/
-            "https://releases.ubuntu.com/resolute/"
-            "ubuntu-{version}-desktop-amd64.iso",
-            /*.checksumUrl =*/"https://releases.ubuntu.com/resolute/SHA256SUMS",
-            /*.checksumType =*/"sha256",
-            /*.fileName =*/"ubuntu-{version}-desktop-amd64.iso",
-            /*.approximateSize =*/sizeFromGiB(kUbuntuDesktopSizeGiB),
-            /*.homepage =*/"https://ubuntu.com/desktop",
-            /*.githubOwner =*/{},
-            /*.githubRepo =*/{},
-            /*.githubAssetPattern =*/{}};
+            .downloadUrl =
+                "https://releases.ubuntu.com/resolute/"
+                "ubuntu-{version}-desktop-amd64.iso",
+            .checksumUrl = "https://releases.ubuntu.com/resolute/SHA256SUMS",
+            .checksumType = "sha256",
+            .fileName = "ubuntu-{version}-desktop-amd64.iso",
+            .approximateSize = sizeFromGiB(kUbuntuDesktopSizeGiB),
+            .homepage = "https://ubuntu.com/desktop",
+            .githubOwner = {},
+            .githubRepo = {},
+            .githubAssetPattern = {}};
 }
 
 DistroInfo ubuntuServerDistro() {
-    return {/*.id =*/"ubuntu-server",
-            /*.name =*/"Ubuntu Server",
-            /*.version =*/"26.04",
-            /*.versionLabel =*/"Resolute Raccoon (LTS)",
+    return {.id = "ubuntu-server",
+            .name = "Ubuntu Server",
+            .version = "26.04",
+            .versionLabel = "Resolute Raccoon (LTS)",
             /*.description =*/
-            "Minimal server installation with no GUI. Ideal for deploying "
-            "headless servers, VMs, and containers. Includes OpenSSH, LVM, "
-            "and cloud-init.",
-            /*.category =*/DistroCategory::GeneralPurpose,
-            /*.sourceType =*/DistroSourceType::DirectURL,
+            .description =
+                "Minimal server installation with no GUI. Ideal for deploying "
+                "headless servers, VMs, and containers. Includes OpenSSH, LVM, "
+                "and cloud-init.",
+            .category = DistroCategory::GeneralPurpose,
+            .sourceType = DistroSourceType::DirectURL,
             /*.downloadUrl =*/
-            "https://releases.ubuntu.com/resolute/"
-            "ubuntu-{version}-live-server-amd64.iso",
-            /*.checksumUrl =*/"https://releases.ubuntu.com/resolute/SHA256SUMS",
-            /*.checksumType =*/"sha256",
-            /*.fileName =*/"ubuntu-{version}-live-server-amd64.iso",
-            /*.approximateSize =*/sizeFromGiB(kUbuntuServerSizeGiB),
-            /*.homepage =*/"https://ubuntu.com/server",
-            /*.githubOwner =*/{},
-            /*.githubRepo =*/{},
-            /*.githubAssetPattern =*/{}};
+            .downloadUrl =
+                "https://releases.ubuntu.com/resolute/"
+                "ubuntu-{version}-live-server-amd64.iso",
+            .checksumUrl = "https://releases.ubuntu.com/resolute/SHA256SUMS",
+            .checksumType = "sha256",
+            .fileName = "ubuntu-{version}-live-server-amd64.iso",
+            .approximateSize = sizeFromGiB(kUbuntuServerSizeGiB),
+            .homepage = "https://ubuntu.com/server",
+            .githubOwner = {},
+            .githubRepo = {},
+            .githubAssetPattern = {}};
 }
 
 DistroInfo linuxMintDistro() {
-    return {/*.id =*/"linuxmint-cinnamon",
-            /*.name =*/"Linux Mint Cinnamon",
-            /*.version =*/"22.3",
-            /*.versionLabel =*/"Zena",
+    return {.id = "linuxmint-cinnamon",
+            .name = "Linux Mint Cinnamon",
+            .version = "22.3",
+            .versionLabel = "Zena",
             /*.description =*/
-            "Sleek, modern desktop based on Ubuntu LTS. Familiar Windows-like "
-            "interface -- excellent for migrating users from Windows. Includes "
-            "full multimedia codecs.",
-            /*.category =*/DistroCategory::GeneralPurpose,
-            /*.sourceType =*/DistroSourceType::DirectURL,
+            .description =
+                "Sleek, modern desktop based on Ubuntu LTS. Familiar Windows-like "
+                "interface -- excellent for migrating users from Windows. Includes "
+                "full multimedia codecs.",
+            .category = DistroCategory::GeneralPurpose,
+            .sourceType = DistroSourceType::DirectURL,
             /*.downloadUrl =*/
-            "https://mirrors.kernel.org/linuxmint/stable/{version}/"
-            "linuxmint-{version}-cinnamon-64bit.iso",
-            /*.checksumUrl =*/"https://mirrors.kernel.org/linuxmint/stable/{version}/sha256sum.txt",
-            /*.checksumType =*/"sha256",
-            /*.fileName =*/"linuxmint-{version}-cinnamon-64bit.iso",
-            /*.approximateSize =*/sizeFromGiB(kLinuxMintSizeGiB),
-            /*.homepage =*/"https://linuxmint.com",
-            /*.githubOwner =*/{},
-            /*.githubRepo =*/{},
-            /*.githubAssetPattern =*/{}};
+            .downloadUrl =
+                "https://mirrors.kernel.org/linuxmint/stable/{version}/"
+                "linuxmint-{version}-cinnamon-64bit.iso",
+            .checksumUrl = "https://mirrors.kernel.org/linuxmint/stable/{version}/sha256sum.txt",
+            .checksumType = "sha256",
+            .fileName = "linuxmint-{version}-cinnamon-64bit.iso",
+            .approximateSize = sizeFromGiB(kLinuxMintSizeGiB),
+            .homepage = "https://linuxmint.com",
+            .githubOwner = {},
+            .githubRepo = {},
+            .githubAssetPattern = {}};
 }
 
 DistroInfo fedoraWorkstationDistro() {
-    return {/*.id =*/"fedora-workstation",
-            /*.name =*/"Fedora Workstation",
-            /*.version =*/"44",
-            /*.versionLabel =*/"Workstation Live 1.7",
+    return {.id = "fedora-workstation",
+            .name = "Fedora Workstation",
+            .version = "44",
+            .versionLabel = "Workstation Live 1.7",
             /*.description =*/
-            "Modern GNOME desktop from the Fedora Project. Good for testing "
-            "current Linux desktop workflows and hardware support.",
-            /*.category =*/DistroCategory::GeneralPurpose,
-            /*.sourceType =*/DistroSourceType::DirectURL,
+            .description =
+                "Modern GNOME desktop from the Fedora Project. Good for testing "
+                "current Linux desktop workflows and hardware support.",
+            .category = DistroCategory::GeneralPurpose,
+            .sourceType = DistroSourceType::DirectURL,
             /*.downloadUrl =*/
-            "https://download.fedoraproject.org/pub/fedora/linux/releases/{version}/"
-            "Workstation/x86_64/iso/Fedora-Workstation-Live-{version}-1.7.x86_64.iso",
+            .downloadUrl =
+                "https://download.fedoraproject.org/pub/fedora/linux/releases/{version}/"
+                "Workstation/x86_64/iso/Fedora-Workstation-Live-{version}-1.7.x86_64.iso",
             /*.checksumUrl =*/
-            "https://download.fedoraproject.org/pub/fedora/linux/releases/{version}/"
-            "Workstation/x86_64/iso/Fedora-Workstation-{version}-1.7-x86_64-CHECKSUM",
-            /*.checksumType =*/"sha256",
-            /*.fileName =*/"Fedora-Workstation-Live-{version}-1.7.x86_64.iso",
-            /*.approximateSize =*/sizeFromGiB(kFedoraWorkstationSizeGiB),
-            /*.homepage =*/"https://fedoraproject.org/workstation/",
-            /*.githubOwner =*/{},
-            /*.githubRepo =*/{},
-            /*.githubAssetPattern =*/{}};
+            .checksumUrl =
+                "https://download.fedoraproject.org/pub/fedora/linux/releases/{version}/"
+                "Workstation/x86_64/iso/Fedora-Workstation-{version}-1.7-x86_64-CHECKSUM",
+            .checksumType = "sha256",
+            .fileName = "Fedora-Workstation-Live-{version}-1.7.x86_64.iso",
+            .approximateSize = sizeFromGiB(kFedoraWorkstationSizeGiB),
+            .homepage = "https://fedoraproject.org/workstation/",
+            .githubOwner = {},
+            .githubRepo = {},
+            .githubAssetPattern = {}};
 }
 
 DistroInfo debianLiveDistro() {
-    return {/*.id =*/"debian-live-gnome",
-            /*.name =*/"Debian Live GNOME",
-            /*.version =*/"13.5.0",
-            /*.versionLabel =*/"Trixie live",
+    return {.id = "debian-live-gnome",
+            .name = "Debian Live GNOME",
+            .version = "13.5.0",
+            .versionLabel = "Trixie live",
             /*.description =*/
-            "Official Debian live desktop image with GNOME and Calamares "
-            "installer. Useful for Linux troubleshooting and installs from USB.",
-            /*.category =*/DistroCategory::GeneralPurpose,
-            /*.sourceType =*/DistroSourceType::DirectURL,
+            .description =
+                "Official Debian live desktop image with GNOME and Calamares "
+                "installer. Useful for Linux troubleshooting and installs from USB.",
+            .category = DistroCategory::GeneralPurpose,
+            .sourceType = DistroSourceType::DirectURL,
             /*.downloadUrl =*/
-            "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/"
-            "debian-live-{version}-amd64-gnome.iso",
+            .downloadUrl =
+                "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/"
+                "debian-live-{version}-amd64-gnome.iso",
             /*.checksumUrl =*/
-            "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA256SUMS",
-            /*.checksumType =*/"sha256",
-            /*.fileName =*/"debian-live-{version}-amd64-gnome.iso",
-            /*.approximateSize =*/sizeFromGiB(kDebianLiveSizeGiB),
-            /*.homepage =*/"https://www.debian.org/distrib/",
-            /*.githubOwner =*/{},
-            /*.githubRepo =*/{},
-            /*.githubAssetPattern =*/{}};
+            .checksumUrl =
+                "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA256SUMS",
+            .checksumType = "sha256",
+            .fileName = "debian-live-{version}-amd64-gnome.iso",
+            .approximateSize = sizeFromGiB(kDebianLiveSizeGiB),
+            .homepage = "https://www.debian.org/distrib/",
+            .githubOwner = {},
+            .githubRepo = {},
+            .githubAssetPattern = {},
+            // current-live/ is a rolling directory but the ISO filename embeds
+            // the point release, so the pinned name 404s on every Debian update.
+            // Discover the current GNOME amd64 live image from the published
+            // SHA256SUMS instead (R5-G22-10).
+            .rollingFilenamePattern = R"(^debian-live-[0-9][0-9.]*-amd64-gnome\.iso$)"};
 }
 
 DistroInfo archLinuxDistro() {
-    return {/*.id =*/"arch-linux",
-            /*.name =*/"Arch Linux",
-            /*.version =*/"2026.05.01",
-            /*.versionLabel =*/"Rolling release install ISO",
+    return {.id = "arch-linux",
+            .name = "Arch Linux",
+            .version = "2026.05.01",
+            .versionLabel = "Rolling release install ISO",
             /*.description =*/
-            "Rolling-release Linux install image for advanced users and "
-            "technicians who need a minimal, current base system.",
-            /*.category =*/DistroCategory::GeneralPurpose,
-            /*.sourceType =*/DistroSourceType::DirectURL,
-            /*.downloadUrl =*/"https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso",
-            /*.checksumUrl =*/"https://geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt",
-            /*.checksumType =*/"sha256",
-            /*.fileName =*/"archlinux-x86_64.iso",
-            /*.approximateSize =*/sizeFromGiB(kArchLinuxSizeGiB),
-            /*.homepage =*/"https://archlinux.org/download/",
-            /*.githubOwner =*/{},
-            /*.githubRepo =*/{},
-            /*.githubAssetPattern =*/{}};
+            .description =
+                "Rolling-release Linux install image for advanced users and "
+                "technicians who need a minimal, current base system.",
+            .category = DistroCategory::GeneralPurpose,
+            .sourceType = DistroSourceType::DirectURL,
+            .downloadUrl = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso",
+            .checksumUrl = "https://geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt",
+            .checksumType = "sha256",
+            .fileName = "archlinux-x86_64.iso",
+            .approximateSize = sizeFromGiB(kArchLinuxSizeGiB),
+            .homepage = "https://archlinux.org/download/",
+            .githubOwner = {},
+            .githubRepo = {},
+            .githubAssetPattern = {}};
 }
 
+// An entry with an empty checksumUrl/checksumType publishes no per-release checksum this
+// catalog can pin. LinuxISODownloader::requirePinnedChecksum refuses to download such an
+// entry: the SourceForge download URL redirects onto mirrors that may serve the ISO over
+// plain HTTP, and without a checksum fetched over HTTPS there is nothing to verify the ISO
+// against before it is written to bootable media. Adding a verified per-release checksum URL
+// re-enables the entry; guessing one would defeat the check it is supposed to provide.
+//
+// Clonezilla Live is a rolling entry, like Debian's. Verified against upstream: the project's own
+// mirror keeps only the current release in clonezilla-live/stable/, with a SHA256SUMS beside it
+// that lists exactly that release, and moves a release away once it is superseded. SourceForge's
+// release directory has no checksum file at all. So the current name is read from that SHA256SUMS,
+// and the ISO comes from the same directory the checksum describes.
 DistroInfo clonezillaDistro() {
-    return {/*.id =*/"clonezilla",
-            /*.name =*/"Clonezilla Live",
-            /*.version =*/"3.3.1-35",
-            /*.versionLabel =*/"Stable (Debian-based)",
+    return {.id = "clonezilla",
+            .name = "Clonezilla Live",
+            .version = "3.3.3-37",
+            .versionLabel = "Stable (Debian-based)",
             /*.description =*/
-            "Disk imaging and cloning tool. Clone entire drives or partitions "
-            "for backup, migration, or mass deployment. Supports multicasting "
-            "for deploying to many machines simultaneously.",
-            /*.category =*/DistroCategory::DiskTools,
-            /*.sourceType =*/DistroSourceType::SourceForge,
-            /*.downloadUrl =*/
-            "https://sourceforge.net/projects/clonezilla/files/"
-            "clonezilla_live_stable/{version}/"
-            "clonezilla-live-{version}-amd64.iso/download",
-            /*.checksumUrl =*/{},
-            /*.checksumType =*/{},
-            /*.fileName =*/"clonezilla-live-{version}-amd64.iso",
-            /*.approximateSize =*/sizeFromMiB(kClonezillaSizeMiB),
-            /*.homepage =*/"https://clonezilla.org",
-            /*.githubOwner =*/{},
-            /*.githubRepo =*/{},
-            /*.githubAssetPattern =*/{}};
+            .description =
+                "Disk imaging and cloning tool. Clone entire drives or partitions "
+                "for backup, migration, or mass deployment. Supports multicasting "
+                "for deploying to many machines simultaneously.",
+            .category = DistroCategory::DiskTools,
+            .sourceType = DistroSourceType::DirectURL,
+            .downloadUrl =
+                "https://free.nchc.org.tw/clonezilla-live/stable/"
+                "clonezilla-live-{version}-amd64.iso",
+            .checksumUrl = "https://free.nchc.org.tw/clonezilla-live/stable/SHA256SUMS",
+            .checksumType = "sha256",
+            .fileName = "clonezilla-live-{version}-amd64.iso",
+            .approximateSize = sizeFromMiB(kClonezillaSizeMiB),
+            .homepage = "https://clonezilla.org",
+            .githubOwner = {},
+            .githubRepo = {},
+            .githubAssetPattern = {},
+            .rollingFilenamePattern = R"(^clonezilla-live-[0-9][0-9.\-]*-amd64\.iso$)"};
 }
 
 DistroInfo gpartedDistro() {
-    return {/*.id =*/"gparted-live",
-            /*.name =*/"GParted Live",
-            /*.version =*/"1.8.1-3",
-            /*.versionLabel =*/{},
+    return {.id = "gparted-live",
+            .name = "GParted Live",
+            .version = "1.8.1-3",
+            .versionLabel = {},
             /*.description =*/
-            "Bootable partition editor for creating, resizing, moving, and "
-            "copying disk partitions. Supports ext2/3/4, NTFS, FAT16/32, "
-            "HFS+, XFS, and many more filesystems.",
-            /*.category =*/DistroCategory::DiskTools,
-            /*.sourceType =*/DistroSourceType::SourceForge,
+            .description =
+                "Bootable partition editor for creating, resizing, moving, and "
+                "copying disk partitions. Supports ext2/3/4, NTFS, FAT16/32, "
+                "HFS+, XFS, and many more filesystems.",
+            .category = DistroCategory::DiskTools,
+            .sourceType = DistroSourceType::SourceForge,
             /*.downloadUrl =*/
-            "https://sourceforge.net/projects/gparted/files/"
-            "gparted-live-stable/{version}/"
-            "gparted-live-{version}-amd64.iso/download",
-            /*.checksumUrl =*/{},
-            /*.checksumType =*/{},
-            /*.fileName =*/"gparted-live-{version}-amd64.iso",
-            /*.approximateSize =*/sizeFromMiB(kGpartedSizeMiB),
-            /*.homepage =*/"https://gparted.org",
-            /*.githubOwner =*/{},
-            /*.githubRepo =*/{},
-            /*.githubAssetPattern =*/{}};
+            .downloadUrl =
+                "https://sourceforge.net/projects/gparted/files/"
+                "gparted-live-stable/{version}/"
+                "gparted-live-{version}-amd64.iso/download",
+            // GParted ships no .sha256 sidecar in the release directory; it publishes the
+            // per-release digests inside the release note that sits in that SAME directory,
+            // as standard "<sha256>  <filename>" lines. That file is {version}-templated like
+            // the ISO beside it, so it addresses one specific release for good and never
+            // rots. parseExpectedHash reads the digest out of it by filename.
+            /*.checksumUrl =*/
+            .checksumUrl =
+                "https://downloads.sourceforge.net/project/gparted/gparted-live-stable/"
+                "{version}/gparted-live-{version}-README.md",
+            .checksumType = "sha256",
+            .fileName = "gparted-live-{version}-amd64.iso",
+            .approximateSize = sizeFromMiB(kGpartedSizeMiB),
+            .homepage = "https://gparted.org",
+            .githubOwner = {},
+            .githubRepo = {},
+            .githubAssetPattern = {}};
 }
 
 DistroInfo shredOsDistro() {
-    return {/*.id =*/"shredos",
-            /*.name =*/"ShredOS",
-            /*.version =*/"v2025.11_30_x86-64_0.41",
-            /*.versionLabel =*/"nwipe 0.41",
+    return {.id = "shredos",
+            .name = "ShredOS",
+            .version = "v2025.11_32_x86-64_0.43.1",
+            .versionLabel = "nwipe 0.43.1",
             /*.description =*/
-            "Bootable secure disk erasure tool powered by nwipe. Wipes drives "
-            "using DoD 5220.22-M, Gutmann, and other standards. Generates "
-            "PDF audit reports for compliance. Essential for ITAD.",
-            /*.category =*/DistroCategory::DiskTools,
-            /*.sourceType =*/DistroSourceType::GitHubRelease,
-            /*.downloadUrl =*/{},
-            /*.checksumUrl =*/{},
-            /*.checksumType =*/"sha1",
-            /*.fileName =*/{},
-            /*.approximateSize =*/sizeFromMiB(kShredOsSizeMiB),
-            /*.homepage =*/"https://github.com/PartialVolume/shredos.x86_64",
-            /*.githubOwner =*/"PartialVolume",
-            /*.githubRepo =*/"shredos.x86_64",
-            /*.githubAssetPattern =*/R"(shredos.*x86-64.*\.iso$)"};
+            .description =
+                "Bootable secure disk erasure tool powered by nwipe. Wipes drives "
+                "using DoD 5220.22-M, Gutmann, and other standards. Generates "
+                "PDF audit reports for compliance. Essential for ITAD.",
+            .category = DistroCategory::DiskTools,
+            .sourceType = DistroSourceType::GitHubRelease,
+            .downloadUrl = {},
+            // Resolved from the release's .sha1 sidecar asset by cacheChecksumSidecar; a
+            // release that ships no sidecar has nothing to pin and the download is refused.
+            .checksumUrl = {},
+            .checksumType = "sha1",
+            .fileName = {},
+            .approximateSize = sizeFromMiB(kShredOsSizeMiB),
+            .homepage = "https://github.com/PartialVolume/shredos.x86_64",
+            .githubOwner = "PartialVolume",
+            .githubRepo = "shredos.x86_64",
+            // The full 64-bit ISO, not the _lite or _plus-partition builds a release also carries.
+            .githubAssetPattern = R"(^shredos-.*_x86-64_v[^_]+_[0-9]+\.iso$)"};
 }
 
 }  // namespace
@@ -303,56 +355,70 @@ void LinuxDistroCatalog::addGeneralPurposeDistros() {
 }
 
 void LinuxDistroCatalog::addSecurityDistros() {
-    addDistro({/*.id =*/"kali-linux",
-               /*.name =*/"Kali Linux",
-               /*.version =*/"2026.1",
-               /*.versionLabel =*/"Installer",
+    addDistro({.id = "kali-linux",
+               .name = "Kali Linux",
+               .version = "2026.1",
+               .versionLabel = "Installer",
                /*.description =*/
-               "The most advanced penetration testing distribution. Includes "
-               "600+ security tools for network analysis, vulnerability "
-               "assessment, and forensics. Essential for security audits.",
-               /*.category =*/Category::Security,
-               /*.sourceType =*/SourceType::DirectURL,
+               .description = "The most advanced penetration testing distribution. Includes "
+                              "600+ security tools for network analysis, vulnerability "
+                              "assessment, and forensics. Essential for security audits.",
+               .category = Category::Security,
+               .sourceType = SourceType::DirectURL,
                /*.downloadUrl =
                 */
-               "https://cdimage.kali.org/current/"
-               "kali-linux-{version}-installer-amd64.iso",
-               /*.checksumUrl =*/"https://cdimage.kali.org/current/SHA256SUMS",
-               /*.checksumType =*/"sha256",
-               /*.fileName =*/"kali-linux-{version}-installer-amd64.iso",
-               /*.approximateSize =*/sizeFromGiB(kKaliSizeGiB),  // ~4.4 GB
-               /*.homepage =*/"https://www.kali.org",
-               /*.githubOwner =*/{},
-               /*.githubRepo =*/{},
-               /*.githubAssetPattern =*/{}});
+               .downloadUrl = "https://cdimage.kali.org/current/"
+                              "kali-linux-{version}-installer-amd64.iso",
+               .checksumUrl = "https://cdimage.kali.org/current/SHA256SUMS",
+               .checksumType = "sha256",
+               .fileName = "kali-linux-{version}-installer-amd64.iso",
+               .approximateSize = sizeFromGiB(kKaliSizeGiB),  // ~4.4 GB
+               .homepage = "https://www.kali.org",
+               .githubOwner = {},
+               .githubRepo = {},
+               .githubAssetPattern = {},
+               // current/ is a rolling directory but the ISO filename embeds the
+               // release, so the pinned name 404s on every Kali update. Discover
+               // the current installer amd64 image from the published SHA256SUMS
+               // instead. Anchored so it never matches installer-netinst,
+               // installer-purple, live, or a non-amd64 image (R5-G22-10).
+               .rollingFilenamePattern = R"(^kali-linux-[0-9][0-9.]*-installer-amd64\.iso$)"});
 }
 
 void LinuxDistroCatalog::addSystemRecoveryDistros() {
-    addDistro({/*.id =*/"systemrescue",
-               /*.name =*/"SystemRescue",
-               /*.version =*/"13.00",
-               /*.versionLabel =*/{},
+    addDistro({.id = "systemrescue",
+               .name = "SystemRescue",
+               .version = "13.00",
+               .versionLabel = {},
                /*.description =*/
-               "Bootable Linux rescue environment for repairing unbootable "
-               "systems. "
-               "Includes filesystem tools (fsck, ntfsfix), network tools, "
-               "partition editors, and data recovery utilities.",
-               /*.category =*/Category::SystemRecovery,
-               /*.sourceType =*/SourceType::SourceForge,
+               .description = "Bootable Linux rescue environment for repairing unbootable "
+                              "systems. "
+                              "Includes filesystem tools (fsck, ntfsfix), network tools, "
+                              "partition editors, and data recovery utilities.",
+               .category = Category::SystemRecovery,
+               .sourceType = SourceType::SourceForge,
                /*.downloadUrl =
                 */
-               "https://sourceforge.net/projects/"
-               "systemrescuecd/files/sysresccd-x86/"
-               "{version}/systemrescue-{version}-"
-               "amd64.iso/download",
-               /*.checksumUrl =*/{},  // SourceForge provides checksums on download page
-               /*.checksumType =*/{},
-               /*.fileName =*/"systemrescue-{version}-amd64.iso",
-               /*.approximateSize =*/sizeFromGiB(kSystemRescueSizeGiB),
-               /*.homepage =*/"https://www.system-rescue.org",
-               /*.githubOwner =*/{},
-               /*.githubRepo =*/{},
-               /*.githubAssetPattern =*/{}});
+               .downloadUrl = "https://sourceforge.net/projects/"
+                              "systemrescuecd/files/sysresccd-x86/"
+                              "{version}/systemrescue-{version}-"
+                              "amd64.iso/download",
+               // SystemRescue keeps a per-release .sha256 on its OWN site under
+               // /releases/{version}/, retained for superseded releases as well as the current
+               // one. Deliberately preferred over the sidecar in the SourceForge release
+               // directory: the ISO arrives through the SourceForge mirror network, so taking
+               // the digest from the project's own host makes the two legs independent instead
+               // of trusting one mirror to attest to itself.
+               /*.checksumUrl =*/
+               .checksumUrl = "https://www.system-rescue.org/releases/{version}/"
+                              "systemrescue-{version}-amd64.iso.sha256",
+               .checksumType = "sha256",
+               .fileName = "systemrescue-{version}-amd64.iso",
+               .approximateSize = sizeFromGiB(kSystemRescueSizeGiB),
+               .homepage = "https://www.system-rescue.org",
+               .githubOwner = {},
+               .githubRepo = {},
+               .githubAssetPattern = {}});
 }
 
 void LinuxDistroCatalog::addDiskToolDistros() {
@@ -362,30 +428,32 @@ void LinuxDistroCatalog::addDiskToolDistros() {
 }
 
 void LinuxDistroCatalog::addUtilityDistros() {
-    addDistro({/*.id =*/"ventoy",
-               /*.name =*/"Ventoy LiveCD",
-               /*.version =*/"1.1.12",
-               /*.versionLabel =*/{},
+    addDistro({.id = "ventoy",
+               .name = "Ventoy LiveCD",
+               .version = "1.1.18",
+               .versionLabel = {},
                /*.description =*/
-               "Multi-boot USB solution. Install Ventoy to a USB drive, then "
-               "simply "
-               "copy ISO files to the drive -- no reformatting needed. Supports "
-               "110+ OS types including Windows, Linux, and WinPE.",
-               /*.category =*/Category::Utilities,
-               /*.sourceType =*/SourceType::GitHubRelease,
-               /*.downloadUrl =*/{},  // Resolved via GitHub Releases API
-               /*.checksumUrl =*/{},  // SHA256 in release body
-               /*.checksumType =*/"sha256",
-               /*.fileName =*/"ventoy-{version}-livecd.iso",
-               /*.approximateSize =*/sizeFromMiB(kVentoySizeMiB),  // ~196 MB
-               /*.homepage =*/"https://www.ventoy.net",
-               /*.githubOwner =*/"ventoy",
-               /*.githubRepo =*/"Ventoy",
-               /*.githubAssetPattern =*/R"(ventoy-.*-livecd\.iso$)"});
+               .description = "Multi-boot USB solution. Install Ventoy to a USB drive, then "
+                              "simply "
+                              "copy ISO files to the drive -- no reformatting needed. Supports "
+                              "110+ OS types including Windows, Linux, and WinPE.",
+               .category = Category::Utilities,
+               .sourceType = SourceType::GitHubRelease,
+               .downloadUrl = {},  // Resolved via GitHub Releases API
+               // Resolved from the release's sha256.txt by cacheChecksumSidecar; a release that
+               // ships no checksums has nothing to pin and the download is refused.
+               .checksumUrl = {},
+               .checksumType = "sha256",
+               .fileName = "ventoy-{version}-livecd.iso",
+               .approximateSize = sizeFromMiB(kVentoySizeMiB),
+               .homepage = "https://www.ventoy.net",
+               .githubOwner = "ventoy",
+               .githubRepo = "Ventoy",
+               .githubAssetPattern = R"(ventoy-.*-livecd\.iso$)"});
 }
 
 void LinuxDistroCatalog::addDistro(const DistroInfo& distro) {
-    m_distroIndex[distro.id] = m_distros.size();
+    m_distroIndex[distro.id] = static_cast<int>(m_distros.size());
     m_distros.append(distro);
 }
 
@@ -410,7 +478,7 @@ QList<LinuxDistroCatalog::DistroInfo> LinuxDistroCatalog::distrosByCategory(
 
 QMap<LinuxDistroCatalog::Category, QString> LinuxDistroCatalog::categoryNames() {
     return {{Category::GeneralPurpose, "General Purpose"},
-            {Category::Security, "Security && Pen-Testing"},
+            {Category::Security, "Security & Pen-Testing"},
             {Category::SystemRecovery, "System Recovery"},
             {Category::DiskTools, "Disk Tools"},
             {Category::Utilities, "Utilities"}};
@@ -441,6 +509,16 @@ QString LinuxDistroCatalog::resolveDownloadUrl(const DistroInfo& distro) const {
 }
 
 QString LinuxDistroCatalog::resolveChecksumUrl(const DistroInfo& distro) const {
+    if (distro.sourceType == SourceType::GitHubRelease) {
+        // A GitHub release's checksum sidecar is cached under "<id>_checksum" as a full
+        // browser_download_url; return it verbatim (no version substitution). Fall through when
+        // no sidecar exists so a static checksumUrl still works and no-sidecar distros are
+        // unaffected.
+        auto it = m_githubAssetUrls.find(distro.id + "_checksum");
+        if (it != m_githubAssetUrls.end()) {
+            return *it;
+        }
+    }
     if (distro.checksumUrl.isEmpty()) {
         return {};
     }
@@ -451,8 +529,8 @@ QString LinuxDistroCatalog::resolveFileName(const DistroInfo& distro) const {
     if (distro.sourceType == SourceType::GitHubRelease) {
         auto url = m_githubAssetUrls.find(distro.id);
         if (url != m_githubAssetUrls.end()) {
-            QString path = QUrl(*url).path();
-            int lastSlash = path.lastIndexOf('/');
+            const QString path = QUrl(*url).path();
+            const int lastSlash = static_cast<int>(path.lastIndexOf('/'));
             if (lastSlash >= 0) {
                 return path.mid(lastSlash + 1);
             }
@@ -460,10 +538,75 @@ QString LinuxDistroCatalog::resolveFileName(const DistroInfo& distro) const {
         if (!distro.fileName.isEmpty()) {
             return substituteVersion(distro.fileName, distro.version);
         }
-        return distro.id + ".iso";
+        // No resolved asset and no static template: do not fabricate an "<id>.iso" guess.
+        // The download is already refused (resolveDownloadUrl returns empty here), so fail
+        // closed with an empty name rather than inventing one.
+        return {};
     }
 
     return substituteVersion(distro.fileName, distro.version);
+}
+
+namespace {
+// Bare ISO filename from a single SHA256SUMS record line, or empty when the line
+// is a comment/blank/prose, its first token is not a digest, or it names a path.
+// Extracted so filenameFromChecksums stays a simple match loop (R5-G22-10).
+QString checksumRecordFilename(const QString& line) {
+    // A checksum record's first token must look like a digest (sha1/sha256/sha512
+    // hex), so a prose line that happens to end in a filename-like word is not
+    // mistaken for a record.
+    static const QRegularExpression hexDigest(QStringLiteral("^[0-9a-fA-F]{40,128}$"));
+    static const QRegularExpression whitespace(QStringLiteral("\\s+"));
+    // A record is at minimum "<digest> <filename>": two whitespace-separated
+    // tokens.
+    constexpr qsizetype kMinChecksumRecordTokens = 2;
+
+    const QString trimmed = line.trimmed();
+    if (trimmed.isEmpty() || trimmed.startsWith('#')) {
+        return {};
+    }
+    const QStringList parts = trimmed.split(whitespace, Qt::SkipEmptyParts);
+    if (parts.size() < kMinChecksumRecordTokens || !hexDigest.match(parts.at(0)).hasMatch()) {
+        return {};  // not a "<digest>  <filename>" record
+    }
+    QString filename = parts.at(1);
+    if (filename.startsWith('*')) {
+        filename = filename.mid(1);  // binary-mode marker "hash *file"
+    }
+    // Only a bare filename may be spliced into the download URL. Reject any record
+    // naming a path so a checksums line can never redirect the download outside
+    // its pinned directory.
+    if (filename.contains('/') || filename.contains('\\')) {
+        return {};
+    }
+    return filename;
+}
+}  // namespace
+
+QString LinuxDistroCatalog::filenameFromChecksums(const QString& checksumsText,
+                                                  const QString& pattern) {
+    if (pattern.isEmpty()) {
+        return {};
+    }
+    const QRegularExpression matcher(pattern);
+    if (!matcher.isValid()) {
+        return {};
+    }
+
+    const QStringList lines = checksumsText.split('\n', Qt::SkipEmptyParts);
+    for (const QString& line : lines) {
+        const QString filename = checksumRecordFilename(line);
+        if (filename.isEmpty()) {
+            continue;
+        }
+        // Full match only, so an unanchored pattern cannot accept a substring.
+        const QRegularExpressionMatch match = matcher.match(filename);
+        if (match.hasMatch() && match.capturedStart() == 0 &&
+            match.capturedLength() == filename.length()) {
+            return filename;
+        }
+    }
+    return {};
 }
 
 QString LinuxDistroCatalog::substituteVersion(const QString& pattern,
@@ -478,7 +621,8 @@ QString LinuxDistroCatalog::substituteVersion(const QString& pattern,
 // ============================================================================
 
 void LinuxDistroCatalog::checkLatestVersion(const QString& distroId) {
-    Q_ASSERT(!distroId.isEmpty());
+    // The constructor creates m_networkManager and nothing reassigns it. An empty or unknown
+    // distroId is rejected below by the index lookup.
     Q_ASSERT(m_networkManager);
     auto it = m_distroIndex.find(distroId);
     if (it == m_distroIndex.end()) {
@@ -493,48 +637,50 @@ void LinuxDistroCatalog::checkLatestVersion(const QString& distroId) {
         return;
     }
 
-    QString apiUrl = QString("https://api.github.com/repos/%1/%2/releases/latest")
-                         .arg(distro.githubOwner, distro.githubRepo);
+    const QString apiUrl = QString("https://api.github.com/repos/%1/%2/releases/latest")
+                               .arg(distro.githubOwner, distro.githubRepo);
 
-    QUrl requestUrl(apiUrl);
-    QNetworkRequest request(requestUrl);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    request.setRawHeader("Accept", "application/vnd.github+json");
-    request.setRawHeader("User-Agent", "SAK-Utility/1.0");
-
-    auto* reply = m_networkManager->get(request);
+    QNetworkReply* reply = sak::startNetworkMetadataGet(
+        *m_networkManager,
+        {.url = QUrl(apiUrl),
+         .raw_headers = {{QByteArrayLiteral("Content-Type"), QByteArrayLiteral("application/json")},
+                         {QByteArrayLiteral("Accept"),
+                          QByteArrayLiteral("application/vnd.github+json")},
+                         {QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")}},
+         .timeout_ms = sak::kHttpMetadataTransferTimeoutMs,
+         .max_response_bytes = kMaxGitHubReleaseBytes});
     reply->setProperty("distroId", distroId);
     m_pendingReplies.append(reply);
 
     connect(reply, &QNetworkReply::finished, this, &LinuxDistroCatalog::onGitHubReleaseReply);
-
     sak::logInfo("Checking latest version for " + distroId.toStdString() + " via GitHub API");
 }
 
 void LinuxDistroCatalog::onGitHubReleaseReply() {
     auto* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
+    if (reply == nullptr) {
         return;
     }
 
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
 
-    QString distroId = reply->property("distroId").toString();
+    const QString distroId = reply->property("distroId").toString();
 
-    if (reply->error() != QNetworkReply::NoError) {
-        QString error = QString("GitHub API error: %1").arg(reply->errorString());
+    const sak::NetworkTransferResult result = sak::takeNetworkMetadataResult(reply);
+    if (!result.success) {
+        const QString error = QString("GitHub API error: %1").arg(result.error_message);
         sak::logWarning(error.toStdString());
         Q_EMIT versionCheckFailed(distroId, error);
         return;
     }
 
-    QByteArray data = reply->readAll();
+    const QByteArray data = result.body;
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString error = "Failed to parse GitHub API response: " + parseError.errorString();
+        const QString error = "Failed to parse GitHub API response: " + parseError.errorString();
         sak::logWarning(error.toStdString());
         Q_EMIT versionCheckFailed(distroId, error);
         return;
@@ -544,27 +690,26 @@ void LinuxDistroCatalog::onGitHubReleaseReply() {
 }
 
 void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId, const QJsonObject& release) {
-    Q_ASSERT(!distroId.isEmpty());
-    Q_ASSERT(!release.isEmpty());
     auto it = m_distroIndex.find(distroId);
     if (it == m_distroIndex.end()) {
         return;
     }
 
     DistroInfo& distro = m_distros[*it];
-    QString oldVersion = distro.version;
+    const QString oldVersion = distro.version;
 
     // Extract version from tag_name
-    QString tagName = release["tag_name"].toString();
+    const QString tagName = release["tag_name"].toString();
     if (tagName.isEmpty()) {
         Q_EMIT versionCheckFailed(distroId, "GitHub release has no tag_name");
         return;
     }
 
-    // Update version (strip leading 'v' if present for display)
-    distro.version = tagName;
-
-    QJsonArray assets = release["assets"].toArray();
+    // Resolve the asset BEFORE advancing the version. resolveGitHubAsset returns false without
+    // mutating anything when no asset matches, so a failed resolution leaves the entry wholly
+    // unchanged. Committing the version first would pair the new version with a prior release's
+    // cached asset URL/size/checksum (partial-mutation / stale-asset).
+    const QJsonArray assets = release["assets"].toArray();
     QString matchedName;
     if (!resolveGitHubAsset(distroId, distro, assets, matchedName)) {
         sak::logWarning("No matching asset found for " + distroId.toStdString() +
@@ -573,7 +718,9 @@ void LinuxDistroCatalog::parseGitHubRelease(const QString& distroId, const QJson
         return;
     }
 
-    bool changed = (oldVersion != distro.version);
+    // A matching asset is now pinned; commit the new version.
+    distro.version = tagName;
+    const bool changed = (oldVersion != distro.version);
     sak::logInfo("Version check for " + distroId.toStdString() + ": " + tagName.toStdString() +
                  (changed ? " (UPDATED)" : " (unchanged)") +
                  " asset: " + matchedName.toStdString());
@@ -585,14 +732,14 @@ bool LinuxDistroCatalog::resolveGitHubAsset(const QString& distroId,
                                             DistroInfo& distro,
                                             const QJsonArray& assets,
                                             QString& matchedName) {
-    QRegularExpression assetRegex(distro.githubAssetPattern,
-                                  QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression assetRegex(distro.githubAssetPattern,
+                                        QRegularExpression::CaseInsensitiveOption);
     QString matchedUrl;
     qint64 matchedSize = 0;
 
     for (const auto& assetVal : assets) {
         QJsonObject asset = assetVal.toObject();
-        QString name = asset["name"].toString();
+        const QString name = asset["name"].toString();
         if (assetRegex.match(name).hasMatch()) {
             matchedUrl = asset["browser_download_url"].toString();
             matchedSize = asset["size"].toInteger();
@@ -605,6 +752,14 @@ bool LinuxDistroCatalog::resolveGitHubAsset(const QString& distroId,
         return false;
     }
 
+    // The asset is downloaded and written to bootable media, so refuse anything that is not an
+    // HTTPS URL: an http:// or malformed browser_download_url from a tampered/MITM'd API
+    // response must never be cached as an official asset. Fail closed on a bad scheme.
+    if (QUrl(matchedUrl).scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) != 0) {
+        sak::logWarning("Rejected non-HTTPS asset URL for " + distroId.toStdString());
+        return false;
+    }
+
     // Cache the resolved URL and size
     m_githubAssetUrls[distroId] = matchedUrl;
     m_githubAssetSizes[distroId] = matchedSize;
@@ -612,20 +767,45 @@ bool LinuxDistroCatalog::resolveGitHubAsset(const QString& distroId,
         distro.approximateSize = matchedSize;
     }
 
-    // Look for checksum sidecar (e.g., .sha256, .sha1)
-    cacheChecksumSidecar(distroId, matchedName, assets);
+    // Look for a checksum sidecar for the declared algorithm (.sha256 / .sha1)
+    cacheChecksumSidecar(distroId, matchedName, distro.checksumType, assets);
 
     return true;
 }
 
 void LinuxDistroCatalog::cacheChecksumSidecar(const QString& distroId,
                                               const QString& matchedName,
+                                              const QString& checksumType,
                                               const QJsonArray& assets) {
+    // A newly resolved release may ship no checksum sidecar. Drop any URL cached
+    // for a PRIOR release first, so we never verify the new asset against an old
+    // release's checksum (stale-checksum false verification / spurious mismatch).
+    m_githubAssetUrls.remove(distroId + "_checksum");
+
+    // Only accept the sidecar for the algorithm this entry declares. Accepting either
+    // .sha256 or .sha1 regardless of checksumType let a differently-hashed sidecar be pinned
+    // while verification computes the declared algorithm (algorithm confusion). With no
+    // matching sidecar the download stays refused by requirePinnedChecksum (fail closed).
+    if (checksumType.isEmpty()) {
+        return;
+    }
+    // Either a sidecar named after the asset, or one file for the whole release ("sha256.txt", as
+    // Ventoy publishes). The verify step finds the asset's own line by name, so an entry for the
+    // wrong file can never be the one compared.
+    const QString sidecarName = matchedName + "." + checksumType.toLower();
+    const QString releaseManifestName = checksumType.toLower() + ".txt";
     for (const auto& assetVal : assets) {
         QJsonObject asset = assetVal.toObject();
-        QString name = asset["name"].toString();
-        if (name == matchedName + ".sha256" || name == matchedName + ".sha1") {
-            m_githubAssetUrls[distroId + "_checksum"] = asset["browser_download_url"].toString();
+        const QString name = asset["name"].toString();
+        if (name == sidecarName || name.compare(releaseManifestName, Qt::CaseInsensitive) == 0) {
+            const QString url = asset["browser_download_url"].toString();
+            // Reject a non-HTTPS or malformed sidecar URL rather than caching it.
+            if (QUrl(url).scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) != 0) {
+                sak::logWarning("Rejected non-HTTPS checksum sidecar URL for " +
+                                distroId.toStdString());
+                return;
+            }
+            m_githubAssetUrls[distroId + "_checksum"] = url;
             break;
         }
     }
@@ -636,9 +816,15 @@ void LinuxDistroCatalog::cacheChecksumSidecar(const QString& distroId,
 // ============================================================================
 
 void LinuxDistroCatalog::cancelAll() {
-    for (auto* reply : m_pendingReplies) {
-        reply->abort();
-        reply->deleteLater();
-    }
+    // abort() synchronously delivers finished(), whose slot calls
+    // m_pendingReplies.removeOne(reply) -- mutating the list mid-iteration (UB).
+    // Snapshot and clear FIRST, then abort from the copy.
+    const QList<QNetworkReply*> pending = m_pendingReplies;
     m_pendingReplies.clear();
+    for (auto* reply : pending) {
+        if (reply != nullptr) {
+            reply->abort();
+            reply->deleteLater();
+        }
+    }
 }

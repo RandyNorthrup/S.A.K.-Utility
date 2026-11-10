@@ -45,8 +45,25 @@ public:
     [[nodiscard]] bool isOpen() const;
 
     /// @brief Read decompressed data into buffer
-    /// @return Bytes produced, 0 at end, -1 on error
+    /// @param data Destination buffer; must not be null
+    /// @param maxSize Buffer capacity; must be > 0 and <= the decoders' 32-bit output
+    ///        limit (zlib/bzip2 avail_out is a uInt, so a larger request would be
+    ///        truncated by setOutput() while the full request was credited as produced).
+    ///        A 0-size request is refused too: returning 0 for it is indistinguishable
+    ///        from the clean end-of-stream 0 below.
+    /// @return Bytes produced, 0 at end, -1 on error. Once a read fails the decompressor
+    ///         is TERMINALLY failed (see m_failed): every later read returns -1 rather
+    ///         than decoding against a library stream left in an undefined state.
     qint64 read(char* data, qint64 maxSize);
+
+    /// @brief Cap the total decompressed output this stream may produce.
+    /// @param maxBytes Positive to enforce a ceiling; <= 0 disables it (the default).
+    ///        The default-off behavior preserves the unbounded reads the fixed-capacity
+    ///        flash consumer relies on -- that consumer writes to a bounded device and
+    ///        must not set a cap. A file-target consumer, whose destination has no such
+    ///        bound, sets a positive limit so a decompression bomb cannot exhaust
+    ///        storage: read() fails closed once the running total exceeds it.
+    void setMaxDecompressedBytes(qint64 maxBytes);
 
     /// @brief Check if at end of decompressed data
     [[nodiscard]] bool atEnd() const;
@@ -90,7 +107,7 @@ protected:
     virtual void setInputFromBuffer(size_t bytes) = 0;
 
     /// @brief Point the stream's output at the caller's buffer
-    virtual void setOutput(char* data, size_t maxSize) = 0;
+    virtual void setOutput(char* data, size_t max_size) = 0;
 
     /// @brief How many output bytes the stream can still produce
     [[nodiscard]] virtual size_t outputRemaining() const = 0;
@@ -101,6 +118,13 @@ protected:
     /// @brief Run one decompression step; update stream pointers
     virtual StepResult decompressStep() = 0;
 
+    /// @brief Reset the library stream to decode the NEXT concatenated member,
+    ///        preserving the current input/output pointers so leftover bytes feed
+    ///        the new member. Called by the base loop after a member's stream-end
+    ///        when more input remains (concatenated gzip/xz/bz2). Returns false on a
+    ///        library reset failure. See @ref pumpDecoder (B8-12).
+    virtual bool resetStreamForNextMember() = 0;
+
     // ---- Common state (available to derived classes) ----
 
     static constexpr int CHUNK_SIZE = 128 * 1024;  ///< 128 KB input buffer
@@ -108,8 +132,33 @@ protected:
     QString m_lastError;
 
 private:
-    /// @brief Attempt to refill input; sets m_eof at end of file
-    /// @return true if input available or eof reached, false on read error
+    /// @brief What a decoder-reported member end resolved to.
+    enum class MemberBoundary {
+        finished,   ///< No more input: a true end of stream (EOF).
+        continued,  ///< More input remains: reset done, keep decoding the next member.
+        failed,     ///< The library reset failed.
+    };
+
+    /// @brief Decode into the current output buffer until it fills or the stream
+    ///        ends.
+    /// @return false on a decode/read error or a detected truncated stream.
+    bool pumpDecoder();
+
+    /// @brief Resolve a decoder-reported member end: EOF when no input remains,
+    ///        otherwise reset for the next concatenated member (B8-12).
+    MemberBoundary onMemberEnd();
+
+    /// @brief True (and records the error) when the decoder stalled with input
+    ///        exhausted before end-of-stream: a truncated stream.
+    bool isTruncatedStream(size_t output_before);
+
+    /// @brief True (and records the error) when an output ceiling is configured and the
+    ///        running decompressed total has passed it. Always false when no ceiling is
+    ///        set (the default), so the fixed-capacity flash consumer is unaffected.
+    bool exceededMaxOutput();
+
+    /// @brief Attempt to refill input; marks the input exhausted at end of file
+    /// @return true if input available or file exhausted, false on read error
     bool tryRefillInput();
 
     /// @brief Fill m_inputBuffer from m_file and call setInputFromBuffer()
@@ -117,9 +166,24 @@ private:
 
     QFile m_file;
     bool m_initialized{false};
+    /// Terminal success: the decoder reported end-of-stream. Distinct from
+    /// m_input_exhausted so a file that ends before the decoder finishes (a
+    /// truncated stream) is reported as an error instead of a clean EOF.
     bool m_eof{false};
+    /// The compressed input file has been fully read (no more bytes on disk).
+    bool m_input_exhausted{false};
+    /// Terminal failure: a decode error, a file read error or a detected truncated
+    /// stream. Sticky until the next open()/close(), so a caller that ignores one -1
+    /// cannot keep pumping a broken library stream -- and can never be handed the 0 that
+    /// means "clean end of file" for a stream that in fact failed.
+    bool m_failed{false};
     qint64 m_compressedBytesRead{0};
     qint64 m_decompressedBytesProduced{0};
+    /// Optional ceiling on total decompressed output; <= 0 disables it (the default,
+    /// which keeps reads unbounded for the fixed-capacity flash consumer). A file-target
+    /// consumer sets a positive bound via setMaxDecompressedBytes() so read() fails
+    /// closed once the running total exceeds it.
+    qint64 m_maxDecompressedBytes{0};
 };
 
 }  // namespace sak

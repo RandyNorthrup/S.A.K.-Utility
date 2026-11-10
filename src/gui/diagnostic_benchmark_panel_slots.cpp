@@ -6,16 +6,21 @@
 
 #include "sak/diagnostic_benchmark_panel.h"
 #include "sak/diagnostic_controller.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/smart_disk_analyzer.h"
 #include "sak/style_constants.h"
+#include "sak/thermal_monitor.h"
+#include "sak/view_empty_state.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDir>
 #include <QFileDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -31,8 +36,9 @@
 #include <QTextEdit>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <array>
 #include <iterator>
-
 
 namespace sak {
 namespace {
@@ -40,8 +46,6 @@ constexpr int kDefaultDiskTestFileSizeMb = 1024;
 constexpr int kReferenceBenchmarkScore = 1000;
 constexpr int kTemperatureWarningCelsius = 60;
 constexpr int kTemperatureCriticalCelsius = 80;
-constexpr int kSuiteStepDoneSymbol = 0x2705;
-constexpr int kSuiteStepRunningSymbol = 0x25B6;
 constexpr int kBenchmarkMetricPrecision = 2;
 }  // namespace
 
@@ -56,6 +60,27 @@ void DiagnosticBenchmarkPanel::onRescanHardwareClicked() {
     m_controller->runHardwareScan();
 }
 
+namespace {
+
+// Windows reports 0 for what it could not read (a VM's memory slots, a basic display adapter's
+// memory). Shown as "0/0 slots" or "0 bytes", that read as a measurement.
+QString memoryText(const MemorySummary& memory) {
+    if (memory.slots_total == 0) {
+        return sak::formatBytes(memory.total_bytes);
+    }
+    return QString("%1 (%2/%3 slots)")
+        .arg(sak::formatBytes(memory.total_bytes))
+        .arg(memory.slots_used)
+        .arg(memory.slots_total);
+}
+
+QString gpuText(const GpuInfo& gpu) {
+    return gpu.vram_bytes > 0 ? QString("%1 (%2)").arg(gpu.name, sak::formatBytes(gpu.vram_bytes))
+                              : gpu.name;
+}
+
+}  // namespace
+
 void DiagnosticBenchmarkPanel::onCopyInventoryClicked() {
     Q_ASSERT(m_controller);
     const auto& report_data = m_controller->reportData();
@@ -67,14 +92,10 @@ void DiagnosticBenchmarkPanel::onCopyInventoryClicked() {
                 .arg(inv.cpu.cores)
                 .arg(inv.cpu.threads)
                 .arg(inv.cpu.max_clock_mhz);
-    text += QString("Memory: %1 (%2/%3 slots)\n")
-                .arg(formatBytes(inv.memory.total_bytes))
-                .arg(inv.memory.slots_used)
-                .arg(inv.memory.slots_total);
-    for (const auto& gpu : inv.gpus) {
-        // cppcheck-suppress useStlAlgorithm ; string formatting not suited for std::accumulate
-        text += QString("GPU: %1 (%2)\n").arg(gpu.name, formatBytes(gpu.vram_bytes));
-    }
+    text += QString("Memory: %1\n").arg(memoryText(inv.memory));
+    std::ranges::for_each(inv.gpus, [&text](const auto& gpu) {
+        text += QString("GPU: %1\n").arg(gpuText(gpu));
+    });
     text +=
         QString("Motherboard: %1 %2\n").arg(inv.motherboard.manufacturer, inv.motherboard.product);
     text += QString("OS: %1 %2 (Build %3)\n").arg(inv.os_name, inv.os_version, inv.os_build);
@@ -96,15 +117,12 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(const HardwareInventory& i
                                 .arg(inventory.cpu.threads)
                                 .arg(inventory.cpu.max_clock_mhz));
 
-    m_hw_memory_label->setText(QString("%1 (%2/%3 slots)")
-                                   .arg(formatBytes(inventory.memory.total_bytes))
-                                   .arg(inventory.memory.slots_used)
-                                   .arg(inventory.memory.slots_total));
+    m_hw_memory_label->setText(memoryText(inventory.memory));
 
     if (!inventory.gpus.isEmpty()) {
         QStringList gpu_lines;
         for (const auto& gpu : inventory.gpus) {
-            gpu_lines.append(QString("%1 (%2)").arg(gpu.name, formatBytes(gpu.vram_bytes)));
+            gpu_lines.append(gpuText(gpu));
         }
         m_hw_gpu_label->setText(gpu_lines.join("; "));
     }
@@ -119,14 +137,7 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(const HardwareInventory& i
 
     m_hw_uptime_label->setText(formatUptime(inventory.uptime_seconds));
 
-    if (inventory.battery.present) {
-        m_hw_battery_label->setText(QString("%1 -- %2% health, %3")
-                                        .arg(inventory.battery.name)
-                                        .arg(inventory.battery.health_percent, 0, 'f', 1)
-                                        .arg(inventory.battery.status));
-    } else {
-        m_hw_battery_label->setText("Not present (desktop)");
-    }
+    m_hw_battery_label->setText(batteryText(inventory.battery));
 
     // Populate disk drive combo for disk benchmark
     populateDiskDriveCombo(inventory);
@@ -137,6 +148,7 @@ void DiagnosticBenchmarkPanel::onHardwareScanComplete(const HardwareInventory& i
     // Automatically trigger SMART analysis after hardware scan
     logMessage("Starting SMART disk analysis...");
     setOperationRunning(true);
+    m_smart_empty_state->setLoading(tr("Scanning storage health..."));
     m_controller->runSmartAnalysis();
 }
 
@@ -145,6 +157,45 @@ void DiagnosticBenchmarkPanel::populateDiskDriveCombo(const HardwareInventory& i
     for (const auto& disk : inventory.storage) {
         addDiskPartitionsToCombo(disk);
     }
+    // The run uses what the box shows, and the box shows its first row.
+    if (m_disk_drive_combo->count() > 0) {
+        m_disk_drive_combo->setCurrentIndex(0);
+    }
+}
+
+QString DiagnosticBenchmarkPanel::batteryText(const BatteryInfo& battery) {
+    if (!battery.present) {
+        return QStringLiteral("Not present (desktop)");
+    }
+    // A battery that reports no capacities has no health to show, not 0%.
+    QString text = battery.health_known
+                       ? QStringLiteral("%1% health").arg(battery.health_percent, 0, 'f', 1)
+                       : QStringLiteral("Health not reported");
+    if (!battery.status.isEmpty()) {
+        text += QStringLiteral(", ") + battery.status;
+    }
+    // A name with no letter in it ("1", VirtualBox's) is an index, not a name.
+    const QString name = battery.name.trimmed();
+    const bool named = std::ranges::any_of(name, [](QChar c) { return c.isLetter(); });
+    if (!named) {
+        return text;
+    }
+    if (!battery.health_known) {
+        text[0] = text[0].toLower();
+    }
+    return QStringLiteral("%1 - %2").arg(name, text);
+}
+
+QString DiagnosticBenchmarkPanel::benchmarkDriveText(const StorageDeviceInfo& disk,
+                                                     const PartitionInfo& volume) {
+    // The volume's own size: testpc1's 32 GB D: read "238.47 GB", its disk's.
+    const QString size = volume.total_bytes > 0 ? formatBytes(volume.total_bytes)
+                                                : QStringLiteral("size unknown");
+    const QString name = volume.label.trimmed().isEmpty()
+                             ? volume.drive_letter
+                             : QStringLiteral("%1 %2").arg(volume.drive_letter,
+                                                           volume.label.trimmed());
+    return QStringLiteral("%1 (%2 volume on %3)").arg(name, size, disk.model);
 }
 
 void DiagnosticBenchmarkPanel::addDiskPartitionsToCombo(const StorageDeviceInfo& disk) {
@@ -152,10 +203,7 @@ void DiagnosticBenchmarkPanel::addDiskPartitionsToCombo(const StorageDeviceInfo&
         if (part.drive_letter.isEmpty()) {
             continue;
         }
-        m_disk_drive_combo->addItem(
-            QString("%1 (%2 - %3)")
-                .arg(part.drive_letter, disk.model, formatBytes(disk.size_bytes)),
-            part.drive_letter + "\\");
+        m_disk_drive_combo->addItem(benchmarkDriveText(disk, part), part.drive_letter + "\\");
     }
 }
 
@@ -167,69 +215,132 @@ void DiagnosticBenchmarkPanel::onRescanSmartClicked() {
     Q_ASSERT(m_controller);
     logMessage("Starting SMART disk analysis...");
     setOperationRunning(true);
+    m_smart_empty_state->setLoading(tr("Scanning storage health..."));
     m_controller->runSmartAnalysis();
+}
+
+DiagnosticBenchmarkPanel::SmartRowIdentity DiagnosticBenchmarkPanel::smartRowIdentity(
+    const SmartReport& report, const StorageDeviceInfo* disk) {
+    // An unreadable drive's report carries no model ("PhysicalDrive1"); the scan knows it.
+    const QString drive = report.device_path.section(QLatin1Char('\\'), -1);
+    QString model = report.model.trimmed();
+    if ((model.isEmpty() || model == drive) && disk != nullptr) {
+        model = disk->model.trimmed();
+    }
+    // The bus as the hardware inventory names it, so the two views agree (UI review F39: Type
+    // read N/A here while the inventory said ATA); smartctl's device type only without a scan.
+    QString type = disk != nullptr ? disk->interface_type.trimmed() : QString();
+    if (type.isEmpty()) {
+        type = report.interface_type.trimmed();
+    }
+    return {.drive = SmartDiskAnalyzer::driveName(report.device_path, model), .type = type};
+}
+
+QString DiagnosticBenchmarkPanel::smartWarningText(const QString& drive, const QString& warning) {
+    // "PhysicalDrive0 (VBOX HARDDISK)" names the drive in the warnings that already carry it as
+    // "PhysicalDrive0: ..." or "PhysicalDrive0 (VBOX HARDDISK): ...".
+    const QString number = drive.section(QLatin1Char(' '), 0, 0);
+    if (warning.startsWith(number + QLatin1Char(':')) ||
+        warning.startsWith(number + QStringLiteral(" ("))) {
+        return warning;
+    }
+    return QStringLiteral("%1: %2").arg(drive, warning);
+}
+
+const StorageDeviceInfo* DiagnosticBenchmarkPanel::inventoryDiskFor(
+    const SmartReport& report) const {
+    const QString drive = report.device_path.section(QLatin1Char('\\'), -1);
+    const auto& storage = m_controller->reportData().inventory.storage;
+    const auto found = std::ranges::find_if(storage, [&drive](const StorageDeviceInfo& disk) {
+        return drive == QStringLiteral("PhysicalDrive%1").arg(disk.disk_number);
+    });
+    return found == storage.end() ? nullptr : &*found;
+}
+
+void DiagnosticBenchmarkPanel::fillSmartRow(int row,
+                                            const SmartReport& report,
+                                            const SmartRowIdentity& identity) {
+    // A drive that could not be read has no temperature or hours to show: zeros would read as
+    // measurements.
+    const bool read = report.overall_health != SmartHealthStatus::Unknown;
+
+    m_smart_table->setItem(row, SmartColDrive, new QTableWidgetItem(identity.drive));
+    // One marker for "not known" across the table: N/A, as Health and Thermal use.
+    const QString missing = tr("N/A");
+    m_smart_table->setItem(row,
+                           SmartColType,
+                           new QTableWidgetItem(identity.type.isEmpty() ? missing : identity.type));
+
+    // Health with icon
+    auto* health_item = new QTableWidgetItem();
+    switch (report.overall_health) {
+    case SmartHealthStatus::Healthy:
+        health_item->setText("PASS");
+        health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorSuccess));
+        break;
+    case SmartHealthStatus::Warning:
+        health_item->setText("WARN");
+        health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorWarning));
+        break;
+    case SmartHealthStatus::Critical:
+        health_item->setText("FAIL");
+        health_item->setForeground(sak::ui::themedColor(sak::ui::kStatusColorError));
+        break;
+    default:
+        health_item->setText("N/A");
+        break;
+    }
+    // Why, in the drive's own terms: FAIL is its own verdict, WARN what it counts.
+    health_item->setToolTip(report.health_reason);
+    m_smart_table->setItem(row, SmartColHealth, health_item);
+
+    m_smart_table->setItem(row,
+                           SmartColTemperature,
+                           new QTableWidgetItem(read ? formatCelsius(report.temperature_celsius, 0)
+                                                     : missing));
+
+    m_smart_table->setItem(row,
+                           SmartColPowerOnHours,
+                           new QTableWidgetItem(read ? QString::number(report.power_on_hours)
+                                                     : missing));
+
+    // Wear level: an NVMe drive reports it; others do not.
+    const QString wear = report.nvme_health.has_value()
+                             ? QString("%1%").arg(report.nvme_health->percentage_used)
+                             : missing;
+    m_smart_table->setItem(row, SmartColWear, new QTableWidgetItem(wear));
 }
 
 void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport>& reports) {
     Q_ASSERT(m_smart_table);
     Q_ASSERT(m_smart_warnings_label);
     setOperationRunning(false);
+    m_smart_empty_state->clearLoading();
 
-    m_smart_table->setRowCount(reports.size());
+    m_smart_table->setRowCount(static_cast<int>(reports.size()));
     QStringList warnings_list;
+    m_smart_hottest_drive_celsius = 0.0;
+    m_smart_scanned = true;
 
     for (int row = 0; row < reports.size(); ++row) {
         const auto& report = reports[row];
-
-        m_smart_table->setItem(row, SmartColDrive, new QTableWidgetItem(report.model));
-        m_smart_table->setItem(row, SmartColType, new QTableWidgetItem(report.interface_type));
-
-        // Health with icon
-        auto* health_item = new QTableWidgetItem();
-        switch (report.overall_health) {
-        case SmartHealthStatus::Healthy:
-            health_item->setText("PASS");
-            health_item->setForeground(QColor(sak::ui::kStatusColorSuccess));
-            break;
-        case SmartHealthStatus::Warning:
-            health_item->setText("WARN");
-            health_item->setForeground(QColor(sak::ui::kStatusColorWarning));
-            break;
-        case SmartHealthStatus::Critical:
-            health_item->setText("FAIL");
-            health_item->setForeground(QColor(sak::ui::kStatusColorError));
-            break;
-        default:
-            health_item->setText("N/A");
-            break;
+        const SmartRowIdentity identity = smartRowIdentity(report, inventoryDiskFor(report));
+        fillSmartRow(row, report, identity);
+        if (report.overall_health != SmartHealthStatus::Unknown) {
+            m_smart_hottest_drive_celsius = std::max(m_smart_hottest_drive_celsius,
+                                                     report.temperature_celsius);
         }
-        m_smart_table->setItem(row, SmartColHealth, health_item);
-
-        m_smart_table->setItem(row,
-                               SmartColTemperature,
-                               new QTableWidgetItem(
-                                   QString("%1 degC").arg(report.temperature_celsius, 0, 'f', 0)));
-
-        m_smart_table->setItem(row,
-                               SmartColPowerOnHours,
-                               new QTableWidgetItem(QString::number(report.power_on_hours)));
-
-        // Wear level: NVMe percentage or "--" for SATA
-        const QString wear = report.nvme_health.has_value()
-                                 ? QString("%1%").arg(report.nvme_health->percentage_used)
-                                 : "--";
-        m_smart_table->setItem(row, SmartColWear, new QTableWidgetItem(wear));
-
-        // Collect warnings
         for (const auto& warning : report.warnings) {
-            warnings_list.append(warning);
+            warnings_list.append(smartWarningText(identity.drive, warning));
         }
     }
 
     m_smart_warnings_label->setText(warnings_list.join("\n"));
     m_smart_warnings_label->setVisible(!warnings_list.isEmpty());
 
-    logMessage(QString("SMART analysis complete: %1 drive(s) analyzed").arg(reports.size()));
+    logMessage(
+        QString("SMART analysis complete: %1 analyzed")
+            .arg(countOf(reports.size(), QStringLiteral("drive"), QStringLiteral("drives"))));
     Q_EMIT statusMessage("SMART analysis complete", sak::kTimerStatusMessageMs);
 }
 
@@ -241,6 +352,7 @@ void DiagnosticBenchmarkPanel::onRunCpuBenchmarkClicked() {
     Q_ASSERT(m_controller);
     logMessage("Starting CPU benchmark...");
     setOperationRunning(true);
+    m_benchmark_stop_button->setEnabled(true);
     m_controller->runCpuBenchmark();
 }
 
@@ -248,18 +360,23 @@ void DiagnosticBenchmarkPanel::onCpuBenchmarkComplete(const CpuBenchmarkResult& 
     Q_ASSERT(m_cpu_single_score_label);
     Q_ASSERT(m_cpu_multi_score_label);
     setOperationRunning(false);
+    m_benchmark_stop_button->setEnabled(false);
 
     m_cpu_single_score_label->setText(QString("Single-Thread: %1").arg(result.single_thread_score));
     m_cpu_multi_score_label->setText(QString("Multi-Thread: %1").arg(result.multi_thread_score));
+    m_cpu_score_label->setText(QString("Score: %1 (baseline i5-12400 = %2)")
+                                   .arg(result.multi_thread_score)
+                                   .arg(kReferenceBenchmarkScore));
 
     m_cpu_score_bar->setValue(result.multi_thread_score);
+    m_cpu_score_bar->setTextVisible(true);
 
     const double baseline_pct = result.multi_thread_score > 0 ? (result.multi_thread_score / 10.0)
                                                               : 0.0;
 
     m_cpu_details_label->setText(
         QString("Prime Sieve: %1 ms | Matrix: %2 ms (%3 GFLOPS) | "
-                "ZLIB: %4 MB/s | AES: %5 MB/s | Scaling: %6% | "
+                "ZLIB: %4 MB/s | AES (S-box proxy): %5 MB/s | Scaling: %6% | "
                 "%7% of baseline (i5-12400)")
             .arg(result.prime_sieve_time_ms, 0, 'f', 1)
             .arg(result.matrix_multiply_time_ms, 0, 'f', 1)
@@ -268,6 +385,7 @@ void DiagnosticBenchmarkPanel::onCpuBenchmarkComplete(const CpuBenchmarkResult& 
             .arg(result.aes_throughput_mbps, 0, 'f', 1)
             .arg(result.thread_scaling_efficiency * sak::kPercentMaxF, 0, 'f', 1)
             .arg(baseline_pct, 0, 'f', 0));
+    m_cpu_details_label->setVisible(true);
 
     logMessage(QString("CPU benchmark complete -- Score: %1 (ST) / %2 (MT)")
                    .arg(result.single_thread_score)
@@ -284,16 +402,25 @@ void DiagnosticBenchmarkPanel::onRunDiskBenchmarkClicked() {
     Q_ASSERT(m_controller);
     if (m_disk_drive_combo->count() == 0) {
         logMessage("No drives available -- run Hardware Scan first");
-        Q_EMIT statusMessage("No drives -- run Hardware Scan first", sak::kTimerStatusMessageMs);
+        Q_EMIT statusMessage("No drives - run Hardware Scan first", sak::kTimerStatusMessageMs);
         return;
     }
 
     DiskBenchmarkConfig config;
     config.drive_path = m_disk_drive_combo->currentData().toString();
+    // Fail closed: never launch disk I/O against an empty target. The combo is
+    // populated only with real drive-letter roots, so this should not fire, but a
+    // missing or wrong-typed selection must be rejected rather than writing to "".
+    if (config.drive_path.isEmpty()) {
+        logMessage("Selected drive has no valid path -- run Hardware Scan first");
+        Q_EMIT statusMessage("Invalid drive selection", sak::kTimerStatusMessageMs);
+        return;
+    }
     config.test_file_size_mb = kDefaultDiskTestFileSizeMb;
 
     logMessage(QString("Starting disk benchmark on %1...").arg(config.drive_path));
     setOperationRunning(true);
+    m_benchmark_stop_button->setEnabled(true);
     m_controller->runDiskBenchmark(config);
 }
 
@@ -301,14 +428,15 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
     Q_ASSERT(m_disk_seq_label);
     Q_ASSERT(m_disk_rand_label);
     setOperationRunning(false);
+    m_benchmark_stop_button->setEnabled(false);
 
-    m_disk_seq_label->setText(QString("Sequential -- Read: %1 MB/s | Write: %2 MB/s")
+    m_disk_seq_label->setText(QString("Sequential - Read: %1 MB/s | Write: %2 MB/s")
                                   .arg(result.seq_read_mbps, 0, 'f', 1)
                                   .arg(result.seq_write_mbps, 0, 'f', 1));
 
     m_disk_rand_label->setText(
-        QString("Random 4K QD1 -- R: %1 MB/s (%2 IOPS) | W: %3 MB/s (%4 IOPS)\n"
-                "Random 4K QD32 -- R: %5 MB/s (%6 IOPS) | W: %7 MB/s (%8 IOPS)")
+        QString("Random 4K QD1 - R: %1 MB/s (%2 IOPS) | W: %3 MB/s (%4 IOPS)\n"
+                "Random 4K QD32 (serialized QD1) - R: %5 MB/s (%6 IOPS) | W: %7 MB/s (%8 IOPS)")
             .arg(result.rand_4k_read_mbps, 0, 'f', 1)
             .arg(result.rand_4k_read_iops, 0, 'f', 0)
             .arg(result.rand_4k_write_mbps, 0, 'f', 1)
@@ -318,18 +446,19 @@ void DiagnosticBenchmarkPanel::onDiskBenchmarkComplete(const DiskBenchmarkResult
             .arg(result.rand_4k_qd32_write_mbps, 0, 'f', 1)
             .arg(result.rand_4k_qd32_write_iops, 0, 'f', 0));
 
-    m_disk_latency_label->setText(QString("Latency -- Read avg: %1 \u03BCs (P99: %2 \u03BCs) | "
+    m_disk_latency_label->setText(QString("Latency - Read avg: %1 \u03BCs (P99: %2 \u03BCs) | "
                                           "Write avg: %3 \u03BCs (P99: %4 \u03BCs)")
                                       .arg(result.avg_read_latency_us, 0, 'f', 1)
                                       .arg(result.p99_read_latency_us, 0, 'f', 1)
                                       .arg(result.avg_write_latency_us, 0, 'f', 1)
                                       .arg(result.p99_write_latency_us, 0, 'f', 1));
 
-    m_disk_score_label->setText(QString("Score: %1 (Samsung 980 PRO = %2)")
+    m_disk_score_label->setText(QString("Score: %1 (baseline Samsung 980 PRO = %2)")
                                     .arg(result.overall_score)
                                     .arg(kReferenceBenchmarkScore));
 
     m_disk_score_bar->setValue(result.overall_score);
+    m_disk_score_bar->setTextVisible(true);
 
     logMessage(QString("Disk benchmark complete -- Score: %1").arg(result.overall_score));
     Q_EMIT statusMessage("Disk benchmark complete", sak::kTimerStatusMessageMs);
@@ -343,6 +472,7 @@ void DiagnosticBenchmarkPanel::onRunMemoryBenchmarkClicked() {
     Q_ASSERT(m_controller);
     logMessage("Starting memory benchmark...");
     setOperationRunning(true);
+    m_benchmark_stop_button->setEnabled(true);
     m_controller->runMemoryBenchmark();
 }
 
@@ -350,26 +480,48 @@ void DiagnosticBenchmarkPanel::onMemoryBenchmarkComplete(const MemoryBenchmarkRe
     Q_ASSERT(m_mem_bandwidth_label);
     Q_ASSERT(m_mem_latency_label);
     setOperationRunning(false);
+    m_benchmark_stop_button->setEnabled(false);
 
     m_mem_bandwidth_label->setText(QString("Read: %1 GB/s | Write: %2 GB/s | Copy: %3 GB/s")
                                        .arg(result.read_bandwidth_gbps, 0, 'f', 1)
                                        .arg(result.write_bandwidth_gbps, 0, 'f', 1)
                                        .arg(result.copy_bandwidth_gbps, 0, 'f', 1));
 
-    m_mem_latency_label->setText(QString("Random Latency: %1 ns | Alloc Stress: %2 ops/s | "
-                                         "Max Contiguous: %3 MB")
-                                     .arg(result.random_latency_ns, 0, 'f', 1)
-                                     .arg(result.alloc_dealloc_ops_per_sec, 0, 'f', 0)
-                                     .arg(result.max_contiguous_alloc_mb));
+    m_mem_latency_label->setText(
+        QString("Random Latency: %1 ns | Alloc Stress: %2 ops/s | "
+                "Max Contiguous: %3")
+            .arg(result.random_latency_ns, 0, 'f', 1)
+            .arg(result.alloc_dealloc_ops_per_sec, 0, 'f', 0)
+            .arg(sak::formatBytes(static_cast<uint64_t>(result.max_contiguous_alloc_mb) *
+                                  sak::kBytesPerMB)));
 
-    m_mem_score_label->setText(QString("Score: %1 (DDR4-3200 dual-channel = %2)")
+    m_mem_score_label->setText(QString("Score: %1 (baseline DDR4-3200 dual-channel = %2)")
                                    .arg(result.overall_score)
                                    .arg(kReferenceBenchmarkScore));
 
     m_mem_score_bar->setValue(result.overall_score);
+    m_mem_score_bar->setTextVisible(true);
 
     logMessage(QString("Memory benchmark complete -- Score: %1").arg(result.overall_score));
     Q_EMIT statusMessage("Memory benchmark complete", sak::kTimerStatusMessageMs);
+}
+
+// ============================================================================
+// Slot: Stop Benchmark (shared CPU/disk/memory)
+// ============================================================================
+
+void DiagnosticBenchmarkPanel::onStopBenchmarkClicked() {
+    Q_ASSERT(m_controller);
+    logMessage("Stopping benchmark...");
+    // cancelCurrent() cooperatively stops the running CPU/disk/memory benchmark worker
+    // (it polls the cancel flag) and waits its future -- a true stop, not a detach. A
+    // cancelled standalone benchmark emits neither benchmarkComplete nor failed(), so no
+    // completion slot runs to clear the operation state. Reset it here -- exactly as
+    // onCancelSuiteClicked does for the suite -- or the panel would stay stuck with every
+    // primary control disabled and this Stop button stranded enabled.
+    m_controller->cancelCurrent();
+    setOperationRunning(false);
+    m_benchmark_stop_button->setEnabled(false);
 }
 
 // ============================================================================
@@ -387,20 +539,44 @@ void DiagnosticBenchmarkPanel::onStartStressTestClicked() {
     config.duration_minutes = m_stress_duration_spin->value();
     config.thermal_limit_celsius = m_stress_thermal_limit_spin->value();
 
+    // Bind disk stress to the user-selected drive (mirrors the full-suite path).
+    // Without this the worker keeps StressTestConfig's default target (the system
+    // volume) and stresses the wrong disk while the UI shows the drive the
+    // technician actually picked.
+    if (m_disk_drive_combo->count() > 0) {
+        config.disk_test_drive = m_disk_drive_combo->currentData().toString();
+    }
+
     if (!config.stress_cpu && !config.stress_memory && !config.stress_disk && !config.stress_gpu) {
         sak::logWarning("Stress test started with no components selected");
         logMessage("Select at least one component for stress testing");
         return;
     }
 
+    // A disk stress writes a real test file. Never let it fall back to a struct-default
+    // volume: require an explicitly selected drive (populated by Hardware Scan).
+    if (config.stress_disk) {
+        if (m_disk_drive_combo->count() == 0) {
+            logMessage("Disk stress needs a drive -- run Hardware Scan first");
+            Q_EMIT statusMessage("Select a drive (run Hardware Scan) before disk stress",
+                                 sak::kTimerStatusMessageMs);
+            return;
+        }
+        config.disk_test_drive = m_disk_drive_combo->currentData().toString();
+    }
+
     logMessage(QString("Starting stress test (%1 minutes)...").arg(config.duration_minutes));
 
     m_stress_test_running = true;
-    m_stress_start_button->setEnabled(false);
+    refreshPrimaryControls();  // lock out benchmarks / suite / quick actions while stressing
     m_stress_stop_button->setEnabled(true);
     m_stress_status_label->setText("Status: Running");
     m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
         sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+    // The bar first, so the message counts as the running work's and stays beside it: the status
+    // bar read "Ready" beside a stress run at 16% (review 3, X3).
+    Q_EMIT progressUpdate(0, sak::kPercentMax);
+    Q_EMIT statusMessage(stressRunningText(0, config.duration_minutes), sak::kTimerStatusMessageMs);
 
     m_controller->runStressTest(config);
 }
@@ -415,45 +591,91 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(const StressTestResult& resu
     Q_ASSERT(m_stress_start_button);
     Q_ASSERT(m_stress_stop_button);
     m_stress_test_running = false;
-    m_stress_start_button->setEnabled(true);
+    refreshPrimaryControls();  // re-enable start and the other operations
     m_stress_stop_button->setEnabled(false);
 
     if (result.passed) {
         m_stress_status_label->setText("Status: PASSED");
         m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
             sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+    } else if (result.stopped) {
+        // A stop is a stop: nothing was found wrong, and nothing was proved either.
+        m_stress_status_label->setText(QString("Status: STOPPED - %1").arg(result.abort_reason));
+        m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+            sak::ui::kFontWeightSemibold, sak::ui::kStatusColorWarning));
     } else {
-        m_stress_status_label->setText(
-            QString("Status: FAILED \u2014 %1").arg(result.abort_reason));
+        m_stress_status_label->setText(QString("Status: FAILED - %1").arg(result.abort_reason));
         m_stress_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
             sak::ui::kFontWeightSemibold, sak::ui::kStatusColorError));
     }
+    // The run's own length, not the last 5 s tick: a 60.6 s run ended on "Elapsed: 00:55", with the
+    // status bar left at 91% beside "Stress test passed" (review 3).
+    m_stress_elapsed_label->setText(stressElapsedText(result.duration_seconds));
+    Q_EMIT progressUpdate(sak::kPercentMax, sak::kPercentMax);
 
-    logMessage(QString("Stress test %1 (%2s, %3 errors, max temp: %4 degC)")
-                   .arg(result.passed ? "PASSED" : "FAILED")
+    logMessage(QString("Stress test %1 (%2s, %3 errors, max temp: %4)")
+                   .arg(QString::fromLatin1(stressVerdictWord(result)))
                    .arg(result.duration_seconds)
                    .arg(result.errors_detected)
-                   .arg(result.max_cpu_temp, 0, 'f', 1));
-    Q_EMIT statusMessage(result.passed ? "Stress test passed" : "Stress test FAILED",
+                   .arg(result.cpuTemperatureRead()
+                            ? formatCelsius(result.max_cpu_temp, 1)
+                            : QStringLiteral("no reading, thermal limit not enforced")));
+    Q_EMIT statusMessage(result.passed    ? QStringLiteral("Stress test passed")
+                         : result.stopped ? QStringLiteral("Stress test stopped")
+                                          : QStringLiteral("Stress test FAILED"),
                          sak::kTimerStatusDefaultMs);
+}
+
+QString DiagnosticBenchmarkPanel::stressRunningText(int elapsed_seconds, int duration_minutes) {
+    // "Elapsed: 00:16" without its label.
+    const QString clock = stressElapsedText(elapsed_seconds).section(QLatin1Char(' '), 1);
+    return QStringLiteral("Stress test running, %1 of %2 min").arg(clock).arg(duration_minutes);
+}
+
+QString DiagnosticBenchmarkPanel::stressElapsedText(int elapsed_seconds) {
+    return QString("Elapsed: %1:%2")
+        .arg(elapsed_seconds / sak::kSecondsPerMinute,
+             sak::kTimeFieldWidth,
+             sak::kDecimalBase,
+             QChar('0'))
+        .arg(elapsed_seconds % sak::kSecondsPerMinute,
+             sak::kTimeFieldWidth,
+             sak::kDecimalBase,
+             QChar('0'));
 }
 
 void DiagnosticBenchmarkPanel::onStressTestStatus(int elapsed_seconds,
                                                   double cpu_temp,
                                                   int errors) {
-    Q_ASSERT(elapsed_seconds >= 0);
+    // Delivered across a queued cross-thread connection from StressTestWorker via
+    // DiagnosticController's signal-to-signal forward. Nothing on that path bounds
+    // it, and a negative elapsed would render "Elapsed: -1:-30" and a negative
+    // progress percentage. Refuse the update and name the value.
+    if (elapsed_seconds < 0) {
+        logMessage(QString("Ignoring stress status with a negative elapsed time: %1 s")
+                       .arg(elapsed_seconds));
+        return;
+    }
     const int duration_sec = m_stress_duration_spin->value() * sak::kSecondsPerMinute;
     const int percent = duration_sec > 0 ? (elapsed_seconds * sak::kPercentMax / duration_sec) : 0;
     Q_EMIT progressUpdate(percent, sak::kPercentMax);
+    Q_EMIT statusMessage(stressRunningText(elapsed_seconds, m_stress_duration_spin->value()),
+                         sak::kTimerStatusMessageMs);
 
-    const int min = elapsed_seconds / sak::kSecondsPerMinute;
-    const int sec = elapsed_seconds % sak::kSecondsPerMinute;
-    m_stress_elapsed_label->setText(
-        QString("Elapsed: %1:%2")
-            .arg(min, sak::kTimeFieldWidth, sak::kDecimalBase, QChar('0'))
-            .arg(sec, sak::kTimeFieldWidth, sak::kDecimalBase, QChar('0')));
+    m_stress_elapsed_label->setText(stressElapsedText(elapsed_seconds));
 
-    m_stress_temp_label->setText(QString("CPU Temp: %1 degC").arg(cpu_temp, 0, 'f', 1));
+    // ThermalMonitor::queryCpuTemperature answers -1.0 for "no reading". A number here would read
+    // as a measurement, and it would hide that the thermal limit is doing nothing.
+    if (cpu_temp > 0.0) {
+        m_stress_temp_label->setText(
+            QStringLiteral("CPU Temp: %1").arg(formatCelsius(cpu_temp, 1)));
+        m_stress_temp_label->setStyleSheet({});
+    } else {
+        m_stress_temp_label->setText(
+            QStringLiteral("CPU Temp: no reading - the thermal limit is not being enforced"));
+        m_stress_temp_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+            sak::ui::kFontWeightSemibold, sak::ui::kStatusColorWarning));
+    }
 
     m_stress_errors_label->setText(QString("Errors: %1").arg(errors));
 
@@ -484,18 +706,28 @@ void DiagnosticBenchmarkPanel::onRunFullSuiteClicked() {
         disk_config.drive_path = m_disk_drive_combo->currentData().toString();
         stress_config.disk_test_drive = disk_config.drive_path;
     } else {
-        disk_config.drive_path = "C:\\";
+        // No drive selected: refuse rather than defaulting the mutating disk step to the
+        // system volume. Hardware Scan populates the drive list.
+        logMessage("Full suite needs a drive selected -- run Hardware Scan first");
+        Q_EMIT statusMessage("Select a drive (run Hardware Scan) before the full suite",
+                             sak::kTimerStatusMessageMs);
+        return;
     }
 
     logMessage("Starting full diagnostic suite...");
     m_suite_running = true;
-    m_suite_run_button->setEnabled(false);
+    m_current_suite_step = -1;
+    refreshPrimaryControls();  // lock standalone ops / report exports / quick actions
     m_suite_cancel_button->setEnabled(true);
     m_suite_skip_button->setEnabled(true);
 
-    // Reset step labels
+    // Reset step labels and per-step skip flags
     for (int i = 0; i < kSuiteStepCount; ++i) {
-        m_suite_step_labels[i]->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextDisabled));
+        m_suite_step_skipped[i] = false;
+        showSuiteStep(i,
+                      kSuitePendingMark,
+                      m_suite_step_names[i],
+                      sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     }
 
     m_controller->runFullSuite(stress_config, disk_config);
@@ -506,7 +738,7 @@ void DiagnosticBenchmarkPanel::onCancelSuiteClicked() {
     logMessage("Cancelling diagnostic suite...");
     m_controller->cancelCurrent();
     m_suite_running = false;
-    m_suite_run_button->setEnabled(true);
+    refreshPrimaryControls();
     m_suite_cancel_button->setEnabled(false);
     m_suite_skip_button->setEnabled(false);
     m_suite_status_label->setText("Suite cancelled");
@@ -514,13 +746,18 @@ void DiagnosticBenchmarkPanel::onCancelSuiteClicked() {
 
 void DiagnosticBenchmarkPanel::onSkipStepClicked() {
     Q_ASSERT(m_controller);
+    // Record which step is being skipped so it is reported as skipped rather than
+    // silently rolled into the completed set (which reads as passed).
+    if (m_current_suite_step >= 0 && m_current_suite_step < kSuiteStepCount) {
+        m_suite_step_skipped[m_current_suite_step] = true;
+    }
     logMessage("Skipping current suite step...");
     m_controller->skipCurrentStep();
 }
 
 void DiagnosticBenchmarkPanel::onSuiteStateChanged(DiagnosticController::SuiteState state) {
     // Map state to step index
-    static constexpr int state_to_step[] = {
+    static constexpr std::array<int, 9> kStateToStep = {
         -1,  // Idle
         0,   // HardwareScan
         1,   // SmartAnalysis
@@ -533,31 +770,51 @@ void DiagnosticBenchmarkPanel::onSuiteStateChanged(DiagnosticController::SuiteSt
     };
 
     const int state_idx = static_cast<int>(state);
-    if (state_idx < 0 || state_idx >= static_cast<int>(std::size(state_to_step))) {
+    if (state_idx < 0 || state_idx >= static_cast<int>(std::size(kStateToStep))) {
         return;  // Invalid state -- ignore
     }
-    const int step = state_to_step[state_idx];
+    const int step = kStateToStep[state_idx];
+    if (step >= 0) {
+        m_current_suite_step = step;
+    }
 
-    // Mark completed steps with checkmark, current with arrow icon
+    // Mark completed steps with a checkmark, skipped steps distinctly, current with arrow
     for (int i = 0; i < kSuiteStepCount; ++i) {
         if (step >= 0 && i < step) {
-            // Completed -- reconstruct label from stored step name
-            m_suite_step_labels[i]->setText(
-                QString("  %1  %2").arg(QChar(kSuiteStepDoneSymbol)).arg(m_suite_step_names[i]));
-            m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
-                sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+            if (m_suite_step_skipped[i]) {
+                // Skipped -- must not read as a completed/passed step.
+                showSuiteStep(i,
+                              kSuiteSkippedMark,
+                              m_suite_step_names[i] + QStringLiteral(" (skipped)"),
+                              sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
+                                                               sak::ui::kStatusColorWarning));
+            } else {
+                // Completed -- reconstruct label from stored step name
+                showSuiteStep(i,
+                              kSuiteDoneMark,
+                              m_suite_step_names[i],
+                              sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
+                                                               sak::ui::kStatusColorSuccess));
+            }
         } else if (i == step) {
             // Current \u2014 use BMP arrow symbol (U+25B6) instead of non-BMP U+1F504
-            m_suite_step_labels[i]->setText(
-                QString("  %1  %2").arg(QChar(kSuiteStepRunningSymbol)).arg(m_suite_step_names[i]));
-            m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
-                sak::ui::kFontWeightSemibold, sak::ui::kStatusColorRunning));
+            showSuiteStep(i,
+                          kSuiteRunningMark,
+                          m_suite_step_names[i],
+                          sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
+                                                           sak::ui::kStatusColorRunning));
         }
     }
 }
 
 void DiagnosticBenchmarkPanel::onSuiteProgress(int percent, const QString& message) {
-    Q_ASSERT(percent >= 0 && percent <= sak::kPercentMax);
+    // percent is produced by DiagnosticController from worker counts; the range
+    // holds only because its eight emit sites happen to pass in-range constants
+    // today, which is a caller list rather than an invariant.
+    if (percent < 0 || percent > sak::kPercentMax) {
+        logMessage(QString("Ignoring out-of-range suite progress: %1%").arg(percent));
+        return;
+    }
     Q_EMIT progressUpdate(percent, sak::kPercentMax);
     m_suite_status_label->setText(message);
 }
@@ -566,19 +823,29 @@ void DiagnosticBenchmarkPanel::onSuiteComplete() {
     Q_ASSERT(m_suite_run_button);
     Q_ASSERT(m_suite_cancel_button);
     m_suite_running = false;
-    m_suite_run_button->setEnabled(true);
+    refreshPrimaryControls();
     m_suite_cancel_button->setEnabled(false);
     m_suite_skip_button->setEnabled(false);
     m_suite_status_label->setText("Suite complete!");
     m_suite_status_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
         sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
 
-    // Mark all steps as complete \u2014 reconstruct from stored step names
+    // Mark steps done, but keep any skipped step reported as skipped rather than
+    // overwriting it with a completed checkmark.
     for (int i = 0; i < kSuiteStepCount; ++i) {
-        m_suite_step_labels[i]->setText(
-            QString("  %1  %2").arg(QChar(kSuiteStepDoneSymbol)).arg(m_suite_step_names[i]));
-        m_suite_step_labels[i]->setStyleSheet(sak::ui::fontWeightAndColorStyle(
-            sak::ui::kFontWeightSemibold, sak::ui::kStatusColorSuccess));
+        if (m_suite_step_skipped[i]) {
+            showSuiteStep(i,
+                          kSuiteSkippedMark,
+                          m_suite_step_names[i] + QStringLiteral(" (skipped)"),
+                          sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
+                                                           sak::ui::kStatusColorWarning));
+        } else {
+            showSuiteStep(i,
+                          kSuiteDoneMark,
+                          m_suite_step_names[i],
+                          sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightSemibold,
+                                                           sak::ui::kStatusColorSuccess));
+        }
     }
 
     logMessage("Full diagnostic suite complete");
@@ -589,62 +856,105 @@ void DiagnosticBenchmarkPanel::onSuiteComplete() {
 // Slot: Thermal Monitor
 // ============================================================================
 
+namespace {
+// Keep the hottest reading seen so far for a sensor class. The first sighting
+// always wins (found is still false) so the zero-initialized accumulator never
+// masks a genuine reading, and thereafter only a hotter value replaces it.
+void keepHottest(bool& found, int& hottest, int candidate) {
+    if (!found || candidate > hottest) {
+        hottest = candidate;
+    }
+    found = true;
+}
+
+// A temperature, coloured by the thermal warning thresholds.
+QString temperatureHtml(int temp) {
+    QString color = sak::ui::kStatusColorSuccess;
+    if (temp >= kTemperatureCriticalCelsius) {
+        color = sak::ui::kStatusColorError;
+    } else if (temp >= kTemperatureWarningCelsius) {
+        color = sak::ui::kColorWarning;
+    }
+    return QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
+        .arg(sak::ui::htmlColor(color))
+        .arg(sak::ui::kFontWeightSemibold)
+        .arg(formatCelsius(temp, 0));
+}
+}  // namespace
+
 void DiagnosticBenchmarkPanel::onThermalReadingsUpdated(const QVector<ThermalReading>& readings) {
     Q_ASSERT(m_thermal_cpu_label);
     Q_ASSERT(m_thermal_cpu_bar);
 
-    // Track which sensors reported data this poll cycle
+    // A poll cycle can carry several sensors of one class (multiple disks, multiple
+    // GPUs). Keep the HOTTEST reading per class -- a last-writer-wins assignment
+    // would let a cooler final disk mask an earlier critically hot one and hide a
+    // thermal fault.
     bool cpu_found = false;
     bool gpu_found = false;
     bool disk_found = false;
+    int cpu_temp = 0;
+    int gpu_temp = 0;
+    int disk_temp = 0;
 
     for (const auto& reading : readings) {
         const int temp = static_cast<int>(reading.temperature_celsius);
-
-        // Color code by thermal warning thresholds.
-        QString color = sak::ui::kStatusColorSuccess;
-        if (temp >= kTemperatureCriticalCelsius) {
-            color = sak::ui::kStatusColorError;
-        } else if (temp >= kTemperatureWarningCelsius) {
-            color = sak::ui::kColorWarning;
-        }
-
-        const QString temp_text = QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
-                                      .arg(color)
-                                      .arg(sak::ui::kFontWeightSemibold)
-                                      .arg(QStringLiteral("%1 \u00B0C").arg(temp));
-
         if (reading.component.contains("CPU", Qt::CaseInsensitive)) {
-            m_thermal_cpu_label->setText(temp_text);
-            m_thermal_cpu_bar->setValue(temp);
-            cpu_found = true;
+            keepHottest(cpu_found, cpu_temp, temp);
         } else if (reading.component.contains("GPU", Qt::CaseInsensitive)) {
-            m_thermal_gpu_label->setText(temp_text);
-            m_thermal_gpu_bar->setValue(temp);
-            gpu_found = true;
+            keepHottest(gpu_found, gpu_temp, temp);
         } else if (reading.component.contains("Disk", Qt::CaseInsensitive)) {
-            m_thermal_disk_label->setText(temp_text);
-            m_thermal_disk_bar->setValue(temp);
-            disk_found = true;
+            keepHottest(disk_found, disk_temp, temp);
         }
     }
 
-    // Show "N/A" for sensors that returned no data
     const QString not_available = QString::fromLatin1(sak::ui::kHtmlSpanColorWeight)
                                       .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
                                       .arg(sak::ui::kFontWeightSemibold)
-                                      .arg(QStringLiteral("N/A"));
-    if (!cpu_found) {
-        m_thermal_cpu_label->setText(not_available);
-        m_thermal_cpu_bar->setValue(0);
+                                      .arg(tr("N/A"));
+
+    // The value column holds a number or "N/A"; anything longer goes on the bar, which spans the
+    // row. A sensor with no reading says why there: a bare N/A told a technician nothing, and the
+    // reason in the value column was cut to "N/A - not" (testpc1).
+    const auto render =
+        [&](QLabel* label, QProgressBar* bar, bool found, int temp, const char* id) {
+            if (found) {
+                label->setText(temperatureHtml(temp));
+                bar->setValue(temp);
+                bar->setFormat(QStringLiteral("%v / %m \u00B0C"));
+            } else {
+                // An empty bar that says so: "0 / 100 C" read as a reading of zero.
+                label->setText(not_available);
+                bar->setValue(0);
+                bar->setFormat(tr("N/A - %1")
+                                   .arg(ThermalMonitor::unavailableReason(
+                                       m_thermal_statuses, QString::fromLatin1(id))));
+            }
+        };
+    render(m_thermal_cpu_label, m_thermal_cpu_bar, cpu_found, cpu_temp, "cpu");
+    render(m_thermal_gpu_label, m_thermal_gpu_bar, gpu_found, gpu_temp, "gpu");
+    if (!disk_found && m_smart_hottest_drive_celsius > 0.0) {
+        // Windows' counters do not report this drive, but its SMART data did.
+        const int smart_temp = static_cast<int>(m_smart_hottest_drive_celsius);
+        m_thermal_disk_label->setText(temperatureHtml(smart_temp));
+        m_thermal_disk_bar->setValue(smart_temp);
+        m_thermal_disk_bar->setFormat(tr("%v / %m \u00B0C, from the SMART scan"));
+        return;
     }
-    if (!gpu_found) {
-        m_thermal_gpu_label->setText(not_available);
-        m_thermal_gpu_bar->setValue(0);
-    }
+    render(m_thermal_disk_label, m_thermal_disk_bar, disk_found, disk_temp, "disk");
     if (!disk_found) {
-        m_thermal_disk_label->setText(not_available);
-        m_thermal_disk_bar->setValue(0);
+        sayWhetherTheDriveWasRead();
+    }
+}
+
+void DiagnosticBenchmarkPanel::sayWhetherTheDriveWasRead() {
+    // Windows' counters seldom report a drive, but its SMART data does. The row said "not
+    // reported by this PC" beside drives the SMART table showed at 42-54 degrees.
+    const QString not_reported = ThermalMonitor::unavailableReason({}, QStringLiteral("disk"));
+    if (!m_smart_scanned &&
+        ThermalMonitor::unavailableReason(m_thermal_statuses, QStringLiteral("disk")) ==
+            not_reported) {
+        m_thermal_disk_bar->setFormat(tr("N/A - not read yet; Scan SMART reads it"));
     }
 }
 
@@ -660,22 +970,37 @@ void DiagnosticBenchmarkPanel::onGenerateReportClicked() {
         return;
     }
 
-    logMessage(QString("Generating reports in %1...").arg(dir));
+    // HTML only: JSON and CSV have their own buttons beside this one.
+    logMessage(QString("Generating report in %1...").arg(dir));
     m_controller->generateReport(dir,
                                  m_report_technician_edit->text(),
                                  m_report_ticket_edit->text(),
                                  m_report_notes_edit->toPlainText(),
-                                 "html,json,csv");
+                                 "html");
 }
 
 void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir) {
-    Q_ASSERT(!output_dir.isEmpty());
+    // DiagnosticController::generateReport validates its formats argument but not
+    // output_dir, and forwards it verbatim into this signal. Reporting "saved to:"
+    // with nothing after it would tell the technician the reports are somewhere
+    // when nobody knows where.
+    if (output_dir.isEmpty()) {
+        logMessage("Reports were reported generated but no output directory was given");
+        Q_EMIT statusMessage("Report generation reported no output location",
+                             sak::kTimerStatusDefaultMs);
+        sak::showWarningLogged(this,
+                               "Reports Generated",
+                               "The diagnostic reports were generated, but no output location "
+                               "was reported. Check the log for the destination.");
+        return;
+    }
     logMessage(QString("Reports generated in %1").arg(output_dir));
     Q_EMIT statusMessage("Reports saved to " + output_dir, sak::kTimerStatusDefaultMs);
 
-    sak::showInformationLogged(this,
-                               "Reports Generated",
-                               QString("Diagnostic reports saved to:\n%1").arg(output_dir));
+    sak::showInformationLogged(
+        this,
+        "Reports Generated",
+        QString("Diagnostic reports saved to:\n%1").arg(QDir::toNativeSeparators(output_dir)));
 }
 
 // ============================================================================
@@ -683,7 +1008,12 @@ void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir) {
 // ============================================================================
 
 void DiagnosticBenchmarkPanel::onOperationProgress(int percent, const QString& message) {
-    Q_ASSERT(percent >= 0 && percent <= sak::kPercentMax);
+    // Computed in DiagnosticController as current * 100 / total from worker-thread
+    // counters. Nothing on that path clamps it.
+    if (percent < 0 || percent > sak::kPercentMax) {
+        logMessage(QString("Ignoring out-of-range operation progress: %1%").arg(percent));
+        return;
+    }
     Q_EMIT progressUpdate(percent, sak::kPercentMax);
     Q_EMIT statusMessage(message, 0);
 }
@@ -694,6 +1024,13 @@ void DiagnosticBenchmarkPanel::onErrorOccurred(const QString& message) {
     // SmartDiskAnalyzer emits non-fatal per-drive errors while analysis
     // continues. The completion handler takes care of re-enabling buttons.
 
+    // A failed standalone benchmark reaches the panel only through this error path (the
+    // worker emits failed(), not benchmarkComplete), so its Stop button would be stranded
+    // enabled. Disable it here -- fail closed. It is enabled only by the benchmark start
+    // handlers, so during a SMART non-fatal per-drive error it is already disabled and
+    // this is a harmless no-op.
+    m_benchmark_stop_button->setEnabled(false);
+
     // Reset suite state if suite was running
     if (m_suite_running) {
         // Suite errors are handled by the controller's advanceSuiteStep;
@@ -702,6 +1039,11 @@ void DiagnosticBenchmarkPanel::onErrorOccurred(const QString& message) {
 
     logMessage(QString("ERROR: %1").arg(message));
     Q_EMIT statusMessage("Error: " + message, sak::kTimerStatusDefaultMs);
+}
+
+void DiagnosticBenchmarkPanel::onDriveWarning(const QString& message) {
+    Q_ASSERT(!message.isEmpty());
+    logMessage(QString("WARNING: %1").arg(message));
 }
 
 }  // namespace sak

@@ -5,8 +5,10 @@
 
 #include <QClipboard>
 #include <QEvent>
+#include <QFrame>
 #include <QGuiApplication>
 #include <QLabel>
+#include <QPointer>
 #include <QPushButton>
 #include <QtTest/QtTest>
 
@@ -27,6 +29,21 @@ bool hasLabelContaining(const QWidget& widget, const QString& needle) {
     });
 }
 
+QFrame* bubbleWithText(QWidget& widget, const QString& needle) {
+    for (QFrame* bubble : widget.findChildren<QFrame*>()) {
+        if (bubble->objectName().startsWith(QStringLiteral("aiTranscriptBubble")) &&
+            hasLabelContaining(*bubble, needle)) {
+            return bubble;
+        }
+    }
+    return nullptr;
+}
+
+void flushDeferredDeletes() {
+    QCoreApplication::processEvents();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+}
+
 QPushButton* buttonWithText(QWidget& widget, const QString& text) {
     const auto buttons = widget.findChildren<QPushButton*>();
     const auto it = std::find_if(buttons.begin(), buttons.end(), [&text](const QPushButton* btn) {
@@ -45,6 +62,8 @@ private Q_SLOTS:
     void appendLoadedLineParsesRoleAndBody();
     void longMessageCanExpand();
     void resultBubbleCopyCopiesOnlyThatMessage();
+    void appendExpandAndActivityTouchOnlyTheirRow();
+    void clearMessagesRemovesBubblesAtOnce();
 };
 
 void AiTranscriptViewTests::appendMessageRendersRedactedText() {
@@ -78,7 +97,16 @@ void AiTranscriptViewTests::longMessageCanExpand() {
     const QString long_text = QString(2200, QLatin1Char('x'));
 
     QVERIFY(view.appendMessage(QStringLiteral("Tool Result"), long_text));
-    QVERIFY(hasLabelContaining(view, QStringLiteral("...[truncated]")));
+    // Pin the exact collapsed body, not just presence of the marker: the boundary is
+    // kCollapsedChars=1800 (ai_transcript_view.cpp:319), so the body label is the first
+    // 1800 'x' plus the truncation marker. A regressed boundary would still emit the marker.
+    const auto labels = view.findChildren<QLabel*>();
+    const auto body_it = std::find_if(labels.begin(), labels.end(), [](const QLabel* l) {
+        return l != nullptr && l->text().endsWith(QStringLiteral("...[truncated]"));
+    });
+    QVERIFY(body_it != labels.end());
+    QCOMPARE((*body_it)->text(),
+             QString(1800, QLatin1Char('x')) + QStringLiteral("\n...[truncated]"));
 
     auto* expand = buttonWithText(view, QStringLiteral("Expand full result"));
     QVERIFY(expand != nullptr);
@@ -101,11 +129,75 @@ void AiTranscriptViewTests::resultBubbleCopyCopiesOnlyThatMessage() {
     QVERIFY(view.appendMessage(QStringLiteral("Assistant"), QStringLiteral("Second result"), true));
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
-    const auto buttons = view.findChildren<QPushButton*>(QStringLiteral("aiTranscriptCopyButton"));
-    QCOMPARE(buttons.size(), 2);
-    buttons.first()->click();
+    // Locate the copy affordances by their AT-observable accessible name -- the contract a
+    // screen-reader user actually relies on, set unconditionally on every result bubble's copy
+    // button -- rather than the internal test-handle objectName. The Expand/Collapse toggle
+    // carries no accessible name, so this matches exactly the two result-bubble copy buttons and
+    // the user bubble still exposes none. findChildren preserves child order, so the first match
+    // is still the first ("First ...") result's copy button.
+    QList<QPushButton*> copyButtons;
+    for (QPushButton* button : view.findChildren<QPushButton*>()) {
+        if (button != nullptr && button->accessibleName() == QObject::tr("Copy chat result")) {
+            copyButtons.append(button);
+        }
+    }
+    QCOMPARE(copyButtons.size(), 2);
+    copyButtons.first()->click();
 
     QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("First [REDACTED] result"));
+}
+
+// Every append, expand and activity change used to delete and rebuild every bubble in the
+// transcript (O(n) widgets per streamed line). Now only the row concerned is built: earlier
+// bubbles are the same widgets afterwards.
+void AiTranscriptViewTests::appendExpandAndActivityTouchOnlyTheirRow() {
+    sak::AiTranscriptView view;
+    view.resize(900, 700);
+    QVERIFY(view.appendMessage(QStringLiteral("You"), QStringLiteral("first prompt"), true));
+    QVERIFY(view.appendMessage(QStringLiteral("Tool Result"), QString(2200, QLatin1Char('y'))));
+    flushDeferredDeletes();
+    const QPointer<QFrame> first = bubbleWithText(view, QStringLiteral("first prompt"));
+    QVERIFY(first != nullptr);
+
+    QVERIFY(view.appendMessage(QStringLiteral("Assistant"), QStringLiteral("third reply"), true));
+    view.setActivityText(QStringLiteral("Running tool"));
+    view.updateActivityFrame();
+    flushDeferredDeletes();
+    QVERIFY(first != nullptr);
+    QVERIFY(bubbleWithText(view, QStringLiteral("third reply")) != nullptr);
+    QVERIFY(hasLabelContaining(view, QStringLiteral("Running tool")));
+    const QPointer<QFrame> third = bubbleWithText(view, QStringLiteral("third reply"));
+
+    auto* expand = buttonWithText(view, QStringLiteral("Expand full result"));
+    QVERIFY(expand != nullptr);
+    expand->click();
+    flushDeferredDeletes();
+    QVERIFY(buttonWithText(view, QStringLiteral("Collapse")) != nullptr);
+    QVERIFY(first != nullptr);
+    QVERIFY(third != nullptr);
+
+    view.setActivityText(QString());
+    flushDeferredDeletes();
+    QVERIFY(!hasLabelContaining(view, QStringLiteral("Running tool")));
+    QVERIFY(first != nullptr);
+
+    QVERIFY(view.appendMessage(QStringLiteral("Assistant"), QStringLiteral("fourth reply"), true));
+    flushDeferredDeletes();
+    QVERIFY(bubbleWithText(view, QStringLiteral("fourth reply")) != nullptr);
+    QVERIFY(first != nullptr);
+    QCOMPARE(view.messageCount(), 4);
+}
+
+// Starting a new chat clears the bubbles at once; they used to stay on screen until the
+// next message re-rendered the transcript.
+void AiTranscriptViewTests::clearMessagesRemovesBubblesAtOnce() {
+    sak::AiTranscriptView view;
+    view.resize(800, 600);
+    QVERIFY(view.appendMessage(QStringLiteral("You"), QStringLiteral("old chat"), true));
+    view.clearMessages();
+    flushDeferredDeletes();
+    QCOMPARE(view.messageCount(), 0);
+    QVERIFY(!hasLabelContaining(view, QStringLiteral("old chat")));
 }
 
 QTEST_MAIN(AiTranscriptViewTests)

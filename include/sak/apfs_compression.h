@@ -51,11 +51,18 @@ inline constexpr uint32_t kApfsCompressPlainAttr = 9;
 inline constexpr uint32_t kApfsCompressPlainRsrc = 10;
 inline constexpr uint32_t kApfsCompressLzfseAttr = 11;
 inline constexpr uint32_t kApfsCompressLzfseRsrc = 12;
+inline constexpr uint32_t kApfsCompressLzbitmapAttr = 13;
 inline constexpr uint32_t kApfsCompressLzbitmapRsrc = 14;
 
 // Inline payload markers: a zlib stream starts 0x78; a stored (uncompressed)
 // block starts with a byte whose low nibble is 0x0F. The writer uses 0xFF.
 inline constexpr uint8_t kApfsDecmpfsStoredMarker = 0xFF;
+
+// Inline LZVN (algo 7) uncompressed marker: when lzvn_encode yields nothing
+// (incompressible or too-small input) the payload is stored raw behind a single
+// 0x06 byte. A valid lzvn stream never begins 0x06, so the macOS kernel's type-7
+// inline path (shared with HFS+) uses it verbatim to distinguish the two forms.
+inline constexpr uint8_t kApfsDecmpfsLzvnRawMarker = 0x06;
 
 // Extended-attribute value flags (apfs_xattr_val.flags).
 inline constexpr uint16_t kApfsXattrDataStream = 0x0001;
@@ -150,11 +157,18 @@ struct ApfsDecmpfsHeader {
     if (attribute.size() < kApfsDecmpfsHeaderBytes) {
         return std::nullopt;
     }
-    return ApfsDecmpfsHeader{.signature = qFromLittleEndian<uint32_t>(attribute.constData()),
-                             .algo = qFromLittleEndian<uint32_t>(attribute.constData() +
-                                                                 kApfsDecmpfsAlgoOffset),
-                             .uncompressed_size = qFromLittleEndian<uint64_t>(
-                                 attribute.constData() + kApfsDecmpfsSizeOffset)};
+    const ApfsDecmpfsHeader header{.signature = qFromLittleEndian<uint32_t>(attribute.constData()),
+                                   .algo = qFromLittleEndian<uint32_t>(attribute.constData() +
+                                                                       kApfsDecmpfsAlgoOffset),
+                                   .uncompressed_size = qFromLittleEndian<uint64_t>(
+                                       attribute.constData() + kApfsDecmpfsSizeOffset)};
+    // The macOS kernel requires the 'cmpf' magic; a crafted attribute without
+    // it is not a decmpfs header, so refuse to route decode paths off its
+    // algo/size fields (defense-in-depth, mirrors decmpfs_validate_compressed_file).
+    if (header.signature != kApfsDecmpfsMagic) {
+        return std::nullopt;
+    }
+    return header;
 }
 
 // Decode a whole embedded inline decmpfs attribute (header + payload). Handles
@@ -186,7 +200,8 @@ struct ApfsDecmpfsHeader {
 
 [[nodiscard]] inline bool apfsDecmpfsAlgoIsInline(uint32_t algo) {
     return algo == kApfsCompressZlibAttr || algo == kApfsCompressLzvnAttr ||
-           algo == kApfsCompressPlainAttr || algo == kApfsCompressLzfseAttr;
+           algo == kApfsCompressPlainAttr || algo == kApfsCompressLzfseAttr ||
+           algo == kApfsCompressLzbitmapAttr;
 }
 
 }  // namespace sak

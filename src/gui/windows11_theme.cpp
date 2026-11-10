@@ -3,71 +3,19 @@
 
 #include "sak/windows11_theme.h"
 
+#include "sak/config_manager.h"
+#include "sak/dialog_button_tones.h"
 #include "sak/style_constants.h"
 
-#include <QEvent>
-#include <QGraphicsDropShadowEffect>
-#include <QGroupBox>
 #include <QMenu>
 #include <QPalette>
 #include <QStyle>
+#include <QStyleHints>
 #include <QWidget>
 
 namespace sak::ui {
 
 namespace {
-
-void applyShadow(QWidget* widget) {
-    Q_ASSERT(widget);
-    if (!widget || widget->graphicsEffect()) {
-        return;
-    }
-
-    const bool should_shadow = qobject_cast<QGroupBox*>(widget) ||
-                               widget->property("sakElevated").toBool() ||
-                               widget->property("sakCard").toBool() ||
-                               (widget->styleSheet().contains("border-radius") &&
-                                widget->styleSheet().contains("background-color"));
-
-    if (should_shadow) {
-        auto* shadow = new QGraphicsDropShadowEffect(widget);
-        shadow->setBlurRadius(kCardShadowBlurRadius);
-        shadow->setColor(
-            QColor(kCardShadowRed, kCardShadowGreen, kCardShadowBlue, kCardShadowAlpha));
-        shadow->setOffset(0.0, kCardShadowOffsetY);
-        shadow->setEnabled(true);
-        widget->setGraphicsEffect(shadow);
-        widget->setAutoFillBackground(true);
-    }
-}
-
-class ThemePolishEventFilter final : public QObject {
-public:
-    using QObject::QObject;
-
-    bool eventFilter(QObject* watched, QEvent* event) override {
-        Q_ASSERT(watched);
-        if (!watched || !event) {
-            return QObject::eventFilter(watched, event);
-        }
-
-        if (event->type() != QEvent::Show && event->type() != QEvent::Polish) {
-            return QObject::eventFilter(watched, event);
-        }
-
-        auto* widget = qobject_cast<QWidget*>(watched);
-        if (!widget) {
-            return QObject::eventFilter(watched, event);
-        }
-
-        if (!widget->property("sakShadowApplied").toBool()) {
-            applyShadow(widget);
-            widget->setProperty("sakShadowApplied", true);
-        }
-
-        return QObject::eventFilter(watched, event);
-    }
-};
 
 constexpr double kChromeDialogAlpha = 0.92;
 constexpr double kChromeTooltipAlpha = 0.95;
@@ -94,6 +42,22 @@ constexpr double kPrimaryGradientBottomAlpha = 0.88;
 constexpr double kPrimaryGradientChunkAlpha = 0.90;
 constexpr double kScrollHandleAlpha = 0.60;
 constexpr double kScrollHandleHoverAlpha = 0.70;
+constexpr double kDisabledInputBorderAlpha = 0.60;
+
+/// @p color at @p alpha over @p backdrop, as one opaque colour. A table paints its selection
+/// colour and then the selected item's colour on top, so a translucent selection came out darker
+/// in tables than in trees and lists; an opaque one paints the same however often it is drawn.
+QString blendedOver(const char* color, double alpha, const char* backdrop) {
+    const QColor top(QString::fromLatin1(color));
+    const QColor under(QString::fromLatin1(backdrop));
+    const auto mix = [alpha](int over, int base) {
+        return qRound((alpha * over) + ((1.0 - alpha) * base));
+    };
+    return QColor(mix(top.red(), under.red()),
+                  mix(top.green(), under.green()),
+                  mix(top.blue(), under.blue()))
+        .name(QColor::HexRgb);
+}
 
 QString themeBaseAndChromeStyles() {
     return QString::fromLatin1(kWindows11ThemeBaseAndChromeStyles)
@@ -109,17 +73,18 @@ QString themeBaseAndChromeStyles() {
         .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderSubtleAlpha))
         .arg(colorWithAlpha(kColorPrimary, kSelectionSubtleAlpha))
         .arg(colorWithAlpha(kColorBgWhite, kChromeMenuAlpha))
-        .arg(colorWithAlpha(kColorPrimary, kSelectionSoftAlpha));
+        .arg(colorWithAlpha(kColorPrimary, kSelectionSoftAlpha))
+        .arg(QString::fromLatin1(kColorTextMuted));
 }
 
 QString themeTabAndButtonStyles() {
     return QString::fromLatin1(kWindows11ThemeTabAndButtonStyles)
-               .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderMediumAlpha),
+               .arg(QString::fromLatin1(kColorBorderDefault),
                     colorWithAlpha(kColorBgWhite, kChromeTabPaneAlpha),
                     colorWithAlpha(kColorBorderDefault, kChromeTabAlpha),
                     QString::fromLatin1(kColorTextHeading),
-                    colorWithAlpha(kColorPrimary, kPrimaryGradientTopAlpha),
-                    colorWithAlpha(kColorPrimaryDark, kPrimaryGradientBottomAlpha),
+                    colorWithAlpha(kColorSelectedTabTop, kPrimaryGradientTopAlpha),
+                    colorWithAlpha(kColorSelectedTabBottom, kPrimaryGradientBottomAlpha),
                     QString::fromLatin1(kColorButtonTextOnTone)) +
            actionButtonStyle(
                "QPushButton, QToolButton", kPrimaryButtonTone, false, kButtonPaddingCompactCss) +
@@ -132,29 +97,35 @@ QString themeInputStyles() {
              QString::fromLatin1(kColorBorderDefault),
              colorWithAlpha(kColorPrimary, kGridLineAlpha),
              QString::fromLatin1(kColorPrimary),
-             QString::fromLatin1(kColorBgWhite));
+             QString::fromLatin1(kColorBgWhite),
+             QString::fromLatin1(kColorTextPrimary),
+             QString::fromLatin1(kColorTextMuted),
+             QString::fromLatin1(kColorTextDisabled),
+             QString::fromLatin1(kColorBgSurface))
+        .arg(colorWithAlpha(kColorBorderDefault, kDisabledInputBorderAlpha));
 }
 
 QString themeInputSelectorStyles(bool dark) {
-    const char* buttonBackground = dark ? kColorDarkBgSurface : kColorBgSurface;
-    const char* buttonHover = dark ? kColorDarkBgHover : kColorBgPageHover;
+    const char* button_background = dark ? kColorDarkBgSurface : kColorBgSurface;
+    const char* button_hover = dark ? kColorDarkBgHover : kColorBgPageHover;
     const char* border = dark ? kColorDarkBorderDefault : kColorBorderDefault;
     const char* text = dark ? kColorDarkTextBody : kColorTextSecondary;
     const QString border_color = QString::fromLatin1(border);
-    const QString button_color = QString::fromLatin1(buttonBackground);
-    const QString hover_color = QString::fromLatin1(buttonHover);
+    const QString button_color = QString::fromLatin1(button_background);
+    const QString hover_color = QString::fromLatin1(button_hover);
     const QString text_color = QString::fromLatin1(text);
     const QString down_icon_path = dark ? kIconSelectorChevronDownDark : kIconSelectorChevronDown;
     const QString up_icon_path = dark ? kIconSelectorChevronUpDark : kIconSelectorChevronUp;
     const QString calendar_icon_path = dark ? kIconSelectorCalendarDark : kIconSelectorCalendar;
     const QString panel_color = QString::fromLatin1(dark ? kColorDarkBgPanel : kColorBgWhite);
     const QString selection_color = QString::fromLatin1(kColorPrimary);
-    const CalendarPopupSelectorTone calendar_tone{panel_color,
-                                                  border_color,
-                                                  hover_color,
-                                                  text_color,
-                                                  selection_color,
-                                                  QString::fromLatin1(kColorButtonTextOnTone)};
+    const CalendarPopupSelectorTone calendar_tone{.panel = panel_color,
+                                                  .border = border_color,
+                                                  .hoverBackground = hover_color,
+                                                  .text = text_color,
+                                                  .selection = selection_color,
+                                                  .selectionText =
+                                                      QString::fromLatin1(kColorButtonTextOnTone)};
     return comboBoxSelectorStyle(border_color, button_color, hover_color, down_icon_path) +
            spinBoxSelectorStyle(
                border_color, button_color, hover_color, up_icon_path, down_icon_path) +
@@ -165,12 +136,15 @@ QString themeInputSelectorStyles(bool dark) {
 QString themeIndicatorStyles() {
     return QString::fromLatin1(kWindows11ThemeIndicatorStyles)
         .arg(kUiIconSmall)
-        .arg(QString::fromLatin1(kColorBorderMuted))
+        .arg(QString::fromLatin1(kColorCheckBoxBorder))
         .arg(kCssRadiusSmallPx)
         .arg(QString::fromLatin1(kColorBgSurface))
         .arg(QString::fromLatin1(kColorPrimary))
         .arg(QString::fromLatin1(kColorPrimaryDark))
-        .arg(kCssRadiusLargePx);
+        .arg(kCssRadiusLargePx)
+        .arg(kIconCheckBoxTickOnTone)
+        .arg(kIconCheckBoxDashOnTone)
+        .arg(QString::fromLatin1(kColorButtonTextOnTone));
 }
 
 QString themeProgressStyles() {
@@ -179,8 +153,8 @@ QString themeProgressStyles() {
         .arg(kCssRadiusXLargePx - kCssBorderWidthDefaultPx)
         .arg(colorWithAlpha(kColorBorderDefault, kChromeProgressTrackAlpha))
         .arg(kUiProgressBarHeight)
-        .arg(colorWithAlpha(kColorPrimary, kPrimaryGradientTopAlpha))
-        .arg(colorWithAlpha(kColorPrimaryPressed, kPrimaryGradientChunkAlpha))
+        .arg(QString::fromLatin1(kColorProgressFillStart))
+        .arg(QString::fromLatin1(kColorProgressFillEnd))
         .arg(kCssRadiusLargePx);
 }
 
@@ -190,23 +164,25 @@ QString themeInputAndIndicatorStyles() {
 }
 
 QString themeContainerAndTableStyles() {
+    const QString selection = blendedOver(kColorPrimary, kSelectionStrongAlpha, kColorBgWhite);
     return QString::fromLatin1(kWindows11ThemeContainerAndTableStyles)
-        .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderStrongAlpha))
+        .arg(QString::fromLatin1(kColorBorderDefault))
         .arg(QString::fromLatin1(kColorTextBody))
         .arg(colorWithAlpha(kColorBorderDefault, kChromeHeaderAlpha))
         .arg(colorWithAlpha(kColorBgWhite, kChromeViewAlpha))
         .arg(QString::fromLatin1(kColorBorderDefault))
         .arg(colorWithAlpha(kColorBorderMuted, kGridLineAlpha))
-        .arg(colorWithAlpha(kColorPrimary, kSelectionMediumAlpha))
+        .arg(selection)
         .arg(QString::fromLatin1(kColorTextPrimary))
-        .arg(colorWithAlpha(kColorPrimary, kSelectionStrongAlpha))
+        .arg(selection)
         .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderAlpha))
         .arg(kUiGroupBoxBorderRadius)
         .arg(kUiGroupBoxTitleMarginTop)
         .arg(kUiGroupBoxContentPaddingTop)
         .arg(kUiGroupBoxContentPaddingHorizontal)
         .arg(kUiGroupBoxContentPaddingBottom)
-        .arg(kUiGroupBoxTitlePaddingHorizontal);
+        .arg(kUiGroupBoxTitlePaddingHorizontal)
+        .arg(QString::fromLatin1(kColorBgSurface));
 }
 
 QString themeSliderStyles() {
@@ -231,7 +207,8 @@ QString darkBaseChromeStyles() {
         .arg(QString::fromLatin1(kColorDarkBgChrome))
         .arg(QString::fromLatin1(kColorDarkBgPanel))
         .arg(QString::fromLatin1(kColorDarkBorderDefault))
-        .arg(QString::fromLatin1(kColorDarkBgHover));
+        .arg(QString::fromLatin1(kColorDarkBgHover))
+        .arg(QString::fromLatin1(kColorDarkTextSecondary));
 }
 
 QString darkTabAndInputStyles() {
@@ -244,24 +221,45 @@ QString darkTabAndInputStyles() {
         .arg(QString::fromLatin1(kColorDarkTextPrimary))
         .arg(QString::fromLatin1(kColorPrimary))
         .arg(QString::fromLatin1(kColorDarkBgInputFocus))
-        .arg(QString::fromLatin1(kColorDarkBorderMuted));
+        .arg(QString::fromLatin1(kColorDarkCheckBoxBorder))
+        .arg(QString::fromLatin1(kColorPrimaryDark))
+        .arg(QString::fromLatin1(kColorButtonTextOnTone))
+        .arg(QString::fromLatin1(kColorDarkTextSecondary))
+        .arg(QString::fromLatin1(kColorDarkTextMuted))
+        .arg(QString::fromLatin1(kColorDarkBgPage))
+        .arg(colorWithAlpha(kColorDarkBorderDefault, kDisabledInputBorderAlpha));
 }
 
 QString darkContainerAndViewStyles() {
+    // The header takes the border shade: on the alternate rows' #1e293b it read as one more row
+    // (review 5, Z4).
     return QString::fromLatin1(kWindows11DarkContainerAndViewStyles)
         .arg(QString::fromLatin1(kColorDarkBorderDefault))
         .arg(QString::fromLatin1(kColorDarkTextHeading))
-        .arg(QString::fromLatin1(kColorDarkBgSurface))
+        .arg(QString::fromLatin1(kColorDarkBorderDefault))
         .arg(QString::fromLatin1(kColorDarkBgInput))
         .arg(QString::fromLatin1(kColorDarkTextPrimary))
-        .arg(QString::fromLatin1(kColorDarkBgHover))
+        .arg(QString::fromLatin1(kColorDarkSelection))
         .arg(QString::fromLatin1(kColorDarkBorderMuted))
-        .arg(QString::fromLatin1(kColorPrimary));
+        .arg(QString::fromLatin1(kColorPrimary))
+        .arg(QString::fromLatin1(kColorDarkBgSurface));
+}
+
+/// The rules the dark QWidget rule shadows, written again after it (see
+/// kWindows11DarkProgressStyles): plain buttons and progress bars.
+QString darkShadowedRules() {
+    return actionButtonStyle(
+               "QPushButton, QToolButton", kPrimaryButtonTone, false, kButtonPaddingCompactCss) +
+           QString::fromLatin1(kWindows11DarkProgressStyles)
+               .arg(QString::fromLatin1(kColorDarkBorderDefault),
+                    QString::fromLatin1(kColorDarkBgInput),
+                    colorWithAlpha(kColorPrimary, kPrimaryGradientTopAlpha),
+                    colorWithAlpha(kColorPrimaryPressed, kPrimaryGradientChunkAlpha));
 }
 
 QString darkThemeOverrideStyles() {
     return darkBaseChromeStyles() + darkTabAndInputStyles() + darkContainerAndViewStyles() +
-           themeInputSelectorStyles(true);
+           themeInputSelectorStyles(true) + darkShadowedRules();
 }
 
 struct ThemePaletteSpec {
@@ -279,34 +277,65 @@ struct ThemePaletteSpec {
     const char* shadow;
 };
 
-inline constexpr ThemePaletteSpec kLightPaletteSpec{kColorBgPage,
-                                                    kColorBgPageHover,
-                                                    kColorBgWhite,
-                                                    kColorBgSurface,
-                                                    kColorTextPrimary,
-                                                    kColorTextBody,
-                                                    kColorTextMuted,
-                                                    kColorTextDisabled,
-                                                    kColorBorderDefault,
-                                                    kColorBgWhite,
-                                                    kColorBorderMuted,
-                                                    kColorTextPrimary};
+inline constexpr ThemePaletteSpec kLightPaletteSpec{.window = kColorBgPage,
+                                                    .chrome = kColorBgPageHover,
+                                                    .base = kColorBgWhite,
+                                                    .alternate = kColorBgSurface,
+                                                    .text = kColorTextPrimary,
+                                                    .body = kColorTextBody,
+                                                    .muted = kColorTextMuted,
+                                                    .disabled = kColorTextDisabled,
+                                                    .border = kColorBorderDefault,
+                                                    .light = kColorBgWhite,
+                                                    // Dark is secondary text (File Explorer's
+                                                    // section headers and status row); slate-400
+                                                    // was 2.6:1 on white.
+                                                    .dark = kColorTextMuted,
+                                                    .shadow = kColorTextPrimary};
 
-inline constexpr ThemePaletteSpec kDarkPaletteSpec{kColorDarkBgPage,
-                                                   kColorDarkBgChrome,
-                                                   kColorDarkBgInput,
-                                                   kColorDarkBgSurface,
-                                                   kColorDarkTextPrimary,
-                                                   kColorDarkTextBody,
-                                                   kColorDarkTextSecondary,
-                                                   kColorDarkTextDisabled,
-                                                   kColorDarkBorderDefault,
-                                                   kColorDarkBgHover,
-                                                   kColorDarkBgPressed,
-                                                   kColorDarkBgInputFocus};
+inline constexpr ThemePaletteSpec kDarkPaletteSpec{.window = kColorDarkBgPage,
+                                                   .chrome = kColorDarkBgChrome,
+                                                   .base = kColorDarkBgInput,
+                                                   .alternate = kColorDarkBgSurface,
+                                                   .text = kColorDarkTextPrimary,
+                                                   .body = kColorDarkTextBody,
+                                                   .muted = kColorDarkTextSecondary,
+                                                   .disabled = kColorDarkTextDisabled,
+                                                   .border = kColorDarkBorderDefault,
+                                                   .light = kColorDarkBgHover,
+                                                   // Dark is the muted-text role on both
+                                                   // palettes; the File Explorer's secondary
+                                                   // text uses it (slate-500 was 3.1-3.7:1 here).
+                                                   .dark = kColorDarkTextSecondary,
+                                                   .shadow = kColorDarkBgInputFocus};
 
 const ThemePaletteSpec& themePaletteSpec(AppThemeMode mode) {
     return mode == AppThemeMode::Dark ? kDarkPaletteSpec : kLightPaletteSpec;
+}
+
+/// Applies @p mode unless it is already the applied theme: Windows and the menu can both ask for
+/// the theme that is showing, and re-polishing every widget for nothing is visible work.
+void showThemeMode(QApplication& app, AppThemeMode mode) {
+    if (app.property("sakThemeMode").isValid() && currentThemeMode(app) == mode) {
+        return;
+    }
+    applyWindows11Theme(app, mode);
+}
+
+/// Light and Dark are asked of Qt so the window frame matches; System hands it back to Windows.
+void requestFrameScheme(ThemePreference preference) {
+    QStyleHints* hints = QGuiApplication::styleHints();
+    switch (preference) {
+    case ThemePreference::Light:
+        hints->setColorScheme(Qt::ColorScheme::Light);
+        break;
+    case ThemePreference::Dark:
+        hints->setColorScheme(Qt::ColorScheme::Dark);
+        break;
+    case ThemePreference::System:
+        hints->unsetColorScheme();
+        break;
+    }
 }
 
 QPalette themePalette(AppThemeMode mode) {
@@ -345,6 +374,11 @@ QPalette themePalette(AppThemeMode mode) {
 
 }  // namespace
 
+QString itemSelectionColor() {
+    return usingDarkUiTheme() ? QString::fromLatin1(kColorDarkSelection)
+                              : blendedOver(kColorPrimary, kSelectionStrongAlpha, kColorBgWhite);
+}
+
 QString windows11ThemeStyleSheet() {
     return windows11ThemeStyleSheet(AppThemeMode::Light);
 }
@@ -365,7 +399,7 @@ void applyWindows11Theme(QApplication& app, AppThemeMode mode) {
     app.setPalette(themePalette(mode));
     app.setStyleSheet(windows11ThemeStyleSheet(mode));
     for (QWidget* widget : QApplication::topLevelWidgets()) {
-        if (!widget) {
+        if (widget == nullptr) {
             continue;
         }
         widget->setPalette(app.palette());
@@ -380,8 +414,66 @@ AppThemeMode currentThemeMode(const QApplication& app) {
                                                                              : AppThemeMode::Light;
 }
 
-void installThemePolishHelper(QApplication& app) {
-    app.installEventFilter(new ThemePolishEventFilter(&app));
+ThemePreference themePreferenceFromSetting(const QString& setting) {
+    if (setting == QLatin1String("light")) {
+        return ThemePreference::Light;
+    }
+    if (setting == QLatin1String("dark")) {
+        return ThemePreference::Dark;
+    }
+    return ThemePreference::System;
+}
+
+QString themePreferenceSetting(ThemePreference preference) {
+    switch (preference) {
+    case ThemePreference::Light:
+        return QStringLiteral("light");
+    case ThemePreference::Dark:
+        return QStringLiteral("dark");
+    case ThemePreference::System:
+        break;
+    }
+    return QStringLiteral("system");
+}
+
+AppThemeMode themeModeFor(ThemePreference preference, Qt::ColorScheme windows_scheme) {
+    switch (preference) {
+    case ThemePreference::Light:
+        return AppThemeMode::Light;
+    case ThemePreference::Dark:
+        return AppThemeMode::Dark;
+    case ThemePreference::System:
+        break;
+    }
+    return windows_scheme == Qt::ColorScheme::Dark ? AppThemeMode::Dark : AppThemeMode::Light;
+}
+
+ThemePreference savedThemePreference() {
+    return themePreferenceFromSetting(ConfigManager::instance().getThemePreference());
+}
+
+void initializeAppTheme(QApplication& app) {
+    // The theme makes every push button primary; a dialog's Close, Cancel and No take the
+    // secondary tone instead.
+    installDialogButtonTones(app);
+    const ThemePreference preference = savedThemePreference();
+    requestFrameScheme(preference);
+    showThemeMode(app, themeModeFor(preference, QGuiApplication::styleHints()->colorScheme()));
+    QObject::connect(QGuiApplication::styleHints(),
+                     &QStyleHints::colorSchemeChanged,
+                     &app,
+                     [&app](Qt::ColorScheme scheme) {
+                         const ThemePreference current = savedThemePreference();
+                         if (current == ThemePreference::System) {
+                             showThemeMode(app, themeModeFor(current, scheme));
+                         }
+                     });
+}
+
+void setThemePreference(QApplication& app, ThemePreference preference) {
+    ConfigManager::instance().setThemePreference(themePreferenceSetting(preference));
+    requestFrameScheme(preference);
+    showThemeMode(app, themeModeFor(preference, QGuiApplication::styleHints()->colorScheme()));
 }
 
 }  // namespace sak::ui

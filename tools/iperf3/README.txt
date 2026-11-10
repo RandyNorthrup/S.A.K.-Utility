@@ -1,4 +1,4 @@
-﻿iPerf3 v3.21
+iPerf3 v3.22
 =================
 Bundled for S.A.K. Utility network diagnostic panel.
 

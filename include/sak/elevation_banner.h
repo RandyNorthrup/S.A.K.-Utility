@@ -32,10 +32,11 @@ constexpr int kElevationBannerIconWidth = ui::kUiIconMedium;
 /// Returns nullptr if the process is already running as admin (no banner
 /// needed). Otherwise returns a styled QFrame with an info message.
 ///
-/// @param parent  Parent widget (typically the panel)
+/// @param parent Parent widget (typically the panel)
+/// @param is_elevated Authoritative process elevation state
 /// @return Banner widget, or nullptr if already elevated
-[[nodiscard]] inline QFrame* createElevationBanner(QWidget* parent) {
-    if (ElevationManager::isElevated()) {
+[[nodiscard]] inline QFrame* createElevationBanner(QWidget* parent, bool is_elevated) {
+    if (is_elevated) {
         return nullptr;
     }
 
@@ -63,6 +64,11 @@ constexpr int kElevationBannerIconWidth = ui::kUiIconMedium;
     layout->addWidget(text_label, 1);
 
     return banner;
+}
+
+/// @brief Create a banner using the current process elevation state.
+[[nodiscard]] inline QFrame* createElevationBanner(QWidget* parent) {
+    return createElevationBanner(parent, ElevationManager::isElevated());
 }
 
 }  // namespace sak

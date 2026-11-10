@@ -12,9 +12,12 @@
 #include <QString>
 #include <QVector>
 
+#include <functional>
 #include <type_traits>
 
 namespace sak {
+
+struct ProcessResult;
 
 /// @brief Manages Windows System Restore points via PowerShell
 ///
@@ -36,16 +39,67 @@ public:
     /// @brief Check if System Restore is enabled on the system drive
     [[nodiscard]] bool isSystemRestoreEnabled() const;
 
+    /// @brief Decide the System-Restore-enabled state from a probe result.
+    /// @param probeSucceeded whether the probe process ran to completion.
+    /// @param output the probe's stdout.
+    /// @return true ONLY when the probe succeeded AND reported "ENABLED".
+    /// @note Fail-closed: a failed probe (non-zero exit / timeout) is reported as
+    ///       NOT enabled, never guessed from an unrelated signal (e.g. the VSS
+    ///       service state, which is independent of System Protection).
+    [[nodiscard]] static bool restoreEnabledFromProbe(bool probeSucceeded, const QString& output);
+
     /// @brief Create a system restore point
     /// @param description Description for the restore point (max 64 chars)
     /// @return true if created successfully
     [[nodiscard]] bool createRestorePoint(const QString& description);
 
+    /// @brief What a "make sure there is a rollback point" request came to.
+    struct Outcome {
+        enum class Kind {
+            Created,
+            ReusedRecent,
+            Failed
+        };
+        Kind kind{Kind::Failed};
+        QString message;  ///< What to tell the user (why it failed, or which point is reused).
+        [[nodiscard]] bool usable() const noexcept { return kind != Kind::Failed; }
+    };
+
+    /// @brief Create a restore point, or -- when Windows' once-per-24-hours limit refuses a new
+    /// one -- accept the restore point it already made within the last 24 hours, and say so.
+    /// The second uninstall of a day used to be refused outright. Blocking (PowerShell, up to
+    /// 2 min): call it off the GUI thread.
+    [[nodiscard]] Outcome ensureRestorePoint(const QString& description);
+
+    /// @brief Pure: the Outcome of a checkpoint run. @p list_points is consulted only when the
+    /// run hit the 24 h limit; a restore point no older than 24 h at @p now is then reused.
+    [[nodiscard]] static Outcome outcomeOfCheckpoint(
+        const ProcessResult& checkpoint,
+        const std::function<QVector<QPair<QDateTime, QString>>(bool&)>& list_points,
+        const QDateTime& now);
+
+    /// @brief The operator-facing reason createRestorePoint refuses BEFORE it does any elevated
+    /// work, or an empty string to proceed. Pure and side-effect-free -- elevation is passed in,
+    /// not read here -- so the fail-closed preflight (an empty description, and the
+    /// administrator-privileges requirement: creating a restore point is an elevated operation and
+    /// a non-elevated call must be refused, never attempted) is unit-testable without invoking the
+    /// real restore-point creation behind it. createRestorePoint calls this with the live
+    /// isElevated(), so passing elevated=false here is the same refusal a non-elevated process
+    /// gets.
+    [[nodiscard]] static QString restorePointPreflightRefusal(const QString& description,
+                                                              bool elevated);
+
     /// @brief Get list of existing restore points
     [[nodiscard]] QVector<QPair<QDateTime, QString>> listRestorePoints() const;
 
-    /// @brief Check if the current process has administrative privileges
-    [[nodiscard]] static bool isElevated();
+    /// @brief Get list of existing restore points, reporting whether the query SUCCEEDED.
+    /// @param queryOk set true only when the underlying Get-ComputerRestorePoint call ran to
+    /// completion (a genuine empty result -> queryOk=true, empty); set false when the query
+    /// FAILED (non-zero exit, timeout, or malformed output). Lets a caller distinguish "no
+    /// restore points" from "could not read restore points" instead of reporting a failed read
+    /// as a definitive zero. The no-argument overload above discards this signal (GUI use).
+    [[nodiscard]] QVector<QPair<QDateTime, QString>> listRestorePoints(bool& queryOk) const;
+
 
 Q_SIGNALS:
     void restorePointCreated(const QString& description);

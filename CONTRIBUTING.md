@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to S.A.K. Utility! This document provides guidelines and instructions for contributing to the project.
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
@@ -12,21 +12,21 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
 - [Testing](#testing)
 - [Pull Request Process](#pull-request-process)
 
-## 🤝 Code of Conduct
+## Code of Conduct
 
 - Be respectful and inclusive
 - Focus on constructive feedback
 - Help others learn and grow
 - Maintain professional communication
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
 - **Windows 10/11** (x64)
 - **Visual Studio 2022** with C++ Desktop Development
 - **CMake 3.28+**
-- **Qt 6.5.3** (msvc2019_64)
+- **Qt 6.12.0** (msvc2022_64, LTS) - the version CI builds and releases with; CMake requires 6.12
 - **Git**
 
 ### Setting Up Your Development Environment
@@ -46,7 +46,7 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
 
 4. **Configure CMake**:
    ```powershell
-   cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="C:/Qt/6.5.3/msvc2019_64"
+   cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="C:/Qt/6.12.0/msvc2022_64"
    ```
 
 5. **Build the project**:
@@ -54,7 +54,16 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
    cmake --build build --config Release
    ```
 
-## 💻 How to Contribute
+6. **Install the pinned gate tools and the hooks** (CI installs the same `requirements-gates.txt`,
+   so clang-format, lizard and pre-commit are the same versions locally and in CI):
+   ```powershell
+   python -m venv .venv
+   .venv\Scripts\python -m pip install -r requirements-gates.txt
+   .venv\Scripts\pre-commit install --install-hooks
+   .venv\Scripts\pre-commit install --hook-type pre-push
+   ```
+
+## How to Contribute
 
 ### Reporting Bugs
 
@@ -108,7 +117,7 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
 
 6. **Create a Pull Request** on GitHub
 
-## 📝 Coding Standards
+## Coding Standards
 
 ### C++ Style Guide
 
@@ -128,9 +137,9 @@ class AppInstallationPanel : public QWidget { };
 // Functions/Methods: camelCase
 void updateTableView();
 
-// Private Members: m_ prefix + camelCase
-QTableView* m_tableView;
-QString m_currentPath;
+// Private Members: m_ prefix + snake_case
+QTableView* m_table_view;
+QString m_current_path;
 
 // Local variables: snake_case
 QString file_path = getPath();
@@ -226,28 +235,66 @@ QVector<int> values;
 auto* widget = new QWidget(this);  // 'this' manages lifetime
 ```
 
-### TigerStyle Best Practices
+### Code Quality Rules
 
-This project follows [TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md) coding discipline as a guiding philosophy. These are best-practice targets to strive for — they do not block a PR that passes the release hooks (zero build warnings, zero build errors, all tests passing).
+The tool rows below are NOT aspirational. Each names its tier (see [AGENTS.md](AGENTS.md), "The gate"): T1 is a pre-commit hook that rejects the commit, T2 runs whole-tree in CI on every push to `dev`, T4 runs nightly or on demand. The full table, with the hook that enforces each rule, is in [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md).
 
 | Rule | Target | Enforced By |
 |---|---|---|
-| Function length | ≤70 lines | Lizard, code review |
-| Nesting depth | ≤3 levels | Lizard, code review |
-| Line length | ≤100 columns | `.clang-format` |
+| Function length | <=70 lines in C++ and JavaScript | `lizard-complexity` -- T1 changed files, T2 whole tree |
+| Cyclomatic complexity | CCN <=10 in C++ and JavaScript | `lizard-complexity` -- T1 changed files, T2 whole tree |
+| Magic numbers | Named `constexpr` constants | `magic-numbers` -- T2 whole tree |
+| Line length | <=100 columns | `clang-format` -- T1 changed files, T2 whole tree |
+| Dead source functions | No unique unreferenced definition in `src/*.cpp` | `dead-code` -- T4 whole tree |
+| Naming | Case conventions (snake_case locals, `k` prefix for constants, `m_` members) | `readability-identifier-naming` via `clang-tidy-naming` -- T4. NOT enforced: "no abbreviations, no single-letter vars" -- `readability-identifier-length` is deliberately disabled (`.clang-tidy:142`, reason at line 102: it flags idiomatic `i`, `x`, `id`), so short names are a review convention, not a gate |
+| Nesting depth | <=3 levels | Code review (Lizard measures complexity, not nesting depth) |
 | Assertions | Meaningful preconditions/postconditions | Code review |
 | `catch(...)` | Should have explanatory comment | Code review |
-| Magic numbers | Prefer named `constexpr` constants | Code review |
-| Naming | No abbreviations, no single-letter vars | Code review |
 
 **Pre-submit checklist**:
 ```powershell
-# Verify formatting
-clang-format --dry-run -Werror <changed-files>
+# T1 runs on every commit by itself (changed files only, under 60 s).
 
-# Run pre-commit hooks (format, complexity, cppcheck)
-pre-commit run --all-files
+# The T2 twins of the CI push gates (whole tree; run before pushing a wide change)
+pre-commit run --hook-stage manual secret-path-scan --all-files
+pre-commit run --hook-stage manual magic-numbers --all-files
+pre-commit run --hook-stage manual gui-style-tokens --all-files
+pre-commit run --hook-stage manual gui-magic-numbers --all-files
+pre-commit run --hook-stage manual gui-stylesheet-literals --all-files
+pre-commit run --hook-stage manual logged-message-boxes --all-files
+pre-commit run --hook-stage manual build-system-lint --all-files
+pre-commit run --hook-stage manual error-message-uniqueness --all-files
+pre-commit run --hook-stage manual third-party-licenses --all-files
+powershell scripts/check_repository_hygiene.ps1
+
+# T2 checks that need a current Release build
+pre-commit run --hook-stage manual startup-budget --all-files
+pre-commit run --hook-stage manual accessibility-runtime --all-files
+pre-commit run --hook-stage manual test-skip-audit --all-files
+pre-commit run --hook-stage manual windows-runtime-dependencies --all-files
+
+# T3 (release bytes): package, smoke, readiness, signing, certification evidence
+pre-commit run --hook-stage manual partition-release-claims --all-files
+pre-commit run --hook-stage manual release-readiness --all-files
+pre-commit run --hook-stage manual portable-release-smoke --all-files
+pre-commit run --hook-stage manual portable-e2e-smoke --all-files
+pre-commit run --hook-stage manual signed-release-verification --all-files
+
+# T4 (minutes each): whole-tree cppcheck, dead code, clang-tidy, mutation, coverage
+pre-commit run --hook-stage manual cppcheck-whole-project --all-files
+pre-commit run --hook-stage manual dead-code --all-files
+pre-commit run --hook-stage manual clang-tidy-naming --all-files
+pre-commit run --hook-stage manual mutation-catalog-integrity --all-files
+pre-commit run --hook-stage manual coverage-measurement --all-files
 ```
+
+`cppcheck-whole-project` is the one that catches what the per-commit `cppcheck` hook
+structurally cannot: that hook checks the files YOUR commit changed, so a finding sitting in
+a file nobody has touched stays invisible until somebody touches it -- and then it blocks
+their commit for a defect they did not introduce. Its second pass re-enables cppcheck's
+`unmatchedSuppression` to find `// cppcheck-suppress` comments that have gone dead, which is
+worth knowing about: a suppression that matches nothing is silencing a check that is not
+firing, and will keep silencing it after the next edit to that line makes it fire again.
 
 ### CMake Standards
 
@@ -255,11 +302,13 @@ pre-commit run --all-files
 # Use modern CMake (3.28+)
 cmake_minimum_required(VERSION 3.28 FATAL_ERROR)
 
-# Group related files
-set(CORE_SOURCES
+# Product sources belong to the product library that owns them, compiled once and
+# linked by the app, the helpers and the tests (never listed on a test target)
+set(SAK_CORE_SOURCES
     src/core/file1.cpp
     src/core/file2.cpp
 )
+sak_add_product_library(sak_core ${SAK_CORE_SOURCES})
 
 # Use target-based approach
 target_include_directories(target_name
@@ -267,7 +316,7 @@ target_include_directories(target_name
 )
 ```
 
-## 🧪 Testing
+## Testing
 
 ### Running Tests
 
@@ -285,7 +334,7 @@ ctest --test-dir build -C Release --output-on-failure
 ### Writing Tests
 
 - Create test files in `tests/unit/` (one per component)
-- Use Qt Test framework (`QTest`) — not raw `assert()`
+- Use Qt Test framework (`QTest`) - not raw `assert()`
 - Test both success and failure cases
 - Include edge cases
 - Verify cleanup (no leaks, proper RAII)
@@ -310,7 +359,7 @@ QTEST_MAIN(TestExample)
 #include "test_example.moc"
 ```
 
-## 🔄 Pull Request Process
+## Pull Request Process
 
 ### Before Submitting
 
@@ -355,23 +404,23 @@ Add screenshots showing UI changes
 3. Once approved, PR will be merged
 4. Your contribution will be included in the next release!
 
-## 📚 Additional Resources
+## Additional Resources
 
 - [Qt Documentation](https://doc.qt.io/qt-6/)
 - [CMake Documentation](https://cmake.org/documentation/)
 - [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines)
 - [Conventional Commits](https://www.conventionalcommits.org/)
 
-## 🎉 Recognition
+## Recognition
 
 Contributors will be recognized in:
 - Release notes
 - README.md Contributors section
 
-## ❓ Questions?
+## Questions?
 
 - Open a [Discussion](https://github.com/RandyNorthrup/S.A.K.-Utility/discussions)
 - Create an [Issue](https://github.com/RandyNorthrup/S.A.K.-Utility/issues)
 - Contact the maintainers
 
-Thank you for contributing to S.A.K. Utility! 🚀
+Thank you for contributing to S.A.K. Utility!

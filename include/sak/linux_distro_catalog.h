@@ -50,24 +50,34 @@ public:
 
     /// @brief Complete metadata for a downloadable distribution
     struct DistroInfo {
-        QString id;              ///< Unique identifier (e.g., "ubuntu-desktop")
-        QString name;            ///< Display name (e.g., "Ubuntu Desktop")
-        QString version;         ///< Current known version (e.g., "26.04")
-        QString versionLabel;    ///< Optional label (e.g., "Resolute", "LTS")
-        QString description;     ///< Short description for UI
-        Category category;       ///< Use-case category
-        SourceType sourceType;   ///< How the URL is resolved
-        QString downloadUrl;     ///< Direct URL or URL template ({version} placeholder)
-        QString checksumUrl;     ///< URL to checksum file (SHA256SUMS, .sha256, etc.)
-        QString checksumType;    ///< "sha256" or "sha1"
-        QString fileName;        ///< Expected filename (with {version} placeholder)
-        qint64 approximateSize;  ///< Approximate size in bytes (for UI display)
-        QString homepage;        ///< Project homepage URL
+        QString id;            ///< Unique identifier (e.g., "ubuntu-desktop")
+        QString name;          ///< Display name (e.g., "Ubuntu Desktop")
+        QString version;       ///< Current known version (e.g., "26.04")
+        QString versionLabel;  ///< Optional label (e.g., "Resolute", "LTS")
+        QString description;   ///< Short description for UI
+        Category category{Category::GeneralPurpose};   ///< Use-case category
+        SourceType sourceType{SourceType::DirectURL};  ///< How the URL is resolved
+        QString downloadUrl;        ///< Direct URL or URL template ({version} placeholder)
+        QString checksumUrl;        ///< URL to checksum file (SHA256SUMS, .sha256, etc.)
+        QString checksumType;       ///< "sha256" or "sha1"
+        QString fileName;           ///< Expected filename (with {version} placeholder)
+        qint64 approximateSize{0};  ///< Approximate size in bytes (for UI display)
+        QString homepage;           ///< Project homepage URL
 
         // GitHub-specific fields (only used when sourceType == GitHubRelease)
         QString githubOwner;         ///< GitHub repository owner
         QString githubRepo;          ///< GitHub repository name
         QString githubAssetPattern;  ///< Regex pattern to match the ISO asset filename
+
+        // Rolling-release filename discovery (only used when non-empty). Some
+        // distros publish under a rolling "current/" directory but embed a
+        // version in the ISO filename, so a pinned filename 404s on every
+        // upstream release. When set, the downloader fetches checksumUrl (the
+        // current SHA256SUMS) BEFORE downloading and derives the actual current
+        // filename by matching this anchored regex, then rebuilds the download
+        // URL in the same directory. Fails closed (no download) on any fetch or
+        // match failure, so it can never ship an unverified ISO (R5-G22-10).
+        QString rollingFilenamePattern{};
     };
 
     explicit LinuxDistroCatalog(QObject* parent = nullptr);
@@ -131,6 +141,27 @@ public:
     QString resolveFileName(const DistroInfo& distro) const;
 
     /**
+     * @brief First ISO filename in a checksum file whose bare name fully matches
+     *        an anchored regex (rolling-release discovery, R5-G22-10)
+     *
+     * Parses SHA256SUMS-style records ("<hexdigest>  <filename>" or
+     * "<hexdigest> *<filename>"): skips blank/comment/prose lines and any record
+     * whose first token is not a hex digest, rejects any entry naming a path (a
+     * '/' or '\\', so a checksum line can never redirect the download outside its
+     * directory), and returns the first remaining filename that FULLY matches
+     * @p pattern. Returns empty when @p pattern is empty or an invalid regex, or
+     * when nothing matches -- the caller fails closed on empty.
+     *
+     * Pure and static; unit-testable without any network.
+     *
+     * @param checksumsText The fetched checksum file body
+     * @param pattern An anchored regex (e.g. "^kali-linux-[0-9.]+-installer-amd64\\.iso$")
+     * @return The matching filename, or empty if none
+     */
+    [[nodiscard]] static QString filenameFromChecksums(const QString& checksumsText,
+                                                       const QString& pattern);
+
+    /**
      * @brief Check for latest version of a GitHub-hosted distro
      *
      * Queries the GitHub Releases API for the latest release, updates the
@@ -167,6 +198,14 @@ private Q_SLOTS:
     void onGitHubReleaseReply();
 
 private:
+    // Test seam (no behaviour change): the GitHubRelease branch of resolveDownloadUrl reads
+    // m_githubAssetUrls, a private cache that production fills only via a networked GitHub
+    // version check (checkLatestVersion -> parseGitHubRelease/resolveGitHubAsset). This friend
+    // lets the hermetic unit test seed that cache directly -- with no network -- so the
+    // GitHubRelease cached-asset lookup (and its cache-key mutant) is killable offline. Nothing
+    // new is exposed to non-test code.
+    friend class TestLinuxDistroCatalog;
+
     void populateCatalog();
     void addGeneralPurposeDistros();
     void addSecurityDistros();
@@ -181,9 +220,12 @@ private:
                             const QJsonArray& assets,
                             QString& matchedName);
 
-    /// @brief Cache checksum sidecar URL (.sha256/.sha1) if present in assets
+    /// @brief Cache checksum sidecar URL if a sidecar matching @p checksumType is present
+    ///        in @p assets. Only the extension for the declared algorithm is accepted, so a
+    ///        release that ships a different-algorithm sidecar cannot be pinned by mistake.
     void cacheChecksumSidecar(const QString& distroId,
                               const QString& matchedName,
+                              const QString& checksumType,
                               const QJsonArray& assets);
 
     QList<DistroInfo> m_distros;

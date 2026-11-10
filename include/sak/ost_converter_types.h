@@ -9,90 +9,30 @@
 #include "sak/layout_constants.h"
 
 #include <QDateTime>
+#include <QList>
+#include <QMap>
 #include <QMetaType>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 #include <QVector>
 
+#include <algorithm>
 #include <cstdint>
 #include <type_traits>
 
 namespace sak {
 
-inline constexpr uint16_t kDefaultImapSslPort = 993;
-inline constexpr int kDefaultImapTimeoutSeconds = 30;
-inline constexpr int kDefaultImapMaxRetries = 3;
 inline constexpr int kDefaultOstConversionThreads = 2;
-inline constexpr qint64 kDefaultPstCustomSplitMb = 5120;
-
-// ============================================================================
-// Output Format
-// ============================================================================
-
-/// @brief Output format for OST/PST conversion
-enum class OstOutputFormat {
-    Pst,        ///< Microsoft PST file (MS-PST format)
-    Eml,        ///< RFC 5322 MIME .eml files (one per message)
-    Msg,        ///< MS-OXMSG compound files (one per message)
-    Mbox,       ///< Unix mbox format (one file per folder)
-    Dbx,        ///< Outlook Express DBX format
-    Html,       ///< HTML pages with embedded images
-    Pdf,        ///< PDF via QTextDocument/QPdfWriter
-    ImapUpload  ///< Direct IMAP upload (not a file format)
-};
 
 // ============================================================================
 // Recovery Mode
 // ============================================================================
 
-/// @brief Recovery mode for damaged files
+/// @brief How far a conversion looks for deleted mail
 enum class RecoveryMode {
-    Normal,       ///< Standard parsing — stop on critical errors
-    SkipCorrupt,  ///< Skip corrupt blocks, log errors, continue
-    DeepRecovery  ///< Scan all NBT nodes including orphaned ones
-};
-
-// ============================================================================
-// PST Split Size
-// ============================================================================
-
-/// @brief PST split size preset
-enum class PstSplitSize {
-    NoSplit,    ///< Single file (no splitting)
-    Split2Gb,   ///< 2 GB per volume (ANSI PST compat)
-    Split5Gb,   ///< 5 GB per volume (recommended)
-    Split10Gb,  ///< 10 GB per volume
-    Custom      ///< User-specified size in MB
-};
-
-// ============================================================================
-// IMAP Authentication
-// ============================================================================
-
-/// @brief IMAP authentication method
-enum class ImapAuthMethod {
-    Plain,   ///< PLAIN SASL mechanism
-    Login,   ///< LOGIN command
-    XOAuth2  ///< XOAUTH2 for Gmail / Microsoft 365
-};
-
-/// @brief IMAP server connection settings
-struct ImapServerConfig {
-    QString host;
-    uint16_t port = kDefaultImapSslPort;
-    bool use_ssl = true;
-    ImapAuthMethod auth_method = ImapAuthMethod::Plain;
-    QString username;
-    QString password;
-    int timeout_seconds = kDefaultImapTimeoutSeconds;
-    int max_retries = kDefaultImapMaxRetries;
-};
-
-/// @brief Folder mapping for IMAP upload
-struct ImapFolderMapping {
-    QString source_folder;
-    QString target_folder;
-    bool skip = false;
+    Normal,       ///< Only what recover_deleted_items asks for
+    DeepRecovery  ///< Also scan all NBT nodes for orphaned messages; implies recover_deleted_items
 };
 
 // ============================================================================
@@ -105,15 +45,12 @@ struct OstConversionJob {
     QString display_name;  ///< Filename for display
     qint64 file_size_bytes = 0;
     bool is_ost = false;
-    int estimated_items = 0;  ///< From PstFileInfo
-    int estimated_folders = 0;
 
     /// @brief Conversion state
     enum class Status {
         Queued,
         Parsing,
         Converting,
-        Uploading,
         Complete,
         Failed,
         Cancelled
@@ -135,9 +72,12 @@ struct OstConversionJob {
 // ============================================================================
 
 /// @brief Global conversion configuration
+///
+/// There is no output format here. The converter has exactly one job -- turn an OST
+/// or PST store into an MBOX mailbox another mail client can import. Per-message
+/// output (EML, HTML, Text, PDF, CSV) is the Email Inspector's job, whole-store or
+/// per-folder, so the two do not overlap.
 struct OstConversionConfig {
-    // Output
-    OstOutputFormat format = OstOutputFormat::Pst;
     QString output_directory;
 
     // Threading
@@ -155,23 +95,11 @@ struct OstConversionConfig {
     RecoveryMode recovery_mode = RecoveryMode::Normal;
     bool recover_deleted_items = false;
 
-    // PST output options
-    PstSplitSize split_size = PstSplitSize::NoSplit;
-    qint64 custom_split_mb = kDefaultPstCustomSplitMb;  ///< Custom split size in MB
-
-    // EML/MSG options
-    bool prefix_filename_with_date = true;
-    bool preserve_folder_structure = true;
-
-    // MBOX options
+    // MBOX options. One .mbox per source folder keeps the folder tree legible to the
+    // importing client; the alternative is a single mailbox.mbox holding everything.
     bool one_mbox_per_folder = true;
 
-    // IMAP upload options
-    ImapServerConfig imap_config;
-    QVector<ImapFolderMapping> folder_mappings;
-
     // Reporting
-    bool generate_properties_manifest = false;
     bool generate_html_report = true;
     bool include_source_checksums = true;
 };
@@ -184,17 +112,55 @@ struct OstConversionConfig {
 struct OstConversionResult {
     QString source_path;
     QString output_path;
-    OstOutputFormat format = OstOutputFormat::Pst;
     int items_converted = 0;
     int items_failed = 0;
     int items_recovered = 0;  ///< Deleted items recovered
+    /// Items left out of the MBOX because they are not mail, or sit in a system folder. They are
+    /// not failures: an MBOX holds mail, and these belong in the Contacts and Calendar windows.
+    /// Counted by what they are, so the run can say exactly what it did not convert.
+    int skipped_contacts = 0;
+    int skipped_calendar = 0;
+    int skipped_tasks = 0;
+    int skipped_notes = 0;
+    int skipped_other = 0;
+    /// The same items by the message class the store gives them, so a technician can say why a
+    /// mailbox's count differs. Class names and counts only: nothing from the items themselves.
+    QMap<QString, int> left_out_by_class;
+    /// False when the deleted-item scan could not enumerate every candidate (a non-cancel read
+    /// error truncated the Recoverable Items walk, or an orphan node could not be read), so
+    /// items_recovered is a floor and NOT the count of what the source holds. An empty or small
+    /// recovered set is only authoritative when this is true.
+    bool recovery_complete = true;
     int folders_processed = 0;
     qint64 bytes_written = 0;
-    int pst_volumes_created = 0;  ///< For split PST (1 if no split)
     QStringList errors;
     QDateTime started;
     QDateTime finished;
     QString source_sha256;  ///< SHA-256 of source file
+    /// True when convert() returned early because the user cancelled the run, so the counts
+    /// above are partial and the output is incomplete. classifyOutcome maps this to Cancelled
+    /// (never Complete) even when no item failed and no error was recorded.
+    bool cancelled = false;
+
+    [[nodiscard]] int itemsSkipped() const {
+        return skipped_contacts + skipped_calendar + skipped_tasks + skipped_notes + skipped_other;
+    }
+
+    /// left_out_by_class on one line, largest count first: "IPM.Contact: 12, IPM.Task: 3".
+    [[nodiscard]] QString leftOutByClassText() const {
+        QList<QPair<QString, int>> rows;
+        for (auto it = left_out_by_class.cbegin(); it != left_out_by_class.cend(); ++it) {
+            rows.append({it.key(), it.value()});
+        }
+        std::ranges::stable_sort(rows,
+                                 [](const auto& a, const auto& b) { return a.second > b.second; });
+        QStringList parts;
+        parts.reserve(rows.size());
+        for (const auto& [name, count] : rows) {
+            parts.append(QStringLiteral("%1: %2").arg(name).arg(count));
+        }
+        return parts.join(QStringLiteral(", "));
+    }
 };
 
 /// @brief Aggregate result of the entire conversion batch
@@ -202,8 +168,14 @@ struct OstConversionBatchResult {
     int files_total = 0;
     int files_succeeded = 0;
     int files_failed = 0;
+    /// Files the batch never attempted or abandoned because the user cancelled.
+    /// Without this, succeeded + failed silently fell short of total after a cancel and the
+    /// "X/N files succeeded" line left the shortfall unexplained.
+    int files_cancelled = 0;
     int total_items_converted = 0;
     int total_items_recovered = 0;
+    int total_items_failed = 0;
+    int total_items_skipped = 0;
     qint64 total_bytes_written = 0;
     QVector<OstConversionResult> file_results;
     QDateTime batch_started;
@@ -220,8 +192,6 @@ static_assert(std::is_default_constructible_v<OstConversionConfig>,
               "OstConversionConfig must be default-constructible.");
 static_assert(std::is_default_constructible_v<OstConversionResult>,
               "OstConversionResult must be default-constructible.");
-static_assert(std::is_default_constructible_v<ImapServerConfig>,
-              "ImapServerConfig must be default-constructible.");
 
 }  // namespace sak
 

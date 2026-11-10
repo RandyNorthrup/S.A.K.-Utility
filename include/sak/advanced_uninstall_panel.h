@@ -10,11 +10,11 @@
 #include "sak/advanced_uninstall_types.h"
 
 #include <QComboBox>
+#include <QHash>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMenu>
 #include <QPushButton>
-#include <QSplitter>
+#include <QSet>
 #include <QTableWidget>
 #include <QWidget>
 
@@ -22,15 +22,19 @@
 #include <type_traits>
 
 class QVBoxLayout;
-class QHBoxLayout;
 class QDialog;
 class QCheckBox;
 class QRadioButton;
 class QListWidget;
 class QFormLayout;
 class QDialogButtonBox;
+class AdvancedUninstallPanelTests;
 
 namespace sak {
+
+namespace ui {
+class ViewEmptyState;
+}  // namespace ui
 
 class AdvancedUninstallController;
 class LogToggleSwitch;
@@ -43,6 +47,7 @@ class LogToggleSwitch;
 /// uninstall, restore point creation, and multi-level leftover scanning.
 class AdvancedUninstallPanel : public QWidget {
     Q_OBJECT
+    friend class ::AdvancedUninstallPanelTests;  // drives the install-folder size row directly
 
 public:
     explicit AdvancedUninstallPanel(QWidget* parent = nullptr);
@@ -54,7 +59,6 @@ public:
     AdvancedUninstallPanel& operator=(AdvancedUninstallPanel&&) = delete;
 
     /// @brief Access the log toggle switch for MainWindow connection
-    [[nodiscard]] LogToggleSwitch* logToggle() const { return m_log_toggle; }
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -75,18 +79,23 @@ private Q_SLOTS:
     void onEnumerationProgress(int current, int total);
     void onEnumerationFinished(QVector<sak::ProgramInfo> programs);
     void onEnumerationFailed(const QString& error);
+    void onEnumerationCancelled();
 
-    void onUninstallStarted(const QString& programName);
+    void onUninstallStarted(const QString& program_name);
     void onUninstallProgress(int percent, const QString& phase);
     void onLeftoverScanFinished(QVector<sak::LeftoverItem> leftovers);
+    void onLeftoversUpdated(QVector<sak::LeftoverItem> leftovers);
     void onUninstallFinished(sak::UninstallReport report);
-    void onUninstallFailed(const QString& error);
+    void onUninstallFailed(int error_code, const QString& error);
     void onUninstallCancelled();
 
-    void onCleanupStarted(int totalItems);
-    void onItemCleaned(const QString& path, bool success);
-    void onCleanupFinished(int succeeded, int failed, qint64 bytesRecovered);
-    void onRebootPendingItems(QStringList paths);
+    void onCleanupStarted(int total_items);
+    void onItemCleaned(sak::LeftoverItem item, bool success);
+    void onItemCleanupError(sak::LeftoverItem item, const QString& reason);
+    void onCleanupFinished(int succeeded, int failed, qint64 bytes_recovered);
+    void onCleanupCancelled();
+    void onCleanupFailed(int error_code, const QString& error);
+    void onBatchFailed(const QString& error);
 
     // Program table
     void onProgramSelectionChanged();
@@ -95,6 +104,7 @@ private Q_SLOTS:
 
     // Leftover table
     void onLeftoverSelectionChanged();
+    void onProgramTickChanged(QTableWidgetItem* item);
     void onSelectAll();
     void onSelectAllSafe();
     void onDeselectAll();
@@ -129,10 +139,10 @@ private:
     void showProgramProperties(const ProgramInfo& program);
     void showSettingsDialog();
 
-    // Dialog helper builders (split for TigerStyle function-length)
+    // Dialog helper builders -- split to stay under the 70-line function gate
     void populateBatchUninstallQueueList(const QVector<UninstallQueueItem>& queue,
-                                         QListWidget* queueList,
-                                         qint64* totalBytesOut) const;
+                                         QListWidget* queue_list,
+                                         qint64* total_bytes_out) const;
     /// @brief Widget pointers for batch uninstall queue dialog
     struct BatchQueueWidgets {
         QListWidget* queue_list;
@@ -144,26 +154,38 @@ private:
 
     void wireBatchUninstallQueueActions(const BatchQueueWidgets& widgets, QDialog* dialog);
 
+    /// @brief The row under the queue: Remove Selected, Clear Queue and the total size. Fills
+    ///        @p widgets' remove_btn, clear_btn and total_label.
+    void addBatchUninstallQueueActions(QDialog* dialog,
+                                       QVBoxLayout* layout,
+                                       qint64 total_size,
+                                       BatchQueueWidgets* widgets) const;
     QCheckBox* addBatchUninstallOptions(QDialog* dialog, QVBoxLayout* layout) const;
     QDialogButtonBox* addBatchUninstallButtons(QDialog* dialog, QVBoxLayout* layout) const;
 
     void populateProgramPropertiesForm(const ProgramInfo& program,
-                                       QWidget* scrollWidget,
-                                       QFormLayout* formLayout) const;
+                                       QWidget* scroll_widget,
+                                       QFormLayout* form_layout) const;
+    /// @brief "Install Folder Size" row with a Measure button: the folder is walked only when
+    ///        asked, off the GUI thread, and the result is cached for the session.
+    void addInstallFolderSizeRow(const ProgramInfo& program,
+                                 QDialog* dialog,
+                                 QFormLayout* form_layout);
 
     QCheckBox* addSettingsSelectionGroup(QDialog* dialog, QVBoxLayout* layout) const;
     QCheckBox* addSettingsDeletionGroup(QDialog* dialog, QVBoxLayout* layout) const;
     QCheckBox* addSettingsRestorePointGroup(QDialog* dialog, QVBoxLayout* layout) const;
     void addSettingsScanLevelGroup(QDialog* dialog,
                                    QVBoxLayout* layout,
-                                   QRadioButton*& safeRadio,
-                                   QRadioButton*& moderateRadio,
-                                   QRadioButton*& advancedRadio) const;
+                                   QRadioButton*& safe_radio,
+                                   QRadioButton*& moderate_radio,
+                                   QRadioButton*& advanced_radio) const;
     QCheckBox* addSettingsDisplayGroup(QDialog* dialog, QVBoxLayout* layout) const;
 
     // -- Table Population --
     void populateProgramTable(const QVector<ProgramInfo>& programs);
     void populateLeftoverTable(const QVector<LeftoverItem>& leftovers);
+    void displayLeftovers(const QVector<LeftoverItem>& leftovers);
     void populateLeftoverRow(int row, const LeftoverItem& item);
     QString leftoverTypeText(LeftoverItem::Type type) const;
     void clearLeftoverTable();
@@ -172,17 +194,27 @@ private:
     void applyFilter();
     [[nodiscard]] bool matchesFilter(const ProgramInfo& program) const;
     [[nodiscard]] QString formatSize(qint64 bytes) const;
+    /// "Total size: 12.3 MB", or that the programs report none (a bare "Total size:" otherwise).
+    [[nodiscard]] QString totalSizeText(qint64 bytes) const;
 
     // -- Utility --
     void logMessage(const QString& message);
     void setOperationRunning(bool running);
+    /// Tells the status bar the current operation ended, so it hides its progress bar.
+    void endStatusBarProgress();
     [[nodiscard]] ProgramInfo selectedProgram() const;
-    [[nodiscard]] QVector<ProgramInfo> selectedPrograms() const;
-    [[nodiscard]] QVector<LeftoverItem> selectedLeftovers() const;
+    /// The checked programs. When @p all_resolved is non-null it is set to false if any CHECKED
+    /// row could not be resolved back to a program, so a destructive batch is never run against a
+    /// silently reduced subset of what the user checked.
+    [[nodiscard]] QVector<ProgramInfo> selectedPrograms(bool* all_resolved = nullptr) const;
+    /// The checked leftover items, with the same all-or-nothing contract as @ref selectedPrograms.
+    [[nodiscard]] QVector<LeftoverItem> selectedLeftovers(bool* all_resolved = nullptr) const;
     void updateStatusCounts();
 
     // -- Controller --
     std::unique_ptr<AdvancedUninstallController> m_controller;
+    /// Install-folder sizes measured on demand this session, keyed by normalized path.
+    QHash<QString, qint64> m_install_folder_bytes;
 
     // -- Toolbar Widgets --
     QLineEdit* m_search_edit{nullptr};
@@ -192,16 +224,23 @@ private:
     QPushButton* m_forced_uninstall_button{nullptr};
     QPushButton* m_batch_button{nullptr};
     QPushButton* m_settings_button{nullptr};
+    // R5-G20-2 in-panel Stop. The one control setOperationRunning(true) leaves ENABLED so a
+    // technician can halt a running enumeration/uninstall/cleanup; clicking it invokes the
+    // controller's cooperative cancelOperation(). Shown+enabled at every start, hidden+disabled
+    // at every terminal (success/error/cancel all reach setOperationRunning(false)).
+    QPushButton* m_cancel_button{nullptr};
 
     // -- Program Table --
     QTableWidget* m_program_table{nullptr};
     QLabel* m_program_count_label{nullptr};
     QLabel* m_total_size_label{nullptr};
+    // Designed empty/loading overlay for the program table (R5-G20-7); driven from the
+    // enumeration handlers. Parented to the table, so it self-manages its lifetime.
+    ui::ViewEmptyState* m_program_empty_state{nullptr};
 
     // -- Leftover Section --
     QWidget* m_leftover_section{nullptr};
     QTableWidget* m_leftover_table{nullptr};
-    QLabel* m_leftover_header_label{nullptr};
     QLabel* m_leftover_count_label{nullptr};
     QPushButton* m_select_all_button{nullptr};
     QPushButton* m_select_safe_button{nullptr};
@@ -211,16 +250,22 @@ private:
     // -- Status Bar --
     int m_cleanup_progress{0};
     int m_cleanup_total{0};
+    bool m_auto_cleanup_in_progress{false};
+    bool m_auto_cleanup_failure_reported{false};
 
     // -- Log toggle --
-    LogToggleSwitch* m_log_toggle{nullptr};
 
     // -- Data --
-    QVector<ProgramInfo> m_allPrograms;        ///< Full unfiltered list
-    QVector<ProgramInfo> m_filteredPrograms;   ///< Currently displayed programs
-    QVector<LeftoverItem> m_currentLeftovers;  ///< Current leftover scan results
-    QString m_searchFilter;
-    ViewFilter m_viewFilter = ViewFilter::All;
+    QVector<ProgramInfo> m_all_programs;       ///< Full unfiltered list
+    QVector<ProgramInfo> m_filtered_programs;  ///< Currently displayed programs
+    /// Ticked programs by programKey(), whether the search shows them or not. The table was the
+    /// only record, so a new search text, which rebuilds it, unticked everything.
+    QSet<QString> m_ticked_programs;
+    [[nodiscard]] static QString programKey(const ProgramInfo& program);
+    [[nodiscard]] static QTableWidgetItem* programNameItem(const ProgramInfo& prog, int row);
+    QVector<LeftoverItem> m_current_leftovers;  ///< Current leftover scan results
+    QString m_search_filter;
+    ViewFilter m_view_filter = ViewFilter::All;
 
     // -- Table Column Indices --
     static constexpr int kColCheck = 0;

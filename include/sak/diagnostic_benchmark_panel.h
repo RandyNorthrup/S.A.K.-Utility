@@ -8,6 +8,7 @@
 
 #include "sak/diagnostic_controller.h"
 #include "sak/diagnostic_types.h"
+#include "sak/quick_action_controller.h"
 #include "sak/widget_helpers.h"
 
 #include <QTabWidget>
@@ -31,8 +32,10 @@ class QVBoxLayout;
 namespace sak {
 
 class LogToggleSwitch;
-class QuickAction;
-class QuickActionController;
+
+namespace ui {
+class ViewEmptyState;
+}  // namespace ui
 
 /// @brief Diagnostic & Benchmarking panel providing hardware inventory,
 ///        SMART health, CPU/disk/memory benchmarks, stress testing,
@@ -46,8 +49,10 @@ class DiagnosticBenchmarkPanel : public QWidget {
 
 public:
     /// @brief Construct the diagnostic benchmark panel
+    /// @param quick_actions Runs the System Maintenance actions; it must outlive the panel
     /// @param parent Parent widget
-    explicit DiagnosticBenchmarkPanel(QWidget* parent = nullptr);
+    explicit DiagnosticBenchmarkPanel(QuickActionController& quick_actions,
+                                      QWidget* parent = nullptr);
     ~DiagnosticBenchmarkPanel() override;
 
     // Non-copyable, non-movable
@@ -59,10 +64,44 @@ public:
     /** @brief Access the log toggle switch for MainWindow connection */
     LogToggleSwitch* logToggle() const { return m_logToggle; }
 
+    /// @brief How the Benchmark Drive list names a volume: its letter and label, its own size, and
+    ///        the disk it is on.
+    [[nodiscard]] static QString benchmarkDriveText(const StorageDeviceInfo& disk,
+                                                    const PartitionInfo& volume);
+
+    /// @brief The Battery row: the battery's name when it has one, its health, and the power
+    ///        state. VirtualBox's battery names itself "1", which read as "1 - health unknown".
+    [[nodiscard]] static QString batteryText(const BatteryInfo& battery);
+
+    /// @brief What the SMART table shows for @p report, with what the hardware scan knows of the
+    ///        same disk (@p disk, null when it has not run): the drive's number and model, so four
+    ///        "VBOX HARDDISK" rows can be told apart and matched to the messages under them, and
+    ///        its bus as the inventory names it.
+    struct SmartRowIdentity {
+        QString drive;
+        QString type;
+    };
+    [[nodiscard]] static SmartRowIdentity smartRowIdentity(const SmartReport& report,
+                                                           const StorageDeviceInfo* disk);
+
+    /// @brief @p warning as the SMART list shows it: every drive's warnings are listed together,
+    ///        so each starts with the drive it is about.
+    [[nodiscard]] static QString smartWarningText(const QString& drive, const QString& warning);
+
+    /// @brief "Elapsed: MM:SS" for the stress test's line.
+    [[nodiscard]] static QString stressElapsedText(int elapsed_seconds);
+    /// "Stress test running, 00:16 of 1 min": the status bar's message while a run goes on.
+    [[nodiscard]] static QString stressRunningText(int elapsed_seconds, int duration_minutes);
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
     void logOutput(const QString& message);
+
+protected:
+    /// Thermal polling runs only while the readout can be seen.
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 
 private Q_SLOTS:
     // -- Hardware Inventory --------------------------------------
@@ -78,6 +117,7 @@ private Q_SLOTS:
     void onRunCpuBenchmarkClicked();
     void onRunDiskBenchmarkClicked();
     void onRunMemoryBenchmarkClicked();
+    void onStopBenchmarkClicked();
     void onCpuBenchmarkComplete(const sak::CpuBenchmarkResult& result);
     void onDiskBenchmarkComplete(const sak::DiskBenchmarkResult& result);
     void onMemoryBenchmarkComplete(const sak::MemoryBenchmarkResult& result);
@@ -106,15 +146,19 @@ private Q_SLOTS:
     // -- Common --------------------------------------------------
     void onOperationProgress(int percent, const QString& message);
     void onErrorOccurred(const QString& message);
-
-    // -- Quick Actions --------------------------------------------
-    void onQuickActionClicked(QuickAction* action);
-    void onQuickActionProgress(QuickAction* action, const QString& message, int progress);
-    void onQuickActionComplete(QuickAction* action);
-    void onQuickActionError(QuickAction* action, const QString& error_message);
+    /// A drive kept with a warning: logged as one, not as an error.
+    void onDriveWarning(const QString& message);
 
 private:
+    void fillSmartRow(int row, const sak::SmartReport& report, const SmartRowIdentity& identity);
+    /// The hardware scan's entry for @p report's disk, or null.
+    [[nodiscard]] const StorageDeviceInfo* inventoryDiskFor(const sak::SmartReport& report) const;
     static constexpr int kSuiteStepCount = 7;
+    /// A suite step's marks. Pending is the idle circle; the hourglass means running elsewhere.
+    static constexpr char16_t kSuitePendingMark = u'\u25CB';
+    static constexpr char16_t kSuiteRunningMark = u'\u25B6';
+    static constexpr char16_t kSuiteDoneMark = u'\u2705';
+    static constexpr char16_t kSuiteSkippedMark = u'\u23ED';
     enum SmartTableColumn {
         SmartColDrive = 0,
         SmartColType,
@@ -138,8 +182,18 @@ private:
     /// @brief Enable/disable inputs based on running state
     void setOperationRunning(bool running);
 
+    /// @brief Enable the operation-starting controls only when fully idle. Single
+    ///        authority that mutually excludes a standalone op, the full suite, a
+    ///        stress test, and a quick action so two never run on the shared
+    ///        controller at once (a second would consume the first's completion).
+    void refreshPrimaryControls();
+
     /// @brief Append a timestamped message to the log viewer
     void logMessage(const QString& message);
+
+    /// The drive row's bar when no counter reported a drive: until a SMART scan has run the
+    /// drive has not been read, which is not the same as this PC not reporting it (review 4, Y23).
+    void sayWhetherTheDriveWasRead();
 
     /// @brief Populate disk drive combo from hardware inventory storage data
     void populateDiskDriveCombo(const HardwareInventory& inventory);
@@ -149,7 +203,7 @@ private:
 
     // -- Section Builders ----------------------------------------
     QWidget* createDiagnosticsTab();
-    QWidget* createBenchmarkTab();
+    void createBenchmarkTab();
     QGroupBox* createHardwareSection();
     QGroupBox* createSmartSection();
     QGroupBox* createBenchmarkSection();
@@ -160,12 +214,22 @@ private:
     QGroupBox* createThermalSection();
     QGroupBox* createSuiteSection();
     void createSuiteStepLabels(QVBoxLayout* layout);
+    /// Show @p step with @p mark and @p text, both in @p style.
+    void showSuiteStep(int step, char16_t mark, const QString& text, const QString& style);
     QHBoxLayout* createSuiteButtonRow();
     void connectSuiteButtons();
     QGroupBox* createReportSection();
 
     QGroupBox* createSystemMaintenanceSection();
     void createQuickActions();
+    void onQuickActionClicked(const QString& action_name);
+    void onQuickActionFinished(const QuickActionRun& run,
+                               const QuickAction::ExecutionResult& result,
+                               QuickAction::ActionStatus status);
+    /// @brief For the System Inventory Report, asks where to save it (starting in Documents)
+    ///        into @p folder. Other actions write no files and pass through.
+    /// @return False when the technician cancelled the folder choice, so nothing runs.
+    bool chooseQuickActionOutputFolder(const QString& action_name, QString* folder);
 
     /// @brief Build technician/ticket/notes input fields for report section
     void createReportInfoFields(QVBoxLayout* layout);
@@ -204,6 +268,7 @@ private:
 
     // -- SMART Health Widgets ------------------------------------
     QTableWidget* m_smart_table{nullptr};
+    ui::ViewEmptyState* m_smart_empty_state{nullptr};  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_smart_warnings_label{nullptr};
     QPushButton* m_smart_rescan_button{nullptr};
 
@@ -211,6 +276,7 @@ private:
     QLabel* m_cpu_single_score_label{nullptr};
     QLabel* m_cpu_multi_score_label{nullptr};
     QLabel* m_cpu_details_label{nullptr};
+    QLabel* m_cpu_score_label{nullptr};
     QProgressBar* m_cpu_score_bar{nullptr};
     QPushButton* m_cpu_benchmark_button{nullptr};
 
@@ -229,6 +295,11 @@ private:
     QLabel* m_mem_score_label{nullptr};
     QProgressBar* m_mem_score_bar{nullptr};
     QPushButton* m_mem_benchmark_button{nullptr};
+
+    // Shared Stop for the individual CPU/disk/memory benchmarks (R5-G20-2). Enabled
+    // while one of those benchmarks runs, disabled at every terminal path; clicking it
+    // cooperatively stops the running benchmark via DiagnosticController::cancelCurrent.
+    QPushButton* m_benchmark_stop_button{nullptr};
 
     // -- Stress Test Widgets -------------------------------------
     QCheckBox* m_stress_cpu_check{nullptr};
@@ -251,8 +322,19 @@ private:
     QProgressBar* m_thermal_cpu_bar{nullptr};
     QProgressBar* m_thermal_gpu_bar{nullptr};
     QProgressBar* m_thermal_disk_bar{nullptr};
+    /// The last thermal poll's unavailable-sensor lines, so N/A can say why.
+    QStringList m_thermal_statuses;
+    /// The hottest drive temperature the last SMART scan read, or 0: a drive Windows' counters
+    /// do not report may still report it over SMART.
+    double m_smart_hottest_drive_celsius{0.0};
+    /// A SMART scan has run this session, so a drive with no temperature was read, not skipped.
+    bool m_smart_scanned{false};
 
     // -- Full Suite Widgets --------------------------------------
+    /// Each step's mark (pending, running, done, skipped) in a column of one width, and its name
+    /// after it: in one label the marks' different widths started the names at three places
+    /// (review 2, F16).
+    QLabel* m_suite_step_marks[kSuiteStepCount]{nullptr};
     QLabel* m_suite_step_labels[kSuiteStepCount]{nullptr};
     QString m_suite_step_names[kSuiteStepCount];  ///< Stored for safe label reconstruction
     QLabel* m_suite_status_label{nullptr};
@@ -272,7 +354,9 @@ private:
     LogToggleSwitch* m_logToggle{nullptr};
 
     // -- Quick Action Widgets ------------------------------------
-    QuickActionController* m_qa_controller{nullptr};
+    // The application's one quick-action controller, shared with the Backup and Restore and
+    // Network panels and the assistant; this panel reacts only to its own runs.
+    QuickActionController& m_quick_actions;
     QHash<QString, QPushButton*> m_qa_buttons;
     QProgressBar* m_qa_progress_bar{nullptr};
 
@@ -280,6 +364,13 @@ private:
     bool m_operation_running{false};
     bool m_stress_test_running{false};
     bool m_suite_running{false};
+    bool m_qa_running{false};
+    /// Index of the suite step currently executing (-1 when none), tracked so Skip
+    /// Step can record which step it skipped.
+    int m_current_suite_step{-1};
+    /// Per-step skip flags: a skipped step is reported distinctly instead of being
+    /// shown with the same "done" checkmark as a completed one.
+    bool m_suite_step_skipped[kSuiteStepCount]{};
 };
 
 }  // namespace sak

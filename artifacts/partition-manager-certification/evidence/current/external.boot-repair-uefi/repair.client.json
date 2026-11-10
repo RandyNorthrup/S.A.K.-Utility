@@ -1,0 +1,90 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:58:05.280Z",
+    "disk_before": {
+        "bus_type": "SATA",
+        "disk_number": 1,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "VBOX HARDDISK",
+        "partition_count": 4,
+        "partition_style": "GPT",
+        "serial_sha256": "7cde3be6f4dfb79abe2a729d856df5242f0507480b3d9dfe6b9517613ca7b5cb",
+        "size_bytes": "343597383680"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "f5f2bf84-c3bd-4e21-896c-b963de673aa4",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Repair UEFI boot files for the Windows on Disk 1\r\nFound Windows on Disk 1, partition 3\r\nBoot files successfully created.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nBoot files rebuilt for the Windows on Disk 1. Start from that disk to check.\r\n",
+                "success": true,
+                "summary": "Repair Boot - Disk 1"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "RepairBoot",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "f5f2bf84-c3bd-4e21-896c-b963de673aa4",
+            "payload": {
+                "boot_mode": "UEFI",
+                "repair_scope": "attached"
+            },
+            "script_sha256": "83423b9dbc4d44ce19968cd985471863bf3bb18dbef4a078872f88963f39a851",
+            "summary": "Repair Boot - Disk 1",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "ATAVBOX HARDDISK",
+                "drive_letter": "",
+                "kind": "Disk",
+                "offset_bytes": "0",
+                "partition_number": 0,
+                "size_bytes": "343597383680"
+            },
+            "type": "Repair Boot",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "a08f0c4bbb747a0953727f6eb80e36584cf96874d2121d21ec2cb8cf558b6e51",
+        "layout_hash": "4decf6ec95d903788ee00b28ded8ed32c32ad9f9827e208561840d1c8f2d44b0",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "e5c0149f-235f-4f2e-841c-f83e201f2cc5",
+    "scenario_id": "external.boot-repair-uefi",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:57:45.926Z",
+    "status": "Passed",
+    "step": "repair",
+    "tool": "partition-manager-scenario-step"
+}

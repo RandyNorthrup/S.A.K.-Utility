@@ -1,0 +1,96 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_fuzz_fs_detector",
+  "ctest_regex": "^test_fuzz_fs_detector$",
+  "mutants": [
+    {
+      "id": "apfs-magic-bytes-corrupted",
+      "file": "src/core/partition_file_system_detector.cpp",
+      "find": "    if (!matchesBytes(bytes, kApfsMagicOffset, \"NXSB\", kApfsMagicSize)) {",
+      "replace": "    if (!matchesBytes(bytes, kApfsMagicOffset, \"NXSC\", kApfsMagicSize)) {",
+      "expect": "killed",
+      "why": "APFS containers are keyed by the exact ASCII 'NXSB'; probing for 'NXSC' leaves a real NXSB image undetected and the detector falls through to std::nullopt. detectsApfsContainerByNxsbMagic asserts detection.has_value() and file_system == \"APFS\""
+    },
+    {
+      "id": "apfs-magic-offset-shifted",
+      "file": "src/core/partition_file_system_detector.cpp",
+      "find": "constexpr qsizetype kApfsMagicOffset = 0x20;",
+      "replace": "constexpr qsizetype kApfsMagicOffset = 0x21;",
+      "expect": "killed",
+      "why": "the NXSB magic lives at container byte 0x20; probing 0x21 reads 'XSB' + a stray byte and matches nothing, so the APFS image is missed. detectsApfsContainerByNxsbMagic asserts file_system == \"APFS\" for a buffer with 'NXSB' written at 0x20"
+    },
+    {
+      "id": "apfs-magic-length-shortened",
+      "file": "src/core/partition_file_system_detector.cpp",
+      "find": "constexpr qsizetype kApfsMagicSize = 4;",
+      "replace": "constexpr qsizetype kApfsMagicSize = 3;",
+      "expect": "killed",
+      "why": "shortening the magic compare to 3 bytes accepts any buffer beginning 'NXS', so a corrupt 'NXSX' superblock is misreported as APFS instead of failing closed. rejectsApfsWhenFourthMagicByteWrong writes 'NXSX' at 0x20 and asserts !detection.has_value() -- the full 4-byte compare is required to reject it"
+    },
+    {
+      "id": "apfs-family-string-changed",
+      "file": "src/core/partition_file_system_detector.cpp",
+      "find": "    PartitionFileSystemDetection detection{.file_system = QStringLiteral(\"APFS\"),",
+      "replace": "    PartitionFileSystemDetection detection{.file_system = QStringLiteral(\"APFSX\"),",
+      "expect": "killed",
+      "why": "the family label routes which reader runs; emitting 'APFSX' mislabels every APFS container. detectsApfsContainerByNxsbMagic asserts file_system == \"APFS\" exactly, not merely non-empty (so the fuzz slot's non-empty check would miss this)"
+    },
+    {
+      "id": "ntfs-family-string-changed",
+      "file": "src/core/partition_file_system_detector.cpp",
+      "find": "        return QStringLiteral(\"NTFS\");",
+      "replace": "        return QStringLiteral(\"exFAT\");",
+      "expect": "killed",
+      "why": "a boot sector with the 'NTFS    ' OEM tag must report NTFS, not exFAT; the wrong family routes the wrong reader at a matching boot signature. detectsNtfsBySignedBootSectorOemTag asserts file_system == \"NTFS\""
+    },
+    {
+      "id": "ntfs-oem-tag-corrupted",
+      "file": "src/core/partition_file_system_detector.cpp",
+      "find": "    if (matchesBytes(bytes, kBootSectorOemOffset, \"NTFS    \", kNtfsOemSize)) {",
+      "replace": "    if (matchesBytes(bytes, kBootSectorOemOffset, \"XTFS    \", kNtfsOemSize)) {",
+      "expect": "killed",
+      "why": "the NTFS OEM signature is the literal 'NTFS    '; corrupting the first byte makes a real NTFS boot sector match no Windows family, so detectBytes falls through to std::nullopt. detectsNtfsBySignedBootSectorOemTag asserts detection.has_value() and file_system == \"NTFS\""
+    },
+    {
+      "id": "ext-magic-offset-shifted",
+      "file": "src/core/partition_file_system_detector.cpp",
+      "find": "constexpr qsizetype kExtMagicOffset = 0x38;",
+      "replace": "constexpr qsizetype kExtMagicOffset = 0x39;",
+      "expect": "killed",
+      "why": "the ext superblock magic 0xEF53 sits at superblock offset 0x38 (image byte 0x438); shifting to 0x39 reads the high magic byte 0xEF where 0x53 is expected, so hasExtMagic fails and the image is missed. detectsExt2ByEf53SuperblockMagic asserts file_system == \"ext2\""
+    },
+    {
+      "id": "ext-magic-low-byte-changed",
+      "file": "src/core/partition_file_system_detector.cpp",
+      "find": "constexpr unsigned char kExtMagicFirstByte = 0x53;",
+      "replace": "constexpr unsigned char kExtMagicFirstByte = 0x54;",
+      "expect": "killed",
+      "why": "the ext magic little-endian low byte is 0x53; requiring 0x54 makes hasExtMagic reject every genuine ext superblock. detectsExt2ByEf53SuperblockMagic writes 0xEF53 at 0x438 and asserts file_system == \"ext2\""
+    },
+    {
+      "id": "ext-family-default-branch-changed",
+      "file": "src/core/partition_file_system_detector.cpp",
+      "find": "    return QStringLiteral(\"ext2\");",
+      "replace": "    return QStringLiteral(\"ext4\");",
+      "expect": "killed",
+      "why": "a superblock with no journal/64bit/extent/ro-compat feature flags is ext2; the default branch must not claim ext4. detectsExt2ByEf53SuperblockMagic uses an all-zero-feature superblock and asserts file_system == \"ext2\""
+    },
+    {
+      "id": "hfsplus-family-branch-changed",
+      "file": "src/core/partition_file_system_detector.cpp",
+      "find": "        return QStringLiteral(\"HFS+\");",
+      "replace": "        return QStringLiteral(\"HFSX\");",
+      "expect": "killed",
+      "why": "the 'H+' volume-header signature is HFS+, distinct from the 'HX' case that yields HFSX; swapping the branch label misroutes HFS+ volumes. detectsHfsPlusByVolumeHeaderSignature writes 'H+' at 1024 and asserts file_system == \"HFS+\""
+    },
+    {
+      "id": "empty-input-guard-inverted",
+      "file": "src/core/partition_file_system_detector.cpp",
+      "find": "    if (bytes.isEmpty()) {",
+      "replace": "    if (!bytes.isEmpty()) {",
+      "expect": "killed",
+      "why": "inverting the no-data guard makes every NON-empty buffer take the fail-closed std::nullopt path immediately, so no real signature is ever examined. detectsApfsContainerByNxsbMagic (and every other positive case) asserts detection.has_value() on a non-empty image and now receives std::nullopt"
+    }
+  ]
+}

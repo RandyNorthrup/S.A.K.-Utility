@@ -1,0 +1,68 @@
+{
+    "tool":  "partition-manager-row-report",
+    "schema_version":  1,
+    "scenario_id":  "vhd.adjacent-extend",
+    "status":  "Passed",
+    "failure":  "",
+    "run_id":  "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "started_utc":  "2026-11-10T16:00:13.3374226Z",
+    "completed_utc":  "2026-11-10T16:00:59.5055832Z",
+    "code":  {
+                 "digest":  "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+                 "commit":  "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+                 "dirty":  false
+             },
+    "binaries":  {
+                     "client_sha256":  "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
+                     "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                     "app_sha256":  "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+                 },
+    "rig":  {
+                "machine_manufacturer":  "innotek GmbH",
+                "machine_model":  "VirtualBox",
+                "firmware":  "UEFI",
+                "os_caption":  "Microsoft Windows 11 Pro",
+                "os_build":  "26200",
+                "consent_prompt_answered_by_policy":  true
+            },
+    "media":  {
+                  "class":  "virtual_disk",
+                  "kind":  "VHDX in a VM",
+                  "model":  "Msft Virtual Disk",
+                  "bus_type":  "File Backed Virtual",
+                  "media_type":  "Unspecified",
+                  "rotation_rate_rpm":  0,
+                  "size_bytes":  "1073741824",
+                  "serial_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+              },
+    "steps":  [
+                  {
+                      "id":  "extend",
+                      "operation":  "Resize",
+                      "expect":  "success",
+                      "report":  "extend.client.json",
+                      "observed":  {
+                                       "client_pid":  2312,
+                                       "exit_code":  0,
+                                       "client_token_elevated":  false,
+                                       "helper_pid":  9844,
+                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+                                       "helper_token_elevated":  true
+                                   }
+                  }
+              ],
+    "independent_file":  "independent.json",
+    "artifacts":  [
+                      {
+                          "path":  "independent.json",
+                          "sha256":  "8e73c857bb2c1a10db22bb0a5b462ecc716af1e979f59d05fb2b24012fd22d0d",
+                          "bytes":  82615
+                      },
+                      {
+                          "path":  "extend.client.json",
+                          "sha256":  "b4f4f201fbaeaa2c31e3894ed1468dfe6600747c2d2b985ec9477601b9853de5",
+                          "bytes":  3235
+                      }
+                  ]
+}

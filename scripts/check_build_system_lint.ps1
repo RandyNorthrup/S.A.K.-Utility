@@ -1,0 +1,326 @@
+# Build-system lint: catch dead CMake guards that silently disable code under the
+# Visual Studio MULTI-CONFIG generator, where CMAKE_BUILD_TYPE is empty at configure
+# time. This campaign found two by hand -- one had silently disabled AddressSanitizer
+# across the whole project. A real (non-comment) "if(CMAKE_BUILD_TYPE STREQUAL ...)"
+# guard is therefore dead here and must not return; config-specific logic must use a
+# generator expression ($<CONFIG:Debug>) or CMAKE_CONFIGURATION_TYPES instead.
+#
+# Fails closed: an unreadable CMakeLists is an error, not a silent pass.
+$ErrorActionPreference = "Stop"
+$root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+
+$cmakeFiles = @()
+$cmakeFiles += Get-ChildItem -Path $root -Filter "CMakeLists.txt" -Recurse -File |
+    Where-Object { $_.FullName -notmatch '[\\/](third_party|build|build-debug|out|vcpkg[_-])' }
+$cmakeFiles += Get-ChildItem -Path (Join-Path $root "cmake") -Filter "*.cmake" -Recurse -File -ErrorAction SilentlyContinue
+
+# A real guard: an "if (" ... "CMAKE_BUILD_TYPE" ... "STREQUAL" that is NOT inside a
+# comment (a "#" before the "if" on the line means it is documentation, which is how
+# the removed anti-patterns are memorialized).
+$pattern = '^\s*if\s*\(\s*CMAKE_BUILD_TYPE\s+STREQUAL'
+$forbiddenWarningSilences = @(
+    "-Wno-unused-command-line-argument",
+    "-Wno-missing-designated-field-initializers",
+    "-Wno-trigraphs",
+    "-Wno-unused-lambda-capture",
+    "-Wno-unused-parameter",
+    "-Wno-missing-field-initializers",
+    "-Wno-unused-variable",
+    "-Wno-unused-function"
+)
+$violations = @()
+foreach ($f in ($cmakeFiles | Sort-Object FullName -Unique)) {
+    $lineNo = 0
+    foreach ($line in (Get-Content -LiteralPath $f.FullName)) {
+        $lineNo++
+        if ($line -match $pattern) {
+            $rel = $f.FullName.Substring($root.Length).TrimStart('\', '/')
+            $violations += "${rel}:${lineNo}: $($line.Trim())"
+        }
+        if ($line.TrimStart().StartsWith("#")) {
+            continue
+        }
+        foreach ($silence in $forbiddenWarningSilences) {
+            if ($line.Contains($silence)) {
+                $rel = $f.FullName.Substring($root.Length).TrimStart('\', '/')
+                $violations += ("${rel}:${lineNo}: forbidden coverage warning silence " +
+                                "'$silence'; fix the diagnostic instead")
+            }
+        }
+    }
+}
+
+# CMAKE_CXX_CLANG_TIDY and CMAKE_CXX_CPPCHECK are copied into a target when that target is
+# created. Setting either variable after add_library/add_executable makes an opt-in analysis build
+# print ENABLED while instrumenting zero already-created targets. Enforce both assignments before
+# the first target in the root build file.
+$rootCmake = Join-Path $root "CMakeLists.txt"
+$rootLines = @(Get-Content -LiteralPath $rootCmake)
+$rootText = $rootLines -join "`n"
+
+# A warning-disabled target may contain only literal vendored sources. TARGET_OBJECTS are allowed:
+# they were already compiled under their own target's flags, so the surrounding archive's /w or
+# -w cannot silence them. Variables and first-party paths are rejected because the gate cannot
+# prove their contents are external. This specifically prevents S.A.K. adapter/shim code from
+# drifting back into the upstream-only warning boundary.
+$warningDisableRegex = '(?i)(?<![A-Za-z0-9])(?:/w|-w)(?![A-Za-z0-9])'
+$targetOptionsRegex = '(?ms)target_compile_options\s*\(\s*(?<target>[A-Za-z0-9_.+-]+)(?<options>.*?)\)'
+$warningDisabledTargets = @([regex]::Matches($rootText, $targetOptionsRegex) |
+    Where-Object { $_.Groups['options'].Value -match $warningDisableRegex } |
+    ForEach-Object { $_.Groups['target'].Value } |
+    Sort-Object -Unique)
+
+function Get-WarningLevelOwnershipViolations {
+    param([string]$Source, [string[]]$DisabledTargets)
+    $issues = [Collections.Generic.List[string]]::new()
+    if ($DisabledTargets.Count -eq 0) { return @() }
+
+    # /WX does not promote MSVC's D9025 command-line warning to an error.
+    # A target-specific warning level must coexist with strict product /W4.
+    $globalOptions = [regex]::Matches($Source, '(?ms)add_compile_options\s*\((?<body>.*?)\)')
+    foreach ($options in $globalOptions) {
+        if ($options.Groups['body'].Value -match '(?m)^\s*/W4(?:\s|#|$)') {
+            $issues.Add('CMakeLists.txt: bare global /W4 conflicts with a vendored /w target')
+        }
+    }
+    foreach ($targetName in $DisabledTargets) {
+        $scopedWarningLevel = '$<$<NOT:$<STREQUAL:$<TARGET_PROPERTY:NAME>,' +
+            $targetName + '>>:/W4>'
+        if (-not $Source.Contains($scopedWarningLevel)) {
+            $issues.Add("CMakeLists.txt: /W4 must exclude warning-disabled target " +
+                        "'$targetName' without weakening other targets")
+        }
+    }
+    if ($DisabledTargets -contains 'sak_lzfse') {
+        $visualStudioBlock = [regex]::Match($Source,
+            '(?ms)if\(MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio"\)' +
+            '(?<body>.*?)elseif\(MSVC\)')
+        $metadata = 'VS_SETTINGS "WarningLevel=TurnOffAllWarnings"'
+        if (-not $visualStudioBlock.Success -or
+            -not $visualStudioBlock.Groups['body'].Value.Contains($metadata) -or
+            -not $visualStudioBlock.Groups['body'].Value.Contains(
+                'get_target_property(_sak_lzfse_sources sak_lzfse SOURCES)')) {
+            $issues.Add('CMakeLists.txt: Visual Studio vendor source warning metadata missing')
+        }
+    }
+    return $issues.ToArray()
+}
+$violations += @(Get-WarningLevelOwnershipViolations -Source $rootText -DisabledTargets $warningDisabledTargets)
+
+# In-memory negative control: losing the MSBuild metadata must turn this gate red.
+if ($warningDisabledTargets -contains 'sak_lzfse') {
+    $withoutMetadata = $rootText.Replace('VS_SETTINGS "WarningLevel=TurnOffAllWarnings"',
+        'VS_SETTINGS "WarningLevel=Level1"')
+    $revealed = @(Get-WarningLevelOwnershipViolations -Source $withoutMetadata `
+        -DisabledTargets $warningDisabledTargets)
+    if (-not @($revealed | Where-Object { $_ -match 'Visual Studio vendor source' }).Count) {
+        $violations += 'Build-system warning-boundary red drill did not detect removed metadata'
+    }
+}
+foreach ($targetName in $warningDisabledTargets) {
+    $targetDeclarationRegex = ('(?ms)add_(?:library|executable)\s*\(\s*' +
+        [regex]::Escape($targetName) + '\b(?<sources>.*?)\)')
+    $targetDeclaration = [regex]::Match($rootText, $targetDeclarationRegex)
+    if (-not $targetDeclaration.Success) {
+        $violations += "CMakeLists.txt: warning-disabled target '$targetName' has no declaration"
+        continue
+    }
+    $sourceTokens = @()
+    foreach ($sourceLine in ($targetDeclaration.Groups['sources'].Value -split '\r?\n')) {
+        $codeOnly = ($sourceLine -split '#', 2)[0]
+        $sourceTokens += @($codeOnly -split '\s+' |
+            ForEach-Object { $_.Trim().Trim('"') } |
+            Where-Object {
+                $_ -ne '' -and
+                $_ -notin @('STATIC', 'SHARED', 'MODULE', 'OBJECT', 'EXCLUDE_FROM_ALL')
+            })
+    }
+    foreach ($sourceToken in $sourceTokens) {
+        if ($sourceToken -match '^\$<TARGET_OBJECTS:[A-Za-z0-9_.+-]+>$') {
+            continue
+        }
+        if ($sourceToken.Replace('\', '/').StartsWith('third_party/')) {
+            continue
+        }
+        $violations += ("CMakeLists.txt: warning-disabled target '$targetName' contains " +
+                        "non-vendored or unresolved source '$sourceToken'")
+    }
+}
+
+$excludedShimPath = Join-Path $root "third_party\lzfse\sak_lzvn_shim.c"
+if (Test-Path -LiteralPath $excludedShimPath -PathType Leaf) {
+    $violations += ("third_party/lzfse/sak_lzvn_shim.c: S.A.K.-authored shim is hidden under " +
+                    "the analyzer-excluded vendor tree; keep it under src/core")
+}
+
+if ($rootText -notmatch '(?ms)^if\s*\(\s*NOT\s+WIN32\s*\).*?message\s*\(\s*FATAL_ERROR.*?^endif\s*\(\s*\)') {
+    $violations += ("CMakeLists.txt: missing fail-closed Windows-only configure boundary; " +
+                    "the shipped application supports Windows 10/11 x64 only")
+}
+$unsupportedPlatformTokens = @(
+    "PLATFORM_MACOS",
+    "PLATFORM_LINUX",
+    "SAK_PLATFORM_MACOS",
+    "SAK_PLATFORM_LINUX",
+    "MACOSX_BUNDLE",
+    "macdeployqt"
+)
+for ($index = 0; $index -lt $rootLines.Count; $index++) {
+    $trimmed = $rootLines[$index].TrimStart()
+    if ($trimmed.StartsWith("#")) {
+        continue
+    }
+    foreach ($token in $unsupportedPlatformTokens) {
+        if ($rootLines[$index].Contains($token)) {
+            $violations += (("CMakeLists.txt:{0}: unsupported application-platform token '{1}'; " +
+                             "remove the dead branch instead of advertising non-Windows support") -f
+                            ($index + 1), $token)
+        }
+    }
+}
+
+# Configure rejects non-Windows hosts before any target is created, so first-party product source
+# must contain only the shipped Windows implementation: platform branches and POSIX host-I/O shims
+# are dead code that can drift away from the executable path. Both checks run over every C/C++
+# file the production-source walk below collects. A platform macro is matched as a whole
+# identifier, so a name that merely contains WIN32 (a SAK_WIN32MCP_..._H header guard,
+# WIN32_LEAN_AND_MEAN) is not a platform test. Q_UNUSED is caught by the warning-silence check.
+$deadPlatformGuardPattern = ('^\s*#\s*(?:if|ifdef|ifndef|elif)\b.*(?<![A-Za-z0-9_])' +
+    '(?:_WIN32|_WIN64|WIN32|Q_OS_[A-Za-z0-9_]+|SAK_PLATFORM_[A-Za-z0-9_]+|PLATFORM_WINDOWS|' +
+    '_MSC_VER|__linux(?:__)?|__APPLE__|__unix(?:__)?|SEEK_DATA|SEEK_HOLE)(?![A-Za-z0-9_])')
+$deadHostCompatibilityTokens = @(
+    "#include <sys/resource.h>",
+    "#include <sys/stat.h>",
+    "#include <sys/statvfs.h>",
+    "#include <unistd.h>"
+)
+
+# Warning-silencing markers are forbidden across all first-party production C/C++ source. An
+# unused callback parameter can be unnamed; a discarded value must be asserted, reported, or
+# removed. File-wide third-party trees stay byte-identical to upstream and are outside this gate.
+$productionSourceFiles = @()
+$profileProgressConsumerPaths = @(
+    "src\gui\user_profile_backup_wizard_execute.cpp",
+    "src\gui\user_profile_restore_wizard_execute.cpp"
+)
+foreach ($sourceRoot in @((Join-Path $root "src"), (Join-Path $root "include"))) {
+    $productionSourceFiles += Get-ChildItem -LiteralPath $sourceRoot -Recurse -File |
+        Where-Object {
+            $_.Extension -in @(".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx") -and
+            $_.FullName -notmatch '[\\/]third_party[\\/]'
+        }
+}
+foreach ($sourceFile in ($productionSourceFiles | Sort-Object FullName -Unique)) {
+    $relativePath = $sourceFile.FullName.Substring($root.Length).TrimStart('\', '/')
+    $lineNo = 0
+    foreach ($line in (Get-Content -LiteralPath $sourceFile.FullName)) {
+        $lineNo++
+        if ($line.TrimStart().StartsWith("//")) {
+            continue
+        }
+        if ($line -match $deadPlatformGuardPattern) {
+            $violations += ("${relativePath}:${lineNo}: dead application-platform guard; " +
+                            "configure already rejects non-Windows targets")
+        }
+        foreach ($token in $deadHostCompatibilityTokens) {
+            if ($line.Contains($token)) {
+                $violations += ("${relativePath}:${lineNo}: dead host-compatibility token " +
+                                "'$token' in Windows-only product module")
+            }
+        }
+        foreach ($marker in @("Q_UNUSED(", "[[maybe_unused]]")) {
+            if ($line.Contains($marker)) {
+                $violations += ("${relativePath}:${lineNo}: forbidden production warning " +
+                                "silence '$marker'; remove the parameter/value or use it")
+            }
+        }
+        if ($relativePath -in $profileProgressConsumerPaths -and
+            $line -match '^\s*\(void\)\s*[A-Za-z_][A-Za-z0-9_]*\s*;') {
+            $violations += ("${relativePath}:${lineNo}: forbidden unused profile-progress value " +
+                            "cast; consume the signal value in the progress UI")
+        }
+    }
+}
+
+# Test registration is part of the Windows-only product contract. A tracked test source or a
+# required PowerShell-driven CTest must fail configure when unavailable, never disappear behind an
+# EXISTS/TARGET/WIN32 guard or a warning that says it was skipped.
+$testsCmakePath = Join-Path $root "tests/CMakeLists.txt"
+$testsCmakeLines = @(Get-Content -LiteralPath $testsCmakePath)
+$testsCmakeText = $testsCmakeLines -join "`n"
+for ($index = 0; $index -lt $testsCmakeLines.Count; $index++) {
+    $line = $testsCmakeLines[$index]
+    if ($line.TrimStart().StartsWith("#")) { continue }
+    if ($line -match '^\s*message\s*\(\s*WARNING.*\bskipp') {
+        $violations += (("tests/CMakeLists.txt:{0}: test omission is a warning; fail configure " +
+                         "instead of skipping the test") -f ($index + 1))
+    }
+    if ($line -match '^\s*if\s*\(\s*WIN32\s+AND\s+EXISTS.*[\\/]test_[^\"]+') {
+        $violations += (("tests/CMakeLists.txt:{0}: tracked Windows test source is conditional; " +
+                         "add it directly so a missing file fails configure") -f ($index + 1))
+    }
+    if ($line -match '^\s*if\s*\(\s*TARGET\s+\S+\s+AND\s+WIN32\s*\)') {
+        $violations += (("tests/CMakeLists.txt:{0}: required CTest is conditional on a target; " +
+                         "the target and test are mandatory on this Windows-only build") -f
+                        ($index + 1))
+    }
+}
+
+$requiredTrackedTestSources = @(
+    "unit/test_win32_mcp_key_chord.cpp",
+    "unit/test_win32_mcp_input_plan.cpp",
+    "unit/test_backup_destination_guard.cpp",
+    "unit/test_win32_mcp_server.cpp",
+    "unit/test_browser_bridge_security.cpp",
+    "unit/test_browser_bridge_pipe.cpp",
+    "unit/test_browser_bridge_relay.cpp"
+)
+foreach ($relativePath in $requiredTrackedTestSources) {
+    $trackedSourcePath = Join-Path (Join-Path $root "tests") $relativePath
+    if (-not (Test-Path -LiteralPath $trackedSourcePath -PathType Leaf)) {
+        $violations += "tests/${relativePath}: required tracked test source is missing"
+    }
+}
+
+if ($testsCmakeText -notmatch
+    '(?ms)find_program\s*\(\s*SAK_TEST_POWERSHELL_PATH\b.*?if\s*\(\s*NOT\s+SAK_TEST_POWERSHELL_PATH\b.*?\).*?message\s*\(\s*FATAL_ERROR') {
+    $violations += ("tests/CMakeLists.txt: required PowerShell CTests lack a fail-closed " +
+                    "find_program/FATAL_ERROR preflight")
+}
+$firstTargetLine = 0
+for ($index = 0; $index -lt $rootLines.Count; $index++) {
+    if ($rootLines[$index] -match '^\s*add_(?:library|executable)\s*\(') {
+        $firstTargetLine = $index + 1
+        break
+    }
+}
+if ($firstTargetLine -eq 0) {
+    $violations += "CMakeLists.txt: no add_library/add_executable target found"
+}
+foreach ($analyzerVariable in @("CMAKE_CXX_CLANG_TIDY", "CMAKE_CXX_CPPCHECK")) {
+    $assignmentLine = 0
+    for ($index = 0; $index -lt $rootLines.Count; $index++) {
+        if ($rootLines[$index] -match ("^\s*set\s*\(\s*" + $analyzerVariable + "\b")) {
+            $assignmentLine = $index + 1
+            break
+        }
+    }
+    if ($assignmentLine -eq 0) {
+        $violations += "CMakeLists.txt: missing $analyzerVariable assignment"
+    } elseif ($firstTargetLine -gt 0 -and $assignmentLine -gt $firstTargetLine) {
+        $violations += ("CMakeLists.txt:{0}: {1} is assigned after first target at line {2}; " +
+                        "build-integrated analysis would not instrument existing targets" -f
+                        $assignmentLine, $analyzerVariable, $firstTargetLine)
+    }
+}
+
+if ($violations.Count -gt 0) {
+    Write-Host "Build-system lint FAILED: invalid CMake gate configuration --"
+    $violations | ForEach-Object { Write-Host "  $_" }
+    exit 1
+}
+
+Write-Host ("Build-system lint passed: Windows-only boundary enforced, no dead CMAKE_BUILD_TYPE " +
+           "guards, coverage warning silences, or production unused-value silences; analyzer " +
+           "setup precedes target creation ($($cmakeFiles.Count) CMake files).")
+exit 0

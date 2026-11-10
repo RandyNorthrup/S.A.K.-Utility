@@ -9,9 +9,12 @@
 #include "sak/email_attachment_saver.h"
 #include "sak/email_constants.h"
 #include "sak/email_inspector_controller.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
+#include "sak/widget_helpers.h"
 
 #include <QApplication>
 #include <QClipboard>
@@ -29,12 +32,9 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
-namespace sak {
+#include <array>
 
-namespace {
-constexpr int kAttachMethodEmbeddedMessage = 5;
-constexpr int kAttachMethodOleObject = 6;
-}  // namespace
+namespace sak {
 
 // ============================================================================
 // Table column indices
@@ -62,11 +62,11 @@ static const QString kFilterArchives = QStringLiteral("Archives");
 static const QString kFilterAudio = QStringLiteral("Audio/Video");
 static const QString kFilterOther = QStringLiteral("Other");
 
-QString attachmentKey(const AttachmentEntry& entry) {
+static QString attachmentKey(const AttachmentEntry& entry) {
     return QStringLiteral("%1:%2").arg(entry.message_node_id).arg(entry.attachment_index);
 }
 
-QTableWidgetItem* makeAttachmentSelectItem(const AttachmentEntry& entry, bool checked) {
+static QTableWidgetItem* makeAttachmentSelectItem(const AttachmentEntry& entry, bool checked) {
     auto* item = new QTableWidgetItem();
     item->setFlags((item->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsEnabled) &
                    ~Qt::ItemIsEditable);
@@ -121,6 +121,7 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createToolbarRow() {
     toolbar->setSpacing(ui::kSpacingMedium);
 
     m_search_edit = new QLineEdit(this);
+    m_search_edit->setAccessibleName(tr("Search attachments"));
     m_search_edit->setPlaceholderText(
         tr("\xF0\x9F\x94\x8D Search attachments by filename or email..."));
     m_search_edit->setClearButtonEnabled(true);
@@ -137,6 +138,7 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createToolbarRow() {
         m_search_timer, &QTimer::timeout, this, &EmailAttachmentsBrowserDialog::onSearchTimerFired);
 
     m_type_filter = new QComboBox(this);
+    m_type_filter->setAccessibleName(tr("Attachment type"));
     m_type_filter->addItems(
         {kFilterAll, kFilterImages, kFilterDocuments, kFilterArchives, kFilterAudio, kFilterOther});
     m_type_filter->setMinimumWidth(email::kAttachmentTypeFilterMinWidth);
@@ -151,6 +153,7 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createToolbarRow() {
 
 QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
     m_table = new QTableWidget(this);
+    m_table->setAccessibleName(tr("Attachments"));
     m_table->setColumnCount(ColCount);
     m_table->setHorizontalHeaderLabels({tr("Select"),
                                         tr("Filename"),
@@ -159,13 +162,9 @@ QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
                                         tr("Source Email"),
                                         tr("Sender"),
                                         tr("Date")});
-    m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    configureStandardTable(m_table, QAbstractItemView::ExtendedSelection);
     m_table->setSortingEnabled(true);
-    m_table->setAlternatingRowColors(true);
     m_table->horizontalHeader()->setStretchLastSection(true);
-    m_table->verticalHeader()->setVisible(false);
 
     m_table->horizontalHeader()->setSectionResizeMode(ColSelect, QHeaderView::Fixed);
     m_table->setColumnWidth(ColSelect, email::kAttachmentIndicatorColumnWidth);
@@ -174,6 +173,8 @@ QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
     m_table->setColumnWidth(ColType, email::kTypeColumnWidth);
     m_table->setColumnWidth(ColSourceSubject, email::kAttachmentSourceSubjectColumnWidth);
     m_table->setColumnWidth(ColSourceSender, email::kAttachmentSourceSenderColumnWidth);
+    // The Select column's fixed width cut its header to "Selec" (UI re-check N4).
+    fitHeaderLabels(m_table);
 
     connect(m_table,
             &QTableWidget::itemSelectionChanged,
@@ -201,6 +202,11 @@ QTableWidget* EmailAttachmentsBrowserDialog::createAttachmentTable() {
             this,
             &EmailAttachmentsBrowserDialog::onTableContextMenu);
 
+    // Built after the widget so the overlay binds to the live model. A loading message
+    // is driven over the table for the duration of the mailbox attachment scan.
+    m_table_empty_state = new ui::ViewEmptyState(m_table,
+                                                 tr("No attachments match the current filter"));
+
     return m_table;
 }
 
@@ -209,6 +215,9 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createButtonRow() {
     buttons->setSpacing(ui::kSpacingMedium);
 
     m_status_label = new QLabel(this);
+    m_status_label->setObjectName(QStringLiteral("emailAttachmentBrowserStatus"));
+    m_status_label->setTextFormat(Qt::PlainText);
+    m_status_label->setAccessibleDescription(tr("Attachment browser status"));
     m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextSecondary));
     buttons->addWidget(m_status_label, 1);
 
@@ -218,7 +227,8 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createButtonRow() {
     connect(m_save_selected_button,
             &QPushButton::clicked,
             this,
-            &EmailAttachmentsBrowserDialog::onSaveSelectedClicked);
+            &EmailAttachmentsBrowserDialog::onSaveSelectedClicked,
+            Qt::QueuedConnection);
     buttons->addWidget(m_save_selected_button);
 
     m_save_all_button = new QPushButton(tr("Save All Visible"), this);
@@ -227,7 +237,8 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createButtonRow() {
     connect(m_save_all_button,
             &QPushButton::clicked,
             this,
-            &EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked);
+            &EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked,
+            Qt::QueuedConnection);
     buttons->addWidget(m_save_all_button);
 
     m_close_button = new QPushButton(tr("Close"), this);
@@ -239,7 +250,7 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createButtonRow() {
 }
 
 // ============================================================================
-// Folder collection — recursively gather all folder IDs
+// Folder collection -- recursively gather all folder IDs
 // ============================================================================
 
 void EmailAttachmentsBrowserDialog::collectFolderIds(const PstFolderTree& tree) {
@@ -258,12 +269,19 @@ void EmailAttachmentsBrowserDialog::collectFolderIdsRecursive(const PstFolder& f
 }
 
 // ============================================================================
-// Scan — iterate all folders, collect items with attachments
+// Scan -- iterate all folders, collect items with attachments
 // ============================================================================
 
 void EmailAttachmentsBrowserDialog::startScan() {
+    if (m_controller == nullptr) {
+        // Fail closed: every request below would dereference it. Say so instead of crashing.
+        m_progress_bar->hide();
+        m_status_label->setText(tr("No mailbox reader is available. Nothing was scanned."));
+        return;
+    }
+    m_table_empty_state->setLoading(tr("Scanning mailbox for attachments..."));
     m_folders_scanned = 0;
-    m_progress_bar->setRange(0, m_all_folder_ids.size());
+    m_progress_bar->setRange(0, static_cast<int>(m_all_folder_ids.size()));
     m_progress_bar->setValue(0);
     m_status_label->setText(tr("Scanning folders for attachments..."));
 
@@ -272,13 +290,33 @@ void EmailAttachmentsBrowserDialog::startScan() {
             this,
             &EmailAttachmentsBrowserDialog::onFolderItemsLoaded);
     connect(m_controller,
+            &::EmailInspectorController::folderItemsFailed,
+            this,
+            &EmailAttachmentsBrowserDialog::onFolderItemsFailed);
+    connect(m_controller,
             &::EmailInspectorController::itemDetailLoaded,
             this,
             &EmailAttachmentsBrowserDialog::onItemDetailLoaded);
     connect(m_controller,
+            &::EmailInspectorController::itemDetailFailed,
+            this,
+            &EmailAttachmentsBrowserDialog::onItemDetailFailed);
+    connect(m_controller,
             &::EmailInspectorController::attachmentContentReady,
             this,
             &EmailAttachmentsBrowserDialog::onAttachmentContentReady);
+    connect(m_controller,
+            &::EmailInspectorController::attachmentContentFailed,
+            this,
+            &EmailAttachmentsBrowserDialog::onAttachmentContentFailed);
+    connect(m_controller,
+            &::EmailInspectorController::mboxMessagesLoaded,
+            this,
+            &EmailAttachmentsBrowserDialog::onMboxMessagesLoaded);
+    connect(m_controller,
+            &::EmailInspectorController::mboxMessageDetailLoaded,
+            this,
+            &EmailAttachmentsBrowserDialog::onMboxMessageDetailLoaded);
     connect(m_controller,
             &::EmailInspectorController::errorOccurred,
             this,
@@ -289,12 +327,13 @@ void EmailAttachmentsBrowserDialog::startScan() {
 
 void EmailAttachmentsBrowserDialog::scanNextFolder() {
     if (m_folders_scanned >= m_all_folder_ids.size()) {
-        // All folders scanned — now load details for items with attachments
-        m_details_total = m_pending_detail_ids.size();
+        // All folders scanned -- now load details for items with attachments
+        m_details_total = static_cast<int>(m_pending_detail_ids.size());
         m_details_loaded = 0;
         if (m_details_total == 0) {
             m_scan_complete = true;
             m_progress_bar->hide();
+            m_table_empty_state->clearLoading();
             updateStatusLabel();
             return;
         }
@@ -306,7 +345,7 @@ void EmailAttachmentsBrowserDialog::scanNextFolder() {
         return;
     }
     m_current_folder_offset = 0;
-    uint64_t folder_id = m_all_folder_ids[m_folders_scanned];
+    const uint64_t folder_id = m_all_folder_ids[m_folders_scanned];
     m_controller->loadFolderItems(folder_id, 0, email::kMaxItemsPerLoad);
 }
 
@@ -314,9 +353,10 @@ void EmailAttachmentsBrowserDialog::requestNextDetail() {
     if (m_details_loaded >= m_pending_detail_ids.size()) {
         m_scan_complete = true;
         m_progress_bar->hide();
+        m_table_empty_state->clearLoading();
         rebuildTable();
         updateStatusLabel();
-        m_save_all_button->setEnabled(!m_all_attachments.isEmpty());
+        updateSaveControls();
         return;
     }
     m_controller->loadItemDetail(m_pending_detail_ids[m_details_loaded]);
@@ -326,13 +366,26 @@ void EmailAttachmentsBrowserDialog::requestNextDetail() {
 // Data loading slots
 // ============================================================================
 
-void EmailAttachmentsBrowserDialog::onFolderItemsLoaded(uint64_t /*folder_id*/,
+void EmailAttachmentsBrowserDialog::onFolderItemsLoaded(uint64_t folder_id,
                                                         QVector<sak::PstItemSummary> items,
                                                         int total) {
+    // Correlate the arrival with the folder this dialog actually asked for. The controller is
+    // shared and onErrorOccurred can advance the cursor while a request is still in flight, so
+    // an uncorrelated arrival would be counted against the wrong folder -- and once every
+    // folder has been scanned there is no slot left to index at all, making
+    // m_all_folder_ids[m_folders_scanned] an out-of-bounds read.
+    if (m_folders_scanned >= m_all_folder_ids.size()) {
+        return;
+    }
+    const uint64_t expected_folder_id = m_all_folder_ids[m_folders_scanned];
+    if (folder_id != expected_folder_id) {
+        return;
+    }
+
     for (const auto& item : items) {
         if (item.has_attachments) {
             m_pending_detail_ids.append(item.node_id);
-            m_message_folder_map.insert(item.node_id, m_all_folder_ids[m_folders_scanned]);
+            m_message_folder_map.insert(item.node_id, expected_folder_id);
         }
     }
 
@@ -342,7 +395,7 @@ void EmailAttachmentsBrowserDialog::onFolderItemsLoaded(uint64_t /*folder_id*/,
     if (m_current_folder_offset < total && !items.isEmpty()) {
         QTimer::singleShot(0, this, [this]() {
             if (m_folders_scanned < m_all_folder_ids.size()) {
-                uint64_t fid = m_all_folder_ids[m_folders_scanned];
+                const uint64_t fid = m_all_folder_ids[m_folders_scanned];
                 m_controller->loadFolderItems(fid,
                                               m_current_folder_offset,
                                               email::kMaxItemsPerLoad);
@@ -363,11 +416,6 @@ void EmailAttachmentsBrowserDialog::onFolderItemsLoaded(uint64_t /*folder_id*/,
 
 void EmailAttachmentsBrowserDialog::onItemDetailLoaded(sak::PstItemDetail detail) {
     for (const auto& att : detail.attachments) {
-        // Skip embedded messages (method 5) and OLE objects (method 6)
-        if (att.attach_method == kAttachMethodEmbeddedMessage ||
-            att.attach_method == kAttachMethodOleObject) {
-            continue;
-        }
         AttachmentEntry entry;
         entry.message_node_id = detail.node_id;
         entry.source_folder_id = m_message_folder_map.value(detail.node_id, 0);
@@ -394,6 +442,58 @@ void EmailAttachmentsBrowserDialog::onItemDetailLoaded(sak::PstItemDetail detail
     QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::requestNextDetail);
 }
 
+// An MBOX is one folder of plain messages. Its rows take the same route as a PST's, so paging, the
+// has-attachments gate and the table all behave identically; the message index is the id.
+void EmailAttachmentsBrowserDialog::onMboxMessagesLoaded(QVector<sak::MboxMessage> messages,
+                                                         int total) {
+    QVector<sak::PstItemSummary> items;
+    items.reserve(messages.size());
+    for (const auto& message : messages) {
+        sak::PstItemSummary item;
+        item.node_id = static_cast<uint64_t>(message.message_index);
+        item.has_attachments = message.has_attachments;
+        items.append(std::move(item));
+    }
+    const uint64_t folder_id =
+        m_folders_scanned < m_all_folder_ids.size() ? m_all_folder_ids[m_folders_scanned] : 0;
+    onFolderItemsLoaded(folder_id, std::move(items), total);
+}
+
+void EmailAttachmentsBrowserDialog::onMboxMessageDetailLoaded(sak::MboxMessageDetail detail) {
+    sak::PstItemDetail item;
+    item.node_id = static_cast<uint64_t>(detail.message_index);
+    item.subject = detail.subject;
+    item.sender_name = detail.from;
+    item.date = detail.date;
+    item.attachments = detail.attachments;
+    onItemDetailLoaded(std::move(item));
+}
+
+void EmailAttachmentsBrowserDialog::onFolderItemsFailed(uint64_t folder_id,
+                                                        int offset,
+                                                        const QString& error) {
+    if (m_folders_scanned >= m_all_folder_ids.size() ||
+        m_all_folder_ids.at(m_folders_scanned) != folder_id || m_current_folder_offset != offset) {
+        return;
+    }
+    surfaceError(tr("Skipped folder %1").arg(folder_id), error);
+    ++m_folders_scanned;
+    m_current_folder_offset = 0;
+    m_progress_bar->setValue(m_folders_scanned);
+    QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::scanNextFolder);
+}
+
+void EmailAttachmentsBrowserDialog::onItemDetailFailed(uint64_t item_id, const QString& error) {
+    if (m_details_loaded >= m_pending_detail_ids.size() ||
+        m_pending_detail_ids.at(m_details_loaded) != item_id) {
+        return;
+    }
+    surfaceError(tr("Skipped item %1").arg(item_id), error);
+    ++m_details_loaded;
+    m_progress_bar->setValue(m_details_loaded);
+    QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::requestNextDetail);
+}
+
 // ============================================================================
 // Table management
 // ============================================================================
@@ -412,7 +512,7 @@ void EmailAttachmentsBrowserDialog::rebuildTable() {
     m_table->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_table);
     m_table->setSortingEnabled(false);
-    m_table->setRowCount(matching.size());
+    m_table->setRowCount(static_cast<int>(matching.size()));
 
     for (int row = 0; row < matching.size(); ++row) {
         const int idx = matching.at(row);
@@ -425,9 +525,10 @@ void EmailAttachmentsBrowserDialog::rebuildTable() {
         name_item->setData(Qt::UserRole, idx);
         m_table->setItem(row, ColFilename, name_item);
 
-        auto* size_item = new QTableWidgetItem(formatBytes(entry.size_bytes));
-        size_item->setData(Qt::UserRole + 1, entry.size_bytes);
-        m_table->setItem(row, ColSize, size_item);
+        m_table->setItem(row,
+                         ColSize,
+                         new sak::NumericSortTableItem(formatBytes(entry.size_bytes),
+                                                       entry.size_bytes));
 
         m_table->setItem(row,
                          ColType,
@@ -445,34 +546,33 @@ void EmailAttachmentsBrowserDialog::rebuildTable() {
 
     m_table->setSortingEnabled(true);
     m_table->setUpdatesEnabled(true);
-    m_save_all_button->setEnabled(m_table->rowCount() > 0);
-    m_save_selected_button->setEnabled(!m_checked_attachment_keys.isEmpty());
+    updateSaveControls();
 }
 
 bool EmailAttachmentsBrowserDialog::matchesFilters(const AttachmentEntry& entry) const {
     // Text search
     if (!m_search_text.isEmpty()) {
-        bool found = entry.filename.contains(m_search_text, Qt::CaseInsensitive) ||
-                     entry.source_subject.contains(m_search_text, Qt::CaseInsensitive) ||
-                     entry.source_sender.contains(m_search_text, Qt::CaseInsensitive);
+        const bool found = entry.filename.contains(m_search_text, Qt::CaseInsensitive) ||
+                           entry.source_subject.contains(m_search_text, Qt::CaseInsensitive) ||
+                           entry.source_sender.contains(m_search_text, Qt::CaseInsensitive);
         if (!found) {
             return false;
         }
     }
 
     // Type filter
-    QString selected = m_type_filter->currentText();
+    const QString selected = m_type_filter->currentText();
     if (selected == kFilterAll) {
         return true;
     }
-    QString category = typeCategory(entry.mime_type, entry.filename);
+    const QString category = typeCategory(entry.mime_type, entry.filename);
     return category == selected;
 }
 
 void EmailAttachmentsBrowserDialog::updateStatusLabel() {
-    int visible = m_table->rowCount();
-    int total = m_all_attachments.size();
-    const int checked = m_checked_attachment_keys.size();
+    const int visible = m_table->rowCount();
+    const int total = static_cast<int>(m_all_attachments.size());
+    const int checked = static_cast<int>(m_checked_attachment_keys.size());
     if (m_scan_complete) {
         if (visible == total) {
             m_status_label->setText(tr("%1 attachments, %2 selected").arg(total).arg(checked));
@@ -507,7 +607,7 @@ void EmailAttachmentsBrowserDialog::onTypeFilterChanged(int /*index*/) {
 }
 
 void EmailAttachmentsBrowserDialog::onSelectionChanged() {
-    m_save_selected_button->setEnabled(!m_checked_attachment_keys.isEmpty());
+    updateSaveControls();
     if (m_scan_complete) {
         updateStatusLabel();
     }
@@ -519,13 +619,17 @@ void EmailAttachmentsBrowserDialog::onTableContextMenu(const QPoint& pos) {
         return;
     }
 
-    int row = item->row();
+    const int row = item->row();
     auto* name_item = m_table->item(row, ColFilename);
     if (name_item == nullptr) {
         return;
     }
-    int att_idx = name_item->data(Qt::UserRole).toInt();
-    if (att_idx < 0 || att_idx >= m_all_attachments.size()) {
+    // A missing or wrong-typed row index coerces to 0 through a bare toInt(), which would
+    // silently offer the FIRST attachment for a row that no longer resolves. Fail closed.
+    bool index_ok = false;
+    const int att_idx = name_item->data(Qt::UserRole).toInt(&index_ok);
+    if (!index_ok || att_idx < 0 || att_idx >= m_all_attachments.size()) {
+        m_status_label->setText(tr("That row no longer resolves to an attachment."));
         return;
     }
     const auto& entry = m_all_attachments[att_idx];
@@ -549,120 +653,176 @@ void EmailAttachmentsBrowserDialog::onTableContextMenu(const QPoint& pos) {
 // Save actions
 // ============================================================================
 
+void EmailAttachmentsBrowserDialog::startBatch(const QString& dir,
+                                               const QVector<AttachmentRef>& refs) {
+    if (!m_batch_save.begin(dir, refs)) {
+        m_status_label->setText(tr("Could not start the save. Nothing was written."));
+        return;
+    }
+    // Lock the save controls for the duration: arrivals from a second batch begun
+    // now would interleave with this one's and land in each other's slots.
+    updateSaveControls();
+    m_status_label->setText(
+        tr("Saving %1...").arg(countOf(refs.size(), tr("attachment"), tr("attachments"))));
+    for (const auto& ref : refs) {
+        m_controller->loadAttachmentContent(ref.message_id, ref.index);
+    }
+}
+
+void EmailAttachmentsBrowserDialog::updateSaveControls() {
+    const bool idle = !m_batch_save.isActive();
+    m_save_selected_button->setEnabled(idle && !m_checked_attachment_keys.isEmpty());
+    m_save_all_button->setEnabled(idle && m_table->rowCount() > 0);
+}
+
 void EmailAttachmentsBrowserDialog::saveOneAttachment(const AttachmentEntry& entry) {
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Save Attachment"));
+    if (m_batch_save.isActive()) {
+        m_status_label->setText(tr("A save is already running. Wait for it to finish."));
+        return;
+    }
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Save Attachment"));
     if (dir.isEmpty()) {
         return;
     }
-    m_batch_save.begin(dir, 1);
-    m_status_label->setText(tr("Saving attachment..."));
-    m_controller->loadAttachmentContent(entry.message_node_id, entry.attachment_index);
+    const QVector<AttachmentRef> refs{
+        AttachmentRef{.message_id = entry.message_node_id, .index = entry.attachment_index}};
+    startBatch(dir, refs);
 }
 
 void EmailAttachmentsBrowserDialog::onSaveSelectedClicked() {
-    if (m_checked_attachment_keys.isEmpty()) {
+    if (m_batch_save.isActive() || m_checked_attachment_keys.isEmpty()) {
         return;
     }
 
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Save Selected Attachments"));
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Save Selected Attachments"));
     if (dir.isEmpty()) {
         return;
     }
 
-    int count = 0;
-    QVector<std::pair<uint64_t, int>> to_save;
+    QVector<AttachmentRef> refs;
+    refs.reserve(m_all_attachments.size());
     for (const auto& entry : m_all_attachments) {
         if (!m_checked_attachment_keys.contains(attachmentKey(entry))) {
             continue;
         }
-        to_save.append({entry.message_node_id, entry.attachment_index});
-        ++count;
+        refs.append(
+            AttachmentRef{.message_id = entry.message_node_id, .index = entry.attachment_index});
     }
-    if (count == 0) {
+    if (refs.isEmpty()) {
         return;
     }
-    m_batch_save.begin(dir, count);
-    m_status_label->setText(tr("Saving %1 attachments...").arg(count));
-    for (const auto& [node_id, att_index] : to_save) {
-        m_controller->loadAttachmentContent(node_id, att_index);
-    }
+    startBatch(dir, refs);
 }
 
 void EmailAttachmentsBrowserDialog::onSaveAllVisibleClicked() {
-    if (m_table->rowCount() == 0) {
+    if (m_batch_save.isActive() || m_table->rowCount() == 0) {
         return;
     }
 
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Save All Visible Attachments"));
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Save All Visible Attachments"));
     if (dir.isEmpty()) {
         return;
     }
 
-    int count = 0;
-    QVector<std::pair<uint64_t, int>> to_save;
+    QVector<AttachmentRef> refs;
+    if (!collectVisibleAttachmentRefs(&refs)) {
+        m_status_label->setText(
+            tr("The table changed while the save was starting. Nothing was written."));
+        return;
+    }
+    if (refs.isEmpty()) {
+        return;
+    }
+    startBatch(dir, refs);
+}
+
+// False when any visible row fails to resolve to a real attachment. A bare toInt() would turn
+// a missing or wrong-typed row index into 0 -- saving the FIRST attachment in place of the row
+// the user is looking at -- and skipping such a row would make "Save All Visible" write a
+// silent subset. Both are fail-closed here: one bad row abandons the whole batch.
+bool EmailAttachmentsBrowserDialog::collectVisibleAttachmentRefs(QVector<AttachmentRef>* refs) {
+    refs->reserve(m_table->rowCount());
     for (int row = 0; row < m_table->rowCount(); ++row) {
         auto* item = m_table->item(row, ColFilename);
         if (item == nullptr) {
-            continue;
+            return false;
         }
-        int att_idx = item->data(Qt::UserRole).toInt();
-        if (att_idx < 0 || att_idx >= m_all_attachments.size()) {
-            continue;
+        bool index_ok = false;
+        const int att_idx = item->data(Qt::UserRole).toInt(&index_ok);
+        if (!index_ok || att_idx < 0 || att_idx >= m_all_attachments.size()) {
+            return false;
         }
         const auto& entry = m_all_attachments[att_idx];
-        to_save.append({entry.message_node_id, entry.attachment_index});
-        ++count;
+        refs->append(
+            AttachmentRef{.message_id = entry.message_node_id, .index = entry.attachment_index});
     }
-    if (count == 0) {
-        return;
-    }
-    m_batch_save.begin(dir, count);
-    m_status_label->setText(tr("Saving %1 attachments...").arg(count));
-    for (const auto& [node_id, att_index] : to_save) {
-        m_controller->loadAttachmentContent(node_id, att_index);
-    }
+    return true;
 }
 
-void EmailAttachmentsBrowserDialog::onAttachmentContentReady(uint64_t /*message_id*/,
-                                                             int /*index*/,
-                                                             QByteArray content,
-                                                             QString filename) {
-    if (!m_batch_save.isActive()) {
+// Attachment payloads arrive here from the parser thread. Both are taken by const reference:
+// on a QUEUED connection Qt copies each argument into the receiving thread's event queue and binds
+// the parameter to THAT copy, which outlives the slot body -- so a const reference is safe and
+// avoids a second copy of the whole attachment. The body only reads them.
+void EmailAttachmentsBrowserDialog::onAttachmentContentReady(uint64_t message_id,
+                                                             int index,
+                                                             const QByteArray& content,
+                                                             const QString& filename) {
+    // Record only what this batch asked for. A stray arrival -- a leftover from a
+    // previous batch, or one requested by another view -- would otherwise be
+    // written into one of this batch's slots and counted as that slot's save.
+    const AttachmentRef ref{.message_id = message_id, .index = index};
+    if (!m_batch_save.expects(ref)) {
         return;
     }
 
-    m_batch_save.recordOne(filename, content);
+    const auto result = m_batch_save.recordOne(ref, filename, content);
+    if (!result.success) {
+        sak::logWarning("Attachment save failed: {}", result.error_message.toStdString());
+    }
     if (m_batch_save.isComplete()) {
         m_status_label->setText(m_batch_save.summaryText());
         m_batch_save.reset();
+        updateSaveControls();
+    }
+}
+
+void EmailAttachmentsBrowserDialog::onAttachmentContentFailed(uint64_t message_id,
+                                                              int index,
+                                                              const QString& error) {
+    // Symmetric to onAttachmentContentReady: count the failure only against the exact
+    // attachment this batch requested. recordError refuses any ref this batch is not
+    // waiting on, so an unrelated controller failure -- one for another view, or a
+    // request refused for a different operation -- can neither inflate the failed count
+    // nor complete the batch early. Every loadAttachmentContent request resolves to
+    // exactly one ready/failed, so the batch still always reaches its expected total.
+    const AttachmentRef ref{.message_id = message_id, .index = index};
+    if (!m_batch_save.recordError(ref)) {
+        return;
+    }
+    sak::logWarning(
+        "Attachment save error (message {} index {}): {}", message_id, index, error.toStdString());
+    if (m_batch_save.isComplete()) {
+        m_status_label->setText(m_batch_save.summaryText());
+        m_batch_save.reset();
+        updateSaveControls();
     }
 }
 
 void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& message) {
-    // During detail loading — skip this item and continue
-    if (!m_scan_complete && m_details_total > 0) {
-        ++m_details_loaded;
-        m_progress_bar->setValue(m_details_loaded);
-        QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::requestNextDetail);
-        return;
-    }
-    // During folder scanning — skip this folder and continue
-    if (m_folders_scanned < m_all_folder_ids.size()) {
-        ++m_folders_scanned;
-        m_current_folder_offset = 0;
-        m_progress_bar->setValue(m_folders_scanned);
-        QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::scanNextFolder);
-        return;
-    }
-    // During save — count as failure and update status
-    if (m_batch_save.isActive()) {
-        m_batch_save.recordError();
-        sak::logWarning("Attachment save error: {}", message.toStdString());
-        if (m_batch_save.isComplete()) {
-            m_status_label->setText(m_batch_save.summaryText());
-            m_batch_save.reset();
-        }
-    }
+    // Generic controller errors carry no request identity. They remain visible and logged,
+    // but only the identity-bearing failure slots above may advance scan/save state.
+    surfaceError(tr("Attachment browser error"), message);
+}
+
+void EmailAttachmentsBrowserDialog::surfaceError(const QString& context, const QString& message) {
+    const QString detail = message.trimmed().isEmpty()
+                               ? tr("Mailbox controller failed without diagnostic detail")
+                               : message.trimmed();
+    m_status_label->setText(tr("%1: %2").arg(context, detail));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
+    sak::logWarning("Email attachments browser: {}: {}",
+                    context.toStdString(),
+                    detail.toStdString());
 }
 
 // ============================================================================
@@ -670,25 +830,14 @@ void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& message) {
 // ============================================================================
 
 QString EmailAttachmentsBrowserDialog::formatBytes(qint64 bytes) {
-    constexpr qint64 kKilo = 1024;
-    constexpr qint64 kMega = kKilo * 1024;
-    constexpr qint64 kGiga = kMega * 1024;
-
-    if (bytes >= kGiga) {
-        return QStringLiteral("%1 GB").arg(static_cast<double>(bytes) / kGiga, 0, 'f', 1);
-    }
-    if (bytes >= kMega) {
-        return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / kMega, 0, 'f', 1);
-    }
-    if (bytes >= kKilo) {
-        return QStringLiteral("%1 KB").arg(static_cast<double>(bytes) / kKilo, 0, 'f', 1);
-    }
-    return QStringLiteral("%1 B").arg(bytes);
+    // GB now renders to two decimals rather than one, matching every other compact caller. That
+    // is the only visible change from sharing the formatter, and it is the point of sharing it.
+    return sak::formatBytes(bytes);
 }
 
-// Data-driven extension → category mapping
+// Data-driven extension -> category mapping
 static const QHash<QString, QString>& extensionCategories() {
-    static const QHash<QString, QString> map = {
+    static const QHash<QString, QString> kMap = {
         // Images
         {".jpg", kFilterImages},
         {".jpeg", kFilterImages},
@@ -719,7 +868,7 @@ static const QHash<QString, QString>& extensionCategories() {
         {".csv", kFilterDocuments},
         {".rtf", kFilterDocuments},
     };
-    return map;
+    return kMap;
 }
 
 struct MimePrefix {
@@ -728,34 +877,34 @@ struct MimePrefix {
 };
 
 static QString classifyByMime(const QString& lower_mime) {
-    static const MimePrefix prefixes[] = {
-        {"image/", &kFilterImages},
-        {"audio/", &kFilterAudio},
-        {"video/", &kFilterAudio},
-    };
-    for (const auto& [prefix, category] : prefixes) {
+    static const std::array<MimePrefix, 3> kPrefixes = {{
+        {.prefix = "image/", .category = &kFilterImages},
+        {.prefix = "audio/", .category = &kFilterAudio},
+        {.prefix = "video/", .category = &kFilterAudio},
+    }};
+    for (const auto& [prefix, category] : kPrefixes) {
         if (lower_mime.startsWith(QLatin1String(prefix))) {
             return *category;
         }
     }
 
-    static const QStringList archive_tokens = {QStringLiteral("zip"),
+    static const QStringList kArchiveTokens = {QStringLiteral("zip"),
                                                QStringLiteral("compressed"),
                                                QStringLiteral("archive")};
-    for (const auto& token : archive_tokens) {
+    for (const auto& token : kArchiveTokens) {
         if (lower_mime.contains(token)) {
             return kFilterArchives;
         }
     }
 
-    static const QStringList doc_tokens = {QStringLiteral("pdf"),
+    static const QStringList kDocTokens = {QStringLiteral("pdf"),
                                            QStringLiteral("document"),
                                            QStringLiteral("spreadsheet"),
                                            QStringLiteral("presentation"),
                                            QStringLiteral("msword"),
                                            QStringLiteral("ms-excel"),
                                            QStringLiteral("ms-powerpoint")};
-    for (const auto& token : doc_tokens) {
+    for (const auto& token : kDocTokens) {
         if (lower_mime.contains(token)) {
             return kFilterDocuments;
         }
@@ -766,17 +915,17 @@ static QString classifyByMime(const QString& lower_mime) {
 
 QString EmailAttachmentsBrowserDialog::typeCategory(const QString& mime_type,
                                                     const QString& filename) {
-    QString lower_name = filename.toLower();
-    int dot = lower_name.lastIndexOf(QLatin1Char('.'));
+    const QString lower_name = filename.toLower();
+    const int dot = static_cast<int>(lower_name.lastIndexOf(QLatin1Char('.')));
     if (dot >= 0) {
-        QString ext = lower_name.mid(dot);
+        const QString ext = lower_name.mid(dot);
         auto iter = extensionCategories().constFind(ext);
         if (iter != extensionCategories().constEnd()) {
             return iter.value();
         }
     }
 
-    QString result = classifyByMime(mime_type.toLower());
+    const QString result = classifyByMime(mime_type.toLower());
     return result.isEmpty() ? kFilterOther : result;
 }
 

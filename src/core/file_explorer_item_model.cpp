@@ -3,16 +3,27 @@
 
 #include "sak/file_explorer_item_model.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 
+#include <QBrush>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QHash>
+#include <QMutex>
+#include <QMutexLocker>
+#include <QPalette>
 #include <QStringList>
 
 #include <algorithm>
 #include <array>
+#include <string>
 #include <utility>
+
+#include <windows.h>
+
+#include <shellapi.h>
 
 namespace sak {
 
@@ -37,7 +48,7 @@ QString displayText(const FileManagementEntry& entry,
     case FileExplorerItemModel::NameColumn:
         return displayName(entry, showFileExtensions);
     case FileExplorerItemModel::TypeColumn:
-        return entry.type;
+        return FileExplorerItemModel::typeText(entry);
     case FileExplorerItemModel::SizeColumn:
         return entry.directory ? QString() : FileExplorerItemModel::sizeText(entry.size_bytes);
     case FileExplorerItemModel::ModifiedColumn:
@@ -93,7 +104,8 @@ int compareEntries(const FileManagementEntry& left,
     case FileExplorerItemModel::CreatedColumn:
         return compareDateTime(left.created_time, right.created_time, left.name, right.name);
     case FileExplorerItemModel::TypeColumn:
-        return QString::localeAwareCompare(left.type, right.type);
+        return QString::localeAwareCompare(FileExplorerItemModel::typeText(left),
+                                           FileExplorerItemModel::typeText(right));
     case FileExplorerItemModel::IdentifierColumn:
         return QString::localeAwareCompare(left.identifier, right.identifier);
     case FileExplorerItemModel::PathColumn:
@@ -108,6 +120,7 @@ QVariant entryRoleValue(const FileManagementEntry& entry, const int role) {
     using Model = FileExplorerItemModel;
     using Accessor = QVariant (*)(const FileManagementEntry&);
     static const QHash<int, Accessor> kAccessors{
+        {Qt::ToolTipRole, [](const FileManagementEntry& e) -> QVariant { return e.path; }},
         {Model::EntryPathRole, [](const FileManagementEntry& e) -> QVariant { return e.path; }},
         {Model::EntryNameRole, [](const FileManagementEntry& e) -> QVariant { return e.name; }},
         {Model::EntryTypeRole, [](const FileManagementEntry& e) -> QVariant { return e.type; }},
@@ -123,6 +136,7 @@ QVariant entryRoleValue(const FileManagementEntry& entry, const int role) {
          [](const FileManagementEntry& e) -> QVariant { return e.regular_file; }},
         {Model::EntrySymlinkRole,
          [](const FileManagementEntry& e) -> QVariant { return e.symlink; }},
+        {Model::EntryHiddenRole, [](const FileManagementEntry& e) -> QVariant { return e.hidden; }},
         {Model::EntryLinkTargetRole,
          [](const FileManagementEntry& e) -> QVariant { return e.link_target; }},
         {Model::EntryAttributeSummaryRole,
@@ -136,16 +150,41 @@ QVariant entryRoleValue(const FileManagementEntry& entry, const int role) {
     return accessor != kAccessors.end() ? accessor.value()(entry) : QVariant();
 }
 
+QVariant alignmentForColumn(const int column) {
+    return column == FileExplorerItemModel::SizeColumn ? QVariant(Qt::AlignRight | Qt::AlignVCenter)
+                                                       : QVariant(Qt::AlignLeft | Qt::AlignVCenter);
+}
+
 }  // namespace
 
 FileExplorerItemModel::FileExplorerItemModel(QObject* parent) : QAbstractTableModel(parent) {}
 
 int FileExplorerItemModel::rowCount(const QModelIndex& parent) const {
-    return parent.isValid() ? 0 : m_entries.size();
+    return parent.isValid() ? 0 : static_cast<int>(m_entries.size());
 }
 
 int FileExplorerItemModel::columnCount(const QModelIndex& parent) const {
     return parent.isValid() ? 0 : ColumnCount;
+}
+
+QStringList FileExplorerItemModel::tagsForEntry(const FileManagementEntry& entry) const {
+    return m_tag_provider ? m_tag_provider(entry.path) : QStringList{};
+}
+
+QVariant FileExplorerItemModel::decorationForColumn(const FileManagementEntry& entry,
+                                                    const int column) const {
+    if (column != NameColumn || !m_icon_provider) {
+        return {};
+    }
+    return m_icon_provider(entry);
+}
+
+QVariant FileExplorerItemModel::displayForColumn(const FileManagementEntry& entry,
+                                                 const int column) const {
+    if (column == TagsColumn) {
+        return tagsForEntry(entry).join(QStringLiteral(", "));
+    }
+    return displayText(entry, column, m_show_file_extensions);
 }
 
 QVariant FileExplorerItemModel::data(const QModelIndex& index, const int role) const {
@@ -154,17 +193,51 @@ QVariant FileExplorerItemModel::data(const QModelIndex& index, const int role) c
     }
 
     const FileManagementEntry& entry = m_entries.at(index.row());
+    if (role == Qt::CheckStateRole) {
+        return checkStateForEntry(entry, index.column());
+    }
+    if (role == EntryTagsRole) {
+        return tagsForEntry(entry);
+    }
+    // Presentation roles first; anything they do not answer falls through to
+    // the entry-field role table (a presentation role that answers "empty"
+    // has no entry-field mapping either, so the fallthrough stays a no-op).
+    const QVariant presentation = presentationData(entry, index.column(), role);
+    return presentation.isValid() ? presentation : entryRoleValue(entry, role);
+}
+
+QVariant FileExplorerItemModel::presentationData(const FileManagementEntry& entry,
+                                                 const int column,
+                                                 const int role) const {
     switch (role) {
     case Qt::DisplayRole:
-        return displayText(entry, index.column(), m_show_file_extensions);
-    case Qt::ToolTipRole:
-        return entry.path;
+        return displayForColumn(entry, column);
+    case Qt::EditRole:
+        return editForColumn(entry, column);
+    case Qt::DecorationRole:
+        return decorationForColumn(entry, column);
     case Qt::TextAlignmentRole:
-        return index.column() == SizeColumn ? QVariant(Qt::AlignRight | Qt::AlignVCenter)
-                                            : QVariant(Qt::AlignLeft | Qt::AlignVCenter);
+        return alignmentForColumn(column);
+    case Qt::ForegroundRole:
+        return foregroundForEntry(entry);
     default:
-        return entryRoleValue(entry, role);
+        return {};
     }
+}
+
+QVariant FileExplorerItemModel::foregroundForEntry(const FileManagementEntry& entry) const {
+    // Files dims cut items (ListedItem.Opacity 0.4); approximated with the
+    // disabled text color until the move-paste lands.
+    if (!m_cut_paths.contains(entry.path)) {
+        return {};
+    }
+    return QBrush(QGuiApplication::palette().color(QPalette::Disabled, QPalette::Text));
+}
+
+QVariant FileExplorerItemModel::editForColumn(const FileManagementEntry& entry,
+                                              const int column) const {
+    // Inline rename edits what the user sees (extension-hidden aware).
+    return column == NameColumn ? displayForColumn(entry, NameColumn) : QVariant();
 }
 
 QVariant FileExplorerItemModel::headerData(const int section,
@@ -181,6 +254,7 @@ QVariant FileExplorerItemModel::headerData(const int section,
         {CreatedColumn, QT_TR_NOOP("Created")},
         {IdentifierColumn, QT_TR_NOOP("ID")},
         {AttributesColumn, QT_TR_NOOP("Attributes")},
+        {TagsColumn, QT_TR_NOOP("Tags")},
         {PathColumn, QT_TR_NOOP("Path")},
     });
     const auto it = std::ranges::find(kHeaders, section, &std::pair<int, const char*>::first);
@@ -191,7 +265,74 @@ Qt::ItemFlags FileExplorerItemModel::flags(const QModelIndex& index) const {
     if (!index.isValid()) {
         return Qt::NoItemFlags;
     }
-    return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+    const Qt::ItemFlags drag = m_drag_payload_provider ? Qt::ItemIsDragEnabled : Qt::NoItemFlags;
+    // Only the name is editable (inline rename); every other column is data.
+    if (index.column() == NameColumn) {
+        const Qt::ItemFlags check = m_checkboxes_visible && m_check_state_provider
+                                        ? Qt::ItemIsUserCheckable
+                                        : Qt::NoItemFlags;
+        return Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable | drag | check;
+    }
+    return Qt::ItemIsEnabled | Qt::ItemIsSelectable | drag;
+}
+
+QMimeData* FileExplorerItemModel::mimeData(const QModelIndexList& indexes) const {
+    if (!m_drag_payload_provider) {
+        return nullptr;
+    }
+    // Collapse the per-column index list into unique, ordered rows.
+    QList<int> rows;
+    for (const QModelIndex& index : indexes) {
+        if (index.isValid() && !rows.contains(index.row())) {
+            rows.append(index.row());
+        }
+    }
+    std::ranges::sort(rows);
+    return rows.isEmpty() ? nullptr : m_drag_payload_provider(rows);
+}
+
+Qt::DropActions FileExplorerItemModel::supportedDragActions() const {
+    return Qt::CopyAction | Qt::MoveAction;
+}
+
+bool FileExplorerItemModel::setData(const QModelIndex& index,
+                                    const QVariant& value,
+                                    const int role) {
+    if (role == Qt::CheckStateRole && index.column() == NameColumn && hasEntry(index.row()) &&
+        m_check_toggle_handler) {
+        // Files checkbox click: (de)selects the item; the panel owns the
+        // selection model, so the toggle routes through the handler.
+        m_check_toggle_handler(m_entries.at(index.row()).path,
+                               value.value<Qt::CheckState>() == Qt::Checked);
+        return true;
+    }
+    if (role != Qt::EditRole || index.column() != NameColumn || !hasEntry(index.row())) {
+        return false;
+    }
+    const FileManagementEntry entry = m_entries.at(index.row());
+    const QString name = completedRenameName(entry, value.toString());
+    if (name.isEmpty() || name == entry.name) {
+        return false;
+    }
+    Q_EMIT renameRequested(index.row(), name);
+    return false;
+}
+
+QString FileExplorerItemModel::completedRenameName(const FileManagementEntry& entry,
+                                                   const QString& edited) const {
+    // Files CommitRenameAsync: trim whitespace and trailing dots.
+    QString name = edited.trimmed();
+    while (name.endsWith(QLatin1Char('.'))) {
+        name.chop(1);
+    }
+    // With extensions hidden the editor shows the base name only; re-attach
+    // the real suffix before the rename (Files nameIsComplete=false path).
+    const QString displayed = displayForColumn(entry, NameColumn).toString();
+    if (!m_show_file_extensions && !entry.directory && entry.name.startsWith(displayed) &&
+        entry.name.length() > displayed.length() && !name.isEmpty()) {
+        name += entry.name.mid(displayed.length());
+    }
+    return name;
 }
 
 void FileExplorerItemModel::sort(const int column, const Qt::SortOrder order) {
@@ -201,16 +342,47 @@ void FileExplorerItemModel::sort(const int column, const Qt::SortOrder order) {
     }
 
     Q_EMIT layoutAboutToBeChanged();
-    std::stable_sort(m_entries.begin(),
-                     m_entries.end(),
-                     [column, order](const auto& left, const auto& right) {
-                         if (left.directory != right.directory) {
-                             return left.directory;
-                         }
-                         const int compared = compareEntries(left, right, column);
-                         return order == Qt::AscendingOrder ? compared < 0 : compared > 0;
-                     });
+    // Remember which entry each persistent index points at (by its unique path)
+    // BEFORE the permutation, so the selection, the current index, and any open
+    // editor follow their items instead of aliasing whatever row later lands at
+    // that number. Emitting layoutChanged without remapping persistent indexes
+    // violates the model contract and silently retargets the selection.
+    const QModelIndexList old_indexes = persistentIndexList();
+    QStringList held_paths;
+    held_paths.reserve(old_indexes.size());
+    for (const QModelIndex& held : old_indexes) {
+        held_paths.append(hasEntry(held.row()) ? m_entries.at(held.row()).path : QString());
+    }
+
+    std::ranges::stable_sort(m_entries,
+
+                             [column, order](const auto& left, const auto& right) {
+                                 if (left.directory != right.directory) {
+                                     return left.directory;
+                                 }
+                                 const int compared = compareEntries(left, right, column);
+                                 return order == Qt::AscendingOrder ? compared < 0 : compared > 0;
+                             });
+
+    remapPersistentIndexesByPath(old_indexes, held_paths);
     Q_EMIT layoutChanged();
+}
+
+void FileExplorerItemModel::remapPersistentIndexesByPath(const QModelIndexList& old_indexes,
+                                                         const QStringList& held_paths) {
+    QHash<QString, int> path_to_row;
+    path_to_row.reserve(m_entries.size());
+    for (int row = 0; row < m_entries.size(); ++row) {
+        path_to_row.insert(m_entries.at(row).path, row);
+    }
+    QModelIndexList new_indexes;
+    new_indexes.reserve(old_indexes.size());
+    for (int i = 0; i < old_indexes.size(); ++i) {
+        const int new_row = path_to_row.value(held_paths.at(i), -1);
+        new_indexes.append(new_row < 0 ? QModelIndex()
+                                       : index(new_row, old_indexes.at(i).column()));
+    }
+    changePersistentIndexList(old_indexes, new_indexes);
 }
 
 void FileExplorerItemModel::setEntries(QVector<FileManagementEntry> entries) {
@@ -223,6 +395,86 @@ void FileExplorerItemModel::clear() {
     setEntries({});
 }
 
+void FileExplorerItemModel::setCutPaths(const QSet<QString>& paths) {
+    if (m_cut_paths == paths) {
+        return;
+    }
+    m_cut_paths = paths;
+    if (!m_entries.isEmpty()) {
+        Q_EMIT dataChanged(index(0, NameColumn),
+                           index(static_cast<int>(m_entries.size() - 1), ColumnCount - 1),
+                           {Qt::ForegroundRole});
+    }
+}
+
+QSet<QString> FileExplorerItemModel::cutPaths() const {
+    return m_cut_paths;
+}
+
+void FileExplorerItemModel::setTagProvider(TagProvider provider) {
+    m_tag_provider = std::move(provider);
+    refreshTags();
+}
+
+void FileExplorerItemModel::setIconProvider(IconProvider provider) {
+    m_icon_provider = std::move(provider);
+    if (!m_entries.isEmpty()) {
+        Q_EMIT dataChanged(index(0, NameColumn),
+                           index(static_cast<int>(m_entries.size() - 1), NameColumn),
+                           {Qt::DecorationRole});
+    }
+}
+
+void FileExplorerItemModel::setDragPayloadProvider(DragPayloadProvider provider) {
+    m_drag_payload_provider = std::move(provider);
+}
+
+QVariant FileExplorerItemModel::checkStateForEntry(const FileManagementEntry& entry,
+                                                   const int column) const {
+    // Files selection checkboxes: the box mirrors the selection state.
+    if (column != NameColumn || !m_checkboxes_visible || !m_check_state_provider) {
+        return {};
+    }
+    return m_check_state_provider(entry.path) ? Qt::Checked : Qt::Unchecked;
+}
+
+void FileExplorerItemModel::setCheckboxProviders(CheckStateProvider provider,
+                                                 CheckToggleHandler handler) {
+    m_check_state_provider = std::move(provider);
+    m_check_toggle_handler = std::move(handler);
+    refreshChecks();
+}
+
+void FileExplorerItemModel::setCheckboxesVisible(const bool visible) {
+    if (m_checkboxes_visible == visible) {
+        return;
+    }
+    m_checkboxes_visible = visible;
+    refreshChecks();
+}
+
+bool FileExplorerItemModel::checkboxesVisible() const {
+    return m_checkboxes_visible;
+}
+
+void FileExplorerItemModel::refreshChecks() {
+    if (m_entries.isEmpty()) {
+        return;
+    }
+    Q_EMIT dataChanged(index(0, NameColumn),
+                       index(static_cast<int>(m_entries.size() - 1), NameColumn),
+                       {Qt::CheckStateRole});
+}
+
+void FileExplorerItemModel::refreshTags() {
+    if (m_entries.isEmpty()) {
+        return;
+    }
+    Q_EMIT dataChanged(index(0, TagsColumn),
+                       index(static_cast<int>(m_entries.size() - 1), TagsColumn),
+                       {Qt::DisplayRole, EntryTagsRole});
+}
+
 void FileExplorerItemModel::setShowFileExtensions(const bool show) {
     if (m_show_file_extensions == show) {
         return;
@@ -230,7 +482,7 @@ void FileExplorerItemModel::setShowFileExtensions(const bool show) {
     m_show_file_extensions = show;
     if (!m_entries.isEmpty()) {
         Q_EMIT dataChanged(index(0, NameColumn),
-                           index(m_entries.size() - 1, NameColumn),
+                           index(static_cast<int>(m_entries.size() - 1), NameColumn),
                            {Qt::DisplayRole});
     }
 }
@@ -251,6 +503,55 @@ bool FileExplorerItemModel::showFileExtensions() const {
     return m_show_file_extensions;
 }
 
+namespace {
+
+/// The name Windows gives files with @p suffix ("Text Document", "PNG File"), as File Explorer
+/// shows it, or empty when the shell has none. Asked once per suffix: SHGetFileInfo with
+/// SHGFI_USEFILEATTRIBUTES reads the registry only, never a file.
+QString shellTypeName(const QString& suffix) {
+    static QMutex mutex;
+    static QHash<QString, QString> names;
+    const QString key = suffix.toLower();
+    const QMutexLocker lock(&mutex);
+    const auto known = names.constFind(key);
+    if (known != names.constEnd()) {
+        return known.value();
+    }
+    const std::wstring probe = (QStringLiteral("probe.") + key).toStdWString();
+    SHFILEINFOW info{};
+    QString name;
+    if (SHGetFileInfoW(probe.c_str(),
+                       FILE_ATTRIBUTE_NORMAL,
+                       &info,
+                       sizeof(info),
+                       SHGFI_TYPENAME | SHGFI_USEFILEATTRIBUTES) != 0) {
+        name = QString::fromWCharArray(info.szTypeName).trimmed();
+    }
+    names.insert(key, name);
+    return name;
+}
+
+}  // namespace
+
+QString FileExplorerItemModel::typeText(const FileManagementEntry& entry) {
+    if (entry.directory) {
+        return tr("File folder");
+    }
+    // A host file is "File" to the listing; the column says what kind, as Windows Explorer does.
+    // It said "File" for a PNG, a CSV and a PDF alike (review 5, Z9).
+    if (entry.type.compare(QStringLiteral("File"), Qt::CaseInsensitive) != 0) {
+        return entry.type;
+    }
+    const QString suffix = QFileInfo(entry.name).suffix();
+    if (suffix.isEmpty()) {
+        return tr("File");
+    }
+    // Windows' own name for the type, as File Explorer shows it; Qt's MIME database said
+    // "Text/csv" and "Portable Document Format" on Windows. Windows' own fallback otherwise.
+    const QString shell = shellTypeName(suffix);
+    return shell.isEmpty() ? tr("%1 File").arg(suffix.toUpper()) : shell;
+}
+
 QString FileExplorerItemModel::attributeSummary(const FileManagementEntry& entry) {
     QStringList attributes;
     if (entry.directory) {
@@ -268,17 +569,7 @@ QString FileExplorerItemModel::attributeSummary(const FileManagementEntry& entry
 }
 
 QString FileExplorerItemModel::sizeText(const uint64_t bytes) {
-    constexpr int kSizeTextDecimals = 2;
-    if (bytes >= sak::kBytesPerGB) {
-        return QStringLiteral("%1 GB").arg(bytes / sak::kBytesPerGBf, 0, 'f', kSizeTextDecimals);
-    }
-    if (bytes >= sak::kBytesPerMB) {
-        return QStringLiteral("%1 MB").arg(bytes / sak::kBytesPerMBf, 0, 'f', 1);
-    }
-    if (bytes >= sak::kBytesPerKB) {
-        return QStringLiteral("%1 KB").arg(bytes / sak::kBytesPerKBf, 0, 'f', 0);
-    }
-    return QStringLiteral("%1 B").arg(bytes);
+    return sak::formatBytes(bytes);
 }
 
 QString FileExplorerItemModel::timeText(const QDateTime& time) {

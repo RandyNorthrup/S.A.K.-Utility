@@ -6,8 +6,12 @@
 
 #include "sak/ethernet_config_manager.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -16,13 +20,20 @@ class TestEthernetConfigManager : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──────────────────────────────────────────────
+    // -- Construction ----------------------------------------------
     void construction_default();
     void construction_nonCopyable();
 
-    // ── EthernetConfigSnapshot ────────────────────────────────────
+    // -- Locale-independent capture (R5-G23-4) ---------------------
+    void snapshotFromNetIpConfig_isLocaleIndependent();
+    void adapterNamesFromJson_readsAnyLanguageAndAnyCount();
+    void adapterNamesFromJson_refusesWhatIsNotAList();
+    void listEthernetAdapters_readsThisPcsAdapters();
+
+    // -- EthernetConfigSnapshot ------------------------------------
     void snapshot_defaults();
     void snapshot_isValid_emptyInvalid();
+    void snapshot_isValid_rejectsMalformedIpv4();
     void snapshot_isValid_withData();
     void snapshot_toJson_roundtrip();
     void snapshot_toJson_allFields();
@@ -31,16 +42,137 @@ private Q_SLOTS:
     void snapshot_toJson_dhcpEnabled();
     void snapshot_toJson_staticIp();
     void snapshot_toJson_multipleDns();
+    void snapshot_keepsTheAdapterType();
+
+    // -- choosing where a backup goes back -----------------------------------
+    void restoreTarget_byNameThenTypeThenFirst();
+
+    // -- File I/O (atomic write) -----------------------------------
+    void saveToFile_atomicRoundTrip();
+
+    // -- MAC lookup (B9-19) ----------------------------------------
+    void lookupAdapterMac_unknownAdapterEmpty();
+    void lookupAdapterMac_fixtureAdapterHasMacFormat();
 };
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Construction
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
+
+// The netsh table this replaced found nothing on non-English Windows, where its words are
+// "Aktiviert", "Verbunden", "Dediziert". Get-NetAdapter gives names and no words to read.
+void TestEthernetConfigManager::adapterNamesFromJson_readsAnyLanguageAndAnyCount() {
+    QCOMPARE(EthernetConfigManager::adapterNamesFromJson(QStringLiteral("[\"Ethernet\"]")),
+             QStringList{QStringLiteral("Ethernet")});
+    const QString german = QStringLiteral("Ethernet-Verbindung 2");
+    const QString wifi = QStringLiteral("WLAN");
+    const QString japanese = QString::fromUtf8("\xE3\x82\xA4\xE3\x83\xBC\xE3\x82\xB5\xE3\x83\x8D");
+    const QString json = QStringLiteral("[\"%1\",\"%2\",\"%3\"]").arg(wifi, japanese, german);
+    QCOMPARE(EthernetConfigManager::adapterNamesFromJson(json),
+             (QStringList{german, wifi, japanese}));
+    // The script writes anything outside ASCII as \\uXXXX, so it survives any code page.
+    QCOMPARE(EthernetConfigManager::adapterNamesFromJson(
+                 QStringLiteral("[\"\\u30a4\\u30fc\\u30b5\\u30cd\"]")),
+             QStringList{japanese});
+    QVERIFY(EthernetConfigManager::adapterNamesFromJson(QStringLiteral("[]")).isEmpty());
+}
+
+void TestEthernetConfigManager::adapterNamesFromJson_refusesWhatIsNotAList() {
+    QVERIFY(EthernetConfigManager::adapterNamesFromJson(QString()).isEmpty());
+    QVERIFY(EthernetConfigManager::adapterNamesFromJson(QStringLiteral("not json")).isEmpty());
+    QVERIFY(EthernetConfigManager::adapterNamesFromJson(QStringLiteral("{\"a\":1}")).isEmpty());
+    QVERIFY(EthernetConfigManager::adapterNamesFromJson(QStringLiteral("[1,\"\"]")).isEmpty());
+}
+
+// The real read-only query. Every machine this runs on has at least one adapter, and the script's
+// names are what the restore path and the assistant's adapter actions match against.
+void TestEthernetConfigManager::listEthernetAdapters_readsThisPcsAdapters() {
+    EthernetConfigManager manager;
+    QSignalSpy errors(&manager, &EthernetConfigManager::errorOccurred);
+    const QStringList names = manager.listEthernetAdapters();
+    QVERIFY2(errors.isEmpty(),
+             errors.isEmpty() ? "" : qPrintable(errors.first().first().toString()));
+    QVERIFY(!names.isEmpty());
+}
+
+void TestEthernetConfigManager::snapshotFromNetIpConfig_isLocaleIndependent() {
+    // R5-G23-4 (locale). captureSettings used to run `netsh interface ip show config` and match
+    // the English labels "DHCP enabled:", "IP Address:", "Subnet Prefix:", "Default Gateway:"
+    // and the word "Yes". netsh TRANSLATES every one of them, so on a non-English Windows each
+    // field came back empty and the snapshot was silently blank -- and that snapshot is what a
+    // RESTORE later replays onto the adapter.
+    //
+    // The backup wizard's copy of this same scrape was fixed earlier; THIS call site was missed,
+    // which is why both now share kNetIpConfigPowerShell. The scan's field names
+    // (Name/Dhcp/IPv4/Prefix/Gateway/Dns) and the Enabled/Disabled enum do not localise, so the
+    // fixture below is what the cmdlet emits on ANY locale -- only the adapter NAME differs, and
+    // a non-ASCII one is used here on purpose.
+    const QString json = QStringLiteral(
+        R"([{"Name":"Ethernet","Dhcp":"Disabled","IPv4":"192.168.1.50","Prefix":24,)"
+        R"("Gateway":"192.168.1.1","Dns":["1.1.1.1","8.8.8.8"]},)"
+        R"({"Name":"WLAN-Verbindung","Dhcp":"Enabled","IPv4":"10.0.0.9","Prefix":16,)"
+        R"("Gateway":null,"Dns":[]}])");
+
+    const auto wired = EthernetConfigManager::snapshotFromNetIpConfig(json,
+                                                                      QStringLiteral("Ethernet"));
+    QCOMPARE(wired.adapterName, QStringLiteral("Ethernet"));
+    QVERIFY(!wired.dhcpEnabled);  // "Disabled" is the enum, not a translated "No"
+    QCOMPARE(wired.ipv4Address, QStringLiteral("192.168.1.50"));
+    // The restore path feeds subnet_mask to `netsh set address`, which wants a dotted quad, so
+    // the CIDR prefix must arrive converted -- not as "24".
+    QCOMPARE(wired.ipv4SubnetMask, QStringLiteral("255.255.255.0"));
+    QCOMPARE(wired.ipv4Gateway, QStringLiteral("192.168.1.1"));
+    QCOMPARE(wired.ipv4DnsServers,
+             QStringList({QStringLiteral("1.1.1.1"), QStringLiteral("8.8.8.8")}));
+
+    // A German adapter name selects correctly, and a DHCP adapter with no gateway and no DNS
+    // yields empty fields rather than stale ones.
+    const auto wireless =
+        EthernetConfigManager::snapshotFromNetIpConfig(json, QStringLiteral("WLAN-Verbindung"));
+    QCOMPARE(wireless.adapterName, QStringLiteral("WLAN-Verbindung"));
+    QVERIFY(wireless.dhcpEnabled);
+    QCOMPARE(wireless.ipv4SubnetMask, QStringLiteral("255.255.0.0"));
+    QVERIFY(wireless.ipv4Gateway.isEmpty());
+    QVERIFY(wireless.ipv4DnsServers.isEmpty());
+
+    // Adapter selection is case-insensitive (Windows adapter names are).
+    QCOMPARE(EthernetConfigManager::snapshotFromNetIpConfig(json, QStringLiteral("ETHERNET"))
+                 .ipv4Address,
+             QStringLiteral("192.168.1.50"));
+
+    // An adapter that is not in the scan yields a snapshot with NO borrowed fields: reporting a
+    // neighbouring adapter's address here would restore the wrong settings onto it.
+    const auto missing =
+        EthernetConfigManager::snapshotFromNetIpConfig(json, QStringLiteral("NoSuchAdapter"));
+    QCOMPARE(missing.adapterName, QStringLiteral("NoSuchAdapter"));
+    QVERIFY(missing.ipv4Address.isEmpty());
+    QVERIFY(missing.ipv4Gateway.isEmpty());
+    QVERIFY(missing.ipv4DnsServers.isEmpty());
+
+    // Empty / malformed scan output is not a configuration.
+    QVERIFY(EthernetConfigManager::snapshotFromNetIpConfig(QString(), QStringLiteral("Ethernet"))
+                .ipv4Address.isEmpty());
+    QVERIFY(EthernetConfigManager::snapshotFromNetIpConfig(QStringLiteral("not json"),
+                                                           QStringLiteral("Ethernet"))
+                .ipv4Address.isEmpty());
+}
 
 void TestEthernetConfigManager::construction_default() {
     EthernetConfigManager mgr;
-    QVERIFY(mgr.parent() == nullptr);
-    QVERIFY(!std::is_copy_constructible_v<EthernetConfigManager>);
+    QCOMPARE(mgr.parent(), static_cast<QObject*>(nullptr));
+    // The default-parent case above cannot see whether the ctor
+    // (ethernet_config_manager.cpp:127 `: QObject(parent)`) actually FORWARDS its argument --
+    // a ctor that DISCARDED parent reports nullptr here too. Pin the parent edge with a real
+    // owner: it is the ownership/thread-affinity contract declared at
+    // ethernet_config_manager.h:54 and relied on by network_diagnostic_controller.cpp:97
+    // (`std::make_unique<EthernetConfigManager>(this)`).
+    QObject owner;
+    EthernetConfigManager child(&owner);
+    QCOMPARE(child.parent(), &owner);
+    QVERIFY(owner.children().contains(&child));
+    // The is_copy_constructible_v check that stood here is a compile-time constant already
+    // enforced by the static_assert at ethernet_config_manager.h:147-148 and asserted verbatim
+    // in construction_nonCopyable() below; it can never fail at runtime, so it is not repeated.
 }
 
 void TestEthernetConfigManager::construction_nonCopyable() {
@@ -48,9 +180,9 @@ void TestEthernetConfigManager::construction_nonCopyable() {
     QVERIFY(!std::is_move_constructible_v<EthernetConfigManager>);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // EthernetConfigSnapshot
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestEthernetConfigManager::snapshot_defaults() {
     EthernetConfigSnapshot snapshot;
@@ -62,11 +194,101 @@ void TestEthernetConfigManager::snapshot_defaults() {
     QVERIFY(snapshot.ipv4SubnetMask.isEmpty());
     QVERIFY(snapshot.ipv4Gateway.isEmpty());
     QVERIFY(snapshot.ipv4DnsServers.isEmpty());
+    // Metadata defaults are load-bearing, not cosmetic: isValid() refuses on an empty
+    // backupTimestamp (ethernet_config_manager.cpp:111), so a non-empty default would
+    // silently disarm that guard for every directly-constructed snapshot (e.g. the one
+    // setDnsServers builds at :418-420). Pin all 10 members so this stays exhaustive.
+    QVERIFY(snapshot.backupTimestamp.isEmpty());
+    QVERIFY(snapshot.computerName.isEmpty());
 }
 
 void TestEthernetConfigManager::snapshot_isValid_emptyInvalid() {
     EthernetConfigSnapshot snapshot;
     QVERIFY(!snapshot.isValid());
+
+    // isValid() is a three-guard refuser (ethernet_config_manager.cpp:110-123) whose third
+    // guard delegates to the four-arm ipv4FieldsWellFormed (:44-60). A default snapshot trips
+    // guard 1 alone, so isolate every guard from a known-valid base by breaking one field.
+    EthernetConfigSnapshot base;
+    base.adapterName = QStringLiteral("Ethernet");
+    base.backupTimestamp = QStringLiteral("2026-03-08T12:00:00");
+    base.dhcpEnabled = false;
+    base.ipv4Address = QStringLiteral("192.168.1.100");
+    base.ipv4SubnetMask = QStringLiteral("255.255.255.0");
+    base.ipv4Gateway = QStringLiteral("192.168.1.1");
+    base.ipv4DnsServers = {QStringLiteral("8.8.8.8")};
+    QVERIFY(base.isValid());
+
+    // Guard 1 (:111): each identity field refuses on its own.
+    {
+        auto s = base;
+        s.adapterName.clear();
+        QVERIFY(!s.isValid());
+    }
+    {
+        auto s = base;
+        s.backupTimestamp.clear();
+        QVERIFY(!s.isValid());
+    }
+
+    // Guard 2 (:117-119): a localized/failed parse recognizes nothing, leaving dhcpEnabled=false
+    // AND no address -- that must fail closed rather than persist an empty backup...
+    {
+        auto s = base;
+        s.ipv4Address.clear();
+        QVERIFY(!s.isValid());
+    }
+    // ...while the same empty address IS legitimate on the DHCP path.
+    {
+        auto s = base;
+        s.ipv4Address.clear();
+        s.dhcpEnabled = true;
+        QVERIFY(s.isValid());
+    }
+}
+
+void TestEthernetConfigManager::snapshot_isValid_rejectsMalformedIpv4() {
+    EthernetConfigSnapshot base;
+    base.adapterName = QStringLiteral("Ethernet");
+    base.backupTimestamp = QStringLiteral("2026-03-08T12:00:00");
+    base.dhcpEnabled = false;
+    base.ipv4Address = QStringLiteral("192.168.1.100");
+    base.ipv4SubnetMask = QStringLiteral("255.255.255.0");
+    base.ipv4Gateway = QStringLiteral("192.168.1.1");
+    base.ipv4DnsServers = {QStringLiteral("8.8.8.8")};
+    QVERIFY(base.isValid());
+
+    // Guard 3 (:122 -> :44-60): every arm refuses a value that is not a dotted-quad IPv4
+    // literal, before it can reach `netsh interface ip set address addr=...`. "::1" is the
+    // load-bearing case: a bare QHostAddress::setAddress accepts it, the protocol() check
+    // at :39 does not.
+    {
+        auto s = base;
+        s.ipv4Address = QStringLiteral("::1");
+        QVERIFY(!s.isValid());
+    }
+    {
+        auto s = base;
+        s.ipv4SubnetMask = QStringLiteral("not-an-ip");
+        QVERIFY(!s.isValid());
+    }
+    {
+        auto s = base;
+        s.ipv4Gateway = QStringLiteral("::1");
+        QVERIFY(!s.isValid());
+    }
+    {
+        auto s = base;
+        s.ipv4DnsServers = {QStringLiteral("8.8.8.8"), QStringLiteral("::1")};
+        QVERIFY(!s.isValid());
+    }
+    // An absent optional gateway / DNS set stays acceptable (:42-43).
+    {
+        auto s = base;
+        s.ipv4Gateway.clear();
+        s.ipv4DnsServers.clear();
+        QVERIFY(s.isValid());
+    }
 }
 
 void TestEthernetConfigManager::snapshot_isValid_withData() {
@@ -107,14 +329,49 @@ void TestEthernetConfigManager::snapshot_toJson_roundtrip() {
 }
 
 void TestEthernetConfigManager::snapshot_toJson_allFields() {
+    // Pin the ON-DISK FILE FORMAT, not just its shape: exact key names, exact JSON
+    // value types, and which value each key carries. Every field gets a distinct
+    // sentinel, so a symmetric key rename in toJson()+fromJson(), or a value swap
+    // between two same-typed string keys, goes red here even though every
+    // round-trip test stays green. Backups written by earlier builds are read back
+    // by these literal names, so the names are the contract.
     EthernetConfigSnapshot snapshot;
     snapshot.adapterName = "Test";
+    snapshot.description = "Intel I219-V";
     snapshot.macAddress = "11:22:33:44:55:66";
+    snapshot.adapterType = "Ethernet";
     snapshot.dhcpEnabled = true;
+    snapshot.ipv4Address = "10.1.2.3";
+    snapshot.ipv4SubnetMask = "255.255.255.0";
+    snapshot.ipv4Gateway = "10.1.2.1";
+    snapshot.ipv4DnsServers = {"9.9.9.9", "1.1.1.1"};
+    snapshot.backupTimestamp = "2026-03-08T12:00:00";
+    snapshot.computerName = "WS-SENTINEL";
 
     const QJsonObject json = snapshot.toJson();
-    QVERIFY(!json.isEmpty());
-    QVERIFY(json.contains("adapterName") || json.contains("adapter_name"));
+
+    QJsonParseError parseError{};
+    const QJsonDocument expectedDoc = QJsonDocument::fromJson(R"({
+        "adapterName": "Test",
+        "description": "Intel I219-V",
+        "macAddress": "11:22:33:44:55:66",
+        "adapterType": "Ethernet",
+        "dhcpEnabled": true,
+        "ipv4Address": "10.1.2.3",
+        "ipv4SubnetMask": "255.255.255.0",
+        "ipv4Gateway": "10.1.2.1",
+        "ipv4DnsServers": ["9.9.9.9", "1.1.1.1"],
+        "backupTimestamp": "2026-03-08T12:00:00",
+        "computerName": "WS-SENTINEL"
+    })",
+                                                              &parseError);
+    QCOMPARE(parseError.error, QJsonParseError::NoError);
+
+    // Deep compare: pins the exact 11 key names (a rename adds/removes a key),
+    // the value bound to each key (a swap moves a value), and each value's JSON
+    // type (dhcpEnabled must stay a bool, ipv4DnsServers an ordered array).
+    QCOMPARE(json, expectedDoc.object());
+    QCOMPARE(json.size(), 11);
 }
 
 void TestEthernetConfigManager::snapshot_fromJson_emptyObject() {
@@ -127,8 +384,24 @@ void TestEthernetConfigManager::snapshot_fromJson_missingFields() {
     QJsonObject partial;
     partial["adapterName"] = "Test";
     const auto snapshot = EthernetConfigSnapshot::fromJson(partial);
-    // Should handle gracefully — either invalid or partial data
-    QVERIFY(snapshot.adapterName == "Test" || snapshot.adapterName.isEmpty());
+    // fromJson assigns adapterName unconditionally from a present string key; the isEmpty
+    // disjunct was unreachable and would mask a broken assignment.
+    QCOMPARE(snapshot.adapterName, QStringLiteral("Test"));
+    // Every ABSENT key must deserialize to the empty/false default -- fail closed. An invented
+    // default (toBool(true), or the live hostname for computerName) would let a truncated
+    // backup satisfy the isValid() guard at ethernet_config_manager.cpp:117 and reach a live
+    // netsh apply as a DHCP switch, or fabricate provenance the backup never recorded.
+    QVERIFY(snapshot.description.isEmpty());
+    QVERIFY(snapshot.macAddress.isEmpty());
+    QCOMPARE(snapshot.dhcpEnabled, false);
+    QVERIFY(snapshot.ipv4Address.isEmpty());
+    QVERIFY(snapshot.ipv4SubnetMask.isEmpty());
+    QVERIFY(snapshot.ipv4Gateway.isEmpty());
+    QVERIFY(snapshot.ipv4DnsServers.isEmpty());
+    QVERIFY(snapshot.backupTimestamp.isEmpty());
+    QVERIFY(snapshot.computerName.isEmpty());
+    // ...and with no dhcp flag and no address recorded, the truncated snapshot is unrestorable.
+    QVERIFY(!snapshot.isValid());
 }
 
 void TestEthernetConfigManager::snapshot_toJson_dhcpEnabled() {
@@ -165,8 +438,144 @@ void TestEthernetConfigManager::snapshot_toJson_multipleDns() {
 
     const QJsonObject json = snapshot.toJson();
     const auto restored = EthernetConfigSnapshot::fromJson(json);
-    QCOMPARE(restored.ipv4DnsServers.size(), 3);
-    QVERIFY(restored.ipv4DnsServers.contains("1.1.1.1"));
+    // The JSON array round-trip preserves order, so pin the full ordered list.
+    QCOMPARE(restored.ipv4DnsServers, (QStringList{"1.1.1.1", "1.0.0.1", "8.8.8.8"}));
+}
+
+void TestEthernetConfigManager::saveToFile_atomicRoundTrip() {
+    // B9-12: saveToFile writes atomically (QSaveFile) and round-trips through
+    // loadFromFile; overwriting an existing backup must fully replace it rather
+    // than truncate-then-write.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = QDir(dir.path()).filePath(QStringLiteral("eth.json"));
+
+    EthernetConfigSnapshot snapshot;
+    snapshot.adapterName = "Ethernet";
+    snapshot.dhcpEnabled = false;
+    snapshot.ipv4Address = "192.168.1.100";
+    snapshot.ipv4SubnetMask = "255.255.255.0";
+    snapshot.ipv4Gateway = "192.168.1.1";
+    snapshot.ipv4DnsServers = {"8.8.8.8"};
+    snapshot.backupTimestamp = "2026-03-08T12:00:00";
+    snapshot.computerName = "WS-01";
+    QVERIFY(snapshot.isValid());
+
+    EthernetConfigManager mgr;
+    QVERIFY(mgr.saveToFile(snapshot, path));
+    QVERIFY(QFileInfo::exists(path));
+
+    // First round trip pins ALL TEN serialized fields through the file path, not just three.
+    const auto first = mgr.loadFromFile(path);
+    QVERIFY(first.isValid());
+    QCOMPARE(first.adapterName, snapshot.adapterName);
+    QCOMPARE(first.description, snapshot.description);
+    QCOMPARE(first.macAddress, snapshot.macAddress);
+    QCOMPARE(first.dhcpEnabled, snapshot.dhcpEnabled);
+    QCOMPARE(first.ipv4Address, snapshot.ipv4Address);
+    QCOMPARE(first.ipv4SubnetMask, snapshot.ipv4SubnetMask);
+    QCOMPARE(first.ipv4Gateway, snapshot.ipv4Gateway);
+    QCOMPARE(first.ipv4DnsServers, snapshot.ipv4DnsServers);
+    QCOMPARE(first.backupTimestamp, snapshot.backupTimestamp);
+    QCOMPARE(first.computerName, snapshot.computerName);
+
+    // Overwrite with MATERIALLY DIFFERENT content so "the write happened" is observable:
+    // re-saving the same bytes cannot tell a real replace from a skipped write. This second
+    // snapshot is the DHCP shape, so its IPv4 fields are legitimately empty and isValid()
+    // still holds via the dhcpEnabled branch (ethernet_config_manager.cpp:117).
+    EthernetConfigSnapshot rewritten;
+    rewritten.adapterName = "Wi-Fi";
+    rewritten.description = "Realtek GbE";
+    rewritten.macAddress = "AA:BB:CC:DD:EE:FF";
+    rewritten.dhcpEnabled = true;
+    rewritten.backupTimestamp = "2026-03-09T13:00:00";
+    rewritten.computerName = "WS-02";
+    QVERIFY(rewritten.isValid());
+    QVERIFY(mgr.saveToFile(rewritten, path));
+
+    // An atomic writer FULLY replaces the prior file: the reload is the new snapshot in
+    // every field, and no value from the first backup survives.
+    const auto restored = mgr.loadFromFile(path);
+    QVERIFY(restored.isValid());
+    QCOMPARE(restored.adapterName, QStringLiteral("Wi-Fi"));
+    QCOMPARE(restored.description, QStringLiteral("Realtek GbE"));
+    QCOMPARE(restored.macAddress, QStringLiteral("AA:BB:CC:DD:EE:FF"));
+    QCOMPARE(restored.dhcpEnabled, true);
+    QCOMPARE(restored.backupTimestamp, QStringLiteral("2026-03-09T13:00:00"));
+    QCOMPARE(restored.computerName, QStringLiteral("WS-02"));
+    // Stale static-IP values from the FIRST backup must be gone, not merged or appended.
+    QVERIFY(restored.ipv4Address.isEmpty());
+    QVERIFY(restored.ipv4SubnetMask.isEmpty());
+    QVERIFY(restored.ipv4Gateway.isEmpty());
+    QCOMPARE(restored.ipv4DnsServers, (QStringList{}));
+}
+
+void TestEthernetConfigManager::lookupAdapterMac_unknownAdapterEmpty() {
+    // B9-19: a nonexistent adapter name resolves to an empty MAC (no match), and an
+    // empty name short-circuits to empty.
+    QVERIFY(EthernetConfigManager::lookupAdapterMac(QString()).isEmpty());
+    QVERIFY(
+        EthernetConfigManager::lookupAdapterMac(QStringLiteral("__no_such_adapter__")).isEmpty());
+}
+
+void TestEthernetConfigManager::lookupAdapterMac_fixtureAdapterHasMacFormat() {
+    const QList<EthernetAdapterIdentity> interfaces = {
+        {.humanReadableName = QStringLiteral("Lab Ethernet"),
+         .systemName = QStringLiteral("{01234567-89AB-CDEF-0123-456789ABCDEF}"),
+         .hardwareAddress = QStringLiteral("02:11:22:33:44:55")}};
+    const QString expectedMac = interfaces.first().hardwareAddress;
+    const QString mac =
+        EthernetConfigManager::lookupAdapterMac(interfaces.first().humanReadableName, interfaces);
+    QCOMPARE(mac, expectedMac);
+    // Canonical form: six colon-separated hex octets.
+    const QRegularExpression macRe(QStringLiteral("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$"));
+    QVERIFY(macRe.match(mac).hasMatch());
+    // The matcher accepts the SYSTEM name as well as the friendly name
+    // (ethernet_config_manager.cpp:134; contract at ethernet_config_manager.h:67-68).
+    // On Windows the system name is the adapter GUID -- the form a win32/netsh caller
+    // supplies -- so pin the second disjunct: dropping it makes this lookup return empty.
+    QVERIFY(!interfaces.first().systemName.isEmpty());
+    QCOMPARE(EthernetConfigManager::lookupAdapterMac(interfaces.first().systemName, interfaces),
+             expectedMac);
+}
+
+void TestEthernetConfigManager::snapshot_keepsTheAdapterType() {
+    EthernetConfigSnapshot snapshot;
+    snapshot.adapterName = QStringLiteral("Ethernet");
+    snapshot.adapterType = QStringLiteral("Ethernet");
+    QCOMPARE(EthernetConfigSnapshot::fromJson(snapshot.toJson()).adapterType,
+             QStringLiteral("Ethernet"));
+    // A backup made before the field existed reads as "type unknown", not as an error.
+    QJsonObject older = snapshot.toJson();
+    older.remove(QStringLiteral("adapterType"));
+    QVERIFY(EthernetConfigSnapshot::fromJson(older).adapterType.isEmpty());
+}
+
+void TestEthernetConfigManager::restoreTarget_byNameThenTypeThenFirst() {
+    // The VM smoke: an Ethernet backup, and the list started on the Bluetooth adapter because it
+    // sorts first.
+    const QList<RestoreCandidate> adapters{
+        {QStringLiteral("Bluetooth Network Connection"), QStringLiteral("Bluetooth")},
+        {QStringLiteral("Ethernet"), QStringLiteral("Ethernet")},
+        {QStringLiteral("Ethernet 2"), QStringLiteral("Ethernet")},
+        {QStringLiteral("Wi-Fi"), QStringLiteral("WiFi")}};
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(
+                 adapters, QStringLiteral("Ethernet"), QStringLiteral("Ethernet")),
+             1);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(
+                 adapters, QStringLiteral("ETHERNET 2"), QString()),
+             2);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(
+                 adapters, QStringLiteral("Office LAN"), QStringLiteral("WiFi")),
+             3);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(
+                 adapters, QStringLiteral("Office LAN"), QStringLiteral("ethernet")),
+             1);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(
+                 adapters, QStringLiteral("Office LAN"), QString()),
+             0);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget(adapters, QString(), QString()), 0);
+    QCOMPARE(EthernetConfigManager::preferredRestoreTarget({}, QStringLiteral("Ethernet"), {}), -1);
 }
 
 QTEST_MAIN(TestEthernetConfigManager)

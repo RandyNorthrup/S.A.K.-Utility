@@ -5,11 +5,11 @@
 
 #include "sak/app_paths.h"
 #include "sak/config_manager.h"
+#include "sak/format_utils.h"
 #include "sak/info_button.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
-#include "sak/network_constants.h"
 #include "sak/style_constants.h"
 
 #include <QDialogButtonBox>
@@ -23,7 +23,36 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <utility>
+
 namespace {
+
+QString cachedFoldersCount(qint64 count) {
+    return sak::countOf(count,
+                        QStringLiteral("cached download folder"),
+                        QStringLiteral("cached download folders"));
+}
+
+// A clear that removed some cache folders but not all: logged, and told to the user with the
+// pronoun agreeing with how many were left behind.
+void reportPartialCacheClear(QWidget* parent, int removed_count, int failed_count) {
+    const QString cleared =
+        sak::countOf(removed_count, QStringLiteral("folder"), QStringLiteral("folders"));
+    sak::logWarning(
+        "Cache clear partially failed: "
+        "cleared {}, {} could not be removed",
+        cleared.toStdString(),
+        failed_count);
+    sak::showWarningLogged(
+        parent,
+        "Clear Download Caches",
+        QString("Cleared %1, but %2 could not be removed.\n%3")
+            .arg(cleared,
+                 QString::number(failed_count),
+                 failed_count == 1 ? QStringLiteral("It may be in use by an active download.")
+                                   : QStringLiteral("They may be in use by an active download.")));
+}
 
 constexpr int kGridNoteRowSpan = 1;
 constexpr int kGridNoteColumnSpan = 2;
@@ -33,12 +62,11 @@ constexpr int kBufferSizeMaximumMb = 512;
 constexpr int kBufferSizeStepMb = 16;
 constexpr int kConcurrentWritesMinimum = 1;
 constexpr int kConcurrentWritesMaximum = 16;
+constexpr int kDefaultMaxConcurrentWrites = 1;
 constexpr int kLargeDriveThresholdMinimumGb = 8;
 constexpr int kLargeDriveThresholdMaximumGb = 2048;
 constexpr int kLargeDriveThresholdStepGb = 8;
 constexpr int kDefaultLargeDriveThresholdGb = 128;
-constexpr int kSizeDisplayPrecisionSmall = 1;
-constexpr int kSizeDisplayPrecisionLarge = 2;
 
 }  // namespace
 
@@ -55,187 +83,221 @@ ImageFlasherSettingsDialog::~ImageFlasherSettingsDialog() = default;
 
 void ImageFlasherSettingsDialog::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
-    auto* mainLayout = new QVBoxLayout(this);
-    setupUi_generalSection(mainLayout);
-    setupUi_advancedSection(mainLayout);
-    setupUi_buttonBar(mainLayout);
+    auto* main_layout = new QVBoxLayout(this);
+    setupUi_generalSection(main_layout);
+    setupUi_advancedSection(main_layout);
+    setupUi_buttonBar(main_layout);
+    alignFieldColumn();
 }
 
-void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* mainLayout) {
-    // Verification group
-    auto* verificationGroup = new QGroupBox("Verification", this);
-    auto* verificationLayout = new QGridLayout(verificationGroup);
+// One column for every field in the dialog, the widest label's: the validation combo started at
+// x=191, the performance spin boxes at x=297 and the threshold at x=210 (review 4, Y18).
+void ImageFlasherSettingsDialog::alignFieldColumn() {
+    int width = 0;
+    for (const QWidget* label : std::as_const(m_fieldLabels)) {
+        width = std::max(width, label->sizeHint().width());
+    }
+    for (QGridLayout* grid : std::as_const(m_fieldGrids)) {
+        grid->setColumnMinimumWidth(0, width);
+    }
+}
 
-    auto* valLabelWidget = sak::InfoButton::createInfoLabel(
-        "Validation Mode:",
+void ImageFlasherSettingsDialog::setupUi_generalSection(QVBoxLayout* main_layout) {
+    // Verification group
+    auto* verification_group = new QGroupBox("Verification", this);
+    auto* verification_layout = new QGridLayout(verification_group);
+
+    auto* val_label_widget = sak::InfoButton::createInfoLabel(
+        "Validation mode:",
         "Choose how to verify data after writing: Full reads every byte back, Quick samples random "
         "blocks, None skips verification",
-        verificationGroup);
-    verificationLayout->addWidget(valLabelWidget, 0, 0);
-    m_validationModeCombo = new QComboBox(verificationGroup);
+        verification_group);
+    verification_layout->addWidget(val_label_widget, 0, 0);
+    m_validationModeCombo = new QComboBox(verification_group);
+    m_validationModeCombo->setAccessibleName(tr("Verification mode"));
     m_validationModeCombo->addItem("Full Verification (Slowest, Most Reliable)", "full");
     m_validationModeCombo->addItem("Quick Check (Faster, Less Thorough)", "quick");
     m_validationModeCombo->addItem("No Verification (Fastest, No Checking)", "none");
-    verificationLayout->addWidget(m_validationModeCombo, 0, 1);
+    verification_layout->addWidget(m_validationModeCombo, 0, 1);
+    verification_layout->setColumnStretch(1, 1);
+    m_fieldLabels.append(val_label_widget);
+    m_fieldGrids.append(verification_layout);
 
-    auto* validationNote = new QLabel(
+    auto* validation_note = new QLabel(
         "Full verification reads every byte back from the drive. "
         "Quick check samples random blocks for faster validation. "
         "No verification writes only without checking.",
-        verificationGroup);
-    validationNote->setWordWrap(true);
-    validationNote->setStyleSheet(
+        verification_group);
+    validation_note->setWordWrap(true);
+    validation_note->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeNote));
-    verificationLayout->addWidget(validationNote, 1, 0, kGridNoteRowSpan, kGridNoteColumnSpan);
+    verification_layout->addWidget(validation_note, 1, 0, kGridNoteRowSpan, kGridNoteColumnSpan);
 
-    mainLayout->addWidget(verificationGroup);
+    main_layout->addWidget(verification_group);
+    setupUi_performanceSection(main_layout);
+}
 
-    // Performance group
-    auto* performanceGroup = new QGroupBox("Performance", this);
-    auto* performanceLayout = new QGridLayout(performanceGroup);
+void ImageFlasherSettingsDialog::setupUi_performanceSection(QVBoxLayout* main_layout) {
+    auto* performance_group = new QGroupBox("Performance", this);
+    auto* performance_layout = new QGridLayout(performance_group);
 
-    auto* bufLabelWidget = sak::InfoButton::createInfoLabel(
-        "Buffer Size (MB):",
-        "Larger buffers improve throughput but use more RAM \u2014 64 MB is a good default for USB "
+    // The unit is the field's suffix: "Buffer Size (MB): 64 MB" gave it twice (review 4, Y18).
+    auto* buf_label_widget = sak::InfoButton::createInfoLabel(
+        "Buffer size:",
+        "Larger buffers improve throughput but use more RAM - 64 MB is a good default for USB "
         "3.0 drives",
-        performanceGroup);
-    performanceLayout->addWidget(bufLabelWidget, 0, 0);
-    m_bufferSizeSpin = new QSpinBox(performanceGroup);
+        performance_group);
+    performance_layout->addWidget(buf_label_widget, 0, 0);
+    m_bufferSizeSpin = new QSpinBox(performance_group);
+    m_bufferSizeSpin->setAccessibleName(tr("Buffer size"));
     m_bufferSizeSpin->setRange(kBufferSizeMinimumMb, kBufferSizeMaximumMb);
     m_bufferSizeSpin->setSingleStep(kBufferSizeStepMb);
     m_bufferSizeSpin->setSuffix(" MB");
-    performanceLayout->addWidget(m_bufferSizeSpin, 0, 1);
+    performance_layout->addWidget(m_bufferSizeSpin, 0, 1);
 
-    auto* concLabelWidget = sak::InfoButton::createInfoLabel(
-        "Max Concurrent Writes:",
-        "Number of USB drives that can be flashed simultaneously \u2014 each uses one thread",
-        performanceGroup);
-    performanceLayout->addWidget(concLabelWidget, 1, 0);
-    m_maxConcurrentWritesSpin = new QSpinBox(performanceGroup);
+    auto* conc_label_widget = sak::InfoButton::createInfoLabel(
+        "Max concurrent writes:",
+        "Number of USB drives that can be flashed simultaneously - each uses one thread",
+        performance_group);
+    performance_layout->addWidget(conc_label_widget, 1, 0);
+    m_maxConcurrentWritesSpin = new QSpinBox(performance_group);
+    m_maxConcurrentWritesSpin->setAccessibleName(tr("Concurrent writes"));
     m_maxConcurrentWritesSpin->setRange(kConcurrentWritesMinimum, kConcurrentWritesMaximum);
-    performanceLayout->addWidget(m_maxConcurrentWritesSpin, 1, 1);
+    performance_layout->addWidget(m_maxConcurrentWritesSpin, 1, 1);
+    performance_layout->setColumnStretch(1, 1);
+    m_fieldLabels.append(buf_label_widget);
+    m_fieldLabels.append(conc_label_widget);
+    m_fieldGrids.append(performance_layout);
 
-    auto* performanceNote = new QLabel(
+    auto* performance_note = new QLabel(
         "Larger buffer sizes may improve performance but use more memory. "
         "Concurrent writes allow flashing to multiple drives simultaneously.",
-        performanceGroup);
-    performanceNote->setWordWrap(true);
-    performanceNote->setStyleSheet(
+        performance_group);
+    performance_note->setWordWrap(true);
+    performance_note->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeNote));
-    performanceLayout->addWidget(
-        performanceNote, kPerformanceNoteRow, 0, kGridNoteRowSpan, kGridNoteColumnSpan);
+    performance_layout->addWidget(
+        performance_note, kPerformanceNoteRow, 0, kGridNoteRowSpan, kGridNoteColumnSpan);
 
-    mainLayout->addWidget(performanceGroup);
+    main_layout->addWidget(performance_group);
 }
 
-void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* mainLayout) {
-    Q_ASSERT(mainLayout);
-    // Safety group
-    auto* safetyGroup = new QGroupBox("Safety", this);
-    auto* safetyLayout = new QVBoxLayout(safetyGroup);
+void ImageFlasherSettingsDialog::setupUi_advancedSection(QVBoxLayout* main_layout) {
+    Q_ASSERT(main_layout);
+    // Safety group.
+    //
+    // There is deliberately no "show system drive warning" control here. The panel
+    // does not warn about the system drive, it REFUSES it outright -- and so does
+    // FlashCoordinator, independently, before any device is opened. A checkbox
+    // offering to turn that off would describe protection the user cannot actually
+    // disable, which is worse than no checkbox at all.
+    auto* safety_group = new QGroupBox("Safety", this);
+    auto* safety_layout = new QVBoxLayout(safety_group);
 
-    m_showSystemDriveWarningCheck = new QCheckBox("Show system drive warning", safetyGroup);
-    auto* sysRow = new QHBoxLayout();
-    sysRow->addWidget(m_showSystemDriveWarningCheck);
-    sysRow->addWidget(new sak::InfoButton(
-        "Prevents accidentally overwriting your Windows installation drive (C:)", safetyGroup));
-    sysRow->addStretch();
-    safetyLayout->addLayout(sysRow);
+    m_showLargeDriveWarningCheck = new QCheckBox("Show large drive warning", safety_group);
+    auto* lg_row = new QHBoxLayout();
+    lg_row->addWidget(m_showLargeDriveWarningCheck);
+    lg_row->addWidget(new sak::InfoButton(
+        "Warns when a drive exceeds the threshold below - large drives are rarely USB sticks",
+        safety_group));
+    lg_row->addStretch();
+    safety_layout->addLayout(lg_row);
 
-    m_showLargeDriveWarningCheck = new QCheckBox("Show large drive warning", safetyGroup);
-    auto* lgRow = new QHBoxLayout();
-    lgRow->addWidget(m_showLargeDriveWarningCheck);
-    lgRow->addWidget(new sak::InfoButton(
-        "Warns when a drive exceeds the threshold below \u2014 large drives are rarely USB sticks",
-        safetyGroup));
-    lgRow->addStretch();
-    safetyLayout->addLayout(lgRow);
-
-    auto* thresholdLayout = new QHBoxLayout();
-    thresholdLayout->addSpacing(sak::ui::kMarginXLarge);
-    thresholdLayout->addWidget(sak::InfoButton::createInfoLabel(
+    auto* threshold_layout = new QGridLayout();
+    auto* threshold_label = sak::InfoButton::createInfoLabel(
         "Large drive threshold:",
-        "Drives exceeding this size trigger a warning \u2014 helps avoid accidentally flashing "
+        "Drives exceeding this size trigger a warning - helps avoid accidentally flashing "
         "internal HDDs",
-        safetyGroup));
-    m_largeDriveThresholdSpin = new QSpinBox(safetyGroup);
+        safety_group);
+    // In under its check box, which it belongs to.
+    threshold_label->setContentsMargins(
+        sak::ui::kMarginXLarge, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    threshold_layout->addWidget(threshold_label, 0, 0);
+    m_fieldLabels.append(threshold_label);
+    m_fieldGrids.append(threshold_layout);
+    m_largeDriveThresholdSpin = new QSpinBox(safety_group);
+    m_largeDriveThresholdSpin->setAccessibleName(tr("Large drive threshold"));
     m_largeDriveThresholdSpin->setRange(kLargeDriveThresholdMinimumGb,
                                         kLargeDriveThresholdMaximumGb);
     m_largeDriveThresholdSpin->setSingleStep(kLargeDriveThresholdStepGb);
     m_largeDriveThresholdSpin->setSuffix(" GB");
-    thresholdLayout->addWidget(m_largeDriveThresholdSpin);
-    thresholdLayout->addStretch();
-    safetyLayout->addLayout(thresholdLayout);
+    threshold_layout->addWidget(m_largeDriveThresholdSpin, 0, 1);
+    threshold_layout->setColumnStretch(1, 1);
+    safety_layout->addLayout(threshold_layout);
 
-    mainLayout->addWidget(safetyGroup);
+    main_layout->addWidget(safety_group);
 
     // Behavior group
-    auto* behaviorGroup = new QGroupBox("Behavior", this);
-    auto* behaviorLayout = new QVBoxLayout(behaviorGroup);
+    auto* behavior_group = new QGroupBox("Behavior", this);
+    auto* behavior_layout = new QVBoxLayout(behavior_group);
 
-    m_unmountOnCompletionCheck = new QCheckBox("Unmount drives on completion", behaviorGroup);
-    auto* unmRow = new QHBoxLayout();
-    unmRow->addWidget(m_unmountOnCompletionCheck);
-    unmRow->addWidget(new sak::InfoButton(
-        "Safely ejects the drive so you can remove it immediately after flashing", behaviorGroup));
-    unmRow->addStretch();
-    behaviorLayout->addLayout(unmRow);
+    m_unmountOnCompletionCheck = new QCheckBox("Unmount drives on completion", behavior_group);
+    auto* unm_row = new QHBoxLayout();
+    unm_row->addWidget(m_unmountOnCompletionCheck);
+    unm_row->addWidget(new sak::InfoButton(
+        "Safely ejects the drive so you can remove it immediately after flashing", behavior_group));
+    unm_row->addStretch();
+    behavior_layout->addLayout(unm_row);
 
-    m_enableNotificationsCheck = new QCheckBox("Enable desktop notifications", behaviorGroup);
-    auto* notRow = new QHBoxLayout();
-    notRow->addWidget(m_enableNotificationsCheck);
-    notRow->addWidget(new sak::InfoButton(
-        "Windows toast notification when a long-running flash finishes", behaviorGroup));
-    notRow->addStretch();
-    behaviorLayout->addLayout(notRow);
+    m_enableNotificationsCheck = new QCheckBox("Enable desktop notifications", behavior_group);
+    auto* not_row = new QHBoxLayout();
+    not_row->addWidget(m_enableNotificationsCheck);
+    not_row->addWidget(new sak::InfoButton(
+        "Windows toast notification when a long-running flash finishes", behavior_group));
+    not_row->addStretch();
+    behavior_layout->addLayout(not_row);
 
-    mainLayout->addWidget(behaviorGroup);
+    main_layout->addWidget(behavior_group);
 }
 
-void ImageFlasherSettingsDialog::setupUi_buttonBar(QVBoxLayout* mainLayout) {
-    Q_ASSERT(mainLayout);
+void ImageFlasherSettingsDialog::setupUi_buttonBar(QVBoxLayout* main_layout) {
+    Q_ASSERT(main_layout);
     // Storage group
-    auto* storageGroup = new QGroupBox("Storage", this);
-    auto* storageLayout = new QVBoxLayout(storageGroup);
+    auto* storage_group = new QGroupBox("Storage", this);
+    auto* storage_layout = new QVBoxLayout(storage_group);
 
-    m_cacheInfoLabel = new QLabel(storageGroup);
+    m_cacheInfoLabel = new QLabel(storage_group);
     m_cacheInfoLabel->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeNote));
-    storageLayout->addWidget(m_cacheInfoLabel);
+    storage_layout->addWidget(m_cacheInfoLabel);
 
-    m_clearCacheButton = new QPushButton("Clear Download Caches", storageGroup);
+    m_clearCacheButton = new QPushButton("Clear Download Caches", storage_group);
     m_clearCacheButton->setStyleSheet(sak::ui::kDangerButtonStyle);
-    auto* cacheInfoRow = new QHBoxLayout();
-    cacheInfoRow->addWidget(m_clearCacheButton);
-    cacheInfoRow->addWidget(new sak::InfoButton(
+    auto* cache_info_row = new QHBoxLayout();
+    cache_info_row->addWidget(m_clearCacheButton);
+    cache_info_row->addWidget(new sak::InfoButton(
         "Removes all cached Windows UUP download files from the temp directory.\n"
         "Use this to free disk space or force a fresh download.",
-        storageGroup));
-    cacheInfoRow->addStretch();
+        storage_group));
+    cache_info_row->addStretch();
     connect(m_clearCacheButton,
             &QPushButton::clicked,
             this,
-            &ImageFlasherSettingsDialog::onClearDownloadCaches);
-    storageLayout->addLayout(cacheInfoRow);
+            &ImageFlasherSettingsDialog::onClearDownloadCaches,
+            Qt::QueuedConnection);
+    storage_layout->addLayout(cache_info_row);
 
-    mainLayout->addWidget(storageGroup);
+    main_layout->addWidget(storage_group);
 
     updateCacheInfo();
 
-    mainLayout->addStretch();
+    main_layout->addStretch();
 
     // Buttons
-    auto* buttonBox = new QDialogButtonBox(
+    auto* button_box = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::RestoreDefaults, this);
 
-    connect(buttonBox, &QDialogButtonBox::accepted, this, &ImageFlasherSettingsDialog::onAccept);
-    connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(buttonBox->button(QDialogButtonBox::RestoreDefaults),
+    connect(button_box, &QDialogButtonBox::accepted, this, &ImageFlasherSettingsDialog::onAccept);
+    connect(button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    // One primary button, OK: Restore Defaults only resets the form (review 3, X10).
+    button_box->button(QDialogButtonBox::RestoreDefaults)
+        ->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    connect(button_box->button(QDialogButtonBox::RestoreDefaults),
             &QPushButton::clicked,
             this,
             &ImageFlasherSettingsDialog::onResetDefaults);
 
-    mainLayout->addWidget(buttonBox);
+    main_layout->addWidget(button_box);
 }
 
 void ImageFlasherSettingsDialog::loadSettings() {
@@ -244,10 +306,10 @@ void ImageFlasherSettingsDialog::loadSettings() {
     const auto& config = sak::ConfigManager::instance();
 
     // Validation mode
-    QString validationMode = config.getImageFlasherValidationMode();
-    int validationIndex = m_validationModeCombo->findData(validationMode);
-    if (validationIndex >= 0) {
-        m_validationModeCombo->setCurrentIndex(validationIndex);
+    const QString validation_mode = config.getImageFlasherValidationMode();
+    const int validation_index = m_validationModeCombo->findData(validation_mode);
+    if (validation_index >= 0) {
+        m_validationModeCombo->setCurrentIndex(validation_index);
     }
 
     // Buffer size (ConfigManager stores in MB)
@@ -257,7 +319,6 @@ void ImageFlasherSettingsDialog::loadSettings() {
     m_maxConcurrentWritesSpin->setValue(config.getImageFlasherMaxConcurrentWrites());
 
     // Safety options
-    m_showSystemDriveWarningCheck->setChecked(config.getImageFlasherShowSystemDriveWarning());
     m_showLargeDriveWarningCheck->setChecked(config.getImageFlasherShowLargeDriveWarning());
     m_largeDriveThresholdSpin->setValue(config.getImageFlasherLargeDriveThreshold());
 
@@ -281,7 +342,6 @@ void ImageFlasherSettingsDialog::saveSettings() {
     config.setImageFlasherMaxConcurrentWrites(m_maxConcurrentWritesSpin->value());
 
     // Safety options
-    config.setImageFlasherShowSystemDriveWarning(m_showSystemDriveWarningCheck->isChecked());
     config.setImageFlasherShowLargeDriveWarning(m_showLargeDriveWarningCheck->isChecked());
     config.setImageFlasherLargeDriveThreshold(m_largeDriveThresholdSpin->value());
 
@@ -299,9 +359,8 @@ void ImageFlasherSettingsDialog::onAccept() {
 
 void ImageFlasherSettingsDialog::onResetDefaults() {
     m_validationModeCombo->setCurrentIndex(0);  // Full
-    m_bufferSizeSpin->setValue(static_cast<int>(sak::kBufferAlignment));
-    m_maxConcurrentWritesSpin->setValue(1);
-    m_showSystemDriveWarningCheck->setChecked(true);
+    m_bufferSizeSpin->setValue(sak::kImageFlasherDefaultBufferMb);
+    m_maxConcurrentWritesSpin->setValue(kDefaultMaxConcurrentWrites);
     m_showLargeDriveWarningCheck->setChecked(true);
     m_largeDriveThresholdSpin->setValue(kDefaultLargeDriveThresholdGb);
     m_unmountOnCompletionCheck->setChecked(true);
@@ -314,37 +373,37 @@ void ImageFlasherSettingsDialog::onResetDefaults() {
 
 QStringList ImageFlasherSettingsDialog::findCacheDirectories() {
     QStringList dirs;
-    const QString tempBase = sak::app_paths::tempDirectory();
-    QDir tempDir(tempBase);
+    const QString temp_base = sak::app_paths::tempDirectory();
+    const QDir temp_dir(temp_base);
 
-    for (const auto& entry : tempDir.entryList(QStringList{"sak_uup_*"}, QDir::Dirs)) {
-        dirs.append(tempDir.filePath(entry));
+    for (const auto& entry : temp_dir.entryList(QStringList{"sak_uup_*"}, QDir::Dirs)) {
+        dirs.append(temp_dir.filePath(entry));
     }
     return dirs;
 }
 
 qint64 ImageFlasherSettingsDialog::calculateCacheSize() {
-    qint64 totalBytes = 0;
-    for (const auto& dirPath : findCacheDirectories()) {
-        QDirIterator it(dirPath, QDir::Files, QDirIterator::Subdirectories);
+    qint64 total_bytes = 0;
+    for (const auto& dir_path : findCacheDirectories()) {
+        QDirIterator it(dir_path, QDir::Files, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             it.next();
-            totalBytes += it.fileInfo().size();
+            total_bytes += it.fileInfo().size();
         }
     }
-    return totalBytes;
+    return total_bytes;
 }
 
 void ImageFlasherSettingsDialog::updateCacheInfo() {
     Q_ASSERT(m_cacheInfoLabel);
     Q_ASSERT(m_clearCacheButton);
-    QStringList dirs = findCacheDirectories();
-    qint64 totalBytes = 0;
-    for (const auto& dirPath : dirs) {
-        QDirIterator it(dirPath, QDir::Files, QDirIterator::Subdirectories);
+    const QStringList dirs = findCacheDirectories();
+    qint64 total_bytes = 0;
+    for (const auto& dir_path : dirs) {
+        QDirIterator it(dir_path, QDir::Files, QDirIterator::Subdirectories);
         while (it.hasNext()) {
             it.next();
-            totalBytes += it.fileInfo().size();
+            total_bytes += it.fileInfo().size();
         }
     }
 
@@ -352,48 +411,32 @@ void ImageFlasherSettingsDialog::updateCacheInfo() {
         m_cacheInfoLabel->setText("No cached downloads found.");
         m_clearCacheButton->setEnabled(false);
     } else {
-        QString sizeStr;
-        if (totalBytes < sak::kBytesPerMB) {
-            sizeStr = QString("%1 KB").arg(totalBytes / sak::kBytesPerKB);
-        } else if (totalBytes < sak::kBytesPerGB) {
-            sizeStr = QString("%1 MB").arg(
-                totalBytes / sak::kBytesPerMBf, 0, 'f', kSizeDisplayPrecisionSmall);
-        } else {
-            sizeStr = QString("%1 GB").arg(
-                totalBytes / sak::kBytesPerGBf, 0, 'f', kSizeDisplayPrecisionLarge);
-        }
+        QString size_str;
+        size_str = sak::formatBytes(total_bytes);
         m_cacheInfoLabel->setText(
-            QString("%1 cached download folder(s) using %2.").arg(dirs.size()).arg(sizeStr));
+            QString("%1 using %2.").arg(cachedFoldersCount(dirs.size()), size_str));
         m_clearCacheButton->setEnabled(true);
     }
 }
 
 void ImageFlasherSettingsDialog::onClearDownloadCaches() {
-    QStringList dirs = findCacheDirectories();
+    const QStringList dirs = findCacheDirectories();
     if (dirs.isEmpty()) {
         sak::showInformationLogged(this, "Clear Download Caches", "No cached downloads to clear.");
         return;
     }
 
-    qint64 totalBytes = calculateCacheSize();
-    QString sizeStr;
-    if (totalBytes < sak::kBytesPerGB) {
-        sizeStr = QString("%1 MB").arg(
-            totalBytes / sak::kBytesPerMBf, 0, 'f', kSizeDisplayPrecisionSmall);
-    } else {
-        sizeStr = QString("%1 GB").arg(
-            totalBytes / sak::kBytesPerGBf, 0, 'f', kSizeDisplayPrecisionLarge);
-    }
+    const qint64 total_bytes = calculateCacheSize();
+    const QString size_str = sak::formatBytes(total_bytes);
 
     auto reply =
         sak::showQuestionLogged(this,
                                 "Clear Download Caches",
-                                QString("This will delete %1 cached download folder(s) (%2) "
+                                QString("This will delete %1 (%2) "
                                         "from the temp directory.\n\n"
                                         "Any in-progress downloads should be cancelled first.\n\n"
                                         "Continue?")
-                                    .arg(dirs.size())
-                                    .arg(sizeStr),
+                                    .arg(cachedFoldersCount(dirs.size()), size_str),
                                 QMessageBox::Yes | QMessageBox::No,
                                 QMessageBox::No);
 
@@ -401,39 +444,27 @@ void ImageFlasherSettingsDialog::onClearDownloadCaches() {
         return;
     }
 
-    int removedCount = 0;
-    int failedCount = 0;
-    for (const auto& dirPath : dirs) {
-        QDir dir(dirPath);
+    int removed_count = 0;
+    int failed_count = 0;
+    for (const auto& dir_path : dirs) {
+        QDir dir(dir_path);
         if (dir.removeRecursively()) {
-            removedCount++;
-            sak::logInfo("Cleared download cache: " + dirPath.toStdString());
+            removed_count++;
+            sak::logInfo("Cleared download cache: " + dir_path.toStdString());
         } else {
-            failedCount++;
-            sak::logWarning("Failed to remove cache directory: " + dirPath.toStdString());
+            failed_count++;
+            sak::logWarning("Failed to remove cache directory: " + dir_path.toStdString());
         }
     }
 
     updateCacheInfo();
 
-    if (failedCount == 0) {
-        sak::showInformationLogged(
-            this,
-            "Clear Download Caches",
-            QString("Successfully cleared %1 cached download folder(s) (%2 freed).")
-                .arg(removedCount)
-                .arg(sizeStr));
+    if (failed_count == 0) {
+        sak::showInformationLogged(this,
+                                   "Clear Download Caches",
+                                   QString("Successfully cleared %1 (%2 freed).")
+                                       .arg(cachedFoldersCount(removed_count), size_str));
     } else {
-        sak::logWarning(
-            "Cache clear partially failed: "
-            "cleared {} folder(s), {} could not be removed",
-            removedCount,
-            failedCount);
-        sak::showWarningLogged(this,
-                               "Clear Download Caches",
-                               QString("Cleared %1 folder(s), but %2 could not be removed.\n"
-                                       "They may be in use by an active download.")
-                                   .arg(removedCount)
-                                   .arg(failedCount));
+        reportPartialCacheClear(this, removed_count, failed_count);
     }
 }

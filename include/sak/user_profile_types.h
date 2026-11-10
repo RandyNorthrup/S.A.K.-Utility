@@ -30,26 +30,34 @@ enum class FolderType {
     AppData_Local,
     Favorites,
     StartMenu,
-    Custom
+    Custom,
+    ApplicationData  // A source from the Application Data page, restored as a unit
 };
 
 /**
  * @brief Permission handling modes during backup/restore
  */
+// A "Hybrid" mode was removed here. It was offered in both wizards and described four
+// different ways - "Strip dangerous, keep safe" on this enum, "Try Preserve, Fallback
+// Strip" in the backup picker, "Safe + Assign" in the restore picker, and "strip then
+// assign to the destination user" in PermissionManager - while every path that actually
+// consumed it just stripped, exactly like StripAll. A permission control that claims to
+// preserve anything and does not is worse than no control. Manifests written with it
+// still load: permissionModeFromString maps the legacy "Hybrid" string to StripAll,
+// which is what those backups actually got.
 enum class PermissionMode {
-    StripAll,             // Remove all ACLs, inherit from parent (SAFEST)
-    PreserveOriginal,     // Keep source ACLs (requires admin, risky)
-    AssignToDestination,  // Replace owner SID with dest user
-    Hybrid                // Strip dangerous, keep safe
+    StripAll,            // Remove all ACLs, inherit from parent (SAFEST)
+    PreserveOriginal,    // Keep source ACLs (requires admin, risky)
+    AssignToDestination  // Replace owner SID with dest user
 };
 
 /**
  * @brief User mapping modes for restore
  */
 enum class MergeMode {
-    ReplaceDestination,    // Overwrite destination user's files
-    MergeIntoDestination,  // Combine files with conflict resolution
-    CreateNewUser          // Create new user profile
+    ReplaceDestination,    // Files the backup also has are overwritten; other files stay
+    MergeIntoDestination,  // Files the backup also has follow the conflict rule
+    CreateNewUser          // A new folder under Users; no Windows account is created
 };
 
 /**
@@ -59,8 +67,7 @@ enum class ConflictResolution {
     SkipDuplicate,     // Don't copy if file exists
     RenameWithSuffix,  // Add _username suffix
     KeepNewer,         // Compare timestamps
-    KeepLarger,        // Compare file sizes
-    PromptUser         // Ask for each conflict
+    KeepLarger         // Compare file sizes
 };
 
 /**
@@ -129,6 +136,9 @@ struct SmartFilter {
     QStringList exclude_patterns;
     QStringList exclude_folders;
     QStringList dangerous_files;  // NTUSER.DAT, etc.
+    /// Also leave out anything under a folder named like a cache, wherever it sits. Written to
+    /// JSON only when off, so a manifest from before this existed still matches its checksum.
+    bool exclude_cache_paths{true};
 
     SmartFilter()
         : enable_file_size_limit(false)    // Optional by default
@@ -139,8 +149,27 @@ struct SmartFilter {
     }
 
     void initializeDefaults();
+
+    /// The Smart Filters page's three tick boxes. Each puts one group of rules in or out of the
+    /// lists above, so what View Full List shows and what the run does stay the same thing.
+    void setExclusionGroups(bool cache, bool temporary, bool lock_files);
+    [[nodiscard]] bool excludesCache() const { return exclude_cache_paths; }
+    [[nodiscard]] bool excludesTemporaryFiles() const;
+    [[nodiscard]] bool excludesLockFiles() const;
+
     QJsonObject toJson() const;
     static SmartFilter fromJson(const QJsonObject& json);
+
+    /// The registry-hive and lock files that MUST always be excluded from a
+    /// profile backup (copying a live NTUSER.DAT corrupts it / locks the run).
+    /// This set is non-negotiable: initializeDefaults() seeds it and fromJson()
+    /// re-unions it, so no supplied/edited manifest can drop it.
+    [[nodiscard]] static QStringList mandatoryDangerousFiles();
+
+    /// These rules as they apply to a source chosen on the Application Data page. Folder names that
+    /// mean "skip this" in a tree of someone's documents are part of the program here: a program's
+    /// settings live under Packages, and an extension will not run without its node_modules.
+    [[nodiscard]] SmartFilter forApplicationData() const;
 };
 
 /**
@@ -169,8 +198,22 @@ struct BackupUserData {
 struct WifiProfileInfo {
     QString profile_name;   // SSID / profile name
     QString security_type;  // WPA2-Personal, Open, etc.
-    QString xml_data;       // Full XML profile data from netsh
+    QString xml_data;       // Re-importable WLANProfile XML, key still DPAPI-protected
     bool selected{true};
+
+    // -- Runtime-only fields. NEITHER is serialized, and that is a security boundary, not an
+    // -- oversight. toJson/fromJson deliberately omit both, so a plaintext PSK cannot reach a
+    // -- backup file, a manifest, or a log by way of a struct that happens to know it. Only the
+    // -- WifiKeyMaterial::Plaintext scan populates plaintext_key; every other caller leaves it
+    // -- empty. See wifi_profile_scanner.h. Pinned by test_user_profile_types
+    // -- wifiProfile_plaintextKeyAndHiddenAreNeverSerialized.
+
+    /// Cleartext pre-shared key. Empty unless the caller explicitly asked for
+    /// WifiKeyMaterial::Plaintext AND the profile's <sharedKey> reported protected=false.
+    QString plaintext_key;
+
+    /// True when the profile is a hidden network (<nonBroadcast>true</nonBroadcast>).
+    bool hidden{false};
 
     QJsonObject toJson() const;
     static WifiProfileInfo fromJson(const QJsonObject& json);
@@ -192,7 +235,43 @@ struct EthernetConfigInfo {
 
     QJsonObject toJson() const;
     static EthernetConfigInfo fromJson(const QJsonObject& json);
+
+    /// @brief Convert an IPv4 CIDR prefix length (0..32) to a dotted-quad subnet mask
+    /// ("255.255.255.0" for 24). Restore feeds subnet_mask to `netsh set address`, which wants
+    /// the dotted-quad form, so the prefix from Get-NetIPConfiguration is converted here. Returns
+    /// an empty string for an out-of-range prefix.
+    static QString prefixLengthToSubnetMask(int prefixLength);
+
+    /// @brief Parse the backup wizard's Get-NetIPConfiguration JSON scan into per-adapter configs.
+    /// The cmdlet output (Name / Dhcp / IPv4 / Prefix / Gateway / Dns) is language-neutral, unlike
+    /// the localized `netsh interface ipv4 show config` text this replaced -- which silently
+    /// captured nothing on a non-English Windows -- so ethernet settings are backed up on any
+    /// locale. Adapters with no Name are skipped; a null Gateway or empty Dns yields empty fields.
+    /// Accepts a JSON array, a bare object (a single adapter), or empty input (no adapters).
+    [[nodiscard]] static QVector<EthernetConfigInfo> parseNetIpConfigJson(const QString& json);
 };
+
+/// @brief The language-neutral adapter scan that feeds parseNetIpConfigJson.
+///
+/// Declared here, beside its parser, because TWO call sites need it: the backup wizard's ethernet
+/// page and EthernetConfigManager::captureSettings. They were fixed at different times, and the
+/// second was still scraping localized `netsh interface ip show config` text long after the first
+/// stopped -- one shared constant is what stops that drifting apart again.
+///
+/// Every field read here (Name / Dhcp / IPv4 / Prefix / Gateway / Dns) and the Enabled/Disabled
+/// DHCP enum are language-neutral, unlike the "DHCP enabled: Yes" / "IP Address:" labels netsh
+/// prints, which are translated and so matched nothing outside English.
+constexpr auto kNetIpConfigPowerShell =
+    "$ErrorActionPreference='Stop'; Get-NetIPConfiguration | ForEach-Object { "
+    "$a=$_.InterfaceAlias; "
+    "$d=(Get-NetIPInterface -InterfaceAlias $a -AddressFamily IPv4 "
+    "-ErrorAction Stop).Dhcp; "
+    "[PSCustomObject]@{ Name=$a; Dhcp=\"$d\"; "
+    "IPv4=($_.IPv4Address.IPAddress | Select-Object -First 1); "
+    "Prefix=($_.IPv4Address.PrefixLength | Select-Object -First 1); "
+    "Gateway=($_.IPv4DefaultGateway.NextHop | Select-Object -First 1); "
+    "Dns=@($_.DNSServer | Where-Object {$_.AddressFamily -eq 2} | "
+    "ForEach-Object {$_.ServerAddresses}) } } | ConvertTo-Json -Depth 4";
 
 /**
  * @brief Application data source for backup/restore
@@ -204,6 +283,15 @@ struct AppDataSourceInfo {
     qint64 size_bytes{0};
     bool exists{false};
     bool selected{true};
+    /// Which files under the path this row takes, by file name ("*.pst"). Both empty takes them
+    /// all. Two rows can share a path and split it this way, as Outlook's archives and cache do.
+    QStringList include_patterns;
+    QStringList exclude_patterns;
+
+    /// Whether this row splits its path with another. Such a row is told apart by its patterns.
+    [[nodiscard]] bool splitsItsPath() const {
+        return !include_patterns.isEmpty() || !exclude_patterns.isEmpty();
+    }
 
     QJsonObject toJson() const;
     static AppDataSourceInfo fromJson(const QJsonObject& json);
@@ -229,6 +317,12 @@ struct BackupManifest {
     qint64 total_backup_size_bytes;
     QString manifest_checksum;
 
+    /// How the payload files were written. Restore needs these to know that a file is a
+    /// codec container and that a password will be required; the container magic is the
+    /// authority per file, and these are what let the UI say so before reading any file.
+    bool compressed{false};
+    bool encrypted{false};
+
     BackupManifest() : version("1.0"), backup_type("user_profiles"), total_backup_size_bytes(0) {}
 
     QJsonObject toJson() const;
@@ -236,6 +330,34 @@ struct BackupManifest {
 
     bool saveToFile(const QString& path) const;
     static BackupManifest loadFromFile(const QString& path);
+
+    // ---- Integrity checksums (B7-13) ---------------------------------------
+    // The manifest and each user's backed-up payload are protected by SHA-256
+    // digests that are actually computed at backup time and verified at restore
+    // time (previously the fields were serialized but never populated/checked).
+
+    /// SHA-256 hex over this manifest's JSON with the "manifest_checksum" key
+    /// removed, so the digest never covers itself. Deterministic: QJsonObject
+    /// serializes keys in sorted order.
+    [[nodiscard]] QString computeManifestChecksum() const;
+
+    /// True if manifest_checksum matches the recomputed digest. An empty stored
+    /// checksum (a legacy backup made before this field was populated) is treated
+    /// as unverifiable-but-acceptable and returns true; a NON-empty checksum that
+    /// does not match returns false (corruption -> caller fails closed). The digest
+    /// is stored inline and unkeyed, so it detects accidental corruption or a payload
+    /// changed without the manifest, not an attacker who rewrites both.
+    [[nodiscard]] bool verifyManifestChecksum() const;
+
+    /// Pure digest helper: SHA-256 hex of the given object after removing the
+    /// self-referential "manifest_checksum" key. Exposed for unit testing.
+    [[nodiscard]] static QString checksumOfManifestJson(QJsonObject obj);
+
+    /// Deterministic SHA-256 hex over every regular file under dir_path (sorted by
+    /// forward-slash relative path; path + size + bytes folded in). Returns an
+    /// empty string when dir_path does not exist. Used for per-user payload
+    /// checksum_sha256 at backup and its verification at restore.
+    [[nodiscard]] static QString hashDirectoryTree(const QString& dir_path);
 };
 
 /**
@@ -247,13 +369,9 @@ struct UserMapping {
     QString destination_username;
     QString destination_sid;  // Empty if creating new user
     MergeMode mode;
-    ConflictResolution conflict_resolution;
-    bool selected;  // Include in restore?
+    bool selected;            // Include in restore?
 
-    UserMapping()
-        : mode(MergeMode::ReplaceDestination)
-        , conflict_resolution(ConflictResolution::RenameWithSuffix)
-        , selected(true) {}
+    UserMapping() : mode(MergeMode::MergeIntoDestination), selected(true) {}
 };
 
 /**
@@ -286,6 +404,5 @@ QString folderTypeToString(FolderType type);
 FolderType stringToFolderType(const QString& str);
 QString permissionModeToString(PermissionMode mode);
 QString mergeModeToString(MergeMode mode);
-QString conflictResolutionToString(ConflictResolution mode);
 
 }  // namespace sak

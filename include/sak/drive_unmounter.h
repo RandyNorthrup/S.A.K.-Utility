@@ -59,14 +59,21 @@ public:
     /**
      * @brief Get list of volume mount points on a drive
      * @param driveNumber Physical drive number
+     * @param enumerationOk Optional out-param set to false if volume enumeration
+     *        itself failed (so callers can distinguish failure from an empty disk)
      * @return List of mount points (e.g., "C:\", "D:\")
      */
-    QStringList getVolumesOnDrive(int driveNumber) const;
+    QStringList getVolumesOnDrive(int driveNumber, bool* enumerationOk = nullptr) const;
 
     /**
      * @brief Lock a volume for exclusive access
      * @param volumePath Volume path (e.g., "\\.\C:")
      * @return Volume handle, or INVALID_HANDLE_VALUE on failure
+     *
+     * OWNERSHIP: this object keeps the handle and closes it in its destructor. The
+     * caller borrows it and must NOT close it. Do not let the returned handle outlive
+     * this DriveUnmounter -- an exclusive volume lock that survives the operation keeps
+     * Windows from remounting the drive.
      */
     HANDLE lockVolume(const QString& volumePath);
 
@@ -90,6 +97,34 @@ public:
      * @return true if successful
      */
     bool preventAutoMount(int driveNumber);
+
+    /**
+     * @brief Clear the persistent OFFLINE attribute to bring a drive back online
+     *        (inverse of preventAutoMount; used to roll back a failed unmount)
+     * @param driveNumber Physical drive number
+     * @return true if successful
+     */
+    bool allowAutoMount(int driveNumber);
+
+    /**
+     * @brief Eject a drive's media so the user can unplug it immediately
+     * @param driveNumber Physical drive number
+     * @return true only if the device actually reported the media ejected
+     *
+     * This is the post-write counterpart to unmountDrive, and is deliberately NOT
+     * the same operation. unmountDrive PREPARES a drive for a raw write: it sets
+     * the persistent OFFLINE attribute and deletes mount points so Windows cannot
+     * touch the disk mid-flash. ejectDrive FINISHES with a drive: it locks and
+     * dismounts the volumes so the media can leave, then issues the eject, and it
+     * sets no persistent attribute -- a drive that stays plugged in must come back
+     * as an ordinary usable disk, not a stranded offline one.
+     *
+     * Fails closed. A device that cannot be ejected (a fixed USB disk, a card
+     * reader that keeps its slot, a volume still held open) returns false with
+     * lastError() set, because reporting a successful eject invites the user to
+     * pull a disk Windows still has mounted.
+     */
+    bool ejectDrive(int driveNumber);
 
     /**
      * @brief Get last error message
@@ -120,33 +155,91 @@ private:
      */
     bool lockAndDismountVolume(const QString& volumePath);
 
-    /**
-     * @brief Get physical drive number for a volume
-     * @param volumePath Volume path
-     * @return Drive number, or -1 on failure
-     */
-    int getDriveNumberForVolume(const QString& volumePath) const;
+    /// @brief Lock and dismount one volume ahead of an eject, keeping the handle in
+    ///        m_lockedVolumes. Unlike lockAndDismountVolume this does NOT delete the
+    ///        volume's mount points: an ejected drive that is plugged back in should
+    ///        return with its drive letter, not be silently stripped of it.
+    /// @return true if the volume was locked and dismounted.
+    bool lockAndDismountForEject(const QString& volumePath);
 
+    /// @brief Issue the media-removal + eject IOCTLs on the physical drive.
+    /// @return true only when IOCTL_STORAGE_EJECT_MEDIA itself succeeded.
+    bool issueEjectIoctls(int driveNumber);
+
+    /// @brief Close and forget every handle held in m_lockedVolumes.
+    void closeLockedVolumeHandles();
+
+public:
+    /// How unmountDrive prepares a disk, as steps, so the order is testable without a disk.
+    struct UnmountSteps {
+        std::function<QStringList(bool* enumeration_ok)> list_volumes;
+        std::function<bool(const QString& volume_path)> lock_and_dismount;
+        std::function<bool()> set_offline;
+        std::function<void()> release_locks;
+    };
+    enum class UnmountOutcome {
+        Prepared,
+        EnumerationFailed,
+        LockFailed,
+        OfflineFailed
+    };
+    /// Lock and dismount every volume, holding the locks, and only then set the persistent
+    /// offline attribute. Offline first removed the volumes, so every lock that followed found
+    /// nothing to open ("CreateFile failed: error 2") and the flash stopped before it began.
+    /// A failure releases the locks; the disk is never left offline by a failed preparation.
+    [[nodiscard]] static UnmountOutcome runUnmountSteps(const UnmountSteps& steps);
+
+private:
     /**
      * @brief Close all handles to a drive
      * @param driveNumber Physical drive number
-     * @return true if successful
+     * @return true if the Restart Manager handle-close pass completed; false if it
+     *         could not run/complete -- including an INCOMPLETE volume enumeration,
+     *         which must not be reported as "nothing was holding a handle".
+     *         ADVISORY ONLY -- the authoritative guard against concurrent access is
+     *         the persistent OFFLINE attribute plus the exclusive volume locks, so
+     *         unmountDrive does not fail on false.
+     *
+     * NOTE: this does not merely close handles. The Restart Manager pass FORCE-
+     * TERMINATES the processes holding them (RmForceShutdown), without giving them a
+     * chance to save. Every holder it can name is logged before the shutdown.
      */
     bool closeAllHandles(int driveNumber);
+
+    /// @brief Run the advisory closeAllHandles() pass and log a warning (not fatal)
+    ///        if it was incomplete. Keeps unmountDrive within complexity limits.
+    void advisoryCloseHandles(int driveNumber);
 
     /**
      * @brief Find all volume GUID paths belonging to a physical drive
      * @param driveNumber Physical drive number
+     * @param enumerationOk Out-param set to false when the enumeration itself failed or
+     *        could not classify a volume. An empty list is otherwise indistinguishable
+     *        from "no volume on this drive holds a handle", which is exactly the
+     *        fiction that would let the Restart Manager pass report success after
+     *        enumerating nothing.
      * @return List of volume GUID paths (without trailing backslash)
      */
-    QStringList findVolumesForDrive(int driveNumber) const;
+    QStringList findVolumesForDrive(int driveNumber, bool* enumerationOk = nullptr) const;
 
     /**
-     * @brief Use Restart Manager to force-close open handles on volumes
+     * @brief Use Restart Manager to FORCE-TERMINATE the processes holding open handles
+     *        on the given volumes (RmForceShutdown; holders do not get to save)
      * @param dwSession Active Restart Manager session handle
      * @param mountPoints Volume GUID paths to process
+     * @return true if the Restart Manager pass completed (nothing left holding a
+     *         handle, or handles were force-closed); false if it could not run or
+     *         complete. Advisory only -- see closeAllHandles.
      */
-    void shutdownHandlesViaRestartManager(DWORD dwSession, const QStringList& mountPoints);
+    bool shutdownHandlesViaRestartManager(DWORD dwSession, const QStringList& mountPoints);
+
+    /**
+     * @brief Delete each mount point in a double-null-terminated path-name list
+     * @param multiSz MULTI_SZ buffer from GetVolumePathNamesForVolumeNameW
+     * @param count Length of the buffer in wchar_t (bounds the walk)
+     * @return true if every mount point was deleted
+     */
+    bool deleteVolumePathNames(const wchar_t* multiSz, size_t count);
 
     QString m_lastError;                    // Last error message
     QMap<QString, HANDLE> m_lockedVolumes;  // Volume path -> handle mapping

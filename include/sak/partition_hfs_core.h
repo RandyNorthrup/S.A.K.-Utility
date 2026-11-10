@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "sak/apfs_lzbitmap.h"
 #include "sak/partition_hfs_case_folding.h"
 #include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
@@ -197,6 +198,7 @@ constexpr qsizetype kBTreeNumRecordsOffset = 10;
 constexpr int8_t kBTreeLeafNode = -1;
 constexpr int8_t kBTreeIndexNode = 0;
 constexpr int8_t kBTreeHeaderNode = 1;
+constexpr int8_t kBTreeMapNode = 2;  // continuation node-allocation-map node (BTNodeDescriptor)
 constexpr qsizetype kBTreeNodeForwardLinkOffset = 0;
 constexpr qsizetype kBTreeNodeBackwardLinkOffset = 4;
 constexpr qsizetype kBTreeHeaderRecordOffset = 14;
@@ -262,6 +264,10 @@ struct HfsForkData {
 struct HfsVolume {
     QString file_system;
     uint64_t volume_offset{0};
+    // Bytes of the HFS wrapper's embedded extent (embeddedExtentBlockCount allocation
+    // blocks) that the inner volume is allowed to occupy; 0 when the volume is not
+    // wrapped. A wrapped volume claiming more than this is refused.
+    uint64_t embedded_extent_bytes{0};
     uint32_t file_count{0};
     uint32_t folder_count{0};
     uint32_t next_catalog_id{0};
@@ -312,7 +318,7 @@ struct HfsCatalogRecord {
     [[nodiscard]] bool regularFile() const noexcept { return record_type == kHfsCatalogFileRecord; }
 
     // A hard-link alias is a 'hlnk'/'hfs+' file record whose special @44 is the
-    // iNodeNum of the real data in the `␄␄␄␄HFS+ Private Data` metadata directory.
+    // iNodeNum of the real data in the `\0\0\0\0HFS+ Private Data` metadata directory.
     [[nodiscard]] bool hardLinkAlias() const noexcept {
         return regularFile() && file_type == kHfsHardLinkFileType &&
                file_creator == kHfsHardLinkFileCreator;
@@ -380,7 +386,9 @@ struct HfsAttributeRecord {
 };
 
 struct HfsAttributeLeafContext {
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QByteArray& node;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QVector<qsizetype>& offsets;
     uint16_t node_size{0};
     uint32_t node_number{0};
@@ -664,9 +672,15 @@ QByteArray hfsCatalogSymlinkRecord(uint32_t fileId, const HfsForkData& fork) {
 // owns the original blocks), and only set the link-chain flag, hl_firstLinkID @4,
 // and the BSDInfo.special @44 = linkCount. Byte layout harvested from macOS Sequoia.
 void hfsStampHardLinkInodeFields(QByteArray* payload, uint32_t firstLinkId, uint32_t linkCount) {
+    // Preserve the inode's other catalog flags (notably kHfsCatalogHasAttributesMask when it owns
+    // extended attributes / a resource fork, and kHfsCatalogHasSecurityMask) and only ADD the
+    // thread-exists + link-chain bits. Overwriting the whole field cleared HasAttributes on an
+    // inode with xattrs, unbalancing the catalog vs attribute-tree bucket counts (fsck_hfs
+    // "Incorrect number of extended attributes").
+    const uint16_t flags = be16(*payload, kHfsCatalogRecordFlagsOffset);
     writeBe16(payload,
               kHfsCatalogRecordFlagsOffset,
-              kHfsCatalogThreadExistsMask | kHfsCatalogHasLinkChainMask);
+              flags | kHfsCatalogThreadExistsMask | kHfsCatalogHasLinkChainMask);
     writeBe32(payload, kHfsCatalogFirstLinkIdOffset, firstLinkId);
     writeBe32(payload, kHfsCatalogBsdSpecialOffset, linkCount);
 }
@@ -764,6 +778,8 @@ constexpr uint32_t kHfsDecmpfsTypeLzvnInline = 7;
 constexpr uint32_t kHfsDecmpfsTypeLzvnResource = 8;
 constexpr uint32_t kHfsDecmpfsTypeLzfseInline = 11;
 constexpr uint32_t kHfsDecmpfsTypeLzfseResource = 12;
+constexpr uint32_t kHfsDecmpfsTypeLzbitmapInline = 13;
+constexpr uint32_t kHfsDecmpfsTypeLzbitmapResource = 14;
 constexpr char kHfsDecmpfsLzvnRawChunkMarker = 0x06;
 constexpr qsizetype kHfsDecmpfsLzfseEncodeSlackBytes = 64;
 constexpr qsizetype kHfsDecmpfsChunkTableMinimumBytes = kUint32Size * 2;
@@ -907,10 +923,10 @@ QByteArray encodeDecmpfsChunk(const QByteArray& chunk) {
 
 // Vendored Apple lzfse/lzvn reference codecs (third_party/lzfse) via C shim.
 extern "C" {
-size_t sak_lzvn_encode(void* dst, size_t dst_size, const void* src, size_t src_size);
-size_t sak_lzvn_decode(void* dst, size_t dst_size, const void* src, size_t src_size);
-size_t sak_lzfse_encode(void* dst, size_t dst_size, const void* src, size_t src_size);
-size_t sak_lzfse_decode(void* dst, size_t dst_size, const void* src, size_t src_size);
+size_t sakLzvnEncode(void* dst, size_t dst_size, const void* src, size_t src_size);
+size_t sakLzvnDecode(void* dst, size_t dst_size, const void* src, size_t src_size);
+size_t sakLzfseEncode(void* dst, size_t dst_size, const void* src, size_t src_size);
+size_t sakLzfseDecode(void* dst, size_t dst_size, const void* src, size_t src_size);
 }
 
 [[nodiscard]] bool decmpfsTypeUsesLzvn(uint32_t compressionType) {
@@ -923,9 +939,33 @@ size_t sak_lzfse_decode(void* dst, size_t dst_size, const void* src, size_t src_
            compressionType == kHfsDecmpfsTypeLzfseResource;
 }
 
+[[nodiscard]] bool decmpfsTypeUsesLzbitmap(uint32_t compressionType) {
+    return compressionType == kHfsDecmpfsTypeLzbitmapInline ||
+           compressionType == kHfsDecmpfsTypeLzbitmapResource;
+}
+
+// A decmpfs type whose compressed payload lives inline in the com.apple.decmpfs xattr.
+[[nodiscard]] bool decmpfsTypeIsInline(uint32_t compressionType) {
+    return compressionType == kHfsDecmpfsTypeZlibInline ||
+           compressionType == kHfsDecmpfsTypeLzvnInline ||
+           compressionType == kHfsDecmpfsTypeLzfseInline ||
+           compressionType == kHfsDecmpfsTypeLzbitmapInline;
+}
+
+// A decmpfs type whose compressed payload lives in the com.apple.ResourceFork stream.
+[[nodiscard]] bool decmpfsTypeIsResource(uint32_t compressionType) {
+    return compressionType == kHfsDecmpfsTypeZlibResource ||
+           compressionType == kHfsDecmpfsTypeLzvnResource ||
+           compressionType == kHfsDecmpfsTypeLzfseResource ||
+           compressionType == kHfsDecmpfsTypeLzbitmapResource;
+}
+
 [[nodiscard]] bool decmpfsTypeUsesChunkedOffsetTable(uint32_t compressionType) {
+    // LZVN, LZFSE and LZBITMAP resource forks all use the bare little-endian
+    // block_offs table (unlike ZLIB, which uses the Apple 'cmpf' rsrc blob).
     return compressionType == kHfsDecmpfsTypeLzvnResource ||
-           compressionType == kHfsDecmpfsTypeLzfseResource;
+           compressionType == kHfsDecmpfsTypeLzfseResource ||
+           compressionType == kHfsDecmpfsTypeLzbitmapResource;
 }
 
 std::optional<QByteArray> decodeLzvnChunk(const QByteArray& chunk, uint32_t expectedBytes) {
@@ -940,10 +980,10 @@ std::optional<QByteArray> decodeLzvnChunk(const QByteArray& chunk, uint32_t expe
         return raw;
     }
     QByteArray output(static_cast<qsizetype>(expectedBytes), '\0');
-    const size_t decoded = sak_lzvn_decode(output.data(),
-                                           static_cast<size_t>(output.size()),
-                                           chunk.constData(),
-                                           static_cast<size_t>(chunk.size()));
+    const size_t decoded = sakLzvnDecode(output.data(),
+                                         static_cast<size_t>(output.size()),
+                                         chunk.constData(),
+                                         static_cast<size_t>(chunk.size()));
     if (decoded != expectedBytes) {
         return std::nullopt;
     }
@@ -952,10 +992,10 @@ std::optional<QByteArray> decodeLzvnChunk(const QByteArray& chunk, uint32_t expe
 
 QByteArray encodeLzvnChunk(const QByteArray& chunk) {
     QByteArray compressed(chunk.size() + 1, '\0');
-    const size_t encoded = sak_lzvn_encode(compressed.data(),
-                                           static_cast<size_t>(chunk.size()),
-                                           chunk.constData(),
-                                           static_cast<size_t>(chunk.size()));
+    const size_t encoded = sakLzvnEncode(compressed.data(),
+                                         static_cast<size_t>(chunk.size()),
+                                         chunk.constData(),
+                                         static_cast<size_t>(chunk.size()));
     if (encoded == 0) {
         QByteArray raw;
         raw.reserve(chunk.size() + 1);
@@ -972,10 +1012,10 @@ std::optional<QByteArray> decodeLzfseChunk(const QByteArray& chunk, uint32_t exp
         return std::nullopt;
     }
     QByteArray output(static_cast<qsizetype>(expectedBytes), '\0');
-    const size_t decoded = sak_lzfse_decode(output.data(),
-                                            static_cast<size_t>(output.size()),
-                                            chunk.constData(),
-                                            static_cast<size_t>(chunk.size()));
+    const size_t decoded = sakLzfseDecode(output.data(),
+                                          static_cast<size_t>(output.size()),
+                                          chunk.constData(),
+                                          static_cast<size_t>(chunk.size()));
     if (decoded != expectedBytes) {
         return std::nullopt;
     }
@@ -986,12 +1026,22 @@ QByteArray encodeLzfseChunk(const QByteArray& chunk) {
     // The lzfse container has its own uncompressed-block form, so the encoder
     // output is always a valid stream; size it generously for tiny inputs.
     QByteArray compressed(chunk.size() + kHfsDecmpfsLzfseEncodeSlackBytes, '\0');
-    const size_t encoded = sak_lzfse_encode(compressed.data(),
-                                            static_cast<size_t>(compressed.size()),
-                                            chunk.constData(),
-                                            static_cast<size_t>(chunk.size()));
+    const size_t encoded = sakLzfseEncode(compressed.data(),
+                                          static_cast<size_t>(compressed.size()),
+                                          chunk.constData(),
+                                          static_cast<size_t>(chunk.size()));
     compressed.truncate(static_cast<qsizetype>(encoded));
     return compressed;
+}
+
+// One decmpfs LZBITMAP block: the exact 64 KiB-block codec APFS uses (algorithm 14),
+// reused here. Each on-disk block is a 0x5A LZBITMAP stream or a 0x0F-nibble stored block.
+std::optional<QByteArray> decodeLzbitmapChunk(const QByteArray& chunk, uint32_t expectedBytes) {
+    return apfsLzbitmapDecodeBlock(chunk, static_cast<int>(expectedBytes));
+}
+
+QByteArray encodeLzbitmapChunk(const QByteArray& chunk) {
+    return apfsLzbitmapEncodeBlock(chunk);
 }
 
 std::optional<QByteArray> decodeDecmpfsCodecChunk(uint32_t compressionType,
@@ -1003,6 +1053,9 @@ std::optional<QByteArray> decodeDecmpfsCodecChunk(uint32_t compressionType,
     if (decmpfsTypeUsesLzfse(compressionType)) {
         return decodeLzfseChunk(chunk, expectedBytes);
     }
+    if (decmpfsTypeUsesLzbitmap(compressionType)) {
+        return decodeLzbitmapChunk(chunk, expectedBytes);
+    }
     return decodeDecmpfsChunk(chunk, expectedBytes);
 }
 
@@ -1012,6 +1065,9 @@ QByteArray encodeDecmpfsCodecChunk(uint32_t compressionType, const QByteArray& c
     }
     if (decmpfsTypeUsesLzfse(compressionType)) {
         return encodeLzfseChunk(chunk);
+    }
+    if (decmpfsTypeUsesLzbitmap(compressionType)) {
+        return encodeLzbitmapChunk(chunk);
     }
     return encodeDecmpfsChunk(chunk);
 }

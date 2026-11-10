@@ -14,6 +14,7 @@ class QProgressBar;
 class QPushButton;
 class QTableWidget;
 class QVBoxLayout;
+class EmailFileScannerDialogTests;  // unit-test friend (global namespace)
 
 namespace sak {
 
@@ -22,12 +23,25 @@ namespace sak {
 class EmailFileScannerDialog : public QDialog {
     Q_OBJECT
 
+    friend class ::EmailFileScannerDialogTests;
+
 public:
     explicit EmailFileScannerDialog(QWidget* parent = nullptr);
     ~EmailFileScannerDialog() override;
 
     /// The path the user chose (empty if cancelled)
     [[nodiscard]] QString selectedFilePath() const;
+
+    /// Mailboxes under a Thunderbird Profiles folder. Thunderbird keeps each mailbox as a file with
+    /// no extension, in Mail or ImapMail account folders and in .sbd subfolders of those.
+    [[nodiscard]] static QStringList thunderbirdMailboxes(const QString& profiles_dir);
+
+    /// The file patterns a scan lists, besides Thunderbird's mailboxes with no extension.
+    [[nodiscard]] static QStringList mailFilePatterns();
+
+    /// @brief A found file's size as the results table shows it: the app's one byte format
+    ///        ("60.0 KB", as Email Inspector and the OST converter show it; review 3, F38).
+    [[nodiscard]] static QString sizeText(qint64 bytes);
 
 private Q_SLOTS:
     void onScanClicked();
@@ -41,6 +55,7 @@ private:
     void setupStatusRow(QVBoxLayout* layout);
     void setupButtonRow(QVBoxLayout* layout);
     void showEvent(QShowEvent* event) override;
+    void showScanFailure(const QString& message);
     [[nodiscard]] static QStringList commonScanPaths();
 
     QTableWidget* m_results_table{nullptr};

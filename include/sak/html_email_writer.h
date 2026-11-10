@@ -36,12 +36,21 @@ public:
     [[nodiscard]] qint64 totalBytesWritten() const { return m_bytes_written; }
 
 private:
-    [[nodiscard]] QString buildHtmlPage(
-        const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const;
+    /// Resolve the destination directory for one message and create it, or fail closed.
+    /// Rejects an empty or non-absolute output root, and a subfolder_path that escapes the
+    /// output dir; on success the returned directory exists on disk.
+    [[nodiscard]] std::expected<QString, error_code> resolveMessageDirectory(
+        const QString& subfolder_path) const;
 
-    void buildHtmlHeaderFields(QTextStream& ts, const PstItemDetail& item) const;
+    [[nodiscard]] static QString buildHtmlPage(
+        const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments);
 
-    [[nodiscard]] QString saveFileAttachments(
+    static void buildHtmlHeaderFields(QTextStream& ts, const PstItemDetail& item);
+
+    /// Saves each listed attachment into a per-message _files dir. Returns false if
+    /// ANY listed attachment fails to save (fail closed) so the caller can refuse to
+    /// emit an HTML page that references files not actually on disk.
+    [[nodiscard]] bool saveFileAttachments(
         const QVector<QPair<QString, QByteArray>>& attachment_data,
         const QString& dir_path,
         const QString& filename);
@@ -54,5 +63,21 @@ private:
     QHash<QString, int> m_filename_counters;
     qint64 m_bytes_written = 0;
 };
+
+/// True when @p name is an inline picture the message body itself shows (it has a Content-ID and
+/// the HTML body refers to it). Such an image is part of the body, not a file the reader was sent:
+/// exports put it in the body and do not list it again as an attachment.
+[[nodiscard]] bool isInlineBodyImage(const PstItemDetail& item, const QString& name);
+
+/// @p body_html with each inline picture's cid: reference replaced by the image itself, as a
+/// data: URI. The result needs nothing outside the document.
+[[nodiscard]] QString embedInlineImagesInHtml(
+    const PstItemDetail& item,
+    QString body_html,
+    const QVector<QPair<QString, QByteArray>>& attachments);
+
+/// @p attachments without the inline pictures the body already shows.
+[[nodiscard]] QVector<QPair<QString, QByteArray>> attachmentsNotInBody(
+    const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments);
 
 }  // namespace sak

@@ -6,6 +6,9 @@
 
 #include "sak/port_scanner.h"
 
+#include <QHostAddress>
+#include <QSignalSpy>
+#include <QTcpServer>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -14,11 +17,11 @@ class TestPortScanner : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──────────────────────────────────────────────
+    // -- Construction ----------------------------------------------
     void construction_default();
     void construction_nonCopyable();
 
-    // ── getServiceName ────────────────────────────────────────────
+    // -- getServiceName --------------------------------------------
     void serviceName_http();
     void serviceName_https();
     void serviceName_ssh();
@@ -28,18 +31,38 @@ private Q_SLOTS:
     void serviceName_rdp();
     void serviceName_unknownPort();
 
-    // ── getPresets ────────────────────────────────────────────────
+    // -- getPresets ------------------------------------------------
     void presets_nonEmpty();
     void presets_haveValidPorts();
     void presets_haveNames();
 
-    // ── ScanConfig defaults ──────────────────────────────────────
+    // -- ScanConfig defaults --------------------------------------
     void scanConfig_defaults();
+    void openPortResponseIsTheConnectTime();
 };
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // Construction
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
+
+// A loopback port that accepts and never speaks: the banner wait ran its two seconds twice, and
+// that wait was reported as the port's response time, above the timeout on the same screen.
+void TestPortScanner::openPortResponseIsTheConnectTime() {
+    QTcpServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost));
+    sak::PortScanner scanner;
+    QSignalSpy scanned(&scanner, &sak::PortScanner::portScanned);
+    sak::PortScanner::ScanConfig config;
+    config.target = QStringLiteral("127.0.0.1");
+    config.ports = {server.serverPort()};
+    config.timeoutMs = 3000;
+    config.grabBanners = true;
+    scanner.scan(config);
+    QCOMPARE(scanned.size(), 1);
+    const auto result = scanned.first().first().value<sak::PortScanResult>();
+    QCOMPARE(result.state, sak::PortScanResult::State::Open);
+    QVERIFY2(result.responseTimeMs < 1000.0, qPrintable(QString::number(result.responseTimeMs)));
+}
 
 void TestPortScanner::construction_default() {
     PortScanner scanner;
@@ -52,69 +75,59 @@ void TestPortScanner::construction_nonCopyable() {
     QVERIFY(!std::is_move_constructible_v<PortScanner>);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // getServiceName
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestPortScanner::serviceName_http() {
     const auto name = PortScanner::getServiceName(80);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("HTTP", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("HTTP"));
 }
 
 void TestPortScanner::serviceName_https() {
     const auto name = PortScanner::getServiceName(443);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("HTTPS", Qt::CaseInsensitive) ||
-            name.contains("HTTP", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("HTTPS"));
 }
 
 void TestPortScanner::serviceName_ssh() {
     const auto name = PortScanner::getServiceName(22);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("SSH", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("SSH"));
 }
 
 void TestPortScanner::serviceName_ftp() {
     const auto name = PortScanner::getServiceName(21);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("FTP", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("FTP Control"));
 }
 
 void TestPortScanner::serviceName_dns() {
     const auto name = PortScanner::getServiceName(53);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("DNS", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("DNS"));
 }
 
 void TestPortScanner::serviceName_smb() {
     const auto name = PortScanner::getServiceName(445);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("SMB", Qt::CaseInsensitive) ||
-            name.contains("Microsoft", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("SMB"));
 }
 
 void TestPortScanner::serviceName_rdp() {
     const auto name = PortScanner::getServiceName(3389);
-    QVERIFY(!name.isEmpty());
-    QVERIFY(name.contains("RDP", Qt::CaseInsensitive) ||
-            name.contains("Remote", Qt::CaseInsensitive));
+    QCOMPARE(name, QStringLiteral("RDP"));
 }
 
 void TestPortScanner::serviceName_unknownPort() {
     const auto name = PortScanner::getServiceName(59'999);
-    // Unknown port should return empty or "Unknown"
-    QVERIFY(name.isEmpty() || name.contains("Unknown", Qt::CaseInsensitive));
+    // A port absent from the service database returns an empty name (no "Unknown" fallback).
+    QVERIFY(name.isEmpty());
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // getPresets
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestPortScanner::presets_nonEmpty() {
     const auto presets = PortScanner::getPresets();
     QVERIFY(!presets.isEmpty());
-    QVERIFY(presets.size() >= 1);
+    QCOMPARE(presets.size(), static_cast<qsizetype>(7));  // kPortPresets has exactly 7 entries
 }
 
 void TestPortScanner::presets_haveValidPorts() {
@@ -134,9 +147,9 @@ void TestPortScanner::presets_haveNames() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 // ScanConfig defaults
-// ═══════════════════════════════════════════════════════════════════
+// ===================================================================
 
 void TestPortScanner::scanConfig_defaults() {
     PortScanner::ScanConfig config;
@@ -144,8 +157,8 @@ void TestPortScanner::scanConfig_defaults() {
     QVERIFY(config.ports.isEmpty());
     QCOMPARE(config.portRangeStart, static_cast<uint16_t>(0));
     QCOMPARE(config.portRangeEnd, static_cast<uint16_t>(0));
-    QVERIFY(config.timeoutMs > 0);
-    QVERIFY(config.maxConcurrent > 0);
+    QCOMPARE(config.timeoutMs, netdiag::kDefaultPortScanTimeoutMs);
+    QCOMPARE(config.maxConcurrent, netdiag::kDefaultMaxConcurrent);
     QCOMPARE(config.grabBanners, true);
 }
 

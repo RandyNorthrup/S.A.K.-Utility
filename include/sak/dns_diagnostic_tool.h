@@ -49,7 +49,7 @@ public:
     /// @brief Update comparison state with a single query result
     void updateComparisonWithResult(const DnsQueryResult& result,
                                     DnsServerComparison& comparison,
-                                    QVector<QString>& firstAnswers);
+                                    QVector<QString>& firstAnswers) const;
 
     /// @brief Inspect the local DNS cache (blocking)
     void inspectDnsCache();
@@ -64,6 +64,30 @@ public:
 
     /// @brief Supported DNS record types
     [[nodiscard]] static QStringList supportedRecordTypes();
+
+    /// @brief True if @p recordType is one of supportedRecordTypes() (case-insensitive).
+    /// Guards against a typo'd type being silently downgraded to an A query.
+    [[nodiscard]] static bool isSupportedRecordType(const QString& recordType);
+
+    /// @brief True if @p ipAddress is a dotted-quad IPv4 with four 0..255 numeric octets.
+    /// Reverse lookup must reject non-numeric octets rather than build a bogus PTR name.
+    [[nodiscard]] static bool isNumericIpv4(const QString& ipAddress);
+
+    /// @brief Order-insensitive comparison of two DNS answer sets. DNS servers may
+    /// return the same records in different order (round-robin), so an ordered
+    /// compare would wrongly flag agreeing servers as disagreeing.
+    [[nodiscard]] static bool answersEquivalent(const QVector<QString>& a,
+                                                const QVector<QString>& b);
+
+    /// @brief Parse the JSON from
+    /// `Get-DnsClientCache -Type A,AAAA | Select-Object Name,Data | ConvertTo-Json` into
+    /// (record-name, address) pairs. The cmdlet and its Name/Data fields are language-neutral,
+    /// unlike the localized "Record Name" / "A (Host) Record" labels of `ipconfig /displaydns`
+    /// that this replaced, so the cache view is correct on non-English Windows. Entries with an
+    /// empty Name or a null/empty Data (negative-cache / pending records) are skipped. Accepts a
+    /// JSON array, a bare object (a single record), or empty input (an empty cache).
+    [[nodiscard]] static QVector<QPair<QString, QString>> parseDnsClientCacheJson(
+        const QString& json);
 
 Q_SIGNALS:
     void queryComplete(sak::DnsQueryResult result);

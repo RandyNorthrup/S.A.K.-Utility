@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QFuture>
 #include <QGroupBox>
@@ -24,8 +25,13 @@
 #include <memory>
 
 class QVBoxLayout;
+class AppInstallationPanelTests;
 
 namespace sak {
+
+namespace ui {
+class ViewEmptyState;
+}  // namespace ui
 
 class ChocolateyManager;
 class AppInstallationWorker;
@@ -51,14 +57,15 @@ class PackageListManager;
  * - Real-time log output
  *
  * The panel uses a tab layout:
- *   Tab 0 — Online Install (search, queue, install via Chocolatey)
- *   Tab 1 — Offline Deploy (build bundles, install from bundles, presets)
+ *   Tab 0 - Online Install (search, queue, install via Chocolatey)
+ *   Tab 1 - Offline Deploy (build bundles, install from bundles, presets)
  *
  * Thread-Safety: UI updates occur on main thread.
  * Search and install operations run on background threads.
  */
 class AppInstallationPanel : public QWidget {
     Q_OBJECT
+    friend class ::AppInstallationPanelTests;
 
 public:
     /**
@@ -80,7 +87,6 @@ public:
     AppInstallationPanel& operator=(AppInstallationPanel&&) = delete;
 
     /** @brief Access the log toggle switch for MainWindow connection */
-    LogToggleSwitch* logToggle() const { return m_logToggle; }
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -134,13 +140,13 @@ private:
     /** @brief Build the search bar section */
     void setupUi_searchBar(QVBoxLayout* layout);
     /** @brief Build the package results table panel */
-    void setupUi_packageTable(QHBoxLayout* sideBySide);
+    void setupUi_packageTable(QHBoxLayout* side_by_side);
     /** @brief Build the install queue section panel */
-    void setupUi_queueSection(QHBoxLayout* sideBySide);
+    void setupUi_queueSection(QHBoxLayout* side_by_side);
     /** @brief Build the online install queue button row */
-    void setupUi_queueButtons(QVBoxLayout* queueLayout);
+    void setupUi_queueButtons(QVBoxLayout* queue_layout);
     /** @brief Build the online install progress widgets */
-    void setupUi_queueProgress(QVBoxLayout* queueLayout);
+    void setupUi_queueProgress(QVBoxLayout* queue_layout);
     /** @brief Build the bottom bar with log toggle */
     void setupUi_bottomBar(QVBoxLayout* layout);
     /** @brief Build the offline deployment tab content */
@@ -156,14 +162,17 @@ private:
     /** @brief Connect offline deployment signals */
     void setupOfflineConnections();
     void setupOfflineInputConnections();
+    void setupOfflineListConnections();
     void setupOfflineActionConnections();
     void setupOfflineWorkerConnections();
     void setupOfflineWorkerProgressConnections();
     void setupOfflineWorkerCompletionConnections();
-    void setupOfflinePresetRow(QVBoxLayout* offlineLayout);
-    void setupOfflineSearchGroup(QHBoxLayout* sideBySide);
-    void setupOfflineDeployListGroup(QHBoxLayout* sideBySide);
-    void setupOfflineActionsGroup(QVBoxLayout* offlineLayout);
+    [[nodiscard]] QString offlineStatusBarText(const QString& summary) const;
+    void setupOfflinePresetRow(QVBoxLayout* offline_layout);
+    void setupOfflineSearchGroup(QHBoxLayout* side_by_side);
+    void setupOfflineDeployListGroup(QHBoxLayout* side_by_side);
+    void setupOfflineActionsGroup(QVBoxLayout* offline_layout);
+    void setupPayloadModeControls(QVBoxLayout* actions_layout);
     /** @brief Handle NuGet search completion on the main thread */
     void onOfflineSearchCompleted(bool success,
                                   const QString& output,
@@ -171,7 +180,7 @@ private:
     /** @brief Parse Chocolatey search output into the results model */
     void updateResultsFromSearch(const QString& output);
     /** @brief Handle search completion on the main thread */
-    void onSearchCompleted(bool success, const QString& output, const QString& errorMessage);
+    void onSearchCompleted(bool success, const QString& output, const QString& error_message);
     /** @brief Refresh the queue list widget from m_installQueue */
     void updateQueueDisplay();
     /** @brief Enable or disable interactive controls during install */
@@ -180,10 +189,10 @@ private:
     void saveQueueToFile();
     /** @brief Load a previously saved install queue from disk */
     void loadQueueFromFile();
-    bool parseQueueFile(const QString& filePath, QJsonArray& out_array);
+    bool parseQueueFile(const QString& file_path, QJsonArray& out_array);
     void importQueueEntries(const QJsonArray& arr, int& added, int& skipped);
-    QIcon publisherIcon(const QString& packageId) const;
-    static QString lookupPublisher(const QString& packageId);
+    QIcon publisherIcon(const QString& package_id) const;
+    static QString lookupPublisher(const QString& package_id);
     std::shared_ptr<MigrationReport> buildInstallMigrationReport() const;
     void setInstallInProgressUi(bool running);
 
@@ -191,6 +200,19 @@ private:
     void updateOfflineListDisplay();
     /** @brief Enable/disable offline deployment controls during operations */
     void enableOfflineControls(bool enabled);
+    /** @brief Claim/release the offline path and refresh both control groups. */
+    void setOfflineInProgressUi(bool running);
+    /**
+     * @brief The ONE authority on whether package work is in flight.
+     *
+     * The online install queue and the offline deployment path both mutate machine
+     * locations through Chocolatey, so they are mutually exclusive. Every entry point and
+     * both control groups gate on this single predicate; separate per-path flags could
+     * disagree and let an offline bundle install start on top of a running online install.
+     */
+    [[nodiscard]] bool packageOperationInFlight() const;
+    /** @brief Enable both control groups iff no package operation is in flight. */
+    void refreshPackageOperationControls();
 
     // Publisher icon cache
     static QHash<QString, QString> s_publisherMap;
@@ -203,6 +225,7 @@ private:
     // Results table
     QTableView* m_onlineResultsTable{nullptr};
     QStandardItemModel* m_onlineResultsModel{nullptr};
+    ui::ViewEmptyState* m_onlineResultsState{nullptr};  ///< empty/loading overlay
 
     // Queue section
     QListWidget* m_queueList{nullptr};
@@ -217,7 +240,6 @@ private:
     QLabel* m_progressLabel{nullptr};
 
     // Bottom bar
-    LogToggleSwitch* m_logToggle{nullptr};
     QPushButton* m_saveQueueButton{nullptr};
 
     // Tab widget
@@ -230,9 +252,12 @@ private:
     QPushButton* m_offlineSearchButton{nullptr};
     QTableView* m_offlineResultsTable{nullptr};
     QStandardItemModel* m_offlineResultsModel{nullptr};
+    ui::ViewEmptyState* m_offlineResultsState{nullptr};  ///< empty/loading overlay
     QPushButton* m_offlineAddButton{nullptr};
     QPushButton* m_offlineRemoveButton{nullptr};
     QPushButton* m_offlineClearButton{nullptr};
+    QComboBox* m_payloadModeCombo{nullptr};  ///< self-contained Bundle vs metadata List
+    QCheckBox* m_airGapCheck{nullptr};       ///< install: air-gap (packed-only) switch
     QPushButton* m_buildBundleButton{nullptr};
     QPushButton* m_installFromBundleButton{nullptr};
     QPushButton* m_directDownloadButton{nullptr};
@@ -253,6 +278,10 @@ private:
     std::shared_ptr<ChocolateyManager> m_choco_manager;
     std::shared_ptr<AppInstallationWorker> m_worker;
     std::unique_ptr<OfflineDeploymentWorker> m_offline_worker;
+    // This run's package count and each failed package with its reason, for the end of run:
+    // the reason was only ever in the log, and the status bar was left at the last success.
+    int m_offline_total{0};
+    QStringList m_offline_failures;
 
     // Async
     QFuture<void> m_searchFuture;

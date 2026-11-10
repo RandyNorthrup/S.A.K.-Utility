@@ -74,9 +74,15 @@ Smoke proof used before approval:
 - `objdump -p` shows only Windows/UCRT API-set imports, no bundled companion DLLs
 
 The manifest approves the tool binaries and command shapes. Partition Manager
-now wires ext format, repair, and grow through Pending Operations, safety
-validators, Apply review, elevated PowerShell execution, manifest/hash
-revalidation, and explicit confirmation. ext shrink remains blocked until a
-separate shrink-specific destructive certification path exists. Read-only ext browse, selected-file extract, and
+now wires ext format, repair, grow AND same-start shrink through Pending
+Operations, safety validators, Apply review, elevated PowerShell execution,
+manifest/hash revalidation, and explicit confirmation.
+(Corrected 2026-08-30: this said "ext shrink remains blocked until a separate
+shrink-specific destructive certification path exists". That path exists and ran --
+`buildExtShrinkResizeScript` (src/core/partition_script_builder.cpp:2763) emits
+`e2fsck -p -f` then `resize2fs`, docs/PARTITION_MANAGER_CERTIFICATION.md:110 records
+"the queued ext format/repair/grow/shrink path" as certified, and the README lists
+confirmed same-start shrink. A blocked-capability note that outlives its blocker is
+the same defect as an overstated one, pointing the other way.) Read-only ext browse, selected-file extract, and
 bounded directory export are provided by original S.A.K. parser code, not by
 this external tool bundle.

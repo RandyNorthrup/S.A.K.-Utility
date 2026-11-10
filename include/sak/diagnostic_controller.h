@@ -8,6 +8,7 @@
 
 #include "sak/diagnostic_types.h"
 #include "sak/layout_constants.h"
+#include "sak/worker_base.h"
 
 #include <QFuture>
 #include <QObject>
@@ -16,9 +17,11 @@
 #include <atomic>
 #include <memory>
 
+class DiagnosticControllerTests;
+
 namespace sak {
 
-inline constexpr int kDefaultThermalMonitoringIntervalMs = kTimerBroadcastMs;
+inline constexpr int kDefaultThermalMonitoringIntervalMs = kThermalReadoutPollIntervalMs;
 
 // Forward declarations
 class HardwareInventoryScanner;
@@ -146,8 +149,56 @@ public:
     /// @brief Get the aggregated report data
     [[nodiscard]] const DiagnosticReportData& reportData() const { return m_report_data; }
 
-    /// @brief Get the thermal monitor instance for direct connection
-    [[nodiscard]] ThermalMonitor* thermalMonitor() const;
+    // There is deliberately no thermalMonitor() accessor. The controller already
+    // forwards ThermalMonitor::readingsUpdated as its own thermalReadingsUpdated
+    // signal, so a caller has nothing to connect directly to; handing out the raw
+    // pointer to an owned unique_ptr only let a caller start and stop the monitor
+    // behind the controller's back.
+
+    // -- Pure decision helpers (public + static for unit testing) -----
+
+    /// @brief Whether a completion for @p completedStep may advance the suite.
+    /// @return true only while a suite is running AND the completed step is the
+    ///         one still in progress.
+    /// @note Guards against stale completions: a cancelled/skipped worker can
+    ///       emit its completion after the suite moved on, and skipCurrentStep
+    ///       queues its own advance -- ignoring non-matching completions prevents
+    ///       a double-advance that would silently skip the following step.
+    [[nodiscard]] static bool suiteAdvanceAllowed(bool runningSuite,
+                                                  SuiteState current,
+                                                  SuiteState completedStep);
+
+    /// @brief The steps with no result in @p data, by the names the suite reports them under. A
+    ///        drive report whose health could not be read is not a SMART result. Pure.
+    [[nodiscard]] static QStringList stepsWithNoResult(const DiagnosticReportData& data);
+
+    /// @brief Downgrade an aggregate status when a suite step failed to run.
+    /// @return @p current when no step failed; otherwise at least Warnings.
+    /// @note Never upgrades (a CriticalIssues status stays critical). Ensures a
+    ///       suite in which a benchmark failed is not reported AllPassed with no
+    ///       successful result.
+    [[nodiscard]] static DiagnosticStatus statusWithStepFailures(DiagnosticStatus current,
+                                                                 bool anyStepFailed);
+
+    /// @brief Which report formats a comma/anything-separated spec requests.
+    /// @param formats free-form text (e.g. "html,json"); matched case-insensitively.
+    /// @return the subset of {"html","json","csv"} present, in that order.
+    /// @note Lets generateReport require at least one real output instead of
+    ///       reporting success when the spec names no known format. Pure + static
+    ///       for unit testing.
+    [[nodiscard]] static QStringList requestedReportFormats(const QString& formats);
+
+    /// @brief Build a collision-free base path for a report set.
+    /// @param output_dir destination directory.
+    /// @param when the report timestamp.
+    /// @param counter a per-run monotonically increasing value.
+    /// @return "<dir>/SAK_Diagnostic_<yyyyMMdd_HHmmss_zzz>_<counter>".
+    /// @note Millisecond resolution + a counter so two reports generated in the
+    ///       same second (previously second-resolution) never overwrite each
+    ///       other. Pure + static for unit testing.
+    [[nodiscard]] static QString uniqueReportBaseName(const QString& output_dir,
+                                                      const QDateTime& when,
+                                                      quint64 counter);
 
 Q_SIGNALS:
     // -- Scan / Analysis Results ---------------------------------
@@ -191,11 +242,17 @@ Q_SIGNALS:
     /// @brief Error from any worker
     void errorOccurred(const QString& message);
 
+    /// @brief A drive the SMART scan kept with a warning (SmartDiskAnalyzer::driveWarning)
+    void driveWarning(const QString& message);
+
     /// @brief Reports generated successfully
     void reportsGenerated(const QString& output_dir);
 
     /// @brief Thermal readings for UI update
     void thermalReadingsUpdated(const QVector<sak::ThermalReading>& readings);
+
+    /// @brief Each thermal poll's unavailable-sensor status lines, before its readings
+    void thermalSensorStatusesUpdated(const QStringList& statuses);
 
     /// @brief Stress test live status
     void stressTestStatus(int elapsed_seconds, double cpu_temp, int errors);
@@ -229,10 +286,36 @@ private:
     void connectThermalMonitor();
     void connectReportGenerator();
 
-    /// @brief Advance to the next step in the full suite
-    void advanceSuiteStep();
+    /// @brief Advance the full suite, but only if @p completedStep is the step
+    ///        currently in progress.
+    /// @param completedStep the suite step whose worker just finished/failed.
+    /// @note Guards against stale completions: a cancelled or skipped worker can
+    ///       still emit its completion signal AFTER the suite has moved on (and
+    ///       skipCurrentStep queues its own advance). Ignoring completions that
+    ///       do not match the current step prevents a double-advance that would
+    ///       silently skip the following step.
+    void advanceSuiteStep(SuiteState completedStep);
+
+    /// @brief Run report generation + emit the terminal Complete state/signals.
+    /// @note Shared by the stress-test and stress-skipped suite-end paths.
+    void finalizeSuiteAndComplete();
+
+    /// @brief Check the fail-closed preconditions for generateReport.
+    /// @param requested the report formats parsed from the spec.
+    /// @param dir the trimmed output directory.
+    /// @param formats the original spec (for the diagnostic on an empty result).
+    /// @return an empty string when a report may be generated; otherwise the
+    ///         user-facing reason (already logged) the caller emits and aborts on.
+    /// @note Refuses a spec that names no known format, an empty directory, and a
+    ///       controller that has produced no result (which would aggregate to a
+    ///       valid-looking "passed" report over an empty data set).
+    [[nodiscard]] QString reportPreconditionError(const QStringList& requested,
+                                                  const QString& dir,
+                                                  const QString& formats) const;
 
     /// @brief Aggregate all data and determine overall status
+    friend class ::DiagnosticControllerTests;  // aggregates a part-run report with no real scan
+
     void aggregateResults();
     void aggregateSmartHealth();
     void aggregateStressTest();
@@ -240,10 +323,10 @@ private:
     // Workers (created on-demand)
     std::unique_ptr<HardwareInventoryScanner> m_hardware_scanner;
     std::unique_ptr<SmartDiskAnalyzer> m_smart_analyzer;
-    std::unique_ptr<CpuBenchmarkWorker> m_cpu_benchmark;
-    std::unique_ptr<DiskBenchmarkWorker> m_disk_benchmark;
-    std::unique_ptr<MemoryBenchmarkWorker> m_memory_benchmark;
-    std::unique_ptr<StressTestWorker> m_stress_test;
+    WorkerPtr<CpuBenchmarkWorker> m_cpu_benchmark;
+    WorkerPtr<DiskBenchmarkWorker> m_disk_benchmark;
+    WorkerPtr<MemoryBenchmarkWorker> m_memory_benchmark;
+    WorkerPtr<StressTestWorker> m_stress_test;
     std::unique_ptr<ThermalMonitor> m_thermal_monitor;
     std::unique_ptr<DiagnosticReportGenerator> m_report_generator;
 
@@ -252,6 +335,17 @@ private:
     std::atomic<bool> m_running_suite{false};
     std::atomic<bool> m_skipping_step{false};  ///< Guards skipCurrentStep from double-advance
     DiagnosticReportData m_report_data;
+
+    /// @brief Set once any diagnostic completion has populated m_report_data. A fresh
+    ///        controller aggregates to AllPassed over an empty data set, so generateReport
+    ///        refuses to emit a valid-looking "passed" report before any scan/benchmark
+    ///        has produced a result.
+    std::atomic<bool> m_has_results{false};
+
+    /// @brief Names of suite steps that failed to complete this run. A failed
+    ///        benchmark records no result, so aggregateResults uses this to
+    ///        avoid reporting AllPassed over a run with unsuccessful steps.
+    QStringList m_suite_failures;
 
     // Async operation futures (prevent fire-and-forget)
     QFuture<void> m_hw_scan_future;

@@ -7,6 +7,8 @@
 #include "sak/actions/backup_bitlocker_keys_action.h"
 
 #include "sak/action_constants.h"
+#include "sak/app_action_guards.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -20,11 +22,16 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QRegularExpression>
+#include <QSaveFile>
 #include <QSysInfo>
 #include <QTextStream>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+
+#include <windows.h>
 
 namespace sak {
 
@@ -34,7 +41,9 @@ namespace sak {
 
 BackupBitlockerKeysAction::BackupBitlockerKeysAction(const QString& backup_location,
                                                      QObject* parent)
-    : QuickAction(parent), m_backup_location(backup_location) {}
+    : QuickAction(parent) {
+    setOutputFolder(backup_location);
+}
 
 // ============================================================================
 // Static Helpers -- WMI Enum Formatting
@@ -43,42 +52,89 @@ BackupBitlockerKeysAction::BackupBitlockerKeysAction(const QString& backup_locat
 namespace {
 
 struct CodeDescriptionEntry {
-    int code;
-    const char* description;
+    int m_code;
+    const char* m_description;
 };
 
-static constexpr CodeDescriptionEntry kEncryptionMethods[] = {
-    {0, "None"},
-    {1, "AES-128 with Diffuser"},
-    {2, "AES-256 with Diffuser"},
-    {3, "AES-128"},
-    {4, "AES-256"},
-    {5, "Hardware Encryption"},
-    {6, "XTS-AES-128"},
-    {7, "XTS-AES-256"},
-};
+static constexpr std::array<CodeDescriptionEntry, 8> kEncryptionMethods = {{
+    {.m_code = 0, .m_description = "None"},
+    {.m_code = 1, .m_description = "AES-128 with Diffuser"},
+    {.m_code = 2, .m_description = "AES-256 with Diffuser"},
+    {.m_code = 3, .m_description = "AES-128"},
+    {.m_code = 4, .m_description = "AES-256"},
+    {.m_code = 5, .m_description = "Hardware Encryption"},
+    {.m_code = 6, .m_description = "XTS-AES-128"},
+    {.m_code = 7, .m_description = "XTS-AES-256"},
+}};
 
-static constexpr CodeDescriptionEntry kProtectorTypes[] = {
-    {0, "Unknown or Other"},
-    {1, "TPM"},
-    {2, "External Key (USB)"},
-    {3, "Numerical Password (Recovery Password)"},
-    {4, "TPM + PIN"},
-    {5, "TPM + Startup Key"},
-    {6, "TPM + PIN + Startup Key"},
-    {7, "Public Key (Certificate)"},
-    {8, "Passphrase"},
-    {9, "TPM + Certificate"},
-    {10, "Clear Key (Unprotected)"},
-};
+static constexpr std::array<CodeDescriptionEntry, 11> kProtectorTypes = {{
+    {.m_code = 0, .m_description = "Unknown or Other"},
+    {.m_code = 1, .m_description = "TPM"},
+    {.m_code = 2, .m_description = "External Key (USB)"},
+    {.m_code = 3, .m_description = "Numerical Password (Recovery Password)"},
+    {.m_code = 4, .m_description = "TPM + PIN"},
+    {.m_code = 5, .m_description = "TPM + Startup Key"},
+    {.m_code = 6, .m_description = "TPM + PIN + Startup Key"},
+    {.m_code = 7, .m_description = "Public Key (Certificate)"},
+    {.m_code = 8, .m_description = "Passphrase"},
+    {.m_code = 9, .m_description = "TPM + Certificate"},
+    {.m_code = 10, .m_description = "Clear Key (Unprotected)"},
+}};
 
 constexpr int kVolumeTypeOperatingSystem = 0;
 constexpr int kVolumeTypeFixedData = 1;
 constexpr int kVolumeTypeRemovableData = 2;
-constexpr int kEstimatedDurationPerVolumeMs = kTimeoutProcessShortMs;
 constexpr int kKeyRetrievalProgressSpan = 40;
 constexpr qsizetype kBitlockerSummaryLineReserve = 14;
-constexpr int kVolumeSizeDisplayPrecision = 2;
+
+/// Length of a bare drive-letter root in native form ("X:\\"): drive letter, ':' and separator.
+constexpr int kDriveRootLength = 3;
+
+/// GetDriveTypeW() value for a mapped network drive. Named so the classification
+/// exists on every platform; the value is checked against the Win32 macro below.
+constexpr unsigned int kWin32DriveRemote = 4;
+static_assert(kWin32DriveRemote == DRIVE_REMOTE, "DRIVE_REMOTE value drifted");
+
+/// @brief Win32 drive type of @p path's "X:\" root, or 0 (DRIVE_UNKNOWN) when the path
+///        has no drive-letter root or the platform has no such concept. GetDriveTypeW
+///        answers from the local mount table, so it does not itself touch the share.
+struct RootFileSystem {
+    QString name;
+    bool keeps_permissions{true};
+};
+
+/// What the drive holding @p path is formatted as. A drive that cannot be asked, one not there yet
+/// for instance, reads as fine here: creating the folder on it fails next, and says so.
+[[nodiscard]] RootFileSystem rootFileSystem(const QString& path) {
+    const QString root =
+        QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(kDriveRootLength);
+    if (root.size() < kDriveRootLength || root[1] != QLatin1Char(':')) {
+        return {};
+    }
+    constexpr DWORD kFileSystemNameChars = 64;
+    wchar_t name[kFileSystemNameChars] = {};
+    DWORD flags = 0;
+    if (GetVolumeInformationW(root.toStdWString().c_str(),
+                              nullptr,
+                              0,
+                              nullptr,
+                              nullptr,
+                              &flags,
+                              name,
+                              kFileSystemNameChars) == 0) {
+        return {};
+    }
+    return {QString::fromWCharArray(name), (flags & FILE_PERSISTENT_ACLS) != 0};
+}
+
+[[nodiscard]] unsigned int rootDriveType(const QString& path) {
+    const QString root =
+        QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(kDriveRootLength);
+    if (root.size() < kDriveRootLength || root[1] != QLatin1Char(':')) {
+        return 0;
+    }
+    return GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16()));
+}
 
 static constexpr auto kDetectEncryptedVolumesScript = R"PS(
 try {
@@ -92,13 +148,17 @@ try {
         $convStatus = $vol.GetConversionStatus()
         $lockStatus = $vol.GetLockStatus()
 
-        $driveInfo = Get-Volume -DriveLetter ($vol.DriveLetter -replace ':',
-            '') -ErrorAction SilentlyContinue
+        $driveInfo = $null
+        if ($vol.DriveLetter) {
+            $driveInfo = Get-Volume -DriveLetter ($vol.DriveLetter -replace ':',
+                '') -ErrorAction Stop
+        }
 
         $obj = @{
             DriveLetter      = $vol.DriveLetter
             DeviceID         = $vol.DeviceID
             VolumeLabel      = if ($driveInfo) { $driveInfo.FileSystemLabel } else { "" }
+            VolumeMetadataKnown = [bool]$driveInfo
             VolumeType       = $vol.VolumeType
             ProtectionStatus = $status.ProtectionStatus
             EncryptionMethod = $encMethod.EncryptionMethod
@@ -117,10 +177,17 @@ try {
 
 static constexpr auto kRestrictPermissionsScriptTemplate = R"PS(
 try {
+    # Fail closed on ANY non-terminating error too: without this, a failed Set-Acl /
+    # Get-ChildItem / Get-Acl would leave a permissive ACL in place yet still fall through
+    # to Write-Output "SUCCESS", reporting plaintext recovery keys as secured when they are
+    # not. With Stop, any such failure throws into catch -> exit 1 -> fail closed.
+    $ErrorActionPreference = 'Stop'
     $path = '%1'
 
-    # Disable inheritance and remove inherited ACEs
-    $acl = Get-Acl -Path $path
+    # Disable inheritance and remove inherited ACEs.
+    # -LiteralPath (not -Path): the backup path may contain [ or ] which -Path
+    # treats as wildcards, so -Path could target the wrong file or nothing.
+    $acl = Get-Acl -LiteralPath $path
     $acl.SetAccessRuleProtection($true, $false)
 
     # Clear all existing rules
@@ -142,11 +209,17 @@ try {
         'NT AUTHORITY\SYSTEM', 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
     $acl.AddAccessRule($systemRule)
 
-    Set-Acl -Path $path -AclObject $acl
+    Set-Acl -LiteralPath $path -AclObject $acl
+
+    # Read it back: a quiet Set-Acl proves nothing. On exFAT and FAT32 it stores nothing and says
+    # nothing. The action checks the drive first, so failing here means something else went wrong.
+    if (-not (Get-Acl -LiteralPath $path).AreAccessRulesProtected) {
+        throw 'The permissions did not stay on this folder.'
+    }
 
     # Apply same ACL to all child items
-    Get-ChildItem -Path $path -Recurse -Force | ForEach-Object {
-        Set-Acl -Path $_.FullName -AclObject $acl
+    Get-ChildItem -LiteralPath $path -Recurse -Force | ForEach-Object {
+        Set-Acl -LiteralPath $_.FullName -AclObject $acl
     }
 
     Write-Output "SUCCESS"
@@ -166,7 +239,14 @@ try {
         exit 1
     }
 
-    $protectorIds = $vol.GetKeyProtectors(0).VolumeKeyProtectorID
+    $kpResult = $vol.GetKeyProtectors(0)
+    if ($kpResult.ReturnValue -ne 0) {
+        # A failed enumeration must NOT be coerced to "no protectors" (which would silently
+        # drop this volume's recovery key from the backup); fail the query so C++ fails closed.
+        Write-Error "GetKeyProtectors failed for %1 (rc=$($kpResult.ReturnValue))"
+        exit 1
+    }
+    $protectorIds = $kpResult.VolumeKeyProtectorID
     if (-not $protectorIds) {
         @() | ConvertTo-Json
         exit 0
@@ -175,14 +255,23 @@ try {
     $results = @()
     foreach ($id in $protectorIds) {
         $typeResult = $vol.GetKeyProtectorType($id)
+        if ($typeResult.ReturnValue -ne 0) {
+            Write-Error "GetKeyProtectorType failed for protector $id"
+            exit 1
+        }
         $type = $typeResult.KeyProtectorType
 
         $recoveryPassword = ""
         if ($type -eq 3) {
             $pwResult = $vol.GetKeyProtectorNumericalPassword($id)
-            if ($pwResult.ReturnValue -eq 0) {
-                $recoveryPassword = $pwResult.NumericalPassword
+            if ($pwResult.ReturnValue -ne 0) {
+                # A recovery-password protector we cannot read must fail the whole query
+                # rather than surface an empty password that the backup would treat as
+                # "this volume has no recovery key".
+                Write-Error "GetKeyProtectorNumericalPassword failed for protector $id"
+                exit 1
             }
+            $recoveryPassword = $pwResult.NumericalPassword
         }
 
         $keyFileName = ""
@@ -209,14 +298,23 @@ try {
 )PS";
 
 template <std::size_t N>
-QString lookupCodeDescription(const CodeDescriptionEntry (&table)[N], int code) {
+QString lookupCodeDescription(const std::array<CodeDescriptionEntry, N>& table, int code) {
     auto it = std::find_if(std::begin(table), std::end(table), [code](const auto& e) {
-        return e.code == code;
+        return e.m_code == code;
     });
     if (it != std::end(table)) {
-        return QString::fromLatin1(it->description);
+        return QString::fromLatin1(it->m_description);
     }
     return QString("Unknown (%1)").arg(code);
+}
+
+// A BitLocker drive letter from Win32_EncryptableVolume is a single ASCII
+// letter, optionally with a trailing colon (e.g. "C:"). Anything else is
+// rejected so a malformed value can never break out of the single-quoted
+// PowerShell filter or escape the backup directory when used in a filename.
+bool isValidDriveLetter(const QString& drive_letter) {
+    static const QRegularExpression kRe(QStringLiteral("^[A-Za-z]:?$"));
+    return kRe.match(drive_letter).hasMatch();
 }
 
 }  // namespace
@@ -249,7 +347,24 @@ QString BackupBitlockerKeysAction::formatVolumeType(int type_code) {
 }
 
 QString BackupBitlockerKeysAction::backupTimestamp() {
-    return QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    // Millisecond resolution: two backups started in the same second would
+    // otherwise produce the same directory name and clobber each other.
+    return QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
+}
+
+QString BackupBitlockerKeysAction::uniqueBackupDirName(const QString& timestamp, unsigned counter) {
+    return QStringLiteral("BitLocker_Keys_%1_%2").arg(timestamp).arg(counter);
+}
+
+BackupBitlockerKeysAction::KeyGate BackupBitlockerKeysAction::evaluateKeyGate(
+    int total_keys_found, int total_recovery_passwords) {
+    if (total_keys_found <= 0) {
+        return KeyGate::NoProtectors;
+    }
+    if (total_recovery_passwords <= 0) {
+        return KeyGate::NoRecoveryPasswords;
+    }
+    return KeyGate::Ok;
 }
 
 // ============================================================================
@@ -278,18 +393,25 @@ QString lockStatusLabel(int status) {
 }  // namespace
 
 QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseDetectedVolumes(
-    const QString& output) {
+    const QString& output, bool& parse_ok) {
+    parse_ok = false;
     QVector<VolumeInfo> volumes;
 
     if (output.isEmpty()) {
+        parse_ok = true;  // The query ran and the system genuinely reports no BitLocker volumes.
         return volumes;
     }
 
     QJsonParseError parse_error;
-    QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &parse_error);
+    const QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &parse_error);
     if (parse_error.error != QJsonParseError::NoError) {
         Q_EMIT logMessage("Failed to parse BitLocker volume data: " + parse_error.errorString());
-        return volumes;
+        return volumes;  // parse_ok stays false: a parse failure is not "no volumes".
+    }
+    if (!doc.isArray() && !doc.isObject()) {
+        Q_EMIT logMessage(
+            "BitLocker volume data was neither an array nor an object; failing closed");
+        return volumes;  // parse_ok stays false.
     }
 
     QJsonArray volume_array;
@@ -300,46 +422,58 @@ QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseD
     }
 
     for (const QJsonValue& val : volume_array) {
+        if (!val.isObject()) {
+            // A non-object entry must not be coerced to an empty volume record (blank drive
+            // letter, zeroed fields); fail closed exactly like parseKeyProtectorResponse so a
+            // malformed response is never read as a valid volume set.
+            Q_EMIT logMessage(
+                "Malformed BitLocker volume entry (not a JSON object); failing closed");
+            return {};  // parse_ok stays false
+        }
         QJsonObject obj = val.toObject();
 
         VolumeInfo vi;
         vi.drive_letter = obj["DriveLetter"].toString();
         vi.device_id = obj["DeviceID"].toString();
         vi.volume_label = obj["VolumeLabel"].toString();
+        vi.volume_metadata_known = obj["VolumeMetadataKnown"].toBool(false);
         vi.volume_type = formatVolumeType(obj["VolumeType"].toInt());
         vi.volume_size_bytes = static_cast<qint64>(obj["SizeBytes"].toDouble());
         vi.protection_status = protectionStatusLabel(obj["ProtectionStatus"].toInt(-1));
         vi.encryption_method = formatEncryptionMethod(obj["EncryptionMethod"].toInt());
 
-        int enc_pct = obj["EncryptionPct"].toInt(-1);
+        const int enc_pct = obj["EncryptionPct"].toInt(-1);
         vi.encryption_percentage = (enc_pct >= 0) ? QString("%1%").arg(enc_pct) : "N/A";
         vi.lock_status = lockStatusLabel(obj["LockStatus"].toInt(-1));
 
         volumes.append(vi);
     }
 
+    parse_ok = true;
     return volumes;
 }
 
-QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::detectEncryptedVolumes() {
+QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::detectEncryptedVolumes(
+    bool& query_ok) {
+    query_ok = false;
     const QString script = QString::fromUtf8(kDetectEncryptedVolumesScript);
 
     Q_EMIT logMessage("Querying BitLocker volume encryption status...");
 
-    ProcessResult proc = runPowerShell(script, sak::kTimeoutProcessLongMs);
+    const ProcessResult proc = runPowerShell(script, sak::kTimeoutProcessLongMs);
 
     if (!proc.succeeded()) {
-        QString error = proc.std_err.trimmed();
+        const QString error = proc.std_err.trimmed();
         if (error.contains("Access is denied", Qt::CaseInsensitive) ||
             error.contains("not recognized", Qt::CaseInsensitive)) {
             Q_EMIT logMessage("BitLocker WMI query requires administrator privileges");
         } else if (!error.isEmpty()) {
             Q_EMIT logMessage("BitLocker detection error: " + error);
         }
-        return {};
+        return {};  // query_ok stays false: the volume set is unknown, not empty.
     }
 
-    return parseDetectedVolumes(proc.std_out.trimmed());
+    return parseDetectedVolumes(proc.std_out.trimmed(), query_ok);
 }
 
 // ============================================================================
@@ -347,14 +481,25 @@ QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::detect
 // ============================================================================
 
 QVector<BackupBitlockerKeysAction::KeyProtectorInfo> BackupBitlockerKeysAction::getKeyProtectors(
-    const QString& drive_letter) {
+    const QString& drive_letter, bool& query_ok) {
+    query_ok = false;
     QVector<KeyProtectorInfo> protectors;
 
     const QString script = buildKeyProtectorScript(drive_letter);
+    if (script.isEmpty()) {
+        // An empty/malformed drive letter yields no script; treat it as a query
+        // failure (query_ok stays false) so the caller fails closed rather than
+        // silently omitting this volume's recovery key from the backup.
+        Q_EMIT logMessage(QString("Refusing to query key protectors for invalid drive letter: %1")
+                              .arg(drive_letter));
+        return protectors;
+    }
 
-    ProcessResult proc = runPowerShell(script, sak::kTimeoutProcessLongMs);
+    const ProcessResult proc = runPowerShell(script, sak::kTimeoutProcessLongMs);
 
     if (!proc.succeeded()) {
+        // query_ok stays false: the caller must fail closed rather than treat a
+        // failed query as "this volume simply has no protectors".
         if (!proc.std_err.trimmed().isEmpty()) {
             Q_EMIT logMessage(QString("Key protector query failed for %1: %2")
                                   .arg(drive_letter, proc.std_err.trimmed()));
@@ -362,40 +507,58 @@ QVector<BackupBitlockerKeysAction::KeyProtectorInfo> BackupBitlockerKeysAction::
         return protectors;
     }
 
-    QString output = proc.std_out.trimmed();
+    const QString output = proc.std_out.trimmed();
     if (output.isEmpty()) {
+        query_ok = true;  // ran successfully; this volume genuinely has none
         return protectors;
     }
 
-    return parseKeyProtectorResponse(output);
+    return parseKeyProtectorResponse(output, query_ok);
 }
 
 QString BackupBitlockerKeysAction::buildKeyProtectorScript(const QString& drive_letter) const {
-    if (drive_letter.isEmpty()) {
+    // Reject anything that is not a bare drive letter (optionally with a colon)
+    // before it is interpolated into the DriveLetter='%1' filter -- defense in
+    // depth against injection even though the value comes from a system source.
+    if (!isValidDriveLetter(drive_letter)) {
         return {};
     }
     return QString::fromUtf8(kKeyProtectorScriptTemplate).arg(drive_letter);
 }
 
 QVector<BackupBitlockerKeysAction::KeyProtectorInfo>
-BackupBitlockerKeysAction::parseKeyProtectorResponse(const QString& output) {
+BackupBitlockerKeysAction::parseKeyProtectorResponse(const QString& output, bool& parse_ok) {
+    parse_ok = false;
     QVector<KeyProtectorInfo> protectors;
 
     QJsonParseError parse_error;
-    QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &parse_error);
+    const QJsonDocument doc = QJsonDocument::fromJson(output.toUtf8(), &parse_error);
     if (parse_error.error != QJsonParseError::NoError) {
         Q_EMIT logMessage("Failed to parse key protector data: " + parse_error.errorString());
-        return protectors;
+        return protectors;  // parse_ok stays false -> caller fails closed
+    }
+
+    if (!doc.isArray() && !doc.isObject()) {
+        // Valid JSON but not the expected array/object shape: do not coerce it to
+        // "no protectors". Fail closed so the caller does not omit a volume's key.
+        Q_EMIT logMessage("Key protector data was neither an array nor an object; failing closed");
+        return protectors;  // parse_ok stays false
     }
 
     QJsonArray protector_array;
     if (doc.isArray()) {
         protector_array = doc.array();
-    } else if (doc.isObject()) {
+    } else {
         protector_array.append(doc.object());
     }
 
     for (const QJsonValue& val : protector_array) {
+        if (!val.isObject()) {
+            // A malformed (non-object) entry must not be silently dropped -- that
+            // could omit a real recovery protector. Reject the whole response.
+            Q_EMIT logMessage("Malformed key protector entry (not a JSON object); failing closed");
+            return {};  // parse_ok stays false -> caller fails closed
+        }
         QJsonObject obj = val.toObject();
 
         KeyProtectorInfo kpi;
@@ -407,53 +570,13 @@ BackupBitlockerKeysAction::parseKeyProtectorResponse(const QString& output) {
         protectors.append(kpi);
     }
 
+    parse_ok = true;
     return protectors;
 }
 
 // ============================================================================
 // Pre-Execution Scan
 // ============================================================================
-
-void BackupBitlockerKeysAction::scan() {
-    setStatus(ActionStatus::Scanning);
-    Q_EMIT scanProgress("Detecting BitLocker-encrypted volumes...");
-
-    m_volumes = detectEncryptedVolumes();
-
-    // Count total key protectors across all volumes
-    // We haven't retrieved keys yet during scan (that requires admin)
-    // Just report volume count
-
-    ScanResult result;
-    if (m_volumes.isEmpty()) {
-        result.applicable = false;
-        result.summary = "No BitLocker-encrypted volumes detected";
-        result.details =
-            "BitLocker is not configured on any volumes, "
-            "or administrator privileges are required to detect them.";
-    } else {
-        result.applicable = true;
-        result.summary = QString("Found %1 BitLocker volume(s)").arg(m_volumes.size());
-
-        QStringList volume_details;
-        for (const auto& vol : m_volumes) {
-            QString detail = QString("%1 (%2) -- Protection: %3, Encryption: %4")
-                                 .arg(vol.drive_letter)
-                                 .arg(vol.volume_label.isEmpty() ? "No Label" : vol.volume_label)
-                                 .arg(vol.protection_status)
-                                 .arg(vol.encryption_method);
-            volume_details.append(detail);
-        }
-        result.details = volume_details.join("\n");
-        result.files_count = m_volumes.size();
-        result.estimated_duration_ms = m_volumes.size() * kEstimatedDurationPerVolumeMs;
-        result.warning = "Recovery keys are sensitive -- store the backup securely";
-    }
-
-    setScanResult(result);
-    setStatus(ActionStatus::Ready);
-    Q_EMIT scanComplete(result);
-}
 
 // ============================================================================
 // Execution -- Full Key Backup
@@ -466,7 +589,7 @@ void BackupBitlockerKeysAction::execute() {
     }
 
     setStatus(ActionStatus::Running);
-    QDateTime start_time = QDateTime::currentDateTime();
+    const QDateTime start_time = QDateTime::currentDateTime();
     int total_keys_found = 0;
     int total_recovery_passwords = 0;
     if (!executeDiscoverVolumes(start_time)) {
@@ -496,8 +619,18 @@ void BackupBitlockerKeysAction::execute() {
 bool BackupBitlockerKeysAction::executeDiscoverVolumes(const QDateTime& start_time) {
     Q_EMIT executionProgress("Detecting BitLocker volumes...", progress::kStep5);
 
-    if (m_volumes.isEmpty()) {
-        m_volumes = detectEncryptedVolumes();
+    bool query_ok = false;
+    m_volumes = detectEncryptedVolumes(query_ok);
+
+    // Fail closed on a failed/denied query: an unknown volume set must not be reported as an
+    // empty one (which would read as "nothing to back up" and silently omit real keys).
+    if (!query_ok) {
+        emitFailedResult("BitLocker detection failed",
+                         "Could not query BitLocker volume status; the volume set is unknown. "
+                         "Run with administrator privileges and retry. No keys were backed up, "
+                         "so none were silently omitted.",
+                         start_time);
+        return false;
     }
 
     if (m_volumes.isEmpty()) {
@@ -527,17 +660,31 @@ bool BackupBitlockerKeysAction::executeExtractKeys(const QDateTime& start_time,
         }
 
         auto& vol = m_volumes[i];
-        const int progress_percent = progress::kStep15 +
-                                     static_cast<int>((static_cast<double>(i) / m_volumes.size()) *
-                                                      kKeyRetrievalProgressSpan);
+        const int progress_percent =
+            progress::kStep15 +
+            static_cast<int>((static_cast<double>(i) / static_cast<double>(m_volumes.size())) *
+                             kKeyRetrievalProgressSpan);
         Q_EMIT executionProgress(QString("Retrieving keys for %1 (%2/%3)...")
                                      .arg(vol.drive_letter)
                                      .arg(i + 1)
                                      .arg(m_volumes.size()),
                                  progress_percent);
 
-        vol.key_protectors = getKeyProtectors(vol.drive_letter);
-        total_keys_found += vol.key_protectors.size();
+        bool query_ok = false;
+        vol.key_protectors = getKeyProtectors(vol.drive_letter, query_ok);
+        if (!query_ok) {
+            // A failed query returns an empty list; counting it as "no keys" would
+            // silently drop this volume's recovery key from the backup, then report
+            // success. Fail closed instead.
+            emitFailedResult("Failed to read BitLocker key protectors",
+                             QString("Key protectors for %1 could not be read, so the backup "
+                                     "would silently omit its recovery key. Ensure the "
+                                     "application is running with administrator privileges.")
+                                 .arg(vol.drive_letter),
+                             start_time);
+            return false;
+        }
+        total_keys_found += static_cast<int>(vol.key_protectors.size());
         total_recovery_passwords += countRecoveryPasswords(vol.key_protectors);
 
         // Log protector IDs only (never log the actual recovery passwords)
@@ -549,11 +696,7 @@ bool BackupBitlockerKeysAction::executeExtractKeys(const QDateTime& start_time,
         }
     }
 
-    if (total_keys_found == 0) {
-        emitFailedResult("No key protectors found on any volume",
-                         "BitLocker volumes were detected but no key protectors could be read.\n"
-                         "Ensure the application has administrator privileges.",
-                         start_time);
+    if (!extractKeysGatePassed(start_time, total_keys_found, total_recovery_passwords)) {
         return false;
     }
 
@@ -564,71 +707,348 @@ bool BackupBitlockerKeysAction::executeExtractKeys(const QDateTime& start_time,
     return true;
 }
 
+bool BackupBitlockerKeysAction::extractKeysGatePassed(const QDateTime& start_time,
+                                                      int total_keys_found,
+                                                      int total_recovery_passwords) {
+    switch (evaluateKeyGate(total_keys_found, total_recovery_passwords)) {
+    case KeyGate::Ok:
+        return true;
+    case KeyGate::NoProtectors:
+        emitFailedResult("No key protectors found on any volume",
+                         "BitLocker volumes were detected but no key protectors could be read.\n"
+                         "Ensure the application has administrator privileges.",
+                         start_time);
+        return false;
+    case KeyGate::NoRecoveryPasswords:
+        emitFailedResult("No recovery passwords found on any volume",
+                         "BitLocker key protectors were read, but none is a numerical recovery "
+                         "password. There is no recovery key to back up.",
+                         start_time);
+        return false;
+    }
+    return false;
+}
+
+// A cancellation between writes must not leave plaintext recovery keys on disk: remove
+// the partial backup directory before reporting the cancel. If the removal itself fails,
+// plaintext keys may remain, so that is a failure -- not a clean cancel.
+void BackupBitlockerKeysAction::emitCancelWithCleanup(const QString& backup_dir_path,
+                                                      const QDateTime& start_time) {
+    if (!QDir(backup_dir_path).removeRecursively()) {
+        emitFailedResult(
+            "BitLocker key backup cancelled, but the partial backup directory "
+            "could not be removed; plaintext recovery keys may remain at " +
+                backup_dir_path,
+            QString(),
+            start_time);
+        return;
+    }
+    emitCancelledResult("BitLocker key backup cancelled", start_time);
+}
+
+// A failed write must not leave a partial (restricted-ACL but plaintext) key backup on
+// disk, symmetric with emitCancelWithCleanup: remove the backup directory before reporting
+// the failure. If the removal itself fails, surface that plaintext keys may remain rather
+// than claiming a clean failure.
+void BackupBitlockerKeysAction::emitFailWithCleanup(const QString& message,
+                                                    const QString& log,
+                                                    const QString& backup_dir_path,
+                                                    const QDateTime& start_time) {
+    if (!QDir(backup_dir_path).removeRecursively()) {
+        const QString partial = message +
+                                "; the partial backup directory could not be removed, so plaintext "
+                                "recovery keys may remain at " +
+                                backup_dir_path;
+        emitFailedResult(partial, log, start_time);
+        return;
+    }
+    emitFailedResult(message, log, start_time);
+}
+
 bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
                                                     QString& backup_dir_path,
                                                     int& key_files_written,
                                                     bool& permissions_set) {
-    Q_EMIT executionProgress("Creating backup directory...", progress::kStep60);
-
-    QString timestamp = backupTimestamp();
-    QString backup_dir_name = QString("BitLocker_Keys_%1").arg(timestamp);
-    backup_dir_path = QDir(m_backup_location).filePath(backup_dir_name);
-
-    QDir backup_dir(backup_dir_path);
-    if (!backup_dir.mkpath(".")) {
-        emitFailedResult("Failed to create backup directory",
-                         "Could not create: " + backup_dir_path,
-                         start_time);
+    if (!createBackupDirectory(start_time, backup_dir_path)) {
         return false;
     }
 
     if (isCancelled()) {
-        emitCancelledResult("BitLocker key backup cancelled", start_time);
+        emitCancelWithCleanup(backup_dir_path, start_time);
         return false;
     }
 
     Q_EMIT executionProgress("Writing recovery key document...", progress::kStep70);
-
-    bool doc_written = writeRecoveryDocument(backup_dir_path);
-    if (!doc_written) {
-        emitFailedResult("Failed to write recovery key document", QString(), start_time);
+    if (!writeRecoveryDocument(backup_dir_path)) {
+        emitFailWithCleanup(
+            "Failed to write recovery key document", QString(), backup_dir_path, start_time);
         return false;
     }
-
     if (isCancelled()) {
-        emitCancelledResult("BitLocker key backup cancelled", start_time);
+        emitCancelWithCleanup(backup_dir_path, start_time);
         return false;
     }
 
     Q_EMIT executionProgress("Writing per-volume key files...", progress::kStep80);
-
-    key_files_written = writePerVolumeKeyFiles(backup_dir_path);
-
+    if (!writePerVolumeKeyFiles(backup_dir_path, key_files_written)) {
+        emitFailWithCleanup("Failed to write a per-volume recovery key file",
+                            "A recovery key file could not be durably written, so this backup "
+                            "is incomplete.",
+                            backup_dir_path,
+                            start_time);
+        return false;
+    }
     if (isCancelled()) {
-        emitCancelledResult("BitLocker key backup cancelled", start_time);
+        emitCancelWithCleanup(backup_dir_path, start_time);
         return false;
     }
 
     Q_EMIT executionProgress("Writing JSON backup...", progress::kStep85);
-
     if (!writeJsonBackup(backup_dir_path)) {
-        emitFailedResult("Failed to write BitLocker key backup file", QString(), start_time);
+        emitFailWithCleanup(
+            "Failed to write BitLocker key backup file", QString(), backup_dir_path, start_time);
         return false;
     }
-
     if (isCancelled()) {
-        emitCancelledResult("BitLocker key backup cancelled", start_time);
+        emitCancelWithCleanup(backup_dir_path, start_time);
         return false;
     }
 
+    return secureBackupDirectory(start_time, backup_dir_path, permissions_set);
+}
+
+QString BackupBitlockerKeysAction::sameVolumeRefusal(const QString& location,
+                                                     const QVector<VolumeInfo>& volumes) {
+    // Keys stored on the volume they unlock are lost exactly when they are needed: a locked
+    // volume locks its own recovery key in with it. The default location (C:/SAK_Backups) is on
+    // the system drive, which is usually the most important BitLocker volume of all.
+    constexpr qsizetype kDriveLetterPrefixLength = 2;  // "C:"
+    const QString canonical = QDir::cleanPath(location);
+    if (canonical.size() < kDriveLetterPrefixLength ||
+        canonical.at(kDriveLetterPrefixLength - 1) != QLatin1Char(':')) {
+        return {};
+    }
+    const QChar letter = canonical.at(0).toUpper();
+    for (const VolumeInfo& volume : volumes) {
+        if (volume.drive_letter.isEmpty() || volume.drive_letter.at(0).toUpper() != letter ||
+            !volumeHasRecoveryPassword(volume.key_protectors)) {
+            continue;
+        }
+        return QStringLiteral(
+                   "The backup location %1 is on BitLocker volume %2:, whose recovery key is in "
+                   "this backup. If that volume is ever locked, its key would be locked with it. "
+                   "Choose a folder on another drive.")
+            .arg(QDir::toNativeSeparators(canonical))
+            .arg(letter);
+    }
+    return {};
+}
+
+QString BackupBitlockerKeysAction::fileSystemRefusal(const QString& location,
+                                                     const QString& file_system,
+                                                     bool keeps_permissions,
+                                                     bool warning_accepted) {
+    if (keeps_permissions || warning_accepted) {
+        return {};
+    }
+    return QStringLiteral(
+               "%1 is on a drive formatted as %2, which cannot restrict who reads files, and "
+               "recovery keys are saved as readable text. No one was asked about that on this "
+               "run, so nothing was written. Run BitLocker Key Backup from Backup and Restore to "
+               "be asked, or choose a folder on a drive formatted as NTFS.")
+        .arg(QDir::toNativeSeparators(location), file_system);
+}
+
+QString BackupBitlockerKeysAction::unprotectedDriveWarning(const QString& location,
+                                                           const QString& file_system) {
+    return QStringLiteral(
+               "%1 is on a drive formatted as %2.\n\n"
+               "This drive cannot restrict who reads files, so anyone with the drive can read the "
+               "recovery keys.\n\n"
+               "If you save them here, move them somewhere secure and delete them from this drive "
+               "as soon as you can.")
+        .arg(QDir::toNativeSeparators(location), file_system);
+}
+
+QString BackupBitlockerKeysAction::unprotectedResultWarning(const QString& file_system) {
+    return QStringLiteral(
+               "The keys are NOT protected: this %1 drive cannot restrict who reads files, so "
+               "anyone with the drive can read them. Move them somewhere secure and delete them "
+               "from this drive.")
+        .arg(file_system);
+}
+
+BackupBitlockerKeysAction::DestinationDrive BackupBitlockerKeysAction::destinationDrive(
+    const QString& path) const {
+    const RootFileSystem root = rootFileSystem(path);
+    return {.file_system = root.name, .keeps_permissions = root.keeps_permissions};
+}
+
+QString BackupBitlockerKeysAction::outputFolderWarning(const QString& folder) const {
+    const DestinationDrive drive = destinationDrive(folder);
+    return drive.keeps_permissions ? QString() : unprotectedDriveWarning(folder, drive.file_system);
+}
+
+QString BackupBitlockerKeysAction::screenDestinationDrive(const QString& location) {
+    const DestinationDrive drive = destinationDrive(location);
+    m_writing_unprotected = !drive.keeps_permissions;
+    m_unprotected_file_system = m_writing_unprotected ? drive.file_system : QString();
+    return fileSystemRefusal(
+        location, drive.file_system, drive.keeps_permissions, outputFolderWarningAccepted());
+}
+
+QString BackupBitlockerKeysAction::screenBackupLocation(const QString& raw_location,
+                                                        QString& refusal) {
+    if (raw_location.trimmed().isEmpty()) {
+        refusal = QStringLiteral("No backup location was supplied.");
+        return {};
+    }
+    // A UNC/device root would push plaintext recovery keys to a remote host (and the first
+    // stat alone triggers an SMB/NTLM handshake). Screened on the literal string BEFORE any
+    // stat, exactly like every other model-/payload-supplied destination in the app.
+    if (isNetworkOrDevicePath(raw_location)) {
+        refusal = QStringLiteral("Refused a network/device backup location: ") + raw_location;
+        return {};
+    }
+    if (QFileInfo(raw_location).isRelative()) {
+        // A relative destination resolves against the ELEVATED helper's working directory,
+        // which the requesting client does not control or see. Require an absolute path.
+        refusal = QStringLiteral("Backup location must be an absolute path: ") + raw_location;
+        return {};
+    }
+    const QString canonical = QDir::cleanPath(QFileInfo(raw_location).absoluteFilePath());
+    if (isNetworkOrDevicePath(canonical)) {
+        refusal = QStringLiteral("Refused a network/device backup location: ") + canonical;
+        return {};
+    }
+    // A pre-planted symlink/junction on the leaf or ANY ancestor silently redirects the keys
+    // elsewhere (possibly to a UNC target); refuse rather than follow it.
+    if (pathReparseUnsafe(canonical)) {
+        refusal = QStringLiteral("Refused a backup location behind a symlink/junction: ") +
+                  canonical;
+        return {};
+    }
+    // A mapped drive letter is a network destination that the literal-string screen above
+    // cannot see. Removable media stays allowed -- a USB key is a legitimate BitLocker
+    // recovery-key medium -- but a remote share is not.
+    if (rootDriveType(canonical) == kWin32DriveRemote) {
+        refusal = QStringLiteral("Refused a mapped network drive as the backup location: ") +
+                  canonical;
+        return {};
+    }
+    return canonical;
+}
+
+bool BackupBitlockerKeysAction::createBackupDirectory(const QDateTime& start_time,
+                                                      QString& backup_dir_path) {
+    Q_EMIT executionProgress("Creating backup directory...", progress::kStep60);
+
+    // The backup location arrives in the caller's task payload, crosses the elevation
+    // boundary, and is about to hold PLAINTEXT recovery keys -- so it is canonicalized and
+    // policy-screened HERE, before any directory is created under it. A refused location
+    // fails closed: nothing is created and nothing is written.
+    QString refusal;
+    const QString location = screenBackupLocation(outputFolder(), refusal);
+    if (location.isEmpty()) {
+        // The reason itself is the message: it is what the panel shows, and the fix is in it.
+        emitFailedResult(refusal, refusal, start_time);
+        return false;
+    }
+    const QString same_volume = sameVolumeRefusal(location, m_volumes);
+    if (!same_volume.isEmpty()) {
+        emitFailedResult(same_volume, same_volume, start_time);
+        return false;
+    }
+    const QString drive_refusal = screenDestinationDrive(location);
+    if (!drive_refusal.isEmpty()) {
+        emitFailedResult(drive_refusal, drive_refusal, start_time);
+        return false;
+    }
+
+    static std::atomic<unsigned> s_dir_counter{0};
+    const QString timestamp = backupTimestamp();
+    const unsigned counter = s_dir_counter.fetch_add(1, std::memory_order_relaxed);
+    const QString backup_dir_name = uniqueBackupDirName(timestamp, counter);
+
+    const QDir parent(location);
+    if (!parent.mkpath(QStringLiteral("."))) {
+        emitFailedResult("Failed to create backup directory",
+                         "Could not create backup location: " + location,
+                         start_time);
+        return false;
+    }
+
+    backup_dir_path = parent.filePath(backup_dir_name);
+    // mkdir (unlike mkpath) fails if the directory already exists, so a name
+    // collision fails closed instead of reopening and truncating a prior backup.
+    if (!parent.mkdir(backup_dir_name)) {
+        emitFailedResult("Failed to create backup directory",
+                         "A fresh backup directory could not be created: " + backup_dir_path,
+                         start_time);
+        return false;
+    }
+    return lockDownNewBackupDirectory(start_time, backup_dir_path);
+}
+
+bool BackupBitlockerKeysAction::lockDownNewBackupDirectory(const QDateTime& start_time,
+                                                           const QString& backup_dir_path) {
+    // A person agreed to a drive that cannot hold permissions, so there is nothing to apply.
+    if (m_writing_unprotected) {
+        Q_EMIT logMessage(QStringLiteral("Saving recovery keys to a %1 drive after the warning: "
+                                         "their permissions cannot be restricted")
+                              .arg(m_unprotected_file_system));
+        return true;
+    }
+    // Harden the ACL BEFORE any plaintext recovery key is written into the
+    // directory, so there is never a window where secrets sit under the default
+    // inherited ACL. Child files created afterwards inherit this protected ACL.
+    // If the restriction cannot be applied, remove the empty directory and fail
+    // closed rather than proceeding to write plaintext under a permissive ACL.
+    if (!restrictFilePermissions(backup_dir_path)) {
+        if (!QDir(backup_dir_path).removeRecursively()) {
+            Q_EMIT logMessage("Failed to remove unsecured backup directory: " + backup_dir_path);
+        }
+        emitFailedResult("Failed to secure backup directory",
+                         "The backup directory permissions could not be restricted before "
+                         "writing any recovery keys; the empty directory was removed.",
+                         start_time);
+        return false;
+    }
+    return true;
+}
+
+bool BackupBitlockerKeysAction::secureBackupDirectory(const QDateTime& start_time,
+                                                      const QString& backup_dir_path,
+                                                      bool& permissions_set) {
+    if (m_writing_unprotected) {
+        permissions_set = false;  // The result says so; see executeBuildReport.
+        return true;
+    }
     Q_EMIT executionProgress("Securing backup files...", progress::kStep90);
 
     permissions_set = restrictFilePermissions(backup_dir_path);
-    if (!permissions_set) {
-        Q_EMIT logMessage("Warning: Could not restrict backup directory permissions");
+    if (permissions_set) {
+        return true;
     }
 
-    return true;
+    // The final re-hardening of the backup ACL failed. Reporting success could
+    // leave insufficiently protected secrets on disk, so delete the backup and
+    // fail closed -- and only claim the keys were removed if removal succeeded.
+    Q_EMIT logMessage("Could not restrict backup permissions; removing exposed key backup");
+    if (QDir(backup_dir_path).removeRecursively()) {
+        emitFailedResult(
+            "Failed to secure the recovery key backup",
+            "The recovery keys could not be protected with restricted permissions, "
+            "so the exposed backup was removed. No keys were left unprotected on disk.",
+            start_time);
+    } else {
+        emitFailedResult("Failed to secure the recovery key backup",
+                         "The recovery keys could not be protected with restricted permissions "
+                         "AND the exposed backup could not be removed. Manually delete: " +
+                             backup_dir_path,
+                         start_time);
+    }
+    return false;
 }
 
 bool BackupBitlockerKeysAction::writeJsonBackup(const QString& backup_dir_path) {
@@ -647,21 +1067,26 @@ bool BackupBitlockerKeysAction::writeJsonBackup(const QString& backup_dir_path) 
     }
     json_backup["volumes"] = volumes_json;
 
-    QString json_path = QDir(backup_dir_path).filePath("bitlocker_keys.json");
-    QFile json_file(json_path);
-    if (json_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        const QByteArray data = QJsonDocument(json_backup).toJson(QJsonDocument::Indented);
-        if (json_file.write(data) != data.size()) {
-            logError("Incomplete write of BitLocker key backup JSON");
-            return false;
-        }
-        json_file.close();
-        return true;
+    const QString json_path = QDir(backup_dir_path).filePath("bitlocker_keys.json");
+    QSaveFile json_file(json_path);
+    if (!json_file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        logError("Failed to write BitLocker key backup JSON: {}",
+                 json_file.errorString().toStdString());
+        return false;
     }
 
-    logError("Failed to write BitLocker key backup JSON: {}",
-             json_file.errorString().toStdString());
-    return false;
+    const QByteArray data = QJsonDocument(json_backup).toJson(QJsonDocument::Indented);
+    if (json_file.write(data) != data.size()) {
+        json_file.cancelWriting();  // discard the partial temp; no truncated JSON remains
+        logError("Incomplete write of BitLocker key backup JSON");
+        return false;
+    }
+    if (!json_file.commit()) {
+        logError("Failed to commit BitLocker key backup JSON: {}",
+                 json_file.errorString().toStdString());
+        return false;
+    }
+    return true;
 }
 
 void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
@@ -679,7 +1104,7 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
 
     Q_EMIT executionProgress("Backup complete", progress::kComplete);
 
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    const qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
     result.success = true;
@@ -688,9 +1113,16 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
     result.duration_ms = duration_ms;
     result.output_path = data.backup_dir_path;
 
-    result.message = QString("Backed up %1 recovery key(s) from %2 volume(s)")
-                         .arg(data.total_recovery_passwords)
-                         .arg(m_volumes.size());
+    result.message =
+        QString("Backed up %1 from %2")
+            .arg(countOf(data.total_recovery_passwords,
+                         QStringLiteral("recovery key"),
+                         QStringLiteral("recovery keys")),
+                 countOf(m_volumes.size(), QStringLiteral("volume"), QStringLiteral("volumes")));
+    if (m_writing_unprotected) {
+        result.warning = unprotectedResultWarning(m_unprotected_file_system);
+        result.message += QStringLiteral(". ") + result.warning;
+    }
 
     QStringList log_lines;
     log_lines.reserve(kBitlockerSummaryLineReserve);
@@ -706,6 +1138,9 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
     if (data.permissions_set) {
         log_lines.append("File permissions: Restricted to current user + Administrators");
     }
+    if (m_writing_unprotected) {
+        log_lines.append(QStringLiteral("File permissions: NOT restricted. ") + result.warning);
+    }
     log_lines.append("");
     log_lines.append("IMPORTANT: Store this backup in a secure location.");
     log_lines.append("Recovery keys can unlock BitLocker-encrypted volumes.");
@@ -718,9 +1153,9 @@ void BackupBitlockerKeysAction::executeBuildReport(const QDateTime& start_time,
 // ============================================================================
 
 bool BackupBitlockerKeysAction::writeRecoveryDocument(const QString& backup_dir) {
-    QString doc_path = QDir(backup_dir).filePath("BitLocker_Recovery_Keys.txt");
+    const QString doc_path = QDir(backup_dir).filePath("BitLocker_Recovery_Keys.txt");
 
-    QFile file(doc_path);
+    QSaveFile file(doc_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         Q_EMIT logMessage("Failed to open recovery document for writing: " + doc_path);
         return false;
@@ -732,8 +1167,17 @@ bool BackupBitlockerKeysAction::writeRecoveryDocument(const QString& backup_dir)
     writeRecoveryDocumentHeader(out);
     writeRecoveryDocumentVolumes(out);
     writeRecoveryDocumentFooter(out);
+    out.flush();
 
-    file.close();
+    if (out.status() != QTextStream::Ok) {
+        file.cancelWriting();
+        Q_EMIT logMessage("Stream error writing recovery document: " + doc_path);
+        return false;
+    }
+    if (!file.commit()) {
+        Q_EMIT logMessage("Failed to commit recovery document: " + doc_path);
+        return false;
+    }
     return true;
 }
 
@@ -760,6 +1204,8 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentHeader(QTextStream& out) co
 }
 
 void BackupBitlockerKeysAction::writeRecoveryDocumentVolumes(QTextStream& out) const {
+    // executeDiscoverVolumes fails the run closed when m_volumes is empty, and it runs before
+    // executeSaveKeyFiles reaches the document writer.
     Q_ASSERT(!m_volumes.isEmpty());
     // Per-volume sections
     for (int volume_index = 0; volume_index < m_volumes.size(); ++volume_index) {
@@ -779,11 +1225,11 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentVolumes(QTextStream& out) c
         out << "  Encryption Method:    " << vol.encryption_method << "\n";
         out << "  Encryption Progress:  " << vol.encryption_percentage << "\n";
         out << "  Lock Status:          " << vol.lock_status << "\n";
+        out << "  Volume Metadata:      "
+            << (vol.volume_metadata_known ? "Available" : "Unavailable") << "\n";
 
         if (vol.volume_size_bytes > 0) {
-            double size_gb = static_cast<double>(vol.volume_size_bytes) / sak::kBytesPerGBf;
-            out << "  Volume Size:          "
-                << QString::number(size_gb, 'f', kVolumeSizeDisplayPrecision) << " GB\n";
+            out << "  Volume Size:          " << sak::formatBytes(vol.volume_size_bytes) << "\n";
         }
 
         out << "\n";
@@ -833,56 +1279,82 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentFooter(QTextStream& out) {
 // File Output -- Per-Volume Key Files
 // ============================================================================
 
-int BackupBitlockerKeysAction::writePerVolumeKeyFiles(const QString& backup_dir) {
+bool BackupBitlockerKeysAction::writePerVolumeKeyFiles(const QString& backup_dir,
+                                                       int& files_written) {
+    // backup_dir is the path createBackupDirectory produced; that runs first in
+    // executeSaveKeyFiles and fails closed unless screenBackupLocation returned an absolute,
+    // screened location whose directory was actually created.
     Q_ASSERT(!backup_dir.isEmpty());
-    int files_written = 0;
+    files_written = 0;
 
     for (const auto& vol : m_volumes) {
         // Only write files for volumes that have recovery passwords
         if (!volumeHasRecoveryPassword(vol.key_protectors)) {
             continue;
         }
-
-        // Create a file named like "BitLocker Recovery Key C.txt"
-        QString safe_drive = vol.drive_letter;
-        safe_drive.remove(':');
-        QString key_file_name = QString("BitLocker Recovery Key %1.txt").arg(safe_drive);
-        QString key_file_path = QDir(backup_dir).filePath(key_file_name);
-
-        QFile file(key_file_path);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            Q_EMIT logMessage("Failed to write key file: " + key_file_path);
-            continue;
+        if (!writeOneVolumeKeyFile(backup_dir, vol)) {
+            return false;  // fail closed: never leave a truncated key file behind
         }
-
-        QTextStream out(&file);
-        out.setEncoding(QStringConverter::Utf8);
-
-        out << "BitLocker Drive Encryption Recovery Key\n";
-        out << "\n";
-        out << "To verify that this is the correct recovery key, compare the start of\n";
-        out << "the following identifier with the identifier value displayed on your PC.\n";
-        out << "\n";
-
-        writeVolumeKeyEntries(out, vol.key_protectors);
-
-        out << "Drive:        " << vol.drive_letter;
-        if (!vol.volume_label.isEmpty()) {
-            out << " (" << vol.volume_label << ")";
-        }
-        out << "\n";
-        out << "Computer:     " << QSysInfo::machineHostName() << "\n";
-        out << "Date:         " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss")
-            << "\n";
-        out << "\n";
-        out << "If the above identifier matches the one shown on your PC, you can use\n";
-        out << "the corresponding recovery key to unlock the drive.\n";
-
-        file.close();
         files_written++;
     }
 
-    return files_written;
+    return true;
+}
+
+bool BackupBitlockerKeysAction::writeOneVolumeKeyFile(const QString& backup_dir,
+                                                      const VolumeInfo& vol) {
+    // Reject a malformed drive letter before it is used to compose the filename,
+    // so a value like "C:\..\.." can never escape the backup directory.
+    if (!isValidDriveLetter(vol.drive_letter)) {
+        Q_EMIT logMessage("Refusing to write key file for invalid drive letter: " +
+                          vol.drive_letter);
+        return false;
+    }
+    // Create a file named like "BitLocker Recovery Key C.txt"
+    QString safe_drive = vol.drive_letter;
+    safe_drive.remove(':');
+    const QString key_file_name = QString("BitLocker Recovery Key %1.txt").arg(safe_drive);
+    const QString key_file_path = QDir(backup_dir).filePath(key_file_name);
+
+    QSaveFile file(key_file_path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        Q_EMIT logMessage("Failed to write key file: " + key_file_path);
+        return false;
+    }
+
+    QTextStream out(&file);
+    out.setEncoding(QStringConverter::Utf8);
+
+    out << "BitLocker Drive Encryption Recovery Key\n";
+    out << "\n";
+    out << "To verify that this is the correct recovery key, compare the start of\n";
+    out << "the following identifier with the identifier value displayed on your PC.\n";
+    out << "\n";
+
+    writeVolumeKeyEntries(out, vol.key_protectors);
+
+    out << "Drive:        " << vol.drive_letter;
+    if (!vol.volume_label.isEmpty()) {
+        out << " (" << vol.volume_label << ")";
+    }
+    out << "\n";
+    out << "Computer:     " << QSysInfo::machineHostName() << "\n";
+    out << "Date:         " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << "\n";
+    out << "\n";
+    out << "If the above identifier matches the one shown on your PC, you can use\n";
+    out << "the corresponding recovery key to unlock the drive.\n";
+    out.flush();
+
+    if (out.status() != QTextStream::Ok) {
+        file.cancelWriting();
+        Q_EMIT logMessage("Stream error writing key file: " + key_file_path);
+        return false;
+    }
+    if (!file.commit()) {
+        Q_EMIT logMessage("Failed to commit key file: " + key_file_path);
+        return false;
+    }
+    return true;
 }
 
 // ============================================================================
@@ -890,12 +1362,17 @@ int BackupBitlockerKeysAction::writePerVolumeKeyFiles(const QString& backup_dir)
 // ============================================================================
 
 bool BackupBitlockerKeysAction::restrictFilePermissions(const QString& path) {
+    // Both callers pass the backup_dir_path built by createBackupDirectory from the screened,
+    // absolute location, so it is never empty.
     Q_ASSERT(!path.isEmpty());
     const QString script =
         QString::fromUtf8(kRestrictPermissionsScriptTemplate).arg(QString(path).replace("'", "''"));
 
-    ProcessResult proc = runPowerShell(script, sak::kTimeoutChocoListMs);
-    return proc.succeeded() && proc.std_out.trimmed().contains("SUCCESS");
+    const ProcessResult proc = runPowerShell(script, sak::kTimeoutAclScriptMs);
+    // The script emits exactly "SUCCESS" on its one success path and nothing else on stdout
+    // (Set-Acl/Get-ChildItem produce no output), so require an exact match rather than a
+    // substring -- a stray token accompanying an error must not read as success.
+    return proc.succeeded() && proc.std_out.trimmed() == QStringLiteral("SUCCESS");
 }
 
 // ============================================================================
@@ -910,9 +1387,8 @@ int BackupBitlockerKeysAction::countRecoveryPasswords(const QVector<KeyProtector
 
 bool BackupBitlockerKeysAction::volumeHasRecoveryPassword(
     const QVector<KeyProtectorInfo>& protectors) {
-    return std::any_of(protectors.begin(), protectors.end(), [](const auto& kp) {
-        return !kp.recovery_password.isEmpty();
-    });
+    return std::ranges::any_of(protectors,
+                               [](const auto& kp) { return !kp.recovery_password.isEmpty(); });
 }
 
 void BackupBitlockerKeysAction::writeKeyProtectorEntry(QTextStream& out,
@@ -953,6 +1429,7 @@ QJsonObject BackupBitlockerKeysAction::buildVolumeJson(const VolumeInfo& vol) co
     QJsonObject vol_obj;
     vol_obj["drive_letter"] = vol.drive_letter;
     vol_obj["volume_label"] = vol.volume_label;
+    vol_obj["volume_metadata_known"] = vol.volume_metadata_known;
     vol_obj["device_id"] = vol.device_id;
     vol_obj["protection_status"] = vol.protection_status;
     vol_obj["encryption_method"] = vol.encryption_method;

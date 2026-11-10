@@ -17,7 +17,7 @@ Bzip2Decompressor::~Bzip2Decompressor() {
 
 bool Bzip2Decompressor::initStream() {
     // verbosity = 0 (quiet), small = 0 (use normal memory)
-    int ret = BZ2_bzDecompressInit(&m_bzstream, 0, 0);
+    const int ret = BZ2_bzDecompressInit(&m_bzstream, 0, 0);
     if (ret != BZ_OK) {
         m_lastError = QString("Failed to initialize bzip2: error code %1").arg(ret);
         return false;
@@ -36,9 +36,9 @@ void Bzip2Decompressor::setInputFromBuffer(size_t bytes) {
     m_bzstream.avail_in = static_cast<unsigned int>(bytes);
 }
 
-void Bzip2Decompressor::setOutput(char* data, size_t maxSize) {
+void Bzip2Decompressor::setOutput(char* data, size_t max_size) {
     m_bzstream.next_out = data;
-    m_bzstream.avail_out = static_cast<unsigned int>(maxSize);
+    m_bzstream.avail_out = static_cast<unsigned int>(max_size);
 }
 
 size_t Bzip2Decompressor::outputRemaining() const {
@@ -50,7 +50,7 @@ bool Bzip2Decompressor::inputEmpty() const {
 }
 
 Bzip2Decompressor::StepResult Bzip2Decompressor::decompressStep() {
-    int ret = BZ2_bzDecompress(&m_bzstream);
+    const int ret = BZ2_bzDecompress(&m_bzstream);
     if (ret == BZ_STREAM_END) {
         return StepResult::stream_end;
     }
@@ -59,6 +59,19 @@ Bzip2Decompressor::StepResult Bzip2Decompressor::decompressStep() {
         return StepResult::error;
     }
     return StepResult::ok;
+}
+
+bool Bzip2Decompressor::resetStreamForNextMember() {
+    // bzip2 has no in-place reset: end and re-init the decoder. BZ2_bzDecompressInit
+    // leaves next_in/avail_in/next_out/avail_out untouched, so the bytes after the
+    // previous member feed the next one (B8-12).
+    BZ2_bzDecompressEnd(&m_bzstream);
+    const int ret = BZ2_bzDecompressInit(&m_bzstream, 0, 0);
+    if (ret != BZ_OK) {
+        m_lastError = QString("Failed to reset bzip2 for the next member: error code %1").arg(ret);
+        return false;
+    }
+    return true;
 }
 
 }  // namespace sak

@@ -54,13 +54,22 @@ try {
             $allowedFiles -notcontains $repoPath
         }
 
-    $rawColorPattern = '#[0-9A-Fa-f]{3,8}\b|rgba?\s*\('
+    if (@($files).Count -eq 0) {
+        throw "GUI style-token check found no .cpp/.h files under src/gui or include/sak in $repo; refusing to report success on an empty scan."
+    }
+
+    # A raw hex color, or a CSS/QColor rgb()/rgba() color CONSTRUCTION. The negative lookbehind
+    # excludes a METHOD or static call -- `color.rgba()` / `QColor::rgba()` reads an existing
+    # (already-themed) color's value (e.g. to fold into a pixmap cache key) and is not a raw token.
+    $rawColorPattern = '#[0-9A-Fa-f]{3,8}\b|(?<![.:])rgba?\s*\('
     $violations = New-Object System.Collections.Generic.List[string]
 
     foreach ($file in $files) {
         $repoPath = Convert-ToRepoPath $file.FullName
         $inHtml = $false
-        $lines = Get-Content -LiteralPath $file.FullName
+        # @() forces an array: Get-Content returns a bare [string] for a single-line file, and
+        # indexing that with [0] yields the first CHARACTER, so the line would never be scanned.
+        $lines = @(Get-Content -LiteralPath $file.FullName)
         for ($i = 0; $i -lt $lines.Count; ++$i) {
             $line = $lines[$i]
             $trimmed = $line.TrimStart()
@@ -74,6 +83,11 @@ try {
             if ($line -match $rawColorPattern) {
                 $violations.Add(("{0}:{1}:{2}" -f $repoPath, ($i + 1), $line.Trim()))
             }
+        }
+        # If the embedded-HTML state never closed, the delimiters have drifted and every line
+        # after the opening was skipped unscanned. Fail closed instead of passing that remainder.
+        if ($inHtml) {
+            throw "Unterminated About/Credits HTML block in ${repoPath}: the style scan could not verify the rest of the file. Fix the block delimiters in check_gui_style_tokens.ps1."
         }
     }
 

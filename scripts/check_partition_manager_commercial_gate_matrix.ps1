@@ -3,9 +3,11 @@
     Verifies Partition Manager destructive/commercial-parity features map to certification evidence.
 
 .DESCRIPTION
-    This static release gate prevents AOMEI/MiniTool-style destructive feature
-    claims from drifting away from execution code, tests, documentation, and
-    docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json evidence IDs.
+    This static release gate prevents AOMEI/MiniTool-style destructive features from
+    drifting away from their execution code, UI, tests, and
+    certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json evidence IDs. It reads code and
+    the matrix only: documentation prose is not evidence (owner ruling 2026-10-24), and the
+    certification document's status block is generated from the matrix instead.
 #>
 
 [CmdletBinding()]
@@ -18,6 +20,11 @@ $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
     $ProjectRoot = Split-Path -Parent $PSScriptRoot
 }
+# Canonicalize to an absolute path once, before any file is read or Push-Location runs.
+# A relative -ProjectRoot would otherwise resolve differently before and after
+# Push-Location (the matrix and the evidence files would be read from different trees).
+# Resolve-Path also fails closed when the root does not exist.
+$ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot -ErrorAction Stop).Path
 
 function Get-RepoText {
     param(
@@ -50,9 +57,9 @@ function Assert-Contains {
     }
 }
 
-$matrixPath = Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+$matrixPath = Join-Path $ProjectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
 $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
-if ($matrix.schema_version -ne 1) {
+if ($matrix.schema_version -ne 2) {
     throw "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
 }
 
@@ -77,11 +84,7 @@ function Assert-MatrixIds {
 
 $uiPath = "src\gui\partition_manager_panel.cpp"
 $scriptBuilderPath = "src\core\partition_script_builder.cpp"
-$planPath = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-$certificationPath = "docs\PARTITION_MANAGER_CERTIFICATION.md"
-$auditPath = "docs\PRODUCTION_GRADE_AUDIT.md"
-$readmePath = "README.md"
-$changelogPath = "CHANGELOG.md"
+$safetyValidatorPath = "src\core\partition_safety_validator.cpp"
 $panelTestPath = "tests\unit\test_partition_manager_panel.cpp"
 $coreTestPath = "tests\unit\test_partition_manager_core.cpp"
 
@@ -90,9 +93,7 @@ $gates = @(
         name = "Image clone and restore overwrite"
         ids = @("vhd.image-clone", "vhd.image-restore")
         evidence = @(
-            @{ path = $uiPath; patterns = @("Create Disk Image", "Restore Disk Image") },
-            @{ path = $planPath; patterns = @("offline VHD image clone", "offline VHD image restore") },
-            @{ path = $certificationPath; patterns = @("Offline VHD image clone", "Offline VHD image restore") }
+            @{ path = $uiPath; patterns = @("Create Disk Image", "Restore Disk Image") }
         )
     },
     @{
@@ -100,8 +101,7 @@ $gates = @(
         ids = @("external.os-migration-reboot")
         evidence = @(
             @{ path = $uiPath; patterns = @("Migrate OS to SSD/HDD Wizard") },
-            @{ path = $scriptBuilderPath; patterns = @("SAK OS migration boot validation", "BIOS/UEFI boot order") },
-            @{ path = $certificationPath; patterns = @("OS migration target boot and firmware-order proof") }
+            @{ path = "src\core\partition_scripts\os_migration.ps1"; patterns = @("function Set-SakTargetBoot", "BIOS or UEFI boot order") }
         )
     },
     @{
@@ -109,8 +109,7 @@ $gates = @(
         ids = @("external.boot-repair-uefi", "external.boot-repair-bios")
         evidence = @(
             @{ path = $uiPath; patterns = @("Rebuild MBR / Boot Repair", "onRepairBoot") },
-            @{ path = $scriptBuilderPath; patterns = @("bcdboot.exe %2 /s %1: /f UEFI", "reagentc.exe /info") },
-            @{ path = $certificationPath; patterns = @("UEFI boot repair", "BIOS/MBR boot repair") }
+            @{ path = $scriptBuilderPath; patterns = @('bcdboot.exe %1 /s \"${sakBootLetter}:\" /f UEFI', "reagentc.exe /info") }
         )
     },
     @{
@@ -120,8 +119,7 @@ $gates = @(
             @{ path = $uiPath; patterns = @("Allocate Free Space", "Allocate Free Space To", "onAllocateFreeSpace", "Back up adjacent donor") },
             @{ path = $scriptBuilderPath; patterns = @("buildAllocateFreeSpaceScript", "sak-allocate-backup", 'New-Partition -DiskNumber %1 -Size $donorRemainingBytes') },
             @{ path = $coreTestPath; patterns = @("scriptBuilder_buildsAllocateFreeSpaceScript", "safetyValidator_blocksUnsafeAllocateFreeSpacePayloads") },
-            @{ path = $panelTestPath; patterns = @("allocateFreeSpaceQueuesAdjacentDonorOperation", "unallocatedAllocateFreeSpaceQueuesAdjacentEngines", "Allocate free space amount") },
-            @{ path = $certificationPath; patterns = @("Allocate Free Space adjacent donor-volume backup/delete/extend/recreate/restore proof") }
+            @{ path = $panelTestPath; patterns = @("allocateFreeSpaceQueuesAdjacentDonorOperation", "unallocatedAllocateFreeSpaceQueuesAdjacentEngines", "Allocate free space amount") }
         )
     },
     @{
@@ -131,9 +129,7 @@ $gates = @(
             @{ path = $uiPath; patterns = @("Move partition start", "Offline move will back up", "MovePartition") },
             @{ path = $scriptBuilderPath; patterns = @("buildMovePartitionScript", "Remove-Partition -DiskNumber %1", 'New-Partition -DiskNumber %7 -Size $targetSize -Offset ', '$targetOffset -DriveLetter $drive') },
             @{ path = $coreTestPath; patterns = @("scriptBuilder_buildsOfflineMoveAndMetadataScripts", "safetyValidator_allowsConfirmedOfflineRebuildOperations") },
-            @{ path = $panelTestPath; patterns = @("unallocatedAllocateFreeSpaceQueuesAdjacentEngines", "Move Partition") },
-            @{ path = $planPath; patterns = @("start-move", "MovePartition") },
-            @{ path = $certificationPath; patterns = @("Offline partition start-move proof") }
+            @{ path = $panelTestPath; patterns = @("unallocatedAllocateFreeSpaceQueuesAdjacentEngines", "Move Partition") }
         )
     },
     @{
@@ -142,8 +138,7 @@ $gates = @(
         evidence = @(
             @{ path = $uiPath; patterns = @("Change Cluster Size", "Back up, reformat with selected cluster size", "onChangeClusterSize") },
             @{ path = $scriptBuilderPath; patterns = @("buildChangeClusterSizeScript", "Get-SakFileManifest") },
-            @{ path = $panelTestPath; patterns = @("changeClusterSizeQueuesVerifiedReformatOperation", "Target cluster size") },
-            @{ path = $certificationPath; patterns = @("Existing-volume cluster-size change proof") }
+            @{ path = $panelTestPath; patterns = @("changeClusterSizeQueuesVerifiedReformatOperation", "Target cluster size") }
         )
     },
     @{
@@ -153,19 +148,17 @@ $gates = @(
             @{ path = $uiPath; patterns = @("Convert Primary/Logical", "onConvertPrimaryLogical", "Primary logical backup directory") },
             @{ path = $scriptBuilderPath; patterns = @("buildConvertPrimaryLogicalScript", "create partition logical", "Assert-SakManifestMatch") },
             @{ path = $coreTestPath; patterns = @("ConvertPrimaryLogical", "safetyValidator_allowsConfirmedOfflineRebuildOperations") },
-            @{ path = $panelTestPath; patterns = @("formerCommercialCompatibilityActionsQueueDirectEngines", "Primary logical backup directory") },
-            @{ path = $certificationPath; patterns = @("Primary/logical conversion on a disposable MBR disk") }
+            @{ path = $panelTestPath; patterns = @("formerCommercialCompatibilityActionsQueueDirectEngines", "Primary logical backup directory") }
         )
     },
     @{
         name = "Volume serial-number change"
         ids = @("external.volume-serial-number")
         evidence = @(
-            @{ path = $uiPath; patterns = @("Change Serial Number", "onChangeVolumeSerialNumber", "Volume serial backup directory") },
+            @{ path = $uiPath; patterns = @("Reformat for New Serial Number", "onChangeVolumeSerialNumber", "Volume serial backup directory") },
             @{ path = $scriptBuilderPath; patterns = @("buildChangeVolumeSerialNumberScript", "Get-SakVolumeSerial", 'Format-Volume -DriveLetter $drive') },
             @{ path = $coreTestPath; patterns = @("ChangeVolumeSerialNumber", "Volume serial changed") },
-            @{ path = $panelTestPath; patterns = @("formerCommercialCompatibilityActionsQueueDirectEngines", "Volume serial backup directory") },
-            @{ path = $certificationPath; patterns = @("Volume serial-number metadata mutation proof") }
+            @{ path = $panelTestPath; patterns = @("formerCommercialCompatibilityActionsQueueDirectEngines", "Volume serial backup directory") }
         )
     },
     @{
@@ -175,26 +168,22 @@ $gates = @(
             @{ path = $uiPath; patterns = @("Convert Dynamic Disk to Basic", "onConvertDynamicDiskToBasic", "Dynamic to basic backup directory") },
             @{ path = $scriptBuilderPath; patterns = @("buildConvertDynamicDiskToBasicScript", "delete volume override", "convert basic") },
             @{ path = $coreTestPath; patterns = @("ConvertDynamicDiskToBasic", "safetyValidator_allowsConfirmedOfflineRebuildOperations") },
-            @{ path = $panelTestPath; patterns = @("formerCommercialCompatibilityActionsQueueDirectEngines", "Dynamic to basic backup directory") },
-            @{ path = $certificationPath; patterns = @("Dynamic disk to basic conversion proof") }
+            @{ path = $panelTestPath; patterns = @("formerCommercialCompatibilityActionsQueueDirectEngines", "Dynamic to basic backup directory") }
         )
     },
     @{
         name = "Direct HDD defrag execution"
         ids = @("external.hdd-defrag-execution")
         evidence = @(
-            @{ path = $uiPath; patterns = @("Disk Defrag", "Queue HDD defrag through cancellable elevated Apply") },
-            @{ path = $panelTestPath; patterns = @("Disk Defrag", "Queue HDD defrag") },
-            @{ path = $certificationPath; patterns = @("Direct in-app HDD defrag execution proof") }
+            @{ path = $uiPath; patterns = @("Disk Defrag", "Queue HDD defrag through elevated Apply") },
+            @{ path = $panelTestPath; patterns = @("Disk Defrag", "Queue HDD defrag") }
         )
     },
     @{
         name = "SSD ReTrim and purge warning"
         ids = @("external.ssd-retrim")
         evidence = @(
-            @{ path = $uiPath; patterns = @("Attach evidence to external.ssd-retrim", "Optimize-Volume") },
-            @{ path = $planPath; patterns = @("ReTrim", "purge warning") },
-            @{ path = $certificationPath; patterns = @("SSD/NVMe ReTrim and vendor purge warning proof") }
+            @{ path = $uiPath; patterns = @("TRIM SSD Volume", "Optimize-Volume") }
         )
     },
     @{
@@ -202,45 +191,34 @@ $gates = @(
         ids = @("external.bitlocker", "external.bitlocker-mutation")
         evidence = @(
             @{ path = $uiPath; patterns = @("Manage BitLocker", "Queue BitLocker unlock", "BitLockerUnlock") },
-            @{ path = $scriptBuilderPath; patterns = @("manage-bde.exe -unlock", "manage-bde.exe -protectors -disable", "manage-bde.exe -protectors -enable") },
-            @{ path = $panelTestPath; patterns = @("Manage BitLocker", "manageBitLockerShowsStatusDialog") },
-            @{ path = $certificationPath; patterns = @("BitLocker locked/unlocked data-volume blocker proof", "In-app BitLocker unlock/suspend/resume mutation proof") }
+            # Unlock is done via the in-process Unlock-BitLocker cmdlet, NOT manage-bde.exe -unlock,
+            # so the recovery password never lands on a child-process command line (see
+            # partition_script_builder.cpp buildBitLockerScript security note).
+            @{ path = $scriptBuilderPath; patterns = @("Unlock-BitLocker", "manage-bde.exe -protectors -disable", "manage-bde.exe -protectors -enable") },
+            @{ path = $panelTestPath; patterns = @("Manage BitLocker", "manageBitLockerShowsStatusDialog") }
         )
     },
     @{
         name = "System MBR-to-GPT"
         ids = @("external.system-mbr2gpt")
         evidence = @(
-            @{ path = $scriptBuilderPath; patterns = @("mbr2gpt.exe /validate", "mbr2gpt.exe /convert") },
-            @{ path = $planPath; patterns = @("Safe system-disk MBR-to-GPT", "System-critical") },
-            @{ path = $certificationPath; patterns = @("System MBR-to-GPT conversion in a disposable boot VM") }
+            @{ path = $scriptBuilderPath; patterns = @("mbr2gpt.exe /validate", "mbr2gpt.exe /convert") }
         )
     },
     @{
         name = "USB removable destructive proof"
         ids = @("external.usb-removable")
         evidence = @(
-            @{ path = $readmePath; patterns = @("removable", "USB") },
-            @{ path = $planPath; patterns = @("USB removable drive") },
-            @{ path = $certificationPath; patterns = @("USB removable disk destructive operation proof") }
+            @{ path = $safetyValidatorPath; patterns = @("disk.is_removable", "Target disk is removable") }
         )
     },
     @{
         name = "Physical hardware wipe"
         ids = @("external.hardware-wipe")
+        # This gate maps capability scope to its evidence ID. Current certification
+        # levels belong to the status/claim verifier, never a hard-coded promotion sentence.
         evidence = @(
-            @{ path = $scriptBuilderPath; patterns = @("Clear-Disk -Number %1 -RemoveData -RemoveOEM") },
-            @{ path = $auditPath; patterns = @("physical wipe proof is imported in the 18/18 external VM/hardware/lab evidence set") },
-            @{ path = $certificationPath; patterns = @("Non-system hardware wipe on disposable physical disk") }
-        )
-    },
-    @{
-        name = "Release-facing certification boundary"
-        ids = @("external.allocate-free-space", "external.partition-move", "external.volume-serial-number", "external.dynamic-to-basic")
-        evidence = @(
-            @{ path = $readmePath; patterns = @("Move partition start", "volume serial-number") },
-            @{ path = $changelogPath; patterns = @("MovePartition", "direct queued UI paths") },
-            @{ path = $auditPath; patterns = @("MovePartition", "primary/logical conversion", "volume serial-number regeneration", "dynamic-to-basic conversion") }
+            @{ path = $scriptBuilderPath; patterns = @("Clear-Disk -Number %1 -RemoveData -RemoveOEM") }
         )
     }
 )

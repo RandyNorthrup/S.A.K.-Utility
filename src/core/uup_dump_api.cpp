@@ -15,17 +15,31 @@
 
 #include "sak/uup_dump_api.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/network_constants.h"
+#include "sak/network_transfer_runner.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QNetworkRequest>
-#include <QSslConfiguration>
+#include <QRegularExpression>
+#include <QTimer>
 #include <QUrlQuery>
 
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <limits>
+#include <utility>
+
 constexpr int kGbDisplayPrecision = 2;
+// The UUP dump JSON endpoints return small documents; a peer that streams past this
+// ceiling is aborted rather than buffered into memory by readAll().
+constexpr qint64 kMaxApiResponseBytes = 32LL * 1024 * 1024;
+// How long to wait before asking UUP dump for a file list a second time.
+constexpr int kFilesRetryDelayMs = 3000;
 
 // --- Construction / Destruction ----------------------------------------------
 
@@ -41,40 +55,55 @@ UupDumpApi::~UupDumpApi() {
 // --- Public API Methods -----------------------------------------------------
 
 void UupDumpApi::fetchAvailableBuilds(const QString& arch, ReleaseChannel channel) {
-    Q_ASSERT(!arch.isEmpty());
+    if (arch.isEmpty()) {
+        const QString errorMsg = "Cannot fetch builds: no architecture was specified.";
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return;
+    }
     sak::logInfo(QString("Fetching available builds for arch=%1, channel=%2")
                      .arg(arch, channelToDisplayName(channel))
                      .toStdString());
 
     // Use listid.php to search for builds matching architecture and channel
-    QString searchQuery = buildSearchQuery(arch, channel);
+    const QString searchQuery = buildSearchQuery(arch, channel);
+    m_buildsChannel = channel;
 
     QMap<QString, QString> params;
     params["search"] = searchQuery;
     params["sortByDate"] = "1";
 
-    QNetworkReply* reply = sendApiRequest("/listid.php", params);
-    if (reply) {
+    const QNetworkReply* reply = sendApiRequest("/listid.php", params);
+    if (reply != nullptr) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onBuildsFetchReply);
     }
 }
 
 void UupDumpApi::listLanguages(const QString& updateId) {
-    Q_ASSERT(!updateId.isEmpty());
+    if (updateId.isEmpty()) {
+        const QString errorMsg = "Cannot list languages: no build id was specified.";
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return;
+    }
     sak::logInfo(QString("Fetching languages for build %1").arg(updateId).toStdString());
 
     QMap<QString, QString> params;
     params["id"] = updateId;
 
-    QNetworkReply* reply = sendApiRequest("/listlangs.php", params);
-    if (reply) {
+    const QNetworkReply* reply = sendApiRequest("/listlangs.php", params);
+    if (reply != nullptr) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onLanguagesReply);
     }
 }
 
 void UupDumpApi::listEditions(const QString& updateId, const QString& lang) {
-    Q_ASSERT(!updateId.isEmpty());
-    Q_ASSERT(!lang.isEmpty());
+    if (updateId.isEmpty() || lang.isEmpty()) {
+        const QString errorMsg = "Cannot list editions: a build id and a language are required.";
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return;
+    }
     sak::logInfo(
         QString("Fetching editions for build %1, lang=%2").arg(updateId, lang).toStdString());
 
@@ -82,15 +111,20 @@ void UupDumpApi::listEditions(const QString& updateId, const QString& lang) {
     params["id"] = updateId;
     params["lang"] = lang;
 
-    QNetworkReply* reply = sendApiRequest("/listeditions.php", params);
-    if (reply) {
+    const QNetworkReply* reply = sendApiRequest("/listeditions.php", params);
+    if (reply != nullptr) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onEditionsReply);
     }
 }
 
 void UupDumpApi::getFiles(const QString& updateId, const QString& lang, const QString& edition) {
-    Q_ASSERT(!updateId.isEmpty());
-    Q_ASSERT(!lang.isEmpty());
+    if (updateId.isEmpty() || lang.isEmpty()) {
+        const QString errorMsg =
+            "Cannot fetch download files: a build id and a language are required.";
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return;
+    }
     sak::logInfo(QString("Fetching download files for build %1, lang=%2, edition=%3")
                      .arg(updateId, lang, edition)
                      .toStdString());
@@ -99,21 +133,34 @@ void UupDumpApi::getFiles(const QString& updateId, const QString& lang, const QS
     params["id"] = updateId;
     params["lang"] = lang;
     params["edition"] = edition;
+    const bool same_request = m_filesRequest.update_id == updateId && m_filesRequest.lang == lang &&
+                              m_filesRequest.edition == edition;
+    m_filesRequest = {.update_id = updateId,
+                      .lang = lang,
+                      .edition = edition,
+                      .retried = same_request && m_filesRequest.retried};
 
-    QNetworkReply* reply = sendApiRequest("/get.php", params);
-    if (reply) {
+    const QNetworkReply* reply = sendApiRequest("/get.php", params);
+    if (reply != nullptr) {
         connect(reply, &QNetworkReply::finished, this, &UupDumpApi::onFilesReply);
     }
 }
 
 void UupDumpApi::cancelAll() {
-    for (QNetworkReply* reply : m_pendingReplies) {
-        if (reply) {
+    // abort() synchronously delivers finished(), whose slot calls
+    // m_pendingReplies.removeOne(reply) -- mutating the very list we would be
+    // range-iterating (iterator invalidation / UB). Snapshot and clear FIRST, then
+    // abort from the copy; the slot's removeOne then no-ops on the empty list.
+    ++m_cancelGeneration;
+    m_filesRequest.retried = false;
+    const QList<QNetworkReply*> pending = m_pendingReplies;
+    m_pendingReplies.clear();
+    for (QNetworkReply* reply : pending) {
+        if (reply != nullptr) {
             reply->abort();
             reply->deleteLater();
         }
     }
-    m_pendingReplies.clear();
 }
 
 // --- Static Helpers ---------------------------------------------------------
@@ -150,6 +197,58 @@ QString UupDumpApi::channelToDisplayName(ReleaseChannel channel) {
     return "Public Release";
 }
 
+bool UupDumpApi::isPassingServiceError(int http_status) {
+    constexpr int kBadRequest = 400;
+    constexpr int kTooManyRequests = 429;
+    constexpr int kServerErrorFirst = 500;
+    constexpr int kServerErrorLast = 599;
+    return http_status == kBadRequest || http_status == kTooManyRequests ||
+           (http_status >= kServerErrorFirst && http_status <= kServerErrorLast);
+}
+
+bool UupDumpApi::buildBelongsToChannel(const BuildInfo& build, ReleaseChannel channel) {
+    if (channel != ReleaseChannel::Retail) {
+        return true;
+    }
+    static const QRegularExpression kPublicRelease(QStringLiteral(
+                                                       "^Windows 1[01], version \\d{2}H\\d \\("),
+                                                   QRegularExpression::CaseInsensitiveOption);
+    return kPublicRelease.match(build.title.trimmed()).hasMatch();
+}
+
+namespace {
+
+/// Windows has two feature updates a year, H1 and H2.
+constexpr int kReleaseHalvesPerYear = 2;
+/// The rank of a title with no "version YYHn" label: below every labelled one.
+constexpr int kUnlabelledReleaseRank = -1;
+
+/// A feature update's place in Windows' release order, from the "version YYHn" in @p title:
+/// 23H2 < 24H2 < 25H2 < 26H1 < 26H2. kUnlabelledReleaseRank when the title has no such label.
+int releaseRank(const QString& title) {
+    static const QRegularExpression kVersionLabel(
+        QStringLiteral(R"(\bversion (?<year>\d{2})H(?<half>[12])\b)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch label = kVersionLabel.match(title);
+    if (!label.hasMatch()) {
+        return kUnlabelledReleaseRank;
+    }
+    const int year = label.captured(QStringLiteral("year")).toInt();
+    const int half = label.captured(QStringLiteral("half")).toInt();
+    return (year * kReleaseHalvesPerYear) + half - 1;
+}
+
+}  // namespace
+
+QList<UupDumpApi::BuildInfo> UupDumpApi::inReleaseOrder(QList<BuildInfo> builds) {
+    // Stable, so builds of one version keep the order they came in. An unlabelled title ranks
+    // below every label, so it is kept, after them all, in the order it came in.
+    std::ranges::stable_sort(builds, std::ranges::greater{}, [](const BuildInfo& build) {
+        return releaseRank(build.title);
+    });
+    return builds;
+}
+
 QList<UupDumpApi::ReleaseChannel> UupDumpApi::allChannels() {
     return {ReleaseChannel::Retail,
             ReleaseChannel::ReleasePreview,
@@ -160,9 +259,36 @@ QList<UupDumpApi::ReleaseChannel> UupDumpApi::allChannels() {
 
 // --- Reply Handlers ---------------------------------------------------------
 
+std::optional<UupDumpApi::BuildInfo> UupDumpApi::parseBuildEntry(const QString& key,
+                                                                 const QJsonObject& buildObj) {
+    BuildInfo info;
+    // The uuid is inside the build object; the key is only a numeric array index. This
+    // used to fall back to the key when the uuid was missing, which handed callers a
+    // build id that identifies nothing - every later get.php request built from it asks
+    // the API for an index. Skip the entry instead: a build we cannot address is not a
+    // build we can offer.
+    info.uuid = buildObj["uuid"].toString();
+    if (info.uuid.isEmpty()) {
+        sak::logWarning("UUP dump: skipping build entry '{}' with no uuid", key.toStdString());
+        return std::nullopt;
+    }
+    info.title = buildObj["title"].toString();
+    info.build = buildObj["build"].toString();
+    info.arch = buildObj["arch"].toString();
+    // A wrong-typed or out-of-range "created" must not invoke double->qint64 UB: a value
+    // that is not a finite, in-range timestamp sorts as oldest (0) instead of corrupting.
+    const double created = buildObj["created"].toDouble();
+    info.created = (std::isfinite(created) &&
+                    created >= static_cast<double>(std::numeric_limits<qint64>::min()) &&
+                    created < static_cast<double>(std::numeric_limits<qint64>::max()))
+                       ? static_cast<qint64>(created)
+                       : 0;
+    return info;
+}
+
 void UupDumpApi::onBuildsFetchReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
+    if (reply == nullptr) {
         sak::logError("onBuildsFetchReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }
@@ -170,19 +296,21 @@ void UupDumpApi::onBuildsFetchReply() {
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
 
-    if (reply->error() != QNetworkReply::NoError) {
-        QString errorMsg = QString("Network error fetching builds: %1").arg(reply->errorString());
+    const sak::NetworkTransferResult transfer = sak::takeNetworkMetadataResult(reply);
+    if (!transfer.success) {
+        const QString errorMsg =
+            QString("Network error fetching builds: %1").arg(transfer.error_message);
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
 
-    QByteArray data = reply->readAll();
+    const QByteArray data = transfer.body;
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg = QString("JSON parse error: %1").arg(parseError.errorString());
+        const QString errorMsg = QString("JSON parse error: %1").arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
@@ -199,24 +327,26 @@ void UupDumpApi::onBuildsFetchReply() {
     QList<BuildInfo> builds;
 
     for (auto it = buildsObj.begin(); it != buildsObj.end(); ++it) {
-        QJsonObject buildObj = it.value().toObject();
-        BuildInfo info;
-        // The uuid is inside the build object, not the key (key is a numeric index)
-        info.uuid = buildObj["uuid"].toString();
-        if (info.uuid.isEmpty()) {
-            info.uuid = it.key();  // fallback
+        if (auto info = parseBuildEntry(it.key(), it.value().toObject());
+            info && buildBelongsToChannel(*info, m_buildsChannel)) {
+            builds.append(*info);
         }
-        info.title = buildObj["title"].toString();
-        info.build = buildObj["build"].toString();
-        info.arch = buildObj["arch"].toString();
-        info.created = static_cast<qint64>(buildObj["created"].toDouble());
-        builds.append(info);
     }
 
-    // Sort by creation date (newest first)
-    std::sort(builds.begin(), builds.end(), [](const BuildInfo& a, const BuildInfo& b) {
-        return a.created > b.created;
-    });
+    // Newest added first, then newest release first: date order alone mixed the versions, since
+    // each month's update of every version is added together (26H1, 25H2, 26H2, 23H2 on the VM).
+    std::ranges::sort(builds,
+                      [](const BuildInfo& a, const BuildInfo& b) { return a.created > b.created; });
+    builds = inReleaseOrder(std::move(builds));
+
+    // An empty set is not a successful result: a garbage or unexpected response yields no
+    // usable build, so fail closed the way the language/edition handlers do rather than
+    // emitting an empty success.
+    if (builds.isEmpty()) {
+        sak::logWarning("API returned no usable builds");
+        Q_EMIT apiError("No builds available for this architecture/channel.");
+        return;
+    }
 
     sak::logInfo(QString("Fetched %1 available builds").arg(builds.size()).toStdString());
     Q_EMIT buildsFetched(builds);
@@ -233,7 +363,7 @@ QMap<QString, QString> UupDumpApi::parseLangFancyNames(const QJsonObject& respon
 
 void UupDumpApi::onLanguagesReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
+    if (reply == nullptr) {
         sak::logError("onLanguagesReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }
@@ -241,20 +371,21 @@ void UupDumpApi::onLanguagesReply() {
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
 
-    if (reply->error() != QNetworkReply::NoError) {
-        QString errorMsg =
-            QString("Network error fetching languages: %1").arg(reply->errorString());
+    const sak::NetworkTransferResult transfer = sak::takeNetworkMetadataResult(reply);
+    if (!transfer.success) {
+        const QString errorMsg =
+            QString("Network error fetching languages: %1").arg(transfer.error_message);
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
 
-    QByteArray data = reply->readAll();
+    const QByteArray data = transfer.body;
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg =
+        const QString errorMsg =
             QString("JSON parse error in languages response: %1").arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
@@ -270,7 +401,7 @@ void UupDumpApi::onLanguagesReply() {
 
     // langList can be a JSON array ["en-us", ...] or object {"en-us": 1, ...}
     QStringList langCodes;
-    QJsonValue langListVal = response["langList"];
+    const QJsonValue langListVal = response["langList"];
     if (langListVal.isArray()) {
         for (const QJsonValue& val : langListVal.toArray()) {
             langCodes.append(val.toString());
@@ -285,7 +416,7 @@ void UupDumpApi::onLanguagesReply() {
     QMap<QString, QString> langNames = parseLangFancyNames(response);
 
     // Sort by friendly name for better UX
-    std::sort(langCodes.begin(), langCodes.end(), [&langNames](const QString& a, const QString& b) {
+    std::ranges::sort(langCodes, [&langNames](const QString& a, const QString& b) {
         return langNames.value(a, a) < langNames.value(b, b);
     });
 
@@ -301,7 +432,7 @@ void UupDumpApi::onLanguagesReply() {
 
 void UupDumpApi::onEditionsReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
+    if (reply == nullptr) {
         sak::logError("onEditionsReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }
@@ -309,19 +440,21 @@ void UupDumpApi::onEditionsReply() {
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
 
-    if (reply->error() != QNetworkReply::NoError) {
-        QString errorMsg = QString("Network error fetching editions: %1").arg(reply->errorString());
+    const sak::NetworkTransferResult transfer = sak::takeNetworkMetadataResult(reply);
+    if (!transfer.success) {
+        const QString errorMsg =
+            QString("Network error fetching editions: %1").arg(transfer.error_message);
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
 
     QJsonObject response;
-    if (!parseApiResponse(reply->readAll(), "editions", response)) {
+    if (!parseApiResponse(transfer.body, "editions", response)) {
         return;
     }
 
-    QStringList editions = parseEditionList(response["editionList"]);
+    const QStringList editions = parseEditionList(response["editionList"]);
 
     QJsonObject editionFancyNames = response["editionFancyNames"].toObject();
     QMap<QString, QString> editionNames;
@@ -339,9 +472,27 @@ void UupDumpApi::onEditionsReply() {
     Q_EMIT editionsFetched(editions, editionNames);
 }
 
+bool UupDumpApi::askFilesOnceMore(const sak::NetworkTransferResult& transfer) {
+    if (transfer.success || transfer.cancelled || m_filesRequest.retried ||
+        !isPassingServiceError(transfer.http_status)) {
+        return false;
+    }
+    m_filesRequest.retried = true;
+    sak::logWarning("UUP dump answered the file list with HTTP {}; asking once more",
+                    transfer.http_status);
+    const FilesRequest again = m_filesRequest;
+    const quint64 generation = m_cancelGeneration;
+    QTimer::singleShot(kFilesRetryDelayMs, this, [this, again, generation]() {
+        if (generation == m_cancelGeneration) {
+            getFiles(again.update_id, again.lang, again.edition);
+        }
+    });
+    return true;
+}
+
 void UupDumpApi::onFilesReply() {
     QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
-    if (!reply) {
+    if (reply == nullptr) {
         sak::logError("onFilesReply: sender is not a QNetworkReply -- signal/slot mismatch");
         return;
     }
@@ -349,19 +500,25 @@ void UupDumpApi::onFilesReply() {
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
 
-    if (reply->error() != QNetworkReply::NoError) {
-        QString errorMsg = QString("Network error fetching files: %1").arg(reply->errorString());
+    const sak::NetworkTransferResult transfer = sak::takeNetworkMetadataResult(reply);
+    if (askFilesOnceMore(transfer)) {
+        return;
+    }
+    m_filesRequest.retried = false;
+    if (!transfer.success) {
+        const QString errorMsg =
+            QString("Network error fetching files: %1").arg(transfer.error_message);
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
 
-    QByteArray data = reply->readAll();
+    const QByteArray data = transfer.body;
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg =
+        const QString errorMsg =
             QString("JSON parse error in files response: %1").arg(parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
@@ -375,69 +532,200 @@ void UupDumpApi::onFilesReply() {
         return;
     }
 
-    QString updateName = response["updateName"].toString();
-    QJsonObject filesObj = response["files"].toObject();
+    const QString updateName = response["updateName"].toString();
 
     QList<FileInfo> files;
-    qint64 totalSize = 0;
-
-    for (auto it = filesObj.begin(); it != filesObj.end(); ++it) {
-        QJsonObject fileObj = it.value().toObject();
-        auto maybeInfo = parseAndValidateFileEntry(it.key(), fileObj);
-        if (maybeInfo.has_value()) {
-            files.append(maybeInfo.value());
-            totalSize += maybeInfo.value().size;
-        }
+    if (!collectValidFiles(response["files"].toObject(), files)) {
+        return;  // incomplete set -- apiError already emitted
     }
-
-    double totalSizeGB = totalSize / sak::kBytesPerGBf;
-    sak::logInfo(QString("Fetched %1 downloadable files (%2 GB total)")
-                     .arg(files.size())
-                     .arg(totalSizeGB, 0, 'f', kGbDisplayPrecision)
-                     .toStdString());
 
     Q_EMIT filesFetched(updateName, files);
 }
 
+bool UupDumpApi::collectValidFiles(const QJsonObject& filesObj, QList<FileInfo>& out) {
+    qint64 totalSize = 0;
+    for (auto it = filesObj.begin(); it != filesObj.end(); ++it) {
+        auto maybeInfo = parseAndValidateFileEntry(it.key(), it.value().toObject());
+        if (maybeInfo.has_value()) {
+            const qint64 entrySize = maybeInfo.value().size;
+            out.append(maybeInfo.value());
+            // Saturate rather than let attacker-controlled positive sizes overflow signed
+            // qint64 (UB); the running total is only used for the GB log line below.
+            totalSize = (entrySize > std::numeric_limits<qint64>::max() - totalSize)
+                            ? std::numeric_limits<qint64>::max()
+                            : totalSize + entrySize;
+        }
+    }
+
+    // An empty or all-rejected file object is not a buildable set: a missing/wrong-typed
+    // response.files must fail closed, not report success with nothing to build.
+    if (out.isEmpty()) {
+        const QString errorMsg =
+            "UUP file set is empty or contained no usable entries. Refusing to build.";
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return false;
+    }
+
+    // A UUP ISO needs every listed file; silently dropping unsafe/unverifiable
+    // entries and reporting success would build from an incomplete set. Refuse.
+    const int droppedCount = static_cast<int>(filesObj.size() - out.size());
+    if (droppedCount > 0) {
+        const QString errorMsg =
+            QString(
+                "UUP file set incomplete: %1 of %2 entries rejected (unsafe, bad URL, or "
+                "missing/invalid SHA-1). Refusing to build from a partial set.")
+                .arg(droppedCount)
+                .arg(filesObj.size());
+        sak::logError(errorMsg.toStdString());
+        Q_EMIT apiError(errorMsg);
+        return false;
+    }
+
+    sak::logInfo(QString("Fetched %1 downloadable files (%2 total)")
+                     .arg(out.size())
+                     .arg(sak::formatBytes(totalSize))
+                     .toStdString());
+    return true;
+}
+
 // --- Private Helpers --------------------------------------------------------
 
-std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
-    const QString& key, const QJsonObject& fileObj) {
-    FileInfo info;
-    info.fileName = key;
-    info.sha1 = fileObj["sha1"].toString();
-    info.size = fileObj["size"].toString().toLongLong();
-    info.url = fileObj["url"].toString();
-    info.uuid = fileObj["uuid"].toString();
-    info.expire = fileObj["expire"].toString();
-
-    // Sanitize filename -- reject path traversal attempts
-    if (info.fileName.contains("..") || info.fileName.contains('/') ||
-        info.fileName.contains('\\')) {
-        sak::logWarning("Rejected unsafe filename from API: " + info.fileName.toStdString());
-        return std::nullopt;
+bool UupDumpApi::isValidSha1(const QString& sha1) {
+    constexpr int kSha1HexLength = 40;
+    if (sha1.size() != kSha1HexLength) {
+        return false;
     }
+    return std::ranges::all_of(sha1, [](const QChar ch) {
+        return (ch >= QLatin1Char('0') && ch <= QLatin1Char('9')) ||
+               (ch >= QLatin1Char('a') && ch <= QLatin1Char('f')) ||
+               (ch >= QLatin1Char('A') && ch <= QLatin1Char('F'));
+    });
+}
 
+namespace {
+
+// Code units below the first printable ASCII character are C0 control characters (incl. NUL);
+// 0x7f is DEL.
+constexpr char16_t kFirstPrintableCodeUnit = 0x20;
+constexpr char16_t kDeleteControlCodeUnit = 0x7f;
+
+// True if @p s holds any C0 control character (incl. NUL) or DEL. Such a byte in a field
+// serialized into the aria2 input file could truncate the line or break out of the record.
+bool hasAria2ControlChar(const QString& s) {
+    return std::ranges::any_of(s, [](const QChar ch) {
+        return ch.unicode() < kFirstPrintableCodeUnit || ch.unicode() == kDeleteControlCodeUnit;
+    });
+}
+
+// True if @p fileName is a Windows reserved device name (CON, NUL, COM1, ...), with or without an
+// extension: aria2 out=con / out=con.esd would open the console device instead of creating a file.
+bool isReservedDosDeviceName(const QString& fileName) {
+    const int dot = static_cast<int>(fileName.indexOf(QLatin1Char('.')));
+    const QString base = (dot < 0 ? fileName : fileName.left(dot)).toUpper();
+    static const QStringList kReserved = {
+        QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),
+        QStringLiteral("NUL"),  QStringLiteral("COM1"), QStringLiteral("COM2"),
+        QStringLiteral("COM3"), QStringLiteral("COM4"), QStringLiteral("COM5"),
+        QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
+        QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"),
+        QStringLiteral("LPT3"), QStringLiteral("LPT4"), QStringLiteral("LPT5"),
+        QStringLiteral("LPT6"), QStringLiteral("LPT7"), QStringLiteral("LPT8"),
+        QStringLiteral("LPT9")};
+    return kReserved.contains(base);
+}
+
+// The out= name must not escape the download dir, alias another file, or normalize (via a trailing
+// dot/space Windows trims) to a different on-disk name than the one we integrity-checked.
+bool isUnsafeAria2FileName(const QString& fileName) {
+    if (fileName.isEmpty() || fileName.contains(QLatin1String("..")) ||
+        fileName.contains(QLatin1Char('/')) || fileName.contains(QLatin1Char('\\')) ||
+        fileName.contains(QLatin1Char(':'))) {
+        return true;  // out= path confinement / drive / NTFS ADS
+    }
+    const QChar last = fileName.back();
+    return last == QLatin1Char('.') || last == QLatin1Char(' ') ||
+           isReservedDosDeviceName(fileName);
+}
+
+}  // namespace
+
+bool UupDumpApi::isSafeAria2FileEntry(const FileInfo& info) {
+    if (isUnsafeAria2FileName(info.fileName)) {
+        return false;
+    }
+    // A control character (incl. NUL, CR, LF, TAB) in ANY serialized field could truncate the
+    // aria2 input line or break out of the record to inject an out=/uri directive.
+    return !hasAria2ControlChar(info.fileName) && !hasAria2ControlChar(info.url) &&
+           !hasAria2ControlChar(info.sha1);
+}
+
+// The download URL must parse, be HTTPS (or plain HTTP only for Microsoft's UUP CDN, which serves
+// no HTTPS but is SHA-1 integrity-checked), and be non-empty. Logs the specific reason; a false
+// here trips the incomplete-set refusal rather than shipping an unfetchable entry.
+bool UupDumpApi::isAcceptableDownloadUrl(const FileInfo& info) {
     // Validate download URL scheme
-    QUrl downloadUrl(info.url);
+    const QUrl downloadUrl(info.url);
     if (!downloadUrl.isValid()) {
         sak::logWarning("Rejected invalid download URL for: " + info.fileName.toStdString());
-        return std::nullopt;
+        return false;
     }
 
-    QString scheme = downloadUrl.scheme().toLower();
-    QString host = downloadUrl.host().toLower();
+    const QString scheme = downloadUrl.scheme().toLower();
+    const QString host = downloadUrl.host().toLower();
     if (scheme == "http" && host.endsWith(".microsoft.com")) {
         // Microsoft's UUP CDN does not support HTTPS -- allow HTTP since
         // every file is integrity-verified via SHA-1 checksums.
         sak::logDebug("Allowing HTTP Microsoft CDN URL for: " + info.fileName.toStdString());
     } else if (scheme != "https") {
         sak::logWarning("Rejected non-HTTPS download URL for: " + info.fileName.toStdString());
-        return std::nullopt;
+        return false;
     }
 
     // Only include files with valid download URLs
     if (info.url.isEmpty() || info.url == "null") {
+        return false;
+    }
+    return true;
+}
+
+std::optional<UupDumpApi::FileInfo> UupDumpApi::parseAndValidateFileEntry(
+    const QString& key, const QJsonObject& fileObj) {
+    FileInfo info;
+    info.fileName = key;
+    info.sha1 = fileObj["sha1"].toString();
+    bool sizeOk = false;
+    info.size = fileObj["size"].toString().toLongLong(&sizeOk);
+    info.url = fileObj["url"].toString();
+    info.uuid = fileObj["uuid"].toString();
+    info.expire = fileObj["expire"].toString();
+
+    // A missing, non-numeric, overflowed, or negative size is not a valid file record: reject
+    // it (which then trips the incomplete-set refusal) instead of accepting a coerced 0.
+    if (!sizeOk || info.size < 0) {
+        sak::logWarning("Rejected file entry with missing/invalid size: " +
+                        info.fileName.toStdString());
+        return std::nullopt;
+    }
+
+    // Reject entries that could inject aria2 directives or escape the download dir when
+    // serialized into the aria2 input file (traversal in fileName, CR/LF/TAB in any field).
+    if (!isSafeAria2FileEntry(info)) {
+        sak::logWarning("Rejected unsafe file entry from API: " + info.fileName.toStdString());
+        return std::nullopt;
+    }
+
+    if (!isAcceptableDownloadUrl(info)) {
+        return std::nullopt;
+    }
+
+    // Require a well-formed SHA-1: the Microsoft CDN is served over plain HTTP
+    // (allowed above) purely because each file is integrity-verified. A missing
+    // or malformed checksum means we cannot verify it -- reject rather than ship
+    // an unverifiable file into the ISO build.
+    if (!isValidSha1(info.sha1)) {
+        sak::logWarning("Rejected file entry with missing/invalid SHA-1: " +
+                        info.fileName.toStdString());
         return std::nullopt;
     }
 
@@ -454,19 +742,16 @@ QNetworkReply* UupDumpApi::sendApiRequest(const QString& endpoint,
     }
     url.setQuery(query);
 
-    QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    request.setRawHeader("Accept", "application/json");
-    request.setRawHeader("User-Agent", "SAK-Utility/1.0");
-
-    // Use TLS 1.2+
-    QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
-    sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
-    request.setSslConfiguration(sslConfig);
-
     sak::logInfo(QString("API request: %1").arg(url.toString()).toStdString());
 
-    QNetworkReply* reply = m_networkManager->get(request);
+    QNetworkReply* reply = sak::startNetworkMetadataGet(
+        *m_networkManager,
+        {.url = url,
+         .raw_headers = {{QByteArrayLiteral("Content-Type"), QByteArrayLiteral("application/json")},
+                         {QByteArrayLiteral("Accept"), QByteArrayLiteral("application/json")},
+                         {QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")}},
+         .timeout_ms = sak::kHttpMetadataTransferTimeoutMs,
+         .max_response_bytes = kMaxApiResponseBytes});
     m_pendingReplies.append(reply);
     return reply;
 }
@@ -475,10 +760,10 @@ bool UupDumpApi::parseApiResponse(const QByteArray& data,
                                   const QString& context,
                                   QJsonObject& response) {
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        QString errorMsg =
+        const QString errorMsg =
             QString("JSON parse error in %1 response: %2").arg(context, parseError.errorString());
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
@@ -506,8 +791,8 @@ QStringList UupDumpApi::parseEditionList(const QJsonValue& edListVal) const {
 
 bool UupDumpApi::checkApiError(const QJsonObject& response, const QString& context) {
     if (response.contains("error")) {
-        QString errorCode = response["error"].toString();
-        QString errorMsg = QString("UUP dump API error while %1: %2").arg(context, errorCode);
+        const QString errorCode = response["error"].toString();
+        const QString errorMsg = QString("UUP dump API error while %1: %2").arg(context, errorCode);
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return true;
@@ -516,6 +801,7 @@ bool UupDumpApi::checkApiError(const QJsonObject& response, const QString& conte
 }
 
 QString UupDumpApi::buildSearchQuery(const QString& arch, ReleaseChannel channel) const {
+    // fetchAvailableBuilds, the only caller, rejects an empty arch before reaching here.
     Q_ASSERT(!arch.isEmpty());
     // Build a search query that filters builds by architecture and channel
     // The listid.php endpoint does text search on build titles

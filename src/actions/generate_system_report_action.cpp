@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file generate_system_report_action.cpp
-/// @brief Implements system information report generation
+/// @brief Implements the System Inventory Report quick action
 
 #include "sak/actions/generate_system_report_action.h"
 
 #include "sak/action_constants.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -14,6 +15,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QStorageInfo>
 #include <QSysInfo>
 
@@ -23,37 +25,86 @@ namespace {
 
 constexpr int kTextReportRuleWidth = 78;
 constexpr int kDurationDisplayPrecision = 1;
-constexpr int kReportSizeDisplayPrecision = 1;
-constexpr int kStorageDisplayPrecision = 2;
 constexpr int kPercentDisplayPrecision = 1;
+
+// Millisecond resolution (_zzz): two reports generated in the same second would
+// otherwise collide and the atomic save would truncate the earlier one.
+QString buildReportFilePath(const QDir& output_dir) {
+    const QString stamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
+    QString path = output_dir.filePath(QString("SystemInventory_%1.txt").arg(stamp));
+    // Millisecond resolution makes a collision unlikely -- a report takes seconds to produce --
+    // but "unlikely" is not "cannot", and the save is an ATOMIC REPLACE: a collision silently
+    // destroys the earlier report rather than failing. Since the cost of being wrong is a lost
+    // artifact and the cost of the check is one stat, the name is made unique instead of assumed
+    // unique. Bounded so a pathological directory cannot spin here.
+    constexpr int kMaxReportNameAttempts = 100;
+    // The first duplicate is "_2", so the un-suffixed name reads as the first of the set.
+    constexpr int kFirstDuplicateSuffix = 2;
+    for (int attempt = kFirstDuplicateSuffix;
+         QFileInfo::exists(path) && attempt <= kMaxReportNameAttempts;
+         ++attempt) {
+        path = output_dir.filePath(QString("SystemInventory_%1_%2.txt").arg(stamp).arg(attempt));
+    }
+    return path;
+}
 
 }  // namespace
 
 GenerateSystemReportAction::GenerateSystemReportAction(const QString& output_location,
                                                        QObject* parent)
-    : QuickAction(parent), m_output_location(output_location) {}
+    : QuickAction(parent) {
+    setOutputFolder(output_location);
+}
 
-void GenerateSystemReportAction::scan() {
-    setStatus(ActionStatus::Scanning);
+bool GenerateSystemReportAction::collectorFailed(bool timed_out,
+                                                 int exit_code,
+                                                 bool output_incomplete) {
+    return timed_out || exit_code != 0 || output_incomplete;
+}
 
-    ScanResult result;
-    result.applicable = true;
-    result.summary = "System report will gather OS, hardware, storage, and drivers";
-    result.details = "Output saved to reports folder";
+bool GenerateSystemReportAction::reportGenerationSucceeded(bool save_ok, bool all_collectors_ok) {
+    return save_ok && all_collectors_ok;
+}
 
-    setScanResult(result);
-    setStatus(ActionStatus::Ready);
-    Q_EMIT scanComplete(result);
+// Fail closed on an empty or relative output location: a blank path resolves
+// against the process working directory and a relative one escapes the intended
+// reports folder, so the report must never be written to a caller-unintended place.
+bool GenerateSystemReportAction::rejectInvalidOutputLocation() {
+    if (outputFolder().trimmed().isEmpty() || !QDir::isAbsolutePath(outputFolder())) {
+        ExecutionResult result;
+        result.success = false;
+        result.message = QStringLiteral("System inventory report has no valid output folder");
+        result.log = QStringLiteral(
+            "Refusing to write a system inventory report to a blank or relative path");
+        finishWithResult(result, ActionStatus::Failed);
+        return true;
+    }
+    return false;
+}
+
+// Polled between collectors so a cancel aborts promptly; settles the cancelled
+// outcome (stamped with start_time) and reports whether execute() should return.
+bool GenerateSystemReportAction::finishIfCancelled(const QDateTime& start_time) {
+    if (isCancelled()) {
+        emitCancelledResult(QStringLiteral("System inventory report cancelled"), start_time);
+        return true;
+    }
+    return false;
 }
 
 void GenerateSystemReportAction::execute() {
     if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("System report generation cancelled"));
+        emitCancelledResult(QStringLiteral("System inventory report cancelled"));
+        return;
+    }
+
+    if (rejectInvalidOutputLocation()) {
         return;
     }
 
     setStatus(ActionStatus::Running);
-    QDateTime start_time = QDateTime::currentDateTime();
+    const QDateTime start_time = QDateTime::currentDateTime();
+    m_collector_errors.clear();
     Q_EMIT executionProgress("Gathering comprehensive system information...", progress::kStep5);
 
     // Phase 1: Report header
@@ -62,90 +113,111 @@ void GenerateSystemReportAction::execute() {
     // Phase 2: OS and hardware
     Q_EMIT executionProgress("Collecting OS and hardware information...", progress::kStep15);
     report += gatherOsAndHardwareInfo();
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+    if (finishIfCancelled(start_time)) {
         return;
     }
 
     // Phase 3: Storage
     Q_EMIT executionProgress("Collecting storage information...", progress::kStep40);
     report += gatherStorageInfo();
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+    if (finishIfCancelled(start_time)) {
         return;
     }
 
     // Phase 4: Network
     Q_EMIT executionProgress("Collecting network configuration...", progress::kStep60);
     report += gatherNetworkInfo();
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+    if (finishIfCancelled(start_time)) {
         return;
     }
 
     // Phase 5: Qt/Volume info
     Q_EMIT executionProgress("Adding supplemental system data...", progress::kStep80);
     report += gatherQtAndVolumeInfo();
-    if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+    if (finishIfCancelled(start_time)) {
         return;
     }
 
     // Phase 6: Save
     Q_EMIT executionProgress("Saving report...", progress::kStep95);
 
-    QDir output_dir(m_output_location);
-    if (!output_dir.exists()) {
-        if (!output_dir.mkpath(".")) {
-            sak::logWarning("Failed to create system report directory: {}",
-                            m_output_location.toStdString());
-        }
-    }
-
-    QString filename = QString("SystemReport_%1.txt")
-                           .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss"));
-    QString filepath = output_dir.filePath(filename);
+    const QDir output_dir(outputFolder());
+    const QString directory_error = ensureOutputDirectory(output_dir);
+    const QString filepath = buildReportFilePath(output_dir);
 
     report += QString("-").repeated(kTextReportRuleWidth) + "\n";
     report += QString("Report completed in %1 seconds\n")
-                  .arg(start_time.msecsTo(QDateTime::currentDateTime()) / kMillisecondsPerSecondF,
+                  .arg(static_cast<double>(start_time.msecsTo(QDateTime::currentDateTime())) /
+                           kMillisecondsPerSecondF,
                        0,
                        'f',
                        kDurationDisplayPrecision);
 
-    saveReportAndFinish(report, filepath, start_time);
+    saveReportAndFinish(report, filepath, start_time, directory_error);
+}
+
+// A directory that could not be created is the usual REASON the save then fails, so it is
+// returned for the failure log rather than left in the app log alone.
+QString GenerateSystemReportAction::ensureOutputDirectory(const QDir& output_dir) const {
+    if (output_dir.exists() || output_dir.mkpath(".")) {
+        return {};
+    }
+    sak::logWarning("Failed to create system inventory report folder: {}",
+                    outputFolder().toStdString());
+    return QStringLiteral("The report folder could not be created: %1").arg(outputFolder());
 }
 
 void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
                                                      const QString& filepath,
-                                                     const QDateTime& start_time) {
-    bool save_success = saveReport(report, filepath);
+                                                     const QDateTime& start_time,
+                                                     const QString& directory_error) {
+    const std::expected<qint64, QString> saved = saveReport(report, filepath);
+    const bool save_success = saved.has_value();
+    const qint64 report_bytes = saved.value_or(0);
+    const bool all_collectors_ok = m_collector_errors.isEmpty();
+    const bool overall_success = reportGenerationSucceeded(save_success, all_collectors_ok);
 
     Q_EMIT executionProgress("Report complete", progress::kComplete);
 
-    qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
+    const qint64 duration_ms = start_time.msecsTo(QDateTime::currentDateTime());
 
     ExecutionResult result;
     result.duration_ms = duration_ms;
-    result.bytes_processed = report.size();
+    result.bytes_processed = report_bytes;
+    result.success = overall_success;
 
-    if (save_success) {
-        result.success = true;
-        result.message = QString("Comprehensive system report generated: %1")
-                             .arg(QFileInfo(filepath).fileName());
+    if (overall_success) {
+        result.message =
+            QString("System inventory report saved: %1").arg(QFileInfo(filepath).fileName());
         result.output_path = filepath;
-        result.log =
-            QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
-                .arg(filepath)
-                .arg(report.size() / sak::kBytesPerKBf, 0, 'f', kReportSizeDisplayPrecision)
-                .arg(duration_ms / kMillisecondsPerSecondF, 0, 'f', kDurationDisplayPrecision);
+        result.log = QString("Report saved to: %1\nSize: %2\nDuration: %3 seconds")
+                         .arg(filepath)
+                         .arg(sak::formatBytes(report_bytes))
+                         .arg(static_cast<double>(duration_ms) / kMillisecondsPerSecondF,
+                              0,
+                              'f',
+                              kDurationDisplayPrecision);
+    } else if (!save_success) {
+        // The reason, not just the path: disk full, access denied and a missing folder all used
+        // to read "Could not write to: <path>" and nothing else.
+        result.message =
+            QStringLiteral("Failed to save system inventory report: %1").arg(saved.error());
+        result.log = QStringLiteral("Could not write to: %1\n%2").arg(filepath, saved.error());
+        if (!directory_error.isEmpty()) {
+            result.log += QLatin1Char('\n') + directory_error;
+        }
     } else {
-        result.success = false;
-        result.message = "Failed to save system report";
-        result.log = QString("Could not write to: %1").arg(filepath);
+        // Saved, but one or more collectors failed to run: surface it rather than
+        // pass off an empty/partial report as a complete success.
+        result.message =
+            QString("System inventory report incomplete: %1 data could not be collected")
+                .arg(m_collector_errors.join(", "));
+        result.output_path = filepath;
+        result.log = QString("Partial report saved to: %1\nFailed collectors: %2")
+                         .arg(filepath, m_collector_errors.join(", "));
     }
 
-    finishWithResult(result, save_success ? ActionStatus::Success : ActionStatus::Failed);
+    finishWithResult(result, overall_success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
 // ============================================================================
@@ -155,10 +227,7 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
 QString GenerateSystemReportAction::buildReportHeader() const {
     QString header;
     header += "+" + QString("=").repeated(kTextReportRuleWidth) + "+\n";
-    header +=
-        "|" +
-        QString(" COMPREHENSIVE SYSTEM DIAGNOSTIC REPORT").leftJustified(kTextReportRuleWidth) +
-        "|\n";
+    header += "|" + QString(" SYSTEM INVENTORY REPORT").leftJustified(kTextReportRuleWidth) + "|\n";
     header += "+" + QString("=").repeated(kTextReportRuleWidth) + "+\n\n";
     header += QString("Generated: %1\n\n")
                   .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd "
@@ -167,7 +236,11 @@ QString GenerateSystemReportAction::buildReportHeader() const {
 }
 
 QString GenerateSystemReportAction::buildOsInfoScript() {
-    return "$info = Get-ComputerInfo\n"
+    // $ErrorActionPreference='Stop' promotes a collector cmdlet failure to a
+    // terminating error so the process exits non-zero and collectorFailed()
+    // rejects the partial output instead of saving it as a complete section.
+    return "$ErrorActionPreference = 'Stop'\n"
+           "$info = Get-ComputerInfo\n"
            "\n"
            "Write-Output \"=== OPERATING SYSTEM ===\"\n"
            "Write-Output \"OS Name: $($info.OsName)\"\n"
@@ -177,8 +250,14 @@ QString GenerateSystemReportAction::buildOsInfoScript() {
            "Write-Output \"OS Install Date: $($info.OsInstallDate)\"\n"
            "Write-Output \"OS Last Boot Time: $($info.OsLastBootUpTime)\"\n"
            "Write-Output \"OS Uptime: $($info.OsUptime)\"\n"
-           "Write-Output \"Windows Directory: $($info.WindowsDirectory)\"\n"
-           "Write-Output \"System Drive: $($info.WindowsSystemRoot)\"\n"
+           // Get-ComputerInfo exposes no "WindowsDirectory" property (verified on a live Windows
+           // 11 host: the property is absent, so this line rendered "Windows Directory:" with
+           // nothing after it). WindowsSystemRoot is the Windows directory -- it is NOT the
+           // system drive, which is what the next line used to call it. Both now say what they
+           // actually are, and the drive comes from the environment, which is where every other
+           // site in this codebase derives it from.
+           "Write-Output \"Windows Directory: $($info.WindowsSystemRoot)\"\n"
+           "Write-Output \"System Drive: $env:SystemDrive\"\n"
            "Write-Output \"\"\n"
            "\n"
            "Write-Output \"=== COMPUTER SYSTEM ===\"\n"
@@ -206,18 +285,24 @@ QString GenerateSystemReportAction::buildOsInfoScript() {
 }
 
 QString GenerateSystemReportAction::buildHardwareInfoScript() {
+    // UNITS ARE NOT UNIFORM ACROSS Get-ComputerInfo, and getting this wrong is silent:
+    //   CsTotalPhysicalMemory comes from Win32_ComputerSystem and is in BYTES  -> / 1GB.
+    //   Os* memory values come from Win32_OperatingSystem and are in KILOBYTES -> / 1KB for MB.
+    // Every Os* value here was divided by 1MB and labelled MB, so each was reported 1024x too
+    // small. Measured on a 32 GB machine: "Free Physical Memory: 16.85 MB" for 17,249 MB actually
+    // free. A technician reading that report would see a machine apparently out of RAM.
     return "\n"
            "Write-Output \"=== MEMORY ===\"\n"
            "Write-Output \"Total Physical Memory: "
            "$([math]::Round($info.CsTotalPhysicalMemory / 1GB, 2)) GB\"\n"
            "Write-Output \"Free Physical Memory: "
-           "$([math]::Round($info.OsFreePhysicalMemory / 1MB, 2)) MB\"\n"
+           "$([math]::Round($info.OsFreePhysicalMemory / 1KB, 2)) MB\"\n"
            "Write-Output \"Total Virtual Memory: "
-           "$([math]::Round($info.OsTotalVirtualMemorySize / 1MB, 2)) MB\"\n"
-           "Write-Output \"Free Virtual Memory: $([math]::Round($info.OsFreeVirtualMemory / 1MB, "
+           "$([math]::Round($info.OsTotalVirtualMemorySize / 1KB, 2)) MB\"\n"
+           "Write-Output \"Free Virtual Memory: $([math]::Round($info.OsFreeVirtualMemory / 1KB, "
            "2)) "
            "MB\"\n"
-           "Write-Output \"Page File Size: $([math]::Round($info.OsSizeStoredInPagingFiles / 1MB, "
+           "Write-Output \"Page File Size: $([math]::Round($info.OsSizeStoredInPagingFiles / 1KB, "
            "2)) "
            "MB\"\n"
            "Write-Output \"\"\n"
@@ -226,6 +311,9 @@ QString GenerateSystemReportAction::buildHardwareInfoScript() {
            "Write-Output \"BIOS Version: $($info.BiosVersion)\"\n"
            "Write-Output \"BIOS Manufacturer: $($info.BiosManufacturer)\"\n"
            "Write-Output \"BIOS Release Date: $($info.BiosReleaseDate)\"\n"
+           // NB: "BiosSeralNumber" is intentionally misspelled -- Get-ComputerInfo
+           // itself exposes the property with the missing 'i' (a documented
+           // Microsoft typo). Correcting it to BiosSerialNumber returns $null.
            "Write-Output \"BIOS Serial Number: $($info.BiosSeralNumber)\"\n"
            "Write-Output \"BIOS UEFI: $($info.BiosFirmwareType)\"\n"
            "Write-Output \"\"\n"
@@ -248,27 +336,97 @@ QString GenerateSystemReportAction::buildHardwareInfoScript() {
            "Write-Output \"Product ID: $($info.WindowsProductId)\"\n"
            "Write-Output \"Edition ID: $($info.WindowsEditionId)\"\n"
            "Write-Output \"Registered Owner: $($info.WindowsRegisteredOwner)\"\n"
-           "Write-Output \"Registered Organization: $($info.WindowsRegisteredOrganization)\"";
+           "Write-Output \"Registered Organization: $($info.WindowsRegisteredOrganization)\"\n";
+}
+
+QString GenerateSystemReportAction::buildActivationInfoScript() {
+    // The section is titled WINDOWS ACTIVATION, and it printed the product name, ID, edition and
+    // owner but no activation state at all, so on an unactivated machine the technician read the
+    // section and saw no sign of the problem. This is the state slmgr /dli reports: the
+    // SoftwareLicensingProduct entry for Windows itself (its fixed ApplicationID) that has a
+    // product key installed, with LicenseStatus decoded per the documented values.
+    //
+    // A failed query is reported in the section, not thrown: the script runs under
+    // $ErrorActionPreference = 'Stop', so an uncaught licensing error would fail the whole
+    // OS/hardware collector and drop every section above it. Ordinary string literals, like the
+    // other collectors: lizard's tokenizer cannot follow PowerShell inside a raw string.
+    return QStringLiteral(
+        "$windowsAppId = '55c92734-d682-4d71-983e-d6ec3f16059f'\n"
+        "$licenseFilter = 'ApplicationID=''' + $windowsAppId + "
+        "''' AND PartialProductKey IS NOT NULL'\n"
+        "$licenses = $null\n"
+        "try {\n"
+        "    $licenses = @(Get-CimInstance SoftwareLicensingProduct -Filter $licenseFilter "
+        "-ErrorAction Stop)\n"
+        "} catch {\n"
+        "    Write-Output ('License Status: query failed: ' + $_.Exception.Message)\n"
+        "}\n"
+        "if ($null -ne $licenses -and $licenses.Count -eq 0) {\n"
+        "    Write-Output 'License Status: no Windows license with an installed product key'\n"
+        "}\n"
+        "$licenseStatusNames = @{\n"
+        "    0 = 'Unlicensed'; 1 = 'Licensed'; 2 = 'Out-of-box grace period';\n"
+        "    3 = 'Out-of-tolerance grace period'; 4 = 'Non-genuine grace period';\n"
+        "    5 = 'Notification (not activated)'; 6 = 'Extended grace period'\n"
+        "}\n"
+        "foreach ($license in @($licenses)) {\n"
+        "    if ($null -eq $license) { continue }\n"
+        "    $statusCode = [int]$license.LicenseStatus\n"
+        "    $statusName = $licenseStatusNames[$statusCode]\n"
+        "    if ($null -eq $statusName) { $statusName = 'Unknown status code ' + $statusCode }\n"
+        "    Write-Output ('License Status: ' + $statusName)\n"
+        "    Write-Output ('License Channel: ' + $license.ProductKeyChannel)\n"
+        "}\n"
+        "Write-Output ''\n");
 }
 
 QString GenerateSystemReportAction::gatherOsAndHardwareInfo() {
-    QString ps_cmd_info = buildOsInfoScript() + buildHardwareInfoScript();
+    const QString ps_cmd_info = buildOsInfoScript() + buildHardwareInfoScript() +
+                                buildActivationInfoScript();
 
-    ProcessResult proc_info = runPowerShell(ps_cmd_info, sak::kTimeoutChocoListMs);
+    // The cancel callback is what makes cancel() actually stop this collector. Without it
+    // the action only re-checked isCancelled() BETWEEN steps, so a cancel arriving while a
+    // collector was running left that PowerShell child running to its full timeout --
+    // cancellation that does not cancel. Matches runSFC / the DISM probes, which already
+    // pass this.
+    // Its OWN bound (kTimeoutSystemInfoMs). This borrowed kTimeoutChocoListMs, a Chocolatey
+    // constant, so retuning package listing would have silently retuned the system report, at a
+    // 15 s that Get-ComputerInfo can exceed on a slow machine. Get-ComputerInfo plus the
+    // licensing query in one cold Windows PowerShell measured 3.4-3.8 s on a fast workstation
+    // (2026-10-31); the bound is 60 s because slow disks and old hardware take far longer and
+    // the collector is cancellable, so a generous bound costs a user nothing.
+    const ProcessResult proc_info = runPowerShell(
+        ps_cmd_info, sak::kTimeoutSystemInfoMs, true, true, [this]() { return isCancelled(); });
     if (!proc_info.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report OS warning: " + proc_info.std_err.trimmed());
     }
 
-    if (!proc_info.timed_out) {
-        return proc_info.std_out + "\n";
+    const bool info_incomplete = proc_info.output_truncated ||
+                                 proc_info.std_out.trimmed().isEmpty();
+    if (collectorFailed(proc_info.timed_out, proc_info.exit_code, info_incomplete)) {
+        m_collector_errors << QStringLiteral("OS/hardware");
+        return "=== OPERATING SYSTEM ===\n[collection failed: OS/hardware data unavailable]\n\n";
     }
-    return "=== OPERATING SYSTEM ===\nTimeout gathering system info\n\n";
+    return proc_info.std_out + "\n";
 }
 
-QString GenerateSystemReportAction::gatherStorageInfo() {
-    QString ps_cmd_storage =
+QString GenerateSystemReportAction::buildStorageInfoScript() {
+    return QStringLiteral(
+        "$ErrorActionPreference = 'Stop'\n"
         "Write-Output \"=== STORAGE DEVICES ===\"\n"
-        "$disks = Get-PhysicalDisk\n"
+        "try {\n"
+        "    $disks = @(Get-PhysicalDisk -ErrorAction Stop)\n"
+        "} catch [System.Management.Automation.CommandNotFoundException] {\n"
+        "    Write-Output \"Storage inventory: unavailable (command not supported)\"\n"
+        "    $disks = @()\n"
+        "}\n"
+        "$smartCommandAvailable = $true\n"
+        "try {\n"
+        "    Get-Command Get-StorageReliabilityCounter -CommandType Cmdlet "
+        "-ErrorAction Stop | Out-Null\n"
+        "} catch [System.Management.Automation.CommandNotFoundException] {\n"
+        "    $smartCommandAvailable = $false\n"
+        "}\n"
         "foreach ($disk in $disks) {\n"
         "    Write-Output \"\"\n"
         "    Write-Output \"Physical Disk $($disk.DeviceID):\"\n"
@@ -279,33 +437,84 @@ QString GenerateSystemReportAction::gatherStorageInfo() {
         "    Write-Output \"  Size: $([math]::Round($disk.Size / 1GB, 2)) GB\"\n"
         "    Write-Output \"  Health Status: $($disk.HealthStatus)\"\n"
         "    Write-Output \"  Operational Status: $($disk.OperationalStatus)\"\n"
-        "    \n"
+        "\n"
+        "    if (-not $smartCommandAvailable) {\n"
+        "        Write-Output \"  Storage reliability counters: unavailable (command not "
+        "supported)\"\n"
+        "        continue\n"
+        "    }\n"
         "    try {\n"
-        "        $smart = $disk | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue\n"
-        "        if ($smart) {\n"
+        "        $smart = $disk | Get-StorageReliabilityCounter -ErrorAction Stop\n"
+        "        if ($null -eq $smart) {\n"
+        "            Write-Output \"  Storage reliability counters: unavailable (no data "
+        "returned)\"\n"
+        "            continue\n"
+        "        }\n"
+        "        if ($null -eq $smart.Temperature) {\n"
+        "            Write-Output \"  Temperature: unavailable\"\n"
+        "        } else {\n"
         "            Write-Output \"  Temperature: $($smart.Temperature) degC\"\n"
+        "        }\n"
+        "        if ($null -eq $smart.PowerOnHours) {\n"
+        "            Write-Output \"  Power On Hours: unavailable\"\n"
+        "        } else {\n"
         "            Write-Output \"  Power On Hours: $($smart.PowerOnHours)\"\n"
+        "        }\n"
+        "        if ($null -eq $smart.Wear) {\n"
+        "            Write-Output \"  Wear: unavailable\"\n"
+        "        } else {\n"
         "            Write-Output \"  Wear: $($smart.Wear)%\"\n"
         "        }\n"
-        "    } catch {}\n"
+        "    } catch [System.NotSupportedException] {\n"
+        "        Write-Output \"  Storage reliability counters: unavailable (command not "
+        "supported)\"\n"
+        "    } catch {\n"
+        "        if ($_.CategoryInfo.Reason -match 'NotSupported') {\n"
+        "            Write-Output \"  Storage reliability counters: unavailable (command not "
+        "supported)\"\n"
+        "        } else {\n"
+        "            Write-Output \"  Storage reliability counter query failed: "
+        "$($_.Exception.Message)\"\n"
+        "        }\n"
+        "    }\n"
         "}\n"
-        "Write-Output \"\"";
+        "Write-Output \"\"");
+}
 
-    ProcessResult proc_storage = runPowerShell(ps_cmd_storage, sak::kTimeoutProcessMediumMs);
+QString GenerateSystemReportAction::gatherStorageInfo() {
+    const QString ps_cmd_storage = buildStorageInfoScript();
+
+    const ProcessResult proc_storage =
+        runPowerShell(ps_cmd_storage, sak::kTimeoutProcessMediumMs, true, true, [this]() {
+            return isCancelled();
+        });
     if (!proc_storage.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report storage warning: " + proc_storage.std_err.trimmed());
     }
 
-    if (!proc_storage.timed_out) {
-        return proc_storage.std_out + "\n";
+    const bool storage_incomplete = proc_storage.output_truncated ||
+                                    proc_storage.std_out.trimmed().isEmpty();
+    if (collectorFailed(proc_storage.timed_out, proc_storage.exit_code, storage_incomplete)) {
+        m_collector_errors << QStringLiteral("storage");
+        return "=== STORAGE DEVICES ===\n[collection failed: storage data unavailable]\n\n";
     }
-    return QString();
+    return proc_storage.std_out + "\n";
 }
 
-QString GenerateSystemReportAction::gatherNetworkInfo() {
-    QString ps_cmd_network =
+QString GenerateSystemReportAction::buildNetworkInfoScript() {
+    return QStringLiteral(
+        "$ErrorActionPreference = 'Stop'\n"
         "Write-Output \"=== NETWORK ADAPTERS ===\"\n"
-        "$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}\n"
+        "try {\n"
+        "    $adapters = @(Get-NetAdapter -ErrorAction Stop | "
+        "Where-Object {$_.Status -eq 'Up'})\n"
+        "} catch [System.Management.Automation.CommandNotFoundException] {\n"
+        "    Write-Output \"Network adapter inventory: unavailable (command not supported)\"\n"
+        "    $adapters = @()\n"
+        "}\n"
+        "if ($adapters.Count -eq 0) {\n"
+        "    Write-Output \"Active network adapters: unavailable (none reported)\"\n"
+        "}\n"
         "foreach ($adapter in $adapters) {\n"
         "    Write-Output \"\"\n"
         "    Write-Output \"$($adapter.Name):\"\n"
@@ -313,27 +522,45 @@ QString GenerateSystemReportAction::gatherNetworkInfo() {
         "    Write-Output \"  MAC Address: $($adapter.MacAddress)\"\n"
         "    Write-Output \"  Link Speed: $($adapter.LinkSpeed)\"\n"
         "    Write-Output \"  Status: $($adapter.Status)\"\n"
-        "    \n"
-        "    $ipconfig = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -ErrorAction "
-        "SilentlyContinue\n"
-        "    foreach ($ip in $ipconfig) {\n"
-        "        if ($ip.AddressFamily -eq 'IPv4') {\n"
+        "\n"
+        "    try {\n"
+        "        $ipconfig = @(Get-NetIPAddress -InterfaceIndex $adapter.ifIndex "
+        "-ErrorAction Stop)\n"
+        "        $ipv4 = @($ipconfig | Where-Object {$_.AddressFamily -eq 'IPv4'})\n"
+        "        if ($ipv4.Count -eq 0) {\n"
+        "            Write-Output \"  IPv4 Address: unavailable (none assigned)\"\n"
+        "        }\n"
+        "        foreach ($ip in $ipv4) {\n"
         "            Write-Output \"  IPv4 Address: $($ip.IPAddress)\"\n"
         "            Write-Output \"  Subnet Prefix: $($ip.PrefixLength)\"\n"
         "        }\n"
+        "    } catch [System.Management.Automation.CommandNotFoundException] {\n"
+        "        Write-Output \"  IP configuration: unavailable (command not supported)\"\n"
+        "    } catch {\n"
+        "        Write-Output \"  IP configuration query failed: $($_.Exception.Message)\"\n"
         "    }\n"
         "}\n"
-        "Write-Output \"\"";
+        "Write-Output \"\"");
+}
 
-    ProcessResult proc_network = runPowerShell(ps_cmd_network, sak::kTimeoutProcessMediumMs);
+QString GenerateSystemReportAction::gatherNetworkInfo() {
+    const QString ps_cmd_network = buildNetworkInfoScript();
+
+    const ProcessResult proc_network =
+        runPowerShell(ps_cmd_network, sak::kTimeoutProcessMediumMs, true, true, [this]() {
+            return isCancelled();
+        });
     if (!proc_network.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report network warning: " + proc_network.std_err.trimmed());
     }
 
-    if (!proc_network.timed_out) {
-        return proc_network.std_out + "\n";
+    const bool network_incomplete = proc_network.output_truncated ||
+                                    proc_network.std_out.trimmed().isEmpty();
+    if (collectorFailed(proc_network.timed_out, proc_network.exit_code, network_incomplete)) {
+        m_collector_errors << QStringLiteral("network");
+        return "=== NETWORK ADAPTERS ===\n[collection failed: network data unavailable]\n\n";
     }
-    return QString();
+    return proc_network.std_out + "\n";
 }
 
 QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {
@@ -358,39 +585,54 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {
         section += QString("  Name: %1\n").arg(storage.name());
         section += QString("  File System: %1\n").arg(QString::fromUtf8(storage.fileSystemType()));
         section += QString("  Device: %1\n").arg(QString::fromUtf8(storage.device()));
-        section +=
-            QString("  Total: %1 GB\n")
-                .arg(storage.bytesTotal() / sak::kBytesPerGBf, 0, 'f', kStorageDisplayPrecision);
-        section +=
-            QString("  Free: %1 GB\n")
-                .arg(storage.bytesFree() / sak::kBytesPerGBf, 0, 'f', kStorageDisplayPrecision);
-        section += QString("  Available: %1 GB\n")
-                       .arg(storage.bytesAvailable() / sak::kBytesPerGBf,
-                            0,
-                            'f',
-                            kStorageDisplayPrecision);
-        section += QString("  Used: %1%%\n\n")
-                       .arg(kPercentMaxF * (1.0 - static_cast<double>(storage.bytesFree()) /
-                                                      storage.bytesTotal()),
-                            0,
-                            'f',
-                            kPercentDisplayPrecision);
+        section += QString("  Total: %1\n").arg(sak::formatBytes(storage.bytesTotal()));
+        section += QString("  Free: %1\n").arg(sak::formatBytes(storage.bytesFree()));
+        section += QString("  Available: %1\n").arg(sak::formatBytes(storage.bytesAvailable()));
+        const qint64 total_bytes = storage.bytesTotal();
+        const double used_percent =
+            total_bytes > 0
+                ? kPercentMaxF * (1.0 - (static_cast<double>(storage.bytesFree()) /
+                                         static_cast<double>(total_bytes)))
+                : 0.0;  // guard divide-by-zero: an unknown-capacity volume reports 0% used
+        // QString::arg has no %% escape: written that way it printed two percent signs.
+        section += QString("  Used: %1%\n\n").arg(used_percent, 0, 'f', kPercentDisplayPrecision);
     }
 
     return section;
 }
 
-bool GenerateSystemReportAction::saveReport(const QString& report, const QString& filepath) {
-    QFile file(filepath);
+std::expected<qint64, QString> GenerateSystemReportAction::saveReport(const QString& report,
+                                                                      const QString& filepath) {
+    // QSaveFile: the report is written to a temp file and atomically renamed on
+    // commit(), so a crash mid-write never leaves a truncated report in place,
+    // and commit() surfaces a close/flush error instead of it being ignored.
+    // Every failure carries QSaveFile's own reason; each path used to return a bare false.
+    QSaveFile file(filepath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        return false;
+        return std::unexpected(
+            QStringLiteral("Could not open the report for writing: %1").arg(file.errorString()));
     }
     const QByteArray data = report.toUtf8();
     if (file.write(data) != data.size()) {
-        return false;
+        const QString reason = file.errorString();
+        file.cancelWriting();
+        return std::unexpected(QStringLiteral("Could not write the report: %1").arg(reason));
     }
-    file.close();
-    return true;
+    if (!file.commit()) {
+        return std::unexpected(
+            QStringLiteral("Could not finish saving the report: %1").arg(file.errorString()));
+    }
+    // Report the SIZE OF THE FILE ON DISK, which is the number the technician can verify in
+    // Explorer. The caller used QString::size() for both the ExecutionResult's bytes_processed
+    // and the "Size: N KB" line, and that counts UTF-16 code units -- so on a localized Windows,
+    // where device names, user names and service descriptions are not ASCII, both numbers
+    // disagreed with the file.
+    //
+    // The encoded payload size is NOT the same thing either, and measuring it here would have
+    // been a subtler version of the same mistake: the device is opened with QIODevice::Text, so
+    // on Windows every '\n' is translated to "\r\n" on the way out and the file is larger than
+    // the bytes handed to write(). Ask the filesystem.
+    return QFileInfo(filepath).size();
 }
 
 }  // namespace sak

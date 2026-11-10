@@ -6,6 +6,7 @@
 
 #include "sak/app_scanner.h"
 
+#include <QDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -19,10 +20,18 @@ private Q_SLOTS:
     void appInfo_confidence_defaults();
     void appInfo_source_defaults();
     void appInfo_versionLocking_defaults();
-    void appInfo_userData_defaults();
     void appInfo_fieldAssignment();
     void scanRegistry_returnsInstalledPrograms();
     void scanAll_returnsNonEmpty();
+
+    // Anti-hijack: AppX scan must invoke PowerShell by absolute System32 path.
+    void composePowerShellPath_absoluteUnderSystemRoot();
+
+    // Anti-hijack: the Windows root comes from the OS, not %SystemRoot% env.
+    void authoritativeWindowsRoot_fromOsNotEnv();
+
+    // Review 3 (N9): the backup wizard listed "CN=Microsoft Corporation, O=Micro...".
+    void appxPublisherIsTheOrganisation();
 };
 
 void TestAppScanner::construction_default() {
@@ -60,12 +69,6 @@ void TestAppScanner::appInfo_versionLocking_defaults() {
     QVERIFY(info.locked_version.isEmpty());
 }
 
-void TestAppScanner::appInfo_userData_defaults() {
-    AppScanner::AppInfo info;
-    QVERIFY(!info.has_user_data);
-    QCOMPARE(info.estimated_data_size, static_cast<qint64>(0));
-}
-
 void TestAppScanner::appInfo_fieldAssignment() {
     AppScanner::AppInfo info;
     info.name = QStringLiteral("Test App");
@@ -76,8 +79,6 @@ void TestAppScanner::appInfo_fieldAssignment() {
     info.source = AppScanner::AppInfo::Source::AppX;
     info.version_locked = true;
     info.locked_version = QStringLiteral("1.0.0");
-    info.has_user_data = true;
-    info.estimated_data_size = 1024;
 
     QCOMPARE(info.name, QStringLiteral("Test App"));
     QCOMPARE(info.version, QStringLiteral("1.2.3"));
@@ -87,8 +88,6 @@ void TestAppScanner::appInfo_fieldAssignment() {
     QCOMPARE(info.source, AppScanner::AppInfo::Source::AppX);
     QVERIFY(info.version_locked);
     QCOMPARE(info.locked_version, QStringLiteral("1.0.0"));
-    QVERIFY(info.has_user_data);
-    QCOMPARE(info.estimated_data_size, static_cast<qint64>(1024));
 }
 
 void TestAppScanner::scanRegistry_returnsInstalledPrograms() {
@@ -108,6 +107,44 @@ void TestAppScanner::scanAll_returnsNonEmpty() {
     const auto programs = scanner.scanAll();
 
     QVERIFY2(!programs.empty(), "scanAll should find installed programs on any Windows system");
+}
+
+void TestAppScanner::composePowerShellPath_absoluteUnderSystemRoot() {
+    // Empty SystemRoot -> fail closed (never run a bare powershell.exe).
+    QVERIFY(AppScanner::composePowerShellPath(QString()).isEmpty());
+
+    const QString path = AppScanner::composePowerShellPath(QStringLiteral("C:\\Windows"));
+    QVERIFY(!path.isEmpty());
+    // Pin the full normalized path: !isEmpty and isAbsolutePath both pass on an un-normalized
+    // "C:\Windows/System32/..." too, so they miss a dropped cleanPath -- the function's whole job.
+    QCOMPARE(path, QStringLiteral("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"));
+    // Must be an absolute, rooted path -- not a bare executable name.
+    QVERIFY(QDir::isAbsolutePath(path));
+}
+
+void TestAppScanner::authoritativeWindowsRoot_fromOsNotEnv() {
+    const QString root = AppScanner::authoritativeWindowsRoot();
+    // The OS API must return a concrete, absolute Windows directory,
+    // independent of (and unspoofable via) the %SystemRoot% environment variable.
+    QVERIFY(!root.isEmpty());
+    QVERIFY(QDir::isAbsolutePath(root));
+    // Composing PowerShell from the OS-resolved root yields a rooted System32 path.
+    const QString ps = AppScanner::composePowerShellPath(root);
+    QVERIFY(QDir::isAbsolutePath(ps));
+    QVERIFY(ps.endsWith(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe")));
+}
+
+void TestAppScanner::appxPublisherIsTheOrganisation() {
+    QJsonObject row;
+    row.insert(QStringLiteral("Name"), QStringLiteral("Microsoft.WindowsCalculator"));
+    row.insert(QStringLiteral("Version"), QStringLiteral("11.2405.2.0"));
+    row.insert(QStringLiteral("Publisher"),
+               QStringLiteral("CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, "
+                              "S=Washington, C=US"));
+    const AppScanner::AppInfo app = AppScanner::appxAppFromJson(row);
+    QCOMPARE(app.name, QStringLiteral("Microsoft.WindowsCalculator"));
+    QCOMPARE(app.publisher, QStringLiteral("Microsoft Corporation"));
+    QVERIFY(app.source == AppScanner::AppInfo::Source::AppX);
 }
 
 QTEST_MAIN(TestAppScanner)

@@ -11,6 +11,7 @@
 #include <QStringList>
 #include <QVector>
 
+#include <atomic>
 #include <cstdint>
 
 namespace sak {
@@ -18,6 +19,10 @@ namespace sak {
 inline constexpr uint64_t kFileRecoveryDefaultMaxScanBytes = 512ULL * 1024ULL * 1024ULL;
 inline constexpr uint64_t kFileRecoveryDefaultMaxCandidateBytes = 128ULL * 1024ULL * 1024ULL;
 inline constexpr int kFileRecoveryDefaultMaxCandidates = 2048;
+/// A person's scan through Data Recovery: the whole source, however large it is, because it reads a
+/// window at a time, and as many files as a review table can hold. Cancel ends it.
+inline constexpr uint64_t kFileRecoveryWholeSourceScanBytes = UINT64_MAX;
+inline constexpr int kFileRecoveryPanelMaxCandidates = 100'000;
 
 struct FileRecoveryCandidate {
     QString id;
@@ -42,7 +47,31 @@ struct FileRecoveryScanResult {
     QStringList warnings;
     uint64_t bytes_read{0};
     bool source_opened_read_only{false};
+    /// True if the carve stopped before scanning everything -- the caller's cancel flag (deadline),
+    /// the forward-scan work budget (a hostile image), the candidate cap, the byte-scan cap
+    /// stopping before EOF, or a mid-scan read error. When true the candidate list is a partial
+    /// result -- callers must not report the scan as complete.
+    bool scan_cancelled{false};
+    /// True when a CONFIGURED bound cut the carve short of the whole source: the byte-scan cap
+    /// stopping before EOF, or the candidate cap. Unlike scan_cancelled (a deadline / hostile-image
+    /// abort), a truncated scan finished its configured work but did not cover everything, so the
+    /// candidate list is still partial -- raising the cap and re-scanning can surface more. A
+    /// caller wanting whole-source coverage must treat EITHER flag as incomplete (R5-P9-24).
+    bool scan_truncated{false};
+    /// True when the caller's cancel flag ended the carve, so what was found so far is here.
+    bool stopped_by_cancel{false};
 };
+
+/// How a scan ended, for whoever has to tell a person about it.
+enum class FileRecoveryScanOutcome {
+    CouldNotRead,   ///< Nothing could be read: the source would not open, or gave no bytes.
+    Stopped,        ///< Cancelled before anything was found.
+    NothingFound,   ///< All of it was read, and no file signature was in it.
+    NothingInPart,  ///< No file signature in what was read, and not all of it was.
+    Found,          ///< Files were found. FileRecoveryScanResult::warnings says if it was partial.
+};
+
+[[nodiscard]] FileRecoveryScanOutcome classifyFileRecoveryScan(const FileRecoveryScanResult& scan);
 
 struct FileRecoveryRestoreOptions {
     QString image_path;
@@ -56,13 +85,24 @@ struct FileRecoveryRestoreResult {
     QStringList restored_paths;
     QStringList warnings;
     bool source_opened_read_only{false};
+    /// True when the hashed source WINDOW (the first source_hash_bytes, or the
+    /// whole file when that is 0) was byte-identical before and after the restore.
+    /// This alone proves only the hashed window is unchanged; a whole-source
+    /// guarantee also requires source_hash_covered_whole (B8-23).
     bool source_not_mutated{false};
+    /// True when the integrity hash covered the ENTIRE source (an uncapped hash,
+    /// or a cap at least as large as the source), so source_not_mutated can be
+    /// read as a whole-source claim rather than a prefix-only one.
+    bool source_hash_covered_whole{false};
 };
 
 class FileRecoveryEngine {
 public:
+    /// @param cancel  Optional cooperative-cancel flag polled during the (potentially long)
+    ///                signature carve. When it flips true the carve stops and the result's
+    ///                scan_cancelled is set. Pass nullptr (the default) for an uncancellable scan.
     [[nodiscard]] static FileRecoveryScanResult scanOfflineImage(
-        const FileRecoveryScanOptions& options);
+        const FileRecoveryScanOptions& options, const std::atomic<bool>* cancel = nullptr);
     [[nodiscard]] static FileRecoveryRestoreResult restoreCandidates(
         const FileRecoveryRestoreOptions& options);
 

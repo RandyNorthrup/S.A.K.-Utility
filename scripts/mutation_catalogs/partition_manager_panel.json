@@ -1,0 +1,416 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_partition_manager_panel",
+  "ctest_regex": "^test_partition_manager_panel$",
+  "mutants": [
+    {
+      "id": "create-preview-drops-trailing-free-span",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (geometry->trailing_bytes > 0) {",
+      "replace": "if (geometry->trailing_bytes > segment.bytes) {",
+      "expect": "killed",
+      "why": "applyPreviewPreservesTrailingFreeSpan requires a create operation inside a larger free region to retain the free space after the new partition."
+    },
+    {
+      "id": "create-preview-allows-free-span-overflow",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "segment.bytes > std::numeric_limits<uint64_t>::max() - segment.offset) {",
+      "replace": "segment.bytes > std::numeric_limits<uint64_t>::max() - segment.offset && segment.bytes == 0) {",
+      "expect": "killed",
+      "why": "applyPreviewRefusesOverflowingFreeSpan requires malformed source geometry whose offset plus byte count wraps to remain unchanged instead of rendering wrapped segments."
+    },
+    {
+      "id": "free-span-request-wraps-through-raw-addition",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "prefix_bytes > segment.bytes || size > segment.bytes - prefix_bytes",
+      "replace": "prefix_bytes > segment.bytes",
+      "expect": "killed",
+      "why": "consumePreviewRefusesOverflowingRequest requires the requested size to fit the remaining span even when both additions are individually representable."
+    },
+    {
+      "id": "consume-preview-ignores-requested-span",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "const auto consumed_geometry = splitFreeSpanGeometry(segment, offset, size);",
+      "replace": "const auto consumed_geometry = splitFreeSpanGeometry(segment, offset, 0);",
+      "expect": "killed",
+      "why": "consumePreviewPreservesNormalRemainders pins the consume caller to the shared checked geometry using the requested size; preserving offset keeps the mutation compile-valid under unused-parameter warnings."
+    },
+    {
+      "id": "restore-image-unmapped-source-guessed-safe",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (!source_disk) {\n        return std::nullopt;",
+      "replace": "if (!source_disk) {\n        return false;",
+      "expect": "killed",
+      "why": "restoreImageSourceRefusesUnmappedIdentity requires an unmapped local drive or mounted folder to remain unknown so restore refuses instead of guessing the image is on another disk."
+    },
+    {
+      "id": "restore-image-ambiguous-source-guessed-safe",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (ambiguous) {\n        return std::nullopt;",
+      "replace": "if (ambiguous) {\n        return false;",
+      "expect": "killed",
+      "why": "restoreImageSourceRefusesAmbiguousIdentity requires duplicate volume identity across disks to remain unknown rather than selecting the last matching disk."
+    },
+    {
+      "id": "restore-image-unc-source-guessed-safe",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (isRemoteUncImagePath(source_path)) {\n        return std::nullopt;",
+      "replace": "if (isRemoteUncImagePath(source_path)) {\n        return false;",
+      "expect": "killed",
+      "why": "restoreImageSourceRefusesUncAliases requires UNC and extended-UNC sources to refuse because localhost administrative shares can reside on the target disk and runtime does not support network image sources."
+    },
+    {
+      "id": "restore-image-volume-guid-match-ignored",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "(volume_identity == device_identity || volume_identity == root_identity)",
+      "replace": "(volume_identity == root_identity || (volume_identity == device_identity && device_identity.size() < 0))",
+      "expect": "killed",
+      "why": "restoreImageSourceMapsDeviceGuid requires a mounted-folder source to map by QStorageInfo device identity even when its mount root is not a drive-letter root."
+    },
+    {
+      "id": "restore-image-volume-guid-root-match-ignored",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "volume_identity == root_identity",
+      "replace": "volume_identity == root_identity && root_identity.size() < 0",
+      "expect": "killed",
+      "why": "restoreImageSourceMapsVolumeGuidRoot requires an extended volume-GUID root to map even when QStorageInfo supplies no separate device string."
+    },
+    {
+      "id": "restore-image-drive-root-is-guessed-without-identity",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "    if (authoritative_identity) {\n        return !volume_identity.isEmpty() &&\n               (volume_identity == device_identity || volume_identity == root_identity);\n    }\n    return false;",
+      "replace": "    if (authoritative_identity) {\n        return !volume_identity.isEmpty() &&\n               (volume_identity == device_identity || volume_identity == root_identity);\n    }\n    return !root_identity.isEmpty() && volume.drive_letter.compare(root_identity.left(1), Qt::CaseInsensitive) == 0;",
+      "expect": "killed",
+      "why": "restoreImageSourceRefusesDriveRootWithoutIdentity requires a bare drive root without authoritative QStorage identity to remain unmapped."
+    },
+    {
+      "id": "restore-image-target-disk-comparison-reversed",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "return *source_disk == target_disk_number;",
+      "replace": "return *source_disk != target_disk_number;",
+      "expect": "killed",
+      "why": "restoreImageSourceMapsDeviceGuid requires target and other disk relations to retain their direction."
+    },
+    {
+      "id": "filesystem-manifest-reverts-to-cwd-fallback",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "const QString manifest_path = PartitionFileSystemToolManifest::resolveRuntimeManifestPath();",
+      "replace": "const QString manifest_path = QDir::current().filePath(PartitionFileSystemToolManifest::defaultRuntimeRelativePath());",
+      "expect": "killed",
+      "why": "runtimeManifestUsesCanonicalTrustedResolver requires the GUI availability probe to share the core trusted application-directory resolver, never admit a user-writable CWD manifest."
+    },
+    {
+      "id": "cluster-backup-missing-target-identity-admitted",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (protected_device.isEmpty()) {",
+      "replace": "if (protected_device.isEmpty() && backup.isEmpty()) {",
+      "expect": "killed",
+      "why": "clusterBackupIdentityFailsClosed requires a missing inventory volume GUID to block admission instead of comparing an empty guessed target against the backup device."
+    },
+    {
+      "id": "cluster-backup-unresolved-device-admitted",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (backup_device.isEmpty()) {",
+      "replace": "if (backup_device.isEmpty() && backup.isEmpty()) {",
+      "expect": "killed",
+      "why": "clusterBackupIdentityFailsClosed requires an invalid, unready, or unmapped backup path to block admission instead of treating an empty device identity as a different volume."
+    },
+    {
+      "id": "cluster-backup-same-volume-comparison-reversed",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (protected_device.compare(backup_device, Qt::CaseInsensitive) == 0) {",
+      "replace": "if (protected_device.compare(backup_device, Qt::CaseInsensitive) != 0) {",
+      "expect": "killed",
+      "why": "clusterBackupIdentityFailsClosed requires a same-volume backup to be refused and a proven different-volume backup to remain allowed."
+    },
+    {
+      "id": "restore-image-reverts-to-live-selection-target",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "queueOperation(PartitionOperationType::RestoreImage, *selected, expected_layout_hash, payload);",
+      "replace": "queueOperation(PartitionOperationType::RestoreImage, *selectedTarget(), expected_layout_hash, payload);",
+      "expect": "killed",
+      "why": "restoreImageQueuesConfirmedTarget requires the queued destructive restore to retain the disk target captured before hashing and approval instead of re-reading a mutable table selection."
+    },
+    {
+      "id": "refreshing-inventory-reopens-panel-actions",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "const bool operation_running = m_controller->interactionBlocked();",
+      "replace": "const bool operation_running = m_controller->state() == PartitionManagerState::Ready;",
+      "expect": "killed",
+      "why": "controllerWatcherLifetimeBlocksInteraction requires target actions to remain disabled for every controller admission-blocked watcher/phase, not one presentation state."
+    },
+    {
+      "id": "watcher-lifetime-policy-requires-both-workers",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "const bool watcher_active = m_inventory_watcher != nullptr || m_apply_watcher != nullptr ||\n                                m_file_system_check_watcher != nullptr;",
+      "replace": "const bool watcher_active = m_inventory_watcher != nullptr && m_apply_watcher != nullptr &&\n                                m_file_system_check_watcher != nullptr;",
+      "expect": "killed",
+      "why": "controllerWatcherLifetimeBlocksInteraction pins admission to any active inventory, apply, or filesystem-check watcher, including terminal-state gaps before queued cleanup finishes."
+    },
+    {
+      "id": "modal-hidden-action-reverts-to-live-selection",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "queueOperation(PartitionOperationType::SetPartitionHidden,\n                       *target,\n                       expected_layout_hash,\n                       withValue(QStringLiteral(\"hidden\"), choice == choices.first()));",
+      "replace": "queueOperation(PartitionOperationType::SetPartitionHidden,\n                       *selectedTarget(),\n                       expected_layout_hash,\n                       withValue(QStringLiteral(\"hidden\"), choice == choices.first()));",
+      "expect": "killed",
+      "why": "modalQueueBindsReviewedTarget changes selection from partition A to B inside the input dialog and requires the queued operation to retain A."
+    },
+    {
+      "id": "reviewed-layout-change-admitted",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (reviewedLayoutChanged(expected_layout_hash)) {\n        return;\n    }\n    m_controller->queueOperation(type, target, payload);",
+      "replace": "if (expected_layout_hash.isEmpty() && reviewedLayoutChanged(expected_layout_hash)) {\n        return;\n    }\n    m_controller->queueOperation(type, target, payload);",
+      "expect": "killed",
+      "why": "modalQueueRefusesChangedLayout replaces inventory during the modal and requires the stale reviewed operation to remain outside the queue."
+    },
+    {
+      "id": "resize-preview-ignores-overflowing-original-end",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (!previous_end.has_value() || !target_end.has_value()) {",
+      "replace": "if ((!previous_end.has_value() && previous_size == 0) || !target_end.has_value()) {",
+      "expect": "killed",
+      "why": "applyPreviewRefusesResizeSplitAndMergeOverflow requires a resize of malformed wrapping source geometry to leave the preview unchanged."
+    },
+    {
+      "id": "split-preview-ignores-overflowing-original-end",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (!original_end.has_value() || !second_offset.has_value()) {",
+      "replace": "if ((!original_end.has_value() && original_size == 0) || !second_offset.has_value()) {",
+      "expect": "killed",
+      "why": "applyPreviewRefusesResizeSplitAndMergeOverflow requires a split of malformed wrapping source geometry to leave the preview unchanged."
+    },
+    {
+      "id": "merge-preview-wraps-target-size",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "const auto merged_size = checkedPanelAdd(target_it->bytes, source->size_bytes);",
+      "replace": "const auto merged_size = std::optional<uint64_t>{target_it->bytes + source->size_bytes};",
+      "expect": "killed",
+      "why": "applyPreviewRefusesResizeSplitAndMergeOverflow requires an overflowing target-plus-source merge size to leave both preview segments unchanged."
+    },
+    {
+      "id": "scale-zero-divisor-loses-saturation",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (divisor == 0) {\n        return std::numeric_limits<uint64_t>::max();\n    }\n    uint64_t high = 0;",
+      "replace": "if (divisor == 0) {\n        return 0;\n    }\n    uint64_t high = 0;",
+      "expect": "killed",
+      "why": "scaledBytesDivisionBoundaries requires zero-divisor calls, including a zero product, to retain explicit saturation."
+    },
+    {
+      "id": "scale-overflow-equality-is-admitted",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (high >= divisor) {",
+      "replace": "if (high > divisor) {",
+      "expect": "killed",
+      "why": "scaledBytesDivisionBoundaries uses a product whose high limb equals its divisor and true quotient is exactly 2^64, requiring saturation before division."
+    },
+    {
+      "id": "scale-division-drops-high-carry",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (carry || remainder >= divisor) {",
+      "replace": "if ((carry && divisor == 0) || remainder >= divisor) {",
+      "expect": "killed",
+      "why": "MAX/MAX identities and divisors above 2^63 require the doubled remainder's 65th bit to force subtraction even when its wrapped low word compares below divisor."
+    },
+    {
+      "id": "scale-division-misses-equal-remainder",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (carry || remainder >= divisor) {",
+      "replace": "if (carry || remainder > divisor) {",
+      "expect": "killed",
+      "why": "scaledBytesDivisionBoundaries includes exact non-saturating quotients and requires subtraction when remainder equals divisor."
+    },
+    {
+      "id": "scale-division-skips-lowest-bit",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "for (int bit = kHighestBit; bit >= 0; --bit) {",
+      "replace": "for (int bit = kHighestBit; bit > 0; --bit) {",
+      "expect": "killed",
+      "why": "Odd exact and non-exact quotients require the long-division loop to process bit zero."
+    },
+    {
+      "id": "clone-preview-scale-wraps-product",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "return saturatingMultiplyDivide(bytes, target_bytes, source_bytes);",
+      "replace": "return source_bytes == 0 ? std::numeric_limits<uint64_t>::max() : (bytes * target_bytes) / source_bytes;",
+      "expect": "killed",
+      "why": "cloneAndUsedScalingDoNotOverflow proves proportional clone preview scaling at UINT64_MAX without a wrapped intermediate product; the mutant retains zero-divisor saturation so it fails an assertion rather than crashing."
+    },
+    {
+      "id": "used-percent-wraps-product",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "saturatingMultiplyDivide(used_bytes, kPartitionProgressMax, total_bytes)",
+      "replace": "(used_bytes * kPartitionProgressMax) / total_bytes",
+      "expect": "killed",
+      "why": "cloneAndUsedScalingDoNotOverflow requires a fully used UINT64_MAX-sized volume to render 100 percent rather than a wrapped fraction."
+    },
+    {
+      "id": "unknown-raw-volume-admitted",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "return QObject::tr(\"Target %1 is not present in the current disk inventory.\")\n        .arg(canonical_target);",
+      "replace": "return {};",
+      "expect": "killed",
+      "why": "customRawCloneTargetsMustExist requires an absent raw drive-letter target to block rather than bypass inventory safety checks."
+    },
+    {
+      "id": "unknown-raw-disk-admitted",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "return QObject::tr(\"Target Disk %1 is not present in the current disk inventory.\")\n            .arg(disk_number);",
+      "replace": "return {};",
+      "expect": "killed",
+      "why": "customRawCloneTargetsMustExist requires an absent PhysicalDrive target to block rather than bypass inventory safety checks."
+    },
+    {
+      "id": "extended-raw-targets-bypass-shared-classifier",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (!isWindowsRawDevicePath(trimmed)) {",
+      "replace": "if (!trimmed.startsWith(QStringLiteral(\"\\\\\\\\.\\\\\"), Qt::CaseInsensitive)) {",
+      "expect": "killed",
+      "why": "customRawCloneTargetsMustExist requires extended PhysicalDrive and volume-GUID device spellings to use the shared raw-device classifier instead of bypassing safety checks."
+    },
+    {
+      "id": "storage-identity-skips-raw-canonicalization",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "const QString canonical = canonicalRawDevicePath(value);",
+      "replace": "const QString canonical;",
+      "expect": "killed",
+      "why": "customRawCloneTargetsMustExist requires extended and canonical volume-GUID spellings to normalize to one storage identity."
+    },
+    {
+      "id": "partition-copy-preserves-extended-device-spelling",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "return isWindowsRawDevicePath(target) ? canonicalRawDevicePath(target) : target;",
+      "replace": "return target;",
+      "expect": "killed",
+      "why": "customRawCloneTargetsMustExist requires the partition-copy path itself to canonicalize extended raw-device spellings before preview and queueing."
+    },
+    {
+      "id": "physical-drive-target-skips-number-resolver",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "const auto disk_number = rawDevicePhysicalDriveNumber(canonical);",
+      "replace": "const auto disk_number = std::optional<uint32_t>{};",
+      "expect": "killed",
+      "why": "customRawCloneTargetsMustExist requires shared physical-drive number resolution for both canonical and extended spellings."
+    },
+    {
+      "id": "backup-identity-reverts-to-path-text",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "const QString backup_device = normalizedStorageIdentity(resolvedStorageVolumeIdentity(backup));",
+      "replace": "const QString backup_device = normalizedStorageIdentity(backup);",
+      "expect": "killed",
+      "why": "clusterBackupIdentityFailsClosed maps a different-letter alias onto the protected volume and requires device identity, never path-prefix text, to refuse it."
+    },
+    {
+      "id": "destructive-backup-skips-post-modal-revalidation",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (selectedAllocateBytes(widgets) == 0 ||\n        !backupIsOffAllocatedVolumes(backup, partition, *donor) ||\n        !widgets.confirmation->isChecked()) {",
+      "replace": "if (selectedAllocateBytes(widgets) == 0 ||\n        (backupIsOffAllocatedVolumes(backup, partition, *donor) && backup.isEmpty()) ||\n        !widgets.confirmation->isChecked()) {",
+      "expect": "killed",
+      "why": "destructiveBackupIsRevalidatedAfterModal programmatically accepts a now-invalid same-donor backup and requires the post-modal safety check to keep the queue empty."
+    },
+    {
+      "id": "copy-wizard-restores-unprobed-custom-target",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "form->addRow(QStringLiteral(\"Target disk:\"), combo);",
+      "replace": "combo->addItem(QStringLiteral(\"Custom path\"), QString());\n    form->addRow(QStringLiteral(\"Target disk:\"), combo);",
+      "expect": "killed",
+      "why": "diskCopyWizardHasNoUnprobedCustomTarget requires disk clone and OS migration targets to come only from sized inventory disks."
+    },
+    {
+      "id": "copy-wizard-admits-unknown-size-inventory-target",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (disk.disk_number.value() == source_disk || disk.size_bytes == 0) {",
+      "replace": "if (disk.disk_number.value() == source_disk) {",
+      "expect": "killed",
+      "why": "diskCopyWizardHasNoUnprobedCustomTarget adds an inventory disk with unknown size and requires it to stay outside the destructive target selector."
+    },
+    {
+      "id": "apfs-unknown-mode-falls-back-to-create",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "return it == kModes.cend() ? std::nullopt : std::make_optional(*it);",
+      "replace": "return it == kModes.cend() ? std::make_optional(PartitionOperationType::ApfsSnapshotCreate) : std::make_optional(*it);",
+      "expect": "killed",
+      "why": "apfsUnknownModeIsRefused requires unknown and empty combo data to remain unqueueable instead of silently becoming snapshot-create."
+    },
+    {
+      "id": "apfs-action-property-name-regresses-double-action",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "constexpr const char* kApfsContainerActionProperty = \"partitionApfsContainerAction\";",
+      "replace": "constexpr const char* kApfsContainerActionProperty = \"partitionApfsContainerActionAction\";",
+      "expect": "killed",
+      "why": "apfsUnknownModeIsRefused also pins the panel property vocabulary against the misleading ActionAction duplicate."
+    },
+    {
+      "id": "apply-review-admits-mutated-queue",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (current.revision != reviewed.revision || current.fingerprint != reviewed.fingerprint ||\n        current.layout_hash != reviewed.layout_hash) {",
+      "replace": "if (current.revision == reviewed.revision && current.fingerprint != reviewed.fingerprint &&\n        current.layout_hash != reviewed.layout_hash) {",
+      "expect": "killed",
+      "why": "applyReviewRejectsQueueMutation changes the queue inside the modal review and requires the captured revision, fingerprint, and layout token to refuse Apply."
+    },
+    {
+      "id": "quick-partition-batch-degrades-to-first-operation",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "return m_controller->queueOperations(requests);",
+      "replace": "return m_controller->queueOperations({requests.first()});",
+      "expect": "killed",
+      "why": "quickPartitionBatchHonorsCapacityAtomically requires initialize and create to enter as one all-or-none batch at the queue capacity edge."
+    },
+    {
+      "id": "quick-partition-announces-refused-batch",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (queueQuickPartitionOperations(disk, quickPartitionOptions(widgets), expected_layout_hash)) {\n        Q_EMIT statusMessage(tr(\"Quick Partition queued\"), sak::kTimerStatusDefaultMs);\n    }",
+      "replace": "if (queueQuickPartitionOperations(disk, quickPartitionOptions(widgets), expected_layout_hash) || !expected_layout_hash.isEmpty()) {\n        Q_EMIT statusMessage(tr(\"Quick Partition queued\"), sak::kTimerStatusDefaultMs);\n    }",
+      "expect": "killed",
+      "why": "quickPartitionBatchHonorsCapacityAtomically drives a refused over-capacity wizard and requires it never to announce Quick Partition queued."
+    },
+    {
+      "id": "panel-admission-ignores-watcher-lifetime",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "if (m_controller->interactionBlocked()) {\n        Q_EMIT statusMessage(tr(\"Wait for the current disk scan or operation to finish before \"",
+      "replace": "if (m_controller->state() == PartitionManagerState::Applying) {\n        Q_EMIT statusMessage(tr(\"Wait for the current disk scan or operation to finish before \"",
+      "expect": "killed",
+      "why": "controllerWatcherLifetimeBlocksInteraction requires panel queue admission to honor active watcher lifetime, including terminal-state queued-callback gaps."
+    },
+    {
+      "id": "cancel-button-uses-state-instead-of-live-future",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "const bool operation_cancellable = m_controller->canCancel();",
+      "replace": "const bool operation_cancellable = m_controller->state() == PartitionManagerState::Applying;",
+      "expect": "killed",
+      "why": "controllerWatcherLifetimeBlocksInteraction pins Cancel enablement to a live cancellable future instead of presentation state alone."
+    },
+    {
+      "id": "apfs-cow-capability-reverts-to-false-generated-provenance",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "{QStringLiteral(\"apfs_cow_mutation_certified\"), true}};",
+      "replace": "{QStringLiteral(\"apfs_generated_layout_confirmed\"), true}};",
+      "expect": "killed",
+      "why": "apfsContainerActionAllowsWritableApfsVolumes requires generated and foreign Apple containers to carry the truthful certified-COW capability gate, never a false generated-layout claim."
+    },
+    {
+      "id": "apfs-resize-preview-reverts-to-generated-only-claim",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "Requires a certified writable COW container that does not already fill it.",
+      "replace": "Requires a generated container that does not already fill it.",
+      "expect": "killed",
+      "why": "apfsUnknownModeIsRefused pins the resize preview to truthful certified-COW scope because the panel intentionally supports foreign Apple containers."
+    },
+    {
+      "id": "apfs-validator-requires-obsolete-generated-provenance",
+      "file": "src/core/partition_safety_validator.cpp",
+      "find": "constexpr auto kApfsCowMutationCertifiedPayload = \"apfs_cow_mutation_certified\";",
+      "replace": "constexpr auto kApfsCowMutationCertifiedPayload = \"apfs_generated_layout_confirmed\";",
+      "expect": "killed",
+      "why": "APFS panel queue tests require validator admission to consume the truthful certified-COW capability produced for both generated and foreign containers."
+    },
+    {
+      "id": "restore-image-authoritative-identity-falls-back-to-drive-letter",
+      "file": "src/gui/partition_manager_panel.cpp",
+      "find": "return !volume_identity.isEmpty() &&\n               (volume_identity == device_identity || volume_identity == root_identity);",
+      "replace": "return (!volume_identity.isEmpty() &&\n               (volume_identity == device_identity || volume_identity == root_identity)) ||\n               volume.drive_letter.compare(root_identity.left(1), Qt::CaseInsensitive) == 0;",
+      "expect": "killed",
+      "why": "restoreImageSourceRefusesUnmappedIdentity supplies a mismatched authoritative QStorageInfo volume identity with a matching drive root and requires refusal instead of drive-letter fallback."
+    }
+  ]
+}

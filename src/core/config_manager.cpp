@@ -13,13 +13,77 @@
 #include <QCoreApplication>
 #include <QtGlobal>
 
+#include <array>
 #include <stdexcept>
 
 namespace sak {
 
 namespace {
-constexpr int kDefaultBackupThreadCount = 4;
 constexpr int kDefaultLargeDriveThresholdGb = 128;
+
+// Settings that are gone, dropped from an existing store on load so a stored value cannot outlive
+// the control it described. image_flasher/show_system_drive_warning described a protection that
+// cannot be turned off. backup/* and quick_actions/* were written and read back only by settings
+// dialogs whose values nothing used (User Migration's popup and the never-opened SettingsDialog);
+// the organizer/duplicate defaults had no reader, and ui/restore_window_geometry had no writer.
+constexpr std::array<const char*, 13> kRetiredKeys = {
+    "image_flasher/show_system_drive_warning",
+    "backup/thread_count",
+    "backup/verify_md5",
+    "backup/last_location",
+    "organizer/preview_mode",
+    "duplicate/minimum_file_size",
+    "duplicate/keep_strategy",
+    "ui/restore_window_geometry",
+    "quick_actions/backup_location",
+    "quick_actions/confirm_before_execute",
+    "quick_actions/show_notifications",
+    "quick_actions/enable_logging",
+    "quick_actions/compress_backups",
+};
+// Sane upper bound (in MB) for the flasher read/write buffer. The settings dialog
+// caps at 512 MB, so anything above this comes from a hand-edited INI, a foreign writer, or the
+// 4096 older versions wrote as their default by mistake.
+constexpr int kMaxImageFlasherBufferSizeMb = 512;
+
+// Getter-side invariant enforcement: a stored value can be out of range (older
+// config, hand-edited INI, or a foreign writer) even though the setters reject
+// bad input. Re-clamp on read so callers never receive a value the setter would
+// have refused; fall back to the default when the stored value is invalid.
+int positiveOrDefault(int value, int default_value) {
+    return value > 0 ? value : default_value;
+}
+
+// Getter-side enum enforcement: validation_mode must be one of the fixed set the
+// flasher understands ("full"/"quick"/"none"; the canonical map lives in
+// validationModeFromSetting). A value outside that set (older config, hand-edited
+// INI, or a foreign writer) resolves to the safest, most thorough default so a
+// caller never receives an unrecognized mode.
+QString validValidationModeOrDefault(const QString& value) {
+    if (value == QLatin1String("full") || value == QLatin1String("quick") ||
+        value == QLatin1String("none")) {
+        return value;
+    }
+    return QStringLiteral("full");
+}
+
+// Getter-side enum enforcement for ui/theme: "system", "light" or "dark". Anything else (an older
+// or hand-edited INI) reads as the documented default, following Windows.
+bool isThemePreference(const QString& value) {
+    return value == QLatin1String("system") || value == QLatin1String("light") ||
+           value == QLatin1String("dark");
+}
+
+// Getter-side magnitude bound: a buffer size (in MB) outside the sane range
+// [1, kMaxImageFlasherBufferSizeMb] -- from older config, a hand-edited INI, or a
+// foreign writer -- is replaced with the default rather than propagated into an
+// absurd allocation request.
+int boundedBufferSizeOrDefault(int value, int default_value) {
+    if (value <= 0 || value > kMaxImageFlasherBufferSizeMb) {
+        return default_value;
+    }
+    return value;
+}
 }  // namespace
 
 ConfigManager& ConfigManager::instance() {
@@ -38,48 +102,61 @@ ConfigManager::ConfigManager(QObject* parent) : QObject(parent) {
     m_settings = std::make_unique<QSettings>(sak::app_paths::configFilePath(),
                                              QSettings::IniFormat);
     // make_unique throws on allocation failure, so m_settings is always valid here.
+    // Surface a corrupt/unreadable config at load rather than silently proceeding
+    // on an empty store: getValue() would then hand back defaults as if the file
+    // were simply new.
+    const QString load_error = describeSettingsStatus(m_settings->status());
+    if (!load_error.isEmpty()) {
+        // Do not write defaults over a corrupt or inaccessible store: initializing
+        // defaults here would clobber a recoverable file or hammer a failing backend.
+        // Surface the error and leave the store untouched; callers observe isHealthy()
+        // and fail closed.
+        logError("ConfigManager: {} at '{}'",
+                 load_error.toStdString(),
+                 m_settings->fileName().toStdString());
+        return;
+    }
     logInfo("ConfigManager initialized: {}", m_settings->fileName().toStdString());
+    // Reconcile the persisted schema version before touching defaults: an older
+    // store is migrated forward (values preserved) and stamped; a newer store is
+    // left intact and surfaced as unhealthy. See reconcileSchemaVersion.
+    if (reconcileSchemaVersion(*m_settings) == SchemaVersionState::FromFuture) {
+        logWarning(
+            "ConfigManager: config schema v{} is newer than supported v{}; "
+            "preserving unknown keys and reporting unhealthy",
+            storedSchemaVersion(),
+            kCurrentSchemaVersion);
+    }
     initializeDefaults();
 }
 
 void ConfigManager::initializeDefaults() {
-    initializeBackupAndOrganizerDefaults();
+    removeRetiredKeys(*m_settings);
     initializeFlasherDefaults();
     initializeUiDefaults();
 }
 
-void ConfigManager::initializeBackupAndOrganizerDefaults() {
-    // Only set defaults if keys don't exist
-    if (!contains("backup/thread_count")) {
-        setValue("backup/thread_count", kDefaultBackupThreadCount);
-    }
-    if (!contains("backup/verify_md5")) {
-        setValue("backup/verify_md5", true);
-    }
-    if (!contains("organizer/preview_mode")) {
-        setValue("organizer/preview_mode", true);
-    }
-    if (!contains("duplicate/minimum_file_size")) {
-        setValue("duplicate/minimum_file_size", 0);
-    }
-    if (!contains("duplicate/keep_strategy")) {
-        setValue("duplicate/keep_strategy", "oldest");
+void ConfigManager::removeRetiredKeys(QSettings& settings) {
+    // Removing a key the store does not hold changes nothing, so a store without them is not
+    // rewritten on every launch (removeRetiredKeys_writesNothingWithoutThem).
+    for (const char* key : kRetiredKeys) {
+        settings.remove(QLatin1String(key));
     }
 }
 
 void ConfigManager::initializeFlasherDefaults() {
+    // Only set defaults if keys don't exist
     if (!contains("image_flasher/validation_mode")) {
         setValue("image_flasher/validation_mode", "full");
     }
     if (!contains("image_flasher/buffer_size")) {
-        setValue("image_flasher/buffer_size", static_cast<int>(sak::kBufferAlignment));
+        setValue("image_flasher/buffer_size", kImageFlasherDefaultBufferMb);
     }
     if (!contains("image_flasher/unmount_on_completion")) {
         setValue("image_flasher/unmount_on_completion", true);
     }
-    if (!contains("image_flasher/show_system_drive_warning")) {
-        setValue("image_flasher/show_system_drive_warning", true);
-    }
+    // image_flasher/show_system_drive_warning is retired, not defaulted (kRetiredKeys): the
+    // system-drive block is unconditional in both ImageFlasherPanel and FlashCoordinator.
     if (!contains("image_flasher/show_large_drive_warning")) {
         setValue("image_flasher/show_large_drive_warning", true);
     }
@@ -95,8 +172,8 @@ void ConfigManager::initializeFlasherDefaults() {
 }
 
 void ConfigManager::initializeUiDefaults() {
-    if (!contains("ui/restore_window_geometry")) {
-        setValue("ui/restore_window_geometry", true);
+    if (!contains("ui/theme")) {
+        setValue("ui/theme", QStringLiteral("system"));
     }
 }
 
@@ -114,7 +191,6 @@ void ConfigManager::setValue(const QString& key, const QVariant& value) {
         return;
     }
     m_settings->setValue(key, value);
-    Q_EMIT settingChanged(key, value);
 }
 
 bool ConfigManager::contains(const QString& key) const {
@@ -133,87 +209,84 @@ void ConfigManager::remove(const QString& key) {
     m_settings->remove(key);
 }
 
-void ConfigManager::clear() {
+#ifdef SAK_CORE_TEST_HOOKS
+void ConfigManager::clearForTesting() {
     m_settings->clear();
     logInfo("All settings cleared");
 }
 
-void ConfigManager::resetToDefaults() {
-    clear();
+void ConfigManager::resetToDefaultsForTesting() {
+    clearForTesting();
+    // clear() drops the schema key too; re-stamp it so a reset store is fully
+    // formed and reads back at the current version. The classification is not
+    // needed here (an empty store always migrates forward).
+    static_cast<void>(reconcileSchemaVersion(*m_settings));
     initializeDefaults();
     logInfo("Settings reset to defaults");
 }
+#endif  // SAK_CORE_TEST_HOOKS
 
-void ConfigManager::sync() {
+ConfigManager::SchemaVersionState ConfigManager::reconcileSchemaVersion(QSettings& settings) {
+    const int stored = settings.value(QLatin1String(kSchemaVersionKey), kNoSchemaVersion).toInt();
+    if (stored == kCurrentSchemaVersion) {
+        return SchemaVersionState::Current;
+    }
+    if (stored > kCurrentSchemaVersion) {
+        // A newer build wrote this config. Preserve every key -- including ones
+        // this build does not recognize -- and leave the stored version intact
+        // so the newer build still reads it. isHealthy() surfaces the mismatch.
+        return SchemaVersionState::FromFuture;
+    }
+    // stored < current (kNoSchemaVersion == a legacy/pre-versioning store, or a
+    // fresh one). Existing values are already present and untouched; migrating
+    // forward only stamps the current version. Field-level migrations chain in
+    // here oldest-first as kCurrentSchemaVersion grows.
+    settings.setValue(QLatin1String(kSchemaVersionKey), kCurrentSchemaVersion);
+    return SchemaVersionState::Migrated;
+}
+
+int ConfigManager::storedSchemaVersion() const {
+    return m_settings->value(QLatin1String(kSchemaVersionKey), kNoSchemaVersion).toInt();
+}
+
+QString ConfigManager::describeSettingsStatus(QSettings::Status status) {
+    switch (status) {
+    case QSettings::NoError:
+        return {};
+    case QSettings::AccessError:
+        return QStringLiteral("settings access error (permission denied or file locked)");
+    case QSettings::FormatError:
+        return QStringLiteral("settings format error (config file is corrupt)");
+    }
+    return QStringLiteral("unknown settings error");
+}
+
+bool ConfigManager::isHealthy() const {
+    if (m_settings->status() != QSettings::NoError) {
+        return false;
+    }
+    // A config stamped by a newer build carries a schema version this build does
+    // not understand. Fail closed rather than risk operating on it -- but never
+    // rewrite or wipe it (see reconcileSchemaVersion).
+    return storedSchemaVersion() <= kCurrentSchemaVersion;
+}
+
+bool ConfigManager::sync() {
     m_settings->sync();
-}
-
-// Backup settings
-int ConfigManager::getBackupThreadCount() const {
-    return getValue("backup/thread_count", kDefaultBackupThreadCount).toInt();
-}
-
-void ConfigManager::setBackupThreadCount(int count) {
-    if (count <= 0) {
-        logWarning("setBackupThreadCount: ignoring non-positive count {}", count);
-        return;
+    // Check status: sync() itself is void in Qt, so a failed disk write is only
+    // observable here. Report it instead of pretending the save succeeded.
+    const QSettings::Status status = m_settings->status();
+    if (status != QSettings::NoError) {
+        logError("ConfigManager::sync failed: {}", describeSettingsStatus(status).toStdString());
+        return false;
     }
-    setValue("backup/thread_count", count);
-}
-
-bool ConfigManager::getBackupVerifyMD5() const {
-    return getValue("backup/verify_md5", true).toBool();
-}
-
-void ConfigManager::setBackupVerifyMD5(bool verify) {
-    setValue("backup/verify_md5", verify);
-}
-
-QString ConfigManager::getLastBackupLocation() const {
-    return getValue("backup/last_location", QString()).toString();
-}
-
-void ConfigManager::setLastBackupLocation(const QString& path) {
-    setValue("backup/last_location", path);
-}
-
-// Organizer settings
-bool ConfigManager::getOrganizerPreviewMode() const {
-    return getValue("organizer/preview_mode", true).toBool();
-}
-
-void ConfigManager::setOrganizerPreviewMode(bool preview) {
-    setValue("organizer/preview_mode", preview);
-}
-
-// Duplicate finder settings
-qint64 ConfigManager::getDuplicateMinimumFileSize() const {
-    return getValue("duplicate/minimum_file_size", 0).toLongLong();
-}
-
-void ConfigManager::setDuplicateMinimumFileSize(qint64 size) {
-    if (size < 0) {
-        logWarning("setDuplicateMinimumFileSize: ignoring negative size {}", size);
-        return;
-    }
-    setValue("duplicate/minimum_file_size", size);
-}
-
-QString ConfigManager::getDuplicateKeepStrategy() const {
-    return getValue("duplicate/keep_strategy", "oldest").toString();
-}
-
-void ConfigManager::setDuplicateKeepStrategy(const QString& strategy) {
-    if (strategy.isEmpty()) {
-        logWarning("setDuplicateKeepStrategy: ignoring empty strategy");
-        return;
-    }
-    setValue("duplicate/keep_strategy", strategy);
+    return true;
 }
 
 // Image Flasher settings
 QString ConfigManager::getImageFlasherValidationMode() const {
-    return getValue("image_flasher/validation_mode", "full").toString();
+    return validValidationModeOrDefault(
+        getValue("image_flasher/validation_mode", "full").toString());
 }
 
 void ConfigManager::setImageFlasherValidationMode(const QString& mode) {
@@ -225,7 +298,9 @@ void ConfigManager::setImageFlasherValidationMode(const QString& mode) {
 }
 
 int ConfigManager::getImageFlasherBufferSize() const {
-    return getValue("image_flasher/buffer_size", static_cast<int>(sak::kBufferAlignment)).toInt();
+    return boundedBufferSizeOrDefault(
+        getValue("image_flasher/buffer_size", kImageFlasherDefaultBufferMb).toInt(),
+        kImageFlasherDefaultBufferMb);
 }
 
 void ConfigManager::setImageFlasherBufferSize(int size) {
@@ -244,14 +319,6 @@ void ConfigManager::setImageFlasherUnmountOnCompletion(bool unmount) {
     setValue("image_flasher/unmount_on_completion", unmount);
 }
 
-bool ConfigManager::getImageFlasherShowSystemDriveWarning() const {
-    return getValue("image_flasher/show_system_drive_warning", true).toBool();
-}
-
-void ConfigManager::setImageFlasherShowSystemDriveWarning(bool show) {
-    setValue("image_flasher/show_system_drive_warning", show);
-}
-
 bool ConfigManager::getImageFlasherShowLargeDriveWarning() const {
     return getValue("image_flasher/show_large_drive_warning", true).toBool();
 }
@@ -261,7 +328,9 @@ void ConfigManager::setImageFlasherShowLargeDriveWarning(bool show) {
 }
 
 int ConfigManager::getImageFlasherLargeDriveThreshold() const {
-    return getValue("image_flasher/large_drive_threshold", kDefaultLargeDriveThresholdGb).toInt();
+    return positiveOrDefault(
+        getValue("image_flasher/large_drive_threshold", kDefaultLargeDriveThresholdGb).toInt(),
+        kDefaultLargeDriveThresholdGb);
 }
 
 void ConfigManager::setImageFlasherLargeDriveThreshold(int threshold) {
@@ -274,7 +343,7 @@ void ConfigManager::setImageFlasherLargeDriveThreshold(int threshold) {
 }
 
 int ConfigManager::getImageFlasherMaxConcurrentWrites() const {
-    return getValue("image_flasher/max_concurrent_writes", 1).toInt();
+    return positiveOrDefault(getValue("image_flasher/max_concurrent_writes", 1).toInt(), 1);
 }
 
 void ConfigManager::setImageFlasherMaxConcurrentWrites(int max) {
@@ -294,12 +363,17 @@ void ConfigManager::setImageFlasherEnableNotifications(bool enable) {
 }
 
 // UI settings
-bool ConfigManager::getRestoreWindowGeometry() const {
-    return getValue("ui/restore_window_geometry", true).toBool();
+QString ConfigManager::getThemePreference() const {
+    const QString value = getValue("ui/theme", QStringLiteral("system")).toString();
+    return isThemePreference(value) ? value : QStringLiteral("system");
 }
 
-void ConfigManager::setRestoreWindowGeometry(bool restore) {
-    setValue("ui/restore_window_geometry", restore);
+void ConfigManager::setThemePreference(const QString& preference) {
+    if (!isThemePreference(preference)) {
+        logWarning("setThemePreference: refusing unknown theme '{}'", preference.toStdString());
+        return;
+    }
+    setValue("ui/theme", preference);
 }
 
 QByteArray ConfigManager::getWindowGeometry() const {

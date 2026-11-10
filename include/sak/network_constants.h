@@ -47,14 +47,22 @@ constexpr int kAria2TimeoutSec = 60;             ///< aria2c --timeout
 constexpr int kAria2TimeoutLongSec = 120;        ///< aria2c extended timeout
 constexpr int kAria2ConnectTimeoutSec = 10;      ///< aria2c --connect-timeout (fast)
 constexpr int kAria2ConnectTimeoutLongSec = 30;  ///< aria2c --connect-timeout (slow)
-constexpr int kAria2RetryWaitSec = 3;            ///< aria2c --retry-wait (fast)
-constexpr int kAria2RetryWaitLongSec = 5;        ///< aria2c --retry-wait (long)
-constexpr int kAria2MaxTries = 5;                ///< aria2c --max-tries (normal)
-constexpr int kAria2MaxTriesHigh = 10;           ///< aria2c --max-tries (resilient)
-constexpr int kAria2MaxConnsPerServer = 16;      ///< aria2c --max-connection-per-server
-constexpr int kAria2Split = 16;                  ///< aria2c --split
-constexpr int kAria2SingleConn = 1;              ///< Single connection mode
-constexpr int kAria2SingleSplit = 1;             ///< No splitting
+
+// QNetworkRequest::setTransferTimeout (ms) inactivity ceiling for the direct QNetworkAccessManager
+// metadata fetches (ISO checksum, rolling-filename discovery, GitHub version check, UUP API).
+// Without it a peer that connects then stalls without sending data leaves QNetworkReply::finished
+// unfired, so the operation hangs forever with no surfaced error; on abort the existing
+// reply->error() branch fails closed. Mirrors the transfer runner's setTransferTimeout
+// (network_transfer_runner.cpp).
+constexpr int kHttpMetadataTransferTimeoutMs = 30'000;
+constexpr int kAria2RetryWaitSec = 3;        ///< aria2c --retry-wait (fast)
+constexpr int kAria2RetryWaitLongSec = 5;    ///< aria2c --retry-wait (long)
+constexpr int kAria2MaxTries = 5;            ///< aria2c --max-tries (normal)
+constexpr int kAria2MaxTriesHigh = 10;       ///< aria2c --max-tries (resilient)
+constexpr int kAria2MaxConnsPerServer = 16;  ///< aria2c --max-connection-per-server
+constexpr int kAria2Split = 16;              ///< aria2c --split
+constexpr int kAria2SingleConn = 1;          ///< Single connection mode
+constexpr int kAria2SingleSplit = 1;         ///< No splitting
 
 // Max concurrent transfers
 constexpr int kMaxConcurrentTransfers = 2;  ///< File transfer concurrency

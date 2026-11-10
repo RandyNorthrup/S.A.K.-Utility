@@ -7,9 +7,11 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QLabel>
+#include <QList>
 #include <QPushButton>
 #include <QSpinBox>
 
+class QGridLayout;
 class QVBoxLayout;
 
 /**
@@ -32,9 +34,11 @@ private Q_SLOTS:
 
 private:
     void setupUi();
-    void setupUi_generalSection(QVBoxLayout* mainLayout);
-    void setupUi_advancedSection(QVBoxLayout* mainLayout);
-    void setupUi_buttonBar(QVBoxLayout* mainLayout);
+    void setupUi_generalSection(QVBoxLayout* main_layout);
+    void setupUi_performanceSection(QVBoxLayout* main_layout);
+    void setupUi_advancedSection(QVBoxLayout* main_layout);
+    void setupUi_buttonBar(QVBoxLayout* main_layout);
+    void alignFieldColumn();
     void loadSettings();
     void saveSettings();
 
@@ -42,11 +46,14 @@ private:
     QComboBox* m_validationModeCombo;
     QSpinBox* m_bufferSizeSpin;
     QCheckBox* m_unmountOnCompletionCheck;
-    QCheckBox* m_showSystemDriveWarningCheck;
     QCheckBox* m_showLargeDriveWarningCheck;
     QSpinBox* m_largeDriveThresholdSpin;
     QSpinBox* m_maxConcurrentWritesSpin;
     QCheckBox* m_enableNotificationsCheck;
+
+    // The form's labels and the grids that hold them, given one label column.
+    QList<QWidget*> m_fieldLabels;
+    QList<QGridLayout*> m_fieldGrids;
 
     // Storage
     QLabel* m_cacheInfoLabel;

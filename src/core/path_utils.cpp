@@ -12,6 +12,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
+#include <system_error>
+#include <vector>
+
+#include <windows.h>
 
 namespace sak {
 
@@ -19,41 +24,185 @@ namespace {
 
 /// @brief Normalize path separators and case for comparison
 std::string normalize_for_compare(std::string value) {
-    std::replace(value.begin(), value.end(), '\\', '/');
-#ifdef _WIN32
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    std::ranges::replace(value, '\\', '/');
+    std::ranges::transform(value, value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
     });
-#endif
     return value;
 }
 
+/// @brief Saturating unsigned add of a file size onto a running byte total: clamps to
+///        UINTMAX instead of wrapping. file_size() reports the LOGICAL size, so a handful
+///        of attacker-created sparse files can each claim exabytes; a wrapped total would
+///        under-report the space a set needs and let an oversized one be judged to fit
+///        (fail open). Clamping keeps a downstream capacity check failing closed.
+std::uintmax_t saturatingAddSize(std::uintmax_t total, std::uintmax_t size) {
+    constexpr auto kUintMax = std::numeric_limits<std::uintmax_t>::max();
+    return (total > kUintMax - size) ? kUintMax : total + size;
+}
+
 /// @brief Accumulate size information for a single directory entry
-void accumulateFileEntry(const std::filesystem::directory_entry& entry,
+/// @return false only when a regular file's size cannot be read -- an unreadable real file must
+///         fail the whole scan closed rather than be silently skipped, because an under-counted
+///         total would let an oversized set be judged to fit (fail open).
+bool accumulateFileEntry(const std::filesystem::directory_entry& entry,
                          path_utils::DirectorySizeInfo& info) {
     if (!entry.is_regular_file()) {
-        return;
+        return true;
     }
     std::error_code ec;
     auto size = entry.file_size(ec);
     if (ec) {
-        return;
+        return false;
     }
-    info.total_bytes += size;
-    info.file_count++;
+    // Saturate instead of wrapping (see saturatingAddSize).
+    info.total_bytes = saturatingAddSize(info.total_bytes, size);
+    constexpr auto kUintMax = std::numeric_limits<std::uintmax_t>::max();
+    if (info.file_count < kUintMax) {
+        ++info.file_count;
+    }
+    return true;
+}
+
+/// @brief Outcome of trying to open a directory for enumeration.
+enum class OpenDirResult {
+    opened,
+    skipped_denied,
+    failed
+};
+
+/// @brief Classify the error_code that constructing a directory_iterator yields: no error
+///        opens, a permission-denied error is a non-fatal skip (a scan must not crash on a
+///        system tree), and any other error is a genuine read error that fails the scan closed.
+OpenDirResult classifyOpenDir(const std::error_code& ec) {
+    if (!ec) {
+        return OpenDirResult::opened;
+    }
+    if (ec == std::errc::permission_denied) {
+        return OpenDirResult::skipped_denied;
+    }
+    return OpenDirResult::failed;
+}
+
+/// @brief Open dir_path for iteration, distinguishing a permission-denied skip
+///        (kept non-fatal so a scan does not crash on a system tree) from a
+///        genuine read error (which must fail the whole scan closed).
+OpenDirResult openDirectory(const std::filesystem::path& dir_path,
+                            std::filesystem::directory_iterator& out) {
+    std::error_code ec;
+    std::filesystem::directory_iterator it(dir_path, ec);
+    const OpenDirResult result = classifyOpenDir(ec);
+    if (result == OpenDirResult::opened) {
+        out = std::move(it);
+    }
+    return result;
+}
+
+/// @brief Apply an open outcome to the walk state. A permission-denied skip is non-fatal but
+///        records info.complete=false (so the caller can tell the size under-reports); an opened
+///        directory is pushed for descent; a genuine read error returns false (fail closed).
+bool recordOpenOutcome(OpenDirResult result,
+                       std::filesystem::directory_iterator child,
+                       std::vector<std::filesystem::directory_iterator>& stack,
+                       path_utils::DirectorySizeInfo& info) {
+    switch (result) {
+    case OpenDirResult::opened:
+        stack.push_back(std::move(child));
+        return true;
+    case OpenDirResult::skipped_denied:
+        info.complete = false;
+        ++info.skipped_dirs;
+        return true;
+    case OpenDirResult::failed:
+        return false;
+    }
+    return false;  // unreachable: all enum cases return above
+}
+
+/// @brief True when entry is a real subdirectory to descend into. Symlinked, junction,
+///        and any other reparse-point directories are NOT followed, which keeps the walk
+///        inside the intended subtree and free of cycles (a junction pointing at an
+///        ancestor would otherwise make this stack-based walk recurse without bound).
+/// @note is_symlink() alone is NOT sufficient on Windows: a directory JUNCTION (a
+///       mount-point reparse point) reports is_symlink()==false there, so it would be
+///       descended -- escaping the subtree and, for a junction aimed at an ancestor,
+///       looping forever. Refuse to descend ANY directory carrying the reparse-point
+///       attribute so both symlinks and junctions are excluded.
+bool shouldRecurse(const std::filesystem::directory_entry& entry) {
+    std::error_code ec;
+    if (entry.is_symlink(ec) || ec) {
+        return false;
+    }
+    const DWORD attributes = GetFileAttributesW(entry.path().c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        // A reparse point (junction/mount point) is not a plain subdirectory to descend.
+        // (On a failed attribute query fall through to is_directory(): a genuinely
+        // unreadable real directory is then failed closed by pushDirectory(), whereas
+        // skipping it here would silently under-count.)
+        return false;
+    }
+    return entry.is_directory(ec) && !ec;
+}
+
+/// @brief Push child_path's iterator onto stack. A permission-denied directory
+///        is skipped and recorded on info (info.complete=false) instead of
+///        aborting; only a genuine read error returns false (fail closed).
+bool pushDirectory(const std::filesystem::path& child_path,
+                   std::vector<std::filesystem::directory_iterator>& stack,
+                   path_utils::DirectorySizeInfo& info) {
+    std::filesystem::directory_iterator child;
+    const OpenDirResult result = openDirectory(child_path, child);
+    return recordOpenOutcome(result, std::move(child), stack, info);
+}
+
+/// @brief Size a directory tree with an explicit stack of directory_iterators.
+///        Permission-denied subtrees are skipped and flagged on info; an
+///        unreadable regular file or any other iteration error fails closed.
+/// @return error_code::success on a completed (possibly partial) walk.
+error_code walkDirectoryTree(const std::filesystem::path& root,
+                             path_utils::DirectorySizeInfo& info) {
+    std::vector<std::filesystem::directory_iterator> stack;
+    if (!pushDirectory(root, stack, info)) {
+        return error_code::read_error;
+    }
+    const std::filesystem::directory_iterator end;
+    while (!stack.empty()) {
+        auto& level = stack.back();
+        if (level == end) {
+            stack.pop_back();
+            continue;
+        }
+        const std::filesystem::directory_entry entry = *level;
+        std::error_code ec;
+        level.increment(ec);
+        if (ec || !accumulateFileEntry(entry, info)) {
+            return error_code::read_error;
+        }
+        if (shouldRecurse(entry) && !pushDirectory(entry.path(), stack, info)) {
+            return error_code::read_error;
+        }
+    }
+    return error_code::success;
 }
 
 }  // anonymous namespace
 
 auto path_utils::normalize(const std::filesystem::path& path)
     -> std::expected<std::filesystem::path, error_code> {
+    // isSafePath() is the only caller and rejects an empty path and an empty
+    // base_dir before either normalize() call below it.
     Q_ASSERT_X(!path.empty(), "path_utils::normalize", "path must not be empty");
 
     try {
         auto normalized = std::filesystem::weakly_canonical(path);
-        Q_ASSERT_X(normalized.is_absolute(),
-                   "path_utils::normalize",
-                   "normalized path must be absolute");
+        if (!normalized.is_absolute()) {
+            // weakly_canonical leaves a path it cannot anchor to an existing
+            // prefix relative. isSafePath's containment comparison only means
+            // anything between two absolute paths, so fail closed rather than
+            // answer a security question from a half-resolved path.
+            logError("Normalized path is not absolute: {}", pathAsUtf8(normalized));
+            return std::unexpected(error_code::invalid_path);
+        }
         return normalized;
     } catch (const std::filesystem::filesystem_error& e) {
         logError("Failed to normalize path: {}", e.what());
@@ -66,9 +215,15 @@ auto path_utils::normalize(const std::filesystem::path& path)
 
 auto path_utils::makeRelative(const std::filesystem::path& path, const std::filesystem::path& base)
     -> std::expected<std::filesystem::path, error_code> {
-    Q_ASSERT_X(!path.empty(), "path_utils::makeRelative", "path must not be empty");
-    Q_ASSERT_X(!base.empty(), "path_utils::makeRelative", "base must not be empty");
-
+    // Reject the empty inputs explicitly. std::filesystem::relative is specified as
+    // weakly_canonical(path).lexically_relative(weakly_canonical(base)), and
+    // lexically_relative on two equal paths yields "." rather than an empty path -- so
+    // makeRelative("", "") used to succeed and hand back ".", a path that resolves to the
+    // caller's working directory. The empty check below never covered that.
+    if (path.empty() || base.empty()) {
+        logError("makeRelative requires a non-empty path and base");
+        return std::unexpected(error_code::invalid_path);
+    }
     try {
         auto rel = std::filesystem::relative(path, base);
         if (rel.empty()) {
@@ -87,8 +242,12 @@ auto path_utils::makeRelative(const std::filesystem::path& path, const std::file
 auto path_utils::isSafePath(const std::filesystem::path& path,
                             const std::filesystem::path& base_dir)
     -> std::expected<bool, error_code> {
-    Q_ASSERT_X(!path.empty(), "path_utils::isSafePath", "path must not be empty");
-    Q_ASSERT_X(!base_dir.empty(), "path_utils::isSafePath", "base_dir must not be empty");
+    // Containment has no meaning without both operands, and this answer gates
+    // path-traversal decisions, so refuse instead of returning a guessed bool.
+    if (path.empty() || base_dir.empty()) {
+        logError("isSafePath requires a non-empty path and base directory");
+        return std::unexpected(error_code::invalid_path);
+    }
 
     try {
         // Normalize both paths
@@ -103,8 +262,8 @@ auto path_utils::isSafePath(const std::filesystem::path& path,
         auto norm_base = *norm_base_result;
 
         // Check if normalized path starts with base directory
-        auto path_str = norm_path.string();
-        auto base_str = norm_base.string();
+        auto path_str = pathAsUtf8(norm_path);
+        auto base_str = pathAsUtf8(norm_base);
 
         path_str = normalize_for_compare(std::move(path_str));
         base_str = normalize_for_compare(std::move(base_str));
@@ -115,7 +274,7 @@ auto path_utils::isSafePath(const std::filesystem::path& path,
         }
 
         return path_str.starts_with(base_str) ||
-               path_str == normalize_for_compare(norm_base.string());
+               path_str == normalize_for_compare(pathAsUtf8(norm_base));
 
     } catch (const std::exception& e) {
         logError("Exception in isSafePath(): {}", e.what());
@@ -126,12 +285,12 @@ auto path_utils::isSafePath(const std::filesystem::path& path,
 bool path_utils::matchesPattern(const std::filesystem::path& path,
                                 const std::vector<std::string>& patterns) noexcept {
     try {
-        const auto filename = path.filename().string();
-        return std::any_of(patterns.begin(),
-                           patterns.end(),
-                           [&filename](const std::string& pattern) {
-                               return wildcardMatch(filename, pattern);
-                           });
+        const auto filename = pathAsUtf8(path.filename());
+        return std::ranges::any_of(patterns,
+
+                                   [&filename](const std::string& pattern) {
+                                       return wildcardMatch(filename, pattern);
+                                   });
     } catch (const std::exception& e) {
         logError("Exception in matchesPattern(): {}", e.what());
         return false;
@@ -144,10 +303,8 @@ bool path_utils::matchesPattern(const std::filesystem::path& path,
 
 auto path_utils::getDirectorySizeAndCount(const std::filesystem::path& dir_path)
     -> std::expected<DirectorySizeInfo, error_code> {
-    Q_ASSERT_X(!dir_path.empty(),
-               "path_utils::getDirectorySizeAndCount",
-               "dir_path must not be empty");
-
+    // An empty dir_path fails the exists() check below and is reported as
+    // file_not_found.
     std::error_code ec;
     if (!std::filesystem::exists(dir_path, ec) || ec) {
         return std::unexpected(error_code::file_not_found);
@@ -160,9 +317,13 @@ auto path_utils::getDirectorySizeAndCount(const std::filesystem::path& dir_path)
     DirectorySizeInfo info;
 
     try {
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(
-                 dir_path, std::filesystem::directory_options::skip_permission_denied)) {
-            accumulateFileEntry(entry, info);
+        // A permission-denied subtree is skipped (info.complete is set false and
+        // info.skipped_dirs counted) rather than crashing the scan on a system
+        // tree; an unreadable regular file or any other read error fails closed.
+        if (const auto walk_ec = walkDirectoryTree(dir_path, info);
+            walk_ec != error_code::success) {
+            logError("Failed to calculate the size of directory: {}", pathAsUtf8(dir_path));
+            return std::unexpected(walk_ec);
         }
     } catch (const std::filesystem::filesystem_error& e) {
         logError("Failed to calculate directory size: {}", e.what());
@@ -175,10 +336,27 @@ auto path_utils::getDirectorySizeAndCount(const std::filesystem::path& dir_path)
     return info;
 }
 
+std::uintmax_t path_utils::saturatingAddSizeForTesting(std::uintmax_t total, std::uintmax_t size) {
+    return saturatingAddSize(total, size);
+}
+
+path_utils::DirectoryOpenStepForTesting path_utils::applyDirectoryOpenErrorForTesting(
+    const std::error_code& ec) {
+    // Run the REAL classify + record chain the size walk uses, on an injected open error, so the
+    // permission-denied skip-and-flag and the genuine-error fail-closed mappings are both proven
+    // without an OS-produced denial (not a deterministic fixture on Windows). A non-empty ec never
+    // classifies as opened, so the (unused) child iterator is never pushed.
+    DirectorySizeInfo info;
+    std::vector<std::filesystem::directory_iterator> stack;
+    std::filesystem::directory_iterator child;
+    const bool continued = recordOpenOutcome(classifyOpenDir(ec), std::move(child), stack, info);
+    return DirectoryOpenStepForTesting{continued, info.complete, info.skipped_dirs};
+}
+
 auto path_utils::getAvailableSpace(const std::filesystem::path& path)
     -> std::expected<std::uintmax_t, error_code> {
-    Q_ASSERT_X(!path.empty(), "path_utils::getAvailableSpace", "path must not be empty");
-
+    // An empty path makes std::filesystem::space() fail; the handler below turns
+    // that into read_error.
     try {
         auto space_info = std::filesystem::space(path);
         return space_info.available;
@@ -192,8 +370,9 @@ auto path_utils::getAvailableSpace(const std::filesystem::path& path)
 }
 
 bool path_utils::wildcardMatch(std::string_view str, std::string_view pattern) noexcept {
-    Q_ASSERT(!str.empty());
-    Q_ASSERT(!pattern.empty());
+    // Empty inputs need no precondition: the loops below already answer them (an
+    // empty pattern matches only an empty string). The caller's pattern list and
+    // the filename it derives are both outside this function's control.
     std::size_t s = 0, p = 0;
     std::size_t star_idx = std::string_view::npos;
     std::size_t match_idx = 0;

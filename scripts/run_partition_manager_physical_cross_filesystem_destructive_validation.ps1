@@ -36,8 +36,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 $LinuxSwapGptType = "{0657FD6D-A4AB-43C4-84E5-0933C84B4F4F}"
 $LargeDiskGuardBytes = 64GB
+
+if (@($FileSystems).Count -eq 0) {
+    throw "FileSystems must list at least one of ext2/ext3/ext4; refusing an empty cross-filesystem set."
+}
 
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
     $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
@@ -68,7 +73,11 @@ function Resolve-ProjectPath {
 
 function Resolve-Certifier {
     if (-not [string]::IsNullOrWhiteSpace($CertifierPath)) {
-        return (Resolve-Path -LiteralPath $CertifierPath -ErrorAction Stop).Path
+        $resolvedCertifier = (Resolve-Path -LiteralPath $CertifierPath -ErrorAction Stop).Path
+        if (-not (Test-Path -LiteralPath $resolvedCertifier -PathType Leaf)) {
+            throw "CertifierPath must reference an executable file, not a directory: $resolvedCertifier"
+        }
+        return $resolvedCertifier
     }
     $candidate = Join-Path $ProjectRoot "build\Release\partition_filesystem_probe_certifier.exe"
     if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
@@ -88,12 +97,16 @@ function Invoke-NativeCommand {
     $started = Get-Date
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $LASTEXITCODE = $null
     try {
         $output = & $FilePath @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     }
     finally {
         $ErrorActionPreference = $oldPreference
+    }
+    if ($null -eq $exitCode) {
+        throw "$Name did not run: '$FilePath' produced no exit code."
     }
 
     $record = [pscustomobject]@{
@@ -166,8 +179,8 @@ function Get-DiskSnapshot {
 
     $disk = Get-Disk -Number $Number -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue | Sort-Object Offset)) {
-        $volume = $partition | Get-Volume -ErrorAction SilentlyContinue
+    foreach ($partition in @(Get-SakDiskPartitions -DiskNumber $Number | Sort-Object Offset)) {
+        $volume = Get-SakPartitionVolume -Partition $partition
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber
             drive_letter = if ($partition.DriveLetter) { [string]$partition.DriveLetter } else { "" }
@@ -238,7 +251,7 @@ function Clear-TargetDisk {
 
     Assert-DisposablePhysicalDisk -Number $Number
     $disk = Get-Disk -Number $Number -ErrorAction Stop
-    $partitions = @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue)
+    $partitions = @(Get-SakDiskPartitions -DiskNumber $Number)
     if ($disk.PartitionStyle -eq "RAW" -and $partitions.Count -eq 0) {
         return "Disk $Number already RAW."
     }
@@ -272,7 +285,7 @@ function Invoke-CertifierProbe {
     }
     Invoke-NativeCommand -Name "sak-probe-$ExpectedFileSystem" -FilePath $Certifier -Arguments $args | Out-Null
     $probe = Get-Content -LiteralPath $ReportPath -Raw | ConvertFrom-Json
-    if ($probe.status -ne "Passed") {
+    if (-not (($probe.status -is [string]) -and $probe.status -eq "Passed")) {
         throw "S.A.K. probe failed for $ExpectedFileSystem on $TargetPath."
     }
     return $probe
@@ -299,7 +312,7 @@ function Invoke-ExtScenario {
 
     $grownSize = [uint64]$partition.Size + [uint64]$GrowByBytes
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $grownSize -ErrorAction Stop
-    Update-HostStorageCache -ErrorAction SilentlyContinue
+    Update-HostStorageCache -ErrorAction Stop
     Invoke-NativeCommand -Name "resize2fs-grow-$FileSystem" -FilePath $Tools.resize2fs.path -Arguments @($rawTarget) | Out-Null
     Invoke-NativeCommand -Name "e2fsck-readonly-after-grow-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
     $growProbePath = Join-Path $RunRoot "$FileSystem-after-grow-probe.json"
@@ -316,7 +329,7 @@ function Invoke-ExtScenario {
     Invoke-NativeCommand -Name "e2fsck-repair-before-shrink-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Out-Null
     Invoke-NativeCommand -Name "resize2fs-shrink-$FileSystem" -FilePath $Tools.resize2fs.path -Arguments @("-p", $rawTarget, "$($shrunkKilobytes)K") | Out-Null
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $shrunkSize -ErrorAction Stop
-    Update-HostStorageCache -ErrorAction SilentlyContinue
+    Update-HostStorageCache -ErrorAction Stop
     Invoke-NativeCommand -Name "e2fsck-readonly-after-shrink-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
     $shrinkProbePath = Join-Path $RunRoot "$FileSystem-after-shrink-probe.json"
     $shrinkProbe = Invoke-CertifierProbe -Certifier $Certifier -TargetPath $rawTarget -ExpectedFileSystem $FileSystem -ReportPath $shrinkProbePath -InputSizeBytes $shrunkSize
@@ -552,6 +565,9 @@ $extResults = @()
 $swapResult = $null
 $cleanupAllowed = $false
 $transcriptStarted = $false
+$certifierPathUsed = ""
+$certifierHash = ""
+$manifestHash = ""
 try {
     Start-Transcript -Path (Join-Path $runRoot "physical-cross-filesystem-destructive.log") -Force | Out-Null
     $transcriptStarted = $true
@@ -567,11 +583,14 @@ try {
     }
 
     $certifier = Resolve-Certifier
+    $certifierPathUsed = $certifier
+    $certifierHash = (Get-FileHash -LiteralPath $certifier -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-DisposablePhysicalDisk -Number $DiskNumber
     $cleanupAllowed = $true
     $before = Get-DiskSnapshot -Number $DiskNumber
 
     $manifestPath = Join-Path $ProjectRoot "tools\filesystem\manifest.json"
+    $manifestHash = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     foreach ($fileSystem in $FileSystems) {
         $tools = [pscustomobject]@{
@@ -624,6 +643,7 @@ $report = [pscustomobject]@{
     finished_at_utc = (Get-Date).ToUniversalTime().ToString("o")
     computer_name = $env:COMPUTERNAME
     user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    transcript_captured = $transcriptStarted
     disk_number = $DiskNumber
     expected_serial_number = $ExpectedSerialNumber
     expected_friendly_name_pattern = $ExpectedFriendlyNamePattern
@@ -633,6 +653,9 @@ $report = [pscustomobject]@{
     linux_swap_result = $swapResult
     after_layout = $after
     tool_hashes = @($toolHashes | Sort-Object id, file_system, operation -Unique)
+    certifier_path = $certifierPathUsed
+    certifier_sha256 = $certifierHash
+    manifest_sha256 = $manifestHash
     commands = @($Script:Commands.ToArray())
     cleanup = $cleanup
     error = $errorText

@@ -35,7 +35,6 @@ private Q_SLOTS:
 
 private:
     QString m_converterPath;
-    bool m_converterAvailable = false;
 
     /// Locate UUPMediaConverter.exe relative to the test executable
     QString findConverter() const;
@@ -64,13 +63,9 @@ void UupConversionPipelineTest::initTestCase() {
     qInfo() << "=== UUP Conversion Pipeline Integration Tests ===";
 
     m_converterPath = findConverter();
-    m_converterAvailable = !m_converterPath.isEmpty();
-
-    if (m_converterAvailable) {
-        qInfo() << "UUPMediaConverter found at:" << m_converterPath;
-    } else {
-        qWarning() << "UUPMediaConverter.exe not found - some tests will be skipped";
-    }
+    QVERIFY2(!m_converterPath.isEmpty(),
+             "UUPMediaConverter.exe must be bundled in tools/uup/uupmc/");
+    qInfo() << "UUPMediaConverter found at:" << m_converterPath;
 }
 
 void UupConversionPipelineTest::cleanupTestCase() {
@@ -79,22 +74,19 @@ void UupConversionPipelineTest::cleanupTestCase() {
 
 /// Verify the bundled UUPMediaConverter.exe is present.
 void UupConversionPipelineTest::testConverterExecutableExists() {
-    QVERIFY2(m_converterAvailable, "UUPMediaConverter.exe must be bundled in tools/uup/uupmc/");
+    QVERIFY2(!m_converterPath.isEmpty(),
+             "UUPMediaConverter.exe must be bundled in tools/uup/uupmc/");
     QVERIFY(QFileInfo(m_converterPath).isExecutable());
 }
 
 /**
  * CRITICAL TEST: Verify converter stays attached to QProcess.
  *
- * UUPMediaConverter.exe is a self-contained .NET 8 executable.
+ * UUPMediaConverter.exe is a self-contained single-file .NET executable.
  * This test ensures it does not fork or detach; QProcess should
  * be able to track the process to completion.
  */
 void UupConversionPipelineTest::testConverterLaunchesWithoutForking() {
-    if (!m_converterAvailable) {
-        QSKIP("UUPMediaConverter.exe not found");
-    }
-
     QProcess process;
     process.setWorkingDirectory(QFileInfo(m_converterPath).absolutePath());
     process.setProcessChannelMode(QProcess::MergedChannels);
@@ -126,10 +118,6 @@ void UupConversionPipelineTest::testConverterLaunchesWithoutForking() {
 
 /// Verify --help produces recognizable usage text.
 void UupConversionPipelineTest::testConverterShowsHelpOutput() {
-    if (!m_converterAvailable) {
-        QSKIP("UUPMediaConverter.exe not found");
-    }
-
     QProcess process;
     process.setWorkingDirectory(QFileInfo(m_converterPath).absolutePath());
     process.setProcessChannelMode(QProcess::MergedChannels);
@@ -152,10 +140,6 @@ void UupConversionPipelineTest::testConverterShowsHelpOutput() {
 
 /// Verify converter exits cleanly with an error when the UUP directory is missing.
 void UupConversionPipelineTest::testConverterExitsOnMissingUupDir() {
-    if (!m_converterAvailable) {
-        QSKIP("UUPMediaConverter.exe not found");
-    }
-
     QTemporaryDir tmpDir;
     QVERIFY(tmpDir.isValid());
 
@@ -187,10 +171,6 @@ void UupConversionPipelineTest::testConverterExitsOnMissingUupDir() {
 
 /// Verify converter exits cleanly when the UUP directory is empty (no ESD files).
 void UupConversionPipelineTest::testConverterExitsOnEmptyUupDir() {
-    if (!m_converterAvailable) {
-        QSKIP("UUPMediaConverter.exe not found");
-    }
-
     QTemporaryDir tmpDir;
     QVERIFY(tmpDir.isValid());
 
@@ -225,7 +205,8 @@ void UupConversionPipelineTest::testConverterExitsOnEmptyUupDir() {
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     UupConversionPipelineTest tc;
-    // cppcheck-suppress unknownMacro
+    // cppcheck-suppress unknownMacro ; QTEST_SET_MAIN_SOURCE_PATH is a Qt test-driver macro
+    // cppcheck's preprocessor cannot resolve; the suppression is scoped to this one call.
     QTEST_SET_MAIN_SOURCE_PATH
     return QTest::qExec(&tc, argc, argv);
 }

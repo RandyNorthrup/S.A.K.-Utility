@@ -1,6 +1,6 @@
 ---
 # =============================================================================
-# S.A.K. Utility — Clang-Format Configuration
+# S.A.K. Utility -- Clang-Format Configuration
 # Production-grade C++23 formatting for consistent, readable code.
 # Requires: clang-format 17+
 # =============================================================================
@@ -9,7 +9,7 @@ BasedOnStyle: Google
 Standard: Latest
 ColumnLimit: 100
 
-# ── Indentation ──────────────────────────────────────────────────────────────
+# -- Indentation --------------------------------------------------------------
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
@@ -25,12 +25,12 @@ LambdaBodyIndentation: Signature
 IndentRequiresClause: true
 RequiresClausePosition: OwnLine
 
-# ── Access Modifiers ─────────────────────────────────────────────────────────
+# -- Access Modifiers ---------------------------------------------------------
 AccessModifierOffset: -4
 EmptyLineBeforeAccessModifier: LogicalBlock
 EmptyLineAfterAccessModifier: Never
 
-# ── Alignment ────────────────────────────────────────────────────────────────
+# -- Alignment ----------------------------------------------------------------
 AlignAfterOpenBracket: Align
 AlignArrayOfStructures: None
 AlignConsecutiveAssignments: None
@@ -43,13 +43,13 @@ AlignTrailingComments:
   Kind: Always
   OverEmptyLines: 1
 
-# ── Arguments / Parameters ───────────────────────────────────────────────────
+# -- Arguments / Parameters ---------------------------------------------------
 AllowAllArgumentsOnNextLine: true
 AllowAllParametersOfDeclarationOnNextLine: true
 BinPackArguments: false
 BinPackParameters: false
 
-# ── Short Forms ──────────────────────────────────────────────────────────────
+# -- Short Forms --------------------------------------------------------------
 AllowShortBlocksOnASingleLine: Empty
 AllowShortCaseLabelsOnASingleLine: false
 AllowShortEnumsOnASingleLine: false
@@ -58,7 +58,7 @@ AllowShortIfStatementsOnASingleLine: Never
 AllowShortLambdasOnASingleLine: Inline
 AllowShortLoopsOnASingleLine: false
 
-# ── Braces ───────────────────────────────────────────────────────────────────
+# -- Braces -------------------------------------------------------------------
 BreakBeforeBraces: Custom
 BraceWrapping:
   AfterCaseLabel: false
@@ -80,7 +80,7 @@ BraceWrapping:
   SplitEmptyNamespace: false
 InsertBraces: true
 
-# ── Breaking ─────────────────────────────────────────────────────────────────
+# -- Breaking -----------------------------------------------------------------
 BreakBeforeBinaryOperators: None
 BreakBeforeConceptDeclarations: Always
 BreakBeforeTernaryOperators: true
@@ -89,12 +89,12 @@ BreakInheritanceList: BeforeComma
 BreakStringLiterals: true
 BreakAfterAttributes: Leave
 
-# ── Constructors / Initializers ──────────────────────────────────────────────
+# -- Constructors / Initializers ----------------------------------------------
 Cpp11BracedListStyle: true
 PackConstructorInitializers: NextLine
 ConstructorInitializerIndentWidth: 4
 
-# ── Include Sorting ──────────────────────────────────────────────────────────
+# -- Include Sorting ----------------------------------------------------------
 SortIncludes: CaseInsensitive
 IncludeBlocks: Regroup
 IncludeCategories:
@@ -128,13 +128,13 @@ IncludeCategories:
     Priority: 8
     SortPriority: 8
 
-# ── Pointer / Reference Alignment ────────────────────────────────────────────
+# -- Pointer / Reference Alignment --------------------------------------------
 DerivePointerAlignment: false
 PointerAlignment: Left
 ReferenceAlignment: Left
 QualifierAlignment: Left
 
-# ── Spaces ───────────────────────────────────────────────────────────────────
+# -- Spaces -------------------------------------------------------------------
 SpaceAfterCStyleCast: false
 SpaceAfterLogicalNot: false
 SpaceAfterTemplateKeyword: true
@@ -160,7 +160,7 @@ SpacesInLineCommentPrefix:
 SpacesInParentheses: false
 SpacesInSquareBrackets: false
 
-# ── Penalties (tune line-break heuristics) ────────────────────────────────────
+# -- Penalties (tune line-break heuristics) ------------------------------------
 PenaltyBreakAssignment: 25
 PenaltyBreakBeforeFirstCallParameter: 50
 PenaltyBreakComment: 300
@@ -172,7 +172,7 @@ PenaltyExcessCharacter: 1000000
 PenaltyIndentedWhitespace: 0
 PenaltyReturnTypeOnItsOwnLine: 200
 
-# ── Miscellaneous ────────────────────────────────────────────────────────────
+# -- Miscellaneous ------------------------------------------------------------
 CompactNamespaces: false
 FixNamespaceComments: true
 MaxEmptyLinesToKeep: 2
@@ -187,7 +187,7 @@ IntegerLiteralSeparator:
   DecimalMinDigits: 5
   HexMinDigits: 6
 
-# ── Qt-Specific ──────────────────────────────────────────────────────────────
+# -- Qt-Specific --------------------------------------------------------------
 # Treat Q_OBJECT, Q_SIGNALS, etc. as macros that don't get formatted oddly
 StatementAttributeLikeMacros: ['Q_EMIT']
 StatementMacros: ['Q_OBJECT', 'Q_GADGET', 'Q_ENUM', 'Q_FLAG', 'Q_PROPERTY']

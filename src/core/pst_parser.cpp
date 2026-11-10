@@ -6,11 +6,16 @@
 
 #include "sak/pst_parser.h"
 
+#include "sak/email_folder_selection.h"
+#include "sak/email_html_sanitizer.h"
+#include "sak/eml_writer.h"
 #include "sak/error_codes.h"
 #include "sak/logger.h"
+#include "sak/pst_rtf_body.h"
 
 #include <QDataStream>
 #include <QFileInfo>
+#include <QScopeGuard>
 #include <qt_windows.h>
 #include <QtEndian>
 #include <QTextDocument>
@@ -20,11 +25,13 @@
 #include <array>
 #include <cstring>
 #include <format>
+#include <iterator>
+#include <limits>
 
 using sak::error_code;
 
 // ============================================================================
-// MS-PST §5.1 — Compressible Encryption Decrypt Table
+// MS-PST section 5.1 -- Compressible Encryption Decrypt Table
 // ============================================================================
 
 // clang-format off
@@ -71,6 +78,17 @@ static constexpr std::array<uint8_t, 256> kDecryptTable = {
 /// Maximum BTree depth to prevent infinite recursion
 static constexpr int kMaxBTreeDepth = 20;
 
+/// MS-PST page-trailer ptype for a Node BTree page (ptypeNBT, MS-PST 2.2.2.7.7.1)
+static constexpr uint8_t kPageTypeNbt = 0x81;
+
+/// MS-PST page-trailer ptype for a Block BTree page (ptypeBBT)
+static constexpr uint8_t kPageTypeBbt = 0x80;
+
+/// Upper bound on a single assembled data tree (bytes). Kept well under INT_MAX so the
+/// cumulative int offsets used while stitching XBLOCK/XXBLOCK children can never overflow;
+/// a data tree that would exceed this is treated as a corrupt/hostile fan-out and fails closed.
+static constexpr int kMaxAssembledDataTreeSize = 1024 * 1024 * 1024;
+
 /// ANSI PST BTree page size (512 bytes)
 static constexpr int kAnsiPageSizeLocal = sak::email::kAnsiPageSize;
 
@@ -96,16 +114,12 @@ static constexpr int kUnicode4kMetadataSize = 8;
 static constexpr int kUnicode4kPaddingSize = 8;
 
 /// ANSI BTree entry size (Node BTree)
-static constexpr int kAnsiNbtEntrySize = 16;
 
 /// Unicode BTree entry size (Node BTree)
-static constexpr int kUnicodeNbtEntrySize = 32;
 
 /// ANSI BTree entry size (Block BTree)
-static constexpr int kAnsiBbtEntrySize = 12;
 
 /// Unicode BTree entry size (Block BTree)
-static constexpr int kUnicodeBbtEntrySize = 24;
 
 static constexpr int kPstOpenProgressHeader = 0;
 static constexpr int kPstOpenProgressNodeBTree = 10;
@@ -121,7 +135,8 @@ static constexpr int kHeaderDataVersionOffset = 10;
 static constexpr int kHeaderClientVersionOffset = 12;
 static constexpr int kHeaderPlatformCreateOffset = 14;
 static constexpr int kHeaderPlatformAccessOffset = 15;
-static constexpr int kHeaderEncryptionOffset = 513;
+static constexpr int kHeaderEncryptionOffset = 513;      // bCryptMethod, Unicode header (0x201)
+static constexpr int kHeaderEncryptionOffsetAnsi = 461;  // bCryptMethod, ANSI header (0x1CD)
 static constexpr int kUnicodeRootOffset = 0xB4;
 static constexpr int kAnsiRootOffset = 0xA4;
 static constexpr int kRootFileSizeOffset = 4;
@@ -146,6 +161,8 @@ static constexpr uint16_t kPidTagLtpRowId = 0x67F2;
 static constexpr uint64_t kNidTypeMask = 0x1F;
 static constexpr uint64_t kNidLower32Mask = 0xFF'FF'FF'FF;
 static constexpr uint64_t kBidInternalFlag = 0x02;
+static constexpr uint64_t kBidReservedBit = 0x01;  // MS-PST 2.2.2.2 "A": readers treat it as zero
+static constexpr int kMaxEmbeddedMessageDepth = 8;
 static constexpr int kHidOffsetRecordSize = 2;
 static constexpr int kUnicode4kEntrySizeOffset = 4;
 static constexpr int kUnicode4kLevelOffset = 5;
@@ -226,6 +243,87 @@ static constexpr int kHidBlockIndexMaskLegacy = 0xFFFF;
 static constexpr int kResolvedRecipientPartCount = 2;
 static constexpr int kBthRowIdValueOffset = 4;
 
+// ---------------------------------------------------------------------------
+// MS-PST integrity-field layout (validated byte-for-byte against real Outlook
+// PST (Unicode wVer=23) and OST (Unicode4k wVer=36) stores)
+// ---------------------------------------------------------------------------
+
+/// dwCRCPartial covers this many bytes of the header starting at wMagicClient.
+static constexpr int kHeaderCrcDataStart = 8;
+/// MS-PST 2.2.2.6 dwCRCPartial length (bytes from offset 8).
+static constexpr int kHeaderCrcPartialLen = 471;
+/// MS-PST 2.2.2.6 dwCRCFull length (bytes from offset 8); Unicode/Unicode4k only.
+static constexpr int kHeaderCrcFullLen = 516;
+/// Offset of dwCRCFull in the Unicode/Unicode4k header.
+static constexpr int kHeaderCrcFullOffset = 0x20C;
+
+/// PAGETRAILER field offsets (relative to the start of the trailer).
+static constexpr int kPageTrailerSigOffset = 2;  // wSig
+static constexpr int kPageTrailerCrcOffset = 4;  // dwCRC
+static constexpr int kPageTrailerBidOffset = 8;  // bid (u64 Unicode/4k, u32 ANSI)
+
+/// BLOCKTRAILER (Unicode 16 / ANSI 12) and Unicode4k block-footer field offsets.
+/// The first 16 bytes of the 24-byte 4k footer share this layout.
+static constexpr int kBlockTrailerCbOffset = 0;   // cb (repeats BBT data size)
+static constexpr int kBlockTrailerSigOffset = 2;  // wSig
+static constexpr int kBlockTrailerCrcOffset = 4;  // dwCRC over the cb data bytes
+static constexpr int kBlockTrailerBidOffset = 8;  // bid (u64 Unicode/4k, u32 ANSI)
+static constexpr int kBlockTrailerSizeUnicode = 16;
+static constexpr int kBlockTrailerSizeAnsi = 12;
+/// On-disk blocks (non-4k) are padded so data+trailer rounds up to this boundary.
+static constexpr int kBlockAlignment = 64;
+
+/// Bits shifted out of the CRC register per input byte, and the low-byte mask that
+/// indexes the CRC lookup table (MS-PST reflected CRC-32 update step).
+static constexpr int kBitsPerByte = 8;
+static constexpr uint32_t kByteMask = 0xFFu;
+/// WORD size (bits) and mask used by MS-PST ComputeSig to fold a 32-bit value.
+static constexpr int kBitsPerWord = 16;
+static constexpr uint32_t kWordMask = 0xFFFFu;
+
+// MS-PST 2.2.2.7.1 / 2.2.2.8.1: 32-bit "weak" CRC. Standard reflected CRC-32
+// lookup table (poly 0xEDB88320) with initial value 0 and NO final inversion --
+// this differs from ISO 3309 CRC-32, which pre/post-inverts with 0xFFFFFFFF.
+// Writes the computed CRC to @p out; returns false (without writing) when the
+// requested range lies outside @p data so the caller fails closed rather than
+// hashing a truncated span.
+static bool msPstWeakCrc(const QByteArray& data, int offset, int len, uint32_t& out) {
+    static const std::array<uint32_t, 256> kTable = [] {
+        std::array<uint32_t, 256> table{};
+        for (uint32_t i = 0; i < 256; ++i) {
+            uint32_t c = i;
+            for (int bit = 0; bit < 8; ++bit) {
+                c = (c & 1u) ? ((c >> 1) ^ 0xED'B8'83'20u) : (c >> 1);
+            }
+            table[i] = c;
+        }
+        return table;
+    }();
+
+    if (offset < 0 || len < 0 ||
+        static_cast<qsizetype>(offset) + static_cast<qsizetype>(len) > data.size()) {
+        return false;
+    }
+    uint32_t crc = 0;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(data.constData()) + offset;
+    for (int i = 0; i < len; ++i) {
+        crc = (crc >> kBitsPerByte) ^ kTable[(crc ^ bytes[i]) & kByteMask];
+    }
+    out = crc;
+    return true;
+}
+
+// MS-PST 5.4 ComputeSig: WORD(ib XOR bid >> 16) XOR WORD(ib XOR bid). The spec
+// folds only the low 32 bits of (ib XOR bid): dwCRC = WORD(value >> 16) ^ WORD(value).
+// Folding bits [32:63] as well diverges from the spec once the byte offset ib
+// exceeds 4 GiB (a >4 GiB OST/PST), which would false-reject every trailer past
+// that mark. Authenticates that a page/block trailer belongs at its file offset
+// with its declared BID.
+static uint16_t msPstComputeSig(uint64_t ib, uint64_t bid) {
+    const uint64_t value = ib ^ bid;
+    return static_cast<uint16_t>(((value >> kBitsPerWord) ^ value) & kWordMask);
+}
+
 // MS-OXCMSG: PR_SUBJECT may begin with a prefix marker (U+0001) followed by
 // a single character encoding the prefix length.  Strip these control bytes.
 static QString stripSubjectPrefix(const QString& subject) {
@@ -256,8 +354,10 @@ static bool isPcVariableType(uint16_t prop_type) {
 
 /// Validate that the PST data version is a known format
 static bool isKnownDataVersion(uint16_t version) {
-    return version == sak::email::kAnsiVersion || version == sak::email::kUnicodeVersion ||
-           version == sak::email::kUnicode4kVersion;
+    // MS-PST 2.2.2.6: an ANSI store's wVer is 14 OR 15 (both accepted); 15 stays classified as
+    // ANSI since 15 < kUnicodeVersion and 15 != kUnicode4kVersion.
+    return version == sak::email::kAnsiVersion || version == sak::email::kAnsiVersion2 ||
+           version == sak::email::kUnicodeVersion || version == sak::email::kUnicode4kVersion;
 }
 
 // ============================================================================
@@ -266,6 +366,15 @@ static bool isKnownDataVersion(uint16_t version) {
 
 template <typename T>
 static T localReadLE(const QByteArray& data, int offset) {
+    // Bounds-check every fixed read: BTree leaf loops derive the record stride
+    // from an attacker-controlled entry_size that can be smaller than the fixed
+    // record actually read (e.g. a legacy page reading a uint32 at off+24 while
+    // entry_size is 2), which would over-read past the page buffer. Return 0 for
+    // an out-of-range field rather than performing an OOB memcpy.
+    if (offset < 0 ||
+        static_cast<qsizetype>(offset) + static_cast<qsizetype>(sizeof(T)) > data.size()) {
+        return T{0};
+    }
     T value;
     std::memcpy(&value, data.constData() + offset, sizeof(T));
     return value;
@@ -296,7 +405,7 @@ static QString formatBooleanValue(const QByteArray& raw) {
     if (raw.size() < 1) {
         return QStringLiteral("<invalid>");
     }
-    return raw[0] ? QStringLiteral("true") : QStringLiteral("false");
+    return (raw[0] != 0) ? QStringLiteral("true") : QStringLiteral("false");
 }
 
 static QString formatFloat64Value(const QByteArray& raw) {
@@ -318,18 +427,24 @@ static QString formatString8Value(const QByteArray& raw) {
 
     // Fall back to the system ANSI codepage (e.g., CP1252 on
     // Western Windows systems, CP932 on Japanese, etc.).
-    int needed =
-        MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, raw.constData(), raw.size(), nullptr, 0);
+    const int needed = MultiByteToWideChar(
+        CP_ACP, MB_PRECOMPOSED, raw.constData(), static_cast<int>(raw.size()), nullptr, 0);
     if (needed > 0) {
         QString result;
         result.resize(needed);
-        MultiByteToWideChar(CP_ACP,
-                            MB_PRECOMPOSED,
-                            raw.constData(),
-                            raw.size(),
-                            reinterpret_cast<wchar_t*>(result.data()),
-                            needed);
-        return result;
+        const int written = MultiByteToWideChar(CP_ACP,
+                                                MB_PRECOMPOSED,
+                                                raw.constData(),
+                                                static_cast<int>(raw.size()),
+                                                reinterpret_cast<wchar_t*>(result.data()),
+                                                needed);
+        // Trust the actually-written count, not the sizing pass: if the second call
+        // converts fewer code units (or fails, returning 0) do not leave uninitialized
+        // tail characters in the string.
+        if (written > 0) {
+            result.resize(written);
+            return result;
+        }
     }
 
     return QString::fromLatin1(raw);
@@ -352,8 +467,13 @@ static QString formatSysTimeValue(const QByteArray& raw) {
     if (raw.size() < kInt64PropertyBytes) {
         return QStringLiteral("<invalid>");
     }
-    int64_t ft = localReadLE<int64_t>(raw, 0);
-    int64_t unix_ms = (ft - kFileTimeEpochDiff) / kFileTimeTicksPerMillisecond;
+    const int64_t ft = localReadLE<int64_t>(raw, 0);
+    // Guard the signed subtraction below: a hostile value near INT64_MIN would underflow
+    // (undefined behavior). Such a value is not a real FILETIME (100ns ticks since 1601).
+    if (ft < INT64_MIN + kFileTimeEpochDiff) {
+        return QStringLiteral("<invalid>");
+    }
+    const int64_t unix_ms = (ft - kFileTimeEpochDiff) / kFileTimeTicksPerMillisecond;
     return QDateTime::fromMSecsSinceEpoch(unix_ms, QTimeZone::UTC).toString(Qt::ISODate);
 }
 
@@ -538,7 +658,7 @@ static const QHash<uint16_t, DetailSetter>& detailSetters() {
 
 static const QHash<uint16_t, SummarySetter>& summarySetters() {
     static const QHash<uint16_t, SummarySetter> kMap = {
-        {kPidTagLtpRowId,  // PidTagLtpRowId — NID
+        {kPidTagLtpRowId,  // PidTagLtpRowId -- NID
          [](sak::PstItemSummary& item, const sak::MapiProperty& col) {
              if (col.raw_value.size() >= kPropertyValueRefSize)
                  item.node_id = localReadLE<uint32_t>(col.raw_value, 0);
@@ -590,6 +710,7 @@ static const QHash<uint16_t, SummarySetter>& summarySetters() {
          }},
         {sak::email::kPropIdMessageClass,
          [](sak::PstItemSummary& item, const sak::MapiProperty& col) {
+             item.message_class = col.display_value;
              item.item_type = PstParser::classifyMessageClass(col.display_value);
          }},
     };
@@ -639,12 +760,18 @@ static const QHash<uint16_t, AttachSetter>& attachmentSetters() {
              a.attach_method = v.toInt();
              a.is_embedded_message = (a.attach_method == sak::email::kAttachEmbeddedMessage);
          }},
+        {sak::email::kPropIdAttachmentHidden,
+         [](sak::PstAttachmentInfo& a, const QString& v) { a.hidden = v == QLatin1String("true"); }},
+        {sak::email::kPropIdAttachmentContactPhoto,
+         [](sak::PstAttachmentInfo& a, const QString& v) {
+             a.contact_photo = v == QLatin1String("true");
+         }},
     };
     return kMap;
 }
 // clang-format on
 
-/// Sender property ID → slot mapping: 0=name, 1=email
+/// Sender property ID -> slot mapping: 0=name, 1=email
 static const QHash<uint16_t, int>& senderPropSlots() {
     static const QHash<uint16_t, int> kMap = {
         {sak::email::kPropIdSenderName, 0},
@@ -662,7 +789,7 @@ static QVector<uint64_t> extractChildNids(const QVector<QVector<sak::MapiPropert
     for (const auto& row : htable) {
         for (const auto& col : row) {
             if (col.tag_id == kPidTagLtpRowId && col.raw_value.size() >= kPropertyValueRefSize) {
-                uint64_t nid = localReadLE<uint32_t>(col.raw_value, 0);
+                const uint64_t nid = localReadLE<uint32_t>(col.raw_value, 0);
                 if (nid != 0) {
                     child_nids.append(nid);
                 }
@@ -683,7 +810,7 @@ static std::expected<int, error_code> resolveHnBlockOffset(uint16_t hid_block_in
     if (block_offsets.isEmpty() || hid_block_index > block_offsets.size()) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
-    int offset = block_offsets[hid_block_index - 1];
+    const int offset = block_offsets[hid_block_index - 1];
     if (offset + kHidOffsetRecordSize > heap_size) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
@@ -691,16 +818,6 @@ static std::expected<int, error_code> resolveHnBlockOffset(uint16_t hid_block_in
 }
 
 /// Find a property by tag ID, returning pointer to raw value (or nullptr)
-static const QByteArray* findPropertyById(const QVector<sak::MapiProperty>& props,
-                                          uint16_t tag_id) {
-    for (const auto& prop : props) {
-        if (prop.tag_id == tag_id) {
-            return &prop.raw_value;
-        }
-    }
-    return nullptr;
-}
-
 // ============================================================================
 // Table Context helpers (use PstParser::TcColDesc and PstParser::TcInfo)
 // ============================================================================
@@ -714,7 +831,7 @@ static std::expected<PstParser::TcInfo, error_code> parseTcInfo(const QByteArray
     }
 
     PstParser::TcInfo info;
-    uint8_t col_count = static_cast<uint8_t>(tc_raw[1]);
+    const uint8_t col_count = static_cast<uint8_t>(tc_raw[1]);
     info.rgib_tci_1b = localReadLE<uint16_t>(tc_raw, kTcHeaderRgibTci1bOffset);
     info.rgib_tci_bm = localReadLE<uint16_t>(tc_raw, kTcHeaderRgibTciBmOffset);
     info.hid_row_index = localReadLE<uint32_t>(tc_raw, kTcHeaderRowIndexHidOffset);
@@ -722,9 +839,12 @@ static std::expected<PstParser::TcInfo, error_code> parseTcInfo(const QByteArray
 
     info.columns.reserve(col_count);
     for (int col_idx = 0; col_idx < col_count; ++col_idx) {
-        int base = kTcinfoHeaderSize + (col_idx * kTcColumnDescriptorSize);
+        const int base = kTcinfoHeaderSize + (col_idx * kTcColumnDescriptorSize);
+        // Fail closed: a declared column whose descriptor runs past the TCINFO buffer means the
+        // header's column count is inconsistent with the (CRC-authenticated) heap allocation.
+        // Returning the columns parsed so far would surface a partial schema as a complete table.
         if (base + kTcColumnDescriptorSize > tc_raw.size()) {
-            break;
+            return std::unexpected(error_code::pst_table_context_error);
         }
         PstParser::TcColDesc col;
         col.prop_type = localReadLE<uint16_t>(tc_raw, base);
@@ -744,7 +864,7 @@ static std::expected<PstParser::TcInfo, error_code> parseTcInfo(const QByteArray
 static sak::PstNode readNodeLeafEntry(const QByteArray& data, int off, bool is_unicode) {
     sak::PstNode node;
     if (is_unicode) {
-        // MS-PST §2.2.2.7.7.4: NBTENTRY nid field is 8 bytes in Unicode
+        // MS-PST section 2.2.2.7.7.4: NBTENTRY nid field is 8 bytes in Unicode
         // files but only the lower 32 bits are the actual NID.  OST files
         // may have non-zero upper bits, so mask to 32 bits.
         node.node_id = localReadLE<uint64_t>(data, off) & kNidLower32Mask;
@@ -795,6 +915,9 @@ PstParser::~PstParser() {
 // ============================================================================
 
 bool PstParser::failOpen(const QString& message, bool close_parser) {
+    // NOTE: despite the name, this FAILS CLOSED -- it means "fail the open()": log
+    // the real error, optionally close the parser, and return false so the caller
+    // aborts. It never proceeds with a partially-parsed file.
     sak::logError("PstParser: {}", message.toStdString());
     Q_EMIT errorOccurred(message);
     if (close_parser) {
@@ -850,7 +973,7 @@ bool PstParser::loadPstStructure() {
 }
 
 void PstParser::populateFileInfo(const QString& file_path) {
-    QFileInfo fi(file_path);
+    const QFileInfo fi(file_path);
     m_file_info.file_path = file_path;
     m_file_info.file_size_bytes = fi.size();
     m_file_info.is_unicode = m_is_unicode;
@@ -861,7 +984,25 @@ void PstParser::populateFileInfo(const QString& file_path) {
     m_file_info.last_modified = fi.lastModified();
 }
 
-void PstParser::loadMessageStoreDisplayName() {
+namespace {
+
+/// Flag the folder whose node id the store names as its IPM subtree. Returns true once found.
+bool markIpmSubtree(sak::PstFolderTree& tree, uint64_t nid) {
+    for (auto& folder : tree) {
+        if (folder.node_id == nid) {
+            folder.is_ipm_subtree = true;
+            return true;
+        }
+        if (markIpmSubtree(folder.children, nid)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+void PstParser::loadMessageStoreProperties() {
     auto store_it = m_nbt_cache.find(sak::email::kNidMessageStore);
     if (store_it == m_nbt_cache.end()) {
         return;
@@ -875,8 +1016,81 @@ void PstParser::loadMessageStoreDisplayName() {
     for (const auto& prop : *props) {
         if (prop.tag_id == sak::email::kPropIdDisplayName) {
             m_file_info.display_name = prop.display_value;
-            break;
+        } else if (prop.tag_id == sak::email::kPropIdIpmSubtreeEntryId &&
+                   prop.raw_value.size() == sak::email::kEntryIdBytes) {
+            // The IPM subtree's name is localized and varies by Outlook version ("Top of Outlook
+            // data file", "IPM_SUBTREE", ...); the store's own pointer to it does not. An EntryID
+            // ends in the folder's NID.
+            markIpmSubtree(m_folder_tree,
+                           readLE<uint32_t>(prop.raw_value, sak::email::kEntryIdNidOffset));
         }
+    }
+}
+
+void PstParser::loadNamedPropertyMap() {
+    m_named_properties.clear();
+    if (!m_nbt_cache.contains(sak::email::kNidNameToIdMap)) {
+        return;
+    }
+    auto props = readPropertyContext(sak::email::kNidNameToIdMap);
+    if (!props) {
+        sak::logWarning("PstParser: Name-to-ID map could not be read: {}",
+                        sak::to_string(props.error()));
+        return;
+    }
+    QByteArray guid_stream;
+    QByteArray entry_stream;
+    for (const auto& prop : *props) {
+        if (prop.tag_id == sak::pst::kPropIdNameidStreamGuid) {
+            guid_stream = prop.raw_value;
+        } else if (prop.tag_id == sak::pst::kPropIdNameidStreamEntry) {
+            entry_stream = prop.raw_value;
+        }
+    }
+    m_named_properties = sak::pst::parseNameIdMap(guid_stream, entry_stream);
+}
+
+void PstParser::countSystemFolderEmails() {
+    // With no populated mail tree the folders are listed from the roots, and all of them are in it.
+    const sak::PstFolder* mail_tree = sak::findIpmSubtree(m_folder_tree);
+    const bool all_inside = mail_tree == nullptr || mail_tree->children.isEmpty();
+    for (auto& root : m_folder_tree) {
+        countSystemFolderEmailsIn(root, all_inside, mail_tree);
+    }
+    // Declared counts can run behind the tables. Before a store is called empty, look.
+    if (m_file_info.total_items == 0) {
+        const std::function<int(const sak::PstFolderTree&)> rows_in =
+            [this, &rows_in](const sak::PstFolderTree& tree) {
+                int rows = 0;
+                for (const auto& folder : tree) {
+                    auto items = readContentsTable(contentsTableNid(folder.node_id), 0, 0);
+                    rows += items ? static_cast<int>(items->size()) : 0;
+                    rows += rows_in(folder.children);
+                }
+                return rows;
+            };
+        m_file_info.total_items = rows_in(m_folder_tree);
+    }
+}
+
+void PstParser::countSystemFolderEmailsIn(sak::PstFolder& folder,
+                                          bool inside_mail_tree,
+                                          const sak::PstFolder* mail_tree) {
+    const bool is_mail_root = &folder == mail_tree;
+    const bool is_search = (folder.node_id & kNidTypeMask) == sak::email::kNidTypeSearchFolder;
+    const bool is_ordinary = inside_mail_tree &&
+                             sak::isMailFolder(folder.display_name, folder.container_class);
+    if (!is_mail_root && !is_search && !is_ordinary) {
+        auto items = readContentsTable(contentsTableNid(folder.node_id), 0, 0);
+        if (items) {
+            folder.system_folder_emails =
+                static_cast<int>(std::ranges::count_if(*items, [](const sak::PstItemSummary& item) {
+                    return sak::isRealEmail(item.item_type);
+                }));
+        }
+    }
+    for (auto& child : folder.children) {
+        countSystemFolderEmailsIn(child, inside_mail_tree || is_mail_root, mail_tree);
     }
 }
 
@@ -893,14 +1107,16 @@ void PstParser::open(const QString& file_path) {
     }
 
 
-    sak::logInfo("PstParser: NBT cache loaded — {} nodes", m_nbt_cache.size());
+    sak::logInfo("PstParser: NBT cache loaded -- {} nodes", m_nbt_cache.size());
 
 
-    sak::logInfo("PstParser: BBT cache loaded — {} blocks", m_bbt_cache.size());
+    sak::logInfo("PstParser: BBT cache loaded -- {} blocks", m_bbt_cache.size());
 
     populateFileInfo(file_path);
 
-    loadMessageStoreDisplayName();
+    loadMessageStoreProperties();
+    loadNamedPropertyMap();
+    countSystemFolderEmails();
 
     m_is_open = true;
     Q_EMIT progressUpdated(kPstOpenProgressComplete, QStringLiteral("File loaded successfully"));
@@ -918,6 +1134,7 @@ void PstParser::close() {
     m_folder_tree.clear();
     m_nbt_cache.clear();
     m_bbt_cache.clear();
+    m_named_properties.clear();
     m_is_unicode = false;
     m_is_4k = false;
     m_encryption_type = 0;
@@ -936,30 +1153,18 @@ sak::PstFolderTree PstParser::folderTree() const {
 }
 
 void PstParser::loadFolderItems(uint64_t folder_node_id, int offset, int limit) {
-    auto result = readFolderItems(folder_node_id, offset, limit);
+    int total = 0;
+    auto result = m_is_open
+                      ? readContentsTable(contentsTableNid(folder_node_id), offset, limit, &total)
+                      : std::unexpected(error_code::invalid_operation);
     if (result) {
         // Enrich items with sender names from individual PCs.
         // The TC often lacks usable sender data, so we do a
         // lightweight per-item PC read for sender properties only.
         enrichItemSenders(*result);
 
-        // Read total count from the folder's content_count
-        int total = 0;
-        auto node_it = m_nbt_cache.find(folder_node_id);
-        if (node_it != m_nbt_cache.end()) {
-            auto props = readPropertyContext(folder_node_id);
-            if (props) {
-                for (const auto& prop : *props) {
-                    if (prop.tag_id == sak::email::kPropIdContentCount) {
-                        total = prop.display_value.toInt();
-                        break;
-                    }
-                }
-            }
-        }
-        if (total == 0) {
-            total = static_cast<int>(result->size());
-        }
+        // The total is the rows the table really holds. A store's declared PR_CONTENT_COUNT can
+        // run ahead of them (real OST and PST files do), and paging by it offered pages of nothing.
         Q_EMIT folderItemsLoaded(folder_node_id, std::move(*result), total);
     } else {
         Q_EMIT errorOccurred(QStringLiteral("Failed to load folder items: %1")
@@ -1000,8 +1205,13 @@ void PstParser::loadAttachmentContent(uint64_t message_node_id, int attachment_i
         Q_EMIT attachmentContentReady(
             message_node_id, attachment_index, std::move(*result), filename);
     } else {
-        Q_EMIT errorOccurred(QStringLiteral("Failed to load attachment: %1")
-                                 .arg(QString::fromUtf8(sak::to_string(result.error()))));
+        const QString message = QStringLiteral("Failed to load attachment: %1")
+                                    .arg(QString::fromUtf8(sak::to_string(result.error())));
+        // Identity-carrying failure first (so a batch save can correlate it to the exact
+        // request), then the generic errorOccurred so existing error-display paths are
+        // unchanged.
+        Q_EMIT attachmentContentFailed(message_node_id, attachment_index, message);
+        Q_EMIT errorOccurred(message);
     }
 }
 
@@ -1019,11 +1229,12 @@ std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readFolderIte
         return std::unexpected(error_code::invalid_operation);
     }
 
-    // Build the contents table NID from the folder NID
-    // Contents table NID = (folder_nid & 0xFFFFFFE0) | NID_TYPE_CONTENTS_TABLE
-    uint64_t contents_nid = (folder_node_id & ~kNidTypeMask) | sak::email::kNidTypeContentsTable;
+    return readContentsTable(contentsTableNid(folder_node_id), offset, limit);
+}
 
-    return readContentsTable(contents_nid, offset, limit);
+uint64_t PstParser::contentsTableNid(uint64_t folder_node_id) {
+    // Contents table NID = (folder_nid & 0xFFFFFFE0) | NID_TYPE_CONTENTS_TABLE
+    return (folder_node_id & ~kNidTypeMask) | sak::email::kNidTypeContentsTable;
 }
 
 std::expected<sak::PstItemDetail, error_code> PstParser::readItemDetail(uint64_t item_node_id) {
@@ -1041,6 +1252,24 @@ std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readItemPropert
     return readPropertyContext(item_node_id);
 }
 
+namespace {
+
+/// A message's attachment sub-nodes in the order they were added. The map hashes its keys with a
+/// seed chosen per run, so walking it directly listed one message's attachments in a different
+/// order on each start of the app, and numbered them differently too.
+QVector<uint64_t> attachmentNodesInOrder(const QHash<uint64_t, sak::PstNode>& subnodes) {
+    QVector<uint64_t> ids;
+    for (auto it = subnodes.cbegin(); it != subnodes.cend(); ++it) {
+        if ((it.key() & kNidTypeMask) == sak::email::kNidTypeAttachment) {
+            ids.append(it.key());
+        }
+    }
+    std::ranges::sort(ids);
+    return ids;
+}
+
+}  // namespace
+
 std::expected<QByteArray, error_code> PstParser::extractAttachmentFromSubnode(
     const sak::PstNode& subnode) {
     HeapContext ctx;
@@ -1051,10 +1280,15 @@ std::expected<QByteArray, error_code> PstParser::extractAttachmentFromSubnode(
     ctx.heap_data = std::move(*data_result);
 
     if (subnode.subnode_bid != 0) {
+        // Fail closed on a sub-node BTree failure: continuing with an empty subnode map makes
+        // every HNID that points into a sub-node (often the attachment payload itself) resolve to
+        // empty, so a corrupt subnode would otherwise yield truncated/empty attachment bytes
+        // returned as success.
         auto sn = readSubNodeBTree(subnode.subnode_bid);
-        if (sn) {
-            ctx.subnode_map = std::move(*sn);
+        if (!sn) {
+            return std::unexpected(sn.error());
         }
+        ctx.subnode_map = std::move(*sn);
     }
 
     auto bth = collectBthLeafData(ctx, kPcSignature);
@@ -1062,12 +1296,79 @@ std::expected<QByteArray, error_code> PstParser::extractAttachmentFromSubnode(
         return std::unexpected(bth.error());
     }
 
-    auto att_props = parsePropertyRecords(*bth, ctx);
-    auto* data = findPropertyById(att_props, sak::email::kPropIdAttachData);
-    if (data) {
-        return *data;
+    const auto att_props = parsePropertyRecords(*bth, ctx);
+    for (const auto& prop : att_props) {
+        if (prop.tag_id != sak::email::kPropIdAttachData) {
+            continue;
+        }
+        if (prop.tag_type == sak::email::kPropTypeObject) {
+            return extractObjectAttachment(prop, att_props, ctx);
+        }
+        return prop.raw_value;
     }
     return std::unexpected(error_code::pst_attachment_error);
+}
+
+std::expected<QByteArray, error_code> PstParser::extractObjectAttachment(
+    const sak::MapiProperty& data_prop,
+    const QVector<sak::MapiProperty>& att_props,
+    const HeapContext& ctx) {
+    // A PtypObject value is an HNID leading to {dwNid, ulSize}; dwNid names a sub-node of this
+    // attachment holding the object (MS-PST 2.3.3.5). Reading the HNID as if it were the payload
+    // handed back four meaningless bytes under the attachment's name.
+    if (data_prop.raw_value.size() < kPropertyValueRefSize) {
+        return std::unexpected(error_code::pst_attachment_error);
+    }
+    const auto reference = resolveHnid(readLE<uint32_t>(data_prop.raw_value, 0),
+                                       ctx.heap_data,
+                                       ctx.block_offsets,
+                                       ctx.subnode_map);
+    if (!reference || reference->size() < kPropertyValueRefSize) {
+        return std::unexpected(error_code::pst_attachment_error);
+    }
+    const auto object_node = ctx.subnode_map.constFind(readLE<uint32_t>(*reference, 0));
+    if (object_node == ctx.subnode_map.constEnd()) {
+        return std::unexpected(error_code::pst_attachment_error);
+    }
+    const bool is_embedded_message = [&att_props] {
+        for (const auto& prop : att_props) {
+            if (prop.tag_id == sak::email::kPropIdAttachMethod) {
+                return prop.display_value.toInt() == sak::email::kAttachEmbeddedMessage;
+            }
+        }
+        return false;
+    }();
+    if (!is_embedded_message) {
+        // An OLE object: the sub-node's data is the object's own stream.
+        return readDataTree(object_node->data_bid);
+    }
+    return embeddedMessageAsEml(*object_node);
+}
+
+std::expected<QByteArray, error_code> PstParser::embeddedMessageAsEml(const sak::PstNode& node) {
+    // Bounded: a message attached to itself, directly or through a chain, must not recurse until
+    // the stack runs out.
+    if (m_embedded_depth >= kMaxEmbeddedMessageDepth) {
+        return std::unexpected(error_code::pst_attachment_error);
+    }
+    ++m_embedded_depth;
+    const auto depth_guard = qScopeGuard([this] { --m_embedded_depth; });
+
+    auto detail = readMessageForNode(node, node.node_id);
+    if (!detail) {
+        return std::unexpected(detail.error());
+    }
+    QVector<QPair<QString, QByteArray>> attachments;
+    attachments.reserve(detail->attachments.size());
+    for (const auto& att : detail->attachments) {
+        auto data = readAttachmentDataForNode(node, att.index);
+        if (!data) {
+            return std::unexpected(data.error());
+        }
+        const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
+        attachments.append({name, *data});
+    }
+    return sak::EmlWriter::buildEmlContent(*detail, attachments);
 }
 
 std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t message_node_id,
@@ -1083,34 +1384,43 @@ std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t mes
                         m_nbt_cache.size());
         return std::unexpected(error_code::pst_node_not_found);
     }
+    return readAttachmentDataForNode(*msg_it, attachment_index);
+}
 
-    if (msg_it->subnode_bid == 0) {
+std::expected<QByteArray, error_code> PstParser::readAttachmentDataForNode(const sak::PstNode& node,
+                                                                           int attachment_index) {
+    if (node.subnode_bid == 0) {
         return std::unexpected(error_code::pst_attachment_error);
     }
 
-    auto subnodes = readSubNodeBTree(msg_it->subnode_bid);
+    auto subnodes = readSubNodeBTree(node.subnode_bid);
     if (!subnodes) {
         return std::unexpected(subnodes.error());
     }
 
     int found_count = 0;
-    for (auto sub_it = subnodes->begin(); sub_it != subnodes->end(); ++sub_it) {
-        uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & kNidTypeMask);
-        if (sub_type != sak::email::kNidTypeAttachment) {
-            continue;
+    for (const uint64_t attachment_nid : attachmentNodesInOrder(*subnodes)) {
+        const sak::PstNode& attachment_node = (*subnodes)[attachment_nid];
+        // Use the SAME gate as readAttachments, which now FAILS CLOSED on an
+        // unparsable attachment instead of compacting past it. The caller's index was
+        // assigned there under this same gate, so failing here (rather than skipping)
+        // keeps index i mapped to the same sub-node and never returns a different
+        // attachment's bytes.
+        auto probe = readSingleAttachment(attachment_node, found_count);
+        if (!probe) {
+            return std::unexpected(probe.error());
         }
-        if (found_count != attachment_index) {
-            ++found_count;
-            continue;
+        if (found_count == attachment_index) {
+            return extractAttachmentFromSubnode(attachment_node);
         }
-        return extractAttachmentFromSubnode(sub_it.value());
+        ++found_count;
     }
 
     return std::unexpected(error_code::pst_attachment_error);
 }
 
 // ============================================================================
-// NDB Layer — Header Parsing
+// NDB Layer -- Header Parsing
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::readHeaderBytes() {
@@ -1143,7 +1453,11 @@ std::expected<void, error_code> PstParser::parseHeaderPreamble(const QByteArray&
     m_is_unicode = (m_header.data_version >= sak::email::kUnicodeVersion);
     m_is_4k = (m_header.data_version == sak::email::kUnicode4kVersion);
     if (!isKnownDataVersion(m_header.data_version)) {
-        sak::logWarning("PstParser: Unusual version: {}", m_header.data_version);
+        // Fail closed: an unrecognized wVer means the on-disk layout (page/trailer/entry sizes,
+        // BREF widths) is unknown, so continuing would parse every downstream field at guessed
+        // offsets. Reject rather than mine garbage from a mislabeled or crafted file.
+        sak::logError("PstParser: Unsupported data version: {}", m_header.data_version);
+        return std::unexpected(error_code::pst_invalid_header);
     }
 
     m_header.client_version = readLE<uint16_t>(data, kHeaderClientVersionOffset);
@@ -1153,11 +1467,29 @@ std::expected<void, error_code> PstParser::parseHeaderPreamble(const QByteArray&
 }
 
 std::expected<void, error_code> PstParser::parseHeaderEncryption(const QByteArray& data) {
-    m_header.encryption_type = static_cast<uint8_t>(data[kHeaderEncryptionOffset]);
+    // bCryptMethod lives at a different offset per format: 513 (0x201) in the
+    // Unicode header, 461 (0x1CD) in the ANSI header (bSentinel@460 then
+    // bCryptMethod@461; the ANSI header has no dwAlign). Reading the Unicode
+    // offset for an ANSI PST both reads past the header and misdetects the crypt
+    // method, so an encoded ANSI file decodes as garbage.
+    const int encryption_offset = m_is_unicode ? kHeaderEncryptionOffset
+                                               : kHeaderEncryptionOffsetAnsi;
+    if (encryption_offset >= data.size()) {
+        return std::unexpected(error_code::pst_invalid_header);
+    }
+    m_header.encryption_type = static_cast<uint8_t>(data[encryption_offset]);
     m_encryption_type = m_header.encryption_type;
 
     if (m_encryption_type == sak::email::kEncryptHigh) {
         sak::logError("PstParser: High encryption not supported");
+        return std::unexpected(error_code::pst_unsupported_encryption);
+    }
+    // Fail closed on any crypt method we do not recognize. Only None and
+    // Compressible are decoded downstream; an unknown value would otherwise be
+    // silently treated as unencrypted and mine garbage from encoded blocks.
+    if (m_encryption_type != sak::email::kEncryptNone &&
+        m_encryption_type != sak::email::kEncryptCompressible) {
+        sak::logError("PstParser: Unknown encryption method: 0x{:02X}", m_encryption_type);
         return std::unexpected(error_code::pst_unsupported_encryption);
     }
     return {};
@@ -1174,6 +1506,40 @@ void PstParser::parseHeaderRootPointers(const QByteArray& data) {
     m_header.file_size = readLE<uint32_t>(data, kAnsiRootOffset + kRootFileSizeOffset);
     m_header.root_nbt_page = readLE<uint32_t>(data, kAnsiRootOffset + kAnsiRootNbtOffset);
     m_header.root_bbt_page = readLE<uint32_t>(data, kAnsiRootOffset + kAnsiRootBbtOffset);
+}
+
+std::expected<void, error_code> PstParser::verifyHeaderIntegrity(const QByteArray& data) {
+    // dwCRCPartial (offset 4) is present in every MS-PST version and covers 471
+    // bytes from wMagicClient (offset 8).
+    uint32_t partial = 0;
+    if (!msPstWeakCrc(data, kHeaderCrcDataStart, kHeaderCrcPartialLen, partial)) {
+        return std::unexpected(error_code::pst_invalid_header);
+    }
+    if (partial != m_header.crc) {
+        sak::logError(
+            "PstParser: header dwCRCPartial mismatch (computed 0x{:08X}, stored 0x{:08X})",
+            partial,
+            m_header.crc);
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+
+    // dwCRCFull (offset 0x20C) exists only in the Unicode/Unicode4k header and
+    // authenticates the fuller 516-byte prefix (through bidNextB).
+    if (m_is_unicode) {
+        uint32_t full = 0;
+        if (!msPstWeakCrc(data, kHeaderCrcDataStart, kHeaderCrcFullLen, full)) {
+            return std::unexpected(error_code::pst_invalid_header);
+        }
+        const uint32_t stored_full = readLE<uint32_t>(data, kHeaderCrcFullOffset);
+        if (full != stored_full) {
+            sak::logError(
+                "PstParser: header dwCRCFull mismatch (computed 0x{:08X}, stored 0x{:08X})",
+                full,
+                stored_full);
+            return std::unexpected(error_code::pst_integrity_check_failed);
+        }
+    }
+    return {};
 }
 
 void PstParser::logParsedHeader() const {
@@ -1194,15 +1560,24 @@ std::expected<void, error_code> PstParser::parseHeader() {
     }
 
     const auto& data = *header_bytes;
-    // §2.2.2.6 — dwMagic at offset 0
+    // section 2.2.2.6 -- dwMagic at offset 0
     auto preamble_result = parseHeaderPreamble(data);
     if (!preamble_result) {
         return std::unexpected(preamble_result.error());
     }
 
-    // wMagicClient at offset 8 — content type (SM or SO)
-    // wVer at offset 10 — version
-    // bCryptMethod — encryption type
+    // section 2.2.2.6 -- authenticate the header before trusting any field past the
+    // preamble. dwCRCPartial/dwCRCFull cover the version, ROOT BREF pointers, and
+    // crypt method; a mismatch means the bytes we are about to parse as the on-disk
+    // layout are corrupt or forged, so fail closed here.
+    auto integrity_result = verifyHeaderIntegrity(data);
+    if (!integrity_result) {
+        return std::unexpected(integrity_result.error());
+    }
+
+    // wMagicClient at offset 8 -- content type (SM or SO)
+    // wVer at offset 10 -- version
+    // bCryptMethod -- encryption type
     // ANSI: offset 513, Unicode: offset 513
     auto encryption_result = parseHeaderEncryption(data);
     if (!encryption_result) {
@@ -1210,11 +1585,11 @@ std::expected<void, error_code> PstParser::parseHeader() {
     }
 
     // Root structure pointers differ between ANSI and Unicode.
-    // MS-PST §2.2.2.6: header fields before ROOT include rgnid[32]
+    // MS-PST section 2.2.2.6: header fields before ROOT include rgnid[32]
     // (128 bytes) plus bid/unique fields whose sizes depend on format.
     //   Unicode: ROOT at offset 0xB4 (180)
     //   ANSI:    ROOT at offset 0xA4 (164)
-    // ROOT layout (§2.2.2.7.5):
+    // ROOT layout (section 2.2.2.7.5):
     //   +0  dwReserved (4)
     //   +4  ibFileEof  (8 Unicode / 4 ANSI)
     //   +36 BREFNBT    (16 Unicode / 8 ANSI)
@@ -1227,7 +1602,7 @@ std::expected<void, error_code> PstParser::parseHeader() {
 }
 
 // ============================================================================
-// NDB Layer — BTree Page Parsing
+// NDB Layer -- BTree Page Parsing
 // ============================================================================
 
 PstParser::PageFormatSizes PstParser::pageFormatSizes() const {
@@ -1243,8 +1618,8 @@ PstParser::PageFormatSizes PstParser::pageFormatSizes() const {
     return fmt;
 }
 
-std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(uint64_t page_offset,
-                                                                              int depth) {
+std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(
+    uint64_t page_offset, int depth, uint8_t expected_ptype) {
     if (depth > kMaxBTreeDepth) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
@@ -1261,13 +1636,24 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(ui
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
-    int trailer_offset = fmt.page_size - fmt.trailer_size;
-    uint8_t ptype = static_cast<uint8_t>((*page_data)[trailer_offset]);
-    if (ptype != static_cast<uint8_t>((*page_data)[trailer_offset + 1])) {
+    const int trailer_offset = fmt.page_size - fmt.trailer_size;
+    const uint8_t ptype = static_cast<uint8_t>((*page_data)[trailer_offset]);
+    // ptype and its duplicate (ptypeRepeat) must agree, and the page must be exactly the BTree
+    // type the caller expected (ptypeNBT vs ptypeBBT). The all-zeros page that a truncated or
+    // crafted file yields satisfies the duplicate check by coincidence; the expected-type gate
+    // rejects it so a non-BTree region is never walked as one.
+    if (ptype != static_cast<uint8_t>((*page_data)[trailer_offset + 1]) ||
+        ptype != expected_ptype) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
-    int meta_offset = trailer_offset - fmt.meta_pad - fmt.meta_size;
+    // Authenticate the page via its PAGETRAILER before walking it as a BTree.
+    auto trailer_ok = verifyPageTrailer(*page_data, fmt, page_offset);
+    if (!trailer_ok) {
+        return std::unexpected(trailer_ok.error());
+    }
+
+    const int meta_offset = trailer_offset - fmt.meta_pad - fmt.meta_size;
     if (meta_offset < 0) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
@@ -1275,6 +1661,35 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(ui
     BTreePageInfo info;
     info.data = std::move(*page_data);
     info.meta_offset = meta_offset;
+    parsePageMeta(info, meta_offset);
+    return info;
+}
+
+std::expected<void, error_code> PstParser::verifyPageTrailer(const QByteArray& page_data,
+                                                             const PageFormatSizes& fmt,
+                                                             uint64_t page_offset) {
+    // section 2.2.2.7.1: dwCRC over the page body preceding the trailer, and
+    // wSig == ComputeSig(page ib, page bid). A structurally-typed-but-corrupt page
+    // (bit rot, or a crafted page whose ptype matches by luck) fails here.
+    const int trailer_offset = fmt.page_size - fmt.trailer_size;
+    uint32_t page_crc = 0;
+    if (!msPstWeakCrc(page_data, 0, fmt.page_size - fmt.trailer_size, page_crc)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    if (page_crc != readLE<uint32_t>(page_data, trailer_offset + kPageTrailerCrcOffset)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    const uint16_t page_sig = readLE<uint16_t>(page_data, trailer_offset + kPageTrailerSigOffset);
+    const uint64_t page_bid =
+        m_is_unicode ? readLE<uint64_t>(page_data, trailer_offset + kPageTrailerBidOffset)
+                     : readLE<uint32_t>(page_data, trailer_offset + kPageTrailerBidOffset);
+    if (msPstComputeSig(page_offset, page_bid) != page_sig) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    return {};
+}
+
+void PstParser::parsePageMeta(BTreePageInfo& info, int meta_offset) const {
     if (m_is_4k) {
         info.entry_count = readLE<uint16_t>(info.data, meta_offset);
         info.entry_size = static_cast<uint8_t>(info.data[meta_offset + kUnicode4kEntrySizeOffset]);
@@ -1284,26 +1699,40 @@ std::expected<PstParser::BTreePageInfo, error_code> PstParser::parseBTreePage(ui
         info.entry_size = static_cast<uint8_t>(info.data[meta_offset + kLegacyEntrySizeOffset]);
         info.level = static_cast<uint8_t>(info.data[meta_offset + kLegacyLevelOffset]);
     }
-    return info;
 }
 
 // ============================================================================
-// NDB Layer — BTree Loading
+// NDB Layer -- BTree Loading
 // ============================================================================
 
 std::expected<void, error_code> PstParser::loadNodeBTree(uint64_t page_offset, int depth) {
-    auto page = parseBTreePage(page_offset, depth);
+    QSet<uint64_t> visited;
+    return loadNodeBTreeGuarded(page_offset, depth, visited);
+}
+
+std::expected<void, error_code> PstParser::loadNodeBTreeGuarded(uint64_t page_offset,
+                                                                int depth,
+                                                                QSet<uint64_t>& visited) {
+    // Expand each page offset at most once per traversal: a valid NBT visits every page once,
+    // so a repeat is a cycle or a fan-out bomb (an internal page listing the same child many
+    // times). Fail closed on both before doing any further work.
+    if (visited.contains(page_offset)) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+    visited.insert(page_offset);
+
+    auto page = parseBTreePage(page_offset, depth, kPageTypeNbt);
     if (!page) {
         return std::unexpected(page.error());
     }
 
     const auto& data = page->data;
-    int entry_size = page->entry_size;
-    int meta_offset = page->meta_offset;
+    const int entry_size = page->entry_size;
+    const int meta_offset = page->meta_offset;
 
     if (page->level == 0) {
         for (int idx = 0; idx < page->entry_count; ++idx) {
-            int off = idx * entry_size;
+            const int off = idx * entry_size;
             if (off + entry_size > meta_offset) {
                 break;
             }
@@ -1313,15 +1742,15 @@ std::expected<void, error_code> PstParser::loadNodeBTree(uint64_t page_offset, i
         }
     } else {
         for (int idx = 0; idx < page->entry_count; ++idx) {
-            int off = idx * entry_size;
+            const int off = idx * entry_size;
             if (off + entry_size > meta_offset) {
                 break;
             }
 
-            uint64_t child_page = m_is_unicode
-                                      ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
-                                      : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
-            auto child_result = loadNodeBTree(child_page, depth + 1);
+            const uint64_t child_page =
+                m_is_unicode ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
+                             : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
+            auto child_result = loadNodeBTreeGuarded(child_page, depth + 1, visited);
             if (!child_result) {
                 return child_result;
             }
@@ -1331,36 +1760,51 @@ std::expected<void, error_code> PstParser::loadNodeBTree(uint64_t page_offset, i
 }
 
 std::expected<void, error_code> PstParser::loadBlockBTree(uint64_t page_offset, int depth) {
-    auto page = parseBTreePage(page_offset, depth);
+    QSet<uint64_t> visited;
+    return loadBlockBTreeGuarded(page_offset, depth, visited);
+}
+
+std::expected<void, error_code> PstParser::loadBlockBTreeGuarded(uint64_t page_offset,
+                                                                 int depth,
+                                                                 QSet<uint64_t>& visited) {
+    // See loadNodeBTreeGuarded: reject a revisited page offset so a crafted BBT cannot cycle
+    // or fan out without bound.
+    if (visited.contains(page_offset)) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+    visited.insert(page_offset);
+
+    auto page = parseBTreePage(page_offset, depth, kPageTypeBbt);
     if (!page) {
         return std::unexpected(page.error());
     }
 
     const auto& data = page->data;
-    int entry_size = page->entry_size;
-    int meta_offset = page->meta_offset;
+    const int entry_size = page->entry_size;
+    const int meta_offset = page->meta_offset;
 
     if (page->level == 0) {
         for (int idx = 0; idx < page->entry_count; ++idx) {
-            int off = idx * entry_size;
+            const int off = idx * entry_size;
             if (off + entry_size > meta_offset) {
                 break;
             }
 
             auto entry = readBlockLeafEntry(data, off, m_is_unicode);
-            m_bbt_cache.insert(entry.bid, BbtEntry{entry.file_offset, entry.cb});
+            m_bbt_cache.insert(entry.bid & ~kBidReservedBit,
+                               BbtEntry{.file_offset = entry.file_offset, .cb = entry.cb});
         }
     } else {
         for (int idx = 0; idx < page->entry_count; ++idx) {
-            int off = idx * entry_size;
+            const int off = idx * entry_size;
             if (off + entry_size > meta_offset) {
                 break;
             }
 
-            uint64_t child_page = m_is_unicode
-                                      ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
-                                      : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
-            auto child_result = loadBlockBTree(child_page, depth + 1);
+            const uint64_t child_page =
+                m_is_unicode ? readLE<uint64_t>(data, off + kBTreeChildPageOffsetUnicode)
+                             : readLE<uint32_t>(data, off + kBTreeChildPageOffsetAnsi);
+            auto child_result = loadBlockBTreeGuarded(child_page, depth + 1, visited);
             if (!child_result) {
                 return child_result;
             }
@@ -1370,60 +1814,110 @@ std::expected<void, error_code> PstParser::loadBlockBTree(uint64_t page_offset, 
 }
 
 // ============================================================================
-// NDB Layer — Block Reading
+// NDB Layer -- Block Reading
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
-    // §2.2.2.2 — The BBT stores BIDs with the fInternal bit (bit 1)
-    // intact, so look up the BID as-is.
-    auto it = m_bbt_cache.find(bid);
+    // section 2.2.2.2 -- The BBT stores BIDs with the fInternal bit (bit 1) intact, so that bit
+    // stays in the key. Bit 0 is the reserved "A" bit: readers must ignore it and treat it as zero
+    // before looking the BID up. Outlook does leave it set on some references in real stores, and
+    // an exact-match lookup turned each of those into "Block not found", hiding the whole folder
+    // or message behind it.
+    const uint64_t lookup_bid = bid & ~kBidReservedBit;
+    auto it = m_bbt_cache.find(lookup_bid);
     if (it == m_bbt_cache.end()) {
         return std::unexpected(error_code::pst_block_not_found);
     }
 
     const auto& entry = it.value();
-    uint64_t file_offset = entry.file_offset;
-    int cb = static_cast<int>(entry.cb);
+    const uint64_t file_offset = entry.file_offset;
+    const int cb = static_cast<int>(entry.cb);
 
     if (cb == 0) {
         return QByteArray{};
     }
 
-    // Read exactly cb bytes of block data (§2.2.2.8 — data precedes trailer)
+    // Read exactly cb bytes of block data (section 2.2.2.8 -- data precedes trailer).
+    // readBytes returns whatever the file has, so a truncated file yields a short buffer;
+    // downstream fixed-offset reads treat the block as cb bytes, so require the full length
+    // and fail closed on a short read rather than parsing past the end.
     auto block_data = readBytes(static_cast<qint64>(file_offset), cb);
     if (!block_data) {
         return std::unexpected(block_data.error());
     }
-
-    auto& raw = *block_data;
-
-    // Unicode4K files (wVer >= 36) may have zlib-compressed blocks.
-    // The block footer contains an uncompressed_data_size field;
-    // when it differs from cb the block must be deflate-decompressed.
-    // Reference: libpff pff_block_footer_64bit_4k_page_t
-    if (m_is_4k && cb > 0) {
-        raw = decompressBlockIf4k(raw, file_offset, cb);
+    if (block_data->size() != cb) {
+        return std::unexpected(error_code::read_error);
     }
 
-    if (m_encryption_type == sak::email::kEncryptCompressible) {
-        bool is_internal = (bid & kBidInternalFlag) != 0;
-        if (!is_internal) {
-            auto span = std::span<uint8_t>(reinterpret_cast<uint8_t*>(raw.data()),
-                                           static_cast<size_t>(raw.size()));
-            decryptBlock(span);
+    return postProcessBlock(std::move(*block_data), file_offset, cb, lookup_bid);
+}
+
+std::expected<QByteArray, error_code> PstParser::postProcessBlock(QByteArray raw,
+                                                                  uint64_t file_offset,
+                                                                  int cb,
+                                                                  uint64_t bid) {
+    // Authenticate the block via its on-disk trailer (section 2.2.2.8.1) BEFORE any
+    // decompression or decryption -- the dwCRC is authored over the raw cb bytes
+    // exactly as stored. A corrupt or forged block fails closed here.
+    auto trailer_result = verifyBlockTrailer(raw, file_offset, cb, bid);
+    if (!trailer_result) {
+        return std::unexpected(trailer_result.error());
+    }
+
+    // Unicode4K files (wVer >= 36) may have zlib-compressed blocks. The block footer
+    // carries an uncompressed_data_size; when it differs from cb the block is
+    // deflate-compressed. Reference: libpff pff_block_footer_64bit_4k_page_t.
+    if (m_is_4k && cb > 0) {
+        auto decompressed = decompressBlockIf4k(raw, file_offset, cb);
+        if (!decompressed) {
+            return std::unexpected(decompressed.error());
         }
+        raw = std::move(*decompressed);
+    }
+
+    // Compressible encryption applies only to external (non-internal) blocks.
+    if (m_encryption_type == sak::email::kEncryptCompressible && (bid & kBidInternalFlag) == 0) {
+        auto span = std::span<uint8_t>(reinterpret_cast<uint8_t*>(raw.data()),
+                                       static_cast<size_t>(raw.size()));
+        decryptBlock(span);
     }
 
     return raw;
 }
 
 std::expected<QByteArray, error_code> PstParser::readDataTree(uint64_t bid,
-                                                              QVector<int>* block_offsets) {
-    bool is_internal = (bid & kBidInternalFlag) != 0;
+                                                              QVector<int>* block_offsets,
+                                                              int depth) {
+    QSet<uint64_t> visited;
+    return readDataTreeGuarded(bid,
+                               block_offsets,
+                               DataTreeGuard{.depth = depth, .visited = visited});
+}
+
+std::expected<QByteArray, error_code> PstParser::readDataTreeGuarded(uint64_t bid,
+                                                                     QVector<int>* block_offsets,
+                                                                     DataTreeGuard guard) {
+    // Bound recursion: a crafted PST can build a self-referential or cyclic chain
+    // of internal (XBLOCK/XXBLOCK) blocks that would otherwise recurse until the
+    // native stack overflows.
+    if (guard.depth > kMaxBTreeDepth) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+
+    // Expand each BID at most once per traversal. A valid data tree references
+    // every block exactly once, so a repeated BID is either a cycle or a
+    // fan-out bomb (a block that lists the same child thousands of times, which
+    // without this guard expands as entry_count^depth). Fail closed on both.
+    if (guard.visited.contains(bid)) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+    guard.visited.insert(bid);
+
+    const bool is_internal = (bid & kBidInternalFlag) != 0;
     if (!is_internal) {
         auto result = readBlock(bid);
-        if (result && block_offsets) {
-            block_offsets->append(result->size());
+        if (result && (block_offsets != nullptr)) {
+            block_offsets->append(static_cast<int>(result->size()));
         }
         return result;
     }
@@ -1438,17 +1932,36 @@ std::expected<QByteArray, error_code> PstParser::readDataTree(uint64_t bid,
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
-    uint8_t block_level = static_cast<uint8_t>(data[1]);
-    uint16_t entry_count = readLE<uint16_t>(data, kBlockTreeEntryCountOffset);
-    QByteArray result;
+    const uint8_t block_level = static_cast<uint8_t>(data[1]);
+    const uint16_t entry_count = readLE<uint16_t>(data, kBlockTreeEntryCountOffset);
 
+    // The in-block entry count is independent of the block's byte length (which
+    // comes from the BBT), so a small block can claim a large count. Reject any
+    // count whose entries would run past the block before reading child bids.
+    const int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
+    if (static_cast<int64_t>(kBlockTreeHeaderSize) +
+            (static_cast<int64_t>(entry_count) * bid_size) >
+        data.size()) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+
+    return readInternalDataBlock(data, block_level, entry_count, block_offsets, guard);
+}
+
+std::expected<QByteArray, error_code> PstParser::readInternalDataBlock(const QByteArray& data,
+                                                                       uint8_t block_level,
+                                                                       uint16_t entry_count,
+                                                                       QVector<int>* block_offsets,
+                                                                       DataTreeGuard guard) {
+    const DataTreeGuard child_guard{.depth = guard.depth + 1, .visited = guard.visited};
+    QByteArray result;
     if (block_level == kDataTreeXBlockLevel) {
-        auto status = readXblockChildren(data, entry_count, result, block_offsets);
+        auto status = readXblockChildren(data, entry_count, result, block_offsets, child_guard);
         if (!status) {
             return std::unexpected(status.error());
         }
     } else if (block_level == kDataTreeXxBlockLevel) {
-        auto status = readXxblockChildren(data, entry_count, result, block_offsets);
+        auto status = readXxblockChildren(data, entry_count, result, block_offsets, child_guard);
         if (!status) {
             return std::unexpected(status.error());
         }
@@ -1461,24 +1974,34 @@ std::expected<QByteArray, error_code> PstParser::readDataTree(uint64_t bid,
 std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& data,
                                                               uint16_t entry_count,
                                                               QByteArray& result,
-                                                              QVector<int>* block_offsets) {
-    int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
+                                                              QVector<int>* block_offsets,
+                                                              DataTreeGuard guard) {
+    const int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
     for (int idx = 0; idx < entry_count; ++idx) {
-        int offset = kBlockTreeHeaderSize + (idx * bid_size);
-        uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
-                                          : readLE<uint32_t>(data, offset);
-        // Recurse through readDataTree so nested internal (XBLOCK/XXBLOCK) children
-        // are properly expanded. Required because some PST/OST files build non-spec
-        // nesting where an XBLOCK entry itself carries the internal bid flag (0x02).
-        int base_offset = result.size();
+        const int offset = kBlockTreeHeaderSize + (idx * bid_size);
+        const uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
+                                                : readLE<uint32_t>(data, offset);
+        // Recurse through readDataTreeGuarded so nested internal (XBLOCK/XXBLOCK)
+        // children are properly expanded (some PST/OST files build non-spec nesting
+        // where an XBLOCK entry itself carries the internal bid flag 0x02) while the
+        // shared visited set bounds total work.
+        const int base_offset = static_cast<int>(result.size());
         QVector<int> child_offsets;
-        auto child_data = readDataTree(child_bid, block_offsets ? &child_offsets : nullptr);
+        auto child_data = readDataTreeGuarded(child_bid,
+                                              (block_offsets != nullptr) ? &child_offsets : nullptr,
+                                              guard);
         if (!child_data) {
             return std::unexpected(child_data.error());
         }
+        // Cap the assembled size BEFORE appending so a near-limit result plus a near-limit child
+        // cannot momentarily allocate ~2x the ceiling; fail closed once the sum would exceed it.
+        // This also keeps the cumulative int offsets below from overflowing.
+        if (static_cast<int64_t>(result.size()) + child_data->size() > kMaxAssembledDataTreeSize) {
+            return std::unexpected(error_code::pst_corrupted_btree);
+        }
         result.append(*child_data);
-        if (block_offsets) {
-            for (int child_off : child_offsets) {
+        if (block_offsets != nullptr) {
+            for (const int child_off : child_offsets) {
                 block_offsets->append(base_offset + child_off);
             }
         }
@@ -1489,21 +2012,28 @@ std::expected<void, error_code> PstParser::readXblockChildren(const QByteArray& 
 std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray& data,
                                                                uint16_t entry_count,
                                                                QByteArray& result,
-                                                               QVector<int>* block_offsets) {
-    int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
+                                                               QVector<int>* block_offsets,
+                                                               DataTreeGuard guard) {
+    const int bid_size = m_is_unicode ? kDataTreeBidSizeUnicode : kDataTreeBidSizeAnsi;
     for (int idx = 0; idx < entry_count; ++idx) {
-        int offset = kBlockTreeHeaderSize + (idx * bid_size);
-        uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
-                                          : readLE<uint32_t>(data, offset);
-        int base_offset = result.size();
+        const int offset = kBlockTreeHeaderSize + (idx * bid_size);
+        const uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset)
+                                                : readLE<uint32_t>(data, offset);
+        const int base_offset = static_cast<int>(result.size());
         QVector<int> child_offsets;
-        auto child_data = readDataTree(child_bid, &child_offsets);
+        auto child_data = readDataTreeGuarded(child_bid, &child_offsets, guard);
         if (!child_data) {
             return std::unexpected(child_data.error());
         }
+        // Cap the assembled size BEFORE appending (see readXblockChildren): a near-limit result
+        // plus a near-limit child must not momentarily allocate ~2x the ceiling. Fail closed once
+        // the sum would exceed it; this also keeps the cumulative int offsets below safe.
+        if (static_cast<int64_t>(result.size()) + child_data->size() > kMaxAssembledDataTreeSize) {
+            return std::unexpected(error_code::pst_corrupted_btree);
+        }
         result.append(*child_data);
-        if (block_offsets) {
-            for (int child_off : child_offsets) {
+        if (block_offsets != nullptr) {
+            for (const int child_off : child_offsets) {
                 block_offsets->append(base_offset + child_off);
             }
         }
@@ -1512,10 +2042,76 @@ std::expected<void, error_code> PstParser::readXxblockChildren(const QByteArray&
 }
 
 // ============================================================================
-// NDB Layer — Block Decompression (Unicode4K / wVer ≥ 36)
+// NDB Layer -- Block Decompression (Unicode4K / wVer >= 36)
 // ============================================================================
 
-QByteArray PstParser::decompressBlockIf4k(const QByteArray& raw, uint64_t file_offset, int cb) {
+std::expected<QByteArray, error_code> PstParser::readBlockTrailer(uint64_t file_offset, int cb) {
+    using namespace sak::email;  // kBlock4kAlignment / kBlock4kFooterSize
+    // Locate the on-disk trailer. The two format families pad differently:
+    //   * non-4k: data+trailer rounds up to a 64-byte boundary (BLOCKTRAILER at end).
+    //   * 4k:     cb rounds up to 512, then a 512 pad is added if the 24-byte footer
+    //             would not otherwise fit -- the same rule decompressBlockIf4k uses.
+    const int trailer_size = m_is_4k        ? kBlock4kFooterSize
+                             : m_is_unicode ? kBlockTrailerSizeUnicode
+                                            : kBlockTrailerSizeAnsi;
+    int64_t trailer_pos = 0;
+    if (m_is_4k) {
+        int aligned = ((cb + kBlock4kAlignment - 1) / kBlock4kAlignment) * kBlock4kAlignment;
+        if ((aligned - cb) < kBlock4kFooterSize) {
+            aligned += kBlock4kAlignment;
+        }
+        trailer_pos = static_cast<int64_t>(file_offset) + aligned - kBlock4kFooterSize;
+    } else {
+        const int64_t disk =
+            ((static_cast<int64_t>(cb) + trailer_size + kBlockAlignment - 1) / kBlockAlignment) *
+            kBlockAlignment;
+        trailer_pos = static_cast<int64_t>(file_offset) + disk - trailer_size;
+    }
+
+    auto trailer = readBytes(trailer_pos, trailer_size);
+    if (!trailer || trailer->size() != trailer_size) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    return std::move(*trailer);
+}
+
+std::expected<void, error_code> PstParser::verifyBlockTrailer(const QByteArray& raw,
+                                                              uint64_t file_offset,
+                                                              int cb,
+                                                              uint64_t bid) {
+    auto trailer = readBlockTrailer(file_offset, cb);
+    if (!trailer) {
+        return std::unexpected(trailer.error());
+    }
+    // Declared size must repeat the BBT's cb.
+    if (readLE<uint16_t>(*trailer, kBlockTrailerCbOffset) != static_cast<uint16_t>(cb)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    // dwCRC over the raw cb bytes.
+    uint32_t block_crc = 0;
+    if (!msPstWeakCrc(raw, 0, cb, block_crc)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    if (block_crc != readLE<uint32_t>(*trailer, kBlockTrailerCrcOffset)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    // wSig authenticates offset+bid, computed over the bid as the trailer records it; that bid must
+    // name the block the BBT says lives here, once the reserved bit readers ignore is cleared.
+    const uint64_t trailer_bid = m_is_unicode ? readLE<uint64_t>(*trailer, kBlockTrailerBidOffset)
+                                              : readLE<uint32_t>(*trailer, kBlockTrailerBidOffset);
+    if (msPstComputeSig(file_offset, trailer_bid) !=
+        readLE<uint16_t>(*trailer, kBlockTrailerSigOffset)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    if ((trailer_bid & ~kBidReservedBit) != bid) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    return {};
+}
+
+std::expected<QByteArray, error_code> PstParser::decompressBlockIf4k(const QByteArray& raw,
+                                                                     uint64_t file_offset,
+                                                                     int cb) {
     using namespace sak::email;
 
     // Calculate aligned block size (512-byte increments for 4K pages)
@@ -1524,20 +2120,22 @@ QByteArray PstParser::decompressBlockIf4k(const QByteArray& raw, uint64_t file_o
         aligned += kBlock4kAlignment;
     }
 
-    // Read the 24-byte block footer from the end of the aligned allocation
-    qint64 footer_pos = static_cast<qint64>(file_offset) + aligned - kBlock4kFooterSize;
+    // Read the 24-byte block footer from the end of the aligned allocation. A truncated or
+    // corrupt allocation that cannot yield the full footer is unreadable; fail closed rather
+    // than returning the still-compressed bytes as if they were the block payload.
+    const qint64 footer_pos = static_cast<qint64>(file_offset) + aligned - kBlock4kFooterSize;
     auto footer_result = readBytes(footer_pos, kBlock4kFooterSize);
     if (!footer_result || footer_result->size() != kBlock4kFooterSize) {
-        return raw;
+        return std::unexpected(error_code::read_error);
     }
 
-    uint16_t uncompressed_size = readLE<uint16_t>(*footer_result, kBlock4kUncompSizeOffset);
+    const uint16_t uncompressed_size = readLE<uint16_t>(*footer_result, kBlock4kUncompSizeOffset);
 
     if (uncompressed_size == 0 || uncompressed_size == static_cast<uint16_t>(cb)) {
         return raw;
     }
 
-    // Block is zlib-compressed — decompress using qUncompress.
+    // Block is zlib-compressed -- decompress using qUncompress.
     // qUncompress expects a 4-byte big-endian size prefix before the
     // raw zlib stream.
     QByteArray prefixed;
@@ -1548,8 +2146,22 @@ QByteArray PstParser::decompressBlockIf4k(const QByteArray& raw, uint64_t file_o
 
     QByteArray decompressed = qUncompress(prefixed);
     if (decompressed.isEmpty()) {
-        sak::logWarning("Block decompression failed at offset {}", std::to_string(file_offset));
-        return raw;
+        // The footer said this block is compressed; a decompress failure means the block is
+        // corrupt. Fail closed -- returning the compressed bytes would feed garbage upstream.
+        sak::logError("Block decompression failed at offset {}", std::to_string(file_offset));
+        return std::unexpected(error_code::pst_decompression_failed);
+    }
+
+    // The footer's uncompressed_size is the block's declared inflated length; qUncompress trusts
+    // the BE size prefix only for its allocation hint, so a stream that inflates to a different
+    // length is a corrupt (or crafted) block. Enforce the exact-size invariant fail-closed rather
+    // than handing a short/long buffer to the size-sensitive readers downstream.
+    if (decompressed.size() != uncompressed_size) {
+        sak::logError("Block decompressed size {} != declared {} at offset {}",
+                      std::to_string(decompressed.size()),
+                      std::to_string(uncompressed_size),
+                      std::to_string(file_offset));
+        return std::unexpected(error_code::pst_decompression_failed);
     }
 
     return decompressed;
@@ -1562,7 +2174,7 @@ void PstParser::decryptBlock(std::span<uint8_t> data) const {
 }
 
 // ============================================================================
-// LTP Layer — BTH Multi-Level Traversal
+// LTP Layer -- BTH Multi-Level Traversal
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::readBthLeafData(
@@ -1571,7 +2183,27 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafData(
     uint8_t key_size,
     int level,
     const QVector<int>& block_offsets) {
-    auto node_data = readHeapOnNode(heap_data, node_hid, block_offsets);
+    QSet<uint32_t> visited_hids;
+    return readBthLeafDataGuarded(node_hid,
+                                  level,
+                                  BthWalk{.heap_data = heap_data,
+                                          .key_size = key_size,
+                                          .block_offsets = block_offsets,
+                                          .visited_hids = visited_hids});
+}
+
+std::expected<QByteArray, error_code> PstParser::readBthLeafDataGuarded(uint32_t node_hid,
+                                                                        int level,
+                                                                        BthWalk walk) {
+    // Reject a heap HID revisited on this traversal: a valid BTH references each HID exactly once,
+    // so a repeat is a cycle or a fan-out bomb (a node listing the same child HID repeatedly, which
+    // without this guard expands as entry_count^idx_levels). Stop the branch on both.
+    if (walk.visited_hids.contains(node_hid)) {
+        return QByteArray{};
+    }
+    walk.visited_hids.insert(node_hid);
+
+    auto node_data = readHeapOnNode(walk.heap_data, node_hid, walk.block_offsets);
     if (!node_data) {
         return std::unexpected(node_data.error());
     }
@@ -1580,26 +2212,35 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafData(
         return *node_data;
     }
 
-    int entry_size = key_size + kBthChildHidSize;
-    if (entry_size == 0) {
-        return QByteArray{};
-    }
+    // walk.key_size is uint8_t, so it promotes to a non-negative int and entry_size is never zero
+    // or negative: the division below needs no runtime divisor guard. (The key_size + data_size
+    // record sizes elsewhere in this file do need one -- both halves can be zero.)
+    static_assert(kBthChildHidSize > 0, "entry_size must stay a positive divisor");
+    const int entry_size = walk.key_size + kBthChildHidSize;
 
-    int entry_count = node_data->size() / entry_size;
+    const int entry_count = static_cast<int>(node_data->size() / entry_size);
     QByteArray combined;
 
     for (int idx = 0; idx < entry_count; ++idx) {
-        int offset = idx * entry_size;
+        const int offset = idx * entry_size;
         if (offset + entry_size > node_data->size()) {
             break;
         }
-        uint32_t child_hid = readLE<uint32_t>(*node_data, offset + key_size);
+        const uint32_t child_hid = readLE<uint32_t>(*node_data, offset + walk.key_size);
         if (child_hid == 0) {
             continue;
         }
-        auto child_result =
-            readBthLeafData(heap_data, child_hid, key_size, level - 1, block_offsets);
+        auto child_result = readBthLeafDataGuarded(child_hid, level - 1, walk);
         if (child_result) {
+            // Cap the assembled leaf the same way readDataTree caps its data tree (line ~1821):
+            // an attacker-crafted heap with many distinct leaf HIDs could otherwise grow
+            // `combined` past INT_MAX, and the record counts derived from combined.size() (all
+            // int) would truncate. Fail closed once the sum would exceed the ceiling, which also
+            // keeps those downstream int record counts/offsets in range.
+            if (static_cast<int64_t>(combined.size()) + child_result->size() >
+                kMaxAssembledDataTreeSize) {
+                return std::unexpected(error_code::pst_corrupted_btree);
+            }
             combined.append(*child_result);
         }
     }
@@ -1608,7 +2249,7 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafData(
 }
 
 // ============================================================================
-// LTP Layer — BTH Collection & Property Parsing
+// LTP Layer -- BTH Collection & Property Parsing
 // ============================================================================
 
 std::expected<PstParser::BthLeafResult, error_code> PstParser::collectBthLeafData(
@@ -1623,7 +2264,7 @@ std::expected<PstParser::BthLeafResult, error_code> PstParser::collectBthLeafDat
         return std::unexpected(error_code::pst_property_context_error);
     }
 
-    uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, kHnRootHidOffset);
+    const uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, kHnRootHidOffset);
     auto bth_header = readHeapOnNode(ctx.heap_data, hid_root, ctx.block_offsets);
     if (!bth_header) {
         return std::unexpected(bth_header.error());
@@ -1635,10 +2276,10 @@ std::expected<PstParser::BthLeafResult, error_code> PstParser::collectBthLeafDat
         return std::unexpected(error_code::pst_property_context_error);
     }
 
-    uint8_t key_size = static_cast<uint8_t>((*bth_header)[kBthKeySizeOffset]);
-    uint8_t data_size = static_cast<uint8_t>((*bth_header)[kBthDataSizeOffset]);
-    uint8_t idx_levels = static_cast<uint8_t>((*bth_header)[kBthIndexLevelsOffset]);
-    uint32_t bth_root_hid = readLE<uint32_t>(*bth_header, kBthRootHidOffset);
+    const uint8_t key_size = static_cast<uint8_t>((*bth_header)[kBthKeySizeOffset]);
+    const uint8_t data_size = static_cast<uint8_t>((*bth_header)[kBthDataSizeOffset]);
+    const uint8_t idx_levels = static_cast<uint8_t>((*bth_header)[kBthIndexLevelsOffset]);
+    const uint32_t bth_root_hid = readLE<uint32_t>(*bth_header, kBthRootHidOffset);
     if (bth_root_hid == 0) {
         return BthLeafResult{};
     }
@@ -1650,22 +2291,24 @@ std::expected<PstParser::BthLeafResult, error_code> PstParser::collectBthLeafDat
     if (!leaf_result) {
         return std::unexpected(leaf_result.error());
     }
-    return BthLeafResult{std::move(*leaf_result), key_size, data_size};
+    return BthLeafResult{.leaf_data = std::move(*leaf_result),
+                         .key_size = key_size,
+                         .data_size = data_size};
 }
 
 QVector<sak::MapiProperty> PstParser::parsePropertyRecords(const BthLeafResult& bth,
                                                            const HeapContext& ctx) {
-    int record_size = bth.key_size + bth.data_size;
+    const int record_size = bth.key_size + bth.data_size;
     if (record_size == 0) {
         return {};
     }
 
-    int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = static_cast<int>(bth.leaf_data.size() / record_size);
     QVector<sak::MapiProperty> properties;
     properties.reserve(record_count);
 
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
-        int rec_off = rec_idx * record_size;
+        const int rec_off = rec_idx * record_size;
         if (rec_off + record_size > bth.leaf_data.size()) {
             break;
         }
@@ -1698,7 +2341,7 @@ QVector<sak::MapiProperty> PstParser::parsePropertyRecords(const BthLeafResult& 
 }
 
 // ============================================================================
-// LTP Layer — Property Context
+// LTP Layer -- Property Context
 // ============================================================================
 
 std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readPropertyContext(uint64_t nid) {
@@ -1710,7 +2353,11 @@ std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readPropertyCon
         return std::unexpected(error_code::pst_node_not_found);
     }
 
-    const auto& node = node_it.value();
+    return readPropertyContextForNode(node_it.value());
+}
+
+std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readPropertyContextForNode(
+    const sak::PstNode& node) {
     if (node.data_bid == 0) {
         return QVector<sak::MapiProperty>{};
     }
@@ -1723,10 +2370,14 @@ std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readPropertyCon
     ctx.heap_data = std::move(*data_result);
 
     if (node.subnode_bid != 0) {
+        // Fail closed on a sub-node BTree failure: silently continuing leaves subnode_map empty,
+        // so every HNID that points into a sub-node resolves to an empty value and the property
+        // context is returned as if those (often the body/large properties) were simply absent.
         auto sn_result = readSubNodeBTree(node.subnode_bid);
-        if (sn_result) {
-            ctx.subnode_map = std::move(*sn_result);
+        if (!sn_result) {
+            return std::unexpected(sn_result.error());
         }
+        ctx.subnode_map = std::move(*sn_result);
     }
 
     auto bth = collectBthLeafData(ctx, kPcSignature);
@@ -1740,7 +2391,7 @@ std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readPropertyCon
 }
 
 // ============================================================================
-// LTP Layer — Table Context
+// LTP Layer -- Table Context
 // ============================================================================
 
 std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTableContext(
@@ -1749,8 +2400,11 @@ std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTa
     if (node_it == m_nbt_cache.end()) {
         return std::unexpected(error_code::pst_node_not_found);
     }
+    return readTableContextForNode(node_it.value());
+}
 
-    const auto& node = node_it.value();
+std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTableContextForNode(
+    const sak::PstNode& node) {
     if (node.data_bid == 0) {
         return QVector<QVector<sak::MapiProperty>>{};
     }
@@ -1767,7 +2421,7 @@ std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTa
         return std::unexpected(valid.error());
     }
 
-    uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, kHnRootHidOffset);
+    const uint32_t hid_root = readLE<uint32_t>(ctx.heap_data, kHnRootHidOffset);
     auto tc_raw = readHeapOnNode(ctx.heap_data, hid_root, ctx.block_offsets);
     if (!tc_raw) {
         return std::unexpected(tc_raw.error());
@@ -1781,7 +2435,7 @@ std::expected<QVector<QVector<sak::MapiProperty>>, error_code> PstParser::readTa
         return QVector<QVector<sak::MapiProperty>>{};
     }
 
-    TcRowMatrix matrix = loadTcRowData(*tc, node, ctx);
+    const TcRowMatrix matrix = loadTcRowData(*tc, node, ctx);
     if (matrix.data.isEmpty()) {
         return QVector<QVector<sak::MapiProperty>>{};
     }
@@ -1821,11 +2475,11 @@ PstParser::TcRowMatrix PstParser::loadTcRowData(const TcInfo& tc,
         auto heap_r = readHeapOnNode(ctx.heap_data, tc.hnid_rows, ctx.block_offsets);
         if (heap_r) {
             matrix.data = std::move(*heap_r);
-            matrix.block_ends.append(matrix.data.size());
+            matrix.block_ends.append(static_cast<int>(matrix.data.size()));
         }
     } else {
         // Subnode-stored: row matrix spans multiple data blocks with per-
-        // block tail padding (MS-PST §2.3.4.4.1).  Capture block boundaries.
+        // block tail padding (MS-PST section 2.3.4.4.1).  Capture block boundaries.
         auto sub = ctx.subnode_map.find(tc.hnid_rows);
         if (sub != ctx.subnode_map.end()) {
             auto sub_data = readDataTree(sub->data_bid, &matrix.block_ends);
@@ -1846,29 +2500,38 @@ QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const TcRowMatrix& ma
         return {};
     }
 
-    // Per MS-PST §2.3.4.4.1, when the row matrix is stored as a sub-node,
+    // Per MS-PST section 2.3.4.4.1, when the row matrix is stored as a sub-node,
     // each data block contains floor(block_bytes / row_size) rows followed
     // by padding.  dwRowIndex from TCROWID is a *logical* row number across
     // all blocks, so we must convert it to (block_i, row_in_block) and skip
     // the padding of prior blocks.
-    const int block_count = matrix.block_ends.size();
+    const int block_count = static_cast<int>(matrix.block_ends.size());
     const int first_block_bytes = matrix.block_ends.first();
     const int rows_per_block = (block_count > 1) ? (first_block_bytes / row_size)
-                                                 : (matrix.data.size() / row_size);
+                                                 : static_cast<int>(matrix.data.size() / row_size);
 
-    // MS-PST §2.3.4.3.1 — TCROWID BTH is the authoritative list of live rows.
+    // MS-PST section 2.3.4.3.1 -- TCROWID BTH is the authoritative list of live rows.
     // The row matrix often contains stale/deleted/padding slots that are NOT
     // valid rows; iterating the matrix directly yields garbled subjects and
     // inflated counts.  Walk the row-index BTH and materialize only the rows
     // it references (in their natural order).
     QVector<uint32_t> live_row_indices = collectTcLiveRowIndices(tc, ctx);
     if (live_row_indices.isEmpty()) {
-        live_row_indices = fallbackTcRowIndices(block_count, rows_per_block);
+        // A present-but-unreadable TCROWID BTH (hid_row_index != 0 yet no live rows
+        // parsed) is corruption, not a genuinely index-less table: fail closed to no
+        // rows rather than enumerating every physical matrix slot, which would surface
+        // stale/deleted/padding slots as if they were live rows. Fall back to contiguous
+        // enumeration only when the table truly carries no row-index BTH.
+        if (tc.hid_row_index != 0) {
+            return {};
+        }
+        live_row_indices =
+            fallbackTcRowIndices(block_count, rows_per_block, matrix.data.size() / row_size);
     }
 
     QVector<QVector<sak::MapiProperty>> rows;
     rows.reserve(live_row_indices.size());
-    for (uint32_t row_index : live_row_indices) {
+    for (const uint32_t row_index : live_row_indices) {
         const int row_off = tcRowOffset(matrix, row_index, row_size, rows_per_block, block_count);
         if (row_off < 0) {
             continue;
@@ -1878,12 +2541,28 @@ QVector<QVector<sak::MapiProperty>> PstParser::buildTcRows(const TcRowMatrix& ma
     return rows;
 }
 
-QVector<uint32_t> PstParser::fallbackTcRowIndices(int block_count, int rows_per_block) {
+QVector<uint32_t> PstParser::fallbackTcRowIndices(int block_count,
+                                                  int rows_per_block,
+                                                  qsizetype max_valid_rows) {
     QVector<uint32_t> indices;
-    indices.reserve(block_count * rows_per_block);
+    // Widen before the multiply: block_count and rows_per_block are int and both derive
+    // from parsed PST bytes, so their 32-bit product can exceed INT32_MAX and wrap to a
+    // bogus (possibly negative) reserve.
+    const qsizetype slot_count = static_cast<qsizetype>(block_count) * rows_per_block;
+    // Fail closed on a corrupt geometry. In a well-formed matrix every block but the last is
+    // the same size, so the physical-slot count is at most max_valid_rows (data bytes /
+    // row_size) plus one block's worth of rows. A crafted TC with a large first block and
+    // many tiny later blocks inflates block_count*rows_per_block far past that, which would
+    // otherwise force a multi-GB reservation of padding slots; reject the whole table (as the
+    // hid_row_index != 0 path above does) rather than enumerating it. The bound never rejects
+    // a uniform-block matrix, and it keeps the inner (b*rows_per_block)+r below 2^31.
+    if (slot_count > max_valid_rows + rows_per_block) {
+        return {};
+    }
+    indices.reserve(slot_count);
     for (int b = 0; b < block_count; ++b) {
         for (int r = 0; r < rows_per_block; ++r) {
-            indices.append(static_cast<uint32_t>(b * rows_per_block + r));
+            indices.append(static_cast<uint32_t>((b * rows_per_block) + r));
         }
     }
     return indices;
@@ -1896,7 +2575,9 @@ QVector<sak::MapiProperty> PstParser::materializeTcRow(const QByteArray& row_dat
                                                        const HeapContext& ctx) {
     QVector<sak::MapiProperty> row_props;
     row_props.reserve(tc.columns.size());
-    const TcRowView row_view{row_off, row_size, row_off + tc.rgib_tci_1b};
+    const TcRowView row_view{.row_off = row_off,
+                             .row_size = row_size,
+                             .ceb_off = row_off + tc.rgib_tci_1b};
     for (const auto& col : tc.columns) {
         row_props.append(buildTcCell(row_data, row_view, col, ctx));
     }
@@ -1908,17 +2589,25 @@ int PstParser::tcRowOffset(const TcRowMatrix& matrix,
                            int row_size,
                            int rows_per_block,
                            int block_count) {
-    if (rows_per_block <= 0) {
+    if (rows_per_block <= 0 || block_count <= 0) {
         return -1;
     }
-    const int block_i = static_cast<int>(row_index) / rows_per_block;
-    const int row_in_block = static_cast<int>(row_index) % rows_per_block;
-    if (block_i >= block_count) {
+    // Do the division in unsigned 64-bit: row_index is untrusted file data, and a
+    // value >= 0x80000000 cast to int becomes negative, producing a negative
+    // block index that reads block_ends out of bounds.
+    const uint64_t block_u = static_cast<uint64_t>(row_index) /
+                             static_cast<uint32_t>(rows_per_block);
+    const uint64_t row_in_block_u = static_cast<uint64_t>(row_index) %
+                                    static_cast<uint32_t>(rows_per_block);
+    if (block_u >= static_cast<uint64_t>(block_count) ||
+        block_u >= static_cast<uint64_t>(matrix.block_ends.size())) {
         return -1;
     }
+    const int block_i = static_cast<int>(block_u);
+    const int row_in_block = static_cast<int>(row_in_block_u);
     const int block_start = (block_i == 0) ? 0 : matrix.block_ends[block_i - 1];
     const int block_end = matrix.block_ends[block_i];
-    const int off = block_start + row_in_block * row_size;
+    const int off = block_start + (row_in_block * row_size);
     if (off < 0 || off + row_size > block_end) {
         return -1;
     }
@@ -1956,11 +2645,11 @@ QVector<uint32_t> PstParser::collectTcLiveRowIndices(const TcInfo& tc, const Hea
 QVector<uint32_t> PstParser::extractTcRowIndicesFromLeaf(const QByteArray& leaf) {
     constexpr int kTcRowIdRecordSize = 8;
     QVector<uint32_t> live_row_indices;
-    const int record_count = leaf.size() / kTcRowIdRecordSize;
+    const int record_count = static_cast<int>(leaf.size() / kTcRowIdRecordSize);
     live_row_indices.reserve(record_count);
     for (int rec = 0; rec < record_count; ++rec) {
         live_row_indices.append(
-            readLE<uint32_t>(leaf, rec * kTcRowIdRecordSize + kBthRowIdValueOffset));
+            readLE<uint32_t>(leaf, (rec * kTcRowIdRecordSize) + kBthRowIdValueOffset));
     }
     return live_row_indices;
 }
@@ -1975,17 +2664,22 @@ sak::MapiProperty PstParser::buildTcCell(const QByteArray& row_data,
     prop.property_name = propertyIdToName(col.prop_id);
 
     bool cell_exists = true;
-    int ceb_byte = row_view.ceb_off + (col.i_bit / kBitPackingBitsPerByte);
-    int ceb_bit = kBitPackingHighBitIndex - (col.i_bit % kBitPackingBitsPerByte);
+    const int ceb_byte = row_view.ceb_off + (col.i_bit / kBitPackingBitsPerByte);
+    const int ceb_bit = kBitPackingHighBitIndex - (col.i_bit % kBitPackingBitsPerByte);
     if (ceb_byte < row_view.row_off + row_view.row_size) {
-        cell_exists = (static_cast<uint8_t>(row_data[ceb_byte]) >> ceb_bit) & 1;
+        cell_exists = (((static_cast<uint8_t>(row_data[ceb_byte]) >> ceb_bit) & 1) != 0);
     }
 
-    int cell_off = row_view.row_off + col.ib_data;
-    if (cell_exists && cell_off + col.cb_data <= row_data.size()) {
+    // Bound the cell against THIS row's end (row_off + row_size), not the whole matrix buffer:
+    // a column whose ib_data/cb_data run past the fixed-row layout must not be allowed to read
+    // bytes that belong to the next row (or the block padding) just because the matrix is large.
+    const int cell_off = row_view.row_off + col.ib_data;
+    const int row_end = row_view.row_off + row_view.row_size;
+    if (cell_exists && cell_off >= row_view.row_off && cell_off + col.cb_data <= row_end &&
+        row_end <= row_data.size()) {
         prop.raw_value = row_data.mid(cell_off, col.cb_data);
         if (isHnidResolvableType(col.prop_type) && col.cb_data == kPropertyValueRefSize) {
-            uint32_t hnid = readLE<uint32_t>(row_data, cell_off);
+            const uint32_t hnid = readLE<uint32_t>(row_data, cell_off);
             auto resolved = resolveHnid(hnid, ctx.heap_data, ctx.block_offsets, ctx.subnode_map);
             if (resolved) {
                 prop.raw_value = std::move(*resolved);
@@ -1997,7 +2691,7 @@ sak::MapiProperty PstParser::buildTcCell(const QByteArray& row_data,
 }
 
 // ============================================================================
-// LTP Layer — Heap-on-Node
+// LTP Layer -- Heap-on-Node
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::readHeapOnNode(const QByteArray& heap_data,
@@ -2009,36 +2703,37 @@ std::expected<QByteArray, error_code> PstParser::readHeapOnNode(const QByteArray
 
     const auto [hid_index, hid_block_index] = unpackHid(hn_id);
 
-    auto block_off = resolveHnBlockOffset(hid_block_index, block_offsets, heap_data.size());
+    auto block_off =
+        resolveHnBlockOffset(hid_block_index, block_offsets, static_cast<int>(heap_data.size()));
     if (!block_off) {
         return std::unexpected(block_off.error());
     }
-    int block_offset = *block_off;
+    const int block_offset = *block_off;
 
-    uint16_t ib_hnpm = readLE<uint16_t>(heap_data, block_offset);
-    int page_map_offset = block_offset + ib_hnpm;
+    const uint16_t ib_hnpm = readLE<uint16_t>(heap_data, block_offset);
+    const int page_map_offset = block_offset + ib_hnpm;
     if (page_map_offset + kInt32PropertyBytes > heap_data.size()) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
 
-    uint16_t alloc_count = readLE<uint16_t>(heap_data, page_map_offset);
+    const uint16_t alloc_count = readLE<uint16_t>(heap_data, page_map_offset);
     if (hid_index == 0 || hid_index > alloc_count) {
         return QByteArray{};
     }
 
-    int alloc_table_offset = page_map_offset + kInt32PropertyBytes;
-    int entry_offset = alloc_table_offset + ((hid_index - 1) * kHidOffsetRecordSize);
-    int next_offset = alloc_table_offset + (hid_index * kHidOffsetRecordSize);
+    const int alloc_table_offset = page_map_offset + kInt32PropertyBytes;
+    const int entry_offset = alloc_table_offset + ((hid_index - 1) * kHidOffsetRecordSize);
+    const int next_offset = alloc_table_offset + (hid_index * kHidOffsetRecordSize);
 
     if (next_offset + kHidOffsetRecordSize > heap_data.size()) {
         return std::unexpected(error_code::pst_invalid_heap);
     }
 
-    uint16_t start = readLE<uint16_t>(heap_data, entry_offset);
-    uint16_t end = readLE<uint16_t>(heap_data, next_offset);
+    const uint16_t start = readLE<uint16_t>(heap_data, entry_offset);
+    const uint16_t end = readLE<uint16_t>(heap_data, next_offset);
 
-    int abs_start = block_offset + start;
-    int abs_end = block_offset + end;
+    const int abs_start = block_offset + start;
+    const int abs_end = block_offset + end;
 
     if (abs_start > abs_end || abs_end > heap_data.size()) {
         return std::unexpected(error_code::pst_invalid_heap);
@@ -2063,7 +2758,7 @@ PstParser::HidParts PstParser::unpackHid(uint32_t hn_id) const {
 }
 
 // ============================================================================
-// LTP Layer — Unified HNID Resolution
+// LTP Layer -- Unified HNID Resolution
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::resolveHnid(
@@ -2080,24 +2775,37 @@ std::expected<QByteArray, error_code> PstParser::resolveHnid(
         return readDataTree(subnode_map[hnid].data_bid);
     }
 
-    // 2. Non-zero low 5 bits → NID not in sub-node map
+    // 2. Non-zero low 5 bits -> NID not in sub-node map
     if ((hnid & kNidTypeMask) != 0) {
         return QByteArray{};
     }
 
-    // 3. HID — delegate to heap reader (validates block range)
+    // 3. HID -- delegate to heap reader (validates block range)
     return readHeapOnNode(heap_data, hnid, block_offsets);
 }
 
 // ============================================================================
-// LTP Layer — Sub-Node BTree
+// LTP Layer -- Sub-Node BTree
 // ============================================================================
 
 std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeBTree(
     uint64_t subnode_bid, int depth) {
+    QSet<uint64_t> visited_bids;
+    return readSubNodeBTreeGuarded(subnode_bid, depth, visited_bids);
+}
+
+std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeBTreeGuarded(
+    uint64_t subnode_bid, int depth, QSet<uint64_t>& visited_bids) {
     if (depth > kMaxBTreeDepth) {
         return std::unexpected(error_code::pst_corrupted_btree);
     }
+
+    // Reject a block BID revisited on this traversal: a valid sub-node BTree references each block
+    // once, so a repeat is a cycle or a fan-out bomb (entry_count^depth). Fail closed on both.
+    if (visited_bids.contains(subnode_bid)) {
+        return std::unexpected(error_code::pst_corrupted_btree);
+    }
+    visited_bids.insert(subnode_bid);
 
     auto block_data = readBlock(subnode_bid);
     if (!block_data) {
@@ -2109,24 +2817,25 @@ std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeB
         return std::unexpected(error_code::pst_corrupted_btree);
     }
 
-    uint8_t level = static_cast<uint8_t>(data[1]);
-    uint16_t entry_count = readLE<uint16_t>(data, kBlockTreeEntryCountOffset);
+    const uint8_t level = static_cast<uint8_t>(data[1]);
+    const uint16_t entry_count = readLE<uint16_t>(data, kBlockTreeEntryCountOffset);
     constexpr int kSubnodeHeaderSize = 8;
 
     if (level == 0) {
         return readSubNodeLeafEntries(data, kSubnodeHeaderSize, entry_count);
     }
-    return readSubNodeIntermediateEntries(data, kSubnodeHeaderSize, entry_count, depth);
+    return readSubNodeIntermediateEntries(
+        data, kSubnodeHeaderSize, entry_count, depth, visited_bids);
 }
 
 QHash<uint64_t, sak::PstNode> PstParser::readSubNodeLeafEntries(const QByteArray& data,
                                                                 int header_size,
-                                                                uint16_t entry_count) {
+                                                                uint16_t entry_count) const {
     QHash<uint64_t, sak::PstNode> result;
-    int entry_size = m_is_unicode ? kSubnodeLeafSizeUnicode : kSubnodeLeafSizeAnsi;
+    const int entry_size = m_is_unicode ? kSubnodeLeafSizeUnicode : kSubnodeLeafSizeAnsi;
 
     for (int entry_idx = 0; entry_idx < entry_count; ++entry_idx) {
-        int offset = header_size + (entry_idx * entry_size);
+        const int offset = header_size + (entry_idx * entry_size);
         if (offset + entry_size > data.size()) {
             break;
         }
@@ -2147,22 +2856,27 @@ QHash<uint64_t, sak::PstNode> PstParser::readSubNodeLeafEntries(const QByteArray
 }
 
 std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeIntermediateEntries(
-    const QByteArray& data, int header_size, uint16_t entry_count, int depth) {
+    const QByteArray& data,
+    int header_size,
+    uint16_t entry_count,
+    int depth,
+    QSet<uint64_t>& visited_bids) {
     QHash<uint64_t, sak::PstNode> result;
-    int entry_size = m_is_unicode ? kSubnodeIntermediateSizeUnicode : kSubnodeIntermediateSizeAnsi;
-    int bid_offset = m_is_unicode ? kSubnodeIntermediateBidOffsetUnicode
-                                  : kSubnodeIntermediateBidOffsetAnsi;
+    const int entry_size = m_is_unicode ? kSubnodeIntermediateSizeUnicode
+                                        : kSubnodeIntermediateSizeAnsi;
+    const int bid_offset = m_is_unicode ? kSubnodeIntermediateBidOffsetUnicode
+                                        : kSubnodeIntermediateBidOffsetAnsi;
 
     for (int entry_idx = 0; entry_idx < entry_count; ++entry_idx) {
-        int offset = header_size + (entry_idx * entry_size);
+        const int offset = header_size + (entry_idx * entry_size);
         if (offset + entry_size > data.size()) {
             break;
         }
 
-        uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset + bid_offset)
-                                          : readLE<uint32_t>(data, offset + bid_offset);
+        const uint64_t child_bid = m_is_unicode ? readLE<uint64_t>(data, offset + bid_offset)
+                                                : readLE<uint32_t>(data, offset + bid_offset);
 
-        auto child_result = readSubNodeBTree(child_bid, depth + 1);
+        auto child_result = readSubNodeBTreeGuarded(child_bid, depth + 1, visited_bids);
         if (child_result) {
             for (auto it = child_result->begin(); it != child_result->end(); ++it) {
                 result.insert(it.key(), it.value());
@@ -2173,7 +2887,7 @@ std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeI
 }
 
 // ============================================================================
-// LTP Layer — Property Formatting
+// LTP Layer -- Property Formatting
 // ============================================================================
 
 QString PstParser::formatPropertyValue(uint16_t prop_type, const QByteArray& raw_value) const {
@@ -2187,7 +2901,7 @@ QString PstParser::formatPropertyValue(uint16_t prop_type, const QByteArray& raw
         return (*fmt_it)(raw_value);
     }
 
-    // Unknown type — hex dump for small values, size summary for large
+    // Unknown type -- hex dump for small values, size summary for large
     constexpr int kMaxInlineHexBytes = 16;
     if (raw_value.size() <= kMaxInlineHexBytes) {
         return raw_value.toHex(' ');
@@ -2313,17 +3027,31 @@ QString PstParser::propertyIdToName(uint16_t prop_id) {
 }
 
 // ============================================================================
-// Messaging Layer — Folder Hierarchy
+// Messaging Layer -- Folder Hierarchy
 // ============================================================================
 
 std::expected<sak::PstFolderTree, error_code> PstParser::buildFolderHierarchy(uint64_t root_nid,
                                                                               int depth) {
+    QSet<uint64_t> visited_nids;
+    return buildFolderHierarchyGuarded(root_nid, depth, visited_nids);
+}
+
+std::expected<sak::PstFolderTree, error_code> PstParser::buildFolderHierarchyGuarded(
+    uint64_t root_nid, int depth, QSet<uint64_t>& visited_nids) {
     if (depth > sak::email::kMaxFolderDepth) {
         return std::unexpected(error_code::pst_folder_traversal_error);
     }
     if (m_cancelled.load(std::memory_order_relaxed)) {
         return std::unexpected(error_code::operation_cancelled);
     }
+
+    // Reject a folder NID revisited on this traversal: valid folders form a tree (each NID appears
+    // once), so a repeat is a cycle or a fan-out bomb (a hierarchy table listing the same child
+    // thousands of times, which without this guard expands as children^depth). Fail closed.
+    if (visited_nids.contains(root_nid)) {
+        return std::unexpected(error_code::pst_folder_traversal_error);
+    }
+    visited_nids.insert(root_nid);
 
     auto props_result = readPropertyContext(root_nid);
     if (!props_result) {
@@ -2341,17 +3069,20 @@ std::expected<sak::PstFolderTree, error_code> PstParser::buildFolderHierarchy(ui
         }
     }
 
-    loadChildFolders(folder, root_nid, depth);
+    loadChildFolders(folder, root_nid, depth, visited_nids);
 
-    folder.subfolder_count = folder.children.size();
+    folder.subfolder_count = static_cast<int>(folder.children.size());
 
     sak::PstFolderTree tree;
     tree.append(std::move(folder));
     return tree;
 }
 
-void PstParser::loadChildFolders(sak::PstFolder& folder, uint64_t root_nid, int depth) {
-    uint64_t hierarchy_nid = (root_nid & ~kNidTypeMask) | sak::email::kNidTypeHierarchyTable;
+void PstParser::loadChildFolders(sak::PstFolder& folder,
+                                 uint64_t root_nid,
+                                 int depth,
+                                 QSet<uint64_t>& visited_nids) {
+    const uint64_t hierarchy_nid = (root_nid & ~kNidTypeMask) | sak::email::kNidTypeHierarchyTable;
 
     sak::logInfo(
         "PstParser: folder 0x{:X} hierarchy NID=0x{:X}, "
@@ -2376,22 +3107,52 @@ void PstParser::loadChildFolders(sak::PstFolder& folder, uint64_t root_nid, int 
                  root_nid,
                  htable_result->size());
     auto child_nids = extractChildNids(*htable_result);
-    for (uint64_t child_nid : child_nids) {
-        auto child_tree = buildFolderHierarchy(child_nid, depth + 1);
-        if (child_tree && !child_tree->isEmpty()) {
-            auto child_folder = (*child_tree)[0];
-            child_folder.parent_node_id = root_nid;
-            folder.children.append(std::move(child_folder));
+    for (const uint64_t child_nid : child_nids) {
+        auto child_tree = buildFolderHierarchyGuarded(child_nid, depth + 1, visited_nids);
+        // Surface, rather than silently swallow, a child that fails to parse or yields no
+        // subtree: dropping it produces a partial folder tree that looks complete. Log each drop
+        // (with the NID and reason) so a truncated/corrupt hierarchy is visible in diagnostics.
+        if (!child_tree) {
+            sak::logWarning("PstParser: child folder 0x{:X} failed to parse: {} (partial tree)",
+                            child_nid,
+                            sak::to_string(child_tree.error()));
+            continue;
         }
+        if (child_tree->isEmpty()) {
+            sak::logWarning("PstParser: child folder 0x{:X} produced an empty subtree (dropped)",
+                            child_nid);
+            continue;
+        }
+        auto child_folder = (*child_tree)[0];
+        child_folder.parent_node_id = root_nid;
+        folder.children.append(std::move(child_folder));
     }
 }
 
 // ============================================================================
-// Messaging Layer — Contents Table
+// Messaging Layer -- Contents Table
 // ============================================================================
 
+sak::PstItemSummary PstParser::summaryFromRow(const QVector<sak::MapiProperty>& row) {
+    const auto& setters = summarySetters();
+    sak::PstItemSummary item;
+    bool has_class_column = false;
+    for (const auto& col : row) {
+        has_class_column = has_class_column || col.tag_id == sak::email::kPropIdMessageClass;
+        auto setter_it = setters.find(col.tag_id);
+        if (setter_it != setters.end()) {
+            (*setter_it)(item, col);
+        }
+    }
+    // A table is free to leave the class out, and what an item is decides where it goes.
+    if (!has_class_column) {
+        enrichSingleItemProps(item);
+    }
+    return item;
+}
+
 std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readContentsTable(
-    uint64_t contents_nid, int offset, int limit) {
+    uint64_t contents_nid, int offset, int limit, int* total_rows) {
     auto table_result = readTableContext(contents_nid);
     if (!table_result) {
         if (table_result.error() == error_code::pst_node_not_found) {
@@ -2401,65 +3162,267 @@ std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readContentsT
     }
 
     const auto& rows = *table_result;
-    int start = std::min(offset, static_cast<int>(rows.size()));
-    int end_idx = (limit > 0) ? std::min(start + limit, static_cast<int>(rows.size()))
-                              : static_cast<int>(rows.size());
+    if (total_rows != nullptr) {
+        *total_rows = static_cast<int>(rows.size());
+    }
+    // Clamp the pagination offset: a negative offset (reachable when a caller's
+    // page*page_size int-multiply overflows) must not produce a negative start
+    // index and read rows[] out of bounds. Clamp to [0, rows.size()].
+    const int start = std::clamp(offset, 0, static_cast<int>(rows.size()));
+    const int end_idx = (limit > 0) ? std::min(start + limit, static_cast<int>(rows.size()))
+                                    : static_cast<int>(rows.size());
 
     QVector<sak::PstItemSummary> items;
     items.reserve(end_idx - start);
 
-    const auto& setters = summarySetters();
     for (int row_idx = start; row_idx < end_idx; ++row_idx) {
         if (m_cancelled.load(std::memory_order_relaxed)) {
             return std::unexpected(error_code::operation_cancelled);
         }
 
-        sak::PstItemSummary item;
-        for (const auto& col : rows[row_idx]) {
-            auto setter_it = setters.find(col.tag_id);
-            if (setter_it != setters.end()) {
-                (*setter_it)(item, col);
-            }
-        }
-        items.append(std::move(item));
+        items.append(summaryFromRow(rows[row_idx]));
     }
 
     return items;
 }
 
 // ============================================================================
-// Messaging Layer — Full Message Read
+// Messaging Layer -- Full Message Read
 // ============================================================================
 
+namespace {
+
+constexpr uint16_t kPropIdStartDate = 0x0060;
+constexpr uint16_t kPropIdEndDate = 0x0061;
+constexpr uint16_t kPropIdCreationTime = 0x3007;
+constexpr uint16_t kPropIdLastModificationTime = 0x3008;
+constexpr uint16_t kPropIdSenderSmtpAddress = 0x5D01;
+constexpr uint16_t kPropIdSentRepresentingSmtpAddress = 0x5D02;
+
+/// Message properties that only fill a gap the main setters and named properties left, so they
+/// are applied after the whole property list has been seen, whatever its order.
+struct MessageExtraProperties {
+    QDateTime start_date;
+    QDateTime end_date;
+    QDateTime modified;
+    QDateTime created;
+    QString sender_smtp;
+    QString representing_smtp;
+
+    void note(const sak::MapiProperty& prop) {
+        switch (prop.tag_id) {
+        case kPropIdStartDate:
+            start_date = QDateTime::fromString(prop.display_value, Qt::ISODate);
+            break;
+        case kPropIdEndDate:
+            end_date = QDateTime::fromString(prop.display_value, Qt::ISODate);
+            break;
+        case kPropIdCreationTime:
+            created = QDateTime::fromString(prop.display_value, Qt::ISODate);
+            break;
+        case kPropIdLastModificationTime:
+            modified = QDateTime::fromString(prop.display_value, Qt::ISODate);
+            break;
+        case kPropIdSenderSmtpAddress:
+            sender_smtp = prop.display_value;
+            break;
+        case kPropIdSentRepresentingSmtpAddress:
+            representing_smtp = prop.display_value;
+            break;
+        default:
+            break;
+        }
+    }
+
+    void apply(sak::PstItemDetail& detail) const {
+        if (!detail.start_time.isValid()) {
+            detail.start_time = start_date;
+        }
+        if (!detail.end_time.isValid()) {
+            detail.end_time = end_date;
+        }
+        detail.store_timestamp = modified.isValid() ? modified : created;
+        // Exchange records the sender as an X.500 path; the SMTP address, when the store has it,
+        // is the one any other mail program can use.
+        if (!detail.sender_email.contains(QLatin1Char('@'))) {
+            const QString& smtp = sender_smtp.isEmpty() ? representing_smtp : sender_smtp;
+            if (!smtp.isEmpty()) {
+                detail.sender_email = smtp;
+            }
+        }
+    }
+};
+
+/// Fill the text bodies from compressed RTF when that is all the message has. A body that fails
+/// its integrity checks stays as raw RTF, which the exporters refuse rather than write blank.
+void applyRtfBody(sak::PstItemDetail& detail) {
+    if (detail.body_rtf_compressed.isEmpty() || !detail.body_plain.isEmpty() ||
+        !detail.body_html.isEmpty()) {
+        return;
+    }
+    const auto rtf = sak::pst::decompressRtf(detail.body_rtf_compressed);
+    if (!rtf) {
+        sak::logWarning("PstParser: compressed RTF body failed its integrity checks");
+        return;
+    }
+    const sak::pst::RtfBodyText body = sak::pst::rtfToText(*rtf);
+    (body.is_html ? detail.body_html : detail.body_plain) = body.text;
+    detail.body_rtf_compressed.clear();
+}
+
+}  // namespace
+
 std::expected<sak::PstItemDetail, error_code> PstParser::readMessage(uint64_t message_nid) {
-    auto props_result = readPropertyContext(message_nid);
+    auto node_it = m_nbt_cache.find(message_nid);
+    if (node_it == m_nbt_cache.end()) {
+        return std::unexpected(error_code::pst_node_not_found);
+    }
+    return readMessageForNode(*node_it, message_nid);
+}
+
+void PstParser::applyMessageProperties(sak::PstItemDetail& detail,
+                                       const QVector<sak::MapiProperty>& props) const {
+    const auto& setters = detailSetters();
+    MessageExtraProperties extra;
+    sak::pst::AppointmentRawValues appointment;
+    for (const auto& prop : props) {
+        auto setter_it = setters.find(prop.tag_id);
+        if (setter_it != setters.end()) {
+            (*setter_it)(detail, prop);
+        } else if (prop.tag_id >= sak::pst::kFirstNamedPropertyId) {
+            const auto named = m_named_properties.constFind(prop.tag_id);
+            if (named != m_named_properties.constEnd()) {
+                sak::pst::applyNamedProperty(detail, appointment, *named, prop);
+            }
+        } else {
+            extra.note(prop);
+        }
+    }
+    extra.apply(detail);
+    if (detail.item_type == sak::EmailItemType::Calendar ||
+        detail.item_type == sak::EmailItemType::MeetingRequest) {
+        sak::pst::finishAppointment(detail, appointment);
+    }
+}
+
+namespace {
+
+/// A recipient row's SMTP address. Exchange recipients keep an X.500 path in the address field,
+/// which no other mail program can use, so it never counts as an address here.
+QString attendeeAddress(const QString& smtp, const QString& address, const QString& address_type) {
+    if (!smtp.isEmpty()) {
+        return smtp;
+    }
+    const bool is_smtp = address_type.compare(QLatin1String("SMTP"), Qt::CaseInsensitive) == 0;
+    return (is_smtp || address.contains(QLatin1Char('@'))) ? address : QString();
+}
+
+sak::PstAttendee attendeeFromRow(const QVector<sak::MapiProperty>& row) {
+    sak::PstAttendee attendee;
+    QString smtp;
+    QString address;
+    QString address_type;
+    for (const auto& col : row) {
+        switch (col.tag_id) {
+        case sak::email::kPropIdDisplayName:
+            attendee.name = col.display_value;
+            break;
+        case sak::email::kPropIdEmailAddress:
+            address = col.display_value;
+            break;
+        case sak::email::kPropIdAddressType:
+            address_type = col.display_value;
+            break;
+        case sak::email::kPropIdSmtpAddress:
+            smtp = col.display_value;
+            break;
+        case sak::email::kPropIdRecipientType:
+            attendee.role = col.display_value.toInt();
+            break;
+        case sak::email::kPropIdRecipientFlags:
+            attendee.organizer = (col.display_value.toUInt() & sak::email::kRecipientOrganizer) !=
+                                 0;
+            break;
+        case sak::email::kPropIdRecipientTrackStatus:
+            attendee.response = col.display_value.toInt();
+            break;
+        default:
+            break;
+        }
+    }
+    attendee.email = attendeeAddress(smtp, address, address_type);
+    return attendee;
+}
+
+}  // namespace
+
+void PstParser::readAttendees(const sak::PstNode& node, sak::PstItemDetail& detail) {
+    if (node.subnode_bid == 0) {
+        return;
+    }
+    auto subnodes = readSubNodeBTree(node.subnode_bid);
+    if (!subnodes) {
+        detail.attendees_unreadable = true;
+        return;
+    }
+    const auto table_node = subnodes->constFind(sak::email::kNidRecipientTable);
+    if (table_node == subnodes->constEnd()) {
+        return;
+    }
+    auto rows = readTableContextForNode(*table_node);
+    if (!rows) {
+        detail.attendees_unreadable = true;
+        return;
+    }
+    detail.attendees.reserve(rows->size());
+    for (const auto& row : *rows) {
+        detail.attendees.append(attendeeFromRow(row));
+    }
+}
+
+std::expected<sak::PstItemDetail, error_code> PstParser::readMessageForNode(
+    const sak::PstNode& node, uint64_t message_nid) {
+    auto props_result = readPropertyContextForNode(node);
     if (!props_result) {
         return std::unexpected(props_result.error());
     }
 
     sak::PstItemDetail detail;
     detail.node_id = message_nid;
+    applyMessageProperties(detail, *props_result);
 
-    const auto& setters = detailSetters();
-    for (const auto& prop : *props_result) {
-        auto setter_it = setters.find(prop.tag_id);
-        if (setter_it != setters.end()) {
-            (*setter_it)(detail, prop);
-        }
+    // Propagate an attachment-read failure rather than returning an attachment-free message:
+    // silently dropping it would present a message that has attachments as if it had none
+    // (data loss the caller cannot detect). A message with no attachments returns an empty
+    // vector (success), so this only fails on a genuine parse error.
+    auto att_result = readAttachmentsForNode(node);
+    if (!att_result) {
+        return std::unexpected(att_result.error());
+    }
+    detail.attachments = std::move(*att_result);
+
+    if (detail.item_type == sak::EmailItemType::Calendar ||
+        detail.item_type == sak::EmailItemType::MeetingRequest) {
+        readAttendees(node, detail);
+    }
+    if (detail.item_type == sak::EmailItemType::Contact) {
+        readContactPhoto(node, detail);
     }
 
-    auto att_result = readAttachments(message_nid);
-    if (att_result) {
-        detail.attachments = std::move(*att_result);
-    }
+    applyRtfBody(detail);
 
     // Ensure both body representations are always populated when the message
     // has any body at all.  Many PST messages store only PR_HTML (no PR_BODY);
     // downstream consumers (the Plain Text view, search indexers, exporters)
-    // must not have to re-implement HTML→text conversion.
+    // must not have to re-implement HTML-to-text conversion.
+    //
+    // The body is attacker-authored, so it goes through the same sanitizer the viewers and the
+    // export writers use before it is parsed -- otherwise script/handler text could surface as
+    // "plain text" in the Plain Text view and in every exported artifact. No resource-denying
+    // document is needed here: toPlainText() never lays the document out, so nothing is loaded.
     if (detail.body_plain.isEmpty() && !detail.body_html.isEmpty()) {
         QTextDocument doc;
-        doc.setHtml(detail.body_html);
+        doc.setHtml(sak::sanitizeEmailBodyHtml(detail.body_html));
         detail.body_plain = doc.toPlainText();
     }
 
@@ -2467,27 +3430,27 @@ std::expected<sak::PstItemDetail, error_code> PstParser::readMessage(uint64_t me
 }
 
 // ============================================================================
-// Messaging Layer — Lightweight Sender Read
+// Messaging Layer -- Lightweight Sender Read
 // ============================================================================
 
 std::pair<QString, QString> PstParser::extractSenderFromLeaf(const BthLeafResult& bth,
                                                              const HeapContext& ctx) {
-    int record_size = bth.key_size + bth.data_size;
+    const int record_size = bth.key_size + bth.data_size;
     if (record_size == 0) {
         return {};
     }
 
-    int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = static_cast<int>(bth.leaf_data.size() / record_size);
     const auto& slot_map = senderPropSlots();
     QString results[kResolvedRecipientPartCount];
 
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
-        int rec_offset = rec_idx * record_size;
+        const int rec_offset = rec_idx * record_size;
         if (rec_offset + record_size > bth.leaf_data.size()) {
             break;
         }
 
-        uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
+        const uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
         auto slot_it = slot_map.find(prop_id);
         if (slot_it == slot_map.end()) {
             continue;
@@ -2496,7 +3459,7 @@ std::pair<QString, QString> PstParser::extractSenderFromLeaf(const BthLeafResult
             continue;
         }
 
-        uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
+        const uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
         uint32_t value_ref = readLE<uint32_t>(bth.leaf_data,
                                               rec_offset + bth.key_size + kPropertyValueRefOffset);
 
@@ -2521,39 +3484,6 @@ std::pair<QString, QString> PstParser::extractSenderFromLeaf(const BthLeafResult
     return {results[0], results[1]};
 }
 
-std::pair<QString, QString> PstParser::readSenderFromPC(uint64_t message_nid) {
-    auto node_it = m_nbt_cache.find(message_nid);
-    if (node_it == m_nbt_cache.end()) {
-        return {};
-    }
-
-    const auto& node = node_it.value();
-    if (node.data_bid == 0) {
-        return {};
-    }
-
-    HeapContext ctx;
-    auto data_result = readDataTree(node.data_bid, &ctx.block_offsets);
-    if (!data_result) {
-        return {};
-    }
-    ctx.heap_data = std::move(*data_result);
-
-    if (node.subnode_bid != 0) {
-        auto sn_result = readSubNodeBTree(node.subnode_bid);
-        if (sn_result) {
-            ctx.subnode_map = std::move(*sn_result);
-        }
-    }
-
-    auto bth = collectBthLeafData(ctx, kPcSignature);
-    if (!bth) {
-        return {};
-    }
-
-    return extractSenderFromLeaf(*bth, ctx);
-}
-
 bool PstParser::loadNodeHeapContext(const sak::PstNode& entry, HeapContext& ctx) {
     auto data_result = readDataTree(entry.data_bid, &ctx.block_offsets);
     if (!data_result) {
@@ -2573,7 +3503,7 @@ bool PstParser::loadNodeHeapContext(const sak::PstNode& entry, HeapContext& ctx)
 QString PstParser::readBthRecordValue(const BthLeafResult& bth,
                                       const HeapContext& ctx,
                                       int rec_offset) {
-    uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
+    const uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
     uint32_t value_ref = readLE<uint32_t>(bth.leaf_data,
                                           rec_offset + bth.key_size + kPropertyValueRefOffset);
     QByteArray raw_value;
@@ -2594,23 +3524,24 @@ void PstParser::scanBthForSubjectAndClass(const BthLeafResult& bth,
                                           sak::PstItemSummary& item,
                                           bool need_subject,
                                           bool need_class) {
-    int record_size = bth.key_size + bth.data_size;
+    const int record_size = bth.key_size + bth.data_size;
     if (record_size == 0) {
         return;
     }
-    int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = static_cast<int>(bth.leaf_data.size() / record_size);
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
-        int rec_offset = rec_idx * record_size;
+        const int rec_offset = rec_idx * record_size;
         if (rec_offset + record_size > bth.leaf_data.size()) {
             break;
         }
-        uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
+        const uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
         if (need_subject && prop_id == sak::email::kPropIdSubject) {
             item.subject = stripSubjectPrefix(readBthRecordValue(bth, ctx, rec_offset));
             need_subject = false;
         }
         if (need_class && prop_id == sak::email::kPropIdMessageClass) {
-            item.item_type = classifyMessageClass(readBthRecordValue(bth, ctx, rec_offset));
+            item.message_class = readBthRecordValue(bth, ctx, rec_offset);
+            item.item_type = classifyMessageClass(item.message_class);
             need_class = false;
         }
         if (!need_subject && !need_class) {
@@ -2632,9 +3563,9 @@ void PstParser::enrichItemFromBth(sak::PstItemSummary& item,
         }
     }
 
-    bool need_class = (item.item_type == sak::EmailItemType::Unknown);
+    const bool need_class = (item.item_type == sak::EmailItemType::Unknown);
     if (need_class) {
-        bool dont_touch_subject = false;
+        const bool dont_touch_subject = false;
         scanBthForSubjectAndClass(bth, ctx, item, dont_touch_subject, need_class);
     }
 }
@@ -2644,8 +3575,8 @@ void PstParser::enrichSingleItemProps(sak::PstItemSummary& item) {
         return;
     }
 
-    bool need_sender = item.sender_name.isEmpty();
-    bool need_class = (item.item_type == sak::EmailItemType::Unknown);
+    const bool need_sender = item.sender_name.isEmpty();
+    const bool need_class = (item.item_type == sak::EmailItemType::Unknown);
     if (!need_sender && !need_class) {
         return;
     }
@@ -2681,7 +3612,7 @@ void PstParser::enrichItemSenders(QVector<sak::PstItemSummary>& items) {
 }
 
 // ============================================================================
-// Messaging Layer — Attachments
+// Messaging Layer -- Attachments
 // ============================================================================
 
 std::expected<sak::PstAttachmentInfo, error_code> PstParser::readSingleAttachment(
@@ -2694,10 +3625,14 @@ std::expected<sak::PstAttachmentInfo, error_code> PstParser::readSingleAttachmen
     ctx.heap_data = std::move(*att_data);
 
     if (subnode.subnode_bid != 0) {
+        // Fail closed on a sub-node BTree failure to match this function's documented contract
+        // (it is the index-alignment gate for readAttachmentData): swallowing it would report an
+        // embedded-message attachment as parsed while its subnode-resolved fields silently vanish.
         auto sn = readSubNodeBTree(subnode.subnode_bid);
-        if (sn) {
-            ctx.subnode_map = std::move(*sn);
+        if (!sn) {
+            return std::unexpected(sn.error());
         }
+        ctx.subnode_map = std::move(*sn);
     }
 
     auto bth = collectBthLeafData(ctx, kPcSignature);
@@ -2711,25 +3646,45 @@ std::expected<sak::PstAttachmentInfo, error_code> PstParser::readSingleAttachmen
     return att;
 }
 
+namespace {
+
+/// An attached email carries no file name of its own: it is written out as an .eml named after its
+/// subject, which the attachment's display name repeats.
+void describeAttachedMessage(sak::PstAttachmentInfo& att, const QString& display_name) {
+    if (att.attach_method != sak::email::kAttachEmbeddedMessage) {
+        return;
+    }
+    att.is_embedded_message = true;
+    att.mime_type = QStringLiteral("message/rfc822");
+    if (att.long_filename.isEmpty() && att.filename.isEmpty()) {
+        att.long_filename = (display_name.isEmpty() ? QStringLiteral("attached message")
+                                                    : display_name) +
+                            QStringLiteral(".eml");
+    }
+}
+
+}  // namespace
+
 void PstParser::populateAttachmentFromLeaf(sak::PstAttachmentInfo& att,
                                            const BthLeafResult& bth,
                                            const HeapContext& ctx) {
-    int record_size = bth.key_size + bth.data_size;
+    const int record_size = bth.key_size + bth.data_size;
     if (record_size == 0) {
         return;
     }
 
-    int record_count = bth.leaf_data.size() / record_size;
+    const int record_count = static_cast<int>(bth.leaf_data.size() / record_size);
     const auto& setters = attachmentSetters();
+    QString display_name;
 
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
-        int rec_offset = rec_idx * record_size;
+        const int rec_offset = rec_idx * record_size;
         if (rec_offset + record_size > bth.leaf_data.size()) {
             break;
         }
 
-        uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
-        uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
+        const uint16_t prop_id = readLE<uint16_t>(bth.leaf_data, rec_offset);
+        const uint16_t prop_type = readLE<uint16_t>(bth.leaf_data, rec_offset + bth.key_size);
         uint32_t value_ref = readLE<uint32_t>(bth.leaf_data,
                                               rec_offset + bth.key_size + kPropertyValueRefOffset);
 
@@ -2748,7 +3703,29 @@ void PstParser::populateAttachmentFromLeaf(sak::PstAttachmentInfo& att,
         auto setter_it = setters.find(prop_id);
         if (setter_it != setters.end()) {
             (*setter_it)(att, formatPropertyValue(prop_type, raw_val));
+        } else if (prop_id == sak::email::kPropIdDisplayName) {
+            display_name = formatPropertyValue(prop_type, raw_val);
         }
+    }
+
+    describeAttachedMessage(att, display_name);
+}
+
+void PstParser::readContactPhoto(const sak::PstNode& node, sak::PstItemDetail& detail) {
+    const auto photo = std::ranges::find_if(detail.attachments, [](const auto& attachment) {
+        return attachment.contact_photo;
+    });
+    if (photo == detail.attachments.end()) {
+        return;
+    }
+    // The contact is still worth showing without its picture.
+    const int index = static_cast<int>(std::distance(detail.attachments.begin(), photo));
+    auto data = readAttachmentDataForNode(node, index);
+    if (data) {
+        detail.contact_photo = std::move(*data);
+    } else {
+        sak::logWarning("PstParser: could not read the picture of contact NID 0x{:08X}",
+                        node.node_id);
     }
 }
 
@@ -2758,12 +3735,16 @@ std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttach
     if (node_it == m_nbt_cache.end()) {
         return std::unexpected(error_code::pst_node_not_found);
     }
+    return readAttachmentsForNode(*node_it);
+}
 
-    if (node_it->subnode_bid == 0) {
+std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttachmentsForNode(
+    const sak::PstNode& node) {
+    if (node.subnode_bid == 0) {
         return QVector<sak::PstAttachmentInfo>{};
     }
 
-    auto subnodes = readSubNodeBTree(node_it->subnode_bid);
+    auto subnodes = readSubNodeBTree(node.subnode_bid);
     if (!subnodes) {
         return std::unexpected(subnodes.error());
     }
@@ -2771,17 +3752,18 @@ std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttach
     QVector<sak::PstAttachmentInfo> attachments;
     int att_index = 0;
 
-    for (auto sub_it = subnodes->begin(); sub_it != subnodes->end(); ++sub_it) {
-        uint8_t sub_type = static_cast<uint8_t>(sub_it.key() & kNidTypeMask);
-        if (sub_type != sak::email::kNidTypeAttachment) {
-            continue;
+    for (const uint64_t attachment_nid : attachmentNodesInOrder(*subnodes)) {
+        // Fail closed on an unparsable attachment sub-node rather than silently
+        // dropping it: a compacted list would report fewer attachments than the
+        // message actually carries yet look complete (data loss the caller cannot
+        // detect). This matches readMessage, which propagates an attachment-read
+        // failure instead of presenting a message as attachment-free.
+        auto att = readSingleAttachment((*subnodes)[attachment_nid], att_index);
+        if (!att) {
+            return std::unexpected(att.error());
         }
-
-        auto att = readSingleAttachment(sub_it.value(), att_index);
-        if (att) {
-            attachments.append(std::move(*att));
-            ++att_index;
-        }
+        attachments.append(std::move(*att));
+        ++att_index;
     }
 
     return attachments;
@@ -2800,22 +3782,43 @@ sak::EmailItemType PstParser::classifyMessageClass(const QString& message_class)
         const char* prefix;
         sak::EmailItemType type;
     };
+    // Most specific first. A class names mail only if it is listed here: Outlook files its own
+    // bookkeeping under IPM too (rule templates, settings, people-card records, and kinds nobody
+    // has listed yet), and the store says nothing else about what such an item is. One left out
+    // this way is still counted as left out, and still opens in its folder.
     static constexpr Mapping kMappings[] = {
-        {"IPM.Note", sak::EmailItemType::Email},
-        {"IPM.Post", sak::EmailItemType::Email},
-        {"IPM.Report", sak::EmailItemType::Email},
-        {"IPM.Contact", sak::EmailItemType::Contact},
-        {"IPM.Appointment", sak::EmailItemType::Calendar},
-        {"IPM.Task", sak::EmailItemType::Task},
-        {"IPM.StickyNote", sak::EmailItemType::StickyNote},
-        {"IPM.Activity", sak::EmailItemType::JournalEntry},
-        {"IPM.DistList", sak::EmailItemType::DistList},
-        {"IPM.Schedule.Meeting", sak::EmailItemType::MeetingRequest},
-        {"IPM", sak::EmailItemType::Email},
+        {.prefix = "IPM.Note.Rules", .type = sak::EmailItemType::Unknown},
+        {.prefix = "IPM.Note", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Post", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Report", .type = sak::EmailItemType::Email},
+        {.prefix = "REPORT", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Sharing", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Document", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.OLE", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.TaskRequest", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Outlook.Recall", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Recall", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Resend", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Conflict", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.InfoPathForm", .type = sak::EmailItemType::Email},
+        {.prefix = "IPM.Contact", .type = sak::EmailItemType::Contact},
+        {.prefix = "IPM.Appointment", .type = sak::EmailItemType::Calendar},
+        {.prefix = "IPM.Task", .type = sak::EmailItemType::Task},
+        {.prefix = "IPM.StickyNote", .type = sak::EmailItemType::StickyNote},
+        {.prefix = "IPM.Activity", .type = sak::EmailItemType::JournalEntry},
+        {.prefix = "IPM.DistList", .type = sak::EmailItemType::DistList},
+        {.prefix = "IPM.Schedule.Meeting", .type = sak::EmailItemType::MeetingRequest},
     };
 
+    // A class name extends by a dot: IPM.TaskRequest is a message about a task, not an IPM.Task.
+    const auto names = [&message_class](const char* prefix) {
+        const QLatin1String name(prefix);
+        return message_class.compare(name, Qt::CaseInsensitive) == 0 ||
+               (message_class.startsWith(name, Qt::CaseInsensitive) &&
+                message_class.at(name.size()) == QLatin1Char('.'));
+    };
     for (const auto& m : kMappings) {
-        if (message_class.startsWith(QLatin1String(m.prefix), Qt::CaseInsensitive)) {
+        if (names(m.prefix)) {
             return m.type;
         }
     }
@@ -2831,9 +3834,8 @@ QVector<uint64_t> PstParser::allNodeIds() const {
 }
 
 std::expected<QByteArray, error_code> PstParser::readBytes(qint64 offset, qint64 count) {
-    Q_ASSERT(m_file.isOpen());
-    Q_ASSERT(count > 0);
-
+    // A closed file makes seek() fail, and a count of zero or less makes read()
+    // return an empty buffer; both are rejected below, so no assert is needed.
     if (!m_file.seek(offset)) {
         return std::unexpected(error_code::seek_error);
     }
@@ -2848,9 +3850,14 @@ std::expected<QByteArray, error_code> PstParser::readBytes(qint64 offset, qint64
 
 template <typename T>
 T PstParser::readLE(const QByteArray& data, int offset) {
-    Q_ASSERT(offset >= 0);
-    Q_ASSERT(offset + static_cast<int>(sizeof(T)) <= data.size());
-
+    // Bounds-check at runtime, not only via the release-disabled Q_ASSERT: page/BTH
+    // entry sizes are attacker-controlled, so a fixed-offset read can otherwise be
+    // driven past the buffer. Return 0 for an out-of-range field rather than memcpy
+    // out of bounds (mirrors the free-function localReadLE).
+    if (offset < 0 ||
+        static_cast<qsizetype>(offset) + static_cast<qsizetype>(sizeof(T)) > data.size()) {
+        return T{0};
+    }
     T value;
     std::memcpy(&value, data.constData() + offset, sizeof(T));
     return value;
@@ -2866,16 +3873,21 @@ template uint64_t PstParser::readLE<uint64_t>(const QByteArray&, int);
 template int64_t PstParser::readLE<int64_t>(const QByteArray&, int);
 
 int PstParser::countTotalItems() const {
-    std::function<int(const sak::PstFolderTree&)> count_recursive;
-    count_recursive = [&](const sak::PstFolderTree& tree) -> int {
-        int total = 0;
+    // folder.content_count is read straight from the store, so a crafted tree of large counts
+    // would overflow a signed int accumulator (UB) before the total is even returned. Accumulate
+    // in int64_t and saturate at INT_MAX after every add so the running sum can never overflow the
+    // int64_t either, then narrow the (already in-range) result back to the int the API exposes.
+    std::function<int64_t(const sak::PstFolderTree&)> count_recursive;
+    count_recursive = [&](const sak::PstFolderTree& tree) -> int64_t {
+        int64_t total = 0;
         for (const auto& folder : tree) {
             total += folder.content_count;
             total += count_recursive(folder.children);
+            total = std::min<int64_t>(total, std::numeric_limits<int>::max());
         }
         return total;
     };
-    return count_recursive(m_folder_tree);
+    return static_cast<int>(count_recursive(m_folder_tree));
 }
 
 int PstParser::countFolders(const sak::PstFolderTree& tree) {

@@ -6,6 +6,7 @@
 
 #include "sak/diagnostic_types.h"
 
+#include <QDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -14,6 +15,7 @@ class DiagnosticTypesTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void diskTestFolderAvoidsTheSystemRoot();
     void cpuBenchmarkResult_defaults();
     void diskBenchmarkConfig_defaults();
     void diskBenchmarkResult_defaults();
@@ -36,6 +38,11 @@ void DiagnosticTypesTests::cpuBenchmarkResult_defaults() {
     QCOMPARE(r.multi_thread_score, 0);
     QCOMPARE(r.thread_count, 0u);
     QVERIFY(!r.thermal_throttle_detected);
+    // thread_scaling_efficiency is the ONE CpuBenchmarkResult default that survives a real run:
+    // the worker assigns it only when the parallel pass produced a positive wall time, and
+    // calculateScores() multiplies the multi-thread score by it. A nonzero default would report
+    // perfect scaling -- and a full multi-thread score -- for a pass that was never timed.
+    QCOMPARE(r.thread_scaling_efficiency, 0.0);
 }
 
 void DiagnosticTypesTests::diskBenchmarkConfig_defaults() {
@@ -46,6 +53,10 @@ void DiagnosticTypesTests::diskBenchmarkConfig_defaults() {
     QCOMPARE(c.queue_depth_high, 32);
     QCOMPARE(c.sequential_passes, 3);
     QCOMPARE(c.random_duration_sec, 30);
+    // random_block_size_kb sets the block size of the "Random 4K" passes, and no caller ever
+    // assigns it (the panel sets only drive_path), so this default is its sole input. A silent
+    // bump to 64 keeps every other assertion green while the reported 4K IOPS come out 16x wrong.
+    QCOMPARE(c.random_block_size_kb, 4);
 }
 
 void DiagnosticTypesTests::diskBenchmarkResult_defaults() {
@@ -74,6 +85,10 @@ void DiagnosticTypesTests::stressTestConfig_defaults() {
     QCOMPARE(c.cpu_threads, 0);
     QCOMPARE(c.thermal_limit_celsius, 95.0);
     QVERIFY(c.abort_on_error);
+    // No caller ever sets memory_usage_percent, so this literal is the sole input to the
+    // validator -- which rejects the WHOLE run when the percentage is outside (0, 100] while
+    // stress_memory (default true) is on -- and to the sizing of the allocation itself.
+    QCOMPARE(c.memory_usage_percent, 80.0);
 }
 
 void DiagnosticTypesTests::stressTestResult_defaults() {
@@ -139,6 +154,21 @@ void DiagnosticTypesTests::smartHealthStatus_enum() {
     QVERIFY(SmartHealthStatus::Healthy != SmartHealthStatus::Warning);
     QVERIFY(SmartHealthStatus::Warning != SmartHealthStatus::Critical);
     QVERIFY(SmartHealthStatus::Critical != SmartHealthStatus::Unknown);
+}
+
+void DiagnosticTypesTests::diskTestFolderAvoidsTheSystemRoot() {
+    // The drive that holds the temp folder uses the temp folder: its root may need administrator
+    // rights. A disk test on that drive still measures that disk.
+    const QString temp = QDir::tempPath();
+    const QString temp_drive = temp.left(2) + QStringLiteral("\\");
+    QCOMPARE(sak::diskTestFolder(temp_drive), temp);
+    QCOMPARE(sak::diskTestFolder(temp_drive.toLower()), temp);
+
+    // Any other drive keeps its root: the test has to land on the drive that was picked.
+    const QString other = (temp.startsWith(QStringLiteral("Q"), Qt::CaseInsensitive))
+                              ? QStringLiteral("R:\\")
+                              : QStringLiteral("Q:\\");
+    QCOMPARE(sak::diskTestFolder(other), other);
 }
 
 QTEST_MAIN(DiagnosticTypesTests)

@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_run_state.h"
 
+#include <algorithm>
+
 namespace sak::ai {
 
 QString runStatusToString(AiRunStatus status) {
@@ -58,6 +60,16 @@ bool isTerminalRunStatus(AiRunStatus status) noexcept {
            status == AiRunStatus::Failed;
 }
 
+bool aiPanelIsBusy(const AiPanelActivity& activity) noexcept {
+    return activity.client_busy || activity.tool_turn_active || activity.workflow_run_active ||
+           activity.execution_broker_running || activity.offline_worker_running ||
+           activity.async_tool_runner_running;
+}
+
+AiRunStatus aiStopRunStatus(const AiPanelActivity& activity) noexcept {
+    return aiPanelIsBusy(activity) ? AiRunStatus::Cancelling : AiRunStatus::Cancelled;
+}
+
 bool AiRunState::isTerminal() const noexcept {
     return isTerminalRunStatus(status);
 }
@@ -86,10 +98,14 @@ AiRunState AiRunState::fromJson(const QJsonObject& object) {
     state.workflow_id = object.value(QStringLiteral("workflow_id")).toString();
     state.status = runStatusFromString(object.value(QStringLiteral("status")).toString());
     state.phase_id = object.value(QStringLiteral("phase_id")).toString();
-    state.active_subagents = object.value(QStringLiteral("active_subagents")).toInt(0);
-    state.completed_subagents = object.value(QStringLiteral("completed_subagents")).toInt(0);
-    state.active_tools = object.value(QStringLiteral("active_tools")).toInt(0);
-    state.completed_tools = object.value(QStringLiteral("completed_tools")).toInt(0);
+    // Counters arrive from a persisted (attacker-writable) state file. A negative count
+    // is meaningless, would render nonsensically, and could drive a later decrement
+    // below zero; clamp to non-negative rather than trust the raw value.
+    state.active_subagents = std::max(0, object.value(QStringLiteral("active_subagents")).toInt(0));
+    state.completed_subagents =
+        std::max(0, object.value(QStringLiteral("completed_subagents")).toInt(0));
+    state.active_tools = std::max(0, object.value(QStringLiteral("active_tools")).toInt(0));
+    state.completed_tools = std::max(0, object.value(QStringLiteral("completed_tools")).toInt(0));
     state.message = object.value(QStringLiteral("message")).toString();
     state.has_pending_human_gate =
         object.value(QStringLiteral("has_pending_human_gate")).toBool(false);
@@ -97,7 +113,13 @@ AiRunState AiRunState::fromJson(const QJsonObject& object) {
         state.pending_human_gate =
             AiHumanGate::fromJson(object.value(QStringLiteral("pending_human_gate")).toObject());
         if (state.pending_human_gate.gate_id.isEmpty()) {
-            state.has_pending_human_gate = false;
+            // Fail closed: a snapshot that asserts a pending human gate but carries a
+            // malformed, identity-less gate payload is corrupt or tampered -- normal
+            // serialization never emits has_pending_human_gate with an empty gate_id.
+            // Clearing the flag here would silently drop a genuine approval and let the run
+            // resume unattended; instead keep the pending flag and force WaitingForHuman so
+            // the run stays blocked until a human intervenes.
+            state.status = AiRunStatus::WaitingForHuman;
         }
     }
     return state;

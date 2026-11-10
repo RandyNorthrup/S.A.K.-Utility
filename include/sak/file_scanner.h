@@ -17,7 +17,10 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
+
+class FileScannerTests;
 
 namespace sak {
 
@@ -35,6 +38,11 @@ struct scan_statistics {
     std::size_t errors_encountered = 0;  ///< Number of errors during scan
     std::uintmax_t total_size = 0;       ///< Total size of all files (bytes)
     std::size_t skipped_by_filter = 0;   ///< Items skipped by filters
+
+    /// @brief Explicit completeness indicator for callers that require a fully-walked tree.
+    /// @return True only if no open/entry error was skipped (errors_encountered == 0); a caller
+    ///         requiring completeness must treat a false result as an incomplete scan.
+    [[nodiscard]] bool is_complete() const noexcept { return errors_encountered == 0; }
 };
 
 /// @brief Callback function for each found entry
@@ -49,10 +57,23 @@ using scan_callback = std::function<bool(const std::filesystem::path& path, bool
 using scan_progress_callback =
     std::function<void(std::size_t files_processed, std::uintmax_t total_size_processed)>;
 
+/// @brief Injectable canonical-path resolver for deterministic traversal-gate tests.
+using canonical_path_resolver =
+    std::function<std::filesystem::path(const std::filesystem::path& path, std::error_code& error)>;
+
 /// @brief Scan options for file scanner
 struct scan_options {
-    bool recursive = true;                                 ///< Recurse into subdirectories
-    bool follow_symlinks = false;                          ///< Follow symbolic links
+    bool recursive = true;         ///< Recurse into subdirectories
+    bool follow_symlinks = false;  ///< Follow symbolic links
+    /// Skip reparse-point (symlink/junction) entries ENTIRELY -- neither emitted nor descended --
+    /// via a non-following reparse-attribute check made BEFORE any target-following stat. Defaults
+    /// to false (GUI behavior: symlink files are still stat'd/emitted). A headless/injectable
+    /// caller sets this true so (a) a planted symlink whose target is a UNC share is never resolved
+    /// (its first following stat would perform an SMB/NTLM handshake and leak the credential hash),
+    /// and (b) a planted junction cannot steer the walk into an arbitrary local tree. Distinct from
+    /// follow_symlinks, which governs only whether a symlinked DIRECTORY is descended (and, being
+    /// is_symlink-based, does not even catch junctions).
+    bool skip_symlinks = false;
     file_type_filter type_filter = file_type_filter::all;  ///< Filter by type
     std::vector<std::string> include_patterns;             ///< Patterns to include (e.g., "*.txt")
     std::vector<std::string> exclude_patterns;             ///< Patterns to exclude
@@ -67,8 +88,21 @@ struct scan_options {
 };
 
 /// @brief High-performance recursive directory scanner
-/// @details Thread-safe scanner with filtering, pattern matching, and cancellation support
+/// @details Filtering, pattern matching, and cooperative cancellation.
+/// @warning NOT thread-safe: one scan() call at a time PER INSTANCE. Each scan
+///          mutates per-scan instance state (the m_visited_dirs cycle set is a plain
+///          unordered_set cleared at scan start and written during recursion; the
+///          progress counters are reset per scan), so running two scans concurrently
+///          on the same instance is a data race. Use a separate instance per thread.
+///          The counters are std::atomic only so a DIFFERENT thread may read live
+///          progress while a single scan runs -- not to permit concurrent scans.
 class file_scanner {
+    // Unit-test seam: exercise the traversal-gate decision (canDescendInto) directly, so the
+    // fail-closed refusal to descend into a directory whose canonical identity cannot be
+    // resolved is provable without a full scan. The test class lives in the global namespace,
+    // so befriend ::FileScannerTests (not sak::FileScannerTests).
+    friend class ::FileScannerTests;
+
 public:
     /// @brief Default constructor
     file_scanner() = default;
@@ -167,6 +201,21 @@ private:
                               std::size_t current_depth,
                               std::stop_token stop_token) -> std::expected<void, error_code>;
 
+    /// @brief Decide whether a directory entry may be descended into.
+    /// @details Independent of the output type filter (so a files_only scan still
+    ///          recurses). Enforces depth/visibility, directory exclusions, the
+    ///          follow-symlinks policy (a symlinked directory is not traversed
+    ///          unless enabled), and cycle detection when following symlinks.
+    ///          When following is enabled and the entry's canonical identity cannot
+    ///          be resolved, the descent is REFUSED and stats.errors_encountered is
+    ///          incremented -- descending without a cycle identity would drop the
+    ///          confinement/loop guard entirely.
+    [[nodiscard]] bool canDescendInto(const std::filesystem::directory_entry& entry,
+                                      const scan_options& options,
+                                      scan_statistics& stats,
+                                      std::size_t current_depth,
+                                      const canonical_path_resolver& canonical_resolver = {});
+
     /// @brief Process a single entry with exception handling (nesting reduction)
     auto processEntryWithErrorHandling(const std::filesystem::directory_entry& entry,
                                        const scan_options& options,
@@ -177,6 +226,9 @@ private:
 
     std::atomic<std::size_t> m_files_processed{0};    ///< Files processed counter
     std::atomic<std::uintmax_t> m_size_processed{0};  ///< Size processed counter
+    /// Canonical paths of directories already descended into during the current
+    /// scan; used only when follow_symlinks is set, to break symlink cycles.
+    std::unordered_set<std::string> m_visited_dirs;
 };
 
 }  // namespace sak

@@ -58,16 +58,25 @@ public:
     ConnectivityTester& operator=(ConnectivityTester&&) = delete;
 
     /// @brief Run ping (blocking)
-    void ping(const PingConfig& config);
+    void ping(const PingConfig& rawConfig);
 
     /// @brief Run traceroute (blocking)
-    void traceroute(const TracerouteConfig& config);
+    void traceroute(const TracerouteConfig& rawConfig);
 
     /// @brief Run MTR -- continuous ping+traceroute (blocking)
-    void mtr(const MtrConfig& config);
+    void mtr(const MtrConfig& rawConfig);
 
     /// @brief Cancel current operation
     void cancel();
+
+    /// @name Config sanitizers -- clamp every numeric field to a safe range.
+    /// Pure and deterministic so they can be unit-tested directly; ping/traceroute/
+    /// mtr each run their config through the matching overload before use.
+    /// @{
+    [[nodiscard]] static PingConfig sanitizeConfig(PingConfig config);
+    [[nodiscard]] static TracerouteConfig sanitizeConfig(TracerouteConfig config);
+    [[nodiscard]] static MtrConfig sanitizeConfig(MtrConfig config);
+    /// @}
 
 Q_SIGNALS:
     void pingReply(sak::PingReply reply);
@@ -90,6 +99,12 @@ private:
                                          int timeoutMs,
                                          int packetSize,
                                          int ttl);
+
+    /// @brief Sweep the hops of one MTR cycle, updating per-hop stats in place
+    void runMtrCycle(const QString& targetIP,
+                     const MtrConfig& config,
+                     QVector<MtrHopStats>& hopStats,
+                     int& maxDiscoveredHop);
 
     /// @brief Probe a single hop for traceroute
     [[nodiscard]] TracerouteHop probeHop(

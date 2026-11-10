@@ -6,7 +6,7 @@
 ///
 /// Parses Microsoft PST and OST files without requiring Outlook or any
 /// COM/MAPI library. Implements the three-layer architecture:
-///   NDB (Node Database) → LTP (Lists, Tables, Properties) → Messaging
+///   NDB (Node Database) -> LTP (Lists, Tables, Properties) -> Messaging
 ///
 /// Reference: [MS-PST]: Outlook Personal Folders (.pst) File Format
 
@@ -14,10 +14,12 @@
 
 #include "sak/email_constants.h"
 #include "sak/email_types.h"
+#include "sak/pst_named_properties.h"
 
 #include <QFile>
 #include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVector>
 
@@ -59,7 +61,7 @@ public:
     /// Get file info for the currently open file
     [[nodiscard]] sak::PstFileInfo fileInfo() const;
 
-    /// Get the folder tree (hierarchy only — items loaded on demand)
+    /// Get the folder tree (hierarchy only -- items loaded on demand)
     [[nodiscard]] sak::PstFolderTree folderTree() const;
 
     /// Load items (messages, contacts, etc.) for a specific folder
@@ -93,13 +95,21 @@ public:
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readAttachmentData(
         uint64_t message_node_id, int attachment_index);
 
+    /// Read attachment metadata (names, sizes) for a message, synchronous. Index-aligned with
+    /// readAttachmentData: both walk the message's attachment sub-nodes with the same
+    /// readSingleAttachment gate, which FAILS CLOSED on an unparsable attachment rather than
+    /// compacting past it, so entry i pairs with readAttachmentData(message_node_id, i) and a
+    /// corrupt attachment is surfaced instead of silently shortening the list.
+    [[nodiscard]] std::expected<QVector<sak::PstAttachmentInfo>, sak::error_code> readAttachments(
+        uint64_t message_nid);
+
     /// Classify an item by its PR_MESSAGE_CLASS value
     [[nodiscard]] static sak::EmailItemType classifyMessageClass(const QString& message_class);
 
     /// Get all cached NBT node IDs (for deleted-item / orphan scanning)
     [[nodiscard]] QVector<uint64_t> allNodeIds() const;
 
-    /// Table Context column descriptor (§2.3.4.2)
+    /// Table Context column descriptor (section 2.3.4.2)
     struct TcColDesc {
         uint16_t prop_type = 0;
         uint16_t prop_id = 0;
@@ -124,6 +134,11 @@ Q_SIGNALS:
     void itemDetailLoaded(sak::PstItemDetail detail);
     void itemPropertiesLoaded(uint64_t item_id, QVector<sak::MapiProperty> properties);
     void attachmentContentReady(uint64_t message_id, int index, QByteArray data, QString filename);
+    /// Emitted when a specific attachment's content could NOT be produced. Carries the
+    /// same (message_id, index) identity as attachmentContentReady so a batch save can
+    /// correlate the failure to the exact request it issued (errorOccurred cannot -- it
+    /// names no attachment).
+    void attachmentContentFailed(uint64_t message_id, int index, QString error);
     void progressUpdated(int percent, QString status);
     void errorOccurred(QString error);
 
@@ -148,6 +163,12 @@ private:
         uint16_t cb = 0;
     };
     QHash<uint64_t, BbtEntry> m_bbt_cache;
+
+    /// Property id -> name for the named properties the app reads (MS-PST 2.4.7).
+    QHash<uint16_t, sak::pst::NamedPropertyKey> m_named_properties;
+
+    /// How deep attached messages are nested in the read in progress.
+    int m_embedded_depth = 0;
 
     // -- Internal helper types --
 
@@ -190,7 +211,7 @@ private:
     };
 
     // ======================================================================
-    // NDB Layer — Node Database
+    // NDB Layer -- Node Database
     // ======================================================================
 
     /// Parse and validate the PST file header
@@ -208,8 +229,22 @@ private:
     /// Populate file-level metadata after structural parse succeeds
     void populateFileInfo(const QString& file_path);
 
-    /// Load message-store display name when present
-    void loadMessageStoreDisplayName();
+    /// Load the message store's display name and flag its IPM subtree in the folder tree
+    void loadMessageStoreProperties();
+
+    /// Load the store's Name-to-ID map
+    void loadNamedPropertyMap();
+
+    /// Note how many real emails sit in each folder that is not an ordinary mail folder, so those
+    /// folders can be shown and the empty ones stay out of the way.
+    void countSystemFolderEmails();
+
+    /// Count the real emails in @p folder and everything under it that is not an ordinary mail
+    /// folder. @p inside_mail_tree says whether the folder is under the store's mail tree, whose
+    /// top is @p mail_tree.
+    void countSystemFolderEmailsIn(sak::PstFolder& folder,
+                                   bool inside_mail_tree,
+                                   const sak::PstFolder* mail_tree);
 
     /// Read and size-check the fixed PST header prefix
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readHeaderBytes();
@@ -224,70 +259,155 @@ private:
     /// Parse format-specific ROOT pointers
     void parseHeaderRootPointers(const QByteArray& data);
 
+    /// Verify the header integrity CRCs (MS-PST 2.2.2.6 dwCRCPartial, plus
+    /// dwCRCFull for Unicode/Unicode4k). Fails closed on mismatch so a corrupt
+    /// or forged header is rejected rather than mined for garbage BTree pointers.
+    [[nodiscard]] std::expected<void, sak::error_code> verifyHeaderIntegrity(
+        const QByteArray& data);
+
+    /// Verify a block's on-disk trailer (MS-PST 2.2.2.8.1 BLOCKTRAILER, or the
+    /// Unicode4k block footer): declared size, dwCRC over the raw cb bytes, and
+    /// the ComputeSig(file_offset, bid) signature. @p raw is the exact cb on-disk
+    /// bytes (pre-decompress/pre-decrypt), matching how the CRC was authored.
+    [[nodiscard]] std::expected<void, sak::error_code> verifyBlockTrailer(const QByteArray& raw,
+                                                                          uint64_t file_offset,
+                                                                          int cb,
+                                                                          uint64_t bid);
+
     /// Log validated header metadata
     void logParsedHeader() const;
 
     /// Compute format-dependent page sizes for BTree parsing
     [[nodiscard]] PageFormatSizes pageFormatSizes() const;
 
-    /// Parse a BTree page: read, validate, and extract metadata
-    [[nodiscard]] std::expected<BTreePageInfo, sak::error_code> parseBTreePage(uint64_t page_offset,
-                                                                               int depth);
+    /// Parse a BTree page: read, validate, and extract metadata. @p expected_ptype is the
+    /// MS-PST page type this page must carry (ptypeNBT/ptypeBBT); a mismatch fails closed so a
+    /// zeroed or mistyped page cannot be walked as a BTree.
+    [[nodiscard]] std::expected<BTreePageInfo, sak::error_code> parseBTreePage(
+        uint64_t page_offset, int depth, uint8_t expected_ptype);
 
-    /// Load the Node BTree from the given page offset
+    /// Verify a BTree page's PAGETRAILER (dwCRC over the page body + wSig =
+    /// ComputeSig(page ib, page bid)). Fails closed on mismatch.
+    [[nodiscard]] std::expected<void, sak::error_code> verifyPageTrailer(
+        const QByteArray& page_data, const PageFormatSizes& fmt, uint64_t page_offset);
+
+    /// Parse the format-dependent BTree page metadata (entry count/size, level).
+    void parsePageMeta(BTreePageInfo& info, int meta_offset) const;
+
+    /// Load the Node BTree from the given page offset. Public entry point: seeds a fresh
+    /// per-traversal visited-page-offset set and delegates to loadNodeBTreeGuarded.
     [[nodiscard]] std::expected<void, sak::error_code> loadNodeBTree(uint64_t page_offset,
                                                                      int depth = 0);
 
-    /// Load the Block BTree from the given page offset
+    /// Recursive worker for loadNodeBTree. @p visited rejects a revisited page offset so a crafted
+    /// NBT whose internal pages point back at one another (or fan out to the same child thousands
+    /// of times) cannot drive unbounded work -- a valid NBT visits each page once.
+    [[nodiscard]] std::expected<void, sak::error_code> loadNodeBTreeGuarded(
+        uint64_t page_offset, int depth, QSet<uint64_t>& visited);
+
+    /// Load the Block BTree from the given page offset. Public entry point: seeds a fresh
+    /// per-traversal visited-page-offset set and delegates to loadBlockBTreeGuarded.
     [[nodiscard]] std::expected<void, sak::error_code> loadBlockBTree(uint64_t page_offset,
                                                                       int depth = 0);
+
+    /// Recursive worker for loadBlockBTree. @p visited rejects a revisited page offset; see
+    /// loadNodeBTreeGuarded.
+    [[nodiscard]] std::expected<void, sak::error_code> loadBlockBTreeGuarded(
+        uint64_t page_offset, int depth, QSet<uint64_t>& visited);
 
     /// Read a single data block by Block ID
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readBlock(uint64_t bid);
 
-    /// Read a multi-block data tree (XBLOCK/XXBLOCK)
+    /// Apply the post-read transforms to a raw block: authenticate its on-disk
+    /// trailer, then (Unicode4k) decompress and (compressible) decrypt. Kept
+    /// separate so readBlock stays within complexity limits.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> postProcessBlock(QByteArray raw,
+                                                                              uint64_t file_offset,
+                                                                              int cb,
+                                                                              uint64_t bid);
+
+    /// Read a block's on-disk trailer bytes (computing its padded position for the
+    /// current format). Fails closed when the trailer cannot be fully read.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> readBlockTrailer(uint64_t file_offset,
+                                                                              int cb);
+
+    /// Recursion guard threaded through the data-tree walk. @p depth bounds
+    /// recursion so a cyclic or self-referential internal block cannot overflow
+    /// the stack; @p visited holds every BID already expanded on this traversal so
+    /// a crafted block that lists the same child thousands of times cannot drive
+    /// exponential fan-out (each distinct BID is expanded at most once). A valid
+    /// single-stream data tree never revisits a BID, so this rejects only
+    /// malformed input.
+    struct DataTreeGuard {
+        int depth = 0;
+        // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
+        QSet<uint64_t>& visited;
+    };
+
+    /// Read a multi-block data tree (XBLOCK/XXBLOCK). Public entry point: seeds a
+    /// fresh per-traversal visited-BID set and delegates to readDataTreeGuarded.
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readDataTree(
-        uint64_t bid, QVector<int>* block_offsets = nullptr);
+        uint64_t bid, QVector<int>* block_offsets = nullptr, int depth = 0);
+
+    /// Recursive worker for readDataTree; see DataTreeGuard.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> readDataTreeGuarded(
+        uint64_t bid, QVector<int>* block_offsets, DataTreeGuard guard);
 
     /// Extract attachment data bytes from a resolved subnode
     [[nodiscard]] std::expected<QByteArray, sak::error_code> extractAttachmentFromSubnode(
         const sak::PstNode& subnode);
+
+    /// Dispatch an internal data block to its XBLOCK/XXBLOCK child reader.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> readInternalDataBlock(
+        const QByteArray& data,
+        uint8_t block_level,
+        uint16_t entry_count,
+        QVector<int>* block_offsets,
+        DataTreeGuard guard);
 
     /// Read child blocks from an XBLOCK
     [[nodiscard]] std::expected<void, sak::error_code> readXblockChildren(
         const QByteArray& data,
         uint16_t entry_count,
         QByteArray& result,
-        QVector<int>* block_offsets);
+        QVector<int>* block_offsets,
+        DataTreeGuard guard);
 
     /// Read child blocks from an XXBLOCK
     [[nodiscard]] std::expected<void, sak::error_code> readXxblockChildren(
         const QByteArray& data,
         uint16_t entry_count,
         QByteArray& result,
-        QVector<int>* block_offsets);
+        QVector<int>* block_offsets,
+        DataTreeGuard guard);
 
-    /// Decompress a 4K-page block if the footer indicates zlib compression
-    [[nodiscard]] QByteArray decompressBlockIf4k(const QByteArray& raw,
-                                                 uint64_t file_offset,
-                                                 int cb);
+    /// Decompress a 4K-page block if the footer indicates zlib compression. Fails closed
+    /// (std::unexpected) on a footer-read or decompression failure so a corrupt 4K block never
+    /// yields still-compressed bytes as if they were plaintext.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> decompressBlockIf4k(
+        const QByteArray& raw, uint64_t file_offset, int cb);
 
     /// Decrypt a block in-place using compressible encryption
     void decryptBlock(std::span<uint8_t> data) const;
 
     // ======================================================================
-    // LTP Layer — Lists, Tables, Properties
+    // LTP Layer -- Lists, Tables, Properties
     // ======================================================================
 
-    /// Read the Property Context (PC) for a node → MAPI properties
+    /// Read the Property Context (PC) for a node -> MAPI properties
     [[nodiscard]] std::expected<QVector<sak::MapiProperty>, sak::error_code> readPropertyContext(
         uint64_t nid);
 
-    /// Read the Table Context (TC) for a node → rows of MAPI properties
+    /// Read the Table Context (TC) for a node -> rows of MAPI properties
     [[nodiscard]] std::expected<QVector<QVector<sak::MapiProperty>>, sak::error_code>
     readTableContext(uint64_t nid);
 
-    /// Row matrix payload with per-block end offsets (MS-PST §2.3.4.4.1).
+    /// The same, for a node already in hand: a message's recipient table is one of its sub-nodes,
+    /// so it is not in the Node BTree.
+    [[nodiscard]] std::expected<QVector<QVector<sak::MapiProperty>>, sak::error_code>
+    readTableContextForNode(const sak::PstNode& node);
+
+    /// Row matrix payload with per-block end offsets (MS-PST section 2.3.4.4.1).
     /// When the row matrix is stored as a sub-node, each data block ends with
     /// padding bytes that must be skipped when addressing rows by index.
     struct TcRowMatrix {
@@ -316,10 +436,14 @@ private:
     /// Extract dwRowIndex values from a TCROWID leaf buffer.
     [[nodiscard]] static QVector<uint32_t> extractTcRowIndicesFromLeaf(const QByteArray& leaf);
 
-    /// Build the contiguous [0..block_count*rows_per_block) fallback index list
-    /// used when the TCROWID BTH is absent.
+    /// Build the contiguous [0..block_count*rows_per_block) fallback index list used when
+    /// the TCROWID BTH is absent. @p max_valid_rows is data bytes / row_size; the table is
+    /// rejected (empty result) if the physical-slot count exceeds max_valid_rows plus one
+    /// block of rows, so a crafted TC whose block_count*rows_per_block over-counts the real
+    /// capacity cannot force a multi-GB reservation or overflow the 32-bit product.
     [[nodiscard]] static QVector<uint32_t> fallbackTcRowIndices(int block_count,
-                                                                int rows_per_block);
+                                                                int rows_per_block,
+                                                                qsizetype max_valid_rows);
 
     /// Materialize a single TC row at the given byte offset into a property vector.
     [[nodiscard]] QVector<sak::MapiProperty> materializeTcRow(const QByteArray& row_data,
@@ -364,14 +488,15 @@ private:
     /// Unpack a 32-bit HID/HNID reference, honoring the 64-bit 4K-page layout.
     [[nodiscard]] HidParts unpackHid(uint32_t hn_id) const;
 
-    /// Resolve an HNID: subnode map → NID check → HID heap lookup
+    /// Resolve an HNID: subnode map -> NID check -> HID heap lookup
     [[nodiscard]] std::expected<QByteArray, sak::error_code> resolveHnid(
         uint32_t hnid,
         const QByteArray& heap_data,
         const QVector<int>& block_offsets,
         const QHash<uint64_t, sak::PstNode>& subnode_map);
 
-    /// Collect all leaf records from a multi-level BTH
+    /// Collect all leaf records from a multi-level BTH. Public entry point: seeds a fresh
+    /// per-traversal visited-HID set and delegates to readBthLeafDataGuarded.
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readBthLeafData(
         const QByteArray& heap_data,
         uint32_t node_hid,
@@ -379,21 +504,41 @@ private:
         int level,
         const QVector<int>& block_offsets = {});
 
-    /// Read the sub-node BTree for a node
+    /// Recursion-invariant context for the BTH walk. @p visited_hids rejects a revisited heap HID
+    /// so a crafted BTH cannot drive exponential fan-out (a valid BTH references each HID once).
+    struct BthWalk {
+        const QByteArray& heap_data;
+        uint8_t key_size;
+        const QVector<int>& block_offsets;
+        QSet<uint32_t>& visited_hids;
+    };
+
+    /// Recursive worker for readBthLeafData; see BthWalk.
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> readBthLeafDataGuarded(
+        uint32_t node_hid, int level, BthWalk walk);
+
+    /// Read the sub-node BTree for a node. Public entry point: seeds a fresh per-traversal
+    /// visited-BID set and delegates to readSubNodeBTreeGuarded.
     [[nodiscard]] std::expected<QHash<uint64_t, sak::PstNode>, sak::error_code> readSubNodeBTree(
         uint64_t subnode_bid, int depth = 0);
+
+    /// Recursive worker for readSubNodeBTree. @p visited_bids rejects a revisited block BID so a
+    /// crafted sub-node BTree cannot drive exponential fan-out.
+    [[nodiscard]] std::expected<QHash<uint64_t, sak::PstNode>, sak::error_code>
+    readSubNodeBTreeGuarded(uint64_t subnode_bid, int depth, QSet<uint64_t>& visited_bids);
 
     /// Read sub-node BTree leaf entries
     [[nodiscard]] QHash<uint64_t, sak::PstNode> readSubNodeLeafEntries(const QByteArray& data,
                                                                        int header_size,
-                                                                       uint16_t entry_count);
+                                                                       uint16_t entry_count) const;
 
     /// Read sub-node BTree intermediate entries (recursive)
     [[nodiscard]] std::expected<QHash<uint64_t, sak::PstNode>, sak::error_code>
     readSubNodeIntermediateEntries(const QByteArray& data,
                                    int header_size,
                                    uint16_t entry_count,
-                                   int depth);
+                                   int depth,
+                                   QSet<uint64_t>& visited_bids);
 
     /// Format a MAPI property value for display
     [[nodiscard]] QString formatPropertyValue(uint16_t prop_type,
@@ -406,23 +551,54 @@ private:
     // Messaging Layer
     // ======================================================================
 
-    /// Build the folder hierarchy starting from the root folder NID
+    /// Build the folder hierarchy starting from the root folder NID. Public entry point: seeds a
+    /// fresh per-traversal visited-NID set and delegates to buildFolderHierarchyGuarded.
     [[nodiscard]] std::expected<sak::PstFolderTree, sak::error_code> buildFolderHierarchy(
         uint64_t root_nid, int depth = 0);
 
+    /// Recursive worker for buildFolderHierarchy. @p visited_nids rejects a revisited folder NID
+    /// so a crafted hierarchy table (a folder that lists itself/an ancestor as a child) cannot
+    /// drive exponential fan-out -- valid folders form a tree (each NID appears once).
+    [[nodiscard]] std::expected<sak::PstFolderTree, sak::error_code> buildFolderHierarchyGuarded(
+        uint64_t root_nid, int depth, QSet<uint64_t>& visited_nids);
+
     /// Load child folders from the hierarchy table into a parent folder
-    void loadChildFolders(sak::PstFolder& folder, uint64_t root_nid, int depth);
+    void loadChildFolders(sak::PstFolder& folder,
+                          uint64_t root_nid,
+                          int depth,
+                          QSet<uint64_t>& visited_nids);
 
     /// Read the contents table for a folder
     [[nodiscard]] std::expected<QVector<sak::PstItemSummary>, sak::error_code> readContentsTable(
-        uint64_t folder_nid, int offset, int limit);
+        uint64_t contents_nid, int offset, int limit, int* total_rows = nullptr);
+
+    /// One row of a contents table as a summary.
+    [[nodiscard]] sak::PstItemSummary summaryFromRow(const QVector<sak::MapiProperty>& row);
 
     /// Read a full message/contact/calendar/task item
+    [[nodiscard]] static uint64_t contentsTableNid(uint64_t folder_node_id);
+    [[nodiscard]] std::expected<QVector<sak::MapiProperty>, sak::error_code>
+    readPropertyContextForNode(const sak::PstNode& node);
+    [[nodiscard]] std::expected<sak::PstItemDetail, sak::error_code> readMessageForNode(
+        const sak::PstNode& node, uint64_t message_nid);
+    void applyMessageProperties(sak::PstItemDetail& detail,
+                                const QVector<sak::MapiProperty>& props) const;
+    /// Fill a calendar item's attendees from its recipient table. An unreadable table is noted on
+    /// the item and does not stop it being read.
+    void readAttendees(const sak::PstNode& node, sak::PstItemDetail& detail);
+    void readContactPhoto(const sak::PstNode& node, sak::PstItemDetail& detail);
+    [[nodiscard]] std::expected<QVector<sak::PstAttachmentInfo>, sak::error_code>
+    readAttachmentsForNode(const sak::PstNode& node);
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> readAttachmentDataForNode(
+        const sak::PstNode& node, int attachment_index);
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> extractObjectAttachment(
+        const sak::MapiProperty& data_prop,
+        const QVector<sak::MapiProperty>& att_props,
+        const HeapContext& ctx);
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> embeddedMessageAsEml(
+        const sak::PstNode& node);
     [[nodiscard]] std::expected<sak::PstItemDetail, sak::error_code> readMessage(
         uint64_t message_nid);
-
-    /// Read just the sender name+email from a message PC (lightweight)
-    [[nodiscard]] std::pair<QString, QString> readSenderFromPC(uint64_t message_nid);
 
     /// Extract sender fields from collected BTH leaf data
     [[nodiscard]] std::pair<QString, QString> extractSenderFromLeaf(const BthLeafResult& bth,
@@ -453,10 +629,6 @@ private:
 
     /// Enrich item summaries with sender names from their PCs
     void enrichItemSenders(QVector<sak::PstItemSummary>& items);
-
-    /// Read attachment metadata for a message
-    [[nodiscard]] std::expected<QVector<sak::PstAttachmentInfo>, sak::error_code> readAttachments(
-        uint64_t message_nid);
 
     /// Read a single attachment's properties from a sub-node
     [[nodiscard]] std::expected<sak::PstAttachmentInfo, sak::error_code> readSingleAttachment(

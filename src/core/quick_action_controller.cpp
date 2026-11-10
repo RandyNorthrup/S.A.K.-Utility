@@ -3,63 +3,102 @@
 
 #include "sak/quick_action_controller.h"
 
+#include "sak/action_constants.h"
+#include "sak/app_action_guards.h"
 #include "sak/app_paths.h"
 #include "sak/elevation_broker.h"
 #include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
-#include "sak/quick_action_result_io.h"
+#include "sak/thread_custody.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonObject>
 #include <QTextStream>
+
+#include <algorithm>
+#include <array>
+#include <memory>
+#include <ranges>
+#include <utility>
 
 namespace sak {
 
 namespace {
 constexpr int kThreadShutdownWaitMs = 10'000;
-}
-
-namespace {
 constexpr int kElevationRequestProgress = 5;
-constexpr auto kBackupBitLockerKeysAction = "Backup BitLocker Keys";
-constexpr auto kDefaultBackupLocation = "C:/SAK_Backups";
 constexpr auto kBackupLocationPayloadKey = "backup_location";
 constexpr auto kMessageResultKey = "message";
 constexpr auto kLogResultKey = "log";
+constexpr auto kInconclusiveResultKey = "inconclusive";
+constexpr auto kWarningResultKey = "warning";
+constexpr auto kOutputPathResultKey = "output_path";
 constexpr auto kStatusResultKey = "status";
 
-QJsonObject buildElevatedActionPayload(const QString& action_name,
-                                       const QString& configuredBackupLocation) {
-    QJsonObject payload;
-    if (action_name != QString::fromLatin1(kBackupBitLockerKeysAction)) {
-        return payload;
-    }
+// What an elevated execution thread hands back. Shared between the thread, which writes it
+// before quitting, and the controller's finished() handler, which reads it afterwards.
+struct ElevatedExecutionOutcome {
+    QuickAction::ExecutionResult result;
+    QuickAction::ActionStatus status{QuickAction::ActionStatus::Failed};
+};
 
-    const QString backup_location = configuredBackupLocation.isEmpty()
-                                        ? QString::fromLatin1(kDefaultBackupLocation)
-                                        : configuredBackupLocation;
-    payload[QString::fromLatin1(kBackupLocationPayloadKey)] = backup_location;
-    return payload;
+// Everything a still-running action thread uses once its controller is gone. Members are
+// destroyed in reverse order, so the thread object (finished by then) goes last.
+struct RetainedActionRun {
+    std::unique_ptr<QThread> thread;
+    std::unique_ptr<QuickAction> action;
+    std::unique_ptr<ElevationBroker> broker;
+};
+
+#ifdef SAK_CORE_TEST_HOOKS
+std::function<std::unique_ptr<ElevationBroker>()>& brokerFactoryForTesting() {
+    static std::function<std::unique_ptr<ElevationBroker>()> factory;
+    return factory;
+}
+#endif
+
+std::unique_ptr<ElevationBroker> makeElevationBroker() {
+#ifdef SAK_CORE_TEST_HOOKS
+    if (const auto& factory = brokerFactoryForTesting()) {
+        return factory();
+    }
+#endif
+    return std::make_unique<ElevationBroker>();
+}
+
+QuickAction::ExecutionResult failedResult(const QString& message) {
+    QuickAction::ExecutionResult result;
+    result.success = false;
+    result.message = message;
+    result.log = message;
+    return result;
+}
+
+// The status a finished in-process run ends in: its own, unless that contradicts its result.
+QuickAction::ActionStatus terminalStatus(const QuickAction::ExecutionResult& result,
+                                         QuickAction::ActionStatus reported) {
+    if (result.success) {
+        return QuickAction::ActionStatus::Success;
+    }
+    return reported == QuickAction::ActionStatus::Cancelled ? QuickAction::ActionStatus::Cancelled
+                                                            : QuickAction::ActionStatus::Failed;
 }
 
 QuickAction::ExecutionResult makeElevationFailureResult(sak::error_code error) {
-    QuickAction::ExecutionResult result;
-    result.success = false;
-
     if (error == sak::error_code::elevation_denied) {
+        QuickAction::ExecutionResult result;
+        result.success = false;
         result.message = QStringLiteral("Administrator privileges required but not granted");
         result.log = QStringLiteral("User cancelled the UAC prompt");
         return result;
     }
-
-    result.message = QStringLiteral("Elevated helper error: %1")
-                         .arg(QString::fromStdString(std::string(sak::to_string(error))));
-    result.log = result.message;
-    return result;
+    return failedResult(QStringLiteral("Elevated helper error: %1")
+                            .arg(QString::fromStdString(std::string(sak::to_string(error)))));
 }
 
 QuickAction::ExecutionResult makeElevatedActionResult(
@@ -73,9 +112,27 @@ QuickAction::ExecutionResult makeElevatedActionResult(
     result.success = broker_result->success;
     result.message = broker_result->data[QString::fromLatin1(kMessageResultKey)].toString();
     result.log = broker_result->data[QString::fromLatin1(kLogResultKey)].toString();
-    status = static_cast<QuickAction::ActionStatus>(
-        broker_result->data[QString::fromLatin1(kStatusResultKey)].toInt(
-            static_cast<int>(QuickAction::ActionStatus::Failed)));
+    result.inconclusive = !result.success &&
+                          broker_result->data[QString::fromLatin1(kInconclusiveResultKey)].toBool();
+    result.warning = broker_result->data[QString::fromLatin1(kWarningResultKey)].toString();
+    result.output_path = broker_result->data[QString::fromLatin1(kOutputPathResultKey)].toString();
+
+    // Decode the status defensively: never cast an out-of-range integer to the enum, and
+    // never surface a status that contradicts the authoritative success flag. A malformed
+    // helper response therefore cannot yield an invalid enum value or a success/failure
+    // mismatch.
+    int status_int = broker_result->data[QString::fromLatin1(kStatusResultKey)].toInt(
+        static_cast<int>(QuickAction::ActionStatus::Failed));
+    if (status_int < static_cast<int>(QuickAction::ActionStatus::Idle) ||
+        status_int > static_cast<int>(QuickAction::ActionStatus::Cancelled)) {
+        status_int = static_cast<int>(QuickAction::ActionStatus::Failed);
+    }
+    status = static_cast<QuickAction::ActionStatus>(status_int);
+    if (result.success) {
+        status = QuickAction::ActionStatus::Success;
+    } else if (status == QuickAction::ActionStatus::Success) {
+        status = QuickAction::ActionStatus::Failed;
+    }
 
     if (!broker_result->success && result.message.isEmpty()) {
         result.message = broker_result->error_message;
@@ -84,9 +141,51 @@ QuickAction::ExecutionResult makeElevatedActionResult(
 }
 }  // namespace
 
+QString elevatedTaskIdForQuickAction(const QString& action_name) {
+    using namespace quick_action_elevation;
+    constexpr std::array mappings{
+        std::pair{kVerifySystemFilesName, kVerifySystemFilesTaskId},
+        std::pair{kCheckDiskErrorsName, kCheckDiskErrorsTaskId},
+        std::pair{kResetNetworkName, kResetNetworkTaskId},
+        std::pair{kBackupBitLockerKeysName, kBackupBitLockerKeysTaskId},
+        std::pair{kDefenderQuickScanName, kDefenderQuickScanTaskId},
+        std::pair{kDefenderFullScanName, kDefenderFullScanTaskId},
+        std::pair{kDefenderSignatureUpdateName, kDefenderSignatureUpdateTaskId},
+    };
+    const auto match = std::ranges::find_if(mappings, [&action_name](const auto& mapping) {
+        return action_name == QString::fromLatin1(mapping.first);
+    });
+    return match == mappings.end() ? QString() : QString::fromLatin1(match->second);
+}
+
+QJsonObject buildElevatedActionPayload(const QString& task_id,
+                                       const QString& output_folder,
+                                       bool output_folder_warning_accepted) {
+    QJsonObject payload;
+    if (task_id != QString::fromLatin1(quick_action_elevation::kBackupBitLockerKeysTaskId)) {
+        return payload;
+    }
+    const QString backup_location = output_folder.trimmed();
+    if (backup_location.isEmpty()) {
+        return payload;
+    }
+    payload[QString::fromLatin1(kBackupLocationPayloadKey)] = backup_location;
+    if (output_folder_warning_accepted) {
+        payload[QString::fromLatin1(quick_action_elevation::kOutputFolderWarningAcceptedKey)] =
+            true;
+    }
+    return payload;
+}
+
+#ifdef SAK_CORE_TEST_HOOKS
+void QuickActionController::setElevationBrokerFactoryForTesting(
+    std::function<std::unique_ptr<ElevationBroker>()> factory) {
+    brokerFactoryForTesting() = std::move(factory);
+}
+#endif
+
 QuickActionController::QuickActionController(QObject* parent) : QObject(parent) {
-    // Setup log file path
-    QString log_dir = sak::app_paths::logsDirectory();
+    const QString log_dir = sak::app_paths::logsDirectory();
     if (!sak::app_paths::ensureDirectory(log_dir)) {
         sak::logWarning("Failed to create quick actions log directory: {}", log_dir.toStdString());
     }
@@ -94,83 +193,93 @@ QuickActionController::QuickActionController(QObject* parent) : QObject(parent) 
 }
 
 QuickActionController::~QuickActionController() {
-    // Cancel any running operations
-    if (m_current_scan_action) {
-        m_current_scan_action->cancel();
+    // Application exit: nothing queued starts, and the running action -- and an elevated task,
+    // whose helper never sees the action's own flag -- is asked to stop, so the bounded join
+    // below does not wait out the helper's full inactivity timeout.
+    m_queue.clear();
+    if (m_current_action != nullptr) {
+        m_current_action->cancel();
     }
-    if (m_current_execution_action) {
-        m_current_execution_action->cancel();
+    if (m_current_elevated && m_broker) {
+        m_broker->cancelCurrentTask();
     }
-
-    // Gracefully shut down threads -- use deleteLater for safe cleanup
-    auto cleanupThread = [](QThread*& thread) {
-        if (!thread) {
-            return;
-        }
-        if (thread->isRunning()) {
-            thread->quit();
-            if (!thread->wait(kThreadShutdownWaitMs)) {
-                sak::logError("QuickAction thread did not stop within 10s");
-            }
-        }
-        thread->deleteLater();
-        thread = nullptr;
-    };
-
-    cleanupThread(m_scan_thread);
-    cleanupThread(m_execution_thread);
+    retireThreadOnDestroy();
+    // m_broker, unless custody took it, is destroyed with the controller; ~ElevationBroker shuts
+    // the helper down.
 }
 
-void QuickActionController::setLoggingEnabled(bool enabled) {
-    m_logging_enabled = enabled;
-}
-
-void QuickActionController::setBackupLocation(const QString& backup_location) {
-    m_backup_location = backup_location;
+void QuickActionController::retireThreadOnDestroy() {
+    QThread* const running = std::exchange(m_thread, nullptr);
+    if (running == nullptr) {
+        return;
+    }
+    running->quit();
+    if (running->wait(kThreadShutdownWaitMs)) {
+        delete running;  // deleteLater would never fire: no event loop runs during teardown.
+        return;
+    }
+    // Overran: never terminated and never waited on without bound -- reported, and retained
+    // with everything it uses until it finishes.
+    auto retained = std::make_shared<RetainedActionRun>();
+    running->setParent(nullptr);
+    retained->thread.reset(running);
+    QuickAction* const action = m_current_action;
+    const auto owned = std::ranges::find_if(m_actions, [action](const auto& candidate) {
+        return candidate.get() == action;
+    });
+    if (owned != m_actions.end()) {
+        retained->action = std::move(*owned);
+        m_actions.erase(owned);
+    }
+    if (m_current_elevated) {
+        retained->broker = std::move(m_broker);
+    }
+    ThreadCustody::retain(
+        running,
+        retained,
+        QStringLiteral("QuickAction thread for '%1' still running %2 ms after its stop request")
+            .arg(action != nullptr ? action->name() : QStringLiteral("unknown"))
+            .arg(kThreadShutdownWaitMs));
 }
 
 QString QuickActionController::registerAction(std::unique_ptr<QuickAction> action) {
-    Q_ASSERT(!m_actions.empty());
-    Q_ASSERT(action);
     if (!action) {
         return QString();
     }
+    const QString action_name = action->name();
 
-    QString action_name = action->name();
+    // Fail closed: refuse a duplicate name instead of shadowing it. m_action_map.insert would
+    // overwrite the key so getAction()/routing resolves only the newest object, while
+    // getAllActions() would still list BOTH -- an ambiguous listing/routing split.
+    if (m_action_map.contains(action_name)) {
+        sak::logWarning("Rejected duplicate quick-action registration: {}",
+                        action_name.toStdString());
+        return QString();
+    }
+
     QuickAction* action_ptr = action.get();
-
-    // Store action
     m_actions.push_back(std::move(action));
     m_action_map.insert(action_name, action_ptr);
 
-    // Connect signals
-    connect(action_ptr, &QuickAction::statusChanged, this, [this, action_ptr]() {
-        if (action_ptr->status() == QuickAction::ActionStatus::Failed) {
-            Q_EMIT actionError(action_ptr, action_ptr->lastExecutionResult().message);
-        }
-    });
-
-    connect(
-        action_ptr, &QuickAction::scanProgress, this, [this, action_ptr](const QString& message) {
-            logOperation(action_ptr, QString("Scanning: %1").arg(message));
-        });
-
+    // Progress and log lines come from the worker running the action; they are queued here
+    // ahead of its completion, so they always land while that run is still the current one.
     connect(action_ptr,
             &QuickAction::executionProgress,
             this,
-            [this, action_ptr](const QString& msg, int prog) {
-                QString message = QString("%1 - %2%").arg(msg).arg(prog);
-                Q_EMIT actionExecutionProgress(action_ptr, message, prog);
-                logOperation(action_ptr, message);
+            [this, action_ptr](const QString& message, int percent) {
+                if (m_current_action == action_ptr && m_current.has_value()) {
+                    Q_EMIT runProgress(*m_current, message, percent);
+                }
             });
+    connect(action_ptr, &QuickAction::logMessage, this, [this, action_ptr](const QString& message) {
+        if (m_current_action == action_ptr && m_current.has_value()) {
+            logRun(*m_current, message);
+        } else {
+            writeLogLine(logLine(action_ptr->name(), message));
+        }
+    });
 
-    connect(
-        action_ptr, &QuickAction::errorOccurred, this, [this, action_ptr](const QString& error) {
-            Q_EMIT actionError(action_ptr, error);
-            logOperation(action_ptr, QString("ERROR: %1").arg(error));
-        });
-
-    logOperation(action_ptr, "Action registered");
+    writeLogLine(logLine(action_name, QStringLiteral("Action registered")));
     return action_name;
 }
 
@@ -187,304 +296,361 @@ std::vector<QuickAction*> QuickActionController::getAllActions() const {
     return result;
 }
 
-std::vector<QuickAction*> QuickActionController::getActionsByCategory(
-    QuickAction::ActionCategory category) const {
-    std::vector<QuickAction*> result;
-    for (const auto& action : m_actions) {
-        if (action->category() == category) {
-            result.push_back(action.get());
+void QuickActionController::requestRun(const QuickActionRun& run) {
+    if (run.owner.trimmed().isEmpty()) {
+        finishUnstarted(run,
+                        QStringLiteral("Refused a quick-action request with no owner"),
+                        QuickAction::ActionStatus::Failed);
+        return;
+    }
+    if (getAction(run.action_name) == nullptr) {
+        finishUnstarted(
+            run,
+            QStringLiteral("No quick action is registered as \"%1\"").arg(run.action_name),
+            QuickAction::ActionStatus::Failed);
+        return;
+    }
+    if (m_current.has_value()) {
+        m_queue.enqueue(run);
+        logRun(run, QStringLiteral("Queued behind %1").arg(m_current->action_name));
+        Q_EMIT runQueued(run, m_current->action_name);
+        return;
+    }
+    startRun(run);
+}
+
+void QuickActionController::cancelRunsOf(const QString& owner) {
+    QList<QuickActionRun> dropped;
+    QQueue<QuickActionRun> kept;
+    for (const QuickActionRun& queued : std::as_const(m_queue)) {
+        if (queued.owner == owner) {
+            dropped << queued;
+        } else {
+            kept.enqueue(queued);
         }
     }
-    return result;
-}
+    m_queue = std::move(kept);
+    for (const QuickActionRun& run : std::as_const(dropped)) {
+        finishUnstarted(run,
+                        QStringLiteral("Cancelled before it started"),
+                        QuickAction::ActionStatus::Cancelled);
+    }
 
-bool QuickActionController::hasAdminPrivileges() {
-    return ElevationManager::isElevated();
-}
-
-void QuickActionController::scanAction(const QString& action_name) {
-    Q_ASSERT(!action_name.isEmpty());
-    QuickAction* action = getAction(action_name);
-    if (!action) {
-        Q_EMIT logMessage(QString("Action not found: %1").arg(action_name));
+    if (!m_current.has_value() || m_current->owner != owner) {
         return;
     }
-
-    // Check admin requirements - but allow scan to proceed
-    // Scan can determine if action is applicable regardless of admin status
-    // Admin check will happen again before execution
-    if (action->requiresAdmin() && !hasAdminPrivileges()) {
-        logOperation(action, "Note: Action requires admin privileges for execution");
+    m_current_action->cancel();
+    // An elevated action runs inside the helper process; the action's own cancel flag never
+    // reaches it. Signal the broker so the privileged task actually stops.
+    if (m_current_elevated && m_broker) {
+        m_broker->cancelCurrentTask();
     }
-
-    // Check if already scanning
-    if (m_current_scan_action) {
-        m_scan_queue.enqueue(action_name);
-        Q_EMIT logMessage(QString("Scan queued: %1").arg(action_name));
-        return;
-    }
-
-    startScanWorker(action);
+    logRun(*m_current, QStringLiteral("Cancel requested"));
 }
 
-void QuickActionController::executeAction(const QString& action_name, bool require_confirmation) {
-    Q_ASSERT(!action_name.isEmpty());
-    QuickAction* action = getAction(action_name);
-    if (!action) {
-        Q_EMIT logMessage(QString("Action not found: %1").arg(action_name));
-        return;
+bool QuickActionController::hasRunsOf(const QString& owner) const {
+    if (m_current.has_value() && m_current->owner == owner) {
+        return true;
     }
-
-    // Check admin requirements
-    if (action->requiresAdmin() && !hasAdminPrivileges()) {
-        executeElevatedAction(action, action_name);
-        return;
-    }
-
-    // Check if already executing
-    if (m_current_execution_action) {
-        // Queue for later
-        m_action_queue.enqueue(action_name);
-        Q_EMIT logMessage(QString("Action queued: %1").arg(action_name));
-        return;
-    }
-
-    // Confirmation handled by panel if required
-    Q_UNUSED(require_confirmation)
-
-    startExecutionWorker(action);
+    return std::ranges::any_of(m_queue,
+                               [&owner](const QuickActionRun& run) { return run.owner == owner; });
 }
 
-void QuickActionController::executeElevatedAction(QuickAction* action, const QString& action_name) {
-    Q_ASSERT(action);
-    Q_ASSERT(!action_name.isEmpty());
-    if (m_current_execution_action) {
-        m_action_queue.enqueue(action_name);
-        Q_EMIT logMessage(QString("Action queued: %1").arg(action_name));
-        return;
-    }
-
-    m_current_execution_action = action;
-    Q_EMIT actionExecutionStarted(action);
-    action->updateStatus(QuickAction::ActionStatus::Running);
-    Q_EMIT actionExecutionProgress(action,
-                                   QStringLiteral("Requesting administrator approval..."),
-                                   kElevationRequestProgress);
-    logOperation(action, QStringLiteral("Requesting administrator elevation via helper"));
-
-    const QJsonObject payload = buildElevatedActionPayload(action_name, m_backup_location);
-
-    m_execution_thread = new QThread(this);
-    auto* thread = m_execution_thread;
-    auto* context = new QObject();
-    context->moveToThread(thread);
-    connect(
-        thread,
-        &QThread::started,
-        context,
-        [this, thread, context, action, action_name, payload]() {
-            ElevationBroker broker;
-            connect(
-                &broker,
-                &ElevationBroker::progressUpdated,
-                this,
-                [this](int percent, const QString& status) {
-                    if (m_current_execution_action) {
-                        Q_EMIT actionExecutionProgress(m_current_execution_action, status, percent);
-                    }
-                },
-                Qt::QueuedConnection);
-
-            QuickAction::ExecutionResult result;
-            QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
-            result = makeElevatedActionResult(broker.executeTask(action_name, action_name, payload),
-                                              status);
-
-            QMetaObject::invokeMethod(
-                this,
-                [this, action, result, status]() {
-                    action->applyExecutionResult(result, status);
-                    onExecutionComplete();
-                },
-                Qt::QueuedConnection);
-            context->deleteLater();
-            thread->quit();
-        });
-    thread->start();
-}
-
-void QuickActionController::scanAllActions() {
-    // Queue all registered actions for sequential scan
-    m_scan_queue.clear();
-    for (const auto& action : m_actions) {
-        m_scan_queue.enqueue(action->name());
-    }
-
-    if (!m_current_scan_action && !m_scan_queue.isEmpty()) {
-        QString next_action = m_scan_queue.dequeue();
-        scanAction(next_action);
+void QuickActionController::startRun(const QuickActionRun& run) {
+    QuickAction* action = getAction(run.action_name);
+    Q_ASSERT(action);  // requestRun refuses an unknown name; actions are never unregistered
+    m_current = run;
+    m_current_action = action;
+    m_current_elevated = action->requiresAdmin() && !ElevationManager::isElevated();
+    action->clearCancellation();  // a stale cancel flag would abort this fresh run immediately
+    // This run's own folder, applied as it starts: a run queued behind another caller's never
+    // writes into the folder that caller chose.
+    action->setOutputFolder(run.output_folder);
+    action->setOutputFolderWarningAccepted(run.output_folder_warning_accepted);
+    Q_EMIT runStarted(run);
+    logRun(run, QStringLiteral("Execution started"));
+    if (m_current_elevated) {
+        startElevated(action);
+    } else {
+        startInProcess(action);
     }
 }
 
-void QuickActionController::cancelCurrentAction() {
-    if (m_current_scan_action) {
-        m_current_scan_action->cancel();
-        logOperation(m_current_scan_action, "Scan cancelled by user");
-    }
-    if (m_current_execution_action) {
-        m_current_execution_action->cancel();
-        logOperation(m_current_execution_action, "Execution cancelled by user");
-    }
-}
+void QuickActionController::startInProcess(QuickAction* action) {
+    m_thread = new QThread(this);
+    action->moveToThread(m_thread);
 
-void QuickActionController::onScanComplete() {
-    Q_ASSERT(m_scan_thread);
-    Q_ASSERT(!m_scan_queue.isEmpty());
-    if (!m_current_scan_action) {
-        return;
-    }
-
-    QuickAction* action = m_current_scan_action;
-    m_current_scan_action = nullptr;
-
-    Q_EMIT actionScanComplete(action);
-    logOperation(action, QString("Scan complete: %1").arg(action->lastScanResult().summary));
-
-    // Cleanup thread
-    if (m_scan_thread) {
-        m_scan_thread->quit();
-        m_scan_thread->wait();
-        m_scan_thread->deleteLater();
-        m_scan_thread = nullptr;
-    }
-
-    // Process scan queue
-    if (!m_scan_queue.isEmpty()) {
-        QString next_action = m_scan_queue.dequeue();
-        scanAction(next_action);
-    }
-}
-
-void QuickActionController::onExecutionComplete() {
-    Q_ASSERT(m_execution_thread);
-    Q_ASSERT(!m_action_queue.isEmpty());
-    if (!m_current_execution_action) {
-        return;
-    }
-
-    QuickAction* action = m_current_execution_action;
-    m_current_execution_action = nullptr;
-
-    Q_EMIT actionExecutionComplete(action);
-
-    const auto& result = action->lastExecutionResult();
-    qint64 duration_sec = result.duration_ms / kMillisecondsPerSecond;
-    QString log_msg = result.success ? QString("Execution complete: %1 (%2 bytes in %3s)")
-                                           .arg(result.message)
-                                           .arg(result.bytes_processed)
-                                           .arg(duration_sec)
-                                     : QString("Execution failed: %1").arg(result.message);
-    logOperation(action, log_msg);
-
-    // Cleanup thread
-    if (m_execution_thread) {
-        m_execution_thread->quit();
-        m_execution_thread->wait();
-        m_execution_thread->deleteLater();
-        m_execution_thread = nullptr;
-    }
-
-    // Process queue
-    if (!m_action_queue.isEmpty()) {
-        QString next_action = m_action_queue.dequeue();
-        executeAction(next_action, false);
-    }
-}
-
-void QuickActionController::onWorkerError(const QString& error) {
-    QuickAction* action = m_current_execution_action ? m_current_execution_action
-                                                     : m_current_scan_action;
-    if (action) {
-        Q_EMIT actionError(action, error);
-        logOperation(action, QString("ERROR: %1").arg(error));
-    }
-}
-
-void QuickActionController::startScanWorker(QuickAction* action) {
-    Q_ASSERT(m_scan_thread);
-    Q_ASSERT(action);
-    m_current_scan_action = action;
-    Q_EMIT actionScanStarted(action);
-    logOperation(action, "Scan started");
-
-    // Create worker thread
-    m_scan_thread = new QThread(this);
-    action->moveToThread(m_scan_thread);
-
-    // Connect completion
-    connect(
-        action, &QuickAction::scanComplete, this, [this](const QuickAction::ScanResult& result) {
-            Q_UNUSED(result);
-            onScanComplete();
-        });
-    connect(m_scan_thread, &QThread::finished, action, [action]() {
-        auto* app_thread = QCoreApplication::instance()->thread();
-        if (action->thread() != app_thread) {
-            action->moveToThread(app_thread);
-        }
-    });
-    connect(m_scan_thread, &QThread::started, action, &QuickAction::scan);
-
-    m_scan_thread->start();
-}
-
-void QuickActionController::startExecutionWorker(QuickAction* action) {
-    Q_ASSERT(m_execution_thread);
-    Q_ASSERT(action);
-    m_current_execution_action = action;
-    Q_EMIT actionExecutionStarted(action);
-    logOperation(action, "Execution started");
-
-    // Create worker thread
-    m_execution_thread = new QThread(this);
-    action->moveToThread(m_execution_thread);
-
-    // Connect completion
+    // Drop any prior connection so a re-run reports its completion exactly once
+    // (UniqueConnection is ignored for lambda connections).
+    disconnect(action, &QuickAction::executionComplete, this, nullptr);
     connect(action,
             &QuickAction::executionComplete,
             this,
-            [this](const QuickAction::ExecutionResult& result) {
-                Q_UNUSED(result);
-                onExecutionComplete();
+            [this, action](const QuickAction::ExecutionResult& result) {
+                if (m_current_action == action) {
+                    finishCurrent(result, terminalStatus(result, action->status()));
+                }
             });
-    connect(m_execution_thread, &QThread::finished, action, [action]() {
+    connect(m_thread, &QThread::finished, action, [action]() {
         auto* app_thread = QCoreApplication::instance()->thread();
         if (action->thread() != app_thread) {
             action->moveToThread(app_thread);
         }
     });
-    connect(m_execution_thread, &QThread::started, action, &QuickAction::execute);
-
-    m_execution_thread->start();
+    connect(m_thread, &QThread::started, action, &QuickAction::execute);
+    m_thread->start();
 }
 
-void QuickActionController::logOperation(QuickAction* action, const QString& message) {
-    Q_ASSERT(action);
-    Q_ASSERT(!message.isEmpty());
-    if (!m_logging_enabled) {
+QString QuickActionController::elevatedRunRefusal(const QString& task_id) const {
+    if (task_id.isEmpty()) {
+        return QStringLiteral("No elevated helper task is registered for this action");
+    }
+    // Fail closed: the folder goes to the ELEVATED helper as the place it writes with
+    // administrator rights. A relative path (resolved against a mutable CWD), a UNC/device
+    // literal or a path reached through a symlink/junction is refused rather than handed over.
+    const QString folder = m_current->output_folder.trimmed();
+    if (!folder.isEmpty() && (!QDir::isAbsolutePath(folder) || isNetworkOrDevicePath(folder) ||
+                              pathReparseUnsafe(folder))) {
+        return QStringLiteral(
+                   "Refused output folder (needs an absolute local path with no "
+                   "links): %1")
+            .arg(folder);
+    }
+    return {};
+}
+
+ElevationBroker& QuickActionController::elevationBroker() {
+    if (!m_broker) {
+        m_broker = makeElevationBroker();
+        connect(
+            m_broker.get(),
+            &ElevationBroker::progressUpdated,
+            this,
+            [this](int percent, const QString& status) {
+                if (m_current.has_value() && m_current_elevated) {
+                    Q_EMIT runProgress(*m_current, status, percent);
+                }
+            },
+            Qt::QueuedConnection);
+    }
+    return *m_broker;
+}
+
+void QuickActionController::startElevated(QuickAction* action) {
+    action->updateStatus(QuickAction::ActionStatus::Running);
+    const QString task_id = elevatedTaskIdForQuickAction(action->name());
+    if (const QString refusal = elevatedRunRefusal(task_id); !refusal.isEmpty()) {
+        logRun(*m_current, refusal);
+        const QuickAction::ExecutionResult result = failedResult(refusal);
+        action->applyExecutionResult(result, QuickAction::ActionStatus::Failed);
+        finishCurrent(result, QuickAction::ActionStatus::Failed);
         return;
     }
+    const QJsonObject payload = buildElevatedActionPayload(
+        task_id, m_current->output_folder, m_current->output_folder_warning_accepted);
+    Q_EMIT runProgress(*m_current,
+                       QStringLiteral("Requesting administrator approval..."),
+                       kElevationRequestProgress);
+    logRun(*m_current, QStringLiteral("Requesting administrator elevation via helper"));
 
-    QString timestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
-    QString log_entry = QString("[%1] %2: %3").arg(timestamp, action->name(), message);
+    ElevationBroker* broker = &elevationBroker();
+    m_thread = new QThread(this);
+    auto* thread = m_thread;
+    auto* context = new QObject();
+    context->moveToThread(thread);
+    // The thread touches only the broker and this shared outcome, never the controller: a
+    // controller torn down mid-task can then retain the broker and thread in custody without
+    // leaving the thread a dangling `this`. The outcome comes back through the thread's own
+    // finished(), whose connection to this controller dies with it.
+    auto outcome = std::make_shared<ElevatedExecutionOutcome>();
+    const QString action_name = action->name();
+    connect(thread,
+            &QThread::started,
+            context,
+            [broker, outcome, thread, context, action_name, task_id, payload]() {
+                // Timed here, from the request to the helper's answer: the helper's result carries
+                // no duration, so every elevated run used to log "(0s)" -- a 13-minute Verify
+                // System Files among them (VM smoke, 2026-11-09).
+                QElapsedTimer clock;
+                clock.start();
+                outcome->result = makeElevatedActionResult(
+                    broker->executeTask(task_id, action_name, payload), outcome->status);
+                outcome->result.duration_ms = clock.elapsed();
+                context->deleteLater();
+                thread->quit();
+            });
+    connect(thread, &QThread::finished, this, [this, action, outcome]() {
+        if (m_current_action == action) {
+            action->applyExecutionResult(outcome->result, outcome->status);
+            finishCurrent(outcome->result, outcome->status);
+        }
+    });
+    thread->start();
+}
 
-    Q_EMIT logMessage(log_entry);
+void QuickActionController::joinCurrentThread() {
+    QThread* thread = std::exchange(m_thread, nullptr);
+    if (thread == nullptr) {
+        return;
+    }
+    thread->quit();
+    // SAK-ALLOW-BLOCKING: load-bearing. The in-process thread's finished handler moves the
+    // action back to the controller's thread, and the next run calls action->moveToThread() --
+    // which is only legal once that has happened. The run has already reported its completion,
+    // so only its return path remains.
+    thread->wait();
+    thread->deleteLater();
+}
 
-    // Write to file
+QString QuickActionController::completionLine(const QuickAction::ExecutionResult& result) {
+    const qint64 duration_sec = result.duration_ms / kMillisecondsPerSecond;
+    // An action that moves no bytes (Check Disk Errors, Optimize Power) ended "(0 bytes in 169s)",
+    // a count of nothing (review 3).
+    if (result.bytes_processed <= 0) {
+        return QStringLiteral("Execution complete: %1 (%2s)").arg(result.message).arg(duration_sec);
+    }
+    return QStringLiteral("Execution complete: %1 (%2 bytes in %3s)")
+        .arg(result.message)
+        .arg(result.bytes_processed)
+        .arg(duration_sec);
+}
+
+void QuickActionController::finishCurrent(const QuickAction::ExecutionResult& result,
+                                          QuickAction::ActionStatus status) {
+    if (!m_current.has_value()) {
+        return;
+    }
+    const QuickActionRun run = *std::exchange(m_current, std::nullopt);
+    m_current_action = nullptr;
+    m_current_elevated = false;
+    // Joined before the public signal: a slot on runFinished may request a new run, and that
+    // run's fresh thread must not be the one torn down here.
+    joinCurrentThread();
+
+    if (result.success) {
+        logRun(run, completionLine(result));
+    } else if (result.inconclusive) {
+        logRun(run, QStringLiteral("Execution finished, result unknown: %1").arg(result.message));
+    } else {
+        logRun(run, QStringLiteral("Execution failed: %1").arg(result.message));
+    }
+    // The action's own detail: per-drive results, backup paths, the CBS log path. Every panel shows
+    // runLog in its Log, so this is the one place that makes it reach all of them.
+    if (!result.log.trimmed().isEmpty()) {
+        logRun(run, QStringLiteral("Details:\n%1").arg(result.log.trimmed()));
+    }
+    Q_EMIT runFinished(run, result, status);
+    startNextQueued();
+}
+
+void QuickActionController::finishUnstarted(const QuickActionRun& run,
+                                            const QString& message,
+                                            QuickAction::ActionStatus status) {
+    logRun(run, message);
+    Q_EMIT runFinished(run, failedResult(message), status);
+}
+
+void QuickActionController::startNextQueued() {
+    // A slot on runFinished may already have started a run; the queue then waits for that one.
+    if (m_current.has_value() || m_queue.isEmpty()) {
+        return;
+    }
+    startRun(m_queue.dequeue());
+}
+
+QString QuickActionController::logLine(const QString& action_name, const QString& message) {
+    return QStringLiteral("[%1] %2: %3")
+        .arg(QDateTime::currentDateTime().toString(Qt::ISODate), action_name, message);
+}
+
+void QuickActionController::logRun(const QuickActionRun& run, const QString& message) {
+    // The file needs the date and time on each line. A caller's Log stamps every line with its
+    // own time already, so a second stamp there read "[06:51:00] [2026-11-05T06:51:00] ...".
+    Q_EMIT runLog(run, QStringLiteral("%1: %2").arg(run.action_name, message));
+    writeLogLine(logLine(run.action_name, message));
+}
+
+namespace {
+
+// Connects one run signal of @p controller to @p handler for the runs @p owner asked for, and no
+// others. Queued, so a run refused inside requestRun() reaches its caller after the request
+// returns; the connection ends with @p receiver. An empty handler connects nothing.
+template <typename... Rest>
+void connectOwnRuns(QuickActionController& controller,
+                    void (QuickActionController::*signal)(const QuickActionRun&, Rest...),
+                    QObject* receiver,
+                    const QString& owner,
+                    const std::function<void(const QuickActionRun&, Rest...)>& handler) {
+    if (!handler) {
+        return;
+    }
+    QObject::connect(
+        &controller,
+        signal,
+        receiver,
+        [owner, handler](const QuickActionRun& run, Rest... rest) {
+            if (run.owner == owner) {
+                handler(run, rest...);
+            }
+        },
+        Qt::QueuedConnection);
+}
+
+}  // namespace
+
+void connectRunsOf(QuickActionController& controller,
+                   const QString& owner,
+                   QObject* receiver,
+                   QuickActionRunHandlers handlers) {
+    connectOwnRuns(controller, &QuickActionController::runQueued, receiver, owner, handlers.queued);
+    connectOwnRuns(
+        controller, &QuickActionController::runStarted, receiver, owner, handlers.started);
+    connectOwnRuns(
+        controller, &QuickActionController::runProgress, receiver, owner, handlers.progress);
+    connectOwnRuns(controller, &QuickActionController::runLog, receiver, owner, handlers.log);
+    connectOwnRuns(
+        controller, &QuickActionController::runFinished, receiver, owner, handlers.finished);
+}
+
+QString quickActionOutcomeText(const QuickActionRun& run,
+                               const QuickAction::ExecutionResult& result,
+                               QuickAction::ActionStatus status) {
+    QString text;
+    if (result.success) {
+        text = QStringLiteral("Completed: %1").arg(run.action_name);
+    } else if (status == QuickAction::ActionStatus::Cancelled) {
+        text = QStringLiteral("Cancelled: %1").arg(run.action_name);
+    } else if (result.inconclusive) {
+        text = QStringLiteral("Result unknown: %1 - %2").arg(run.action_name, result.message);
+    } else {
+        text = QStringLiteral("Failed: %1 - %2").arg(run.action_name, result.message);
+    }
+    // Output saved even partly says where it went.
+    if (!result.output_path.isEmpty()) {
+        text += QStringLiteral(" - saved to %1").arg(QDir::toNativeSeparators(result.output_path));
+    }
+    if (!result.warning.isEmpty()) {
+        text += QStringLiteral(" - %1").arg(result.warning);
+    }
+    return text;
+}
+
+QString quickActionQueuedText(const QuickActionRun& run, const QString& running_action) {
+    return QStringLiteral("Queued: %1 - waits for %2 to finish")
+        .arg(run.action_name, running_action);
+}
+
+void QuickActionController::writeLogLine(const QString& line) const {
+    // Fail closed: if the log file has been replaced with a reparse point (junction/symlink), do
+    // NOT append into a redirected target -- a possibly-elevated process must not be tricked into
+    // writing elsewhere. The caller's runLog signal still delivered the line.
+    if (QFileInfo(m_log_file_path).isSymLink()) {
+        return;
+    }
     QFile log_file(m_log_file_path);
     if (log_file.open(QIODevice::Append | QIODevice::Text)) {
         QTextStream stream(&log_file);
-        stream << log_entry << "\n";
+        stream << line << "\n";
     }
 }
 

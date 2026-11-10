@@ -17,60 +17,108 @@ $required = @(
     'sak_elevated_helper.exe',
     'sak_apfs_writer_cli.exe',
     'sak_hfs_writer_cli.exe',
+    'sak_browser_control.crx',
     'Qt6Core.dll',
+    'Qt6Gui.dll',
     'Qt6Widgets.dll',
     'platforms/qwindows.dll',
-    'tools/filesystem/manifest.json',
-    'tools/mcp/win32-mcp-server/win32-mcp-server.exe',
-    'tools/mcp/win32-mcp-server/THIRD_PARTY_LICENSES.txt',
-    'data/ai/providers/providers.json',
-    'data/ai/app_manifests/windows_defender.json',
-    'data/ai/app_manifests/superantispyware.json',
-    'data/ai/app_manifests/windows_sfc.json'
+    'tools/filesystem/manifest.json'
 )
 
 foreach ($rel in $required) {
     $path = Join-Path $root $rel
-    if (!(Test-Path -LiteralPath $path)) {
+    if (!(Test-Path -LiteralPath $path -PathType Leaf)) {
         Fail "missing required portable file: $rel"
     }
 }
 
-if (Get-ChildItem -LiteralPath $root -Recurse -Filter '*.local.json' -ErrorAction SilentlyContinue) {
+if (Get-ChildItem -LiteralPath $root -Recurse -Filter '*.local.json' -ErrorAction Stop) {
     Fail 'local provider/app config leaked into package'
-}
-if (Test-Path -LiteralPath (Join-Path $root 'tools/mcp/_build')) {
-    Fail 'tools/mcp/_build leaked into package'
 }
 if (Test-Path -LiteralPath (Join-Path $root 'tools/filesystem/_build')) {
     Fail 'tools/filesystem/_build leaked into package'
 }
-foreach ($rel in @('data/ai_sessions', 'data/temp', 'data/logs', 'data/config', '_logs')) {
+foreach ($rel in @('data/ai_sessions', 'data/temp', 'data/logs', 'data/config', 'data/crashes', '_logs')) {
     if (Test-Path -LiteralPath (Join-Path $root $rel)) {
         Fail "mutable runtime data leaked into package: $rel"
     }
 }
-foreach ($rel in @('tools/chocolatey/lib-bad', 'tools/chocolatey/cache', 'tools/chocolatey/temp')) {
+# The provider policy is compiled into sak_utility.exe and is the only copy it reads.
+if (Test-Path -LiteralPath (Join-Path $root 'data/ai')) {
+    Fail 'unread data/ai folder shipped in package'
+}
+foreach ($rel in @('tools/chocolatey/lib-bad', 'tools/chocolatey/cache', 'tools/chocolatey/temp',
+        'tools/chocolatey/bin/_processed.txt', 'tools/chocolatey/bin/RefreshEnv.cmd')) {
     if (Test-Path -LiteralPath (Join-Path $root $rel)) {
         Fail "Chocolatey mutable runtime state leaked into package: $rel"
     }
 }
+$chocolateyLogs = Join-Path $root 'tools/chocolatey/logs'
+if (Test-Path -LiteralPath $chocolateyLogs) {
+    if (-not (Test-Path -LiteralPath $chocolateyLogs -PathType Container) -or
+        @(Get-ChildItem -LiteralPath $chocolateyLogs -Force -ErrorAction Stop).Count -gt 0) {
+        Fail 'Chocolatey runtime logs leaked into package'
+    }
+}
 
-$providersPath = Join-Path $root 'data/ai/providers/providers.json'
+# The catalog the executable embeds (resources/ai.qrc) is read from the source tree it was built
+# from: every stdio command it names must ship inside the package, and no provider may carry a
+# secret.
+if (-not $RepoRoot) {
+    Fail '-RepoRoot is required to read the embedded AI provider catalog'
+}
+$providersPath = Join-Path (Resolve-Path -LiteralPath $RepoRoot).Path 'resources/ai/providers/providers.json'
+if (-not (Test-Path -LiteralPath $providersPath -PathType Leaf)) {
+    Fail "embedded AI provider catalog not found: $providersPath"
+}
 $providers = Get-Content -LiteralPath $providersPath -Raw | ConvertFrom-Json
+if ($null -eq $providers -or ($providers.PSObject.Properties.Name -notcontains 'providers')) {
+    Fail 'providers.json has no providers array'
+}
+$rootPrefix = $root.TrimEnd('\') + '\'
+# Case-insensitive secret-field names. 'auth' alone is deliberately excluded so
+# legitimate fields like requires_auth / auth_mode are not flagged.
+$secretPattern = '(api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|secret|token|password|passwd|credential|bearer)'
 foreach ($provider in @($providers.providers)) {
-    if ($provider.transport -eq 'stdio') {
-        if ([System.IO.Path]::IsPathRooted([string]$provider.command)) {
-            Fail "provider '$($provider.id)' uses absolute command path: $($provider.command)"
+    if ($null -eq $provider) {
+        Fail 'providers.json contains an empty provider entry'
+    }
+    $providerProps = @($provider.PSObject.Properties.Name)
+    if (($providerProps -notcontains 'id') -or [string]::IsNullOrWhiteSpace([string]$provider.id)) {
+        Fail 'providers.json contains a provider with no id'
+    }
+    $providerId = [string]$provider.id
+    if (($providerProps -notcontains 'transport') -or [string]::IsNullOrWhiteSpace([string]$provider.transport)) {
+        Fail "provider '$providerId' has no transport"
+    }
+    $transport = [string]$provider.transport
+    if ($transport -eq 'stdio') {
+        if (($providerProps -notcontains 'command') -or [string]::IsNullOrWhiteSpace([string]$provider.command)) {
+            Fail "provider '$providerId' (stdio) has no command"
         }
-        $command = Join-Path $root ([string]$provider.command)
-        if (!(Test-Path -LiteralPath $command)) {
-            Fail "provider '$($provider.id)' command missing: $($provider.command)"
+        $commandRel = [string]$provider.command
+        if ([System.IO.Path]::IsPathRooted($commandRel)) {
+            Fail "provider '$providerId' uses absolute command path: $commandRel"
+        }
+        $resolvedCommand = Resolve-Path -LiteralPath (Join-Path $root $commandRel) -ErrorAction SilentlyContinue
+        if (-not $resolvedCommand) {
+            Fail "provider '$providerId' command missing: $commandRel"
+        }
+        $commandPath = $resolvedCommand.Path
+        if (-not $commandPath.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Fail "provider '$providerId' command escapes package root: $commandRel"
+        }
+        if (!(Test-Path -LiteralPath $commandPath -PathType Leaf)) {
+            Fail "provider '$providerId' command is not a file: $commandRel"
         }
     }
-    foreach ($bad in @('api_key', 'auth_token')) {
-        if ($provider.PSObject.Properties.Name -contains $bad) {
-            Fail "provider '$($provider.id)' contains forbidden secret field: $bad"
+    $secretNames = @($providerProps)
+    if (($providerProps -contains 'environment') -and ($null -ne $provider.environment)) {
+        $secretNames += @($provider.environment.PSObject.Properties.Name)
+    }
+    foreach ($propName in $secretNames) {
+        if ($propName -match $secretPattern) {
+            Fail "provider '$providerId' contains forbidden secret-like field: $propName"
         }
     }
 }
@@ -78,19 +126,40 @@ foreach ($provider in @($providers.providers)) {
 if ($RepoRoot) {
     $repo = (Resolve-Path -LiteralPath $RepoRoot).Path
     $textExtensions = @('.json', '.txt', '.md', '.ini', '.ps1')
-    $textFiles = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+    $textFiles = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction Stop |
         Where-Object { $textExtensions -contains $_.Extension.ToLowerInvariant() }
     foreach ($file in $textFiles) {
-        $content = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction SilentlyContinue
+        $content = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop
         if ($content -and $content.Contains($repo)) {
             Fail "dev repo path found in packaged text file: $($file.FullName.Substring($root.Length + 1))"
         }
     }
 }
 
-$runtimeVerifier = if ($RepoRoot) { Join-Path (Resolve-Path -LiteralPath $RepoRoot).Path 'scripts/verify_windows_runtime_dependencies.ps1' } else { '' }
-if ($runtimeVerifier -and (Test-Path -LiteralPath $runtimeVerifier)) {
-    & $runtimeVerifier -RootDir $root -PrimaryExe 'sak_utility.exe'
+# Runtime dependency verification. This used to invoke the verifier and DISCARD its exit
+# code, then print "smoke passed" regardless - so a package missing a required DLL, i.e.
+# one that cannot start on a clean machine, passed the very check that exists to catch
+# that. It also treated an absent verifier as success. Both are fail-open, and both are
+# refused here: a check that did not run is not a check that passed.
+if (-not $RepoRoot) {
+    Write-Host "FAIL: -RepoRoot is required to locate the runtime dependency verifier." -ForegroundColor Red
+    exit 1
+}
+$runtimeVerifier = Join-Path (Resolve-Path -LiteralPath $RepoRoot).Path `
+    'scripts/verify_windows_runtime_dependencies.ps1'
+if (-not (Test-Path -LiteralPath $runtimeVerifier)) {
+    Write-Host "FAIL: runtime dependency verifier not found at $runtimeVerifier" -ForegroundColor Red
+    exit 1
+}
+
+# Child process: a .ps1 invoked with the call operator only sets $LASTEXITCODE when it
+# calls exit, so an in-process call cannot distinguish "returned normally" from "left the
+# last native tool's code lying around".
+& pwsh -NoProfile -File $runtimeVerifier -RootDir $root -PrimaryExe 'sak_utility.exe'
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "FAIL: runtime dependency verification failed (exit $LASTEXITCODE)." -ForegroundColor Red
+    exit 1
 }
 
 Write-Host "Portable release smoke passed: $root"
+exit 0

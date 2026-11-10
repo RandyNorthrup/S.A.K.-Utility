@@ -37,7 +37,7 @@ using TaskHandler = std::function<TaskHandlerResult(
 
 /// @brief Manages the compile-time allowlist of tasks and dispatches them
 ///
-/// Only tasks explicitly registered are accepted — any unregistered task
+/// Only tasks explicitly registered are accepted -- any unregistered task
 /// is rejected with error_code::task_not_allowed (security hardening).
 class ElevatedTaskDispatcher {
 public:

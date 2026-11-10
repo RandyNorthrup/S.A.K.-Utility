@@ -12,7 +12,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$ProjectRoot = ".",
+    [string]$ProjectRoot = "",
     [string]$EvidenceRoot = "artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext-linux-validation",
     [string]$ReportPath = "",
     [string]$DistroName = "archlinux",
@@ -24,6 +24,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+$Sys32 = Join-Path $env:SystemRoot "System32"
+$WslExe = Join-Path $Sys32 "wsl.exe"
+$FsutilExe = Join-Path $Sys32 "fsutil.exe"
+if (-not (Test-Path -LiteralPath $WslExe -PathType Leaf)) {
+    throw "wsl.exe was not found at its System32 path: $WslExe"
+}
+if (-not (Test-Path -LiteralPath $FsutilExe -PathType Leaf)) {
+    throw "fsutil.exe was not found at its System32 path: $FsutilExe"
+}
 
 function ConvertTo-PlainText {
     param([object[]]$Value)
@@ -50,6 +60,9 @@ function Invoke-RecordedCommand {
     finally {
         $ErrorActionPreference = $oldPreference
     }
+    if ($null -eq $exitCode) {
+        throw "$Name did not report an exit code; the command may not have launched."
+    }
 
     $record = [pscustomobject]@{
         name = $Name
@@ -75,9 +88,9 @@ function Invoke-WslScript {
 
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Script))
     return Invoke-RecordedCommand -Name $Name `
-        -FilePath "wsl.exe" `
+        -FilePath $WslExe `
         -Arguments @("-d", $DistroName, "-u", "root", "--", "sh", "-lc",
-            "printf '%s' '$encoded' | base64 -d | bash") `
+            "set -o pipefail; printf '%s' '$encoded' | base64 -d | bash") `
         -AcceptedExitCodes $AcceptedExitCodes
 }
 
@@ -158,13 +171,29 @@ if ($ShrunkSizeBytes -le $InitialSizeBytes -or $ShrunkSizeBytes -ge $GrownSizeBy
     throw "ShrunkSizeBytes must be between InitialSizeBytes and GrownSizeBytes."
 }
 
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+    $ProjectRoot = Split-Path -Parent $PSScriptRoot
+}
 $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
-$EvidenceRoot = Join-Path $ProjectRoot $EvidenceRoot
+$EvidenceRoot = [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot $EvidenceRoot))
+if (-not $EvidenceRoot.StartsWith($ProjectRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "EvidenceRoot must resolve inside the project root: $EvidenceRoot"
+}
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
     $ReportPath = Join-Path $EvidenceRoot "report.json"
 }
-$runRoot = Join-Path $EvidenceRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
-New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
+$ReportPath = [System.IO.Path]::GetFullPath($ReportPath)
+if (-not $ReportPath.StartsWith($EvidenceRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "ReportPath must resolve inside the evidence root: $ReportPath"
+}
+$runRoot = Join-Path $EvidenceRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + [guid]::NewGuid().ToString("N"))
+if (Test-Path -LiteralPath $runRoot) {
+    throw "Run directory already exists: $runRoot"
+}
+$runRootItem = New-Item -ItemType Directory -Path $runRoot
+if ($runRootItem.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+    throw "Run directory is a reparse point: $runRoot"
+}
 New-Item -ItemType Directory -Path (Split-Path -Parent $ReportPath) -Force | Out-Null
 
 $Script:Commands = [System.Collections.Generic.List[object]]::new()
@@ -187,7 +216,7 @@ try {
     $toolHashes = @($mke2fs, $e2fsck, $resize2fs)
 
     Invoke-RecordedCommand -Name "wsl-uname" `
-        -FilePath "wsl.exe" `
+        -FilePath $WslExe `
         -Arguments @("-d", $DistroName, "--", "uname", "-a") | Out-Null
     Invoke-WslScript -Name "linux-tool-preflight" -Script @"
 set -euo pipefail
@@ -199,8 +228,12 @@ id
 "@ | Out-Null
 
     Invoke-RecordedCommand -Name "create-disposable-image" `
-        -FilePath "fsutil.exe" `
+        -FilePath $FsutilExe `
         -Arguments @("file", "createnew", $imagePath, [string]$InitialSizeBytes) | Out-Null
+    $imageItem = Get-Item -LiteralPath $imagePath
+    if ($imageItem.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+        throw "Disposable image path is a reparse point: $imagePath"
+    }
     Invoke-RecordedCommand -Name "mke2fs-format-$FileSystem" `
         -FilePath $mke2fs.path `
         -Arguments @("-q", "-t", $FileSystem, "-F", "-L", "SAKLINUX", $imagePath) | Out-Null
@@ -208,7 +241,7 @@ id
         -FilePath $e2fsck.path `
         -Arguments @("-n", "-f", $imagePath) | Out-Null
     Invoke-RecordedCommand -Name "grow-disposable-image" `
-        -FilePath "fsutil.exe" `
+        -FilePath $FsutilExe `
         -Arguments @("file", "seteof", $imagePath, [string]$GrownSizeBytes) | Out-Null
     Invoke-RecordedCommand -Name "windows-resize2fs-grow-$FileSystem" `
         -FilePath $resize2fs.path `
@@ -224,7 +257,7 @@ id
         -FilePath $resize2fs.path `
         -Arguments @("-p", $imagePath, "$($shrunkKilobytes)K") | Out-Null
     Invoke-RecordedCommand -Name "shrink-disposable-image-container" `
-        -FilePath "fsutil.exe" `
+        -FilePath $FsutilExe `
         -Arguments @("file", "seteof", $imagePath, [string]$ShrunkSizeBytes) | Out-Null
     Invoke-RecordedCommand -Name "windows-e2fsck-after-shrink-$FileSystem" `
         -FilePath $e2fsck.path `
@@ -232,13 +265,18 @@ id
 
     $imageHashAfterWindows = (Get-FileHash -LiteralPath $imagePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $wslPathOutput = Invoke-RecordedCommand -Name "wslpath-image" `
-        -FilePath "wsl.exe" `
+        -FilePath $WslExe `
         -Arguments @("-d", $DistroName, "--", "wslpath", "-a", ($imagePath -replace "\\", "/"))
     $linuxImagePath = $wslPathOutput.output.Trim()
+    if ($linuxImagePath -match "[`r`n`0]") {
+        throw "Unexpected control character in the WSL image path."
+    }
+    $linuxImagePathEscaped = $linuxImagePath.Replace("'", "'\''")
+    $expectedShrunkFsBytes = [uint64]$shrunkKilobytes * 1024
 
     $linuxValidationScript = @"
 set -euo pipefail
-img='$linuxImagePath'
+img='$linuxImagePathEscaped'
 mnt=/mnt/sak-ext-linux-validation-`$`$
 cleanup() {
   if mountpoint -q "`$mnt"; then umount "`$mnt"; fi
@@ -247,7 +285,23 @@ cleanup() {
 trap cleanup EXIT
 echo "linux-uname=`$(uname -a)"
 e2fsck -f -n "`$img"
-dumpe2fs -h "`$img" 2>/dev/null | grep -E 'Filesystem volume name|Filesystem state|Filesystem features|Block count|Block size'
+dump=`$(dumpe2fs -h "`$img" 2>/dev/null)
+echo "`$dump" | grep -E 'Filesystem volume name|Filesystem state|Filesystem features|Block count|Block size'
+feat=`$(echo "`$dump" | sed -n 's/^Filesystem features:[[:space:]]*//p')
+case '$FileSystem' in
+  ext3) echo "`$feat" | grep -qw has_journal || { echo "ext3 image is missing has_journal"; exit 1; } ;;
+  ext4) echo "`$feat" | grep -qw has_journal || { echo "ext4 image is missing has_journal"; exit 1; }
+        echo "`$feat" | grep -qw extent || { echo "ext4 image is missing extent"; exit 1; } ;;
+esac
+bs=`$(echo "`$dump" | sed -n 's/^Block size:[[:space:]]*//p')
+bc=`$(echo "`$dump" | sed -n 's/^Block count:[[:space:]]*//p')
+[ -n "`$bs" ] && [ -n "`$bc" ] || { echo "could not read ext block geometry"; exit 1; }
+fsbytes=`$((bs * bc))
+expected=$expectedShrunkFsBytes
+if [ "`$fsbytes" -gt "`$expected" ] || [ "`$((expected - fsbytes))" -ge "`$bs" ]; then
+  echo "resize geometry mismatch: fs_bytes=`$fsbytes expected=`$expected block_size=`$bs"
+  exit 1
+fi
 mkdir -p "`$mnt"
 mount -o loop,rw "`$img" "`$mnt"
 printf 'SAK Linux validation fixture\n' > "`$mnt/sak-linux-proof.txt"
@@ -257,11 +311,18 @@ cat "`$mnt/sak-linux-proof.txt"
 umount "`$mnt"
 rmdir "`$mnt"
 e2fsck -f -n "`$img"
-debugfs -R 'stat /sak-linux-proof.txt' "`$img" 2>/dev/null
+proof=`$(debugfs -R 'stat /sak-linux-proof.txt' "`$img" 2>/dev/null)
+echo "`$proof"
+echo "`$proof" | grep -q 'Inode:' || { echo "debugfs could not stat the Linux fixture"; exit 1; }
+content=`$(debugfs -R 'cat /sak-linux-proof.txt' "`$img" 2>/dev/null)
+echo "`$content" | grep -q 'SAK Linux validation fixture' || { echo "Linux fixture content did not persist"; exit 1; }
 "@
     Invoke-WslScript -Name "linux-e2fsck-dumpe2fs-loopmount-write-$FileSystem" `
         -Script $linuxValidationScript | Out-Null
     $imageHashAfterLinux = (Get-FileHash -LiteralPath $imagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($imageHashAfterLinux -eq $imageHashAfterWindows) {
+        throw "Linux fixture write did not alter the image; loop mount or write may have failed."
+    }
     Invoke-RecordedCommand -Name "windows-e2fsck-after-linux-write-$FileSystem" `
         -FilePath $e2fsck.path `
         -Arguments @("-n", "-f", $imagePath) | Out-Null
@@ -303,8 +364,8 @@ $report = [pscustomobject]@{
     error = $errorText
 }
 $reportJson = ConvertTo-RedactedReportJson -Report $report
-$reportJson | Set-Content -LiteralPath $ReportPath -Encoding UTF8
 $reportJson | Set-Content -LiteralPath (Join-Path $runRoot "report.json") -Encoding UTF8
+$reportJson | Set-Content -LiteralPath $ReportPath -Encoding UTF8
 
 if ($status -ne "Passed") {
     throw "Linux ext validation failed. Report: $ReportPath`n$errorText"

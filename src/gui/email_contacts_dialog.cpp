@@ -10,6 +10,7 @@
 #include "sak/email_inspector_controller.h"
 #include "sak/layout_constants.h"
 #include "sak/style_constants.h"
+#include "sak/widget_helpers.h"
 
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -37,6 +38,23 @@ enum ContactColumn {
     ColCount
 };
 
+namespace {
+// Hard ceilings so a hostile PST/OST (untrusted on-disk bytes) cannot exhaust memory
+// through the address book. Real contact folders are far smaller than these.
+constexpr int kMaxContactsPerFolder = 2000;
+constexpr int kMaxTotalContacts = 100'000;
+constexpr int kMaxContactFieldChars = 100'000;
+
+// Bound a free-form contact field before it is HTML-escaped and rendered, so a single
+// oversized property cannot force multiple full-size allocations in the UI process.
+QString clampContactField(const QString& value) {
+    if (value.size() <= kMaxContactFieldChars) {
+        return value;
+    }
+    return value.left(kMaxContactFieldChars) + QStringLiteral("...");
+}
+}  // namespace
+
 // ============================================================================
 // Construction
 // ============================================================================
@@ -45,11 +63,11 @@ EmailContactsDialog::EmailContactsDialog(::EmailInspectorController* controller,
                                          const QVector<uint64_t>& contact_folder_ids,
                                          QWidget* parent)
     : QDialog(parent), m_controller(controller), m_folder_ids(contact_folder_ids) {
-    setWindowTitle(tr("Address Book — Contacts"));
+    setWindowTitle(tr("Address Book - Contacts"));
     setModal(true);
     resize(kWizardLargeWidth, kWizardLargeHeight);
 
-    // Debounce search input — refilter at most once every 150 ms while
+    // Debounce search input -- refilter at most once every 150 ms while
     // the user is typing to avoid O(N) scans on every keystroke.
     constexpr int kSearchDebounceMs = 150;
     m_search_timer = new QTimer(this);
@@ -72,11 +90,12 @@ EmailContactsDialog::~EmailContactsDialog() = default;
 void EmailContactsDialog::setupHeader(QVBoxLayout* layout) {
     auto* heading = new QLabel(tr("Address Book"), this);
     heading->setStyleSheet(ui::fontSizeWeightColorStyle(
-        ui::kFontSizeTitle, ui::kFontWeightSemibold, ui::kColorTextHeading));
+        ui::kFontSizeSection, ui::kFontWeightSemibold, ui::kColorTextHeading));
     layout->addWidget(heading);
 
     auto* search_row = new QHBoxLayout();
     m_search_edit = new QLineEdit(this);
+    m_search_edit->setAccessibleName(tr("Search contacts"));
     m_search_edit->setPlaceholderText(tr("Search contacts by name, email, or company..."));
     m_search_edit->setClearButtonEnabled(true);
     connect(
@@ -90,6 +109,7 @@ void EmailContactsDialog::setupContactSplitter(QVBoxLayout* layout) {
     m_splitter->setChildrenCollapsible(false);
 
     m_contact_table = new QTableWidget(this);
+    m_contact_table->setAccessibleName(tr("Contacts"));
     m_contact_table->setColumnCount(ColCount);
     m_contact_table->setHorizontalHeaderLabels(
         {tr("Name"), tr("Email"), tr("Company"), tr("Phone")});
@@ -97,10 +117,14 @@ void EmailContactsDialog::setupContactSplitter(QVBoxLayout* layout) {
     m_contact_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_contact_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_contact_table->setSortingEnabled(true);
-    m_contact_table->horizontalHeader()->setStretchLastSection(true);
-    m_contact_table->setColumnWidth(ColName, email::kContactsNameColumnWidth);
-    m_contact_table->setColumnWidth(ColEmail, email::kContactsEmailColumnWidth);
-    m_contact_table->setColumnWidth(ColCompany, email::kContactsCompanyColumnWidth);
+    // Name, Company and Phone take what they hold and Email the rest, eliding a long address:
+    // fixed widths that added up to more than the list's pane put Company behind a scroll bar
+    // ("Harbor La", review 2). The full address is in the detail pane beside the list.
+    QHeaderView* header = m_contact_table->horizontalHeader();
+    header->setSectionResizeMode(ColName, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(ColEmail, QHeaderView::Stretch);
+    header->setSectionResizeMode(ColCompany, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(ColPhone, QHeaderView::ResizeToContents);
     m_contact_table->verticalHeader()->setVisible(false);
     connect(
         m_contact_table, &QTableWidget::cellClicked, this, &EmailContactsDialog::onContactSelected);
@@ -108,6 +132,7 @@ void EmailContactsDialog::setupContactSplitter(QVBoxLayout* layout) {
 
     // Detail panel
     m_detail_browser = new QTextBrowser(this);
+    m_detail_browser->setAccessibleName(tr("Contact details"));
     m_detail_browser->setOpenExternalLinks(false);
     m_detail_browser->setMinimumWidth(email::kContactsDetailMinWidth);
     m_detail_browser->setPlaceholderText(tr("Select a contact to view details"));
@@ -122,15 +147,21 @@ void EmailContactsDialog::setupButtonRow(QVBoxLayout* layout) {
     m_export_vcf_button = new QPushButton(tr("Export VCF"), this);
     m_export_vcf_button->setToolTip(tr("Export all contacts as vCard (.vcf) files"));
     m_export_vcf_button->setStyleSheet(ui::kPrimaryButtonStyle);
-    connect(
-        m_export_vcf_button, &QPushButton::clicked, this, &EmailContactsDialog::onExportVcfClicked);
+    connect(m_export_vcf_button,
+            &QPushButton::clicked,
+            this,
+            &EmailContactsDialog::onExportVcfClicked,
+            Qt::QueuedConnection);
     button_row->addWidget(m_export_vcf_button);
 
     m_export_csv_button = new QPushButton(tr("Export CSV"), this);
     m_export_csv_button->setToolTip(tr("Export all contacts as a CSV spreadsheet"));
     m_export_csv_button->setStyleSheet(ui::kSecondaryButtonStyle);
-    connect(
-        m_export_csv_button, &QPushButton::clicked, this, &EmailContactsDialog::onExportCsvClicked);
+    connect(m_export_csv_button,
+            &QPushButton::clicked,
+            this,
+            &EmailContactsDialog::onExportCsvClicked,
+            Qt::QueuedConnection);
     button_row->addWidget(m_export_csv_button);
 
     button_row->addStretch();
@@ -171,6 +202,7 @@ void EmailContactsDialog::loadContacts() {
 
     m_status_label->setText(tr("Loading contacts..."));
     m_folders_loaded = 0;
+    m_truncated = false;
     m_all_contacts.clear();
 
     // Connect to controller to receive folder items
@@ -182,9 +214,13 @@ void EmailContactsDialog::loadContacts() {
             &::EmailInspectorController::itemDetailLoaded,
             this,
             &EmailContactsDialog::onDetailLoaded);
+    // Surface a load/export failure instead of leaving "Loading contacts..." forever.
+    connect(m_controller,
+            &::EmailInspectorController::errorOccurred,
+            this,
+            &EmailContactsDialog::onControllerError);
 
-    constexpr int kMaxContactsPerFolder = 2000;
-    for (uint64_t folder_id : m_folder_ids) {
+    for (const uint64_t folder_id : m_folder_ids) {
         m_controller->loadFolderItems(folder_id, 0, kMaxContactsPerFolder);
     }
 }
@@ -207,7 +243,7 @@ void EmailContactsDialog::onContactSelected(int row, int /*column*/) {
         return;
     }
     bool ok = false;
-    uint64_t node_id = hidden_item->data(Qt::UserRole).toULongLong(&ok);
+    const uint64_t node_id = hidden_item->data(Qt::UserRole).toULongLong(&ok);
     if (!ok) {
         return;
     }
@@ -215,7 +251,7 @@ void EmailContactsDialog::onContactSelected(int row, int /*column*/) {
 }
 
 void EmailContactsDialog::onExportVcfClicked() {
-    QString dir_path =
+    const QString dir_path =
         QFileDialog::getExistingDirectory(this, tr("Select Export Directory for VCF Files"));
     if (dir_path.isEmpty()) {
         return;
@@ -223,48 +259,80 @@ void EmailContactsDialog::onExportVcfClicked() {
     sak::EmailExportConfig config;
     config.format = sak::ExportFormat::Vcf;
     config.output_path = dir_path;
-    for (uint64_t folder_id : m_folder_ids) {
-        config.folder_id = folder_id;
-        m_controller->exportItems(config);
-    }
+    // One export pass aggregating every folder: the controller rejects a second
+    // export while the first is still running, so a per-folder loop exported only
+    // the first folder.
+    config.folder_ids = m_folder_ids;
+    m_controller->exportItems(config);
 }
 
 void EmailContactsDialog::onExportCsvClicked() {
-    QString file_path = QFileDialog::getSaveFileName(this,
-                                                     tr("Export Contacts as CSV"),
-                                                     QStringLiteral("contacts.csv"),
-                                                     tr("CSV Files (*.csv)"));
-    if (file_path.isEmpty()) {
+    // The exporter treats output_path as a directory (it appends its own
+    // contacts_export.csv), so ask for a directory, not a file name.
+    const QString dir_path =
+        QFileDialog::getExistingDirectory(this, tr("Select Export Directory for Contacts CSV"));
+    if (dir_path.isEmpty()) {
         return;
     }
     sak::EmailExportConfig config;
     config.format = sak::ExportFormat::CsvContacts;
-    config.output_path = file_path;
-    for (uint64_t folder_id : m_folder_ids) {
-        config.folder_id = folder_id;
-        m_controller->exportItems(config);
-    }
+    config.output_path = dir_path;
+    config.folder_ids = m_folder_ids;
+    m_controller->exportItems(config);
 }
 
 void EmailContactsDialog::onItemsLoaded(uint64_t /*folder_id*/,
                                         QVector<sak::PstItemSummary> items,
-                                        int /*total*/) {
+                                        int total) {
+    // A folder reporting more items than it returned was capped at the per-folder
+    // limit; record that so the subset is never presented as the complete set.
+    if (total > items.size()) {
+        m_truncated = true;
+    }
     for (const auto& item : items) {
         if (item.item_type == EmailItemType::Contact || item.item_type == EmailItemType::DistList) {
+            if (m_all_contacts.size() >= kMaxTotalContacts) {
+                m_truncated = true;
+                break;
+            }
             m_all_contacts.append(item);
         }
     }
     ++m_folders_loaded;
     if (m_folders_loaded >= m_folder_ids.size()) {
+        loadContactDetails();
         filterContacts(m_search_edit->text());
-        m_status_label->setText(tr("%1 contacts").arg(m_all_contacts.size()));
+        QString status = tr("%1 contacts").arg(m_all_contacts.size());
+        if (m_truncated) {
+            status += QLatin1Char(' ');
+            status += tr("(list truncated to bound memory)");
+        }
+        m_status_label->setText(status);
     }
 }
 
-void EmailContactsDialog::onDetailLoaded(sak::PstItemDetail detail) {
-    if (detail.item_type == EmailItemType::Contact || detail.item_type == EmailItemType::DistList) {
+void EmailContactsDialog::loadContactDetails() {
+    // Item reads run on this thread, one at a time, so each reply lands before the next request.
+    m_loading_contact_details = true;
+    for (const auto& contact : m_all_contacts) {
+        m_controller->loadItemDetail(contact.node_id);
+    }
+    m_loading_contact_details = false;
+}
+
+void EmailContactsDialog::onDetailLoaded(const sak::PstItemDetail& detail) {
+    if (detail.item_type != EmailItemType::Contact && detail.item_type != EmailItemType::DistList) {
+        return;
+    }
+    m_contact_details.insert(detail.node_id, detail);
+    if (!m_loading_contact_details) {
         displayContactDetail(detail);
     }
+}
+
+void EmailContactsDialog::onControllerError(const QString& error) {
+    // Fail closed on the UI: never leave the dialog stuck on "Loading contacts...".
+    m_status_label->setText(tr("Failed to load contacts: %1").arg(error));
 }
 
 // ============================================================================
@@ -276,7 +344,7 @@ void EmailContactsDialog::filterContacts(const QString& text) {
     const QSignalBlocker blocker(m_contact_table);
     m_contact_table->setSortingEnabled(false);
     m_contact_table->setRowCount(0);
-    QString filter = text.trimmed().toLower();
+    const QString filter = text.trimmed().toLower();
 
     // Pre-filter into indices so the table can be sized in a single call
     // instead of paying per-row `insertRow` cost.
@@ -285,45 +353,82 @@ void EmailContactsDialog::filterContacts(const QString& text) {
     for (int idx = 0; idx < m_all_contacts.size(); ++idx) {
         const auto& contact = m_all_contacts.at(idx);
         if (!filter.isEmpty()) {
-            bool match = contact.subject.toLower().contains(filter) ||
-                         contact.sender_name.toLower().contains(filter) ||
-                         contact.sender_email.toLower().contains(filter);
+            const sak::PstItemDetail detail = m_contact_details.value(contact.node_id);
+            const bool match = contact.subject.toLower().contains(filter) ||
+                               detail.email_address.toLower().contains(filter) ||
+                               detail.company_name.toLower().contains(filter);
             if (!match) {
                 continue;
             }
         }
         matching.append(idx);
     }
-    m_contact_table->setRowCount(matching.size());
+    m_contact_table->setRowCount(static_cast<int>(matching.size()));
     for (int row = 0; row < matching.size(); ++row) {
         const auto& contact = m_all_contacts.at(matching.at(row));
 
         auto* name_item = new QTableWidgetItem(contact.subject);
         name_item->setData(Qt::UserRole, QVariant::fromValue(contact.node_id));
         m_contact_table->setItem(row, ColName, name_item);
-        m_contact_table->setItem(row, ColEmail, new QTableWidgetItem(contact.sender_email));
-        m_contact_table->setItem(row, ColCompany, new QTableWidgetItem(contact.sender_name));
-        m_contact_table->setItem(row, ColPhone, new QTableWidgetItem());
+        // The list's one phone column shows the first number the contact has.
+        const sak::PstItemDetail detail = m_contact_details.value(contact.node_id);
+        const QString phone = !detail.business_phone.isEmpty() ? detail.business_phone
+                              : !detail.mobile_phone.isEmpty() ? detail.mobile_phone
+                                                               : detail.home_phone;
+        m_contact_table->setItem(row, ColEmail, new QTableWidgetItem(detail.email_address));
+        m_contact_table->setItem(row, ColCompany, new QTableWidgetItem(detail.company_name));
+        m_contact_table->setItem(row, ColPhone, new QTableWidgetItem(phone));
     }
     m_contact_table->setSortingEnabled(true);
     m_contact_table->setUpdatesEnabled(true);
 }
 
+namespace {
+
+/// One labelled line of the detail pane, or nothing when the contact has no such value.
+QString contactFieldHtml(const char* label, const QString& value) {
+    if (value.isEmpty()) {
+        return {};
+    }
+    return QStringLiteral("<p><b>%1:</b> %2</p>")
+        .arg(QLatin1String(label), clampContactField(value).toHtmlEscaped());
+}
+
+QString distListMembersHtml(const sak::PstItemDetail& detail) {
+    if (detail.distlist_members.isEmpty()) {
+        return {};
+    }
+    QString html = QStringLiteral("<p><b>Members:</b></p><ul>");
+    for (const auto& member : detail.distlist_members) {
+        html += QStringLiteral("<li>%1 &lt;%2&gt;</li>")
+                    .arg(clampContactField(member.name).toHtmlEscaped(),
+                         clampContactField(member.email).toHtmlEscaped());
+    }
+    return html + QStringLiteral("</ul>");
+}
+
+}  // namespace
+
 void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail) {
+    // A distribution list has a name of its own, not a person's first and last name.
+    const bool is_list = detail.item_type == EmailItemType::DistList;
+    const QString heading_first = is_list ? detail.subject : detail.given_name;
+    const QString heading_last = is_list ? QString() : detail.surname;
     QString html = QString::fromLatin1(ui::kHtmlContactDetailHeadingOpen)
                        .arg(ui::kHtmlDetailPaddingPx)
                        .arg(ui::htmlColor(ui::kColorTextHeading))
                        .arg(ui::kSpacingMedium)
-                       .arg(detail.given_name.toHtmlEscaped())
-                       .arg(detail.surname.toHtmlEscaped());
+                       .arg(clampContactField(heading_first).toHtmlEscaped())
+                       .arg(clampContactField(heading_last).toHtmlEscaped());
 
     if (!detail.job_title.isEmpty() || !detail.company_name.isEmpty()) {
         html += QString::fromLatin1(ui::kHtmlParagraphColorMarginOpen)
                     .arg(ui::htmlColor(ui::kColorTextSecondary))
                     .arg(ui::kCssPaddingTinyPx)
-                    .arg(detail.job_title.toHtmlEscaped());
+                    .arg(clampContactField(detail.job_title).toHtmlEscaped());
         if (!detail.company_name.isEmpty()) {
-            html += QStringLiteral(" at <b>%1</b>").arg(detail.company_name.toHtmlEscaped());
+            html += QStringLiteral(" at <b>%1</b>")
+                        .arg(clampContactField(detail.company_name).toHtmlEscaped());
         }
         html += QStringLiteral("</p>");
     }
@@ -332,28 +437,13 @@ void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail)
                 .arg(ui::kCssBorderWidthDefaultPx)
                 .arg(ui::htmlColor(ui::kColorBorderDefault));
 
-    // Email
-    if (!detail.email_address.isEmpty()) {
-        html += QStringLiteral("<p><b>Email:</b> %1</p>").arg(detail.email_address.toHtmlEscaped());
-    }
-
-    // Phones
-    if (!detail.business_phone.isEmpty()) {
-        html +=
-            QStringLiteral("<p><b>Business:</b> %1</p>").arg(detail.business_phone.toHtmlEscaped());
-    }
-    if (!detail.mobile_phone.isEmpty()) {
-        html += QStringLiteral("<p><b>Mobile:</b> %1</p>").arg(detail.mobile_phone.toHtmlEscaped());
-    }
-    if (!detail.home_phone.isEmpty()) {
-        html += QStringLiteral("<p><b>Home:</b> %1</p>").arg(detail.home_phone.toHtmlEscaped());
-    }
-
-    // Subject (often the full display name)
-    if (!detail.subject.isEmpty()) {
-        html +=
-            QStringLiteral("<p><b>Display Name:</b> %1</p>").arg(detail.subject.toHtmlEscaped());
-    }
+    html += contactFieldHtml("Email", detail.email_address);
+    html += distListMembersHtml(detail);
+    html += contactFieldHtml("Business", detail.business_phone);
+    html += contactFieldHtml("Mobile", detail.mobile_phone);
+    html += contactFieldHtml("Home", detail.home_phone);
+    // Often the full display name.
+    html += contactFieldHtml("Display Name", detail.subject);
 
     // Notes / body
     if (!detail.body_plain.isEmpty()) {
@@ -361,7 +451,7 @@ void EmailContactsDialog::displayContactDetail(const sak::PstItemDetail& detail)
                     .arg(ui::kCssBorderWidthDefaultPx)
                     .arg(ui::htmlColor(ui::kColorBorderDefault))
                     .arg(ui::htmlColor(ui::kColorTextBody))
-                    .arg(detail.body_plain.toHtmlEscaped());
+                    .arg(clampContactField(detail.body_plain).toHtmlEscaped());
     }
 
     html += QStringLiteral("</div>");

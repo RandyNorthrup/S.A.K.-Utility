@@ -1,0 +1,48 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_user_profile_restore_selection",
+  "ctest_regex": "^test_user_profile_restore_selection$",
+  "mutants": [
+    {
+      "id": "folder-choice-user-match-inverted",
+      "file": "src/core/user_profile_restore_selection.cpp",
+      "find": "choice.username == user.username &&",
+      "replace": "choice.username != user.username &&",
+      "expect": "killed",
+      "why": "selectionIsScopedPerUser requires an Alice/Documents choice to affect Alice only and a later Bob/Documents choice to affect Bob only."
+    },
+    {
+      "id": "folder-choice-path-match-inverted",
+      "file": "src/core/user_profile_restore_selection.cpp",
+      "find": "choice.relative_path == folder.relative_path",
+      "replace": "choice.relative_path != folder.relative_path",
+      "expect": "killed",
+      "why": "uncheckingAFolderClearsOnlyThatFolder pins every Alice folder identity and selection so a choice cannot apply to a different relative path."
+    },
+    {
+      "id": "folder-choice-value-inverted",
+      "file": "src/core/user_profile_restore_selection.cpp",
+      "find": "folder.selected = choice.selected;",
+      "replace": "folder.selected = !choice.selected;",
+      "expect": "killed",
+      "why": "uncheckingAFolderClearsOnlyThatFolder requires true choices to remain selected and the false Desktop choice to clear exactly that folder."
+    },
+    {
+      "id": "selected-count-user-filter-inverted",
+      "file": "src/core/user_profile_restore_selection.cpp",
+      "find": "if (user.username != username) {",
+      "replace": "if (user.username == username) {",
+      "expect": "killed",
+      "why": "absentUserCountsZero requires nonmatching manifest users to be skipped rather than counted."
+    },
+    {
+      "id": "selected-count-predicate-inverted",
+      "file": "src/core/user_profile_restore_selection.cpp",
+      "find": "[](const FolderSelection& folder) { return folder.selected; }",
+      "replace": "[](const FolderSelection& folder) { return !folder.selected; }",
+      "expect": "killed",
+      "why": "selectedFolderCountReflectsChoices requires the count to include selected folders, not the complement of unchecked folders."
+    }
+  ]
+}

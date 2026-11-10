@@ -15,11 +15,13 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDateTime>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QPushButton>
 #include <QSplitter>
+#include <QTextCharFormat>
 #include <QTextEdit>
 #include <QTreeWidget>
 #include <QWidget>
@@ -34,6 +36,10 @@ namespace sak {
 
 class AdvancedSearchController;
 class LogToggleSwitch;
+
+namespace ui {
+class ViewEmptyState;
+}  // namespace ui
 
 /// @brief Advanced Search Panel -- three-panel grep-style file search UI
 ///
@@ -58,6 +64,10 @@ public:
     /// @brief Access the log toggle switch for MainWindow connection
     LogToggleSwitch* logToggle() const { return m_log_toggle; }
 
+    /// @brief How a match is marked in the preview: a yellow or, for the current one, orange
+    ///        fill, with dark text on it in either theme.
+    [[nodiscard]] static QTextCharFormat matchHighlightFormat(bool current);
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
@@ -73,7 +83,9 @@ private Q_SLOTS:
     // Controller signals
     void onSearchStarted(const QString& pattern);
     void onResultsReceived(QVector<sak::SearchMatch> matches);
-    void onSearchFinished(int totalMatches, int totalFiles);
+    /// @param complete False when the run omitted files/results; the log line must
+    ///        then say INCOMPLETE rather than claim the search covered everything.
+    void onSearchFinished(int total_matches, int total_files, bool complete);
     void onSearchFailed(const QString& error);
     void onSearchCancelled();
 
@@ -92,11 +104,14 @@ private Q_SLOTS:
     void onPreviousMatch();
     void onNextMatch();
 
+protected:
+    void showEvent(QShowEvent* event) override;
+
 private:
     // -- UI Setup --
     void setupUi();
     void createSearchBar(QVBoxLayout* layout);
-    void createSearchTargetRow(QVBoxLayout* searchLayout);
+    void createSearchTargetRow(QVBoxLayout* search_layout);
     void connectSearchBarSignals();
     void createThreePanelSplitter(QVBoxLayout* layout);
     void createFileExplorer();
@@ -110,26 +125,37 @@ private:
     void addManualSearchTarget();
     [[nodiscard]] FileManagementTarget currentSearchTarget() const;
     void populateFileExplorerRoot();
-    void populateDirectoryChildren(QTreeWidgetItem* parentItem, const QString& dirPath);
-    void addPlaceholderChild(QTreeWidgetItem* parentItem);
-    static void removePlaceholderChildren(QTreeWidgetItem* parentItem);
+    void populateDirectoryChildren(QTreeWidgetItem* parent_item, const QString& dir_path);
+    void addPlaceholderChild(QTreeWidgetItem* parent_item);
+    static void removePlaceholderChildren(QTreeWidgetItem* parent_item);
 
     // -- Results Helpers --
     void clearResults();
     void sortResults();
-    QTreeWidgetItem* findOrCreateFileItem(const QString& filePath,
-                                          const QVector<SearchMatch>& fileMatches);
+    QTreeWidgetItem* findOrCreateFileItem(const QString& file_path,
+                                          const QVector<SearchMatch>& file_matches);
 
     // -- Preview Helpers --
-    void showFilePreview(const QString& filePath, const QVector<SearchMatch>& matches);
-    void showMetadataPreview(const QString& filePath, const QVector<SearchMatch>& matches);
-    void showMetadataDialog(const QString& filePath);
+    void showFilePreview(const QString& file_path, const QVector<SearchMatch>& matches);
+    /// The numbered lines of @p stream in the preview, matches highlighted, at the first match.
+    void showTextPreview(QTextStream& stream,
+                         const QString& file_path,
+                         const QVector<SearchMatch>& matches);
+    void showMetadataPreview(const QString& file_path, const QVector<SearchMatch>& matches);
+    void showMetadataDialog(const QString& file_path);
     void showMetadataTreeDialog(const QString& title, const QMap<QString, QString>& metadata);
-    [[nodiscard]] QMap<QString, QString> collectRemoteMetadata(const QString& filePath) const;
-    [[nodiscard]] QMap<QString, QString> collectLocalMetadata(const QString& filePath) const;
+    [[nodiscard]] QMap<QString, QString> collectRemoteMetadata(const QString& file_path) const;
+    [[nodiscard]] QMap<QString, QString> collectLocalMetadata(const QString& file_path) const;
+
+public:
+    /// @brief A file time in the metadata view: as File Explorer's lists show one
+    ///        ("2026-11-06 18:02"), not ISO 8601 (review 3, X16); empty for an invalid time.
+    [[nodiscard]] static QString metadataTimeText(const QDateTime& time);
+
+private:
     void highlightMatches();
     void highlightMetadataMatches();
-    void navigateToMatch(int matchIndex);
+    void navigateToMatch(int match_index);
     void updateMatchCounter();
 
     // -- Utility --
@@ -168,11 +194,16 @@ private:
 
     // -- File Explorer (Left Panel) --
     QTreeWidget* m_file_explorer{nullptr};
+    // Root population is deferred while the panel is hidden (it lists the
+    // target's root directory synchronously); showEvent completes it.
+    bool m_file_explorer_pending{false};
 
     // -- Results Tree (Middle Panel) --
     QTreeWidget* m_results_tree{nullptr};
     QComboBox* m_sort_combo{nullptr};
     QLabel* m_results_count_label{nullptr};
+    // Shared empty/loading overlay for the results tree (R5-G20-7).
+    ui::ViewEmptyState* m_results_empty{nullptr};
 
     // -- Preview Pane (Right Panel) --
     QTextEdit* m_preview_edit{nullptr};
@@ -198,7 +229,7 @@ private:
     static constexpr const char* kPlaceholderText = "Loading...";
 };
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 /// AdvancedSearchPanel must inherit QWidget.
 static_assert(std::is_base_of_v<QWidget, AdvancedSearchPanel>,

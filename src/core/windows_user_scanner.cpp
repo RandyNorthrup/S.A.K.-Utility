@@ -3,125 +3,135 @@
 
 #include "sak/windows_user_scanner.h"
 
+#include "sak/logger.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QProcess>
 #include <QStandardPaths>
 
-#ifdef Q_OS_WIN
-#include "sak/logger.h"
-
-#include <algorithm>
-#include <numeric>
+#include <limits>
 
 #include <windows.h>
 
 #include <lm.h>
 #include <sddl.h>
 #include <userenv.h>
-#include <wtsapi32.h>
 #pragma comment(lib, "netapi32.lib")
 #pragma comment(lib, "userenv.lib")
-#pragma comment(lib, "wtsapi32.lib")
-#endif
 
 namespace sak {
 
 namespace {
-#ifdef Q_OS_WIN
-constexpr DWORD kNetUserInfoDetailedLevel = 3;
+// Level 0 is names only, which is all the scan reads, and the level any account may ask for. The
+// profile path and SID each come from their own lookup.
+constexpr DWORD kNetUserInfoNamesLevel = 0;
 constexpr int kWindowsAccountBufferChars = 256;
 constexpr int kProfileSizeEstimateFileLimit = 1000;
 constexpr int kFolderSelectionFileLimit = 10'000;
-#endif
 }  // namespace
 
 WindowsUserScanner::WindowsUserScanner(QObject* parent) : QObject(parent) {}
 
 QVector<UserProfile> WindowsUserScanner::scanUsers() {
+    // Convenience overload for callers that do not track completeness. It must NOT let a hard
+    // enumeration failure pass as a genuine empty user set: scanUsers(bool&) already clears the
+    // list and reports queryOk == false on a NetUserEnum failure, so surface that failure here
+    // instead of silently returning an ambiguous empty vector.
+    bool queryOk = false;
+    QVector<UserProfile> profiles = scanUsers(queryOk);
+    if (!queryOk) {
+        sak::logError(
+            "WindowsUserScanner::scanUsers(): enumeration failed; the empty result "
+            "must not be read as 'no users found'");
+    }
+    return profiles;
+}
+
+QVector<UserProfile> WindowsUserScanner::scanUsers(bool& queryOk) {
     QVector<UserProfile> profiles;
 
-#ifdef Q_OS_WIN
-    enumerateWindowsUsers(profiles);
-#endif
+    // enumerateWindowsUsers returns false only on a hard NetUserEnum failure. A drained-but-empty
+    // enumeration returns true: that is a genuine "no matching accounts", not a failed read.
+    queryOk = enumerateWindowsUsers(profiles);
 
     return profiles;
 }
 
-#ifdef Q_OS_WIN
 bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
+    // scanUsers(bool&) is the only caller and declares profiles as a fresh local.
     Q_ASSERT(profiles.isEmpty());
-    LPUSER_INFO_3 userInfo = nullptr;
-    DWORD entriesRead = 0;
-    DWORD totalEntries = 0;
+    const QString currentUserLower = getCurrentUsername().toLower();
     DWORD resumeHandle = 0;
+    NET_API_STATUS status = NERR_Success;
 
-    NET_API_STATUS status = NetUserEnum(nullptr,                // local computer
-                                        kNetUserInfoDetailedLevel,
-                                        FILTER_NORMAL_ACCOUNT,  // normal user accounts only
-                                        reinterpret_cast<LPBYTE*>(&userInfo),
-                                        MAX_PREFERRED_LENGTH,
-                                        &entriesRead,
-                                        &totalEntries,
-                                        &resumeHandle);
-
-    if (status != NERR_Success && status != ERROR_MORE_DATA) {
-        return false;
-    }
-
-    QString currentUser = getCurrentUsername();
-
-    for (DWORD i = 0; i < entriesRead; ++i) {
-        UserProfile profile;
-        profile.username = QString::fromWCharArray(userInfo[i].usri3_name);
-
-        // Get profile path
-        profile.profile_path = getProfilePath(profile.username);
-
-        // Skip if profile doesn't exist
-        if (profile.profile_path.isEmpty() || !QDir(profile.profile_path).exists()) {
-            continue;
+    // Drain every page: NetUserEnum returns ERROR_MORE_DATA (not failure) when the SAM has
+    // more normal accounts than fit one MAX_PREFERRED_LENGTH buffer. The single-call version
+    // accepted that status and scanned only the first page, silently dropping later users.
+    do {
+        LPUSER_INFO_0 userInfo = nullptr;
+        DWORD entriesRead = 0;
+        DWORD totalEntries = 0;
+        status = NetUserEnum(nullptr,                // local computer
+                             kNetUserInfoNamesLevel,
+                             FILTER_NORMAL_ACCOUNT,  // normal user accounts only
+                             reinterpret_cast<LPBYTE*>(&userInfo),
+                             MAX_PREFERRED_LENGTH,
+                             &entriesRead,
+                             &totalEntries,
+                             &resumeHandle);
+        if (status != NERR_Success && status != ERROR_MORE_DATA) {
+            // Surface the exact failure instead of returning a silently-partial list: the
+            // caller's queryOk already flips false, but the concrete status was being lost.
+            sak::logError("NetUserEnum failed; user enumeration incomplete (status {})",
+                          QString::number(status).toStdString());
+            // Fail closed: drop any profiles gathered from earlier pages so a caller that
+            // ignores queryOk cannot mistake a partial (failed) enumeration for a complete one.
+            profiles.clear();
+            return false;
         }
-
-        // Get SID
-        profile.sid = getUserSID(profile.username);
-
-        // Check if current user - cache toLower() to avoid redundant calls
-        const QString currentUserLower = currentUser.toLower();
-        const QString usernameLower = profile.username.toLower();
-        profile.is_current_user = (usernameLower == currentUserLower);
-
-        // Quick size estimate
-        profile.total_size_estimated = estimateProfileSize(profile.profile_path);
-
-        // Populate default folder selections
-        populateFolderSelections(profile);
-
-        profiles.append(profile);
-
-        Q_EMIT userFound(profile.username);
-        Q_EMIT scanProgress(profiles.size(), totalEntries);
-    }
-
-    NetApiBufferFree(userInfo);
+        for (DWORD i = 0; i < entriesRead; ++i) {
+            UserProfile profile;
+            profile.username = QString::fromWCharArray(userInfo[i].usri0_name);
+            profile.profile_path = getProfilePath(profile.username);
+            if (profile.profile_path.isEmpty() || !QDir(profile.profile_path).exists()) {
+                continue;
+            }
+            profile.sid = getUserSID(profile.username);
+            if (profile.sid.isEmpty()) {
+                // Surface, do not silently swallow: the SID drives later ownership/permission
+                // operations, so a profile recorded without one must be visibly flagged.
+                sak::logWarning("Could not resolve SID for user {}; profile recorded without a SID",
+                                profile.username.toStdString());
+            }
+            profile.is_current_user = (profile.username.toLower() == currentUserLower);
+            profile.total_size_estimated = estimateProfileSize(profile.profile_path);
+            populateFolderSelections(profile);
+            profiles.append(profile);
+            Q_EMIT userFound(profile.username);
+            Q_EMIT scanProgress(static_cast<int>(profiles.size()), static_cast<int>(totalEntries));
+        }
+        NetApiBufferFree(userInfo);
+    } while (status == ERROR_MORE_DATA);
     return true;
 }
-#endif
 
 QString WindowsUserScanner::getCurrentUsername() {
-#ifdef Q_OS_WIN
     wchar_t username[kWindowsAccountBufferChars];
     DWORD size = kWindowsAccountBufferChars;
-    if (GetUserNameW(username, &size)) {
+    if (GetUserNameW(username, &size) != 0) {
         return QString::fromWCharArray(username);
     }
-#endif
     return QString();
 }
 
 QString WindowsUserScanner::getUserSID(const QString& username) {
-    Q_ASSERT(!username.isEmpty());
-#ifdef Q_OS_WIN
+    if (username.isEmpty()) {
+        // Fail closed: an empty name is no account. LookupAccountNameW does not reliably fail on
+        // one -- it can resolve to the local domain -- and callers use the returned SID to take
+        // ownership and set permissions, so a non-user SID must never leave here.
+        return {};
+    }
     // Try to lookup SID using LookupAccountName
     const auto* usernameW = reinterpret_cast<const wchar_t*>(username.utf16());
     PSID sid = nullptr;
@@ -138,18 +148,18 @@ QString WindowsUserScanner::getUserSID(const QString& username) {
     }
 
     sid = static_cast<PSID>(LocalAlloc(LPTR, sidSize));
-    if (!sid) {
+    if (sid == nullptr) {
         return QString();
     }
     domainSize = kWindowsAccountBufferChars;
 
-    if (!LookupAccountNameW(nullptr, usernameW, sid, &sidSize, domain, &domainSize, &sidType)) {
+    if (LookupAccountNameW(nullptr, usernameW, sid, &sidSize, domain, &domainSize, &sidType) == 0) {
         LocalFree(sid);
         return QString();
     }
 
     LPWSTR sidString = nullptr;
-    if (!ConvertSidToStringSidW(sid, &sidString)) {
+    if (ConvertSidToStringSidW(sid, &sidString) == 0) {
         LocalFree(sid);
         return QString();
     }
@@ -158,32 +168,32 @@ QString WindowsUserScanner::getUserSID(const QString& username) {
     LocalFree(sidString);
     LocalFree(sid);
     return result;
-#else
-    (void)username;
-    return QString();
-#endif
 }
 
 namespace {
 
 /// @brief Expand a registry path value, handling REG_EXPAND_SZ environment variables
 QString expandRegistryPath(const wchar_t* profileDir, DWORD valueType) {
+    // lookupRegistryProfilePath is the only caller and passes its own stack buffer.
     Q_ASSERT(profileDir);
     if (valueType != REG_EXPAND_SZ) {
         return QString::fromWCharArray(profileDir);
     }
     wchar_t expandedPath[MAX_PATH] = {};
-    DWORD expandedLen = ExpandEnvironmentStringsW(profileDir, expandedPath, MAX_PATH);
+    DWORD const expandedLen = ExpandEnvironmentStringsW(profileDir, expandedPath, MAX_PATH);
     if (expandedLen > 0 && expandedLen <= MAX_PATH) {
         return QString::fromWCharArray(expandedPath);
     }
-    return QString::fromWCharArray(profileDir);
+    // Fail closed: a failed or overflowing expansion must NOT fall back to the raw,
+    // unexpanded %VAR% text -- that would let malformed registry data become a profile path.
+    return {};
 }
 
 /// @brief Look up a user's profile path from the registry using their SID
 QString lookupRegistryProfilePath(const QString& sid) {
+    // getProfilePath is the only caller and returns early on an empty SID.
     Q_ASSERT(!sid.isEmpty());
-    QString regPath =
+    const QString regPath =
         QString("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\%1").arg(sid);
     HKEY hKey = nullptr;
     LONG result = RegOpenKeyExW(
@@ -212,6 +222,18 @@ QString lookupRegistryProfilePath(const QString& sid) {
     if (valueType != REG_SZ && valueType != REG_EXPAND_SZ) {
         return {};
     }
+    // RegQueryValueExW does NOT guarantee the returned string is NUL-terminated and can fill
+    // the whole buffer; bound the read by the returned byte count and force a terminator so
+    // expandRegistryPath / ExpandEnvironmentStringsW / fromWCharArray never read past
+    // profileDir. Reject a malformed length or one that left no room to terminate.
+    if (bufferSize == 0 || (bufferSize % sizeof(wchar_t)) != 0 || bufferSize > sizeof(profileDir)) {
+        return {};
+    }
+    const DWORD charCount = bufferSize / sizeof(wchar_t);
+    if (charCount >= MAX_PATH) {
+        return {};  // no slot left to terminate safely -> treat as hostile/malformed
+    }
+    profileDir[charCount] = L'\0';
 
     QString registryPath = expandRegistryPath(profileDir, valueType);
     if (QDir(registryPath).exists()) {
@@ -223,88 +245,85 @@ QString lookupRegistryProfilePath(const QString& sid) {
 }  // anonymous namespace
 
 QString WindowsUserScanner::getProfilePath(const QString& username) {
-    Q_ASSERT(!username.isEmpty());
-    // First try standard location using SystemDrive environment variable
-    QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
-    if (systemDrive.isEmpty()) {
-        systemDrive = "C:";
+    if (username.isEmpty()) {
+        // Fail closed: with no name the standard-location path built below collapses to the
+        // profiles root itself, which exists -- so an empty name would resolve to the parent
+        // of every user's profile instead of reporting "not found".
+        return {};
     }
-    QString standardPath = systemDrive + "\\Users\\" + username;
+
+    // AUTHORITATIVE source first: the SID -> ProfileImagePath registry mapping is where a
+    // profile actually lives. A relocated profile is correct ONLY there, so it must win over
+    // the guessed <SystemDrive>\Users\<name> location (no guessed-default preferred over the
+    // authoritative source). lookupRegistryProfilePath already fails closed when the path it
+    // names does not exist, so a stale registry entry falls through to the standard location.
+    const QString sid = getUserSID(username);
+    if (!sid.isEmpty()) {
+        const QString registryPath = lookupRegistryProfilePath(sid);
+        if (!registryPath.isEmpty()) {
+            return registryPath;
+        }
+    }
+
+    // Standard location only as a SECONDARY, when the authoritative lookup yielded nothing
+    // Still gated by existence so a nonexistent guess is reported as
+    // "not found" rather than returned.
+    // No 'C:' fallback: an unset SystemDrive means the standard location cannot be resolved,
+    // so report "not found" rather than guess a drive letter. The guess is not merely
+    // redundant -- on a machine whose system drive is not C: but which happens to have a
+    // C:\Users\Username, guessing C: would return a path that is NOT this user's profile. This
+    // matches UserProfileRestoreWorker::resolveCreateNewUser, which refuses the same guess,
+    // and the no-guessed-default rule already applied to the authoritative lookup above.
+    const QString systemDrive = QString::fromLocal8Bit(qgetenv("SystemDrive"));
+    if (systemDrive.isEmpty()) {
+        return {};
+    }
+    const QString standardPath = systemDrive + "\\Users\\" + username;
     if (QDir(standardPath).exists()) {
         return standardPath;
     }
-
-#ifdef Q_OS_WIN
-    // Query registry for actual profile path using the user's SID
-    QString sid = getUserSID(username);
-    if (sid.isEmpty()) {
-        return {};
-    }
-    return lookupRegistryProfilePath(sid);
-#else
     return {};
-#endif
 }
 
-bool WindowsUserScanner::isUserLoggedIn(const QString& username) {
-    Q_ASSERT(!username.isEmpty());
-#ifdef Q_OS_WIN
-    // Enumerate active sessions using WTS API
-    PWTS_SESSION_INFOW pSessionInfo = nullptr;
-    DWORD sessionCount = 0;
-
-    if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &pSessionInfo, &sessionCount)) {
-        // Failed to enumerate sessions
-        return false;
+qint64 WindowsUserScanner::sumFolderFileSizes(const QString& folderPath, int fileLimit) {
+    qint64 total = 0;
+    int count = 0;
+    QDirIterator it(folderPath, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext() && count < fileLimit) {
+        it.next();
+        const qint64 sz = it.fileInfo().size();
+        // Saturate rather than overflow: file sizes are attacker-influenceable metadata
+        // (e.g. a crafted sparse file reporting a near-INT64_MAX logical size), and signed
+        // qint64 overflow is undefined behavior.
+        if (sz > 0) {
+            if (total > std::numeric_limits<qint64>::max() - sz) {
+                return std::numeric_limits<qint64>::max();
+            }
+            total += sz;
+        }
+        ++count;
     }
-
-    bool isLoggedIn = false;
-
-    for (DWORD i = 0; i < sessionCount; i++) {
-        // Skip disconnected and idle sessions
-        if (pSessionInfo[i].State != WTSActive) {
-            continue;
-        }
-
-        // Get username for this session
-        LPWSTR pUserName = nullptr;
-        DWORD bytesReturned = 0;
-
-        if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE,
-                                         pSessionInfo[i].SessionId,
-                                         WTSUserName,
-                                         &pUserName,
-                                         &bytesReturned)) {
-            continue;
-        }
-
-        QString sessionUser = QString::fromWCharArray(pUserName);
-        WTSFreeMemory(pUserName);
-
-        // Compare usernames (case-insensitive)
-        if (sessionUser.compare(username, Qt::CaseInsensitive) == 0) {
-            isLoggedIn = true;
-            break;
-        }
-    }
-
-    WTSFreeMemory(pSessionInfo);
-    return isLoggedIn;
-#else
-    (void)username;
-    return false;
-#endif
+    return total;
 }
 
 qint64 WindowsUserScanner::estimateProfileSize(const QString& profilePath) {
-    Q_ASSERT(!profilePath.isEmpty());
+    // Public static, so profilePath arrives from another translation unit. An empty one
+    // would build "/Documents", "/Desktop" and so on, which QDir resolves against the
+    // current drive root -- the function would happily size an unrelated tree and report
+    // it as a user's profile. 0 is already this function's answer for a profile with
+    // nothing in it.
+    if (profilePath.isEmpty()) {
+        return 0;
+    }
+
     qint64 totalSize = 0;
 
     // Quick estimate by scanning main folders (non-recursive)
-    QStringList mainFolders = {"Documents", "Desktop", "Pictures", "Videos", "Music", "Downloads"};
+    const QStringList mainFolders = {
+        "Documents", "Desktop", "Pictures", "Videos", "Music", "Downloads"};
 
     for (const QString& folder : mainFolders) {
-        QString folderPath = profilePath + "/" + folder;
+        const QString folderPath = profilePath + "/" + folder;
         if (!QDir(folderPath).exists()) {
             continue;
         }
@@ -313,7 +332,15 @@ qint64 WindowsUserScanner::estimateProfileSize(const QString& profilePath) {
         int fileCount = 0;
         while (it.hasNext() && fileCount < kProfileSizeEstimateFileLimit) {
             it.next();
-            totalSize += it.fileInfo().size();
+            const qint64 sz = it.fileInfo().size();
+            // Saturate rather than overflow (see sumFolderFileSizes): signed qint64
+            // overflow on attacker-influenceable file sizes is undefined behavior.
+            if (sz > 0) {
+                if (totalSize > std::numeric_limits<qint64>::max() - sz) {
+                    return std::numeric_limits<qint64>::max();
+                }
+                totalSize += sz;
+            }
             fileCount++;
         }
     }
@@ -344,9 +371,14 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(
         // Calculate size if folder exists
         sel.size_bytes = 0;
         sel.file_count = 0;
-        QString fullPath = profilePath + "/" + relativePath;
+        const QString fullPath = profilePath + "/" + relativePath;
         if (QDir(fullPath).exists()) {
-            sel.size_bytes = WindowsUserScanner::estimateProfileSize(fullPath);
+            // Size THIS folder directly. estimateProfileSize expects a profile
+            // ROOT and scans its standard subfolders, so calling it on a single
+            // folder (e.g. .../Documents) looked for .../Documents/Documents and
+            // reported 0 for almost every selection.
+            sel.size_bytes = WindowsUserScanner::sumFolderFileSizes(fullPath,
+                                                                    kFolderSelectionFileLimit);
             // Quick file count
             QDirIterator it(fullPath, QDir::Files, QDirIterator::Subdirectories);
             while (it.hasNext() && sel.file_count < kFolderSelectionFileLimit) {
@@ -374,38 +406,6 @@ QVector<FolderSelection> WindowsUserScanner::getDefaultFolderSelections(
     createSelection(FolderType::AppData_Local, "AppData (Local)", "AppData\\Local", false);
 
     return selections;
-}
-
-qint64 WindowsUserScanner::quickSizeEstimate(const QString& path, int maxDepth) {
-    Q_ASSERT(!path.isEmpty());
-    Q_ASSERT(maxDepth >= 0);
-    if (maxDepth <= 0) {
-        return 0;
-    }
-
-    qint64 size_bytes = 0;
-    QDir dir(path);
-
-    if (!dir.exists()) {
-        return 0;
-    }
-
-    // Get files in current directory
-    QFileInfoList files = dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
-    size_bytes += std::accumulate(
-        files.begin(), files.end(), qint64{0}, [](qint64 sum, const QFileInfo& file) {
-            return sum + file.size();
-        });
-
-    // Recurse into subdirectories (limited depth)
-    if (maxDepth > 1) {
-        QFileInfoList dirs = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
-        std::for_each(dirs.begin(), dirs.end(), [&](const QFileInfo& subdir) {
-            size_bytes += quickSizeEstimate(subdir.absoluteFilePath(), maxDepth - 1);
-        });
-    }
-
-    return size_bytes;
 }
 
 }  // namespace sak

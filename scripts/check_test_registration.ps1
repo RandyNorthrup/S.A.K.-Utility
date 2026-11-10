@@ -1,0 +1,390 @@
+# Copyright (c) 2026 Randy Northrup. All rights reserved.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Gate: every test source must build, and every test target must run.
+#
+# WHY THIS EXISTS
+# Nine test files -- tests/unit/test_network_share_browser.cpp,
+# test_active_connections_monitor.cpp, test_bundled_tools_manager.cpp,
+# test_drive_unmounter.cpp, test_image_source.cpp,
+# test_network_adapter_inspector.cpp, test_network_diagnostic_controller.cpp,
+# test_port_scanner.cpp and test_uninstall_worker.cpp -- existed in the tree,
+# were listed in tests/README.md, and had NO target in any CMakeLists. Roughly
+# 89 test slots had therefore never compiled and never executed, while earlier
+# remediation campaigns cited assertions inside them as evidence that findings
+# were fixed. Three of those files were last touched by remediation commits.
+#
+# The rule that produced this gate: an assertion is only evidence once it runs.
+#
+# Four directions are checked, because each is a way for a test to stop running:
+#   1. a test source with no add_executable  -> it never builds
+#   2. a test target with no add_test        -> it builds but ctest never runs it
+#   3. a test_*.ps1 with no add_test         -> it needs no build, so nothing else
+#                                               would ever notice it does not run
+#   4. a test_*.mjs/.js/.py with no add_test -> same no-build blind spot in another language
+#
+# Direction 3 was added after two PowerShell guard tests landed in tests/unit/ during
+# the R5 campaign. This gate scanned only test_*.cpp, so they sat in the tree looking
+# like coverage while ctest never invoked them -- the same failure this gate exists to
+# stop, one file extension over. JavaScript and Python are checked for the same reason.
+#
+# Fails closed: a missing file, an unreadable CMakeLists, or zero discovered
+# tests is an error, never a silent pass.
+
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+function Remove-CMakeComments {
+    param([string]$Text)
+    # Quoted/bracket arguments and escaped characters are opaque. Removing '#' inside
+    # them would change real arguments; bracket comments can span complete fake routes.
+    $pattern = '(?s)\\.|"(?:\\.|[^"\\])*"|\[(?<argEquals>=*)\[.*?\]\k<argEquals>\]|(?<comment>\#\[(?<commentEquals>=*)\[.*?\]\k<commentEquals>\]|\#[^\r\n]*)'
+    return [regex]::Replace($Text, $pattern, [Text.RegularExpressions.MatchEvaluator]{
+        param($match)
+        if ($match.Groups['comment'].Success) {
+            return [regex]::Replace($match.Value, '[^\r\n]', ' ')
+        }
+        return $match.Value
+    })
+}
+
+function Get-CMakeCommandBodies {
+    param([string]$Text, [string]$CommandName)
+    $pattern = '(?s)\\.|"(?:\\.|[^"\\])*"|\[(?<argEquals>=*)\[.*?\]\k<argEquals>\]|(?<command>(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\()|(?<open>\()|(?<close>\))'
+    $bodies = [Collections.Generic.List[string]]::new()
+    $depth = 0
+    $maximumDepth = 256
+    $name = ''
+    $start = 0
+    foreach ($token in [regex]::Matches($Text, $pattern)) {
+        if ($token.Groups['command'].Success -or $token.Groups['open'].Success) {
+            if ($depth -eq 0) {
+                $name = $token.Groups['name'].Value
+                $start = $token.Index + $token.Length
+            }
+            $depth++
+            if ($depth -gt $maximumDepth) { throw 'CMake command nesting exceeds the registration parser bound' }
+        } elseif ($token.Groups['close'].Success) {
+            if ($depth -le 0) { throw 'Unbalanced CMake command in test registration input' }
+            $depth--
+            if ($depth -eq 0 -and $name -ieq $CommandName) {
+                $bodies.Add($Text.Substring($start, $token.Index - $start))
+            }
+        }
+    }
+    if ($depth -ne 0) { throw 'Unterminated CMake command in test registration input' }
+    return $bodies.ToArray()
+}
+
+function Get-CMakeArguments {
+    param([string]$Text)
+    return @([regex]::Matches($Text, '(?s)"(?:\\.|[^"\\])*"|\[(?<argEquals>=*)\[.*?\]\k<argEquals>\]|(?:\\.|[^\s])+') |
+        ForEach-Object {
+            $value = $_.Value
+            if ($value.StartsWith('"') -and $value.EndsWith('"')) {
+                $value = $value.Substring(1, $value.Length - 2)
+            } elseif ($value -match '(?s)^\[(?<equals>=*)\[(?<argument>.*?)\]\k<equals>\]$') {
+                $value = $matches['argument']
+            }
+            $value
+        })
+}
+
+function Get-CMakeRegisteredCommandTargets {
+    param([string[]]$AddTestBodies)
+    $targets = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($body in $AddTestBodies) {
+        $tokens = @(Get-CMakeArguments $body)
+        if ($tokens.Count -lt 3 -or $tokens[0] -cne 'NAME') { continue }
+        $commandIndex = [Array]::IndexOf($tokens, 'COMMAND', 2)
+        if ($commandIndex -lt 0) { continue }
+        for ($index = $commandIndex + 1; $index -lt $tokens.Count; $index++) {
+            $argument = $tokens[$index]
+            if ($argument -cin @('CONFIGURATIONS', 'WORKING_DIRECTORY', 'COMMAND_EXPAND_LISTS')) { break }
+            $isExecutable = $index -eq ($commandIndex + 1)
+            if ($isExecutable -and $argument -cmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+                [void]$targets.Add($argument)
+            }
+            # The certification wrapper executes the exact -CertifierPath argument.
+            # A TARGET_FILE in unrelated data/output arguments is not execution evidence.
+            if (($isExecutable -or $tokens[$index - 1] -ceq '-CertifierPath') -and
+                $argument -cmatch '^\$<TARGET_FILE:([A-Za-z_][A-Za-z0-9_]*)>$') {
+                [void]$targets.Add($matches[1])
+            }
+        }
+    }
+    return @($targets)
+}
+
+function Assert-CMakePowerShellLaunches {
+    param([string[]]$AddTestBodies)
+    $violations = [Collections.Generic.List[string]]::new()
+    # Direct engines used by this tree, including the three CMake-resolved paths.
+    # This is source registration policy, not evaluation of arbitrary CMake wrappers.
+    $engines = @('${SAK_TEST_POWERSHELL_PATH}', '${SAK_PWSH_EXECUTABLE}',
+        '${SAK_WINDOWS_POWERSHELL_EXECUTABLE}')
+    foreach ($body in $AddTestBodies) {
+        $tokens = @(Get-CMakeArguments $body)
+        if ($tokens.Count -lt 4 -or $tokens[0] -cne 'NAME') { continue }
+        $commandIndex = [Array]::IndexOf($tokens, 'COMMAND', 2)
+        if ($commandIndex -lt 0 -or $commandIndex + 1 -ge $tokens.Count) { continue }
+        $engineIndex = $commandIndex + 1
+        $engine = $tokens[$engineIndex]
+        if (($engine -ceq '${CMAKE_COMMAND}' -or $engine -match '(?i)(^|[\\/])cmake(\.exe)?$') -and
+            $engineIndex + 2 -lt $tokens.Count -and $tokens[$engineIndex + 1] -ceq '-E' -and
+            $tokens[$engineIndex + 2] -ceq 'env') {
+            # Resolve only the executed command of a real cmake -E env wrapper.
+            # Engine names in assignment values or script arguments are data, not launches.
+            $engineIndex += 3
+            while ($engineIndex -lt $tokens.Count -and
+                ($tokens[$engineIndex] -cmatch '^--unset=[A-Za-z_][A-Za-z0-9_]*$' -or
+                 $tokens[$engineIndex] -cmatch '^[A-Za-z_][A-Za-z0-9_]*=')) { $engineIndex++ }
+            if ($engineIndex -lt $tokens.Count -and $tokens[$engineIndex] -ceq '--') { $engineIndex++ }
+            if ($engineIndex -ge $tokens.Count) { continue }
+            $engine = $tokens[$engineIndex]
+        }
+        if ($engine -cnotin $engines -and $engine -notmatch '(?i)(^|[\\/])(pwsh|powershell)(\.exe)?$') { continue }
+        $arguments = [Collections.Generic.List[string]]::new()
+        for ($index = $engineIndex + 1; $index -lt $tokens.Count; $index++) {
+            if ($tokens[$index] -cin @('CONFIGURATIONS', 'WORKING_DIRECTORY', 'COMMAND_EXPAND_LISTS')) { break }
+            $arguments.Add($tokens[$index])
+        }
+        # The canonical two host flags must occur before -File, not inside script
+        # arguments, comments or one quoted example. Extra host switches (including
+        # every spelling of a policy override) are not silently accepted.
+        $valid = $arguments.Count -ge 4 -and $arguments[2] -ieq '-File' -and
+            $arguments[3] -match '\.ps1$' -and
+            ((($arguments[0] -ieq '-NoProfile') -and ($arguments[1] -ieq '-NonInteractive')) -or
+             (($arguments[0] -ieq '-NonInteractive') -and ($arguments[1] -ieq '-NoProfile')))
+        if (-not $valid) { $violations.Add($tokens[1]) }
+    }
+    if ($violations.Count -gt 0) {
+        throw ('PowerShell CTest launch policy rejected: ' + ($violations -join ', ') +
+            '. Require -NoProfile -NonInteractive -File with no execution-policy override.')
+    }
+}
+
+$ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+$TestsDir = Join-Path $ProjectRoot 'tests'
+$TestsCMake = Join-Path $TestsDir 'CMakeLists.txt'
+$RootCMake = Join-Path $ProjectRoot 'CMakeLists.txt'
+
+foreach ($required in @($TestsDir, $TestsCMake, $RootCMake)) {
+    if (-not (Test-Path $required)) {
+        Write-Error "Test registration gate cannot run: missing $required"
+        exit 1
+    }
+}
+
+# Targets that are deliberately NOT ctest entries. Each one drives real hardware
+# or requires elevation, so it is run by hand during certification rather than in
+# the suite. Anything not on this list must be registered with add_test.
+$IntentionallyUnregistered = @(
+    'file_management_live_certifier',
+    'flash_live_certifier',
+    'partition_file_recovery_certifier',
+    'partition_filesystem_probe_certifier'
+)
+
+# The "is it built" question looks at both files, because a test source may be
+# referenced from either. The "is it registered" question looks ONLY at the tests
+# CMakeLists: the root file declares the application and CLI targets
+# (sak_utility, sak_elevated_helper, the writer CLIs), which are programs rather
+# than tests and must never be expected to appear in ctest.
+$testsCMakeText = Remove-CMakeComments (Get-Content $TestsCMake -Raw)
+$cmakeText = $testsCMakeText + "`n" + (Remove-CMakeComments (Get-Content $RootCMake -Raw))
+
+$sources = @(Get-ChildItem -Path $TestsDir -Recurse -File -Filter 'test_*.cpp')
+if ($sources.Count -eq 0) {
+    Write-Error "Test registration gate found no test_*.cpp files at all; refusing to pass."
+    exit 1
+}
+
+$declaredTargets = @(Get-CMakeCommandBodies $testsCMakeText 'add_executable' | ForEach-Object {
+    if ($_ -match '^\s*([A-Za-z0-9_]+)') { $matches[1] }
+})
+$addTestBodies = @(Get-CMakeCommandBodies $testsCMakeText 'add_test')
+Assert-CMakePowerShellLaunches $addTestBodies
+$registeredTests = @($addTestBodies | ForEach-Object {
+    if ($_ -match '^\s*NAME\s+([A-Za-z0-9_$\{\}]+)') { $matches[1] }
+})
+$registeredCommandTargets = @(Get-CMakeRegisteredCommandTargets $addTestBodies)
+
+# Targets and add_test names can both come from a foreach(test_name ...) loop, in
+# which case the literal name never appears and the CMake text carries
+# "${test_name}" instead. When such a loop is present, a name listed inside it
+# counts as registered.
+# The loop is written as:
+#     set(UNIT_TESTS test_a test_b)
+#     foreach(test_name ${UNIT_TESTS})
+#         ... unit/${test_name}.cpp ... add_test(NAME ${test_name} ...)
+# so the names live in the set() block, not inside the foreach parentheses.
+# Only treat set() contents as loop-built when the file really does compile
+# "${test_name}.cpp"; otherwise an unrelated list could silently exempt a test.
+$loopRegistered = @()
+if ($testsCMakeText -match '\$\{test_name\}\.cpp') {
+    foreach ($m in [regex]::Matches($testsCMakeText, '(?s)set\(\s*[A-Za-z_][A-Za-z0-9_]*\s+(.*?)\)')) {
+        foreach ($n in [regex]::Matches($m.Groups[1].Value, '\btest_[A-Za-z0-9_]+\b')) {
+            $loopRegistered += $n.Value
+        }
+    }
+}
+
+if ($declaredTargets.Count -eq 0) {
+    Write-Error "Test registration gate parsed zero add_executable targets; refusing to pass."
+    exit 1
+}
+
+# A source counts as built only when it is referenced in a SOURCE position:
+# either the literal "<name>.cpp" appears, or the stem is listed inside a
+# foreach(test_name ...) loop that compiles "unit/${test_name}.cpp".
+#
+# Matching the bare stem anywhere is NOT sufficient and was rejected: the stem
+# equals the target name, so it also appears in add_test, target_link_libraries
+# and set_target_properties. A file removed from its target's source list would
+# still have looked "built". Verified by deliberately orphaning a real test and
+# confirming the loose form passed while this form fails.
+$unbuilt = @()
+foreach ($src in $sources) {
+    $builtLiterally = $cmakeText -match [regex]::Escape($src.Name)
+    $builtByLoop = $loopRegistered -contains $src.BaseName
+    if (-not ($builtLiterally -or $builtByLoop)) {
+        $unbuilt += $src.FullName.Substring($ProjectRoot.Length + 1)
+    }
+}
+
+$unregistered = @()
+foreach ($target in $declaredTargets) {
+    if ($IntentionallyUnregistered -contains $target) { continue }
+    if ($registeredTests -contains $target) { continue }
+    if ($registeredCommandTargets -contains $target) { continue }
+    if ($loopRegistered -contains $target) { continue }
+    $unregistered += $target
+}
+
+# A PowerShell test has no build step, so "does it compile" says nothing about whether it
+# runs. Its stem must appear as an add_test name -- either literally, or inside a
+# foreach() list that registers "${<var>}.ps1".
+# The loop must be matched as a whole -- its variable, its list, and its body -- and the body
+# must register THAT variable as a .ps1. Testing the file for any "${x}.ps1" instead would let
+# one such loop vouch for every other foreach in the file, so a .ps1 sharing a stem with some
+# unrelated C++ target listed in one would be recorded as running when nothing runs it. That is
+# the same silent non-execution this gate exists to catch.
+$psLoopRegistered = @()
+$loopPattern = '(?s)foreach\(\s*([A-Za-z_][A-Za-z0-9_]*)\s+([^)]*)\)(.*?)endforeach\(\)'
+foreach ($m in [regex]::Matches($testsCMakeText, $loopPattern)) {
+    $loopVar = $m.Groups[1].Value
+    $loopBody = $m.Groups[3].Value
+    if ($loopBody -notmatch ([regex]::Escape('${' + $loopVar + '}') + '\.ps1')) { continue }
+    if ($loopBody -notmatch '\badd_test\b') { continue }
+    foreach ($n in [regex]::Matches($m.Groups[2].Value, '\btest_[A-Za-z0-9_]+\b')) {
+        $psLoopRegistered += $n.Value
+    }
+}
+
+# scripts/ holds test_*.ps1 too, and this gate used to scan only tests/. Two suites were
+# sitting there unregistered as a result: the certification-tool self-test (now a ctest
+# entry) and the VHD preflight. Both were reachable only from check_release_readiness.ps1,
+# which runs in the release workflow -- and CI has not run for 776 commits, so "it is
+# wired somewhere" was not the same as "it runs".
+$ScriptsDir = Join-Path $ProjectRoot 'scripts'
+
+$NonTestScripts = @()
+
+$psSources = @(Get-ChildItem -Path $TestsDir -Recurse -File -Filter 'test_*.ps1') +
+             @(Get-ChildItem -Path $ScriptsDir -File -Filter 'test_*.ps1')
+$psUnregistered = @()
+foreach ($ps in $psSources) {
+    if ($NonTestScripts -contains $ps.BaseName) { continue }
+    if ($registeredTests -contains $ps.BaseName) { continue }
+    if ($psLoopRegistered -contains $ps.BaseName) { continue }
+    $psUnregistered += $ps.FullName.Substring($ProjectRoot.Length + 1)
+}
+
+# JavaScript tests have no build step either, so nothing but this gate would ever notice one
+# that ctest does not run. This directions exists because the .ps1 case above was added after
+# two PowerShell suites sat unregistered -- the gate covered .cpp only, and the failure simply
+# moved one file extension over. It has now moved once more, to the browser-extension suite.
+$jsSources = @(Get-ChildItem -Path $TestsDir -Recurse -File -Include 'test_*.mjs', 'test_*.js')
+$jsUnregistered = @()
+foreach ($js in $jsSources) {
+    if ($registeredTests -contains $js.BaseName) { continue }
+    $jsUnregistered += $js.FullName.Substring($ProjectRoot.Length + 1)
+}
+
+# Python gate tests have the same no-build shape. Keep this list exact: a test_*.py source is
+# evidence only when CTest names and executes its stem.
+$pySources = @(Get-ChildItem -Path $TestsDir -Recurse -File -Filter 'test_*.py')
+$pyUnregistered = @()
+foreach ($py in $pySources) {
+    if ($registeredTests -contains $py.BaseName) { continue }
+    $pyUnregistered += $py.FullName.Substring($ProjectRoot.Length + 1)
+}
+
+$failed = $false
+
+if ($unbuilt.Count -gt 0) {
+    $failed = $true
+    Write-Host ''
+    Write-Host 'TEST SOURCES THAT NO CMakeLists BUILDS (they never compile or run):' -ForegroundColor Red
+    $unbuilt | Sort-Object | ForEach-Object { Write-Host "  $_" }
+}
+
+if ($unregistered.Count -gt 0) {
+    $failed = $true
+    Write-Host ''
+    Write-Host 'TEST TARGETS THAT BUILD BUT ARE NEVER REGISTERED WITH ctest:' -ForegroundColor Red
+    $unregistered | Sort-Object | ForEach-Object { Write-Host "  $_" }
+    Write-Host ''
+    Write-Host 'Add an add_test(NAME <target> COMMAND <target> ...) entry, or, if the target'
+    Write-Host 'genuinely cannot run in the suite, add it to $IntentionallyUnregistered in'
+    Write-Host 'this script WITH a comment stating why.'
+}
+
+if ($psUnregistered.Count -gt 0) {
+    $failed = $true
+    Write-Host ''
+    Write-Host 'POWERSHELL TESTS THAT ctest NEVER RUNS:' -ForegroundColor Red
+    $psUnregistered | Sort-Object | ForEach-Object { Write-Host "  $_" }
+    Write-Host ''
+    Write-Host 'Add an add_test(NAME <stem> COMMAND pwsh -NoProfile -NonInteractive -File ...)'
+    Write-Host 'entry in tests/CMakeLists.txt. A .ps1 test needs no build step, so nothing'
+    Write-Host 'else will ever notice that it is not running.'
+}
+
+if ($jsUnregistered.Count -gt 0) {
+    $failed = $true
+    Write-Host ''
+    Write-Host 'JAVASCRIPT TESTS THAT ctest NEVER RUNS:' -ForegroundColor Red
+    $jsUnregistered | Sort-Object | ForEach-Object { Write-Host "  $_" }
+    Write-Host ''
+    Write-Host 'Add an add_test(NAME <stem> COMMAND "${SAK_NODE_EXECUTABLE}" --test ...) entry'
+    Write-Host 'in tests/CMakeLists.txt. A .mjs test needs no build step either, so nothing'
+    Write-Host 'else will ever notice that it is not running.'
+}
+
+if ($pyUnregistered.Count -gt 0) {
+    $failed = $true
+    Write-Host ''
+    Write-Host 'PYTHON TESTS THAT ctest NEVER RUNS:' -ForegroundColor Red
+    $pyUnregistered | Sort-Object | ForEach-Object { Write-Host "  $_" }
+    Write-Host ''
+    Write-Host 'Add an add_test(NAME <stem> COMMAND python <path>) entry in tests/CMakeLists.txt.'
+}
+
+if ($failed) {
+    Write-Host ''
+    Write-Error ("Test registration gate failed: {0} unbuilt source(s), {1} unregistered target(s), {2} unregistered PowerShell test(s), {3} unregistered JavaScript test(s), {4} unregistered Python test(s)." -f
+                 $unbuilt.Count, $unregistered.Count, $psUnregistered.Count,
+                 $jsUnregistered.Count, $pyUnregistered.Count)
+    exit 1
+}
+
+$psExempt = @($psSources | Where-Object { $NonTestScripts -contains $_.BaseName }).Count
+Write-Host ("Test registration: {0} test sources, all built; {1} targets, all registered ({2} certifiers exempt); {3} PowerShell test(s), all registered ({4} exempt as non-tests); {5} JavaScript test(s), all registered; {6} Python test(s), all registered." -f
+            $sources.Count, $declaredTargets.Count, $IntentionallyUnregistered.Count,
+            ($psSources.Count - $psExempt), $psExempt, $jsSources.Count, $pySources.Count)
+exit 0

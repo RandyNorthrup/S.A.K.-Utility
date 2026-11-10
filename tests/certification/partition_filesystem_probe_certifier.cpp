@@ -25,12 +25,7 @@
 #include <limits>
 #include <optional>
 
-#ifdef Q_OS_WIN
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <windows.h>
-#endif
 
 namespace {
 
@@ -329,7 +324,6 @@ uint64_t remainingSizeAfterOffset(uint64_t fullSize, uint64_t offsetBytes) {
     return offsetBytes < fullSize ? fullSize - offsetBytes : 0ULL;
 }
 
-#ifdef Q_OS_WIN
 class ScopedWin32Handle {
 public:
     explicit ScopedWin32Handle(HANDLE handle) : handle_(handle) {}
@@ -457,14 +451,11 @@ std::optional<QByteArray> readWindowsDeviceProbeBytes(const QString& path,
     }
     return readWindowsProbeBytesFromHandle(handle.get(), errorMessage);
 }
-#endif
 
 QString reportInputPath(const QString& path) {
-#ifdef Q_OS_WIN
     if (isWindowsDevicePath(path)) {
         return path;
     }
-#endif
     return QFileInfo(path).absoluteFilePath();
 }
 
@@ -900,11 +891,9 @@ std::optional<QByteArray> readProbeBytes(const QString& path,
                                          uint64_t inputOffsetBytes,
                                          uint64_t* inputSizeBytes,
                                          QString* errorMessage) {
-#ifdef Q_OS_WIN
     if (isWindowsDevicePath(path)) {
         return readWindowsDeviceProbeBytes(path, inputOffsetBytes, inputSizeBytes, errorMessage);
     }
-#endif
 
     QFile file(path);
     if (!openFileReadOnly(&file, errorMessage)) {
@@ -1970,9 +1959,8 @@ int runHfsWriterFixtureCertifier(const Config& config) {
 
 sak::PartitionApfsWriteOptions apfsCertifierWriteOptions() {
     sak::PartitionApfsWriteOptions options;
-    options.enable_experimental_writer = true;
+    options.writable = true;
     options.image_only = true;
-    options.destructive_certification_evidence = true;
     options.allow_encrypted_or_protected_volume = true;
     options.allow_compressed_file_mutation = true;
     options.allow_snapshots = true;
@@ -2072,13 +2060,13 @@ sak::PartitionApfsFileReadResult appendApfsListingValidation(
 
 struct ApfsReadValidation {
     QJsonObject* report{nullptr};
-    QString imagePath;
-    QString path;
+    QString imagePath{};
+    QString path{};
     uint64_t maxBytes{0};
-    QString reportKey;
-    QString failureLabel;
-    QByteArray expectedData;
-    QString mismatchMessage;
+    QString reportKey{};
+    QString failureLabel{};
+    QByteArray expectedData{};
+    QString mismatchMessage{};
     bool compareExpected{false};
 };
 
@@ -2144,7 +2132,6 @@ QStringList appendApfsFormatBuildValidation(QJsonObject* report,
                                   .compareExpected = true},
                                  &blockers);
     }
-    Q_UNUSED(config);
     return blockers;
 }
 
@@ -2189,7 +2176,8 @@ sak::PartitionApfsWriteOptions apfsExistingFormatOptions(const Config& config) {
     auto options = apfsCertifierWriteOptions();
     if (config.apfsFormatAllowRawTarget) {
         options.image_only = false;
-        options.raw_media_hardware_certification_evidence = config.apfsFormatRawHardwareProof;
+        // A raw target is written only when the operator supplied the hardware-proof flag.
+        options.writable = config.apfsFormatRawHardwareProof;
         options.evidence_id = QStringLiteral("certifier.apfs-raw-existing-format");
     }
     return options;
@@ -2199,8 +2187,8 @@ sak::PartitionApfsWriteOptions apfsRawMutationOptions(const Config& config,
                                                       const QString& evidenceId) {
     auto options = apfsCertifierWriteOptions();
     options.image_only = false;
-    options.raw_media_hardware_certification_evidence = config.apfsWriteRawHardwareProof ||
-                                                        config.apfsRepairRawHardwareProof;
+    // A raw target is written only when the operator supplied a hardware-proof flag.
+    options.writable = config.apfsWriteRawHardwareProof || config.apfsRepairRawHardwareProof;
     options.evidence_id = evidenceId;
     return options;
 }
@@ -2240,7 +2228,7 @@ int runApfsExistingFormatCertifier(const Config& config) {
 }
 
 QJsonObject apfsFileWriteReportObject(const Config& config,
-                                      const sak::PartitionApfsImageFileWriteResult& write) {
+                                      const sak::PartitionApfsImageCheckpointCommitResult& write) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   write.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -2249,22 +2237,18 @@ QJsonObject apfsFileWriteReportObject(const Config& config,
                   QFileInfo(write.source_image_path).absoluteFilePath());
     report.insert(QStringLiteral("written_image_path"),
                   QFileInfo(write.written_image_path).absoluteFilePath());
-    report.insert(QStringLiteral("written_image_sha256"), write.written_image_sha256);
-    report.insert(QStringLiteral("written_data_blocks"),
-                  QString::number(write.written_data_blocks));
     report.insert(QStringLiteral("file_name"), config.apfsWriteRootFileName);
-    report.insert(QStringLiteral("plan_operation"), write.plan.operation);
-    report.insert(QStringLiteral("plan_steps"), apfsPlanStepsArray(write.plan.steps));
-    report.insert(QStringLiteral("post_apply_verification"),
-                  stringArray(write.plan.post_apply_verification));
+    report.insert(QStringLiteral("previous_xid"), QString::number(write.previous_xid));
+    report.insert(QStringLiteral("new_xid"), QString::number(write.new_xid));
     report.insert(QStringLiteral("warnings"), stringArray(write.warnings));
     report.insert(QStringLiteral("blockers"), stringArray(write.blockers));
     return report;
 }
 
-QStringList appendApfsFileWriteValidation(QJsonObject* report,
-                                          const Config& config,
-                                          const sak::PartitionApfsImageFileWriteResult& write) {
+QStringList appendApfsFileWriteValidation(
+    QJsonObject* report,
+    const Config& config,
+    const sak::PartitionApfsImageCheckpointCommitResult& write) {
     QStringList blockers;
     if (!report || !write.ok) {
         return blockers;
@@ -2310,12 +2294,13 @@ int runApfsRootFileWriteCertifier(const Config& config) {
         return fail(config, configErrors.join(QStringLiteral("; ")));
     }
 
-    const auto write = sak::PartitionApfsWriter::writeImageOnlyRootFile(
-        {.source_image_path = config.inputPath,
-         .written_image_path = config.apfsWriteRootFileImagePath,
-         .file_name = config.apfsWriteRootFileName,
-         .file_data = config.apfsWriteRootFileText.toUtf8(),
-         .options = apfsCertifierWriteOptions()});
+    const auto write = sak::PartitionApfsWriter::commitImageOnlyFileWrite(
+        sak::PartitionApfsImageFileInsertCommitRequest{
+            .source_image_path = config.inputPath,
+            .written_image_path = config.apfsWriteRootFileImagePath,
+            .file_name = config.apfsWriteRootFileName,
+            .file_data = config.apfsWriteRootFileText.toUtf8(),
+            .options = apfsCertifierWriteOptions()});
     QJsonObject report = apfsFileWriteReportObject(config, write);
     QStringList blockers = write.blockers;
     blockers.append(appendApfsFileWriteValidation(&report, config, write));
@@ -2336,7 +2321,7 @@ int runApfsRootFileWriteCertifier(const Config& config) {
 }
 
 QJsonObject apfsFilePatchReportObject(const Config& config,
-                                      const sak::PartitionApfsImageFilePatchResult& patch) {
+                                      const sak::PartitionApfsImageCheckpointCommitResult& patch) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   patch.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -2345,28 +2330,21 @@ QJsonObject apfsFilePatchReportObject(const Config& config,
                   QFileInfo(patch.source_image_path).absoluteFilePath());
     report.insert(QStringLiteral("written_image_path"),
                   QFileInfo(patch.written_image_path).absoluteFilePath());
-    report.insert(QStringLiteral("written_image_sha256"), patch.written_image_sha256);
-    report.insert(QStringLiteral("written_data_blocks"),
-                  QString::number(patch.written_data_blocks));
     report.insert(QStringLiteral("file_name"), config.apfsPatchRootFileName);
-    report.insert(QStringLiteral("file_bytes"), QString::number(patch.file_bytes));
-    report.insert(QStringLiteral("patch_offset_bytes"), QString::number(patch.patch_offset_bytes));
-    report.insert(QStringLiteral("patch_bytes"), QString::number(patch.patch_bytes));
-    report.insert(QStringLiteral("patch_sha256"), patch.patch_sha256);
-    report.insert(QStringLiteral("readback_sha256"), patch.readback_sha256);
-    report.insert(QStringLiteral("plan_operation"), patch.plan.operation);
-    report.insert(QStringLiteral("plan_steps"), apfsPlanStepsArray(patch.plan.steps));
-    report.insert(QStringLiteral("post_apply_verification"),
-                  stringArray(patch.plan.post_apply_verification));
+    report.insert(QStringLiteral("patch_offset_bytes"),
+                  QString::number(config.apfsPatchRootFileOffsetBytes));
+    report.insert(QStringLiteral("previous_xid"), QString::number(patch.previous_xid));
+    report.insert(QStringLiteral("new_xid"), QString::number(patch.new_xid));
     report.insert(QStringLiteral("warnings"), stringArray(patch.warnings));
     report.insert(QStringLiteral("blockers"), stringArray(patch.blockers));
     return report;
 }
 
-QStringList appendApfsFilePatchValidation(QJsonObject* report,
-                                          const Config& config,
-                                          const sak::PartitionApfsImageFilePatchResult& patch,
-                                          const QByteArray& expectedData) {
+QStringList appendApfsFilePatchValidation(
+    QJsonObject* report,
+    const Config& config,
+    const sak::PartitionApfsImageCheckpointCommitResult& patch,
+    const QByteArray& expectedData) {
     QStringList blockers;
     if (!report || !patch.ok) {
         return blockers;
@@ -2444,13 +2422,15 @@ int runApfsRootFilePatchCertifier(const Config& config) {
         return fail(config, expectedBlockers.join(QStringLiteral("; ")));
     }
 
-    const auto patch = sak::PartitionApfsWriter::patchImageOnlyRootFile(
-        {.source_image_path = config.inputPath,
-         .written_image_path = config.apfsPatchRootFileImagePath,
-         .file_name = config.apfsPatchRootFileName,
-         .patch_offset_bytes = config.apfsPatchRootFileOffsetBytes,
-         .patch_data = config.apfsPatchRootFileText.toUtf8(),
-         .options = apfsCertifierWriteOptions()});
+    const auto patch = sak::PartitionApfsWriter::commitImageOnlyFilePatch(
+        sak::PartitionApfsImageFilePatchCommitRequest{
+            .source_image_path = config.inputPath,
+            .written_image_path = config.apfsPatchRootFileImagePath,
+            .directory_name = QString(),
+            .file_name = config.apfsPatchRootFileName,
+            .patch_offset_bytes = config.apfsPatchRootFileOffsetBytes,
+            .patch_data = config.apfsPatchRootFileText.toUtf8(),
+            .options = apfsCertifierWriteOptions()});
     QJsonObject report = apfsFilePatchReportObject(config, patch);
     QStringList blockers = patch.blockers;
     blockers.append(appendApfsFilePatchValidation(&report, config, patch, *expected));
@@ -2470,8 +2450,8 @@ int runApfsRootFilePatchCertifier(const Config& config) {
     return 0;
 }
 
-QJsonObject apfsFileDeleteReportObject(const Config& config,
-                                       const sak::PartitionApfsImageFileDeleteResult& deleted) {
+QJsonObject apfsFileDeleteReportObject(
+    const Config& config, const sak::PartitionApfsImageCheckpointCommitResult& deleted) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   deleted.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
@@ -2480,24 +2460,18 @@ QJsonObject apfsFileDeleteReportObject(const Config& config,
                   QFileInfo(deleted.source_image_path).absoluteFilePath());
     report.insert(QStringLiteral("written_image_path"),
                   QFileInfo(deleted.written_image_path).absoluteFilePath());
-    report.insert(QStringLiteral("written_image_sha256"), deleted.written_image_sha256);
-    report.insert(QStringLiteral("deleted_file_bytes"),
-                  QString::number(deleted.deleted_file_bytes));
-    report.insert(QStringLiteral("deleted_file_sha256"), deleted.deleted_file_sha256);
-    report.insert(QStringLiteral("freed_data_blocks"), QString::number(deleted.freed_data_blocks));
     report.insert(QStringLiteral("file_name"), config.apfsDeleteRootFileName);
-    report.insert(QStringLiteral("plan_operation"), deleted.plan.operation);
-    report.insert(QStringLiteral("plan_steps"), apfsPlanStepsArray(deleted.plan.steps));
-    report.insert(QStringLiteral("post_apply_verification"),
-                  stringArray(deleted.plan.post_apply_verification));
+    report.insert(QStringLiteral("previous_xid"), QString::number(deleted.previous_xid));
+    report.insert(QStringLiteral("new_xid"), QString::number(deleted.new_xid));
     report.insert(QStringLiteral("warnings"), stringArray(deleted.warnings));
     report.insert(QStringLiteral("blockers"), stringArray(deleted.blockers));
     return report;
 }
 
-QStringList appendApfsFileDeleteValidation(QJsonObject* report,
-                                           const Config& config,
-                                           const sak::PartitionApfsImageFileDeleteResult& deleted) {
+QStringList appendApfsFileDeleteValidation(
+    QJsonObject* report,
+    const Config& config,
+    const sak::PartitionApfsImageCheckpointCommitResult& deleted) {
     QStringList blockers;
     if (!report || !deleted.ok) {
         return blockers;
@@ -2542,11 +2516,12 @@ int runApfsRootFileDeleteCertifier(const Config& config) {
         return fail(config, configErrors.join(QStringLiteral("; ")));
     }
 
-    const auto deleted = sak::PartitionApfsWriter::deleteImageOnlyRootFile(
-        {.source_image_path = config.inputPath,
-         .written_image_path = config.apfsDeleteRootFileImagePath,
-         .file_name = config.apfsDeleteRootFileName,
-         .options = apfsCertifierWriteOptions()});
+    const auto deleted = sak::PartitionApfsWriter::commitImageOnlyFileDelete(
+        sak::PartitionApfsImageFileDeleteCommitRequest{.source_image_path = config.inputPath,
+                                                       .written_image_path =
+                                                           config.apfsDeleteRootFileImagePath,
+                                                       .file_name = config.apfsDeleteRootFileName,
+                                                       .options = apfsCertifierWriteOptions()});
     QJsonObject report = apfsFileDeleteReportObject(config, deleted);
     QStringList blockers = deleted.blockers;
     blockers.append(appendApfsFileDeleteValidation(&report, config, deleted));
@@ -2566,37 +2541,34 @@ int runApfsRootFileDeleteCertifier(const Config& config) {
     return 0;
 }
 
-QJsonObject apfsRawFileWriteReportObject(const Config& config,
-                                         const sak::PartitionApfsRawFileWriteResult& write) {
+QJsonObject apfsRawFileWriteReportObject(
+    const Config& config, const sak::PartitionApfsImageCheckpointCommitResult& write) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   write.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("operation"), QStringLiteral("APFS raw root-file write"));
-    report.insert(QStringLiteral("target_path"), write.target_path);
+    report.insert(QStringLiteral("target_path"), config.apfsWriteRootFileTargetPath);
     report.insert(QStringLiteral("target_container_bytes"),
                   QString::number(config.apfsWriteTargetSizeBytes));
-    report.insert(QStringLiteral("written_data_blocks"),
-                  QString::number(write.written_data_blocks));
     report.insert(QStringLiteral("file_name"), config.apfsWriteRootFileName);
-    report.insert(QStringLiteral("plan_operation"), write.plan.operation);
-    report.insert(QStringLiteral("plan_steps"), apfsPlanStepsArray(write.plan.steps));
-    report.insert(QStringLiteral("post_apply_verification"),
-                  stringArray(write.plan.post_apply_verification));
+    report.insert(QStringLiteral("previous_xid"), QString::number(write.previous_xid));
+    report.insert(QStringLiteral("new_xid"), QString::number(write.new_xid));
     report.insert(QStringLiteral("warnings"), stringArray(write.warnings));
     report.insert(QStringLiteral("blockers"), stringArray(write.blockers));
     return report;
 }
 
-QStringList appendApfsRawFileWriteValidation(QJsonObject* report,
-                                             const Config& config,
-                                             const sak::PartitionApfsRawFileWriteResult& write) {
+QStringList appendApfsRawFileWriteValidation(
+    QJsonObject* report,
+    const Config& config,
+    const sak::PartitionApfsImageCheckpointCommitResult& write) {
     QStringList blockers;
     if (!report || !write.ok) {
         return blockers;
     }
     const auto detection = appendApfsDetectionValidation(
         {.report = report,
-         .imagePath = write.target_path,
+         .imagePath = config.apfsWriteRootFileTargetPath,
          .imageSize = config.apfsWriteTargetSizeBytes,
          .reportKey = QStringLiteral("raw_written_detection"),
          .missingMessage = QStringLiteral("Raw written APFS target was not detected"),
@@ -2606,14 +2578,14 @@ QStringList appendApfsRawFileWriteValidation(QJsonObject* report,
         return blockers;
     }
     appendApfsListingValidation({.report = report,
-                                 .imagePath = write.target_path,
+                                 .imagePath = config.apfsWriteRootFileTargetPath,
                                  .reportKey = QStringLiteral("raw_written_apfs_listing"),
                                  .failureLabel = QStringLiteral("Raw written APFS listing")},
                                 &blockers);
     const QString readPath = QStringLiteral("/%1").arg(config.apfsWriteRootFileName.trimmed());
     appendApfsReadValidation(
         {.report = report,
-         .imagePath = write.target_path,
+         .imagePath = config.apfsWriteRootFileTargetPath,
          .path = readPath,
          .maxBytes = static_cast<uint64_t>(config.apfsWriteRootFileText.toUtf8().size()),
          .reportKey = QStringLiteral("raw_written_file_read"),
@@ -2631,15 +2603,16 @@ int runApfsRawRootFileWriteCertifier(const Config& config) {
         return fail(config, configErrors.join(QStringLiteral("; ")));
     }
 
-    const auto write = sak::PartitionApfsWriter::writeRawRootFile(
-        {.target_path = config.apfsWriteRootFileTargetPath,
-         .target_container_bytes = config.apfsWriteTargetSizeBytes,
-         .file_name = config.apfsWriteRootFileName,
-         .file_data = config.apfsWriteRootFileText.toUtf8(),
-         .target_write_confirmed = config.apfsWriteTargetConfirmed,
-         .allow_raw_device_target = config.apfsWriteAllowRawTarget,
-         .options = apfsRawMutationOptions(config,
-                                           QStringLiteral("certifier.apfs-raw-root-file-write"))});
+    const auto write =
+        sak::PartitionApfsWriter::commitRawFileWrite(sak::PartitionApfsRawFileInsertCommitRequest{
+            .target_path = config.apfsWriteRootFileTargetPath,
+            .target_container_bytes = config.apfsWriteTargetSizeBytes,
+            .file_name = config.apfsWriteRootFileName,
+            .file_data = config.apfsWriteRootFileText.toUtf8(),
+            .target_mutation_confirmed = config.apfsWriteTargetConfirmed,
+            .allow_raw_device_target = config.apfsWriteAllowRawTarget,
+            .options = apfsRawMutationOptions(
+                config, QStringLiteral("certifier.apfs-raw-root-file-write"))});
     QJsonObject report = apfsRawFileWriteReportObject(config, write);
     QStringList blockers = write.blockers;
     blockers.append(appendApfsRawFileWriteValidation(&report, config, write));
@@ -2659,43 +2632,37 @@ int runApfsRawRootFileWriteCertifier(const Config& config) {
     return 0;
 }
 
-QJsonObject apfsRawFilePatchReportObject(const Config& config,
-                                         const sak::PartitionApfsRawFilePatchResult& patch) {
+QJsonObject apfsRawFilePatchReportObject(
+    const Config& config, const sak::PartitionApfsImageCheckpointCommitResult& patch) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   patch.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("operation"), QStringLiteral("APFS raw root-file patch"));
-    report.insert(QStringLiteral("target_path"), patch.target_path);
+    report.insert(QStringLiteral("target_path"), config.apfsPatchRootFileTargetPath);
     report.insert(QStringLiteral("target_container_bytes"),
                   QString::number(config.apfsWriteTargetSizeBytes));
-    report.insert(QStringLiteral("written_data_blocks"),
-                  QString::number(patch.written_data_blocks));
     report.insert(QStringLiteral("file_name"), config.apfsPatchRootFileName);
-    report.insert(QStringLiteral("file_bytes"), QString::number(patch.file_bytes));
-    report.insert(QStringLiteral("patch_offset_bytes"), QString::number(patch.patch_offset_bytes));
-    report.insert(QStringLiteral("patch_bytes"), QString::number(patch.patch_bytes));
-    report.insert(QStringLiteral("patch_sha256"), patch.patch_sha256);
-    report.insert(QStringLiteral("readback_sha256"), patch.readback_sha256);
-    report.insert(QStringLiteral("plan_operation"), patch.plan.operation);
-    report.insert(QStringLiteral("plan_steps"), apfsPlanStepsArray(patch.plan.steps));
-    report.insert(QStringLiteral("post_apply_verification"),
-                  stringArray(patch.plan.post_apply_verification));
+    report.insert(QStringLiteral("patch_offset_bytes"),
+                  QString::number(config.apfsPatchRootFileOffsetBytes));
+    report.insert(QStringLiteral("previous_xid"), QString::number(patch.previous_xid));
+    report.insert(QStringLiteral("new_xid"), QString::number(patch.new_xid));
     report.insert(QStringLiteral("warnings"), stringArray(patch.warnings));
     report.insert(QStringLiteral("blockers"), stringArray(patch.blockers));
     return report;
 }
 
-QStringList appendApfsRawFilePatchValidation(QJsonObject* report,
-                                             const Config& config,
-                                             const sak::PartitionApfsRawFilePatchResult& patch,
-                                             const QByteArray& expectedData) {
+QStringList appendApfsRawFilePatchValidation(
+    QJsonObject* report,
+    const Config& config,
+    const sak::PartitionApfsImageCheckpointCommitResult& patch,
+    const QByteArray& expectedData) {
     QStringList blockers;
     if (!report || !patch.ok) {
         return blockers;
     }
     const auto detection = appendApfsDetectionValidation(
         {.report = report,
-         .imagePath = patch.target_path,
+         .imagePath = config.apfsPatchRootFileTargetPath,
          .imageSize = config.apfsWriteTargetSizeBytes,
          .reportKey = QStringLiteral("raw_patched_detection"),
          .missingMessage = QStringLiteral("Raw patched APFS target was not detected"),
@@ -2705,13 +2672,13 @@ QStringList appendApfsRawFilePatchValidation(QJsonObject* report,
         return blockers;
     }
     appendApfsListingValidation({.report = report,
-                                 .imagePath = patch.target_path,
+                                 .imagePath = config.apfsPatchRootFileTargetPath,
                                  .reportKey = QStringLiteral("raw_patched_apfs_listing"),
                                  .failureLabel = QStringLiteral("Raw patched APFS listing")},
                                 &blockers);
     const QString readPath = QStringLiteral("/%1").arg(config.apfsPatchRootFileName.trimmed());
     appendApfsReadValidation({.report = report,
-                              .imagePath = patch.target_path,
+                              .imagePath = config.apfsPatchRootFileTargetPath,
                               .path = readPath,
                               .maxBytes = static_cast<uint64_t>(expectedData.size()),
                               .reportKey = QStringLiteral("raw_patched_file_read"),
@@ -2762,16 +2729,18 @@ int runApfsRawRootFilePatchCertifier(const Config& config) {
         return fail(config, expectedBlockers.join(QStringLiteral("; ")));
     }
 
-    const auto patch = sak::PartitionApfsWriter::patchRawRootFile(
-        {.target_path = config.apfsPatchRootFileTargetPath,
-         .target_container_bytes = config.apfsWriteTargetSizeBytes,
-         .file_name = config.apfsPatchRootFileName,
-         .patch_offset_bytes = config.apfsPatchRootFileOffsetBytes,
-         .patch_data = config.apfsPatchRootFileText.toUtf8(),
-         .target_write_confirmed = config.apfsWriteTargetConfirmed,
-         .allow_raw_device_target = config.apfsWriteAllowRawTarget,
-         .options = apfsRawMutationOptions(config,
-                                           QStringLiteral("certifier.apfs-raw-root-file-patch"))});
+    const auto patch =
+        sak::PartitionApfsWriter::commitRawFilePatch(sak::PartitionApfsRawFilePatchCommitRequest{
+            .target_path = config.apfsPatchRootFileTargetPath,
+            .target_container_bytes = config.apfsWriteTargetSizeBytes,
+            .directory_name = QString(),
+            .file_name = config.apfsPatchRootFileName,
+            .patch_offset_bytes = config.apfsPatchRootFileOffsetBytes,
+            .patch_data = config.apfsPatchRootFileText.toUtf8(),
+            .target_mutation_confirmed = config.apfsWriteTargetConfirmed,
+            .allow_raw_device_target = config.apfsWriteAllowRawTarget,
+            .options = apfsRawMutationOptions(
+                config, QStringLiteral("certifier.apfs-raw-root-file-patch"))});
     QJsonObject report = apfsRawFilePatchReportObject(config, patch);
     QStringList blockers = patch.blockers;
     blockers.append(appendApfsRawFilePatchValidation(&report, config, patch, *expected));
@@ -2791,24 +2760,18 @@ int runApfsRawRootFilePatchCertifier(const Config& config) {
     return 0;
 }
 
-QJsonObject apfsRawFileDeleteReportObject(const Config& config,
-                                          const sak::PartitionApfsRawFileDeleteResult& deleted) {
+QJsonObject apfsRawFileDeleteReportObject(
+    const Config& config, const sak::PartitionApfsImageCheckpointCommitResult& deleted) {
     QJsonObject report = baseReport(config);
     report.insert(QStringLiteral("status"),
                   deleted.ok ? QStringLiteral("Passed") : QStringLiteral("Failed"));
     report.insert(QStringLiteral("operation"), QStringLiteral("APFS raw root-file delete"));
-    report.insert(QStringLiteral("target_path"), deleted.target_path);
+    report.insert(QStringLiteral("target_path"), config.apfsDeleteRootFileTargetPath);
     report.insert(QStringLiteral("target_container_bytes"),
                   QString::number(config.apfsWriteTargetSizeBytes));
-    report.insert(QStringLiteral("deleted_file_bytes"),
-                  QString::number(deleted.deleted_file_bytes));
-    report.insert(QStringLiteral("deleted_file_sha256"), deleted.deleted_file_sha256);
-    report.insert(QStringLiteral("freed_data_blocks"), QString::number(deleted.freed_data_blocks));
     report.insert(QStringLiteral("file_name"), config.apfsDeleteRootFileName);
-    report.insert(QStringLiteral("plan_operation"), deleted.plan.operation);
-    report.insert(QStringLiteral("plan_steps"), apfsPlanStepsArray(deleted.plan.steps));
-    report.insert(QStringLiteral("post_apply_verification"),
-                  stringArray(deleted.plan.post_apply_verification));
+    report.insert(QStringLiteral("previous_xid"), QString::number(deleted.previous_xid));
+    report.insert(QStringLiteral("new_xid"), QString::number(deleted.new_xid));
     report.insert(QStringLiteral("warnings"), stringArray(deleted.warnings));
     report.insert(QStringLiteral("blockers"), stringArray(deleted.blockers));
     return report;
@@ -2817,14 +2780,14 @@ QJsonObject apfsRawFileDeleteReportObject(const Config& config,
 QStringList appendApfsRawFileDeleteValidation(
     QJsonObject* report,
     const Config& config,
-    const sak::PartitionApfsRawFileDeleteResult& deleted) {
+    const sak::PartitionApfsImageCheckpointCommitResult& deleted) {
     QStringList blockers;
     if (!report || !deleted.ok) {
         return blockers;
     }
     const auto detection = appendApfsDetectionValidation(
         {.report = report,
-         .imagePath = deleted.target_path,
+         .imagePath = config.apfsDeleteRootFileTargetPath,
          .imageSize = config.apfsWriteTargetSizeBytes,
          .reportKey = QStringLiteral("raw_deleted_detection"),
          .missingMessage = QStringLiteral("Raw deleted APFS target was not detected"),
@@ -2834,14 +2797,14 @@ QStringList appendApfsRawFileDeleteValidation(
         return blockers;
     }
     appendApfsListingValidation({.report = report,
-                                 .imagePath = deleted.target_path,
+                                 .imagePath = config.apfsDeleteRootFileTargetPath,
                                  .reportKey = QStringLiteral("raw_deleted_apfs_listing"),
                                  .failureLabel = QStringLiteral("Raw deleted APFS listing")},
                                 &blockers);
 
     const QString readPath = QStringLiteral("/%1").arg(config.apfsDeleteRootFileName.trimmed());
-    const auto readBack =
-        sak::PartitionApfsFileSystemReader::readFileFromImage(deleted.target_path, readPath, 1);
+    const auto readBack = sak::PartitionApfsFileSystemReader::readFileFromImage(
+        config.apfsDeleteRootFileTargetPath, readPath, 1);
     report->insert(QStringLiteral("raw_deleted_file_negative_read"),
                    QJsonObject{{QStringLiteral("status"),
                                 readBack.ok ? QStringLiteral("Failed") : QStringLiteral("Passed")},
@@ -2859,14 +2822,15 @@ int runApfsRawRootFileDeleteCertifier(const Config& config) {
         return fail(config, configErrors.join(QStringLiteral("; ")));
     }
 
-    const auto deleted = sak::PartitionApfsWriter::deleteRawRootFile(
-        {.target_path = config.apfsDeleteRootFileTargetPath,
-         .target_container_bytes = config.apfsWriteTargetSizeBytes,
-         .file_name = config.apfsDeleteRootFileName,
-         .target_write_confirmed = config.apfsWriteTargetConfirmed,
-         .allow_raw_device_target = config.apfsWriteAllowRawTarget,
-         .options = apfsRawMutationOptions(config,
-                                           QStringLiteral("certifier.apfs-raw-root-file-delete"))});
+    const auto deleted =
+        sak::PartitionApfsWriter::commitRawFileDelete(sak::PartitionApfsRawFileDeleteCommitRequest{
+            .target_path = config.apfsDeleteRootFileTargetPath,
+            .target_container_bytes = config.apfsWriteTargetSizeBytes,
+            .file_name = config.apfsDeleteRootFileName,
+            .target_mutation_confirmed = config.apfsWriteTargetConfirmed,
+            .allow_raw_device_target = config.apfsWriteAllowRawTarget,
+            .options = apfsRawMutationOptions(
+                config, QStringLiteral("certifier.apfs-raw-root-file-delete"))});
     QJsonObject report = apfsRawFileDeleteReportObject(config, deleted);
     QStringList blockers = deleted.blockers;
     blockers.append(appendApfsRawFileDeleteValidation(&report, config, deleted));

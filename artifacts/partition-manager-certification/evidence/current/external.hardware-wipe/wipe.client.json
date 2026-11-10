@@ -1,0 +1,89 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:12:20.755Z",
+    "disk_before": {
+        "bus_type": "NVMe",
+        "disk_number": 0,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "SSD",
+        "model": "SAMSUNG MZVL2512HCJQ-00BH1",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "53a53c0c25394c9d6ea8ce84e1ac35d148e95e481855f2f4ee42da1540500318",
+        "size_bytes": "512110190592"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "0113d468-84ae-41c1-bf82-865311661513",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Wipe Disk 0\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining      Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------      ----\r\n            SAK_WIPE     NTFS           Fixed     Healthy      OK                    476.82 GB 476.92 GB\r\n\r\n\r\n",
+                "success": true,
+                "summary": "Wipe Disk - Disk 0"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "WipeDisk",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "0113d468-84ae-41c1-bf82-865311661513",
+            "payload": {
+            },
+            "script_sha256": "a470f27dadf1be48b40f359a9a08f40863ef8542183a547b79ddc62ec1f12303",
+            "summary": "Wipe Disk - Disk 0",
+            "target": {
+                "disk_number": 0,
+                "disk_unique_id": "eui.002538B821B737C0",
+                "drive_letter": "",
+                "kind": "Disk",
+                "offset_bytes": "0",
+                "partition_number": 0,
+                "size_bytes": "512110190592"
+            },
+            "type": "Wipe Disk",
+            "warnings": [
+                "SSD wipe uses software clear; vendor secure erase is required for purge"
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "d0f91775ee62d1be4b79fd4e0863f437d9bc87da5b0efca8af36dd4f5f02f3dd",
+        "layout_hash": "2e11fd32d133cdb4836444784baa5d517f940368de85a359d50f20c645da7780",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "dbf4576c-b378-4960-bd27-2d144d5596de",
+    "scenario_id": "external.hardware-wipe",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:04:21.993Z",
+    "status": "Passed",
+    "step": "wipe",
+    "tool": "partition-manager-scenario-step"
+}

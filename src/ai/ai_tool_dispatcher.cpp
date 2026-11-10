@@ -3,12 +3,23 @@
 
 #include "sak/ai/ai_tool_dispatcher.h"
 
+#include "sak/logger.h"
+
 #include <QElapsedTimer>
+#include <QJsonDocument>
+#include <QJsonParseError>
+#include <QSet>
 #include <QStringList>
+
+#include <algorithm>
+#include <exception>
 
 namespace sak::ai {
 
 namespace {
+
+constexpr qsizetype kHealthDiscriminatorPartChars = 64;
+constexpr qsizetype kHealthNestedArgumentsMaxChars = 4096;
 
 QString normalizeName(const QString& tool_name) {
     return tool_name.trimmed().toLower();
@@ -23,11 +34,38 @@ QJsonObject emptyHandlerResult(const AiToolCallRequest& request) {
     return obj;
 }
 
-bool resultSucceeded(const QJsonObject& result) {
-    if (result.contains(QStringLiteral("success"))) {
-        return result.value(QStringLiteral("success")).toBool(false);
+QJsonObject handlerThrewResult(const AiToolCallRequest& request, const QString& what) {
+    QJsonObject obj;
+    obj[QStringLiteral("success")] = false;
+    obj[QStringLiteral("tool_name")] = request.tool_name;
+    obj[QStringLiteral("operation")] = request.operation;
+    obj[QStringLiteral("failure_class")] = QStringLiteral("handler_exception");
+    obj[QStringLiteral("error_message")] =
+        QStringLiteral("Tool handler threw an exception: %1").arg(what);
+    return obj;
+}
+
+bool resultHasFailureMarker(const QJsonObject& result) {
+    if (!result.value(QStringLiteral("failure_class")).toString().trimmed().isEmpty()) {
+        return true;
     }
-    return true;
+    static const QStringList kFailureFlags = {
+        QStringLiteral("policy_denied"),
+        QStringLiteral("handler_missing"),
+        QStringLiteral("lease_denied"),
+        QStringLiteral("availability_denied"),
+        QStringLiteral("health_suppressed"),
+        QStringLiteral("cancelled"),
+        QStringLiteral("canceled"),
+    };
+    return std::ranges::any_of(kFailureFlags, [&result](const QString& field) {
+        return result.value(field).toBool(false);
+    });
+}
+
+bool resultSucceeded(const QJsonObject& result) {
+    const QJsonValue success = result.value(QStringLiteral("success"));
+    return success.isBool() && success.toBool() && !resultHasFailureMarker(result);
 }
 
 QString resultErrorMessage(const QJsonObject& result) {
@@ -38,49 +76,162 @@ QString resultErrorMessage(const QJsonObject& result) {
     return result.value(QStringLiteral("message")).toString().trimmed();
 }
 
-QString providerGatewayDiscriminator(const QJsonObject& arguments) {
-    const QString operation =
-        arguments.value(QStringLiteral("operation")).toString().trimmed().toLower();
-    const QString provider_id =
-        arguments.value(QStringLiteral("provider_id")).toString().trimmed().toLower();
-    const QString app_id = arguments.value(QStringLiteral("app_id")).toString().trimmed().toLower();
-    const QString action = arguments.value(QStringLiteral("action")).toString().trimmed().toLower();
-    const QJsonObject extra = arguments.value(QStringLiteral("arguments")).toObject();
-    const QString extra_provider =
-        extra.value(QStringLiteral("provider_id")).toString().trimmed().toLower();
-    const QString extra_tool =
-        extra.value(QStringLiteral("tool_name")).toString().trimmed().toLower();
+QString boundedHealthPart(const QJsonValue& value) {
+    if (!value.isString()) {
+        return {};
+    }
+    return value.toString().left(kHealthDiscriminatorPartChars).trimmed().toLower();
+}
+
+QJsonObject nestedGatewayArguments(const QJsonValue& value) {
+    if (value.isObject()) {
+        return value.toObject();
+    }
+    if (!value.isString() || value.toString().size() > kHealthNestedArgumentsMaxChars) {
+        return {};
+    }
+    QJsonParseError error{};
+    const QJsonDocument document = QJsonDocument::fromJson(value.toString().toUtf8(), &error);
+    return error.error == QJsonParseError::NoError && document.isObject() ? document.object()
+                                                                          : QJsonObject{};
+}
+
+void appendHealthPart(const QString& value, QStringList* parts) {
+    if (!value.isEmpty()) {
+        parts->append(value);
+    }
+}
+
+void appendProviderHealthTarget(const QJsonObject& arguments, QStringList* parts) {
+    appendHealthPart(boundedHealthPart(arguments.value(QStringLiteral("provider_id"))), parts);
+}
+
+void appendAppHealthTarget(const QJsonObject& arguments, QStringList* parts) {
+    appendHealthPart(boundedHealthPart(arguments.value(QStringLiteral("app_id"))), parts);
+    appendHealthPart(boundedHealthPart(arguments.value(QStringLiteral("action"))), parts);
+}
+
+void appendWin32HealthTarget(const QJsonObject& extra, QStringList* parts) {
+    QString tool = boundedHealthPart(extra.value(QStringLiteral("tool_name")));
+    if (tool.isEmpty()) {
+        tool = boundedHealthPart(extra.value(QStringLiteral("tool")));
+    }
+    appendHealthPart(tool, parts);
+}
+
+QString boundedOperation(const AiToolCallRequest& request, const QJsonObject& arguments) {
+    QString operation = request.operation.left(kHealthDiscriminatorPartChars).trimmed().toLower();
+    if (operation.isEmpty()) {
+        operation = boundedHealthPart(arguments.value(QStringLiteral("operation")));
+    }
+    return operation;
+}
+
+// "<operation>:<target>" for a tool whose calls each act on one named target, so one broken
+// target does not take the tool away from every other one. sak_app_action used to share a single
+// key across every action id, and sak_package_manager across every package: three unclassified
+// failures of one action or one package suppressed the whole tool for every target for the
+// backoff window (5 s, growing to 300 s).
+QString targetedDiscriminator(const AiToolCallRequest& request,
+                              const QJsonObject& arguments,
+                              const QString& target_field) {
+    QStringList parts;
+    appendHealthPart(boundedOperation(request, arguments), &parts);
+    appendHealthPart(boundedHealthPart(arguments.value(target_field)), &parts);
+    return parts.join(QLatin1Char(':'));
+}
+
+QString providerGatewayDiscriminator(const AiToolCallRequest& request,
+                                     const QJsonObject& arguments) {
+    const QString operation = boundedOperation(request, arguments);
+    const QJsonObject extra = nestedGatewayArguments(arguments.value(QStringLiteral("arguments")));
 
     QStringList parts;
-    if (!operation.isEmpty()) {
-        parts << operation;
-    }
-    if (!provider_id.isEmpty()) {
-        parts << provider_id;
-    } else if (!extra_provider.isEmpty()) {
-        parts << extra_provider;
-    }
-    if (!app_id.isEmpty()) {
-        parts << app_id;
-    }
-    if (!action.isEmpty()) {
-        parts << action;
-    }
-    if (!extra_tool.isEmpty()) {
-        parts << extra_tool;
+    appendHealthPart(operation, &parts);
+    if (operation == QLatin1String("docs_query") || operation == QLatin1String("provider_status")) {
+        appendProviderHealthTarget(arguments, &parts);
+    } else if (operation.startsWith(QLatin1String("app_"))) {
+        appendAppHealthTarget(arguments, &parts);
+    } else if (operation == QLatin1String("win32_mcp_call")) {
+        appendWin32HealthTarget(extra, &parts);
     }
     return parts.join(QLatin1Char(':'));
 }
 
 QString healthKeyFor(const AiToolCallRequest& request, const QJsonObject& arguments) {
     const QString name = normalizeName(request.tool_name);
+    QString discriminator;
     if (name == QLatin1String("sak_provider_gateway")) {
-        const QString discriminator = providerGatewayDiscriminator(arguments);
-        if (!discriminator.isEmpty()) {
-            return QStringLiteral("%1:%2").arg(name, discriminator);
-        }
+        discriminator = providerGatewayDiscriminator(request, arguments);
+    } else if (name == QLatin1String("sak_app_action")) {
+        discriminator = targetedDiscriminator(request, arguments, QStringLiteral("action_id"));
+    } else if (name == QLatin1String("sak_package_manager")) {
+        discriminator = targetedDiscriminator(request, arguments, QStringLiteral("package_id"));
     }
-    return name;
+    return discriminator.isEmpty() ? name : QStringLiteral("%1:%2").arg(name, discriminator);
+}
+
+bool failureAffectsHealth(const QJsonObject& result) {
+    const QString failure_class = AiToolHealthLedger::classifyResult(result).trimmed().toLower();
+    static const QSet<QString> kNonHealthFailures{
+        QStringLiteral("cancelled"),
+        QStringLiteral("canceled"),
+        QStringLiteral("policy_denied"),
+        QStringLiteral("policy_blocked"),
+        QStringLiteral("lease_denied"),
+        QStringLiteral("user_declined"),
+        QStringLiteral("restore_point_declined"),
+        QStringLiteral("tool_busy"),
+    };
+    return !failure_class.isEmpty() && !kNonHealthFailures.contains(failure_class) &&
+           !failure_class.startsWith(QLatin1String("invalid_")) &&
+           !failure_class.endsWith(QLatin1String("_not_found"));
+}
+
+QString handlerResultContractError(const QJsonObject& result) {
+    const QJsonValue success = result.value(QStringLiteral("success"));
+    if (!success.isBool()) {
+        return QStringLiteral("Tool handler result omitted a boolean success field");
+    }
+    if (success.toBool() && resultHasFailureMarker(result)) {
+        return QStringLiteral("Tool handler result contradicted success with a failure marker");
+    }
+    return {};
+}
+
+void stampHandlerContractFailure(const QString& contract_error, QJsonObject* result) {
+    if (contract_error.isEmpty()) {
+        return;
+    }
+    (*result)[QStringLiteral("success")] = false;
+    if (!result->value(QStringLiteral("failure_class")).isString() ||
+        result->value(QStringLiteral("failure_class")).toString().trimmed().isEmpty()) {
+        (*result)[QStringLiteral("failure_class")] = QStringLiteral("malformed_handler_result");
+    }
+    if (resultErrorMessage(*result).isEmpty()) {
+        (*result)[QStringLiteral("error_message")] = contract_error;
+    }
+}
+
+void stampHandlerFailureEnvelope(const AiToolCallRequest& request, QJsonObject* result) {
+    if (resultSucceeded(*result)) {
+        return;
+    }
+    if (resultErrorMessage(*result).isEmpty()) {
+        (*result)[QStringLiteral("error_message")] =
+            QStringLiteral("Tool handler reported failure without an error message");
+    }
+    (*result)[QStringLiteral("tool_name")] = request.tool_name;
+    (*result)[QStringLiteral("operation")] = request.operation;
+}
+
+void normalizeHandlerResult(const AiToolCallRequest& request, QJsonObject* result) {
+    if (result->isEmpty()) {
+        *result = emptyHandlerResult(request);
+        return;
+    }
+    stampHandlerContractFailure(handlerResultContractError(*result), result);
+    stampHandlerFailureEnvelope(request, result);
 }
 
 }  // namespace
@@ -110,7 +261,7 @@ void AiToolDispatcher::registerAvailabilityChecker(const QString& tool_name,
     }
 }
 
-void AiToolDispatcher::clearHandlers() {
+void AiToolDispatcher::clearRegistrations() {
     m_handlers.clear();
     m_availability_checkers.clear();
 }
@@ -120,7 +271,7 @@ bool AiToolDispatcher::hasHandler(const QString& tool_name) const {
 }
 
 int AiToolDispatcher::handlerCount() const {
-    return m_handlers.size();
+    return static_cast<int>(m_handlers.size());
 }
 
 void AiToolDispatcher::setLeaseManager(AiLeaseManager* manager) {
@@ -131,9 +282,36 @@ void AiToolDispatcher::setHealthLedger(AiToolHealthLedger* ledger) {
     m_health_ledger = ledger;
 }
 
+void AiToolDispatcher::invokeHandler(const Handler& handler,
+                                     const AiToolCallContext& context,
+                                     const AiToolCallRequest& request,
+                                     const QJsonObject& arguments,
+                                     DispatchOutcome* outcome) {
+    QElapsedTimer timer;
+    timer.start();
+    try {
+        outcome->result = handler(context, arguments, outcome->policy_decision);
+    } catch (const std::exception& ex) {
+        // Fail closed: a throwing handler must not leak the mutation lease -- leases never expire,
+        // so an unreleased one blocks every future mutating call until restart -- nor skip health
+        // recording. Convert the throw into a structured failure so the caller's normal
+        // record-health / release-lease path still runs.
+        sak::logError("AI tool handler '{}' threw: {}", request.tool_name.toStdString(), ex.what());
+        outcome->result = handlerThrewResult(request, QString::fromUtf8(ex.what()));
+    } catch (...) {
+        sak::logError("AI tool handler '{}' threw a non-standard exception",
+                      request.tool_name.toStdString());
+        outcome->result = handlerThrewResult(request, QStringLiteral("unknown exception"));
+    }
+    outcome->latency_ms = timer.elapsed();
+    outcome->dispatched = true;
+    normalizeHandlerResult(request, &outcome->result);
+}
+
 AiToolDispatcher::DispatchOutcome AiToolDispatcher::dispatch(AiToolPolicy policy,
                                                              const AiToolCallRequest& request,
                                                              const QJsonObject& arguments,
+                                                             const AiToolCallContext& context,
                                                              const QString& agent_id) const {
     DispatchOutcome outcome;
     outcome.policy_decision = evaluateToolPolicy(policy, request);
@@ -161,24 +339,21 @@ AiToolDispatcher::DispatchOutcome AiToolDispatcher::dispatch(AiToolPolicy policy
         return outcome;
     }
 
-    QElapsedTimer timer;
-    timer.start();
-    outcome.result = handler(arguments, outcome.policy_decision);
-    outcome.latency_ms = timer.elapsed();
-    outcome.dispatched = true;
-    if (outcome.result.isEmpty()) {
-        outcome.result = emptyHandlerResult(request);
-    }
+    // The handler runs under this dispatch's lease, never one a caller put in the context.
+    AiToolCallContext call_context = context;
+    call_context.lease_id = lease_id;
+    invokeHandler(handler, call_context, request, arguments, &outcome);
+    // Release BEFORE recording health: a release that reports the lease was already gone means
+    // lease ownership was violated mid-op, which fails the result closed -- and the health ledger
+    // must then record that corrected failure, not the handler's (now untrustworthy) success.
+    releaseLeaseForDispatch(&outcome, request, lease_id);
     recordHealthForResult(outcome);
-    if (!lease_id.isEmpty() && m_lease_manager) {
-        m_lease_manager->release(lease_id);
-    }
     return outcome;
 }
 
 bool AiToolDispatcher::applyHealthGate(DispatchOutcome* outcome,
                                        const AiToolCallRequest& request) const {
-    if (!m_health_ledger) {
+    if (m_health_ledger == nullptr) {
         return true;
     }
     const AiToolAvailability availability = m_health_ledger->check(outcome->health_key);
@@ -194,17 +369,39 @@ bool AiToolDispatcher::applyAvailabilityGate(DispatchOutcome* outcome,
                                              const AiToolCallRequest& request,
                                              const QJsonObject& arguments,
                                              const QString& normalized_name) const {
-    const auto checker = m_availability_checkers.constFind(normalized_name);
-    if (checker == m_availability_checkers.constEnd() || !checker.value()) {
+    const auto checker_it = m_availability_checkers.constFind(normalized_name);
+    if (checker_it == m_availability_checkers.constEnd() || !checker_it.value()) {
         return true;
     }
-    const QJsonObject availability = checker.value()(arguments, outcome->policy_decision);
-    if (availability.isEmpty() || availability.value(QStringLiteral("success")).toBool(false)) {
+    // Copy the checker out of the hash before invoking it. Invoking through the live
+    // iterator would dangle if the callback re-entrantly registers or clears a checker:
+    // a QHash rehash destroys the referenced std::function mid-call (use-after-free).
+    const AvailabilityChecker checker = checker_it.value();
+    QJsonObject availability;
+    try {
+        availability = checker(arguments, outcome->policy_decision);
+    } catch (const std::exception& ex) {
+        sak::logError("AI tool availability checker '{}' threw: {}",
+                      request.tool_name.toStdString(),
+                      ex.what());
+        // Fail closed: a throwing checker denies (no explicit success below).
+        availability[QStringLiteral("error_message")] =
+            QStringLiteral("Availability check threw: %1").arg(QString::fromUtf8(ex.what()));
+    } catch (...) {
+        sak::logError("AI tool availability checker '{}' threw a non-standard exception",
+                      request.tool_name.toStdString());
+        availability[QStringLiteral("error_message")] =
+            QStringLiteral("Availability check threw an unknown exception");
+    }
+    // Fail closed: a registered checker that returns success:true passes; anything else --
+    // including an empty/malformed object with no explicit success -- denies the call. An
+    // empty result is not evidence of availability.
+    if (availability.value(QStringLiteral("success")).toBool(false)) {
         return true;
     }
     outcome->availability_denied = true;
     outcome->result = availabilityDeniedResult(request, availability);
-    if (m_health_ledger) {
+    if (m_health_ledger != nullptr && failureAffectsHealth(outcome->result)) {
         m_health_ledger->recordFailure(
             outcome->health_key,
             outcome->result.value(QStringLiteral("failure_class"))
@@ -224,7 +421,7 @@ AiToolDispatcher::Handler AiToolDispatcher::resolveHandler(DispatchOutcome* outc
     }
     outcome->handler_missing = true;
     outcome->result = handlerMissingResult(request);
-    if (m_health_ledger) {
+    if (m_health_ledger != nullptr) {
         m_health_ledger->recordFailure(
             outcome->health_key,
             QStringLiteral("handler_missing"),
@@ -238,14 +435,19 @@ bool AiToolDispatcher::acquireLeaseForDispatch(DispatchOutcome* outcome,
                                                const AiToolCallRequest& request,
                                                const QString& agent_id,
                                                QString* lease_id) const {
-    if (!m_lease_manager || !outcome->policy_decision.requires_lease) {
+    if (!outcome->policy_decision.requires_lease) {
         return true;
     }
-    const auto acquire =
-        m_lease_manager->acquire(agent_id,
-                                 QStringList{request.tool_name},
-                                 QStringLiteral("system_change"),
-                                 outcome->policy_decision.requires_exclusive_lease);
+    if (m_lease_manager == nullptr) {
+        // Fail closed: a call that requires a mutation lease must NOT run when no lease
+        // manager is wired. Proceeding would let a mutating tool execute with no
+        // cross-agent serialization -- the exact guarantee the lease exists to provide.
+        outcome->lease_denied = true;
+        outcome->result = leaseDeniedResult(
+            request, QStringLiteral("Mutating lease required but no lease manager is configured"));
+        return false;
+    }
+    const auto acquire = m_lease_manager->acquire(agent_id);
     if (acquire.granted) {
         *lease_id = acquire.lease.lease_id;
         outcome->lease_id = *lease_id;
@@ -256,12 +458,47 @@ bool AiToolDispatcher::acquireLeaseForDispatch(DispatchOutcome* outcome,
     return false;
 }
 
+void AiToolDispatcher::releaseLeaseForDispatch(DispatchOutcome* outcome,
+                                               const AiToolCallRequest& request,
+                                               const QString& lease_id) const {
+    if (lease_id.isEmpty() || (m_lease_manager == nullptr)) {
+        return;
+    }
+    if (m_lease_manager->release(lease_id)) {
+        // Normal path: the lease this dispatch acquired was still held and is now released.
+        return;
+    }
+    // release() reports false only when the id is no longer held. A lease id minted for this
+    // dispatch carries an unguessable token no other agent can present. A missing lease therefore
+    // means internal ownership was violated; fail closed and never report the mutation as clean.
+    outcome->lease_release_failed = true;
+    outcome->result[QStringLiteral("success")] = false;
+    outcome->result[QStringLiteral("lease_release_failed")] = true;
+    outcome->result[QStringLiteral("failure_class")] = QStringLiteral("lease_release_failed");
+    outcome->result[QStringLiteral("tool_name")] = request.tool_name;
+    outcome->result[QStringLiteral("operation")] = request.operation;
+    outcome->result[QStringLiteral("error_message")] = leaseReleaseFailureMessage(lease_id);
+}
+
+QString AiToolDispatcher::leaseReleaseFailureMessage(const QString& lease_id) {
+    // Leases have had no TTL since 38338649, so "reclaimed by TTL" named a cause that cannot
+    // happen. And the full id is the BEARER TOKEN that releases the lease: the diagnostic gets the
+    // non-secret label, as the denial path already does.
+    return QStringLiteral(
+               "Mutating lease '%1' was no longer held when the handler finished: lease "
+               "ownership was violated, so exclusive access could not be guaranteed for this call")
+        .arg(AiLeaseManager::publicLabel(lease_id));
+}
+
 void AiToolDispatcher::recordHealthForResult(const DispatchOutcome& outcome) const {
-    if (!m_health_ledger) {
+    if (m_health_ledger == nullptr) {
         return;
     }
     if (resultSucceeded(outcome.result)) {
         m_health_ledger->recordSuccess(outcome.health_key, outcome.latency_ms);
+        return;
+    }
+    if (!failureAffectsHealth(outcome.result)) {
         return;
     }
     m_health_ledger->recordFailure(outcome.health_key,
@@ -303,6 +540,7 @@ QJsonObject AiToolDispatcher::handlerMissingResult(const AiToolCallRequest& requ
     obj[QStringLiteral("success")] = false;
     obj[QStringLiteral("handler_missing")] = true;
     obj[QStringLiteral("tool_name")] = request.tool_name;
+    obj[QStringLiteral("operation")] = request.operation;
     obj[QStringLiteral("error_message")] =
         QStringLiteral("No handler registered for tool '%1'").arg(request.tool_name);
     return obj;

@@ -11,6 +11,59 @@
 
 namespace sak {
 
+namespace {
+
+// Shared raw-target gate for every *FromImage wrapper: reject an empty path,
+// enforce the image-only hardware gate for raw devices, then open read/write.
+// Fail closed -- on any failure the blocker is recorded and nullptr returned so
+// the single policy lives in one place instead of 27 near-identical copies.
+[[nodiscard]] std::unique_ptr<QIODevice> openImageTargetForWrite(
+    const QString& image_path,
+    const PartitionHfsFileWriteOptions& options,
+    const QString& gate_label,
+    QStringList* blockers) {
+    if (image_path.trimmed().isEmpty()) {
+        blockers->append(QStringLiteral("Image path is required"));
+        return nullptr;
+    }
+    // image_only is the explicit raw-target opt-in: a raw device is refused unless the caller
+    // clears it (the sak_hfs_writer_cli --allow-raw-target flag maps to image_only=false, paired
+    // with --confirm-target -> options.target_write_confirmed, which the HfsReader write engine
+    // independently requires before mutating). A raw path left image_only fails closed here.
+    if (options.image_only && isWindowsRawDevicePath(image_path)) {
+        blockers->append(QStringLiteral("HFS+ %1 is image-only; raw targets require a "
+                                        "separate hardware gate")
+                             .arg(gate_label));
+        return nullptr;
+    }
+
+    QString openError;
+    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    if (!image) {
+        blockers->append(QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
+    }
+    return image;
+}
+
+// Flush @p image's buffers to durable storage after a successful *FromImage write commit,
+// recording a blocker on @p result when the flush fails. A *FromImage write owns the image
+// handle and tears it down when the returned QIODevice unique_ptr leaves scope; that close()
+// flush is best-effort and cannot surface a failure, so a raw/image write-back that FlushFile
+// -Buffers rejects (I/O error, removable write-cache failure, device yanked) would otherwise be
+// reported as success. Fail closed: only flush a write that itself reported no blocker.
+template <typename ResultT>
+[[nodiscard]] ResultT flushHfsImageWrite(QIODevice* image, ResultT result) {
+    QString flushError;
+    if (result.blockers.isEmpty() && !flushDeviceBuffers(image, &flushError)) {
+        result.blockers.append(
+            QStringLiteral("HFS+ image durable flush failed: %1").arg(flushError));
+        result.ok = false;
+    }
+    return result;
+}
+
+}  // namespace
+
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::overwriteFileSameSize(
     QIODevice* device,
     const QString& path,
@@ -35,24 +88,12 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::overwriteFileSameSizeF
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(QStringLiteral(
-            "HFS+ same-size writer is image-only; raw targets require a separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("same-size writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return overwriteFileSameSize(image.get(), path, data, options);
+    return flushHfsImageWrite(image.get(), overwriteFileSameSize(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceFileWithinAllocatedBlocks(
@@ -79,25 +120,13 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceFileWithinAlloc
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ allocated-block writer is image-only; raw targets require a "
-                           "separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("allocated-block writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return replaceFileWithinAllocatedBlocks(image.get(), path, data, options);
+    return flushHfsImageWrite(image.get(),
+                              replaceFileWithinAllocatedBlocks(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceResourceForkWithinAllocatedBlocks(
@@ -125,25 +154,13 @@ PartitionHfsFileSystemWriter::replaceResourceForkWithinAllocatedBlocksFromImage(
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ resource-fork writer is image-only; raw targets require a "
-                           "separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("resource-fork writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return replaceResourceForkWithinAllocatedBlocks(image.get(), path, data, options);
+    return flushHfsImageWrite(
+        image.get(), replaceResourceForkWithinAllocatedBlocks(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceFileWithAllocationGrowth(
@@ -170,25 +187,13 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceFileWithAllocat
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ allocation-growth writer is image-only; raw targets require a "
-                           "separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("allocation-growth writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return replaceFileWithAllocationGrowth(image.get(), path, data, options);
+    return flushHfsImageWrite(image.get(),
+                              replaceFileWithAllocationGrowth(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceResourceForkWithAllocationGrowth(
@@ -231,25 +236,13 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replaceCompressedFileC
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ compressed-file writer is image-only; raw targets require a "
-                           "separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("compressed-file writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return replaceCompressedFileContent(image.get(), path, data, options);
+    return flushHfsImageWrite(image.get(),
+                              replaceCompressedFileContent(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult
@@ -261,25 +254,15 @@ PartitionHfsFileSystemWriter::replaceResourceForkWithAllocationGrowthFromImage(
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ resource-fork allocation-growth writer is image-only; raw targets "
-                           "require a separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(image_path,
+                                         options,
+                                         QStringLiteral("resource-fork allocation-growth writer"),
+                                         &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return replaceResourceForkWithAllocationGrowth(image.get(), path, data, options);
+    return flushHfsImageWrite(
+        image.get(), replaceResourceForkWithAllocationGrowth(image.get(), path, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::truncateFileWithinAllocatedBlocks(
@@ -301,24 +284,13 @@ PartitionHfsFileSystemWriter::truncateFileWithinAllocatedBlocksFromImage(
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(QStringLiteral(
-            "HFS+ truncate writer is image-only; raw targets require a separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("truncate writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return truncateFileWithinAllocatedBlocks(image.get(), path, options);
+    return flushHfsImageWrite(image.get(),
+                              truncateFileWithinAllocatedBlocks(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::truncateResourceForkWithinAllocatedBlocks(
@@ -340,25 +312,13 @@ PartitionHfsFileSystemWriter::truncateResourceForkWithinAllocatedBlocksFromImage
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ resource-fork truncate writer is image-only; raw targets require "
-                           "a separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("resource-fork truncate writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return truncateResourceForkWithinAllocatedBlocks(image.get(), path, options);
+    return flushHfsImageWrite(
+        image.get(), truncateResourceForkWithinAllocatedBlocks(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::renameOrMoveCatalogEntry(
@@ -388,25 +348,13 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::renameOrMoveCatalogEnt
     PartitionHfsFileWriteResult result;
     result.path = source_path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ catalog rename/move is image-only; raw targets require a separate "
-                           "hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("catalog rename/move"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return renameOrMoveCatalogEntry(image.get(), source_path, destination_path, options);
+    return flushHfsImageWrite(
+        image.get(), renameOrMoveCatalogEntry(image.get(), source_path, destination_path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createEmptyFile(
@@ -426,23 +374,12 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createEmptyFileFromIma
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(QStringLiteral(
-            "HFS+ empty-file create is image-only; raw targets require a separate hardware gate"));
-        return result;
-    }
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("empty-file create"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return createEmptyFile(image.get(), path, options);
+    return flushHfsImageWrite(image.get(), createEmptyFile(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileWithData(
@@ -469,23 +406,48 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileWithDataFrom
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(QStringLiteral(
-            "HFS+ file create is image-only; raw targets require a separate hardware gate"));
-        return result;
-    }
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("file create"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return createFileWithData(image.get(), path, data, options);
+    return flushHfsImageWrite(image.get(), createFileWithData(image.get(), path, data, options));
+}
+
+PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileFromHostPathStreamed(
+    QIODevice* device,
+    const QString& path,
+    const QString& host_file_path,
+    uint64_t size,
+    const PartitionHfsFileWriteOptions& options) {
+    HfsReader reader(device);
+    if (!reader.load()) {
+        PartitionHfsFileWriteResult result;
+        result.path = path.trimmed();
+        result.evidence_id = options.evidence_id;
+        result.blockers.append(QStringLiteral("Unable to open HFS+ filesystem for file create"));
+        return result;
+    }
+    return reader.createFileFromHostPathStreamed(path, host_file_path, size, options);
+}
+
+PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createFileFromHostPathStreamedFromImage(
+    const QString& image_path,
+    const QString& path,
+    const QString& host_file_path,
+    uint64_t size,
+    const PartitionHfsFileWriteOptions& options) {
+    PartitionHfsFileWriteResult result;
+    result.path = path.trimmed();
+    result.evidence_id = options.evidence_id;
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("file create"), &result.blockers);
+    if (!image) {
+        return result;
+    }
+    return flushHfsImageWrite(
+        image.get(),
+        createFileFromHostPathStreamed(image.get(), path, host_file_path, size, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createSymlink(
@@ -512,23 +474,12 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createSymlinkFromImage
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(QStringLiteral(
-            "HFS+ symlink create is image-only; raw targets require a separate hardware gate"));
-        return result;
-    }
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("symlink create"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return createSymlink(image.get(), path, target, options);
+    return flushHfsImageWrite(image.get(), createSymlink(image.get(), path, target, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createHardlink(
@@ -556,23 +507,13 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createHardlinkFromImag
     PartitionHfsFileWriteResult result;
     result.path = link_path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(QStringLiteral(
-            "HFS+ hard-link create is image-only; raw targets require a separate hardware gate"));
-        return result;
-    }
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("hard-link create"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return createHardlink(image.get(), existing_path, link_path, options);
+    return flushHfsImageWrite(image.get(),
+                              createHardlink(image.get(), existing_path, link_path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteHardlink(
@@ -596,23 +537,12 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteHardlinkFromImag
     PartitionHfsFileWriteResult result;
     result.path = link_path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(QStringLiteral(
-            "HFS+ hard-link delete is image-only; raw targets require a separate hardware gate"));
-        return result;
-    }
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("hard-link delete"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return deleteHardlink(image.get(), link_path, options);
+    return flushHfsImageWrite(image.get(), deleteHardlink(image.get(), link_path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteEmptyFile(
@@ -632,23 +562,12 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteEmptyFileFromIma
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(QStringLiteral(
-            "HFS+ empty-file delete is image-only; raw targets require a separate hardware gate"));
-        return result;
-    }
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("empty-file delete"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return deleteEmptyFile(image.get(), path, options);
+    return flushHfsImageWrite(image.get(), deleteEmptyFile(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteFileAndReleaseAllocatedBlocks(
@@ -669,24 +588,13 @@ PartitionHfsFileSystemWriter::deleteFileAndReleaseAllocatedBlocksFromImage(
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ allocated-file delete is image-only; raw targets require a "
-                           "separate hardware gate"));
-        return result;
-    }
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("allocated-file delete"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return deleteFileAndReleaseAllocatedBlocks(image.get(), path, options);
+    return flushHfsImageWrite(image.get(),
+                              deleteFileAndReleaseAllocatedBlocks(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteFolderTreeAndReleaseAllocatedBlocks(
@@ -707,23 +615,13 @@ PartitionHfsFileSystemWriter::deleteFolderTreeAndReleaseAllocatedBlocksFromImage
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(QStringLiteral(
-            "HFS+ folder-tree delete is image-only; raw targets require a separate hardware gate"));
-        return result;
-    }
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("folder-tree delete"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return deleteFolderTreeAndReleaseAllocatedBlocks(image.get(), path, options);
+    return flushHfsImageWrite(
+        image.get(), deleteFolderTreeAndReleaseAllocatedBlocks(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createEmptyFolder(
@@ -743,24 +641,12 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::createEmptyFolderFromI
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ empty-folder create is image-only; raw targets require a separate "
-                           "hardware gate"));
-        return result;
-    }
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("empty-folder create"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return createEmptyFolder(image.get(), path, options);
+    return flushHfsImageWrite(image.get(), createEmptyFolder(image.get(), path, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteEmptyFolder(
@@ -780,24 +666,12 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::deleteEmptyFolderFromI
     PartitionHfsFileWriteResult result;
     result.path = path.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ empty-folder delete is image-only; raw targets require a separate "
-                           "hardware gate"));
-        return result;
-    }
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("empty-folder delete"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return deleteEmptyFolder(image.get(), path, options);
+    return flushHfsImageWrite(image.get(), deleteEmptyFolder(image.get(), path, options));
 }
 
 PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::createInlineAttributeValue(
@@ -828,25 +702,14 @@ PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::createInlineAttri
     result.file_id = file_id;
     result.attribute_name = attribute_name.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ inline attribute writer is image-only; raw targets require a "
-                           "separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("inline attribute writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return createInlineAttributeValue(image.get(), file_id, attribute_name, data, options);
+    return flushHfsImageWrite(
+        image.get(),
+        createInlineAttributeValue(image.get(), file_id, attribute_name, data, options));
 }
 
 PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replayJournal(
@@ -867,24 +730,12 @@ PartitionHfsFileWriteResult PartitionHfsFileSystemWriter::replayJournalFromImage
     PartitionHfsFileWriteResult result;
     result.path = QStringLiteral("(journal)");
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(QStringLiteral(
-            "HFS+ journal replay is image-only; raw targets require a separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("journal replay"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return replayJournal(image.get(), options);
+    return flushHfsImageWrite(image.get(), replayJournal(image.get(), options));
 }
 
 PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::createForkAttributeValue(
@@ -915,25 +766,13 @@ PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::createForkAttribu
     result.file_id = file_id;
     result.attribute_name = attribute_name.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ inline attribute writer is image-only; raw targets require a "
-                           "separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("inline attribute writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return createForkAttributeValue(image.get(), file_id, attribute_name, data, options);
+    return flushHfsImageWrite(
+        image.get(), createForkAttributeValue(image.get(), file_id, attribute_name, data, options));
 }
 
 PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::deleteAttributeValue(
@@ -962,25 +801,13 @@ PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::deleteAttributeVa
     result.file_id = file_id;
     result.attribute_name = attribute_name.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ inline attribute writer is image-only; raw targets require a "
-                           "separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("inline attribute writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return deleteAttributeValue(image.get(), file_id, attribute_name, options);
+    return flushHfsImageWrite(image.get(),
+                              deleteAttributeValue(image.get(), file_id, attribute_name, options));
 }
 
 PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::replaceInlineAttributeValue(
@@ -1011,25 +838,14 @@ PartitionHfsAttributeWriteResult PartitionHfsFileSystemWriter::replaceInlineAttr
     result.file_id = file_id;
     result.attribute_name = attribute_name.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ inline attribute writer is image-only; raw targets require a "
-                           "separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("inline attribute writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return replaceInlineAttributeValue(image.get(), file_id, attribute_name, data, options);
+    return flushHfsImageWrite(
+        image.get(),
+        replaceInlineAttributeValue(image.get(), file_id, attribute_name, data, options));
 }
 
 PartitionHfsAttributeWriteResult
@@ -1063,26 +879,14 @@ PartitionHfsFileSystemWriter::replaceForkAttributeValueWithinAllocatedBlocksFrom
     result.file_id = file_id;
     result.attribute_name = attribute_name.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ fork attribute writer is image-only; raw targets require a "
-                           "separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(
+        image_path, options, QStringLiteral("fork attribute writer"), &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return replaceForkAttributeValueWithinAllocatedBlocks(
-        image.get(), file_id, attribute_name, data, options);
+    return flushHfsImageWrite(image.get(),
+                              replaceForkAttributeValueWithinAllocatedBlocks(
+                                  image.get(), file_id, attribute_name, data, options));
 }
 
 PartitionHfsAttributeWriteResult
@@ -1116,26 +920,16 @@ PartitionHfsFileSystemWriter::replaceForkAttributeValueWithAllocationGrowthFromI
     result.file_id = file_id;
     result.attribute_name = attribute_name.trimmed();
     result.evidence_id = options.evidence_id;
-    if (image_path.trimmed().isEmpty()) {
-        result.blockers.append(QStringLiteral("Image path is required"));
-        return result;
-    }
-    if (options.image_only && isWindowsRawDevicePath(image_path)) {
-        result.blockers.append(
-            QStringLiteral("HFS+ fork attribute allocation-growth writer is image-only; raw "
-                           "targets require a separate hardware gate"));
-        return result;
-    }
-
-    QString openError;
-    auto image = openFileOrRawDeviceReadWrite(image_path, &openError);
+    auto image = openImageTargetForWrite(image_path,
+                                         options,
+                                         QStringLiteral("fork attribute allocation-growth writer"),
+                                         &result.blockers);
     if (!image) {
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ image read/write: %1").arg(openError));
         return result;
     }
-    return replaceForkAttributeValueWithAllocationGrowth(
-        image.get(), file_id, attribute_name, data, options);
+    return flushHfsImageWrite(image.get(),
+                              replaceForkAttributeValueWithAllocationGrowth(
+                                  image.get(), file_id, attribute_name, data, options));
 }
 
 }  // namespace sak

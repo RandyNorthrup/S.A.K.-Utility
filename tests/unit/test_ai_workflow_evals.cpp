@@ -20,6 +20,22 @@
 
 namespace {
 
+void configureDeterministicPreflight(sak::ai::AiOrchestrator* orchestrator) {
+    orchestrator->setOverseerHandler([](const sak::ai::WorkflowPhase&,
+                                        const sak::ai::AiWorkflowPhaseContext&,
+                                        const sak::ai::CancellationToken&) {
+        return QJsonObject{{QStringLiteral("success"), true}};
+    });
+    orchestrator->setGuidanceResolver(
+        [](const QString& ref) -> sak::ai::WorkflowGuidanceResolution {
+            return QStringLiteral("fixture guidance for %1").arg(ref);
+        });
+    orchestrator->setSoftwareResolver(
+        [](const sak::ai::WorkflowRequirement&) -> sak::ai::SoftwareAvailabilityResolution {
+            return true;
+        });
+}
+
 class FakeModelClient : public sak::ai::IAiModelClient {
 public:
     Response invoke(const Request& /*request*/, const sak::ai::CancellationToken& token) override {
@@ -324,6 +340,7 @@ void AiWorkflowEvalsTests::downloadOfflineInstallerExecutesSakFirstThenCleansUp(
     TracingToolExecutor tool;
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_run_1"));
     const auto result = orchestrator.run(workflow, QStringLiteral("eval_run_1"), root);
@@ -353,6 +370,7 @@ void AiWorkflowEvalsTests::downloadOfflineInstallerRunsFallbackAfterSakFailure()
     tool.fail_phase_ids.insert(QStringLiteral("direct_download"));
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_fallback_run"));
     const auto result = orchestrator.run(workflow, QStringLiteral("eval_fallback_run"), root);
@@ -390,6 +408,7 @@ void AiWorkflowEvalsTests::installAppWorkflowFallsBackAfterPackageLookupFailure(
     tool.fail_phase_ids.insert(QStringLiteral("precheck"));
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_install_fallback_run"));
     const auto result =
@@ -399,9 +418,14 @@ void AiWorkflowEvalsTests::installAppWorkflowFallsBackAfterPackageLookupFailure(
     QVERIFY(result.flags.contains(QStringLiteral("precheck_failed")));
     QVERIFY(result.flags.contains(QStringLiteral("fallback_research_succeeded")));
     QVERIFY(!result.flags.contains(QStringLiteral("install_succeeded")));
-    QVERIFY(tool.order.contains(QStringLiteral("precheck")));
-    QVERIFY(tool.order.contains(QStringLiteral("cleanup")));
-    QVERIFY(!tool.order.contains(QStringLiteral("install")));
+    // Exact dispatch order. The membership form never asserted that identify_package ran at all --
+    // and it is phase 0, so a start-index regression in planGroups (ai_orchestrator.cpp:415)
+    // silently drops the built-in package search that this workflow's first acceptance criterion
+    // requires, with all three checks still green.
+    QCOMPARE(tool.order,
+             QStringList({QStringLiteral("identify_package"),
+                          QStringLiteral("precheck"),
+                          QStringLiteral("cleanup")}));
 
     const auto phase_index = [&](const QString& phase_id) {
         for (int i = 0; i < result.phases.size(); ++i) {
@@ -417,7 +441,17 @@ void AiWorkflowEvalsTests::installAppWorkflowFallsBackAfterPackageLookupFailure(
     QVERIFY(precheck_idx >= 0);
     QVERIFY(fallback_idx > precheck_idx);
     QVERIFY(install_idx > fallback_idx);
-    QVERIFY(result.phases.at(install_idx).skipped);
+    QCOMPARE(result.phases.at(install_idx).skipped, true);
+    QCOMPARE(result.phases.at(install_idx).ran, false);
+    // Prove install was skipped FOR THE STATED REASON. skip_reason is persisted into the run
+    // record (ai_orchestrator.cpp:92) and fed to downstream delegates as evidence (:215-218), so
+    // an empty or misattributed reason is a real regression no other assertion here would see.
+    QCOMPARE(result.phases.at(install_idx).skip_reason,
+             QStringLiteral("Condition not satisfied: precheck_succeeded"));
+    const int verify_idx = phase_index(QStringLiteral("verify"));
+    QVERIFY(verify_idx > install_idx);
+    QCOMPARE(result.phases.at(verify_idx).skip_reason,
+             QStringLiteral("Condition not satisfied: install_succeeded"));
 }
 
 void AiWorkflowEvalsTests::cancellationDuringWorkflowPropagatesToChildren() {
@@ -431,12 +465,19 @@ void AiWorkflowEvalsTests::cancellationDuringWorkflowPropagatesToChildren() {
     TracingToolExecutor tool;
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_cancel_run"));
     const auto result = orchestrator.run(workflow, QStringLiteral("eval_cancel_run"), root);
 
     QCOMPARE(result.status, sak::ai::AiRunStatus::Cancelled);
-    QVERIFY(!result.error_message.isEmpty());
+    // The cancel REASON must survive the child token -> subagent result -> run result relay;
+    // !isEmpty() is satisfied by the canned "Phase cancelled" fallback instead. The root token is
+    // never cancelled here (propagation is downward only, ai_cancellation_token.cpp:147-149), so
+    // the relay is the only carrier.
+    QCOMPARE(result.error_message, QStringLiteral("eval_cancel"));
+    QCOMPARE(result.phases.last().phase_id, QStringLiteral("report"));
+    QCOMPARE(result.phases.last().subagent_status, sak::ai::AiSubagentStatus::Cancelled);
     QVERIFY(tool.order.contains(QStringLiteral("direct_download")));
 }
 
@@ -451,6 +492,7 @@ void AiWorkflowEvalsTests::cleanupFailureInSeededWorkflowIsRecordedNotFatal() {
     tool.fail_phase_ids.insert(QStringLiteral("cleanup"));
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_cleanup_fail"));
     const auto result = orchestrator.run(workflow, QStringLiteral("eval_cleanup_fail"), root);
@@ -471,13 +513,26 @@ void AiWorkflowEvalsTests::reportFailureRunsAlwaysCleanup() {
     TracingToolExecutor tool;
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_report_fail"));
     const auto result = orchestrator.run(workflow, QStringLiteral("eval_report_fail"), root);
 
     QCOMPARE(result.status, sak::ai::AiRunStatus::Failed);
-    QVERIFY(result.error_message.contains(QStringLiteral("report")));
-    QVERIFY(tool.order.contains(QStringLiteral("cleanup")));
+    // Exact abort text: contains("report") also passes when the id and the message are swapped
+    // into "Phase  failed: report". The message is empty because the fake model reports failed
+    // with a summary and no error_message (ai_subagent_runner.cpp:1060).
+    QCOMPARE(result.error_message, QStringLiteral("Phase report failed: "));
+    // Prove cleanup reached the tool executor through the ALWAYS-RUN recovery pass -- the
+    // planned-group loop breaks on aborted_for_failure (ai_orchestrator.cpp:1062) before the
+    // cleanup group is reached, and only the recovery pass stamps recovery_pass.
+    QCOMPARE(tool.order,
+             QStringList({QStringLiteral("package_search"),
+                          QStringLiteral("direct_download"),
+                          QStringLiteral("cleanup")}));
+    QCOMPARE(result.phases.last().phase_id, QStringLiteral("cleanup"));
+    QCOMPARE(result.phases.last().metadata.value(QStringLiteral("recovery_pass")).toBool(false),
+             true);
 }
 
 QStringList seededWorkflowFiles() {
@@ -602,7 +657,8 @@ void AiWorkflowEvalsTests::seededWorkflowRolesAreSpecificAndDiverse() {
         }
     }
 
-    QVERIFY2(roles.size() >= 10,
+    // Exactly 15 distinct workflow roles; `>= 10` would miss a role collapsing into another.
+    QVERIFY2(roles.size() == 15,
              qPrintable(
                  QStringLiteral("Workflow roles collapsed to %1 role(s)").arg(roles.size())));
     QVERIFY2(generic_pc_roles <= 1,
@@ -818,6 +874,7 @@ void AiWorkflowEvalsTests::seededReadOnlyToolPhasesStayReadOnly() {
 
 void AiWorkflowEvalsTests::seededStorageReliabilityChecksDeclareFallbacks() {
     const QStringList files = seededWorkflowFiles();
+    QStringList checked_phases;
     for (const auto& f : files) {
         QString err;
         const auto wf = loadGoldenWorkflow(f, &err);
@@ -831,6 +888,7 @@ void AiWorkflowEvalsTests::seededStorageReliabilityChecksDeclareFallbacks() {
             if (!command.contains(QStringLiteral("get-storagereliabilitycounter"))) {
                 continue;
             }
+            checked_phases.append(QStringLiteral("%1/%2").arg(f, phase.id));
             QVERIFY2(command.contains(QStringLiteral("[warning]")) &&
                          command.contains(QStringLiteral("unavailable")),
                      qPrintable(QStringLiteral("%1/%2: storage reliability command must "
@@ -842,6 +900,12 @@ void AiWorkflowEvalsTests::seededStorageReliabilityChecksDeclareFallbacks() {
                                     .arg(f, phase.id)));
         }
     }
+    // Without this the test is vacuous: rename or drop the counter query in the workflows and the
+    // inner guard stops firing, so every QVERIFY2 above simply never executes.
+    QCOMPARE(checked_phases,
+             QStringList({QStringLiteral("full_pc_health_check.json/collect_storage_evidence"),
+                          QStringLiteral("drive_health_deep_check.json/collect_health"),
+                          QStringLiteral("bsod_investigation.json/bugcheck_events")}));
 }
 
 void AiWorkflowEvalsTests::fullPcHealthCheckUsesLiveCpuSample() {
@@ -868,6 +932,29 @@ void AiWorkflowEvalsTests::fullPcHealthCheckUsesLiveCpuSample() {
     }
     QVERIFY2(saw_live_sample, "full_pc_health_check must collect a short live CPU sample");
 }
+
+namespace {
+
+// The pairwise index checks in the caller name six of ten phases and leave approval_gate -- the
+// human/restore-point gate that must sit between verification and execution -- completely
+// unpinned. Deleting it still satisfies the risky-workflow gate check in
+// seededWorkflowsHaveReportVerifyCleanupShape, because run_tool's own prompt contains the word
+// "approval". Compare the ordered catalog instead.
+void verifyTechnicianPhaseCatalog(const QStringList& phase_ids) {
+    QCOMPARE(phase_ids,
+             QStringList({QStringLiteral("scope"),
+                          QStringLiteral("source_review"),
+                          QStringLiteral("download_tool"),
+                          QStringLiteral("verify_download"),
+                          QStringLiteral("approval_gate"),
+                          QStringLiteral("run_tool"),
+                          QStringLiteral("verify_result"),
+                          QStringLiteral("verify_analysis"),
+                          QStringLiteral("report"),
+                          QStringLiteral("cleanup")}));
+}
+
+}  // namespace
 
 void AiWorkflowEvalsTests::technicianToolWorkflowDownloadsRunsVerifiesAndCleans() {
     QString err;
@@ -897,6 +984,11 @@ void AiWorkflowEvalsTests::technicianToolWorkflowDownloadsRunsVerifiesAndCleans(
     QVERIFY(verify_result_idx > run_idx);
     QVERIFY(report_idx > verify_result_idx);
     QVERIFY(cleanup_idx > report_idx);
+    QStringList technician_phase_ids;
+    for (const auto& phase : wf.phases) {
+        technician_phase_ids.append(phase.id);
+    }
+    verifyTechnicianPhaseCatalog(technician_phase_ids);
 
     const auto& download = wf.phases.at(download_idx);
     QCOMPARE(download.tool, QStringLiteral("download_file"));
@@ -905,6 +997,17 @@ void AiWorkflowEvalsTests::technicianToolWorkflowDownloadsRunsVerifiesAndCleans(
     QVERIFY(run.arguments.value(QStringLiteral("command"))
                 .toString()
                 .contains(QStringLiteral("${result_download_tool_path}")));
+    // The command substring above ignores the fields that actually GATE execution.
+    // `condition` is never compared anywhere in this file, yet it is the only thing
+    // stopping run_tool from executing a binary whose SHA-256 check failed: a failed
+    // verify_download is classified continue-degraded (ai_recovery_policy.cpp:196-199),
+    // so the run does not abort on its own.
+    QCOMPARE(run.tool, QStringLiteral("run_powershell"));
+    QCOMPARE(run.type, QStringLiteral("tool_action"));
+    QCOMPARE(run.operation, QStringLiteral("repair"));
+    QCOMPARE(run.risk, QStringLiteral("system_change"));
+    QCOMPARE(run.condition, QStringLiteral("verify_download_succeeded"));
+    QCOMPARE(run.arguments.value(QStringLiteral("requires_admin")).toBool(true), false);
     const auto& cleanup = wf.phases.at(cleanup_idx);
     QCOMPARE(cleanup.type, QStringLiteral("cleanup"));
     QVERIFY(cleanup.arguments.value(QStringLiteral("command"))
@@ -924,6 +1027,7 @@ void AiWorkflowEvalsTests::seededWorkflowsContinueAfterEmptyDelegateFailure() {
         TracingToolExecutor tool;
         sak::ai::AiSubagentRunner runner(&model);
         sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+        configureDeterministicPreflight(&orchestrator);
         sak::ai::AiOrchestrationOptions opts;
         opts.stop_on_phase_failure = false;
         orchestrator.setOptions(opts);

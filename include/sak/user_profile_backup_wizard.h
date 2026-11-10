@@ -3,14 +3,18 @@
 
 #pragma once
 
+#include "sak/app_scanner.h"
+#include "sak/backup_file_codec.h"
 #include "sak/smart_file_filter.h"
 #include "sak/user_profile_types.h"
 #include "sak/windows_user_scanner.h"
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFutureWatcher>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
@@ -20,11 +24,15 @@
 #include <QWizard>
 #include <QWizardPage>
 
+#include <atomic>
+#include <memory>
+#include <vector>
+
 class QVBoxLayout;
+class UserProfileAppRestoreFlowTests;  // unit-test friend (global namespace)
 
 namespace sak {
 
-// Forward declarations
 class UserProfileBackupWorker;
 
 /**
@@ -61,9 +69,13 @@ public:
     ~UserProfileBackupWizard() override;
 
     /**
-     * @brief Get the backup manifest after completion
+     * @brief Stable accessor for the scanned/selected users.
+     *
+     * Returns the wizard-owned vector (populated by the Select Users page) so
+     * the execute page copies real data instead of an unset "scannedUsers"
+     * property, which always yielded an empty, dangling list.
      */
-    BackupManifest getBackupManifest() const { return m_manifest; }
+    const QVector<UserProfile>& scannedUsers() const { return m_scannedUsers; }
 
     /**
      * @brief Get the smart filter configuration
@@ -71,19 +83,22 @@ public:
     SmartFilter getSmartFilter() const { return m_smartFilter; }
 
     /**
-     * @brief Get compression level (0-9: 0=none, 3=fast, 6=balanced, 9=max)
+     * @brief Get the permission mode chosen on the settings page.
+     * @return the selected PermissionMode, or StripAll (safest) if unset/invalid.
      */
-    int getCompressionLevel() const;
+    PermissionMode getPermissionMode() const;
 
     /**
-     * @brief Check if encryption is enabled
+     * @brief Per-file compression/encryption chosen on the settings page.
+     *
+     * Read from the page directly rather than through a registered wizard field: a
+     * QWizard field is readable by name from every page, and the encryption password
+     * should not be. Returns pass-through options if the page is not present.
      */
-    [[nodiscard]] bool isEncryptionEnabled() const;
+    [[nodiscard]] BackupCodecOptions getCodecOptions() const;
 
-    /**
-     * @brief Get encryption password
-     */
-    QString getEncryptionPassword() const;
+    /// @brief Whether the settings page asks for each stored file to be checked after writing.
+    [[nodiscard]] bool verifyAfterBackup() const;
 
     /** @brief Get/set installed apps selected for backup */
     QVector<InstalledAppInfo> installedApps() const { return m_installedApps; }
@@ -104,6 +119,9 @@ public:
     void setAppDataSources(const QVector<AppDataSourceInfo>& sources) {
         m_appDataSources = sources;
     }
+
+protected:
+    void initializePage(int id) override;
 
 private:
     BackupManifest m_manifest;
@@ -190,7 +208,7 @@ private:
     void setupUi();
     void populateUserList();
     /// @brief Find the nth selected user in m_users
-    UserProfile* findSelectedUserByRow(int selectedRow);
+    UserProfile* findSelectedUserByRow(int selected_row);
 
     QVector<UserProfile>& m_users;
 
@@ -205,9 +223,11 @@ private:
  */
 class UserProfileBackupAppDataPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupAppDataPage(QVector<UserProfile>& users, QWidget* parent = nullptr);
+    ~UserProfileBackupAppDataPage() override;
 
     void initializePage() override;
     bool isComplete() const override;
@@ -215,6 +235,8 @@ public:
 
 private Q_SLOTS:
     void onScanAppData();
+    /// @brief Apply worker-thread scan results to the tree (GUI thread)
+    void onScanFinished();
     void onSelectAll();
     void onSelectNone();
     void onItemChanged(QTreeWidgetItem* item, int column);
@@ -224,6 +246,8 @@ private:
     void populateTree(const QVector<AppDataSourceInfo>& sources);
     void updateParentCheckState(QTreeWidgetItem* parent);
     void updateNextButtonText();
+    /// @brief Collect checked app-data sources and commit them to the wizard
+    void commitAppDataSelection();
 
     QVector<UserProfile>& m_users;
     QTreeWidget* m_appDataTree{nullptr};
@@ -234,6 +258,11 @@ private:
     QLabel* m_summaryLabel{nullptr};
     QProgressBar* m_scanProgress{nullptr};
     bool m_scanned{false};
+
+    /// @brief Watches the off-GUI-thread app-data size scan
+    QFutureWatcher<QVector<AppDataSourceInfo>>* m_scanWatcher{nullptr};
+    /// @brief Cooperative cancel flag so teardown can bound the scan wait
+    std::shared_ptr<std::atomic_bool> m_scanCancel;
 };
 
 /**
@@ -241,6 +270,7 @@ private:
  */
 class UserProfileBackupSmartFiltersPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupSmartFiltersPage(SmartFilter& filter, QWidget* parent = nullptr);
@@ -279,6 +309,7 @@ private:
  */
 class UserProfileBackupKnownNetworksPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupKnownNetworksPage(QWidget* parent = nullptr);
@@ -294,9 +325,14 @@ private Q_SLOTS:
     void onItemChanged(QTreeWidgetItem* item, int column);
 
 private:
+    /// @brief The status line after a scan that found @p count profiles (empty for none).
+    [[nodiscard]] static QString scanStatusText(qsizetype count);
     void setupUi();
     void populateTree(const QVector<WifiProfileInfo>& profiles);
     void updateNextButtonText();
+    /// @brief Collect checked rows (copying the scanned profile intact, so the
+    /// XML payload is preserved) and commit them to the wizard + summary.
+    void commitWifiSelection();
 
     QTreeWidget* m_networkTree{nullptr};
     QPushButton* m_scanButton{nullptr};
@@ -305,6 +341,7 @@ private:
     QLabel* m_statusLabel{nullptr};
     QLabel* m_summaryLabel{nullptr};
     QProgressBar* m_scanProgress{nullptr};
+    QVector<WifiProfileInfo> m_scannedProfiles;  // Full payloads (incl. XML), by row
     bool m_scanned{false};
 };
 
@@ -313,6 +350,7 @@ private:
  */
 class UserProfileBackupEthernetSettingsPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupEthernetSettingsPage(QWidget* parent = nullptr);
@@ -325,11 +363,16 @@ private Q_SLOTS:
     void onScanEthernet();
     void onSelectAll();
     void onSelectNone();
+    void onEthernetItemChanged(QTableWidgetItem* item);
 
 private:
     void setupUi();
+    void setupSelectionButtons(QVBoxLayout* layout);
     void populateTable(const QVector<EthernetConfigInfo>& configs);
     void updateNextButtonText();
+    /// @brief Collect checked rows (copying the scanned config intact, so DNS and
+    /// other fields are preserved) and commit them to the wizard + summary.
+    void commitEthernetSelection();
 
     QTableWidget* m_ethernetTable{nullptr};
     QPushButton* m_scanButton{nullptr};
@@ -338,6 +381,7 @@ private:
     QLabel* m_statusLabel{nullptr};
     QLabel* m_summaryLabel{nullptr};
     QProgressBar* m_scanProgress{nullptr};
+    QVector<EthernetConfigInfo> m_scannedConfigs;  // Full configs (incl. DNS), by row
     bool m_scanned{false};
 };
 
@@ -346,6 +390,7 @@ private:
  */
 class UserProfileBackupSettingsPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupSettingsPage(BackupManifest& manifest, QWidget* parent = nullptr);
@@ -353,31 +398,51 @@ public:
     void initializePage() override;
     bool validatePage() override;
 
+    /// @brief Per-file transforms chosen on this page, read by the execute page.
+    /// The password is only non-empty when encryption is actually enabled.
+    [[nodiscard]] bool compressionEnabled() const;
+    [[nodiscard]] int compressionLevel() const;
+    [[nodiscard]] bool encryptionEnabled() const;
+    [[nodiscard]] QString encryptionPassword() const;
+    [[nodiscard]] bool verifyEnabled() const;
+
 private Q_SLOTS:
     void onBrowseDestination();
     void updateSummary();
 
 private:
     void setupUi();
-    void setupUi_destinationAndCompression(QVBoxLayout* layout);
-    void setupUi_encryptionAndPermissions(QVBoxLayout* layout);
+    void setupUi_destination(QVBoxLayout* layout);
+    void setupUi_transforms(QVBoxLayout* layout);
+    void setupUi_compressionLevelRow(QVBoxLayout* layout);
+    void setupUi_permissions(QVBoxLayout* layout);
+    /// @brief Refuse a mismatched or too-short password; true when the run may proceed.
+    bool validateEncryptionPassword();
     void setupUi_summaryAndRegistration(QVBoxLayout* layout);
+    /// @brief Screen the typed destination and store the accepted form in m_destinationPath
+    /// @return false (with a refusal dialog) for blank, relative, or source-overlapping paths
     bool validateDestination();
-    bool validateEncryptionSettings();
-    void installExecutePage();
+    /// @brief Ask before reusing an existing folder; true when the run may proceed
+    bool confirmExistingDestination(const QString& destination);
+    void passRunInputsToExecutePage();
 
     BackupManifest& m_manifest;
     QString m_destinationPath;
 
     QLineEdit* m_destinationEdit{nullptr};
+    QLabel* m_destinationLabel{nullptr};
+    QLabel* m_compressionLabel{nullptr};
+    QLabel* m_permissionLabel{nullptr};
     QPushButton* m_browseButton{nullptr};
-    QComboBox* m_compressionCombo{nullptr};
-    QCheckBox* m_encryptionCheck{nullptr};
-    QLineEdit* m_passwordEdit{nullptr};
-    QLineEdit* m_passwordConfirmEdit{nullptr};
     QComboBox* m_permissionModeCombo{nullptr};
     QCheckBox* m_verifyCheck{nullptr};
     QLabel* m_summaryLabel{nullptr};
+
+    QCheckBox* m_compressCheck{nullptr};
+    QComboBox* m_compressionLevelCombo{nullptr};
+    QCheckBox* m_encryptCheck{nullptr};
+    QLineEdit* m_passwordEdit{nullptr};
+    QLineEdit* m_passwordConfirmEdit{nullptr};
 };
 
 /**
@@ -385,19 +450,39 @@ private:
  */
 class UserProfileBackupExecutePage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupExecutePage(BackupManifest& manifest,
                                           const QVector<UserProfile>& users,
-                                          const QString& destinationPath,
+                                          const QString& destination_path,
                                           QWidget* parent = nullptr);
+    ~UserProfileBackupExecutePage() override;
+    UserProfileBackupExecutePage(const UserProfileBackupExecutePage&) = delete;
+    UserProfileBackupExecutePage& operator=(const UserProfileBackupExecutePage&) = delete;
+    UserProfileBackupExecutePage(UserProfileBackupExecutePage&&) = delete;
+    UserProfileBackupExecutePage& operator=(UserProfileBackupExecutePage&&) = delete;
+
+    /// True while the backup worker this page started is still running.
+    [[nodiscard]] bool isBackupRunning() const;
+    /// Cooperatively cancels a running backup; the worker stops at its next file boundary.
+    void cancelBackup();
+
+    /// @brief The users and screened destination the run will use, set when Backup Settings is
+    ///        accepted. The page is registered with the wizard from the start, so that Backup
+    ///        Settings offers Next rather than Finish, and only learns what to back up here.
+    void setRunInputs(const QVector<UserProfile>& users, const QString& destination_path);
 
     void initializePage() override;
+    void cleanupPage() override;
     bool isComplete() const override;
 
 private Q_SLOTS:
     void onStartBackup();
-    void onBackupProgress(int current, int total, qint64 bytes, qint64 totalBytes);
+    void onBackupProgress(int completed_users,
+                          int total_users,
+                          qint64 processed_bytes,
+                          qint64 total_bytes);
     void onBackupComplete(bool success, const QString& message);
     void onLogMessage(const QString& message);
 
@@ -405,29 +490,43 @@ private:
     void setupUi();
     void appendLog(const QString& message);
 
-    /// @brief Save installed apps list from wizard to backup directory
-    void saveInstalledAppsToBackup(const QVector<InstalledAppInfo>& installedApps);
+    /// @brief Re-screen the destination this page was constructed with
+    /// @return an empty string when the destination may be used, else the refusal reason
+    QString screenRunDestination() const;
 
-    /// @brief Save WiFi profiles from wizard to backup directory
-    void saveWifiProfilesToBackup(const QVector<WifiProfileInfo>& profiles);
+    /// @brief Screen, then ensure the backup destination directory exists (create if needed)
+    /// @param error Set to a user-facing reason when the destination is refused or cannot be made
+    /// @return true if the directory exists or was created, false otherwise
+    bool ensureDestinationDirectory(QString& error);
+    /// @brief Report a pre-start failure, re-enable retry, leave page incomplete
+    void failBackupPreflight(const QString& message);
+    /// @brief Write every metadata sidecar; false if any write fails
+    bool saveAllSidecars(const UserProfileBackupWizard* wiz);
 
-    /// @brief Save Ethernet configs from wizard to backup directory
-    void saveEthernetConfigsToBackup(const QVector<EthernetConfigInfo>& configs);
+    /// @brief Mirror the SELECTED WiFi/Ethernet/AppData selections into the manifest
+    ///        so they are covered by the manifest's SHA-256 digest. The standalone
+    ///        *.json sidecars are written for inspection but are NOT integrity
+    ///        protected, so restore trusts only these manifest-embedded copies.
+    void recordNetworkSelectionsInManifest(const UserProfileBackupWizard* wiz);
 
-    /// @brief Save app data sources from wizard to backup directory
-    void saveAppDataSourcesToBackup(const QVector<AppDataSourceInfo>& sources);
+    /// @brief Save installed apps list to backup directory; false on write failure
+    bool saveInstalledAppsToBackup(const QVector<InstalledAppInfo>& installed_apps);
+
+    /// @brief Save WiFi profiles to backup directory; false on write failure
+    bool saveWifiProfilesToBackup(const QVector<WifiProfileInfo>& profiles);
+
+    /// @brief Save Ethernet configs to backup directory; false on write failure
+    bool saveEthernetConfigsToBackup(const QVector<EthernetConfigInfo>& configs);
+
+    /// @brief Save app data sources to backup directory; false on write failure
+    bool saveAppDataSourcesToBackup(const QVector<AppDataSourceInfo>& sources);
 
     /// @brief Create, connect, and start the backup worker
-    void connectAndStartBackupWorker(SmartFilter smartFilter,
-                                     PermissionMode permissionMode,
-                                     int compressionLevel,
-                                     bool encrypt,
-                                     const QString& password);
+    void connectAndStartBackupWorker(SmartFilter smart_filter, PermissionMode permission_mode);
 
     BackupManifest& m_manifest;
-    const QVector<UserProfile>& m_users;
-    const QString& m_destinationPath;
-    UserProfileBackupWorker* m_worker{nullptr};
+    QVector<UserProfile> m_users;  // Owned copy: the source list may not outlive this page
+    QString m_destinationPath;     // Owned copy: the source string may not outlive this page
 
     QProgressBar* m_overallProgress{nullptr};
     QProgressBar* m_currentProgress{nullptr};
@@ -436,8 +535,12 @@ private:
     QTextEdit* m_logEdit{nullptr};
     QPushButton* m_startButton{nullptr};
 
+    // Child of this page while it runs; deleted (and nulled) once it reports completion.
+    QPointer<UserProfileBackupWorker> m_worker;
+
     bool m_started{false};
     bool m_completed{false};
+    qint64 m_lastProcessedBytes{0};
 };
 
 /**
@@ -449,6 +552,7 @@ private:
  */
 class UserProfileBackupInstalledAppsPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupInstalledAppsPage(QWidget* parent = nullptr);
@@ -471,9 +575,15 @@ private:
     void populateTree(const QVector<InstalledAppInfo>& apps);
     void updateParentCheckState(QTreeWidgetItem* parent);
     void updateNextButtonText();
+    /// @brief Collect checked apps and commit them to the wizard + summary
+    void commitAppSelection();
 
     /// @brief Categorize an application by name/publisher into a UI group
-    static QString categorizeApp(const QString& name, const QString& publisher);
+    static QString categorizeApp(const QString& name);
+
+    /// @brief What the page lists and the backup records for a finished scan, with each
+    ///        application's Chocolatey match. Runs on the scan's worker thread.
+    static QVector<InstalledAppInfo> inventoryFromScan(std::vector<AppScanner::AppInfo> apps);
 
     QTreeWidget* m_appTree{nullptr};
     QPushButton* m_scanButton{nullptr};

@@ -21,8 +21,8 @@ constexpr int kMaxMagicSignatureBytes = 6;
 }  // namespace
 
 std::unique_ptr<StreamingDecompressor> DecompressorFactory::create(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
-    QString format = detectFormat(filePath);
+    // An empty path detects as no format, which is rejected with a nullptr below.
+    const QString format = detectFormat(filePath);
 
     if (format.isEmpty()) {
         sak::logWarning(QString("Unknown compression format: %1").arg(filePath).toStdString());
@@ -60,28 +60,32 @@ QString DecompressorFactory::detectFormat(const QString& filePath) {
 }
 
 QString DecompressorFactory::detectByExtension(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
-    QFileInfo fileInfo(filePath);
+    // An empty path has no suffix and matches no entry, so it returns the empty
+    // "unknown format" result like any other unrecognised name.
+    const QFileInfo fileInfo(filePath);
     QString suffix = fileInfo.suffix().toLower();
 
     struct ExtEntry {
         const char* ext;
         const char* format;
     };
+    // Only single-stream formats this factory can actually create() a decompressor
+    // for. A zip is a multi-member archive handled by the archive service, not a
+    // stream -- advertising it here made isCompressed() return true while create()
+    // returned nullptr, an inconsistency a guard-then-create caller would trip on
+    // (B8-23).
     static constexpr ExtEntry kExtensions[] = {
-        {"gz", "gzip"},
-        {"gzip", "gzip"},
-        {"bz2", "bzip2"},
-        {"bzip2", "bzip2"},
-        {"xz", "xz"},
-        {"lzma", "xz"},
-        {"zip", "zip"},
+        {.ext = "gz", .format = "gzip"},
+        {.ext = "gzip", .format = "gzip"},
+        {.ext = "bz2", .format = "bzip2"},
+        {.ext = "bzip2", .format = "bzip2"},
+        {.ext = "xz", .format = "xz"},
+        {.ext = "lzma", .format = "xz"},
     };
 
-    auto it =
-        std::find_if(std::begin(kExtensions), std::end(kExtensions), [&suffix](const auto& entry) {
-            return suffix == QLatin1String(entry.ext);
-        });
+    const auto* it = std::ranges::find_if(kExtensions, [&suffix](const auto& entry) {
+        return suffix == QLatin1String(entry.ext);
+    });
     if (it != std::end(kExtensions)) {
         return QLatin1String(it->format);
     }
@@ -89,15 +93,13 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
     // Handle compound extensions like .tar.gz
     QString completeSuffix = fileInfo.completeSuffix().toLower();
     static constexpr ExtEntry kCompound[] = {
-        {".gz", "gzip"},
-        {".bz2", "bzip2"},
-        {".xz", "xz"},
+        {.ext = ".gz", .format = "gzip"},
+        {.ext = ".bz2", .format = "bzip2"},
+        {.ext = ".xz", .format = "xz"},
     };
-    auto compound_it = std::find_if(std::begin(kCompound),
-                                    std::end(kCompound),
-                                    [&completeSuffix](const auto& entry) {
-                                        return completeSuffix.endsWith(QLatin1String(entry.ext));
-                                    });
+    const auto* compound_it = std::ranges::find_if(kCompound, [&completeSuffix](const auto& entry) {
+        return completeSuffix.endsWith(QLatin1String(entry.ext));
+    });
     if (compound_it != std::end(kCompound)) {
         return QLatin1String(compound_it->format);
     }
@@ -106,9 +108,12 @@ QString DecompressorFactory::detectByExtension(const QString& filePath) {
 }
 
 QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
-    unsigned char magic[kMagicHeaderProbeBytes];
-    if (!readMagicNumber(filePath, magic, sizeof(magic))) {
+    // readMagicNumber() cannot open an empty (or unreadable) path, so it returns a
+    // negative count and this reports the empty "unknown format" result. The buffer is
+    // zero-initialised so a signature is only ever matched against bytes actually read.
+    unsigned char magic[kMagicHeaderProbeBytes] = {};
+    const int bytesRead = readMagicNumber(filePath, magic, sizeof(magic));
+    if (bytesRead <= 0) {
         return QString();
     }
 
@@ -117,15 +122,21 @@ QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
         int length;
         const char* format;
     };
+    // No zip ("PK") entry: this factory only produces single-stream decompressors,
+    // and create() cannot build one for a zip archive (B8-23).
     static constexpr MagicEntry kMagicTable[] = {
-        {{0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}, 6, "xz"},
-        {{0x42, 0x5A, 0x68, 0, 0, 0}, 3, "bzip2"},
-        {{0x5D, 0x00, 0x00, 0, 0, 0}, 3, "xz"},
-        {{0x1F, 0x8B, 0, 0, 0, 0}, 2, "gzip"},
-        {{0x50, 0x4B, 0, 0, 0, 0}, 2, "zip"},
+        {.bytes = {0xFD, 0x37, 0x7A, 0x58, 0x5A, 0x00}, .length = 6, .format = "xz"},
+        {.bytes = {0x42, 0x5A, 0x68, 0, 0, 0}, .length = 3, .format = "bzip2"},
+        {.bytes = {0x5D, 0x00, 0x00, 0, 0, 0}, .length = 3, .format = "xz"},
+        {.bytes = {0x1F, 0x8B, 0, 0, 0, 0}, .length = 2, .format = "gzip"},
     };
 
     for (const auto& entry : kMagicTable) {
+        // Not enough bytes were read to confirm this signature; never let the
+        // zero-filled tail complete a match on a short file.
+        if (entry.length > bytesRead) {
+            continue;
+        }
         bool match = true;
         for (int i = 0; i < entry.length; ++i) {
             if (magic[i] != entry.bytes[i]) {
@@ -141,18 +152,22 @@ QString DecompressorFactory::detectByMagicNumber(const QString& filePath) {
     return QString();
 }
 
-bool DecompressorFactory::readMagicNumber(const QString& filePath,
-                                          unsigned char* buffer,
-                                          int size) {
+int DecompressorFactory::readMagicNumber(const QString& filePath, unsigned char* buffer, int size) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        return false;
+        return -1;
     }
 
-    qint64 bytesRead = file.read(reinterpret_cast<char*>(buffer), size);
+    const qint64 bytesRead = file.read(reinterpret_cast<char*>(buffer), size);
     file.close();
 
-    return bytesRead == size;
+    // A read fault reports -1; a short read reports the count actually delivered so the
+    // caller matches signatures only against real bytes (size <= kMagicHeaderProbeBytes,
+    // so the value always fits in int).
+    if (bytesRead < 0) {
+        return -1;
+    }
+    return static_cast<int>(bytesRead);
 }
 
 }  // namespace sak

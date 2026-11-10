@@ -1,0 +1,91 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:04:02.784Z",
+    "disk_before": {
+        "bus_type": "NVMe",
+        "disk_number": 0,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "SSD",
+        "model": "SAMSUNG MZVL2512HCJQ-00BH1",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "53a53c0c25394c9d6ea8ce84e1ac35d148e95e481855f2f4ee42da1540500318",
+        "size_bytes": "512110190592"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "2f0dc758-93f7-4546-9a0a-cf8f6a2d13f7",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Wipe Disk 0\r\nVERBOSE: Invoking retrim on SAKWIPE (T:)...\r\nVERBOSE: Retrim:  100% complete.  \nVERBOSE: \r\nPost Defragmentation Report:\nVERBOSE: \r\r\n Volume Information:\nVERBOSE:   Volume size                 = 1023.99 MB\nVERBOSE:   Cluster size                = 4 KB\nVERBOSE:   Used space                  = 41.48 MB\nVERBOSE:   Free space                  = 982.51 MB\nVERBOSE: \r\r\n Retrim:\nVERBOSE:   Backed allocations          = 0\nVERBOSE:   Allocations trimmed         = 0\nVERBOSE:   Total space trimmed         = 0 bytes\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining      Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------      ----\r\n            SAK_WIPE     NTFS           Fixed     Healthy      OK                    476.82 GB 476.92 GB\r\n\r\n\r\n",
+                "success": true,
+                "summary": "Wipe Disk - Disk 0"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "WipeDisk",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "2f0dc758-93f7-4546-9a0a-cf8f6a2d13f7",
+            "payload": {
+                "ssd_secure_erase": true,
+                "target_wipe_confirmed": true
+            },
+            "script_sha256": "09a3d4436eea07e71eec9a514e7d15e6da08254c060ee435522db6f831ae7998",
+            "summary": "Wipe Disk - Disk 0",
+            "target": {
+                "disk_number": 0,
+                "disk_unique_id": "eui.002538B821B737C0",
+                "drive_letter": "",
+                "kind": "Disk",
+                "offset_bytes": "0",
+                "partition_number": 0,
+                "size_bytes": "512110190592"
+            },
+            "type": "Wipe Disk",
+            "warnings": [
+                "SSD wipe uses software clear; vendor secure erase is required for purge"
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "9628f6c699e59d6a9e37d601105d52e28430b8ab516b919570e9393c634fd247",
+        "layout_hash": "97f2254d4d525e9c0fd879aee4219e124723f089b96410d6ee988e5eecd18175",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "dbf4576c-b378-4960-bd27-2d144d5596de",
+    "scenario_id": "external.ssd-secure-erase",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T15:54:44.320Z",
+    "status": "Passed",
+    "step": "erase",
+    "tool": "partition-manager-scenario-step"
+}

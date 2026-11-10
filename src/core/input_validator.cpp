@@ -13,9 +13,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <regex>
+#include <string>
+#include <vector>
 
-#ifdef _WIN32
 #include <windows.h>
 
 #include <psapi.h>
@@ -23,11 +25,6 @@
 #undef emit
 #undef signals
 #undef slots
-#else
-#include <sys/resource.h>
-#include <sys/statvfs.h>
-#include <unistd.h>
-#endif
 
 namespace sak {
 
@@ -49,11 +46,28 @@ constexpr int kUtf8ThreeContinuations = 3;
 constexpr int kUtf8TwoByteSequenceLength = 2;
 constexpr int kUtf8ThreeByteSequenceLength = 3;
 constexpr int kUtf8FourByteSequenceLength = 4;
-constexpr std::uintmax_t kFileDescriptorWarnNumerator = 4;
-constexpr std::uintmax_t kFileDescriptorWarnDenominator = 5;
+// RFC 3629 second-byte boundaries used to reject overlong encodings, UTF-16
+// surrogates (U+D800..U+DFFF), and code points above U+10FFFF.
+constexpr unsigned char kUtf8ContinuationMin = 0x80;
+constexpr unsigned char kUtf8ContinuationMax = 0xBF;
+constexpr unsigned char kUtf8ThreeByteLeadE0 = 0xE0;
+constexpr unsigned char kUtf8ThreeByteLeadED = 0xED;
+constexpr unsigned char kUtf8ThreeByteE0MinSecond = 0xA0;  // reject E0 80..9F (overlong)
+constexpr unsigned char kUtf8ThreeByteEDMaxSecond = 0x9F;  // reject ED A0..BF (surrogate)
+constexpr unsigned char kUtf8FourByteMinLead = 0xF0;
+constexpr unsigned char kUtf8FourByteMaxLead = 0xF4;       // U+10FFFF cap
+constexpr unsigned char kUtf8FourByteLeadF4 = 0xF4;
+constexpr unsigned char kUtf8FourByteF0MinSecond = 0x90;   // reject F0 80..8F (overlong)
+constexpr unsigned char kUtf8FourByteF4MaxSecond = 0x8F;   // reject F4 90..BF (> U+10FFFF)
 constexpr std::size_t kUnknownHardwareThreadLimit = 64;
 constexpr unsigned int kThreadWarningMultiplier = 2;
 constexpr unsigned int kThreadRejectMultiplier = 4;
+// The reserved DOS device names, as a PATH-level pattern. This deliberately does NOT use the
+// shared sak::isWindowsReservedName (sak/windows_reserved_names.h), which the four other former
+// copies of this catalogue were migrated onto: that helper answers "is this NAME a device", while
+// this answers the different question "does any COMPONENT of this path name a device", and it
+// operates on std::string_view rather than QString. Keeping the pattern here is a deliberate
+// design decision, not an un-migrated copy -- but if the device list ever changes, BOTH must move.
 constexpr auto kWindowsDeviceNamePattern = "(^|[/\\\\])(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\.|$)";
 
 bool isContinuationByte(unsigned char byte) noexcept {
@@ -72,7 +86,38 @@ bool hasContinuationBytes(std::string_view str, std::size_t pos, int count) noex
     return true;
 }
 
+// Validate the second byte of a 3-byte sequence per RFC 3629, rejecting
+// overlong forms (lead E0, second < 0xA0) and surrogates (lead ED, second > 0x9F).
+bool isValidThreeByteSecond(unsigned char lead, unsigned char second) noexcept {
+    unsigned char lo = kUtf8ContinuationMin;
+    unsigned char hi = kUtf8ContinuationMax;
+    if (lead == kUtf8ThreeByteLeadE0) {
+        lo = kUtf8ThreeByteE0MinSecond;
+    } else if (lead == kUtf8ThreeByteLeadED) {
+        hi = kUtf8ThreeByteEDMaxSecond;
+    }
+    return second >= lo && second <= hi;
+}
+
+// Validate the lead and second byte of a 4-byte sequence per RFC 3629, keeping
+// only U+10000..U+10FFFF (leads F0..F4 with the matching second-byte window).
+bool isValidFourByteLeadPair(unsigned char lead, unsigned char second) noexcept {
+    if (lead < kUtf8FourByteMinLead || lead > kUtf8FourByteMaxLead) {
+        return false;
+    }
+    unsigned char lo = kUtf8ContinuationMin;
+    unsigned char hi = kUtf8ContinuationMax;
+    if (lead == kUtf8FourByteMinLead) {
+        lo = kUtf8FourByteF0MinSecond;
+    } else if (lead == kUtf8FourByteLeadF4) {
+        hi = kUtf8FourByteF4MaxSecond;
+    }
+    return second >= lo && second <= hi;
+}
+
 int checkMultiByteUtf8(std::string_view str, std::size_t pos) noexcept {
+    // isValidUtf8() is the only caller and reaches this from inside its
+    // `while (i < str.length())` loop, so str is non-empty and pos is in range.
     Q_ASSERT(!str.empty());
     Q_ASSERT(pos < str.size());
     const unsigned char lead = static_cast<unsigned char>(str[pos]);
@@ -83,22 +128,28 @@ int checkMultiByteUtf8(std::string_view str, std::size_t pos) noexcept {
                    : 0;
     }
     if ((lead & kUtf8ThreeByteMask) == kUtf8ThreeByteTag) {
-        return hasContinuationBytes(str, pos, kUtf8TwoContinuations) ? kUtf8ThreeByteSequenceLength
-                                                                     : 0;
+        if (!hasContinuationBytes(str, pos, kUtf8TwoContinuations)) {
+            return 0;
+        }
+        const auto second = static_cast<unsigned char>(str[pos + 1]);
+        return isValidThreeByteSecond(lead, second) ? kUtf8ThreeByteSequenceLength : 0;
     }
     if ((lead & kUtf8FourByteMask) == kUtf8FourByteTag) {
-        return hasContinuationBytes(str, pos, kUtf8ThreeContinuations) ? kUtf8FourByteSequenceLength
-                                                                       : 0;
+        if (!hasContinuationBytes(str, pos, kUtf8ThreeContinuations)) {
+            return 0;
+        }
+        const auto second = static_cast<unsigned char>(str[pos + 1]);
+        return isValidFourByteLeadPair(lead, second) ? kUtf8FourByteSequenceLength : 0;
     }
     return 0;
 }
 
 bool isPrintableString(std::string_view str) {
-    return std::all_of(str.begin(), str.end(), [](unsigned char c) { return std::isprint(c); });
+    return std::ranges::all_of(str, [](unsigned char c) { return std::isprint(c); });
 }
 
 bool isAsciiString(std::string_view str) {
-    return std::all_of(str.begin(), str.end(), [](unsigned char c) { return c < kAsciiLimit; });
+    return std::ranges::all_of(str, [](unsigned char c) { return c < kAsciiLimit; });
 }
 
 validation_result validateStringLengthPolicy(std::string_view str,
@@ -147,89 +198,193 @@ validation_result validateStringEncodingPolicy(std::string_view str,
 // Path Validation
 // ============================================
 
+namespace {
+
+bool componentIsReparsePoint(const std::filesystem::path& p) {
+    // Catches BOTH symlinks and junctions (mount points): std::filesystem's
+    // is_symlink does not report a junction, but the reparse-point attribute
+    // does, and a junction ancestor is exactly the traversal we must block.
+    const DWORD attrs = GetFileAttributesW(p.wstring().c_str());
+    if (attrs != INVALID_FILE_ATTRIBUTES) {
+        return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    }
+    // A component that is genuinely ABSENT (a not-yet-created leaf/ancestor) is
+    // safely not a reparse point. Any OTHER failure (access denied, sharing
+    // violation, device not ready) leaves the component's nature UNKNOWN and must
+    // fail CLOSED: report it as a blocking reparse point rather than silently treat
+    // it as a plain, traversable path.
+    const DWORD err = GetLastError();
+    return err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND;
+}
+
+// True if ANY component along the path (any ancestor, not just the final one) is
+// a reparse point. Non-existent components simply are not reparse points, so this
+// is safe to call on a not-yet-created leaf.
+bool anyComponentIsReparsePoint(const std::filesystem::path& path) {
+    return std::ranges::any_of(input_validator::pathPrefixes(path), componentIsReparsePoint);
+}
+
+}  // namespace
+
+std::vector<std::filesystem::path> input_validator::pathPrefixes(
+    const std::filesystem::path& path) {
+    std::vector<std::filesystem::path> prefixes;
+    std::filesystem::path current;
+    for (const auto& part : path) {
+        current /= part;
+        prefixes.push_back(current);
+    }
+    return prefixes;
+}
+
+namespace {
+
+// Enforce the file/directory type constraints for an existing path. Split out so
+// validatePathExistence stays within the complexity budget.
+validation_result validatePathTypeConstraints(const std::filesystem::path& path,
+                                              const path_validation_config& config) {
+    std::error_code ec;
+    if (config.must_be_directory && !std::filesystem::is_directory(path, ec)) {
+        return input_validator::failure(error_code::not_a_directory, "Path must be a directory");
+    }
+    if (config.must_be_file && !std::filesystem::is_regular_file(path, ec)) {
+        return input_validator::failure(error_code::invalid_file, "Path must be a regular file");
+    }
+    return input_validator::success();
+}
+
+}  // namespace
+
 validation_result input_validator::validatePathExistence(const std::filesystem::path& path,
                                                          const path_validation_config& config) {
     std::error_code ec;
     const bool exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        // A stat that genuinely FAILS (permission denied on an ancestor, an I/O
+        // error) is not the same as a path that is simply absent: exists() clears
+        // ec for a genuinely-absent path and sets it only on a real error. Fail
+        // CLOSED rather than let an optional (must_exist == false) path pass on a
+        // status we could not resolve.
+        return failure(error_code::filesystem_error, "Cannot determine whether path exists");
+    }
 
     if (config.must_exist && !exists) {
         return failure(error_code::file_not_found, "Path must exist but does not");
+    }
+
+    // Reject a symlink/junction ANYWHERE in the path when links are disallowed --
+    // not just the final component. An ancestor junction would otherwise redirect
+    // the whole subtree past this check. Run this even for a not-yet-existing leaf
+    // so a later write cannot be smuggled through an existing ancestor reparse.
+    if (!config.allow_symlinks && anyComponentIsReparsePoint(path)) {
+        return failure(error_code::invalid_path,
+                       "Symbolic links / reparse points are not allowed in the path");
     }
 
     if (!exists) {
         return success();
     }
 
-    // Check symlink requirement
-    const bool is_symlink = std::filesystem::is_symlink(path, ec);
-    if (is_symlink && !config.allow_symlinks) {
-        return failure(error_code::invalid_path, "Symbolic links are not allowed");
-    }
-
-    // Check directory requirement
-    const bool is_dir = std::filesystem::is_directory(path, ec);
-    if (config.must_be_directory && !is_dir) {
-        return failure(error_code::not_a_directory, "Path must be a directory");
-    }
-
-    // Check file requirement
-    const bool is_file = std::filesystem::is_regular_file(path, ec);
-    if (config.must_be_file && !is_file) {
-        return failure(error_code::invalid_file, "Path must be a regular file");
-    }
-
-    return success();
+    return validatePathTypeConstraints(path, config);
 }
 
 namespace {
 
-#ifdef _WIN32
+// Probe whether opening @p path for @p desired_access is denied by the file's
+// DACL. Only ERROR_ACCESS_DENIED counts as a denial; other open failures
+// (sharing violations, transient errors) are not treated as permission
+// problems here so the advisory check does not produce false positives.
+bool windowsAccessDenied(const std::filesystem::path& path, DWORD desired_access, DWORD attrs) {
+    const DWORD flags = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0 ? FILE_FLAG_BACKUP_SEMANTICS : 0UL;
+    HANDLE handle = CreateFileW(path.wstring().c_str(),
+                                desired_access,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                flags,
+                                nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return GetLastError() == ERROR_ACCESS_DENIED;
+    }
+    CloseHandle(handle);
+    return false;
+}
+
 validation_result checkWindowsPermissions(const std::filesystem::path& path,
                                           const path_validation_config& config) {
-    DWORD attrs = GetFileAttributesW(path.wstring().c_str());
+    DWORD const attrs = GetFileAttributesW(path.wstring().c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES) {
         if (config.check_read_permission || config.check_write_permission) {
             return input_validator::failure(error_code::permission_denied,
                                             "Cannot check file permissions");
         }
+        return input_validator::success();
     }
 
-    if (config.check_write_permission && (attrs & FILE_ATTRIBUTE_READONLY)) {
-        return input_validator::failure(error_code::permission_denied, "Path is read-only");
-    }
-
-    return input_validator::success();
-}
-#else
-validation_result checkUnixPermissions(const std::filesystem::path& path,
-                                       const path_validation_config& config) {
-    if (config.check_read_permission && access(path.c_str(), R_OK) != 0) {
+    // Actually test read access against the DACL rather than assuming a file
+    // with normal attributes is readable (a deny-read ACE leaves attributes
+    // untouched but still blocks the open).
+    if (config.check_read_permission && windowsAccessDenied(path, GENERIC_READ, attrs)) {
         return input_validator::failure(error_code::permission_denied, "Path is not readable");
     }
 
-    if (config.check_write_permission && access(path.c_str(), W_OK) != 0) {
-        return input_validator::failure(error_code::permission_denied, "Path is not writable");
+    if (config.check_write_permission) {
+        if ((attrs & FILE_ATTRIBUTE_READONLY) != 0) {
+            return input_validator::failure(error_code::permission_denied, "Path is read-only");
+        }
+        // Directories cannot be opened for GENERIC_WRITE data access, so limit
+        // the ACL-based write probe to regular files.
+        if ((attrs & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
+            windowsAccessDenied(path, GENERIC_WRITE, attrs)) {
+            return input_validator::failure(error_code::permission_denied, "Path is not writable");
+        }
     }
 
     return input_validator::success();
 }
-#endif
+
+// Split a path into normalized, comparable components. On Windows the components
+// are lowercased so containment is case-insensitive (matching the platform
+// filesystem). Empty (trailing-separator) and "." elements are dropped so
+// "C:/safe/" and "C:/safe" compare equal.
+std::vector<std::string> normalizedPathComponents(const std::filesystem::path& p) {
+    std::vector<std::string> components;
+    for (const auto& part : p.lexically_normal()) {
+        std::string component = pathAsUtf8(part);
+        if (component.empty() || component == ".") {
+            continue;
+        }
+        std::ranges::transform(component, component.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        components.push_back(std::move(component));
+    }
+    return components;
+}
+
+// True when path is base itself or a descendant, compared component-by-component.
+// Unlike a raw string prefix test this cannot be fooled by sibling names that
+// share a textual prefix ("safe" vs "safeevil").
+bool baseContainsPath(const std::filesystem::path& base, const std::filesystem::path& path) {
+    const auto base_components = normalizedPathComponents(base);
+    const auto path_components = normalizedPathComponents(path);
+    if (path_components.size() < base_components.size()) {
+        return false;
+    }
+    return std::equal(base_components.begin(), base_components.end(), path_components.begin());
+}
 
 }  // namespace
 
 validation_result input_validator::validatePathPermissions(const std::filesystem::path& path,
                                                            const path_validation_config& config) {
-#ifdef _WIN32
     return checkWindowsPermissions(path, config);
-#else
-    return checkUnixPermissions(path, config);
-#endif
 }
 
 validation_result input_validator::validatePathSyntax(const std::filesystem::path& path,
                                                       const path_validation_config& config) {
-    const auto path_str = path.string();
-    if (path_str.length() > config.max_path_length) {
+    const auto path_str = pathAsUtf8(path);
+    if (path.native().length() > config.max_path_length) {
         return failure(error_code::path_too_long, "Path exceeds maximum allowed length");
     }
     if (path_str.find('\0') != std::string::npos) {
@@ -250,6 +405,11 @@ validation_result input_validator::validatePathSyntax(const std::filesystem::pat
 
 validation_result input_validator::validatePath(const std::filesystem::path& path,
                                                 const path_validation_config& config) {
+    // Fail closed on an empty path: a blank target is not a valid path and must never
+    // pass validation, where a later step could resolve it to the current directory.
+    if (path.empty()) {
+        return failure(error_code::invalid_path, "Path is empty");
+    }
     auto syntax_result = validatePathSyntax(path, config);
     if (!syntax_result) {
         return syntax_result;
@@ -261,7 +421,13 @@ validation_result input_validator::validatePath(const std::filesystem::path& pat
     }
 
     std::error_code ec;
-    if (std::filesystem::exists(path, ec)) {
+    const bool path_exists = std::filesystem::exists(path, ec);
+    if (ec) {
+        // A stat that genuinely FAILS (not a plain absence) leaves existence unresolved.
+        // Fail closed rather than skip the permission check and fall through to success.
+        return failure(error_code::filesystem_error, "Cannot determine whether path exists");
+    }
+    if (path_exists) {
         auto perm_result = validatePathPermissions(path, config);
         if (!perm_result) {
             return perm_result;
@@ -278,12 +444,41 @@ validation_result input_validator::validatePath(const std::filesystem::path& pat
     return success();
 }
 
-bool input_validator::containsTraversalSequences(const std::filesystem::path& path) noexcept {
-    Q_ASSERT(!path.empty());
-    const auto path_str = path.string();
+namespace {
 
-    // Check for common traversal patterns
-    if (path_str.find("..") != std::string::npos) {
+bool isPathSeparator(char c) noexcept {
+    return c == '/' || c == '\\';
+}
+
+// True when ".." appears as a WHOLE path segment (bounded by a separator or a
+// string boundary), i.e. an actual parent-directory reference. A blanket ".."
+// substring test also rejected legitimate names like "my..file" or "..bar";
+// this keeps the traversal block precise while still catching "..", "../x",
+// "x/..", and "a/../b" under either separator regardless of host platform.
+bool hasDotDotSegment(const std::string& s) noexcept {
+    std::size_t pos = 0;
+    while ((pos = s.find("..", pos)) != std::string::npos) {
+        const bool before_ok = pos == 0 || isPathSeparator(s[pos - 1]);
+        const std::size_t after = pos + 2;
+        const bool after_ok = after == s.size() || isPathSeparator(s[after]);
+        if (before_ok && after_ok) {
+            return true;
+        }
+        pos += 1;
+    }
+    return false;
+}
+
+}  // namespace
+
+bool input_validator::containsTraversalSequences(const std::filesystem::path& path) noexcept {
+    // An empty path contains no traversal sequence; do not assert non-empty
+    // (debug-only crash on a legitimate empty query).
+    const auto path_str = pathAsUtf8(path);
+
+    // Reject a real parent-directory segment (".." delimited by separators), not
+    // any incidental ".." inside an ordinary filename.
+    if (hasDotDotSegment(path_str)) {
         return true;
     }
 
@@ -294,14 +489,20 @@ bool input_validator::containsTraversalSequences(const std::filesystem::path& pa
     }
 
     // Check each path component
-    return std::any_of(path.begin(), path.end(), [](const auto& component) {
-        const auto comp_str = component.string();
+    return std::ranges::any_of(path, [](const auto& component) {
+        const auto comp_str = pathAsUtf8(component);
         return comp_str == ".." || comp_str == ".";
     });
 }
 
 validation_result input_validator::validatePathWithinBase(const std::filesystem::path& path,
                                                           const std::filesystem::path& base_dir) {
+    // BY CONTRACT this is a pathname (string) containment check, not a handle-based
+    // one -- it cannot itself close the validate-then-open TOCTOU window. The
+    // ancestor reparse-point walk in validatePathExistence blocks junction/symlink
+    // redirection of the tree, and destructive callers additionally re-verify the
+    // opened handle (GetFinalPathNameByHandleW) against this result. Adding a handle
+    // probe here would open a path this function is not given the access intent for.
     try {
         // Canonicalize both paths
         std::error_code ec;
@@ -315,17 +516,10 @@ validation_result input_validator::validatePathWithinBase(const std::filesystem:
             return failure(error_code::invalid_path, "Cannot canonicalize base directory");
         }
 
-        // Check if path starts with base (case-insensitive on Windows)
-        auto path_str = canonical_path.string();
-        auto base_str = canonical_base.string();
-
-#ifdef _WIN32
-        // Windows filesystem is case-insensitive
-        std::transform(path_str.begin(), path_str.end(), path_str.begin(), ::tolower);
-        std::transform(base_str.begin(), base_str.end(), base_str.begin(), ::tolower);
-#endif
-
-        if (path_str.find(base_str) != 0) {
+        // Containment must be tested component-by-component. A raw string prefix
+        // test accepts sibling directories that share a textual prefix -- e.g.
+        // base "C:/safe" would wrongly contain "C:/safeevil/payload".
+        if (!baseContainsPath(canonical_base, canonical_path)) {
             return failure(error_code::path_traversal_attempt,
                            "Path is outside allowed base directory");
         }
@@ -338,23 +532,71 @@ validation_result input_validator::validatePathWithinBase(const std::filesystem:
     }
 }
 
+namespace {
+
+// A colon in a Windows path is legitimate only as the drive-letter separator at
+// index 1 ("C:\..."). Every other colon opens an NTFS Alternate Data Stream --
+// e.g. "file.txt::$DATA" or "name:stream" -- which resolves to a different
+// on-disk object and can smuggle a write past an exact-name/extension check.
+// Treat any non-drive colon as suspicious.
+bool hasAdsColonStream(const std::string& path_str) noexcept {
+    constexpr std::size_t kDriveColonIndex = 1;
+    for (std::size_t i = 0; i < path_str.size(); ++i) {
+        if (path_str[i] != ':') {
+            continue;
+        }
+        const bool is_drive_colon = i == kDriveColonIndex &&
+                                    std::isalpha(static_cast<unsigned char>(path_str[0])) != 0;
+        if (!is_drive_colon) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Windows silently strips a trailing '.' or ' ' from a path component, so
+// "secret.txt." or "secret.txt " resolves to "secret.txt" and can slip past an
+// exact-name/extension check. Flag a dot/space that ends the whole path or any
+// component (immediately precedes a separator).
+bool hasTrailingDotOrSpace(const std::string& path_str) noexcept {
+    for (std::size_t i = 0; i < path_str.size(); ++i) {
+        if (path_str[i] != '.' && path_str[i] != ' ') {
+            continue;
+        }
+        const bool ends_component = i + 1 == path_str.size() || isPathSeparator(path_str[i + 1]);
+        if (ends_component) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
 bool input_validator::containsSuspiciousPatterns(const std::filesystem::path& path) noexcept {
-    Q_ASSERT(!path.empty());
-    const auto path_str = path.string();
+    // An empty path has no suspicious pattern; do not assert non-empty (debug-only
+    // crash on a legitimate empty query).
+    const auto path_str = pathAsUtf8(path);
 
     // Windows device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
-    static const std::regex device_pattern(kWindowsDeviceNamePattern, std::regex::icase);
+    static const std::regex kDevicePattern(kWindowsDeviceNamePattern, std::regex::icase);
 
-    if (std::regex_search(path_str, device_pattern)) {
+    if (std::regex_search(path_str, kDevicePattern)) {
         return true;
     }
 
-    // UNC paths (Windows network paths)
-#ifdef _WIN32
+    // UNC paths (Windows network paths). This doubled-separator prefix also
+    // rejects the extended-length ("\\?\"), device ("\\.\") and "//?/" / "//./"
+    // namespaces, all of which begin with two separators and can bypass the
+    // normalization and length checks that operate on ordinary Win32 paths.
     if (path_str.starts_with("\\\\") || path_str.starts_with("//")) {
         return true;
     }
-#endif
+    // Alternate Data Streams and a trailing dot/space both resolve to a
+    // different on-disk name than the text shown, bypassing exact-name checks.
+    if (hasAdsColonStream(path_str) || hasTrailingDotOrSpace(path_str)) {
+        return true;
+    }
 
     // Unusual characters that might indicate injection
     if (path_str.find('\0') != std::string::npos || path_str.find('\n') != std::string::npos ||
@@ -389,25 +631,26 @@ bool input_validator::containsNullBytes(std::string_view str) noexcept {
 }
 
 bool input_validator::containsControlChars(std::string_view str) noexcept {
-    return std::any_of(str.begin(), str.end(), [](unsigned char c) {
+    return std::ranges::any_of(str, [](unsigned char c) {
         return std::iscntrl(c) && c != '\n' && c != '\r' && c != '\t';
     });
 }
 
 bool input_validator::isValidUtf8(std::string_view str) noexcept {
-    Q_ASSERT(!str.empty());
-    Q_ASSERT(str.data());
+    // An empty string is vacuously valid UTF-8; do not assert non-empty (that
+    // crashed debug builds on a legitimate empty input). The loop below handles
+    // an empty view correctly.
     std::size_t i = 0;
 
     while (i < str.length()) {
-        unsigned char c = static_cast<unsigned char>(str[i]);
+        const unsigned char c = static_cast<unsigned char>(str[i]);
 
         if (c < kAsciiLimit) {
             i++;
             continue;
         }
 
-        int seq_len = checkMultiByteUtf8(str, i);
+        const int seq_len = checkMultiByteUtf8(str, i);
         if (seq_len == 0) {
             return false;
         }
@@ -418,17 +661,17 @@ bool input_validator::isValidUtf8(std::string_view str) noexcept {
 }
 
 std::string input_validator::sanitizeString(std::string_view str, bool allow_unicode) {
-    Q_ASSERT(!str.empty());
-    Q_ASSERT(str.data());
+    // Sanitizing an empty string yields an empty string; do not assert non-empty
+    // (a debug-only crash on legitimate input). The loop handles an empty view.
     std::string result;
     result.reserve(str.length());
 
-    for (unsigned char c : str) {
+    for (const unsigned char c : str) {
         if (c == '\0') {
             continue;
         }
 
-        if (std::iscntrl(c) && c != '\n' && c != '\r' && c != '\t') {
+        if ((std::iscntrl(c) != 0) && c != '\n' && c != '\r' && c != '\t') {
             continue;
         }
 
@@ -449,7 +692,10 @@ std::string input_validator::sanitizeString(std::string_view str, bool allow_uni
 validation_result input_validator::validateBufferSize(std::size_t buffer_size,
                                                       std::size_t max_size,
                                                       std::size_t required_size) {
-    Q_ASSERT_X(max_size > 0, "validateBufferSize", "max_size must be positive");
+    // A zero maximum is a misconfiguration, not a validation that trivially passes.
+    if (max_size == 0) {
+        return failure(error_code::validation_failed, "Maximum buffer size must be positive");
+    }
 
     if (required_size > 0 && buffer_size < required_size) {
         return failure(error_code::validation_failed, "Buffer is too small");
@@ -468,8 +714,12 @@ validation_result input_validator::validateBufferSize(std::size_t buffer_size,
 
 validation_result input_validator::validate_disk_space(const std::filesystem::path& path,
                                                        std::uintmax_t required_bytes) {
-    Q_ASSERT_X(!path.empty(), "validate_disk_space", "path must not be empty");
-    Q_ASSERT_X(required_bytes > 0, "validate_disk_space", "required_bytes must be positive");
+    // Fail closed on an empty path or a zero byte requirement rather than run a
+    // trivially-true check.
+    if (path.empty() || required_bytes == 0) {
+        return failure(error_code::validation_failed,
+                       "Disk space check needs a path and a positive byte count");
+    }
 
     try {
         std::error_code ec;
@@ -493,7 +743,10 @@ validation_result input_validator::validate_disk_space(const std::filesystem::pa
 }
 
 validation_result input_validator::validate_available_memory(std::size_t required_bytes) {
-    Q_ASSERT_X(required_bytes > 0, "validate_available_memory", "required_bytes must be positive");
+    // A zero requirement is a misconfiguration.
+    if (required_bytes == 0) {
+        return failure(error_code::validation_failed, "Required memory must be positive");
+    }
 
     const auto available = get_available_memory_impl();
 
@@ -509,31 +762,15 @@ validation_result input_validator::validate_available_memory(std::size_t require
 }
 
 validation_result input_validator::validate_file_descriptor_limit() {
-#ifdef _WIN32
     // Windows has no POSIX file descriptor limit; always succeeds
     return success();
-#else
-    const auto current_count = get_file_descriptor_count_impl();
-    const auto limit = get_file_descriptor_limit_impl();
-
-    if (limit == 0) {
-        return success();  // Cannot determine, assume OK
-    }
-
-    // Warn if using more than 80% of limit
-    if (current_count > (limit * kFileDescriptorWarnNumerator / kFileDescriptorWarnDenominator)) {
-        logWarning("Approaching file descriptor limit: {}/{}", current_count, limit);
-        return failure(error_code::resource_limit_reached, "Approaching file descriptor limit");
-    }
-
-    return success();
-#endif
 }
 
 validation_result input_validator::validate_thread_count(std::size_t requested_threads) {
-    Q_ASSERT_X(requested_threads > 0,
-               "validate_thread_count",
-               "requested_threads must be positive");
+    // A zero thread request is invalid, not a trivially-satisfied validation.
+    if (requested_threads == 0) {
+        return failure(error_code::validation_failed, "Requested thread count must be positive");
+    }
 
     const auto hardware_threads = std::thread::hardware_concurrency();
 
@@ -565,58 +802,26 @@ validation_result input_validator::validate_thread_count(std::size_t requested_t
 // ============================================
 
 validation_result input_validator::success() noexcept {
-    return validation_result{true, error_code::success, ""};
+    return validation_result{.is_valid = true, .error = error_code::success, .error_message = ""};
 }
 
 validation_result input_validator::failure(error_code err, std::string_view message) {
-    return validation_result{false, err, std::string(message)};
+    return validation_result{.is_valid = false,
+                             .error = err,
+                             .error_message = std::string(message)};
 }
 
 // ============================================
-// Platform-Specific Implementations
+// Windows Resource Implementation
 // ============================================
 
 std::uintmax_t input_validator::get_available_memory_impl() {
-#ifdef _WIN32
     MEMORYSTATUSEX mem_info;
     mem_info.dwLength = sizeof(MEMORYSTATUSEX);
-    if (GlobalMemoryStatusEx(&mem_info)) {
+    if (GlobalMemoryStatusEx(&mem_info) != 0) {
         return mem_info.ullAvailPhys;
     }
     return 0;
-#else
-    long pages = sysconf(_SC_AVPHYS_PAGES);
-    long page_size = sysconf(_SC_PAGE_SIZE);
-    if (pages > 0 && page_size > 0) {
-        return static_cast<std::uintmax_t>(pages) * static_cast<std::uintmax_t>(page_size);
-    }
-    return 0;
-#endif
 }
-
-#ifndef _WIN32
-std::size_t input_validator::get_file_descriptor_count_impl() {
-    // Count open file descriptors in /proc/self/fd
-    std::size_t count = 0;
-    try {
-        for (const auto& entry : std::filesystem::directory_iterator("/proc/self/fd")) {
-            (void)entry;
-            ++count;
-        }
-    } catch (const std::exception& e) {
-        logDebug("Failed to enumerate /proc/self/fd for file descriptor count: {}", e.what());
-        return 0;  // Cannot determine
-    }
-    return count;
-}
-
-std::size_t input_validator::get_file_descriptor_limit_impl() {
-    struct rlimit limit;
-    if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
-        return limit.rlim_cur;
-    }
-    return 0;
-}
-#endif
 
 }  // namespace sak

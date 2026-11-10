@@ -13,16 +13,32 @@
 
 namespace sak {
 
+namespace quick_action_elevation {
+constexpr char kVerifySystemFilesName[] = "Verify System Files";
+constexpr char kVerifySystemFilesTaskId[] = "Verify System Files";
+constexpr char kCheckDiskErrorsName[] = "Check Disk Errors";
+constexpr char kCheckDiskErrorsTaskId[] = "Check Disk Errors";
+constexpr char kResetNetworkName[] = "Reset Network Settings";
+constexpr char kResetNetworkTaskId[] = "Reset Network";
+constexpr char kBackupBitLockerKeysName[] = "BitLocker Key Backup";
+constexpr char kBackupBitLockerKeysTaskId[] = "Backup BitLocker Keys";
+/// In a helper task's payload: a person agreed to the action's output folder warning.
+constexpr char kOutputFolderWarningAcceptedKey[] = "output_folder_warning_accepted";
+constexpr char kDefenderQuickScanName[] = "Microsoft Defender Quick Scan";
+constexpr char kDefenderQuickScanTaskId[] = "Defender Quick Scan";
+constexpr char kDefenderFullScanName[] = "Microsoft Defender Full Scan";
+constexpr char kDefenderFullScanTaskId[] = "Defender Full Scan";
+constexpr char kDefenderSignatureUpdateName[] = "Microsoft Defender Signature Update";
+constexpr char kDefenderSignatureUpdateTaskId[] = "Defender Signature Update";
+}  // namespace quick_action_elevation
+
 // ============================================================================
 // Retry / backoff policy
 // ============================================================================
 
-constexpr int kRetryCountDefault = 3;         ///< Default retry attempts
-constexpr int kRetryCountHigh = 5;            ///< Higher retry attempts
-constexpr int kRetryBackoffBaseMs = 2000;     ///< Retry backoff base
-constexpr int kRetryBackoffBaseFastMs = 500;  ///< Fast retry backoff
-constexpr int kRetryBackoffMaxMs = 60'000;    ///< Retry backoff ceiling
-constexpr int kRetryBackoffSlowMs = 5000;     ///< Slow retry backoff
+constexpr int kRetryCountDefault = 3;      ///< Default retry attempts
+constexpr int kRetryCountHigh = 5;         ///< Higher retry attempts
+constexpr int kRetryBackoffSlowMs = 5000;  ///< Slow retry backoff
 
 // ============================================================================
 // Process exit codes
@@ -30,7 +46,6 @@ constexpr int kRetryBackoffSlowMs = 5000;     ///< Slow retry backoff
 
 constexpr int kExitSuccess = 0;
 constexpr int kExitRebootRequired = 3010;  ///< Windows restart needed
-constexpr int kExitNoUpdate = 2;           ///< Chocolatey "already installed"
 
 // ============================================================================
 // Chocolatey / package manager
@@ -38,7 +53,6 @@ constexpr int kExitNoUpdate = 2;           ///< Chocolatey "already installed"
 
 constexpr int kChocoTimeoutDefaultSec = 300;   ///< Default choco --execution-timeout
 constexpr int kChocoTimeoutExtendedSec = 900;  ///< Extended choco timeout
-constexpr int kChocoMaxPackageBatch = 10;      ///< Max packages in batch install
 
 // ============================================================================
 // Progress step helpers
@@ -53,7 +67,6 @@ constexpr int kStep3 = 3;
 constexpr int kStep5 = 5;
 constexpr int kStep10 = 10;
 constexpr int kStep15 = 15;
-constexpr int kStep20 = 20;
 constexpr int kStep25 = 25;
 constexpr int kStep30 = 30;
 constexpr int kStep35 = 35;

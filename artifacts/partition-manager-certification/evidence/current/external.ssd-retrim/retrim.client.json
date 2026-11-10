@@ -1,0 +1,89 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T15:54:16.535Z",
+    "disk_before": {
+        "bus_type": "NVMe",
+        "disk_number": 0,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "SSD",
+        "model": "SAMSUNG MZVL2512HCJQ-00BH1",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "53a53c0c25394c9d6ea8ce84e1ac35d148e95e481855f2f4ee42da1540500318",
+        "size_bytes": "512110190592"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "c2fff2b3-0ad5-4150-bdb1-41cb62a78446",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Run SSD ReTrim on T:\r\nNTFS DisableDeleteNotify = 0  (Allows TRIM operations to be sent to the storage device)\r\nReFS DisableDeleteNotify = 0  (Allows TRIM operations to be sent to the storage device)\r\nVERBOSE: Invoking retrim on SAKTRIM (T:)...\r\nVERBOSE: Retrim:  0% complete...\nVERBOSE: Retrim:  100% complete.  \nVERBOSE: \r\nPost Defragmentation Report:\nVERBOSE: \r\r\n Volume Information:\nVERBOSE:   Volume size                 = 3.99 GB\nVERBOSE:   Cluster size                = 4 KB\nVERBOSE:   Used space                  = 47.41 MB\nVERBOSE:   Free space                  = 3.95 GB\nVERBOSE: \r\r\n Retrim:\nVERBOSE:   Backed allocations          = 4\nVERBOSE:   Allocations trimmed         = 3\nVERBOSE:   Total space trimmed         = 2.95 GB\n",
+                "success": true,
+                "summary": "TRIM SSD Volume - Disk 0 Partition 2"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "OptimizeSsd",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "c2fff2b3-0ad5-4150-bdb1-41cb62a78446",
+            "payload": {
+                "drive_letter": "T"
+            },
+            "script_sha256": "d89a8139dd3c2bb0628956c1f3c970f4918058c46220bb4b0d3fd9b084e60bd7",
+            "summary": "TRIM SSD Volume - Disk 0 Partition 2",
+            "target": {
+                "disk_number": 0,
+                "disk_unique_id": "eui.002538B821B737C0",
+                "drive_letter": "T",
+                "kind": "Partition",
+                "offset_bytes": "16777216",
+                "partition_number": 2,
+                "size_bytes": "4294967296"
+            },
+            "type": "TRIM SSD Volume",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "977d27c83181e78b5340185ec9ada74c3f7f3110150a59780c8e9e18e7514a8e",
+        "layout_hash": "f033a1b2e413d9f6214a0ec4d14277f5c2429bae0f6e3ea032a2b8b41abf868a",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "dbf4576c-b378-4960-bd27-2d144d5596de",
+    "scenario_id": "external.ssd-retrim",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T15:53:56.041Z",
+    "status": "Passed",
+    "step": "retrim",
+    "tool": "partition-manager-scenario-step"
+}

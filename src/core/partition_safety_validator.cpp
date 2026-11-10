@@ -6,15 +6,54 @@
 
 #include "sak/partition_safety_validator.h"
 
+#include "sak/partition_os_migration.h"
+#include "sak/partition_raw_device_io.h"
+
+#include <QDir>
+#include <QFileInfo>
 #include <QSet>
 #include <QStringList>
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <limits>
 #include <optional>
 
+#include <windows.h>
+
 namespace sak {
+
+PartitionPathVolumeIdentity resolvePartitionPathVolumeIdentity(const QString& path) {
+    constexpr DWORD kPathBufferChars = 32'768;
+    QString native_path = QDir::toNativeSeparators(path.trimmed());
+    if (native_path.isEmpty()) {
+        return {.volume_guid = {}, .error = QStringLiteral("Backup path is empty")};
+    }
+    while (!QFileInfo::exists(native_path)) {
+        const QString parent = QFileInfo(native_path).dir().absolutePath();
+        if (parent == native_path || parent.isEmpty()) {
+            return {.volume_guid = {},
+                    .error = QStringLiteral("No existing backup-path ancestor was found")};
+        }
+        native_path = QDir::toNativeSeparators(parent);
+    }
+    std::wstring volume_root(kPathBufferChars, L'\0');
+    if (!GetVolumePathNameW(
+            reinterpret_cast<LPCWSTR>(native_path.utf16()), volume_root.data(), kPathBufferChars)) {
+        return {.volume_guid = {},
+                .error = QStringLiteral("GetVolumePathNameW failed (%1)").arg(GetLastError())};
+    }
+    std::wstring volume_name(kPathBufferChars, L'\0');
+    if (!GetVolumeNameForVolumeMountPointW(
+            volume_root.c_str(), volume_name.data(), kPathBufferChars)) {
+        return {.volume_guid = {},
+                .error = QStringLiteral("GetVolumeNameForVolumeMountPointW failed (%1)")
+                             .arg(GetLastError())};
+    }
+    return {.volume_guid = QString::fromWCharArray(volume_name.c_str()).trimmed().toUpper(),
+            .error = {}};
+}
 
 namespace {
 
@@ -28,16 +67,23 @@ constexpr uint64_t kAllocationUnit16KbBytes = 16 * 1024;
 constexpr uint64_t kAllocationUnit32KbBytes = 32 * 1024;
 constexpr uint64_t kAllocationUnit64KbBytes = 64 * 1024;
 constexpr uint64_t kAllocateFreeSpaceMinimumRemainderBytes = 64ULL * 1024ULL * 1024ULL;
+// Windows aligns the first partition at 1 MiB, which covers the protective MBR, the GPT
+// header and the GPT entry array; the same span at the tail of the disk holds the backup GPT.
+// A raw region write inside either span destroys the target disk's partition table.
+constexpr uint64_t kPartitionTableReserveBytes = 1024ULL * 1024ULL;
 constexpr auto kApfsRootFileNamePayload = "apfs_root_file_name";
 constexpr auto kApfsRootDirectoryNamePayload = "apfs_root_directory_name";
 constexpr auto kApfsRootFilePayloadBase64 = "apfs_root_file_payload_base64";
 constexpr auto kApfsRootFilePayloadText = "apfs_root_file_payload_text";
 constexpr auto kApfsRootFilePatchOffsetPayload = "apfs_root_file_patch_offset_bytes";
-constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_confirmed";
+constexpr auto kApfsCowMutationCertifiedPayload = "apfs_cow_mutation_certified";
 constexpr auto kApfsEncryptVolumePayload = "apfs_encrypt_volume";
+constexpr uint64_t kMaximumApfsEncryptedFormatBytes = 128ULL * 1024ULL * 1024ULL;
 constexpr auto kApfsVolumePasswordPayload = "apfs_volume_password";
 constexpr qsizetype kApfsVolumeLabelMaxChars = 255;
 constexpr qsizetype kApfsVolumeLabelFieldBytes = 256;
+// A raw "\\.\X:" volume alias's tail is a drive letter plus ':', i.e. exactly two characters.
+constexpr qsizetype kDriveLetterAliasLength = 2;
 constexpr auto kHfsPathPayload = "hfs_path";
 constexpr auto kHfsDestinationPathPayload = "hfs_destination_path";
 constexpr auto kHfsPayloadBase64 = "hfs_payload_base64";
@@ -150,16 +196,61 @@ void addWarningIf(PartitionValidationResult* result, bool warned, const QString&
 }
 
 bool blocksCurrentOsDiskMutation(const PartitionDiskInfo& disk, PartitionOperationType type) {
-    return disk.is_system && isDestructiveDiskOperation(type) && !isSystemAllowedOperation(type);
+    // Block destructive mutation of BOTH the system (ESP) disk and the boot (OS)
+    // disk. On a multi-disk boot config these are different disks: the OS lives
+    // on the is_boot disk while the ESP is on the is_system disk, so guarding
+    // is_system alone would let a WipeDisk destroy the running OS disk.
+    return (disk.is_system || disk.is_boot) && isDestructiveDiskOperation(type) &&
+           !isSystemAllowedOperation(type);
+}
+
+bool blocksCurrentOsDiskPartitionMutation(const PartitionDiskInfo& disk,
+                                          PartitionOperationType type) {
+    // Partition-scoped mirror of blocksCurrentOsDiskMutation: a destructive partition op that
+    // MUTATES a partition on the current OS disk (system/boot) is blocked in v1 even when that
+    // specific partition is not itself flagged protected. Without this an OS-disk DATA partition
+    // slips past blocksProtectedPartition (which guards only system/boot/efi/msr/recovery
+    // partitions) while blocksCurrentOsDiskMutation covers only whole-disk ops. ClonePartition
+    // READS the selected partition (its write target is a separate, independently validated
+    // disk), so it is excluded here.
+    return (disk.is_system || disk.is_boot) && isDestructivePartitionOperation(type) &&
+           type != PartitionOperationType::ClonePartition;
 }
 
 bool allowsDynamicDiskOperation(PartitionOperationType type) {
     return type == PartitionOperationType::ConvertDynamicDiskToBasic;
 }
 
+// A disk-scoped destructive operation (WipeDisk, InitializeDisk, CloneDisk,
+// ConvertPartitionStyle, DeleteAllPartitions, ...) MUST carry a whole-disk
+// target. validate() dispatches guards by target.kind, so a disk-scoped op
+// smuggled in with a Partition/Volume target would route to
+// validatePartitionOperation and skip every disk-state guard (OS-disk / wipe /
+// read-only / dynamic) while buildScript still keys on operation.type and emits
+// a whole-disk Clear-Disk against target.disk_number -- wiping the OS disk with
+// no guard. Reject any scope mismatch fail-closed. RestoreImage is legitimately
+// dual-scope (whole-disk or partition restore), so it is excluded by the
+// partition-scoped test; Unallocated targets are left to their own path.
+bool operationTargetScopeMismatch(const PartitionOperation& operation) {
+    const PartitionOperationType type = operation.type;
+    const PartitionTargetKind kind = operation.target.kind;
+    const bool diskScoped = isDestructiveDiskOperation(type);
+    const bool partitionScoped = isDestructivePartitionOperation(type);
+    if (diskScoped && !partitionScoped && kind != PartitionTargetKind::Disk) {
+        return true;
+    }
+    if (partitionScoped && !diskScoped && kind == PartitionTargetKind::Disk) {
+        return true;
+    }
+    return false;
+}
+
 bool blocksDataDiskStyleConversion(const PartitionDiskInfo& disk, PartitionOperationType type) {
-    return type == PartitionOperationType::ConvertPartitionStyle && !disk.partitions.isEmpty() &&
-           !disk.is_system;
+    // Windows puts a Microsoft Reserved partition on a GPT disk as it initializes it. It holds no
+    // files, and a disk with only that on it is what a person calls empty.
+    const bool holds_data = std::ranges::any_of(
+        disk.partitions, [](const PartitionInfoEx& partition) { return !partition.is_msr; });
+    return type == PartitionOperationType::ConvertPartitionStyle && holds_data && !disk.is_system;
 }
 
 bool blocksUnsafeSystemStyleConversion(const PartitionDiskInfo& disk,
@@ -169,17 +260,6 @@ bool blocksUnsafeSystemStyleConversion(const PartitionDiskInfo& disk,
         operation.payload.value(QStringLiteral("target_style")).toString().toUpper();
     return disk.is_system && operation.type == PartitionOperationType::ConvertPartitionStyle &&
            (mode != QStringLiteral("mbr2gpt") || target_style != QStringLiteral("GPT"));
-}
-
-bool diskLooksSsd(const PartitionDiskInfo& disk) {
-    const QString media =
-        QStringLiteral("%1 %2 %3").arg(disk.media_type, disk.bus_type, disk.model).toUpper();
-    return media.contains(QStringLiteral("SSD")) || media.contains(QStringLiteral("NVME"));
-}
-
-bool diskLooksHdd(const PartitionDiskInfo& disk) {
-    const QString media = QStringLiteral("%1 %2").arg(disk.media_type, disk.model).toUpper();
-    return media.contains(QStringLiteral("HDD")) || media.contains(QStringLiteral("HARD"));
 }
 
 bool requiresTargetOverwriteConfirmation(const PartitionOperation& operation) {
@@ -230,15 +310,44 @@ bool hasUnlockedBitLockerVolume(const PartitionInfoEx& partition) {
            !partition.volume->bitlocker_locked;
 }
 
+bool hasUnknownBitLockerState(const PartitionInfoEx& partition) {
+    // Pending means Apply reads it in the helper and comes back here before anything is written.
+    return partition.volume && !partition.volume->bitlocker_state_known &&
+           !partition.volume->administrator_state_pending &&
+           !partition.volume->bitlocker_state_error.trimmed().isEmpty();
+}
+
 bool hasDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType type) {
-    return partition.volume && partition.volume->dirty_bit_set &&
-           type != PartitionOperationType::RepairBoot;
+    return partition.volume && partition.volume->dirty_bit_known &&
+           partition.volume->dirty_bit_set && type != PartitionOperationType::RepairBoot;
+}
+
+bool hasUnknownDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType type) {
+    return partition.volume && partition.volume->hasDriveLetter() &&
+           !partition.volume->dirty_bit_known && !partition.volume->administrator_state_pending &&
+           !partition.volume->bitlocker_locked && type != PartitionOperationType::RepairBoot;
+}
+
+QString unknownDirtyVolumeWarning(const PartitionInfoEx& partition) {
+    const QString reason = partition.volume ? partition.volume->dirty_bit_error.trimmed()
+                                            : QString();
+    return reason.isEmpty()
+               ? QStringLiteral("File system dirty state could not be determined")
+               : QStringLiteral("File system dirty state could not be determined: %1").arg(reason);
 }
 
 uint64_t payloadUInt64(const PartitionOperation& operation, const QString& key) {
     const auto value = operation.payload.value(key);
     if (value.isDouble()) {
-        return static_cast<uint64_t>(value.toDouble());
+        // Casting a non-finite, negative, or >= 2^64 JSON number straight to uint64 is
+        // undefined behavior; accept only a finite value in [0, 2^64) and treat anything else
+        // as absent so the validator never reasons about a garbage size/offset.
+        const double number = value.toDouble();
+        if (std::isfinite(number) && number >= 0.0 &&
+            number < static_cast<double>(std::numeric_limits<uint64_t>::max())) {
+            return static_cast<uint64_t>(number);
+        }
+        return 0;
     }
     bool ok = false;
     const auto parsed = value.toString().toULongLong(&ok);
@@ -246,13 +355,12 @@ uint64_t payloadUInt64(const PartitionOperation& operation, const QString& key) 
 }
 
 bool payloadBool(const PartitionOperation& operation, const QString& key) {
+    // Fail closed on type: a confirmation/marker flag counts only when supplied as a real
+    // JSON bool. A stringly-typed "true"/"1"/"yes" is a wrong-typed input and must never be
+    // coerced into authorizing a destructive operation; anything but a genuine bool reads
+    // false so absent/malformed confirmations block rather than proceed.
     const auto value = operation.payload.value(key);
-    if (value.isBool()) {
-        return value.toBool();
-    }
-    const QString text = value.toString().trimmed().toLower();
-    return text == QStringLiteral("true") || text == QStringLiteral("1") ||
-           text == QStringLiteral("yes");
+    return value.isBool() && value.toBool();
 }
 
 bool isNonNativeFileSystemToolOperation(const PartitionOperation& operation) {
@@ -324,8 +432,21 @@ bool isSupportedNonNativeFileSystemToolOperation(const PartitionOperation& opera
         PartitionOperationType::HfsCreateHardlink,
         PartitionOperationType::HfsDeleteHardlink,
     };
-    return std::find(std::begin(kSupportedTypes), std::end(kSupportedTypes), operation.type) !=
-           std::end(kSupportedTypes);
+    return std::ranges::find(kSupportedTypes, operation.type) != std::end(kSupportedTypes);
+}
+
+// APFS operations that act on the CONTAINER or on whole objects rather than on a root file's
+// bytes: snapshot create/delete/revert, clone, hardlink, and the container grow. They are listed
+// in isSupportedNonNativeFileSystemToolOperation above, so they must also be recognized by the
+// filesystem-pairing table below; otherwise the two tables disagree and every one of them is
+// blocked unconditionally no matter which filesystem is selected.
+bool isApfsContainerToolOperation(PartitionOperationType type) {
+    return type == PartitionOperationType::ApfsSnapshotCreate ||
+           type == PartitionOperationType::ApfsSnapshotDelete ||
+           type == PartitionOperationType::ApfsSnapshotRevert ||
+           type == PartitionOperationType::ApfsCloneRootFile ||
+           type == PartitionOperationType::ApfsHardlinkRootFile ||
+           type == PartitionOperationType::ApfsResizeContainer;
 }
 
 bool isApfsRootFileMutationOperation(PartitionOperationType type) {
@@ -418,12 +539,12 @@ QString normalizedTargetPath(const PartitionOperation& operation) {
 }
 
 QString canonicalRawPartitionTargetPath(const PartitionOperation& operation) {
-    if (operation.target.partition_number == 0) {
+    if (operation.target.partition_number.value() == 0) {
         return {};
     }
     return QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk%1\\Partition%2")
-        .arg(operation.target.disk_number)
-        .arg(operation.target.partition_number);
+        .arg(operation.target.disk_number.value())
+        .arg(operation.target.partition_number.value());
 }
 
 bool targetPathMatchesSelectedRawPartition(const PartitionOperation& operation) {
@@ -441,29 +562,92 @@ QString normalizedBackupDirectory(const PartitionOperation& operation) {
     return path;
 }
 
+QString normalizedBackupVolumeGuid(const PartitionOperation& operation) {
+    return operation.payload.value(QStringLiteral("backup_volume_guid"))
+        .toString()
+        .trimmed()
+        .toUpper();
+}
+
+bool backupVolumeMatches(const PartitionOperation& operation, const PartitionVolumeInfo& volume) {
+    return !volume.volume_guid.trimmed().isEmpty() &&
+           normalizedBackupVolumeGuid(operation) == volume.volume_guid.trimmed().toUpper();
+}
+
+// Raw-device classification is ONE authority (sak::isWindowsRawDevicePath in
+// partition_raw_device_io.cpp) shared by the plan-time validator, the raw I/O layer and the
+// clone/image script builder. Accepting a \\?\ device spelling here while the executor
+// recognized only \\.\ is what let a validator-approved target skip the executor's
+// take-offline / IsBoot re-check, so no caller re-derives the rule locally.
 bool targetPathIsRawDevice(const PartitionOperation& operation) {
-    return normalizedTargetPath(operation).startsWith(QStringLiteral("\\\\.\\"),
-                                                      Qt::CaseInsensitive);
+    return isWindowsRawDevicePath(normalizedTargetPath(operation));
 }
 
 std::optional<uint32_t> physicalDriveNumberFromPath(const QString& targetPath) {
-    QString path = targetPath.trimmed();
-    path.replace('/', '\\');
-    const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
-    if (!path.startsWith(prefix, Qt::CaseInsensitive)) {
-        return std::nullopt;
-    }
-
-    bool ok = false;
-    const uint value = path.mid(prefix.size()).toUInt(&ok);
-    if (!ok) {
-        return std::nullopt;
-    }
-    return static_cast<uint32_t>(value);
+    return rawDevicePhysicalDriveNumber(targetPath);
 }
 
 std::optional<uint32_t> targetPhysicalDriveNumber(const PartitionOperation& operation) {
     return physicalDriveNumberFromPath(normalizedTargetPath(operation));
+}
+
+// A raw "\\.\X:" volume alias resolves to a drive letter; unlike \\.\PhysicalDriveN it still
+// writes to a real disk but is not caught by targetPhysicalDriveNumber.
+std::optional<QString> rawVolumeAliasLetter(const QString& targetPath) {
+    QString path = targetPath.trimmed();
+    path.replace('/', '\\');
+    const QString prefix = QStringLiteral("\\\\.\\");
+    if (!path.startsWith(prefix, Qt::CaseInsensitive)) {
+        return std::nullopt;
+    }
+    const QString rest = path.mid(prefix.size());
+    if (rest.size() == kDriveLetterAliasLength && rest.at(0).isLetter() &&
+        rest.at(1) == QLatin1Char(':')) {
+        return rest.left(1).toUpper();
+    }
+    return std::nullopt;
+}
+
+const PartitionDiskInfo* diskForDriveLetter(const PartitionInventory& inventory,
+                                            const QString& letter) {
+    for (const auto& disk : inventory.disks) {
+        const bool hasMatchingVolume =
+            std::ranges::any_of(disk.partitions, [&](const auto& partition) {
+                return partition.volume &&
+                       partition.volume->drive_letter.compare(letter, Qt::CaseInsensitive) == 0;
+            });
+        if (hasMatchingVolume) {
+            return &disk;
+        }
+    }
+    return nullptr;
+}
+
+// Disk number a raw device target addresses. Covers \\.\ and \\?\ PhysicalDriveN plus the
+// app's own canonical raw target \\?\GLOBALROOT\Device\HarddiskN\PartitionM (built from
+// target.disk_number). Lets the disk-safety checks resolve a raw GLOBALROOT/PhysicalDrive
+// write to a known disk by NUMBER (not only a \\.\X: drive letter); an unparseable/unknown
+// target still fails closed at the call site.
+std::optional<uint32_t> rawTargetDiskNumber(const QString& targetPath) {
+    if (const auto physical = physicalDriveNumberFromPath(targetPath)) {
+        return physical;
+    }
+    QString path = targetPath.trimmed();
+    path.replace('/', '\\');
+    const QString marker = QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk");
+    if (!path.startsWith(marker, Qt::CaseInsensitive)) {
+        return std::nullopt;
+    }
+    QString digits;
+    for (const QChar c : path.mid(marker.size())) {
+        if (!c.isDigit()) {
+            break;
+        }
+        digits.append(c);
+    }
+    bool ok = false;
+    const uint value = digits.toUInt(&ok);
+    return ok ? std::optional<uint32_t>(static_cast<uint32_t>(value)) : std::nullopt;
 }
 
 bool targetPathIsPhysicalDrive(const PartitionOperation& operation) {
@@ -479,6 +663,26 @@ bool targetPathStartsWithDrive(const QString& targetPath, const QString& driveLe
     return targetPath.startsWith(drivePrefix, Qt::CaseInsensitive);
 }
 
+// A "\\?\Volume{GUID}\" alias names a volume without a drive letter. Match the stable {GUID}
+// token so a volume-GUID target path is recognized as the same volume despite path-form
+// differences (trailing slash, \\?\ vs \\.\).
+bool targetPathReferencesVolumeGuid(const QString& targetPath, const QString& volumeGuid) {
+    if (volumeGuid.isEmpty()) {
+        return false;
+    }
+    const int open = static_cast<int>(volumeGuid.indexOf(QLatin1Char('{')));
+    const int close = static_cast<int>(volumeGuid.indexOf(QLatin1Char('}'), open + 1));
+    if (open >= 0 && close > open) {
+        return targetPath.contains(volumeGuid.mid(open, close - open + 1), Qt::CaseInsensitive);
+    }
+    return targetPath.contains(volumeGuid, Qt::CaseInsensitive);
+}
+
+bool targetPathReferencesVolume(const QString& targetPath, const PartitionVolumeInfo& volume) {
+    return targetPathStartsWithDrive(targetPath, volume.drive_letter) ||
+           targetPathReferencesVolumeGuid(targetPath, volume.volume_guid);
+}
+
 bool createImageTargetsRawDevice(const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::CreateImage &&
            targetPathIsRawDevice(operation);
@@ -487,8 +691,7 @@ bool createImageTargetsRawDevice(const PartitionOperation& operation) {
 bool createImageTargetsSourcePartition(const PartitionInfoEx& partition,
                                        const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::CreateImage && partition.volume &&
-           targetPathStartsWithDrive(normalizedTargetPath(operation),
-                                     partition.volume->drive_letter);
+           targetPathReferencesVolume(normalizedTargetPath(operation), *partition.volume);
 }
 
 bool createImageTargetsSourceDisk(const PartitionDiskInfo& disk,
@@ -497,10 +700,12 @@ bool createImageTargetsSourceDisk(const PartitionDiskInfo& disk,
         return false;
     }
     const QString targetPath = normalizedTargetPath(operation);
-    return std::any_of(
-        disk.partitions.cbegin(), disk.partitions.cend(), [&targetPath](const auto& p) {
-            return p.volume && targetPathStartsWithDrive(targetPath, p.volume->drive_letter);
-        });
+    return std::ranges::any_of(disk.partitions,
+
+                               [&targetPath](const auto& p) {
+                                   return p.volume &&
+                                          targetPathReferencesVolume(targetPath, *p.volume);
+                               });
 }
 
 bool isSupportedAllocationUnitSize(uint64_t value) {
@@ -518,14 +723,14 @@ bool isSupportedExplicitChangeClusterUnit(const PartitionOperation& operation) {
 
 bool changeClusterMissingBackup(const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::ChangeClusterSize &&
-           normalizedBackupDirectory(operation).isEmpty();
+           (normalizedBackupDirectory(operation).isEmpty() ||
+            normalizedBackupVolumeGuid(operation).isEmpty());
 }
 
 bool changeClusterBackupOnTargetVolume(const PartitionInfoEx& partition,
                                        const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::ChangeClusterSize && partition.volume &&
-           targetPathStartsWithDrive(normalizedBackupDirectory(operation),
-                                     partition.volume->drive_letter);
+           backupVolumeMatches(operation, *partition.volume);
 }
 
 bool changeClusterMissingConfirmation(const PartitionOperation& operation) {
@@ -573,6 +778,10 @@ bool createTypeMatchesFileSystem(const PartitionOperation& operation) {
     return true;
 }
 
+// Fit is checked against the queued region (operation.target). Detecting a layout change
+// between preview and apply is the app layer's job via confirm_layout_hash drift detection
+// plus the recovery-candidate overlap/exceeds guards; this validator intentionally reasons
+// only about the region the operation was queued against.
 bool createFitsSelectedRegion(const PartitionOperation& operation) {
     const uint64_t requestedSize = payloadUInt64(operation, QStringLiteral("size_bytes"));
     const uint64_t relativeOffset = payloadUInt64(operation,
@@ -603,30 +812,6 @@ void validateCreateUnallocatedPayload(const PartitionOperation& operation,
     addBlockerIf(result,
                  !createTypeMatchesFileSystem(operation),
                  QStringLiteral("Create partition type is incompatible with the file system"));
-}
-
-uint64_t saturatingAdd(uint64_t left, uint64_t right) {
-    if (std::numeric_limits<uint64_t>::max() - left < right) {
-        return std::numeric_limits<uint64_t>::max();
-    }
-    return left + right;
-}
-
-uint64_t usedBytes(const PartitionInfoEx& partition) {
-    if (!partition.volume || partition.volume->total_bytes < partition.volume->free_bytes) {
-        return 0;
-    }
-    return partition.volume->total_bytes - partition.volume->free_bytes;
-}
-
-uint64_t adjacentFreeBytesAfter(const PartitionDiskInfo& disk, const PartitionInfoEx& partition) {
-    const uint64_t partitionEnd = saturatingAdd(partition.offset_bytes, partition.size_bytes);
-    const auto it = std::find_if(disk.unallocated_regions.cbegin(),
-                                 disk.unallocated_regions.cend(),
-                                 [partitionEnd](const auto& region) {
-                                     return region.offset_bytes == partitionEnd;
-                                 });
-    return it == disk.unallocated_regions.cend() ? 0 : it->size_bytes;
 }
 
 bool resizeTargetMissing(const PartitionOperation& operation) {
@@ -672,26 +857,47 @@ bool nonNativeToolUnsupportedOperation(const PartitionOperation& operation) {
            !isSupportedNonNativeFileSystemToolOperation(operation);
 }
 
+bool isCreateOrFormatOperation(PartitionOperationType type) {
+    return type == PartitionOperationType::Create || type == PartitionOperationType::Format;
+}
+
+bool isCreateFormatOrCheckOperation(PartitionOperationType type) {
+    return isCreateOrFormatOperation(type) || type == PartitionOperationType::CheckFileSystem;
+}
+
+// ext supports exactly what the refusal message advertises -- create, format, repair (the check
+// operation carries the repair mode) and resize.
+bool isExtSupportedOperation(PartitionOperationType type) {
+    return isCreateFormatOrCheckOperation(type) || type == PartitionOperationType::Resize;
+}
+
+// Every APFS-only operation: the root-file/directory mutations plus the container-level work
+// (snapshot create/delete/revert, clone, hard link, container grow).
+bool isApfsOnlyToolOperation(PartitionOperationType type) {
+    return isApfsRootFileMutationOperation(type) || isApfsContainerToolOperation(type);
+}
+
 bool nonNativeFileSystemSupportedForOperation(PartitionOperationType type,
                                               const QString& fileSystem) {
+    // A blanket "ext supports everything" here granted an ext payload EVERY operation type,
+    // including the APFS- and HFS-specific mutations that have no ext implementation, so the
+    // gate failed OPEN for those pairings.
     if (isExtFileSystemToken(fileSystem)) {
-        return true;
+        return isExtSupportedOperation(type);
     }
-    const bool createOrFormat = type == PartitionOperationType::Create ||
-                                type == PartitionOperationType::Format;
     if (isLinuxSwapFileSystemToken(fileSystem)) {
-        return createOrFormat;
+        return isCreateOrFormatOperation(type);
     }
-    const bool createFormatOrCheck = createOrFormat ||
-                                     type == PartitionOperationType::CheckFileSystem;
-    const bool apfsRootMutation = isApfsRootFileMutationOperation(type);
-    if (apfsRootMutation) {
+    // The container operations previously had no branch at all and fell through to the
+    // create/format/check tail below, which reported them unsupported for EVERY filesystem --
+    // so the APFS Container dialog could queue an operation the validator then always blocked.
+    if (isApfsOnlyToolOperation(type)) {
         return isApfsFileSystemToken(fileSystem);
     }
     if (isHfsFileMutationOperation(type)) {
         return isHfsFileSystemToken(fileSystem);
     }
-    return createFormatOrCheck &&
+    return isCreateFormatOrCheckOperation(type) &&
            (isHfsFileSystemToken(fileSystem) || isApfsFileSystemToken(fileSystem));
 }
 
@@ -735,9 +941,9 @@ bool apfsRootFileMutationMissingConfirmation(const PartitionOperation& operation
            !payloadBool(operation, QStringLiteral("target_wipe_confirmed"));
 }
 
-bool apfsRootFileMutationMissingLayoutConfirmation(const PartitionOperation& operation) {
+bool apfsRootFileMutationMissingCowCertification(const PartitionOperation& operation) {
     return isApfsRootFileMutationOperation(operation.type) &&
-           !payloadBool(operation, QString::fromLatin1(kApfsGeneratedLayoutConfirmedPayload));
+           !payloadBool(operation, QString::fromLatin1(kApfsCowMutationCertifiedPayload));
 }
 
 bool apfsRootFileMutationMissingFileName(const PartitionOperation& operation) {
@@ -891,7 +1097,6 @@ bool nonNativeResizeShrinkNeedsUsageMetadata(const PartitionInfoEx& partition,
 
 bool blocksTooSmallCloneTarget(const PartitionOperation& operation) {
     const bool cloneOperation = operation.type == PartitionOperationType::CloneDisk ||
-                                operation.type == PartitionOperationType::MigrateOs ||
                                 operation.type == PartitionOperationType::RestoreImage;
     const uint64_t sourceSize = payloadUInt64(operation, QStringLiteral("source_size_bytes"));
     const uint64_t targetSize = payloadUInt64(operation, QStringLiteral("target_size_bytes"));
@@ -904,11 +1109,21 @@ bool restoreImageMissingKnownSizes(const PartitionOperation& operation) {
             payloadUInt64(operation, QStringLiteral("target_size_bytes")) == 0);
 }
 
+// Clone/Migrate must know both source and target sizes before touching the target: an
+// unknown (zero) size can neither be range-checked against the target nor bounded during
+// the byte copy, so the operation fails closed rather than proceed with an unbounded write.
+bool cloneOrMigrateMissingKnownSizes(const PartitionOperation& operation) {
+    return (operation.type == PartitionOperationType::CloneDisk ||
+            operation.type == PartitionOperationType::MigrateOs) &&
+           (payloadUInt64(operation, QStringLiteral("source_size_bytes")) == 0 ||
+            payloadUInt64(operation, QStringLiteral("target_size_bytes")) == 0);
+}
+
 bool clonePartitionTargetsRawDevice(const PartitionOperation& operation) {
-    const QString targetPath =
-        operation.payload.value(QStringLiteral("target_path")).toString().trimmed();
+    // Use the shared raw-device classifier so an extended-length \\?\ device spelling is
+    // recognized here too and still requires the target-wipe confirmation below.
     return operation.type == PartitionOperationType::ClonePartition &&
-           targetPath.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive);
+           targetPathIsRawDevice(operation);
 }
 
 bool clonePartitionTargetsRegion(const PartitionOperation& operation) {
@@ -921,11 +1136,82 @@ bool clonePartitionRegionMissingFields(const PartitionOperation& operation) {
     if (!clonePartitionTargetsRegion(operation)) {
         return false;
     }
-    const QString targetPath =
-        operation.payload.value(QStringLiteral("target_path")).toString().trimmed();
+    // target_offset_bytes must be supplied explicitly AND be non-zero: an absent offset
+    // defaults to 0 in the builder and an explicit 0 seeks the target device to sector 0,
+    // either of which writes the source over the target disk's partition table (GPT/MBR)
+    // instead of into the intended region. The target must also resolve to a physical drive
+    // through the shared classifier -- the same set of spellings the builder normalizes -- so
+    // the disk-number match and region-bounds proofs below always have a disk to check.
     return !operation.payload.contains(QStringLiteral("target_disk_number")) ||
-           !targetPath.startsWith(QStringLiteral("\\\\.\\PhysicalDrive"), Qt::CaseInsensitive) ||
+           payloadUInt64(operation, QStringLiteral("target_offset_bytes")) == 0 ||
+           !targetPathIsPhysicalDrive(operation) ||
            payloadUInt64(operation, QStringLiteral("target_size_bytes")) == 0;
+}
+
+// A partition clone copies source_size_bytes bytes into the target region. With an unknown
+// (zero) source size the executor derives the byte count from the source stream at run time,
+// so the too-small-target guard below has nothing to compare against and the write is
+// unbounded. An unknown size is not a size: refuse rather than discover it mid-copy.
+bool clonePartitionMissingKnownSourceSize(const PartitionOperation& operation) {
+    return operation.type == PartitionOperationType::ClonePartition &&
+           payloadUInt64(operation, QStringLiteral("source_size_bytes")) == 0;
+}
+
+// Byte span a partition-clone region occupies on the target disk. The declared region size and
+// the source size are both authoritative (the too-small guard keeps source <= target), so the
+// larger of the two is the span that must be proven to fit.
+uint64_t clonePartitionRegionSpan(const PartitionOperation& operation) {
+    return std::max(payloadUInt64(operation, QStringLiteral("source_size_bytes")),
+                    payloadUInt64(operation, QStringLiteral("target_size_bytes")));
+}
+
+// Unallocated regions are derived from the live partition table, so containment in one is a
+// positive proof that the span holds no existing partition -- not merely an absence of a
+// known overlap.
+bool clonePartitionRegionIsUnallocated(const PartitionDiskInfo& targetDisk,
+                                       uint64_t offset,
+                                       uint64_t span) {
+    const uint64_t end = offset + span;
+    return std::ranges::any_of(targetDisk.unallocated_regions,
+
+                               [offset, end](const auto& region) {
+                                   return offset >= region.offset_bytes &&
+                                          end <= region.offset_bytes + region.size_bytes;
+                               });
+}
+
+// The region a partition clone writes is proven against the LIVE target disk before any byte
+// leaves the source: it must fit inside the disk, clear the partition-table reserve at both
+// ends (the protective MBR/GPT header and entry array at the head, the backup GPT at the
+// tail), and land in space the inventory reports as unallocated. A region that cannot be
+// proven free is refused -- never clamped or trimmed to fit.
+void validateClonePartitionRegionBounds(const PartitionDiskInfo& targetDisk,
+                                        const PartitionOperation& operation,
+                                        PartitionValidationResult* result) {
+    if (!clonePartitionTargetsRegion(operation)) {
+        return;
+    }
+    const uint64_t offset = payloadUInt64(operation, QStringLiteral("target_offset_bytes"));
+    const uint64_t span = clonePartitionRegionSpan(operation);
+    if (offset == 0 || span == 0) {
+        return;  // Already refused by the region payload-shape blockers.
+    }
+    if (offset >= targetDisk.size_bytes || span > targetDisk.size_bytes - offset) {
+        result->blockers.append(
+            QStringLiteral("Partition clone target region does not fit within the target disk"));
+        return;
+    }
+    const uint64_t tailReserveStart = targetDisk.size_bytes > kPartitionTableReserveBytes
+                                          ? targetDisk.size_bytes - kPartitionTableReserveBytes
+                                          : 0;
+    addBlockerIf(result,
+                 offset < kPartitionTableReserveBytes || offset + span > tailReserveStart,
+                 QStringLiteral("Partition clone target region overlaps the target disk's "
+                                "partition-table reserve"));
+    addBlockerIf(result,
+                 !clonePartitionRegionIsUnallocated(targetDisk, offset, span),
+                 QStringLiteral("Partition clone target region must be free unallocated space "
+                                "on the target disk"));
 }
 
 bool clonePartitionPhysicalTargetMissingRegion(const PartitionOperation& operation) {
@@ -957,13 +1243,15 @@ bool recoveryCandidateOverlapsExistingPartition(const PartitionDiskInfo& disk,
     if (start == 0 || size == 0) {
         return false;
     }
-    const uint64_t end = start + size;
-    return std::any_of(disk.partitions.cbegin(),
-                       disk.partitions.cend(),
-                       [start, end](const auto& p) {
-                           const uint64_t partition_end = p.offset_bytes + p.size_bytes;
-                           return start < partition_end && end > p.offset_bytes;
-                       });
+    // Saturated, so a size typed past the end of the range cannot wrap round to an end before
+    // the partition it covers.
+    constexpr uint64_t kMax = std::numeric_limits<uint64_t>::max();
+    const uint64_t end = size > kMax - start ? kMax : start + size;
+    return std::ranges::any_of(disk.partitions, [start, end](const auto& p) {
+        const uint64_t partition_end =
+            p.size_bytes > kMax - p.offset_bytes ? kMax : p.offset_bytes + p.size_bytes;
+        return start < partition_end && end > p.offset_bytes;
+    });
 }
 
 bool recoveryCandidateExceedsDisk(const PartitionDiskInfo& disk,
@@ -1012,8 +1300,9 @@ bool isFatToNtfsConversion(const PartitionInfoEx& partition, PartitionOperationT
 bool mergeSourceIsAdjacentAfterTarget(const PartitionDiskInfo& disk,
                                       const PartitionInfoEx& target,
                                       uint32_t source_partition_number) {
-    const auto* source = PartitionSafetyValidator::findPartition(disk, source_partition_number);
-    return source && source->offset_bytes == target.offset_bytes + target.size_bytes;
+    const auto* source =
+        PartitionSafetyValidator::findPartition(disk, PartitionNumber{source_partition_number});
+    return (source != nullptr) && source->offset_bytes == target.offset_bytes + target.size_bytes;
 }
 
 const PartitionInfoEx* allocateDonorPartition(const PartitionDiskInfo& disk,
@@ -1023,12 +1312,12 @@ const PartitionInfoEx* allocateDonorPartition(const PartitionDiskInfo& disk,
     }
     const auto sourcePartition =
         static_cast<uint32_t>(payloadUInt64(operation, QStringLiteral("source_partition_number")));
-    return PartitionSafetyValidator::findPartition(disk, sourcePartition);
+    return PartitionSafetyValidator::findPartition(disk, PartitionNumber{sourcePartition});
 }
 
 bool allocationDonorSizeMismatch(const PartitionInfoEx* donor,
                                  const PartitionOperation& operation) {
-    if (operation.type != PartitionOperationType::AllocateFreeSpace || !donor) {
+    if (operation.type != PartitionOperationType::AllocateFreeSpace || (donor == nullptr)) {
         return false;
     }
     const uint64_t sourceSize = payloadUInt64(operation, QStringLiteral("source_size_bytes"));
@@ -1038,24 +1327,25 @@ bool allocationDonorSizeMismatch(const PartitionInfoEx* donor,
 bool allocationDonorIsAdjacentAfterTarget(const PartitionInfoEx& target,
                                           const PartitionInfoEx* donor,
                                           const PartitionOperation& operation) {
-    return operation.type == PartitionOperationType::AllocateFreeSpace && donor &&
+    return operation.type == PartitionOperationType::AllocateFreeSpace && (donor != nullptr) &&
            donor->offset_bytes == target.offset_bytes + target.size_bytes;
 }
 
 bool allocationDonorIsProtected(const PartitionInfoEx* donor, const PartitionOperation& operation) {
-    return operation.type == PartitionOperationType::AllocateFreeSpace && donor &&
+    return operation.type == PartitionOperationType::AllocateFreeSpace && (donor != nullptr) &&
            (PartitionSafetyValidator::isSystemProtectedPartition(*donor) || donor->is_read_only);
 }
 
 bool allocationDonorMissingMountedVolume(const PartitionInfoEx* donor,
                                          const PartitionOperation& operation) {
-    return operation.type == PartitionOperationType::AllocateFreeSpace && donor &&
+    return operation.type == PartitionOperationType::AllocateFreeSpace && (donor != nullptr) &&
            (!donor->volume || donor->volume->drive_letter.isEmpty());
 }
 
 bool allocationDonorVolumePayloadMismatch(const PartitionInfoEx* donor,
                                           const PartitionOperation& operation) {
-    if (operation.type != PartitionOperationType::AllocateFreeSpace || !donor || !donor->volume) {
+    if (operation.type != PartitionOperationType::AllocateFreeSpace || (donor == nullptr) ||
+        !donor->volume) {
         return false;
     }
     const QString payloadDrive =
@@ -1075,7 +1365,7 @@ bool allocationAmountMissing(const PartitionOperation& operation) {
 
 bool allocationLeavesDonorTooSmall(const PartitionInfoEx* donor,
                                    const PartitionOperation& operation) {
-    if (operation.type != PartitionOperationType::AllocateFreeSpace || !donor) {
+    if (operation.type != PartitionOperationType::AllocateFreeSpace || (donor == nullptr)) {
         return false;
     }
     const uint64_t bytes = payloadUInt64(operation, QStringLiteral("bytes_to_allocate"));
@@ -1089,7 +1379,8 @@ bool allocationLeavesDonorTooSmall(const PartitionInfoEx* donor,
 
 bool allocationMissingBackup(const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::AllocateFreeSpace &&
-           normalizedBackupDirectory(operation).isEmpty();
+           (normalizedBackupDirectory(operation).isEmpty() ||
+            normalizedBackupVolumeGuid(operation).isEmpty());
 }
 
 bool allocationBackupOnTargetOrDonor(const PartitionInfoEx& target,
@@ -1098,10 +1389,8 @@ bool allocationBackupOnTargetOrDonor(const PartitionInfoEx& target,
     if (operation.type != PartitionOperationType::AllocateFreeSpace) {
         return false;
     }
-    const QString backup = normalizedBackupDirectory(operation);
-    return (target.volume && targetPathStartsWithDrive(backup, target.volume->drive_letter)) ||
-           (donor && donor->volume &&
-            targetPathStartsWithDrive(backup, donor->volume->drive_letter));
+    return (target.volume && backupVolumeMatches(operation, *target.volume)) ||
+           ((donor != nullptr) && donor->volume && backupVolumeMatches(operation, *donor->volume));
 }
 
 bool allocationMissingConfirmation(const PartitionOperation& operation) {
@@ -1135,14 +1424,14 @@ bool backupRestoreMissingMountedVolume(const PartitionInfoEx& partition,
 
 bool backupRestoreMissingBackup(const PartitionOperation& operation) {
     return backupRestorePartitionOperation(operation.type) &&
-           normalizedBackupDirectory(operation).isEmpty();
+           (normalizedBackupDirectory(operation).isEmpty() ||
+            normalizedBackupVolumeGuid(operation).isEmpty());
 }
 
 bool backupRestoreBackupOnTargetVolume(const PartitionInfoEx& partition,
                                        const PartitionOperation& operation) {
     return backupRestorePartitionOperation(operation.type) && partition.volume &&
-           targetPathStartsWithDrive(normalizedBackupDirectory(operation),
-                                     partition.volume->drive_letter);
+           backupVolumeMatches(operation, *partition.volume);
 }
 
 bool backupRestoreMissingConfirmation(const PartitionOperation& operation) {
@@ -1193,14 +1482,13 @@ bool movePartitionOverlapsOtherPartitions(const PartitionDiskInfo& disk,
     }
     const uint64_t start = payloadUInt64(operation, QStringLiteral("target_offset_bytes"));
     const uint64_t end = start + payloadUInt64(operation, QStringLiteral("target_size_bytes"));
-    return std::any_of(
-        disk.partitions.cbegin(), disk.partitions.cend(), [&](const auto& candidate) {
-            if (candidate.partition_number == partition.partition_number) {
-                return false;
-            }
-            const uint64_t candidateEnd = candidate.offset_bytes + candidate.size_bytes;
-            return start < candidateEnd && end > candidate.offset_bytes;
-        });
+    return std::ranges::any_of(disk.partitions, [&](const auto& candidate) {
+        if (candidate.partition_number == partition.partition_number) {
+            return false;
+        }
+        const uint64_t candidateEnd = candidate.offset_bytes + candidate.size_bytes;
+        return start < candidateEnd && end > candidate.offset_bytes;
+    });
 }
 
 bool primaryLogicalTargetLayoutInvalid(const PartitionOperation& operation) {
@@ -1232,7 +1520,8 @@ bool dynamicToBasicMissingPayload(const PartitionOperation& operation) {
                 .trimmed()
                 .isEmpty() ||
             operation.payload.value(QStringLiteral("file_system")).toString().trimmed().isEmpty() ||
-            normalizedBackupDirectory(operation).isEmpty());
+            normalizedBackupDirectory(operation).isEmpty() ||
+            normalizedBackupVolumeGuid(operation).isEmpty());
 }
 
 bool dynamicToBasicMissingConfirmation(const PartitionOperation& operation) {
@@ -1246,12 +1535,13 @@ bool dynamicToBasicUnsupportedFileSystem(const PartitionOperation& operation) {
                operation.payload.value(QStringLiteral("file_system")).toString());
 }
 
-bool dynamicToBasicBackupOnSourceVolume(const PartitionOperation& operation) {
+bool dynamicToBasicBackupOnSourceVolume(const PartitionDiskInfo& disk,
+                                        const PartitionOperation& operation) {
     if (operation.type != PartitionOperationType::ConvertDynamicDiskToBasic) {
         return false;
     }
-    const QString drive = operation.payload.value(QStringLiteral("drive_letter")).toString();
-    return targetPathStartsWithDrive(normalizedBackupDirectory(operation), drive);
+    return disk.partitions.size() == 1 && disk.partitions.first().volume &&
+           backupVolumeMatches(operation, *disk.partitions.first().volume);
 }
 
 bool dynamicToBasicUnsupportedDisk(const PartitionDiskInfo& disk,
@@ -1260,12 +1550,59 @@ bool dynamicToBasicUnsupportedDisk(const PartitionDiskInfo& disk,
            (!disk.is_dynamic || disk.partitions.size() != 1);
 }
 
+// Drive letter of the single live volume a whole-disk backup/recreate destroys and rebuilds.
+QString singleVolumeDriveLetter(const PartitionDiskInfo& disk) {
+    if (disk.partitions.size() != 1 || !disk.partitions.first().volume) {
+        return {};
+    }
+    return disk.partitions.first().volume->drive_letter.left(1).toUpper();
+}
+
+// The recreate size and drive letter arrive in the payload, but the volume being wiped and
+// rebuilt is the live one the validator approved. A declared size that does not match the live
+// volume recreates the wrong geometry -- and a size too small to hold the backup is only
+// discovered after the source has already been destroyed -- so both are bound to inventory
+// here and any mismatch fails closed rather than being trusted.
+bool dynamicToBasicSourceIdentityMismatch(const PartitionDiskInfo& disk,
+                                          const PartitionOperation& operation) {
+    if (operation.type != PartitionOperationType::ConvertDynamicDiskToBasic ||
+        disk.partitions.size() != 1) {
+        return false;  // Disk shape is already refused by dynamicToBasicUnsupportedDisk.
+    }
+    const QString letter = operation.payload.value(QStringLiteral("drive_letter"))
+                               .toString()
+                               .trimmed()
+                               .left(1)
+                               .toUpper();
+    const QString liveLetter = singleVolumeDriveLetter(disk);
+    return liveLetter.isEmpty() || letter != liveLetter ||
+           payloadUInt64(operation, QStringLiteral("source_size_bytes")) !=
+               disk.partitions.first().size_bytes;
+}
+
+// Same binding for the primary/logical rebuild: the partition the validator approved is the
+// one diskpart deletes and recreates, so the declared source size must be that partition's
+// live size and never a caller-declared value.
+bool primaryLogicalSourceSizeMismatch(const PartitionInfoEx& partition,
+                                      const PartitionOperation& operation) {
+    return operation.type == PartitionOperationType::ConvertPrimaryLogical &&
+           payloadUInt64(operation, QStringLiteral("source_size_bytes")) != partition.size_bytes;
+}
+
 void validatePartitionTargetState(const PartitionDiskInfo& disk,
                                   const PartitionInfoEx& partition,
                                   const PartitionOperation& operation,
                                   PartitionValidationResult* result) {
     addBlockerIf(result,
-                 disk.is_read_only || partition.is_read_only,
+                 partition.volume_lookup_failed,
+                 QStringLiteral("Mounted volume metadata is unknown because its lookup failed"));
+    addBlockerIf(result,
+                 hasUnknownBitLockerState(partition),
+                 QStringLiteral("BitLocker protection and lock state could not be determined"));
+    addBlockerIf(result,
+                 (disk.is_read_only || partition.is_read_only) &&
+                     operation.type != PartitionOperationType::CreateImage &&
+                     operation.type != PartitionOperationType::ClonePartition,
                  QStringLiteral("Target partition is read-only"));
     addBlockerIf(result,
                  disk.is_dynamic || disk.is_storage_spaces,
@@ -1274,10 +1611,19 @@ void validatePartitionTargetState(const PartitionDiskInfo& disk,
                  blocksProtectedPartition(partition, operation.type),
                  QStringLiteral(
                      "System, boot, EFI, MSR, and recovery partitions are protected in v1"));
+    addBlockerIf(
+        result,
+        blocksCurrentOsDiskPartitionMutation(disk, operation.type),
+        QStringLiteral(
+            "Destructive changes to a partition on the current OS disk are blocked in v1"));
     addBlockerIf(result,
                  hasLockedBitLockerVolume(partition) &&
                      operation.type != PartitionOperationType::BitLockerUnlock,
                  QStringLiteral("BitLocker volume is locked"));
+    // Deliberate warning-level policy (not a blocker): this is a technician tool, so an
+    // unlocked-BitLocker or dirty-volume state advises suspend/repair but does not force it
+    // -- the technician may knowingly proceed. The fail-closed guards above (read-only,
+    // locked BitLocker, protected partitions) still hard-block; these two stay advisory.
     addWarningIf(
         result,
         hasUnlockedBitLockerVolume(partition) && !isBitLockerManagementOperation(operation.type),
@@ -1285,6 +1631,9 @@ void validatePartitionTargetState(const PartitionDiskInfo& disk,
     addWarningIf(result,
                  hasDirtyVolume(partition, operation.type),
                  QStringLiteral("File system dirty bit is set; run repair first"));
+    addWarningIf(result,
+                 hasUnknownDirtyVolume(partition, operation.type),
+                 unknownDirtyVolumeWarning(partition));
 }
 
 void validatePartitionMetadataOperation(const PartitionDiskInfo& disk,
@@ -1309,7 +1658,8 @@ void validatePartitionMetadataOperation(const PartitionDiskInfo& disk,
                  operation.type == PartitionOperationType::DefragVolume && diskLooksSsd(disk),
                  QStringLiteral("HDD defrag is blocked on SSD/NVMe media"));
     addBlockerIf(result,
-                 operation.type == PartitionOperationType::DefragVolume && !diskLooksHdd(disk),
+                 operation.type == PartitionOperationType::DefragVolume && !diskLooksHdd(disk) &&
+                     !diskMediaUnknownUntilApply(disk),
                  QStringLiteral("HDD defrag requires media reported as HDD"));
     addBlockerIf(result,
                  backupRestoreMissingMountedVolume(partition, operation),
@@ -1337,6 +1687,10 @@ void validatePartitionMetadataOperation(const PartitionDiskInfo& disk,
                  primaryLogicalTargetLayoutInvalid(operation),
                  QStringLiteral(
                      "Primary/logical conversion requires primary or logical target layout"));
+    addBlockerIf(result,
+                 primaryLogicalSourceSizeMismatch(partition, operation),
+                 QStringLiteral(
+                     "Primary/logical source size must match the live selected partition"));
 }
 
 void validateImageRestoreContentBlockers(const PartitionInfoEx& partition,
@@ -1385,21 +1739,22 @@ void validateNonNativeToolContentBlockers(const PartitionInfoEx& partition,
                                           PartitionValidationResult* result) {
     addBlockerIf(result,
                  operation.type == PartitionOperationType::Format &&
-                     operation.target.partition_number == 0,
+                     operation.target.partition_number.value() == 0,
                  QStringLiteral("Format requires a partition identity"));
     addBlockerIf(
         result,
         nonNativeToolUnsupportedOperation(operation),
         QStringLiteral(
             "Non-Windows filesystem tool support is limited to format, repair, resize, APFS "
-            "generated root-file/root-directory mutation, and HFS+ staged file mutation"));
+            "copy-on-write root-file/root-directory mutation, and HFS+ staged file mutation"));
     addBlockerIf(
         result,
         nonNativeToolUnsupportedFileSystem(operation),
         QStringLiteral(
             "Non-Windows write support is limited to ext2/ext3/ext4 create/format/repair/resize, "
             "HFS+/HFSX create/format/repair/staged file mutation, Linux swap create/format, and "
-            "APFS generated create/format/repair/root-file/root-directory mutation"));
+            "APFS generated create/format/repair and copy-on-write root-file/root-directory "
+            "mutation"));
     addBlockerIf(result,
                  nonNativeToolMissingTarget(operation),
                  QStringLiteral(
@@ -1417,27 +1772,30 @@ void validateNonNativeToolContentBlockers(const PartitionInfoEx& partition,
     addBlockerIf(result,
                  apfsEncryptedFormatWrongFileSystem(operation),
                  QStringLiteral("Volume encryption is only supported for APFS format"));
+    addBlockerIf(result,
+                 apfsEncryptedFormatRequested(operation) &&
+                     operation.target.size_bytes > kMaximumApfsEncryptedFormatBytes,
+                 QStringLiteral("APFS encryption is limited to containers up to 128 MiB; format "
+                                "this partition without encryption, or use a smaller one"));
 }
 
 void validateApfsRootMutationContentBlockers(const PartitionOperation& operation,
                                              PartitionValidationResult* result) {
     addBlockerIf(result,
                  apfsRootFileMutationMissingToolMarker(operation),
-                 QStringLiteral("APFS generated root mutation must use non-Windows tool payload"));
+                 QStringLiteral("APFS COW mutation must use non-Windows tool payload"));
     addBlockerIf(result,
                  apfsRootFileMutationUnsupportedFileSystem(operation),
-                 QStringLiteral("APFS generated root mutation requires APFS file system"));
+                 QStringLiteral("APFS COW mutation requires APFS file system"));
     addBlockerIf(result,
                  apfsRootFileMutationMissingTarget(operation),
-                 QStringLiteral(
-                     "APFS generated root mutation target must match selected raw partition"));
+                 QStringLiteral("APFS COW mutation target must match selected raw partition"));
     addBlockerIf(result,
                  apfsRootFileMutationMissingConfirmation(operation),
-                 QStringLiteral("APFS generated root mutation requires destructive confirmation"));
+                 QStringLiteral("APFS COW mutation requires destructive confirmation"));
     addBlockerIf(result,
-                 apfsRootFileMutationMissingLayoutConfirmation(operation),
-                 QStringLiteral(
-                     "APFS generated root mutation requires S.A.K. generated-layout confirmation"));
+                 apfsRootFileMutationMissingCowCertification(operation),
+                 QStringLiteral("APFS root mutation requires the copy-on-write write engine"));
     addBlockerIf(result,
                  apfsRootFileMutationMissingFileName(operation),
                  apfsRootMutationMissingNameMessage(operation.type));
@@ -1514,7 +1872,8 @@ void validateResizeContentBlockers(const PartitionInfoEx& partition,
     addBlockerIf(result,
                  resizeRequestsDonorSpace(operation),
                  QStringLiteral(
-                     "Donor-space extend requires an offline move engine and certification"));
+                     "Donor-space extend requires an offline move engine, which this version "
+                     "does not have"));
 }
 
 void validateConversionAndClusterBlockers(const PartitionInfoEx& partition,
@@ -1545,11 +1904,14 @@ void validatePartitionCloneRegionBlockers(const PartitionOperation& operation,
     addBlockerIf(result,
                  clonePartitionRegionMissingFields(operation),
                  QStringLiteral("Partition clone target region requires a physical disk path, "
-                                "target disk, and target size"));
+                                "target disk, target offset, and target size"));
     addBlockerIf(result,
                  clonePartitionPhysicalTargetMissingRegion(operation),
                  QStringLiteral("Partition clone raw physical disk targets require an explicit "
                                 "target disk and offset"));
+    addBlockerIf(result,
+                 clonePartitionMissingKnownSourceSize(operation),
+                 QStringLiteral("Partition clone requires a known source partition size"));
     addBlockerIf(result,
                  blocksTooSmallPartitionCloneTarget(operation),
                  QStringLiteral("Target partition region is smaller than the source partition"));
@@ -1603,13 +1965,15 @@ void validatePartitionCompositeOperation(const PartitionDiskInfo& disk,
                  QStringLiteral(
                      "Merge source must be an existing adjacent partition after target"));
     addBlockerIf(result,
-                 operation.type == PartitionOperationType::AllocateFreeSpace && !allocationDonor,
+                 operation.type == PartitionOperationType::AllocateFreeSpace &&
+                     (allocationDonor == nullptr),
                  QStringLiteral("Allocate Free Space requires an existing donor partition"));
     addBlockerIf(result,
                  allocationDonorSizeMismatch(allocationDonor, operation),
                  QStringLiteral("Allocate Free Space donor identity is missing or stale"));
     addBlockerIf(result,
-                 operation.type == PartitionOperationType::AllocateFreeSpace && allocationDonor &&
+                 operation.type == PartitionOperationType::AllocateFreeSpace &&
+                     (allocationDonor != nullptr) &&
                      !allocationDonorIsAdjacentAfterTarget(partition, allocationDonor, operation),
                  QStringLiteral(
                      "Allocate Free Space donor must be directly after the target partition"));
@@ -1657,21 +2021,79 @@ void validatePartitionCompositeOperation(const PartitionDiskInfo& disk,
 
 }  // namespace
 
+uint64_t jsonUInt64(const QJsonObject& object, const QString& key) {
+    const auto value = object.value(key);
+    if (value.isDouble()) {
+        // Clamped at zero: a negative cast straight to uint64_t wraps to ~1.8e19, and this reads
+        // partition offsets and sizes.
+        return static_cast<uint64_t>(std::max(0.0, value.toDouble()));
+    }
+    bool ok = false;
+    const uint64_t parsed = value.toString().toULongLong(&ok);
+    return ok ? parsed : 0;
+}
+
+uint64_t saturatingAdd(uint64_t left, uint64_t right) {
+    if (std::numeric_limits<uint64_t>::max() - left < right) {
+        return std::numeric_limits<uint64_t>::max();
+    }
+    return left + right;
+}
+
+uint64_t usedBytes(const PartitionInfoEx& partition) {
+    if (!partition.volume || partition.volume->total_bytes < partition.volume->free_bytes) {
+        return 0;
+    }
+    return partition.volume->total_bytes - partition.volume->free_bytes;
+}
+
+uint64_t adjacentFreeBytesAfter(const PartitionDiskInfo& disk, const PartitionInfoEx& partition) {
+    const uint64_t partitionEnd = saturatingAdd(partition.offset_bytes, partition.size_bytes);
+    const auto it = std::ranges::find_if(disk.unallocated_regions,
+
+                                         [partitionEnd](const auto& region) {
+                                             return region.offset_bytes == partitionEnd;
+                                         });
+    return it == disk.unallocated_regions.cend() ? 0 : it->size_bytes;
+}
+
+
+bool diskLooksSsd(const PartitionDiskInfo& disk) {
+    const QString media =
+        QStringLiteral("%1 %2 %3").arg(disk.media_type, disk.bus_type, disk.model).toUpper();
+    return media.contains(QStringLiteral("SSD")) || media.contains(QStringLiteral("NVME"));
+}
+
+bool diskMediaIsUnspecified(const PartitionDiskInfo& disk) {
+    return disk.media_type.compare(QStringLiteral("Unspecified"), Qt::CaseInsensitive) == 0;
+}
+
+bool diskLooksHdd(const PartitionDiskInfo& disk) {
+    const QString media = QStringLiteral("%1 %2").arg(disk.media_type, disk.model).toUpper();
+    if (media.contains(QStringLiteral("HDD")) || media.contains(QStringLiteral("HARD"))) {
+        return true;
+    }
+    return diskMediaIsUnspecified(disk) && disk.rotation_rate_rpm > 0 && !diskLooksSsd(disk);
+}
+
+bool diskMediaUnknownUntilApply(const PartitionDiskInfo& disk) {
+    return disk.rotation_rate_pending && !diskLooksSsd(disk) && !diskLooksHdd(disk);
+}
+
+
 const PartitionDiskInfo* PartitionSafetyValidator::findDisk(const PartitionInventory& inventory,
-                                                            uint32_t disk_number) {
-    auto it = std::find_if(inventory.disks.begin(),
-                           inventory.disks.end(),
-                           [disk_number](const auto& d) { return d.disk_number == disk_number; });
+                                                            DiskNumber disk_number) {
+    auto it = std::ranges::find_if(inventory.disks, [disk_number](const auto& d) {
+        return d.disk_number == disk_number;
+    });
     return it == inventory.disks.end() ? nullptr : &(*it);
 }
 
 const PartitionInfoEx* PartitionSafetyValidator::findPartition(const PartitionDiskInfo& disk,
-                                                               uint32_t partition_number) {
-    auto it = std::find_if(disk.partitions.begin(),
-                           disk.partitions.end(),
-                           [partition_number](const auto& p) {
-                               return p.partition_number == partition_number;
-                           });
+                                                               PartitionNumber partition_number) {
+    auto it = std::ranges::find_if(disk.partitions, [partition_number](const auto& p) {
+        return p.partition_number == partition_number;
+    });
     return it == disk.partitions.end() ? nullptr : &(*it);
 }
 
@@ -1680,16 +2102,68 @@ bool PartitionSafetyValidator::isSystemProtectedPartition(const PartitionInfoEx&
            partition.is_recovery;
 }
 
-PartitionValidationResult PartitionSafetyValidator::validate(
-    const PartitionInventory& inventory, const PartitionOperation& operation) const {
+static void validateImageCaptureSourceState(const PartitionDiskInfo& disk,
+                                            const PartitionOperation& operation,
+                                            PartitionValidationResult* result) {
+    const QString source = operation.payload.value(QStringLiteral("source_path")).toString();
+    if (operation.type != PartitionOperationType::CreateImage || !isWindowsRawDevicePath(source)) {
+        return;
+    }
+    if (!disk.is_offline.has_value()) {
+        result->blockers.append(
+            QStringLiteral("Create Image source online/offline state is unknown"));
+        return;
+    }
+    const QString mode = operation.payload.value(QStringLiteral("source_capture_mode")).toString();
+    if (mode == QStringLiteral("LockedVolumes")) {
+        addBlockerIf(result,
+                     *disk.is_offline,
+                     QStringLiteral("LockedVolumes capture requires an online source disk"));
+        return;
+    }
+    if (mode != QStringLiteral("OfflineDisk")) {
+        result->blockers.append(
+            QStringLiteral("Create Image requires an explicit source capture mode"));
+        return;
+    }
+    addBlockerIf(result,
+                 !*disk.is_offline,
+                 QStringLiteral("OfflineDisk capture requires an already-offline source disk"));
+    addBlockerIf(result,
+                 disk.is_system || disk.is_boot,
+                 QStringLiteral("Offline capture cannot target the current OS disk"));
+}
+
+PartitionValidationResult PartitionSafetyValidator::validate(const PartitionInventory& inventory,
+                                                             const PartitionOperation& operation) {
     PartitionValidationResult result;
     const PartitionDiskInfo* disk = findDisk(inventory, operation.target.disk_number);
-    if (!disk) {
+    if (disk == nullptr) {
         result.blockers.append(QStringLiteral("Target disk was not found in current inventory"));
         return result;
     }
+    if (disk->partition_enumeration_failed) {
+        // The disk's partition table could not be read, so NOTHING about it can be validated:
+        // an "empty" partition list, an absent system/boot partition and an apparently free
+        // region are all unknowns, not facts. Refuse every operation on it rather than let a
+        // destructive one run against a layout we never saw.
+        result.blockers.append(
+            QStringLiteral("Partition enumeration failed for disk %1, so its layout is unknown "
+                           "and no operation can be validated against it; refresh the inventory "
+                           "first")
+                .arg(disk->disk_number.value()));
+        return result;
+    }
 
+    validateImageCaptureSourceState(*disk, operation, &result);
     addCommonDiskWarnings(*disk, &result);
+
+    if (operationTargetScopeMismatch(operation)) {
+        result.blockers.append(QStringLiteral(
+            "Operation scope does not match its target kind: a disk-scoped operation "
+            "requires a whole-disk target"));
+        return result;
+    }
 
     switch (operation.target.kind) {
     case PartitionTargetKind::Disk:
@@ -1698,7 +2172,7 @@ PartitionValidationResult PartitionSafetyValidator::validate(
     case PartitionTargetKind::Partition:
     case PartitionTargetKind::Volume: {
         const PartitionInfoEx* partition = findPartition(*disk, operation.target.partition_number);
-        if (!partition) {
+        if (partition == nullptr) {
             result.blockers.append(QStringLiteral("Target partition was not found"));
             break;
         }
@@ -1708,15 +2182,22 @@ PartitionValidationResult PartitionSafetyValidator::validate(
     case PartitionTargetKind::Unallocated:
         validateUnallocatedOperation(*disk, operation, &result);
         break;
+    default:
+        // An out-of-range target.kind (corrupted/forged) must never fall through with
+        // only warnings and leave allowed() true. Fail closed.
+        result.blockers.append(QStringLiteral("Unknown partition target kind"));
+        break;
     }
 
     return result;
 }
 
-void validateDiskStateBlockers(const PartitionDiskInfo& disk,
-                               const PartitionOperation& operation,
-                               PartitionValidationResult* result) {
-    addBlockerIf(result, disk.is_read_only, QStringLiteral("Target disk is read-only"));
+static void validateDiskStateBlockers(const PartitionDiskInfo& disk,
+                                      const PartitionOperation& operation,
+                                      PartitionValidationResult* result) {
+    addBlockerIf(result,
+                 disk.is_read_only && operation.type != PartitionOperationType::CreateImage,
+                 QStringLiteral("Target disk is read-only"));
     addBlockerIf(result,
                  (disk.is_dynamic && !allowsDynamicDiskOperation(operation.type)) ||
                      disk.is_storage_spaces,
@@ -1725,13 +2206,14 @@ void validateDiskStateBlockers(const PartitionDiskInfo& disk,
                  blocksCurrentOsDiskMutation(disk, operation.type),
                  QStringLiteral("Current OS disk destructive mutation is blocked in v1"));
     addBlockerIf(result,
-                 operation.type == PartitionOperationType::WipeDisk && disk.is_system,
+                 operation.type == PartitionOperationType::WipeDisk &&
+                     (disk.is_system || disk.is_boot),
                  QStringLiteral("Current OS disk wipe is blocked"));
 }
 
-void validateDynamicToBasicBlockers(const PartitionDiskInfo& disk,
-                                    const PartitionOperation& operation,
-                                    PartitionValidationResult* result) {
+static void validateDynamicToBasicBlockers(const PartitionDiskInfo& disk,
+                                           const PartitionOperation& operation,
+                                           PartitionValidationResult* result) {
     addBlockerIf(result,
                  dynamicToBasicUnsupportedDisk(disk, operation),
                  QStringLiteral(
@@ -1742,11 +2224,15 @@ void validateDynamicToBasicBlockers(const PartitionDiskInfo& disk,
         QStringLiteral(
             "Dynamic-to-basic conversion requires source volume, size, file system, and backup"));
     addBlockerIf(result,
+                 dynamicToBasicSourceIdentityMismatch(disk, operation),
+                 QStringLiteral("Dynamic-to-basic source volume and size must match the live "
+                                "volume on the selected disk"));
+    addBlockerIf(result,
                  dynamicToBasicUnsupportedFileSystem(operation),
                  QStringLiteral(
                      "Dynamic-to-basic conversion supports NTFS, FAT32, and exFAT only"));
     addBlockerIf(result,
-                 dynamicToBasicBackupOnSourceVolume(operation),
+                 dynamicToBasicBackupOnSourceVolume(disk, operation),
                  QStringLiteral("Backup directory must not be on the dynamic source volume"));
     addBlockerIf(
         result,
@@ -1755,9 +2241,9 @@ void validateDynamicToBasicBlockers(const PartitionDiskInfo& disk,
             "Dynamic-to-basic conversion requires destructive backup/restore confirmation"));
 }
 
-void validateDiskStyleBlockers(const PartitionDiskInfo& disk,
-                               const PartitionOperation& operation,
-                               PartitionValidationResult* result) {
+static void validateDiskStyleBlockers(const PartitionDiskInfo& disk,
+                                      const PartitionOperation& operation,
+                                      PartitionValidationResult* result) {
     addBlockerIf(result,
                  blocksDataDiskStyleConversion(disk, operation.type),
                  QStringLiteral(
@@ -1775,12 +2261,61 @@ void validateDiskStyleBlockers(const PartitionDiskInfo& disk,
                  QStringLiteral("System disk conversion must use MBR2GPT to GPT"));
 }
 
-void validateDiskCloneImageBlockers(const PartitionDiskInfo& disk,
+// The plan is worked out again from the live disk: this is what stops a target too small for the
+// data, and BitLocker on the source, before anything is written. The script checks both once more.
+static void validateOsMigrationPlan(const PartitionDiskInfo& disk,
                                     const PartitionOperation& operation,
                                     PartitionValidationResult* result) {
+    if (operation.type != PartitionOperationType::MigrateOs) {
+        return;
+    }
+    const OsMigrationPlan live =
+        planOsMigration(disk, payloadUInt64(operation, QStringLiteral("target_size_bytes")));
+    result->blockers.append(live.blockers);
+    const auto reviewed = osMigrationPlanFromJson(
+        operation.payload.value(QStringLiteral("migration_plan")).toObject());
     addBlockerIf(result,
-                 operation.type == PartitionOperationType::MigrateOs && !disk.is_system,
-                 QStringLiteral("OS migration source must be a system disk"));
+                 !reviewed.has_value(),
+                 QStringLiteral("Migrate OS was queued with no plan worked out for its target"));
+    addBlockerIf(result,
+                 reviewed.has_value() && !osMigrationPlansAgree(*reviewed, live),
+                 QStringLiteral("The source disk's layout or the target's size changed since "
+                                "Migrate OS was planned"));
+    addWarningIf(result,
+                 operation.payload.value(QStringLiteral("allow_no_snapshot")).toBool(false),
+                 QStringLiteral(
+                     "If Windows cannot take a snapshot, this copies the running disk "
+                     "anyway. Files that change during the copy can then be inconsistent "
+                     "on the target, and it may not start."));
+}
+
+// One repairs the Windows that is running, and the other a Windows on a disk that is not running.
+static void validateBootRepairScope(const PartitionDiskInfo& disk,
+                                    const PartitionOperation& operation,
+                                    PartitionValidationResult* result) {
+    if (operation.type != PartitionOperationType::RepairBoot) {
+        return;
+    }
+    const bool attached = operation.payload.value(QStringLiteral("repair_scope")).toString() ==
+                          QStringLiteral("attached");
+    const bool running_disk = disk.is_system || disk.is_boot;
+    addBlockerIf(result,
+                 attached && running_disk,
+                 QStringLiteral("This is the disk Windows is running from, so a repair meant for "
+                                "an attached disk does not run on it"));
+    addBlockerIf(result,
+                 !attached && !running_disk,
+                 QStringLiteral("A repair of the running Windows was queued on a disk Windows is "
+                                "not running from"));
+}
+
+static void validateDiskCloneImageBlockers(const PartitionDiskInfo& disk,
+                                           const PartitionOperation& operation,
+                                           PartitionValidationResult* result) {
+    addBlockerIf(result,
+                 operation.type == PartitionOperationType::MigrateOs &&
+                     !(disk.is_system || disk.is_boot),
+                 QStringLiteral("OS migration source must be the running OS (system/boot) disk"));
     addBlockerIf(result,
                  restoreOrMigrateMissingPhysicalTarget(operation),
                  QStringLiteral("Restore Image and OS migration require a physical target disk"));
@@ -1790,6 +2325,10 @@ void validateDiskCloneImageBlockers(const PartitionDiskInfo& disk,
     addBlockerIf(result,
                  restoreImageMissingKnownSizes(operation),
                  QStringLiteral("Restore Image requires known image and target sizes"));
+    addBlockerIf(result,
+                 cloneOrMigrateMissingKnownSizes(operation),
+                 QStringLiteral("Disk clone and OS migration require known source and "
+                                "target sizes"));
     addBlockerIf(result,
                  blocksTooSmallCloneTarget(operation),
                  QStringLiteral("Target disk is smaller than the source disk"));
@@ -1801,9 +2340,9 @@ void validateDiskCloneImageBlockers(const PartitionDiskInfo& disk,
                  QStringLiteral("Create Image destination cannot be on the source disk"));
 }
 
-void validateDiskRecoveryBlockers(const PartitionDiskInfo& disk,
-                                  const PartitionOperation& operation,
-                                  PartitionValidationResult* result) {
+static void validateDiskRecoveryBlockers(const PartitionDiskInfo& disk,
+                                         const PartitionOperation& operation,
+                                         PartitionValidationResult* result) {
     addBlockerIf(result,
                  requiresRecoveryRestoreAcknowledgement(operation),
                  QStringLiteral("Recovered partition restore acknowledgement is required"));
@@ -1821,12 +2360,14 @@ void validateDiskRecoveryBlockers(const PartitionDiskInfo& disk,
 void PartitionSafetyValidator::validateDiskOperation(const PartitionInventory& inventory,
                                                      const PartitionDiskInfo& disk,
                                                      const PartitionOperation& operation,
-                                                     PartitionValidationResult* result) const {
+                                                     PartitionValidationResult* result) {
     validatePayloadRawWriteTarget(inventory, disk, operation, result);
     validateDiskStateBlockers(disk, operation, result);
     validateDynamicToBasicBlockers(disk, operation, result);
     validateDiskStyleBlockers(disk, operation, result);
     validateDiskCloneImageBlockers(disk, operation, result);
+    validateOsMigrationPlan(disk, operation, result);
+    validateBootRepairScope(disk, operation, result);
     validateDiskRecoveryBlockers(disk, operation, result);
     addWarningIf(result,
                  operation.type == PartitionOperationType::WipeDisk &&
@@ -1835,25 +2376,27 @@ void PartitionSafetyValidator::validateDiskOperation(const PartitionInventory& i
                      "SSD wipe uses software clear; vendor secure erase is required for purge"));
 }
 
-void PartitionSafetyValidator::validatePayloadRawWriteTarget(
-    const PartitionInventory& inventory,
-    const PartitionDiskInfo& selectedDisk,
-    const PartitionOperation& operation,
-    PartitionValidationResult* result) const {
+void PartitionSafetyValidator::validatePayloadRawWriteTarget(const PartitionInventory& inventory,
+                                                             const PartitionDiskInfo& selectedDisk,
+                                                             const PartitionOperation& operation,
+                                                             PartitionValidationResult* result) {
     if (restoreOrMigrateMissingPhysicalTarget(operation)) {
         return;
     }
 
     const auto targetDiskNumber = targetPhysicalDriveNumber(operation);
     if (!targetDiskNumber.has_value()) {
+        // Not a \\.\PhysicalDriveN path. A raw "\\.\X:" volume alias still writes to a disk
+        // and must be validated (or blocked); an image-file target is left to other checks.
+        validateRawVolumeAliasWriteTarget(inventory, selectedDisk, operation, result);
         return;
     }
 
-    const PartitionDiskInfo* targetDisk = findDisk(inventory, *targetDiskNumber);
+    const PartitionDiskInfo* targetDisk = findDisk(inventory, DiskNumber{*targetDiskNumber});
     addBlockerIf(result,
                  payloadTargetDiskMustExist(operation) && targetDisk == nullptr,
                  QStringLiteral("Payload target disk was not found in current inventory"));
-    if (!targetDisk) {
+    if (targetDisk == nullptr) {
         return;
     }
 
@@ -1881,17 +2424,59 @@ void PartitionSafetyValidator::validatePayloadRawWriteTarget(
         const uint32_t payloadDisk =
             static_cast<uint32_t>(payloadUInt64(operation, QStringLiteral("target_disk_number")));
         addBlockerIf(result,
-                     payloadDisk != targetDisk->disk_number,
+                     DiskNumber{payloadDisk} != targetDisk->disk_number,
                      QStringLiteral(
                          "Partition clone target disk number must match the physical target path"));
     }
+    validateClonePartitionRegionBounds(*targetDisk, operation, result);
+}
+
+void PartitionSafetyValidator::validateRawVolumeAliasWriteTarget(
+    const PartitionInventory& inventory,
+    const PartitionDiskInfo& selectedDisk,
+    const PartitionOperation& operation,
+    PartitionValidationResult* result) {
+    if (!targetPathIsRawDevice(operation)) {
+        return;  // An image-file target: covered by the image-destination checks.
+    }
+    const QString rawPath = normalizedTargetPath(operation);
+    const auto letter = rawVolumeAliasLetter(rawPath);
+    const PartitionDiskInfo* targetDisk =
+        letter.has_value() ? diskForDriveLetter(inventory, *letter) : nullptr;
+    // A \\.\X: alias resolves by drive letter; a PhysicalDriveN / GLOBALROOT\HarddiskN raw
+    // target (incl. the app's own canonical target) resolves by disk number.
+    if (targetDisk == nullptr) {
+        if (const auto diskNo = rawTargetDiskNumber(rawPath)) {
+            targetDisk = findDisk(inventory, DiskNumber{*diskNo});
+        }
+    }
+    // A raw device target we cannot resolve to a known disk must fail closed rather than
+    // slip past every disk-safety check below.
+    addBlockerIf(result,
+                 targetDisk == nullptr,
+                 QStringLiteral("Raw device target could not be resolved to a known disk; use a "
+                                "\\\\.\\PhysicalDriveN path"));
+    if (targetDisk == nullptr) {
+        return;
+    }
+    addCommonDiskWarnings(*targetDisk, result);
+    addBlockerIf(result,
+                 isUnsafeRawWriteTargetDisk(*targetDisk),
+                 QStringLiteral(
+                     "Payload target disk is system, boot, read-only, dynamic, or Storage Spaces"));
+    const bool cloneLike = operation.type == PartitionOperationType::CloneDisk ||
+                           operation.type == PartitionOperationType::MigrateOs ||
+                           operation.type == PartitionOperationType::ClonePartition;
+    addBlockerIf(result,
+                 cloneLike && targetDisk->disk_number == selectedDisk.disk_number,
+                 QStringLiteral("Source and payload target disk must be different"));
 }
 
 void PartitionSafetyValidator::validatePartitionOperation(const PartitionInventory& inventory,
                                                           const PartitionDiskInfo& disk,
                                                           const PartitionInfoEx& partition,
                                                           const PartitionOperation& operation,
-                                                          PartitionValidationResult* result) const {
+                                                          PartitionValidationResult* result) {
     validatePayloadRawWriteTarget(inventory, disk, operation, result);
     validatePartitionTargetState(disk, partition, operation, result);
     validatePartitionMetadataOperation(disk, partition, operation, result);
@@ -1899,10 +2484,9 @@ void PartitionSafetyValidator::validatePartitionOperation(const PartitionInvento
     validatePartitionCompositeOperation(disk, partition, operation, result);
 }
 
-void PartitionSafetyValidator::validateUnallocatedOperation(
-    const PartitionDiskInfo& disk,
-    const PartitionOperation& operation,
-    PartitionValidationResult* result) const {
+void PartitionSafetyValidator::validateUnallocatedOperation(const PartitionDiskInfo& disk,
+                                                            const PartitionOperation& operation,
+                                                            PartitionValidationResult* result) {
     if (operation.type != PartitionOperationType::Create) {
         result->blockers.append(QStringLiteral("Only create is valid for unallocated space"));
     }
@@ -1917,8 +2501,8 @@ void PartitionSafetyValidator::validateUnallocatedOperation(
                      QStringLiteral(
                          "Non-Windows write support is limited to ext2/ext3/ext4 "
                          "create/format/repair/resize, HFS+/HFSX create/format/repair/staged file "
-                         "mutation, Linux swap create/format, and APFS generated "
-                         "create/format/repair/root-file/root-directory mutation"));
+                         "mutation, Linux swap create/format, APFS generated create/format/repair, "
+                         "and copy-on-write root-file/root-directory mutation"));
         addBlockerIf(
             result,
             nonNativeToolMissingConfirmation(operation),
@@ -1931,7 +2515,10 @@ void PartitionSafetyValidator::validateUnallocatedOperation(
                              0,
                      QStringLiteral("APFS create requires a GPT disk"));
     }
-    if (disk.is_system) {
+    if (disk.is_system || disk.is_boot) {
+        // On a split-boot config the OS lives on the is_boot disk while the ESP is on the
+        // is_system disk; guarding is_system alone would let a create land on the running
+        // OS (is_boot) disk. Block both.
         result->blockers.append(
             QStringLiteral("Creating partitions on current OS disk is blocked in v1"));
     }
@@ -1945,7 +2532,7 @@ void PartitionSafetyValidator::validateUnallocatedOperation(
 }
 
 void PartitionSafetyValidator::addCommonDiskWarnings(const PartitionDiskInfo& disk,
-                                                     PartitionValidationResult* result) const {
+                                                     PartitionValidationResult* result) {
     if (disk.is_removable) {
         result->warnings.append(QStringLiteral("Target disk is removable"));
     }

@@ -23,13 +23,17 @@ private Q_SLOTS:
     void uninstallReport_defaults();
     void scanLevel_values();
     void mode_values();
+    void nativeUninstallSucceeded_classifiesExitCodes();
 };
 
 void TestUninstallWorker::construction_default() {
     ProgramInfo program;
     program.displayName = QStringLiteral("Test Program");
     UninstallWorker worker(program, UninstallWorker::Mode::Standard, ScanLevel::Safe, false);
-    QVERIFY(dynamic_cast<QObject*>(&worker) != nullptr);
+    // The dynamic_cast to a compile-time base could never be null. Pin the real post-construction
+    // invariant: a freshly built, un-started worker is idle and not stop-requested.
+    QVERIFY(!worker.isExecuting());
+    QVERIFY(!worker.stopRequested());
 }
 
 void TestUninstallWorker::construction_nonCopyable() {
@@ -88,6 +92,20 @@ void TestUninstallWorker::mode_values() {
     QCOMPARE(static_cast<int>(UninstallWorker::Mode::ForcedUninstall), 1);
     QCOMPARE(static_cast<int>(UninstallWorker::Mode::UwpRemove), 2);
     QCOMPARE(static_cast<int>(UninstallWorker::Mode::RegistryOnly), 3);
+}
+
+void TestUninstallWorker::nativeUninstallSucceeded_classifiesExitCodes() {
+    // Exit status 0 with exit code 0 is success.
+    QVERIFY(UninstallWorker::nativeUninstallSucceeded(0, 0, false));
+    // 3010 = MSI reboot-required: a SUCCESS that asks for a restart. It must be accepted (and its
+    // code carried into the report), not treated as a failure.
+    QVERIFY(UninstallWorker::nativeUninstallSucceeded(0, 3010, false));
+    // A real failure code (e.g. 1603 fatal MSI error) is not success.
+    QVERIFY(!UninstallWorker::nativeUninstallSucceeded(0, 1603, false));
+    // A cancelled run is never success, even with a zero exit code.
+    QVERIFY(!UninstallWorker::nativeUninstallSucceeded(0, 0, true));
+    // A non-zero process exit status is never success.
+    QVERIFY(!UninstallWorker::nativeUninstallSucceeded(1, 0, false));
 }
 
 QTEST_MAIN(TestUninstallWorker)

@@ -7,6 +7,7 @@
 #include "sak/error_codes.h"
 #include "sak/input_validator.h"
 
+#include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -28,11 +29,15 @@ private Q_SLOTS:
     void validatePath_directoryAsFile_fails();
     void validatePath_traversalSequences();
     void validatePath_suspiciousPatterns();
+    void validatePath_nameOutsideTheCodePage();
     void validatePath_maxPathLength();
+    void pathPrefixes_decomposesEveryAncestor();
+    void emptyInput_handledGracefully();
 
     // Path-within-base validation
     void pathWithinBase_validSubpath();
     void pathWithinBase_traversalRejected();
+    void pathWithinBase_siblingPrefixRejected();
 
     // String validation
     void validateString_normal();
@@ -59,6 +64,7 @@ private Q_SLOTS:
     void safeMultiply_overflow();
     void safeCast_validCast();
     void safeCast_overflowCast();
+    void safeCast_signedToUnsignedWidening();
 
     // Buffer validation
     void validateBufferSize_withinLimits();
@@ -76,6 +82,17 @@ private Q_SLOTS:
     void containsControlChars_detected();
     void isValidUtf8_valid();
     void isValidUtf8_invalid();
+    void isValidUtf8_rejectsSurrogatesAndOverlong();
+
+    // R5-G10-9: traversal / injection fail-closed paths
+    void containsTraversal_urlEncoded();
+    void containsSuspicious_windowsDeviceNames();
+    void containsSuspicious_adsColonStream();
+    void containsSuspicious_trailingDotOrSpace();
+    void containsSuspicious_newlineAndCarriageReturn();
+    void validatePath_emptyRejected();
+    void validateNumeric_nanRejected();
+    void safeCast_nonFiniteAndOutOfRangeFloatRejected();
 
 private:
     QTemporaryDir m_tempDir;
@@ -113,6 +130,7 @@ void InputValidatorTests::validatePath_nonExistent_mustExistFails() {
 
     auto result = sak::input_validator::validatePath(m_basePath / "nonexistent.txt", cfg);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error, sak::error_code::file_not_found);
 }
 
 void InputValidatorTests::validatePath_nonExistent_noMustExist() {
@@ -130,6 +148,7 @@ void InputValidatorTests::validatePath_directoryAsFile_fails() {
 
     auto result = sak::input_validator::validatePath(m_basePath / "test_subdir", cfg);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error, sak::error_code::invalid_file);
 }
 
 void InputValidatorTests::validatePath_traversalSequences() {
@@ -149,6 +168,35 @@ void InputValidatorTests::validatePath_maxPathLength() {
     auto result = sak::input_validator::validatePath(
         std::filesystem::path("this_is_a_very_long_path_name.txt"), cfg);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error, sak::error_code::path_too_long);
+}
+
+// B5-15: the disallow-symlinks check must inspect EVERY ancestor. pathPrefixes
+// is the decomposition it iterates -- verify it yields each cumulative prefix so
+// an ancestor junction is included, not just the final component.
+void InputValidatorTests::pathPrefixes_decomposesEveryAncestor() {
+    const auto prefixes =
+        sak::input_validator::pathPrefixes(std::filesystem::path("a") / "b" / "c");
+    // Every ancestor plus the leaf is present, in root-to-leaf order.
+    QCOMPARE(static_cast<int>(prefixes.size()), 3);
+    QCOMPARE(prefixes.front(), std::filesystem::path("a"));
+    QCOMPARE(prefixes.at(1), std::filesystem::path("a") / "b");
+    QCOMPARE(prefixes.back(), std::filesystem::path("a") / "b" / "c");
+
+    // Empty path -> no prefixes.
+    QVERIFY(sak::input_validator::pathPrefixes(std::filesystem::path()).empty());
+}
+
+// B5 tail: these public helpers previously asserted non-empty input, crashing
+// debug builds on a legitimate empty query. They must now return the sensible
+// result for empty input.
+void InputValidatorTests::emptyInput_handledGracefully() {
+    // An empty string is vacuously valid UTF-8 and sanitizes to empty.
+    QVERIFY(sak::input_validator::isValidUtf8(std::string_view{}));
+    QVERIFY(sak::input_validator::sanitizeString(std::string_view{}, true).empty());
+    // An empty path has no traversal / suspicious pattern.
+    QVERIFY(!sak::input_validator::containsTraversalSequences(std::filesystem::path()));
+    QVERIFY(!sak::input_validator::containsSuspiciousPatterns(std::filesystem::path()));
 }
 
 // ============================================================================
@@ -165,6 +213,17 @@ void InputValidatorTests::pathWithinBase_traversalRejected() {
     auto result = sak::input_validator::validatePathWithinBase(
         m_basePath / ".." / ".." / "etc" / "passwd", m_basePath);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error, sak::error_code::path_traversal_attempt);
+}
+
+void InputValidatorTests::pathWithinBase_siblingPrefixRejected() {
+    // A sibling directory that shares a textual prefix with the base ("<base>evil")
+    // must not be considered inside the base. A raw string prefix test accepted it.
+    std::filesystem::path sibling = m_basePath;
+    sibling += "evil";
+    auto result = sak::input_validator::validatePathWithinBase(sibling / "payload", m_basePath);
+    QVERIFY(!result.is_valid);
+    QCOMPARE(result.error, sak::error_code::path_traversal_attempt);
 }
 
 // ============================================================================
@@ -182,6 +241,7 @@ void InputValidatorTests::validateString_tooShort() {
 
     auto result = sak::input_validator::validateString("Hi", cfg);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error_message, std::string("String is too short"));
 }
 
 void InputValidatorTests::validateString_tooLong() {
@@ -190,6 +250,7 @@ void InputValidatorTests::validateString_tooLong() {
 
     auto result = sak::input_validator::validateString("This is too long", cfg);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error_message, std::string("String is too long"));
 }
 
 void InputValidatorTests::validateString_nullBytes() {
@@ -202,6 +263,7 @@ void InputValidatorTests::validateString_nullBytes() {
     auto result = sak::input_validator::validateString(
         std::string_view(withNull.data(), withNull.size()), cfg);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error_message, std::string("String contains null bytes"));
 }
 
 void InputValidatorTests::validateString_controlChars() {
@@ -210,6 +272,7 @@ void InputValidatorTests::validateString_controlChars() {
 
     auto result = sak::input_validator::validateString("hello\x01world", cfg);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error_message, std::string("String contains control characters"));
 }
 
 void InputValidatorTests::validateString_utf8Check() {
@@ -229,6 +292,7 @@ void InputValidatorTests::sanitizeString_removesControlChars() {
     std::string input = "hello\x01\x02world";
     std::string sanitized = sak::input_validator::sanitizeString(input);
     QVERIFY(!sak::input_validator::containsControlChars(sanitized));
+    QCOMPARE(sanitized, std::string("helloworld"));  // control chars stripped, letters intact
 }
 
 void InputValidatorTests::sanitizeString_preservesUnicode() {
@@ -240,9 +304,10 @@ void InputValidatorTests::sanitizeString_preservesUnicode() {
 void InputValidatorTests::sanitizeString_stripUnicode() {
     std::string input = "Hello \xC3\xA9 World";
     std::string sanitized = sak::input_validator::sanitizeString(input, false);
-    // Non-ASCII bytes should be removed when allow_unicode=false
-    // The exact behavior depends on implementation
-    QVERIFY(!sanitized.empty());
+    // The two-byte UTF-8 'e-acute' is dropped and the surrounding spaces survive, giving a
+    // deterministic "Hello  World" (two spaces). `!empty()` would pass even if the strip were a
+    // no-op that returned the input unchanged.
+    QCOMPARE(sanitized, std::string("Hello  World"));
 }
 
 // ============================================================================
@@ -265,6 +330,7 @@ void InputValidatorTests::validateNumeric_belowMin() {
 
     auto result = sak::input_validator::validateNumeric(5, cfg);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error_message, std::string("Value below minimum allowed"));
 }
 
 void InputValidatorTests::validateNumeric_aboveMax() {
@@ -274,6 +340,7 @@ void InputValidatorTests::validateNumeric_aboveMax() {
 
     auto result = sak::input_validator::validateNumeric(150, cfg);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error_message, std::string("Value exceeds maximum allowed"));
 }
 
 // ============================================================================
@@ -314,6 +381,26 @@ void InputValidatorTests::safeCast_overflowCast() {
     auto result = sak::input_validator::safeCast<int>(
         static_cast<std::int64_t>((std::numeric_limits<int>::max)()) + 1);
     QVERIFY(!result.has_value());
+    QCOMPARE(result.error(), sak::error_code::integer_overflow);
+}
+
+void InputValidatorTests::safeCast_signedToUnsignedWidening() {
+    // Positive signed -> wider unsigned must succeed. The old limits-cast check
+    // compared against static_cast<int64_t>(UINT64_MAX) == -1 and rejected every
+    // positive value.
+    auto ok = sak::input_validator::safeCast<std::uint64_t>(std::int64_t{1});
+    QVERIFY(ok.has_value());
+    QCOMPARE(ok.value(), std::uint64_t{1});
+
+    auto big =
+        sak::input_validator::safeCast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)());
+    QVERIFY(big.has_value());
+    QCOMPARE(big.value(), static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)()));
+
+    // Negative -> unsigned must still be rejected.
+    auto neg = sak::input_validator::safeCast<std::uint64_t>(std::int64_t{-1});
+    QVERIFY(!neg.has_value());
+    QCOMPARE(neg.error(), sak::error_code::integer_overflow);
 }
 
 // ============================================================================
@@ -328,11 +415,13 @@ void InputValidatorTests::validateBufferSize_withinLimits() {
 void InputValidatorTests::validateBufferSize_exceedsMax() {
     auto result = sak::input_validator::validateBufferSize(2048, 1024, 0);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error_message, std::string("Buffer exceeds maximum allowed size"));
 }
 
 void InputValidatorTests::validateBufferSize_belowMin() {
     auto result = sak::input_validator::validateBufferSize(5, 1024, 10);
     QVERIFY(!result.is_valid);
+    QCOMPARE(result.error_message, std::string("Buffer is too small"));
 }
 
 // ============================================================================
@@ -366,6 +455,12 @@ void InputValidatorTests::containsTraversal_normal() {
         std::filesystem::path("subdir/file.txt")));
     QVERIFY(
         !sak::input_validator::containsTraversalSequences(std::filesystem::path("normal_path")));
+    // Codex-3 finding 12: an incidental ".." INSIDE a filename is not a traversal
+    // segment and must NOT be over-rejected, while a real ".." segment still is.
+    QVERIFY(!sak::input_validator::containsTraversalSequences(std::filesystem::path("my..file")));
+    QVERIFY(!sak::input_validator::containsTraversalSequences(std::filesystem::path("..bar")));
+    QVERIFY(!sak::input_validator::containsTraversalSequences(std::filesystem::path("a/b..c/d")));
+    QVERIFY(sak::input_validator::containsTraversalSequences(std::filesystem::path("a/../b")));
 }
 
 void InputValidatorTests::containsNullBytes_detected() {
@@ -396,6 +491,156 @@ void InputValidatorTests::isValidUtf8_invalid() {
 
     // Invalid UTF-8: overlong 2-byte encoding of ASCII
     QVERIFY(!sak::input_validator::isValidUtf8("\xC0\x80"));
+}
+
+void InputValidatorTests::isValidUtf8_rejectsSurrogatesAndOverlong() {
+    // RFC 3629 forbids these even though their continuation-byte shape is valid.
+    // UTF-16 surrogate U+D800 encoded as ED A0 80.
+    QVERIFY(!sak::input_validator::isValidUtf8("\xED\xA0\x80"));
+    // Overlong 3-byte encoding of '/' (U+002F).
+    QVERIFY(!sak::input_validator::isValidUtf8("\xE0\x80\xAF"));
+    // 4-byte lead above the U+10FFFF cap (F5) and overlong 4-byte (F0 80 80 80).
+    QVERIFY(!sak::input_validator::isValidUtf8("\xF5\x80\x80\x80"));
+    QVERIFY(!sak::input_validator::isValidUtf8("\xF0\x80\x80\x80"));
+
+    // Legitimate multibyte sequences must still validate (no over-rejection).
+    QVERIFY(sak::input_validator::isValidUtf8("\xE2\x82\xAC"));      // euro sign U+20AC
+    QVERIFY(sak::input_validator::isValidUtf8("\xF0\x9F\x98\x80"));  // emoji U+1F600
+}
+
+// ============================================================================
+// R5-G10-9: traversal / injection fail-closed paths
+//
+// These guards defend the path/argument trust boundary. Each test feeds the hostile
+// token the guard exists to stop and asserts the refusal, with a non-vacuity control
+// (a benign near-miss that must NOT be flagged), so a weakened guard turns the test red
+// rather than passing vacuously.
+// ============================================================================
+
+void InputValidatorTests::containsTraversal_urlEncoded() {
+    // A caller that percent-decodes the path AFTER this check would be traversal-bypassed,
+    // so the encoded and double-encoded ".." forms must be flagged here too.
+    QVERIFY(sak::input_validator::containsTraversalSequences(
+        std::filesystem::path("uploads/%2e%2e/%2e%2e/etc/passwd")));
+    QVERIFY(sak::input_validator::containsTraversalSequences(
+        std::filesystem::path("uploads/%252e%252e/secret")));
+    // Non-vacuity: an ordinary percent sequence that is not encoded traversal is not flagged.
+    QVERIFY(!sak::input_validator::containsTraversalSequences(
+        std::filesystem::path("uploads/100%25done/file.txt")));
+}
+
+// path::string() converts to the system code page, and THROWS on a character it does not have.
+// These checks are noexcept, so that would end the process; before them it ended the run with
+// "Unhandled exception", for any folder whose name is outside the PC's language setting.
+void InputValidatorTests::validatePath_nameOutsideTheCodePage() {
+    const QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString name = QString::fromUtf8("\xE5\x86\x99\xE7\x9C\x9F");  // photos
+    QVERIFY(QDir(dir.path()).mkdir(name));
+    const std::filesystem::path folder(QDir(dir.path()).filePath(name).toStdWString());
+
+    QVERIFY(!sak::input_validator::containsTraversalSequences(folder));
+    QVERIFY(!sak::input_validator::containsSuspiciousPatterns(folder));
+
+    sak::path_validation_config config;
+    config.must_exist = true;
+    config.must_be_directory = true;
+    QVERIFY(sak::input_validator::validatePath(folder, config));
+
+    // Two different names in that alphabet must not compare as the same folder.
+    QVERIFY(!sak::input_validator::validatePathWithinBase(folder.parent_path() / L"\u5199\u771F2",
+                                                          folder));
+    QVERIFY(sak::input_validator::validatePathWithinBase(folder / L"inside", folder));
+}
+
+void InputValidatorTests::containsSuspicious_windowsDeviceNames() {
+    // A reserved device name aliases a hardware device rather than a file; writing "CON" or
+    // "LPT1" can hang or redirect I/O. The component-anchored regex flags them on any platform.
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("CON")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("NUL")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("COM1")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("LPT1")));
+    // Non-vacuity: an ordinary name that merely begins with those letters is not a device name.
+    QVERIFY(
+        !sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("console.txt")));
+}
+
+void InputValidatorTests::containsSuspicious_adsColonStream() {
+    // Any colon other than the drive-letter separator opens an NTFS Alternate Data Stream, which
+    // resolves to a different on-disk object and can smuggle a write past an exact-name check.
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("data:stream")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(
+        std::filesystem::path("report.txt::$DATA")));
+    // Non-vacuity: a legitimate drive-letter colon is not an ADS stream.
+    QVERIFY(!sak::input_validator::containsSuspiciousPatterns(
+        std::filesystem::path("C:/reports/report.txt")));
+}
+
+void InputValidatorTests::containsSuspicious_trailingDotOrSpace() {
+    // Windows silently strips a trailing '.' or ' ' from a component, so "secret.txt." resolves
+    // to "secret.txt" and slips past an exact-name/extension check.
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("secret.txt.")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("secret.txt ")));
+    // Non-vacuity: an interior dot (the real extension separator) is not a trailing dot.
+    QVERIFY(!sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("secret.txt")));
+}
+
+void InputValidatorTests::containsSuspicious_newlineAndCarriageReturn() {
+    // A newline or carriage return in a path is an injection vector (log forging, command
+    // splitting downstream); it is refused on any platform.
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("a\nb")));
+    QVERIFY(sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("a\rb")));
+    // Non-vacuity: an ordinary underscore-joined name is not flagged.
+    QVERIFY(!sak::input_validator::containsSuspiciousPatterns(std::filesystem::path("a_b")));
+}
+
+void InputValidatorTests::validatePath_emptyRejected() {
+    // A blank target must never pass validation, where a later step could resolve it to the
+    // current working directory. allow_relative_paths is set TRUE so the dedicated empty-path gate
+    // in validatePath is what rejects the empty path -- otherwise the relative-path check (an empty
+    // path is_relative()) would also reject it with the SAME invalid_path code and mask a removed
+    // empty gate. The specific "Path is empty" message pins it to that gate.
+    sak::path_validation_config cfg;
+    cfg.must_exist = false;
+    cfg.allow_relative_paths = true;
+    const auto empty = sak::input_validator::validatePath(std::filesystem::path(), cfg);
+    QVERIFY(!empty.is_valid);
+    QCOMPARE(empty.error, sak::error_code::invalid_path);
+    QCOMPARE(QString::fromStdString(empty.error_message), QStringLiteral("Path is empty"));
+    // Non-vacuity: a non-empty (absolute) path with the same config still validates, so the reject
+    // is the empty-path gate, not a config that rejects everything.
+    const auto present = sak::input_validator::validatePath(m_basePath / "future_file.txt", cfg);
+    QVERIFY2(present.is_valid, qPrintable(QString::fromStdString(present.error_message)));
+}
+
+void InputValidatorTests::validateNumeric_nanRejected() {
+    // A NaN compares false against both bounds, so a naive range test would pass it as valid.
+    // It must fail closed instead.
+    sak::numeric_validation_config<double> cfg;
+    cfg.min_value = 0.0;
+    cfg.max_value = 100.0;
+    const auto nan_result =
+        sak::input_validator::validateNumeric(std::numeric_limits<double>::quiet_NaN(), cfg);
+    QVERIFY(!nan_result.is_valid);
+    QCOMPARE(nan_result.error_message, std::string("Value is not a number"));
+    // Non-vacuity: a finite in-range double still validates.
+    QVERIFY(sak::input_validator::validateNumeric(50.0, cfg).is_valid);
+}
+
+void InputValidatorTests::safeCast_nonFiniteAndOutOfRangeFloatRejected() {
+    // Converting a non-finite or out-of-range floating value to an integral target is undefined
+    // behaviour; safeCast must refuse it rather than perform the UB cast.
+    const auto nan_cast =
+        sak::input_validator::safeCast<int>(std::numeric_limits<double>::quiet_NaN());
+    QVERIFY(!nan_cast.has_value());
+    QCOMPARE(nan_cast.error(), sak::error_code::integer_overflow);
+    QVERIFY(
+        !sak::input_validator::safeCast<int>(std::numeric_limits<double>::infinity()).has_value());
+    QVERIFY(!sak::input_validator::safeCast<int>(1e300).has_value());
+    // Non-vacuity: a finite in-range float truncates and converts.
+    const auto ok = sak::input_validator::safeCast<int>(42.0);
+    QVERIFY(ok.has_value());
+    QCOMPARE(ok.value(), 42);
 }
 
 QTEST_GUILESS_MAIN(InputValidatorTests)

@@ -12,6 +12,7 @@
 
 #include "sak/advanced_search_types.h"
 #include "sak/regex_pattern_library.h"
+#include "sak/worker_base.h"
 
 #include <QObject>
 #include <QStringList>
@@ -86,6 +87,10 @@ public:
     /// @brief Access the regex pattern library
     [[nodiscard]] RegexPatternLibrary* patternLibrary() const;
 
+    /// What the last finished search could not search, one line each, as the worker recorded it
+    /// (it keeps the first 32). Empty after a complete search.
+    [[nodiscard]] QStringList incompleteReasons() const { return m_incomplete_reasons; }
+
 Q_SIGNALS:
     /// @brief Emitted when controller state changes
     void stateChanged(sak::AdvancedSearchController::State newState);
@@ -99,8 +104,17 @@ Q_SIGNALS:
     /// @brief Emitted per-file as search progresses
     void fileSearched(const QString& filePath, int matchCount);
 
-    /// @brief Emitted when search completes successfully
-    void searchFinished(int totalMatches, int totalFiles);
+    /// @brief Emitted when a search run ends without failing or being cancelled
+    /// @param totalMatches Matches delivered to the UI
+    /// @param totalFiles   Files that produced at least one match
+    /// @param complete     False when the run could not cover everything it was
+    ///                     asked to cover (an unreadable/over-cap file, a failed
+    ///                     or truncated listing, an archive whose entry chain
+    ///                     stopped early, or a hit result cap). Every consumer
+    ///                     MUST qualify what it reports on false: announcing an
+    ///                     incomplete run as "complete" anywhere turns a missed
+    ///                     match into a confident "not found".
+    void searchFinished(int totalMatches, int totalFiles, bool complete);
 
     /// @brief Emitted when search fails
     void searchFailed(const QString& error);
@@ -124,14 +138,27 @@ private Q_SLOTS:
     void onFileSearched(const QString& filePath, int matchCount);
 
 private:
+    QStringList m_incomplete_reasons;
     /// @brief Transition to a new state
     void setState(State newState);
 
     /// @brief Clean up the current worker
     void cleanupWorker();
 
+    /// @brief Wire the current worker's signals, guarded by the search generation
+    ///
+    /// A worker emits cancelled()/finished()/resultsReady() from its own thread
+    /// as queued metacalls to this controller. Those events survive the worker's
+    /// destruction (Qt only drops posted events whose receiver is destroyed, not
+    /// whose sender is), so a stale worker from a superseded search could mutate
+    /// the state of the replacement search. Each connection therefore captures
+    /// the generation active when it was made and drops the signal if a newer
+    /// search has since started.
+    void connectWorkerSignals(AdvancedSearchWorker* worker, quint64 generation);
+
     State m_state = State::Idle;
-    std::unique_ptr<AdvancedSearchWorker> m_worker;
+    WorkerPtr<AdvancedSearchWorker> m_worker;
+    quint64 m_worker_generation = 0;
     std::unique_ptr<RegexPatternLibrary> m_pattern_library;
 
     QStringList m_search_history;
@@ -143,7 +170,7 @@ private:
     static constexpr int kMaxHistorySize = 50;
 };
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 /// AdvancedSearchController must inherit QObject.
 static_assert(std::is_base_of_v<QObject, AdvancedSearchController>,
@@ -156,9 +183,5 @@ static_assert(!std::is_copy_constructible_v<AdvancedSearchController>,
 /// AdvancedSearchController must not be movable.
 static_assert(!std::is_move_constructible_v<AdvancedSearchController>,
               "AdvancedSearchController must not be move-constructible.");
-
-/// AdvancedSearchController must not be copyable.
-static_assert(!std::is_copy_constructible_v<AdvancedSearchController>,
-              "AdvancedSearchController must not be copy-constructible.");
 
 }  // namespace sak

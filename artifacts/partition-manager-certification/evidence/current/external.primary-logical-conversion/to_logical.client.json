@@ -1,0 +1,97 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:35:48.054Z",
+    "disk_before": {
+        "bus_type": "File Backed Virtual",
+        "disk_number": 1,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Msft Virtual Disk",
+        "partition_count": 1,
+        "partition_style": "MBR",
+        "serial_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": "1073741824"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "13b6431b-63da-47ea-be66-18bc6b6da764",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Convert Disk 1 Partition 1 to logical\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Tuesday, November 10, 2026 8:35:33 AM\r\n   Source : C:\\SAKCert\\stage\\data\\temp\\sak-shadow-4f326c4b51ef4df080a242fed453fc48\\\r\n     Dest : C:\\SAKCert\\work\\backup-external.primary-logical-conversion\\sak-primary-logical-backup-aabbbe431c7c4b7a80ed3f62d9594bff\\\r\n\r\n    Files : *.*\r\n\t    \r\n  Options : *.* /S /E /COPYALL /PURGE /MIR /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-4f326c4b51ef4df080a242fed453fc48\\\r\n\t  New Dir          5\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-4f326c4b51ef4df080a242fed453fc48\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-4f326c4b51ef4df080a242fed453fc48\\fixture\\sub dir\\\r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-4f326c4b51ef4df080a242fed453fc48\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-4f326c4b51ef4df080a242fed453fc48\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-4f326c4b51ef4df080a242fed453fc48\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         7         5         2         0         0         0\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           85,266,028 Bytes/sec.\r\n   Speed :            4,878.961 MegaBytes/min.\r\n   Ended : Tuesday, November 10, 2026 8:35:33 AM\r\n\r\nMicrosoft DiskPart version 10.0.26100.1150\r\n\r\nCopyright (C) Microsoft Corporation.\r\nOn computer: DESKTOP-EB5HH3F\r\n\r\nDisk 1 is now the selected disk.\r\n\r\nDiskPart succeeded in cleaning the disk.\r\n\r\nDiskPart successfully converted the selected disk to MBR format.\r\n\r\nDiskPart succeeded in creating the specified partition.\r\n\r\nDiskPart succeeded in creating the specified partition.\r\n\r\n\r\n    0 percent completed\r\n  100 percent completed\r\n\r\n\r\nDiskPart successfully formatted the volume.\r\n\r\nDiskPart successfully assigned the drive letter or mount point.\r\n\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Tuesday, November 10, 2026 8:35:36 AM\r\n   Source : C:\\SAKCert\\work\\backup-external.primary-logical-conversion\\sak-primary-logical-backup-aabbbe431c7c4b7a80ed3f62d9594bff\\\r\n     Dest : T:\\\r\n\r\n    Files : *.*\r\n\t    \r\n  Options : *.* /S /E /COPYALL /PURGE /MIR /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tC:\\SAKCert\\work\\backup-external.primary-logical-conversion\\sak-primary-logical-backup-aabbbe431c7c4b7a80ed3f62d9594bff\\\r\n\t  New Dir          5\tC:\\SAKCert\\work\\backup-external.primary-logical-conversion\\sak-primary-logical-backup-aabbbe431c7c4b7a80ed3f62d9594bff\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.primary-logical-conversion\\sak-primary-logical-backup-aabbbe431c7c4b7a80ed3f62d9594bff\\fixture\\sub dir\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.primary-logical-conversion\\sak-primary-logical-backup-aabbbe431c7c4b7a80ed3f62d9594bff\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.primary-logical-conversion\\sak-primary-logical-backup-aabbbe431c7c4b7a80ed3f62d9594bff\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tC:\\SAKCert\\work\\backup-external.primary-logical-conversion\\sak-primary-logical-backup-aabbbe431c7c4b7a80ed3f62d9594bff\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         6         5         1         0         0         1\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           403,592,533 Bytes/sec.\r\n   Speed :            23,093.750 MegaBytes/min.\r\n   Ended : Tuesday, November 10, 2026 8:35:36 AM\r\n\r\nNoErrorsFound\r\n\r\nDiskNumber PartitionNumber DriveLetter Offset      Size Type    \r\n---------- --------------- ----------- ------      ---- ----    \r\n         1               0           \u0000  65536 536870912 Extended\r\n         1               1           T 131072 402653184 IFS     \r\n\r\n\r\n",
+                "success": true,
+                "summary": "Convert Primary/Logical - Disk 1 Partition 1"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "ConvertPrimaryLogical",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "13b6431b-63da-47ea-be66-18bc6b6da764",
+            "payload": {
+                "backup_directory": "C:\\SAKCert\\work\\backup-external.primary-logical-conversion",
+                "backup_volume_guid": "\\\\?\\VOLUME{92E38F2A-9B38-4F3D-B65E-8472CA9BBC3B}\\",
+                "backup_volume_identity_error": "",
+                "drive_letter": "T",
+                "file_system": "NTFS",
+                "label": "SAKLOG",
+                "source_size_bytes": "402653184",
+                "target_layout": "logical",
+                "target_wipe_confirmed": true
+            },
+            "script_sha256": "996d976158716225d052dfe86e8f18faf241cc6bdfbbd13ed19465deb2a430ed",
+            "summary": "Convert Primary/Logical - Disk 1 Partition 1",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "60022480813569AC6229A9F7D5666B8B",
+                "drive_letter": "T",
+                "kind": "Partition",
+                "offset_bytes": "65536",
+                "partition_number": 1,
+                "size_bytes": "402653184"
+            },
+            "type": "Convert Primary/Logical",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "c31c795a82b836d02c2a2784e360f74872a3e121be38e94c1b7e4379be871e81",
+        "layout_hash": "2d2a195baf03e38ec3e6b96cd8050461de27338c82df6fb46f54432bbd623d90",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "6dabd3e9-9548-4b37-b588-cd518f92232c",
+    "scenario_id": "external.primary-logical-conversion",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:35:22.115Z",
+    "status": "Passed",
+    "step": "to_logical",
+    "tool": "partition-manager-scenario-step"
+}

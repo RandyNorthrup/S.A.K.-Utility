@@ -44,6 +44,12 @@ public:
         bool preview_mode{false};                     ///< Dry run without moving
         bool create_subdirectories{true};             ///< Create category folders
         QString collision_strategy{"rename"};         ///< rename/skip/overwrite
+        /// Preview-only ceiling on how many immediate files the dry run will collect and plan, to
+        /// bound peak memory on a pathological directory. 0 = unlimited. Consulted ONLY when
+        /// preview_mode is true; an apply (preview_mode=false) is always uncapped -- it must move
+        /// every matching file. When the cap is hit, planTruncated() becomes true and the reported
+        /// count is an honest lower bound.
+        int max_preview_files{0};
     };
 
     /**
@@ -52,6 +58,53 @@ public:
      * @param parent Parent QObject
      */
     explicit OrganizerWorker(const Config& config, QObject* parent = nullptr);
+
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
+    ~OrganizerWorker() override { stopAndJoin(); }
+
+    /**
+     * @brief Number of files actually relocated by the last run
+     *
+     * Counts only real moves (a skipped-collision file that stays in place is not
+     * counted). Written on the worker thread before finished() is emitted, so it is
+     * safe to read from a slot connected to finished().
+     * @return Count of files moved
+     */
+    [[nodiscard]] int movedCount() const noexcept { return m_moved_count; }
+
+    /**
+     * @brief The files the last run could not move, each with the reason.
+     *
+     * One locked file does not stop the others, so the run finishes and then reports failure. These
+     * files stayed where they were. Written on the worker thread before failed() is emitted, so it
+     * is safe to read from a slot connected to failed().
+     * @return One line per file
+     */
+    [[nodiscard]] const QStringList& failedMoves() const noexcept { return m_failed_moves; }
+
+    /**
+     * @brief The move operations planned by the last run (source, destination, category,
+     *        would_overwrite), before any move is executed.
+     *
+     * In preview_mode the run stops right after planning, so this is the full plan of what an
+     * apply WOULD do. Populated on the worker thread before finished() is emitted, so it is safe
+     * to read from a slot connected to finished().
+     * @return Planned move operations
+     */
+    [[nodiscard]] const std::vector<MoveOperation>& plannedOperations() const noexcept {
+        return m_planned_operations;
+    }
+
+    /**
+     * @brief Whether the last (preview) run stopped collecting at Config::max_preview_files.
+     *
+     * When true, plannedOperations()/movedCount reflect only the capped prefix, so any reported
+     * file count is a lower bound. Always false for an uncapped run (apply, or preview with
+     * max_preview_files == 0).
+     * @return True if the preview cap was reached
+     */
+    [[nodiscard]] bool planTruncated() const noexcept { return m_plan_truncated; }
 
 Q_SIGNALS:
     /**
@@ -123,4 +176,8 @@ private:
 
     Config m_config;
     std::vector<MoveOperation> m_planned_operations;
+    int m_moved_count{0};  ///< Files actually relocated by the current run
+    QStringList m_failed_moves;
+    bool m_plan_truncated{
+        false};  ///< Preview hit max_preview_files (reported count is a lower bound)
 };

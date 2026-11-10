@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/file_explorer_details_view.h"
+#include "sak/file_explorer_group_proxy_model.h"
 #include "sak/file_explorer_item_model.h"
 #include "sak/file_explorer_sort_filter_model.h"
 #include "sak/file_explorer_types.h"
@@ -30,7 +31,9 @@ public:
     explicit FileExplorerPane(QWidget* parent = nullptr);
 
     [[nodiscard]] FileExplorerItemModel* itemModel() const;
+    [[nodiscard]] FileExplorerItemModel* columnsPreviewModel() const;
     [[nodiscard]] FileExplorerSortFilterModel* sortFilterModel() const;
+    [[nodiscard]] FileExplorerGroupProxyModel* groupProxyModel() const;
     [[nodiscard]] QTableView* tableView() const;
     [[nodiscard]] QListView* listView() const;
     [[nodiscard]] QListView* gridView() const;
@@ -45,12 +48,15 @@ public:
     [[nodiscard]] FileManagementEntry entryAtViewRow(int row) const;
     [[nodiscard]] bool hasViewEntry(int row) const;
     [[nodiscard]] FileExplorerViewMode viewMode() const;
-    [[nodiscard]] int itemSizePx() const;
+    [[nodiscard]] const FileExplorerLayoutSizes& layoutSizes() const;
     [[nodiscard]] bool showHiddenItems() const;
     [[nodiscard]] bool showFileExtensions() const;
 
     void setViewMode(FileExplorerViewMode mode);
-    void setItemSizePx(int item_size_px);
+    void setLayoutSizes(const FileExplorerLayoutSizes& sizes);
+    void setGrouping(FileExplorerGroupOption option,
+                     FileExplorerGroupDateUnit date_unit,
+                     Qt::SortOrder direction);
     void setShowHiddenItems(bool show);
     void setShowFileExtensions(bool show);
     void setColumnsPreviewEntries(const QString& path, QVector<FileManagementEntry> entries);
@@ -69,7 +75,8 @@ private:
     void setStateMessage(const QString& message, bool visible);
     void configureListView(QListView* view, const QString& object_name, QListView::ViewMode mode);
     void configureColumnsPreviewView(QListView* view);
-    void applyItemSize();
+    void applyLayoutSizes();
+    void applyGroupHeaderSpans();
     void updateColumnsPreviewRequest();
     [[nodiscard]] FileManagementEntry columnsPreviewEntryAtRow(int row) const;
 
@@ -80,6 +87,7 @@ Q_SIGNALS:
 private:
     FileExplorerItemModel* m_item_model{nullptr};
     FileExplorerSortFilterModel* m_sort_filter_model{nullptr};
+    FileExplorerGroupProxyModel* m_group_proxy{nullptr};
     FileExplorerItemModel* m_columns_preview_model{nullptr};
     FileExplorerSortFilterModel* m_columns_preview_proxy{nullptr};
     QItemSelectionModel* m_selection_model{nullptr};
@@ -95,7 +103,7 @@ private:
     QLabel* m_status_label{nullptr};
     QString m_columns_preview_path;
     FileExplorerViewMode m_view_mode{FileExplorerViewMode::Details};
-    int m_item_size_px{kFileExplorerItemSizeDefault};
+    FileExplorerLayoutSizes m_layout_sizes;
 };
 
 }  // namespace sak

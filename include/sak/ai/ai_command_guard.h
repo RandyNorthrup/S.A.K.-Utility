@@ -13,16 +13,30 @@ namespace sak::ai {
 ///
 /// These checks fail fast for command shapes that caused bad agent behavior in
 /// manual QA, and request explicit approval for package-manager trust bypasses.
-struct AiCommandGuardResult {
-    QString block_error;
-    QString approval_reason;
+/// Decisions use only executable request fields. Display previews and manifest
+/// labels are untrusted presentation metadata and cannot weaken or trigger a guard.
+class AiCommandGuardResult final {
+public:
+    /// Allowed means execution may proceed without another authorization step.
+    [[nodiscard]] bool allowed() const {
+        return m_block_error.isEmpty() && m_approval_reason.isEmpty();
+    }
+    [[nodiscard]] bool blocked() const { return !m_block_error.isEmpty(); }
+    [[nodiscard]] bool requiresApproval() const {
+        return m_block_error.isEmpty() && !m_approval_reason.isEmpty();
+    }
+    [[nodiscard]] const QString& blockError() const { return m_block_error; }
+    [[nodiscard]] const QString& approvalReason() const { return m_approval_reason; }
+
+private:
+    friend AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request);
+
+    AiCommandGuardResult(QString block_error, QString approval_reason);
+
+    QString m_block_error;
+    QString m_approval_reason;
 };
 
-[[nodiscard]] QString commandGuardBlockError(const AiCommandRequest& request,
-                                             const QString& preview);
-[[nodiscard]] QString commandGuardApprovalReason(const AiCommandRequest& request,
-                                                 const QString& preview);
-[[nodiscard]] AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request,
-                                                        const QString& preview);
+[[nodiscard]] AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request);
 
 }  // namespace sak::ai

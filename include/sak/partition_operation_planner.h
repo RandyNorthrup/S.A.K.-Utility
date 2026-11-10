@@ -23,9 +23,9 @@ public:
 private:
     PartitionSafetyValidator m_validator;
 
-    void fillRiskAndSummary(PartitionOperation* operation) const;
-    void expandCompositeOperation(const PartitionOperation& operation,
-                                  OperationPreview* preview) const;
+    static void fillRiskAndSummary(PartitionOperation* operation);
+    static void expandCompositeOperation(const PartitionOperation& operation,
+                                         OperationPreview* preview);
 };
 
 }  // namespace sak

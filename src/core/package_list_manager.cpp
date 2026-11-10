@@ -15,16 +15,24 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 
 #include <algorithm>
 
 namespace sak {
 
+namespace {
+/// @brief Hard cap on a package-list JSON file read from disk. A list holds at most
+/// kMaxPackageListEntries small entries, so a few hundred KiB is realistic; 8 MiB
+/// bounds a hostile/corrupt file before it is read wholesale into memory.
+constexpr qint64 kMaxPackageListFileBytes = 8LL * 1024 * 1024;
+}  // namespace
+
 // ============================================================================
 // Preset Lists
 // ============================================================================
 
-QStringList PackageListManager::presetNames() const {
+QStringList PackageListManager::presetNames() {
     return {"Office PC",
             "Developer Workstation",
             "Kiosk / POS",
@@ -32,7 +40,7 @@ QStringList PackageListManager::presetNames() const {
             "Education Lab"};
 }
 
-PackageList PackageListManager::preset(const QString& name) const {
+PackageList PackageListManager::preset(const QString& name) {
     if (name == "Office PC") {
         return buildOfficePreset();
     }
@@ -69,7 +77,12 @@ PackageList PackageListManager::createList(const QString& name, const QString& d
 bool PackageListManager::addPackage(PackageList& list,
                                     const QString& package_id,
                                     const QString& version,
-                                    const QString& notes) {
+                                    const QString& notes,
+                                    bool pinned) {
+    if (package_id.trimmed().isEmpty()) {
+        sak::logWarning("[PackageListManager] Rejected package with empty id");
+        return false;
+    }
     if (list.entries.size() >= offline::kMaxPackageListEntries) {
         sak::logWarning("[PackageListManager] List full: {} entries",
                         static_cast<int>(list.entries.size()));
@@ -77,8 +90,8 @@ bool PackageListManager::addPackage(PackageList& list,
     }
 
     // Check for duplicates
-    bool exists = std::any_of(
-        list.entries.cbegin(), list.entries.cend(), [&package_id](const PackageListEntry& entry) {
+    const bool exists =
+        std::ranges::any_of(list.entries, [&package_id](const PackageListEntry& entry) {
             return entry.package_id.compare(package_id, Qt::CaseInsensitive) == 0;
         });
 
@@ -90,6 +103,7 @@ bool PackageListManager::addPackage(PackageList& list,
     entry.package_id = package_id;
     entry.version = version;
     entry.notes = notes;
+    entry.pinned = pinned;
     list.entries.append(entry);
 
     list.modified_date = QDateTime::currentDateTime().toString(Qt::ISODate);
@@ -97,10 +111,9 @@ bool PackageListManager::addPackage(PackageList& list,
 }
 
 bool PackageListManager::removePackage(PackageList& list, const QString& package_id) {
-    auto iter = std::find_if(
-        list.entries.begin(), list.entries.end(), [&package_id](const PackageListEntry& entry) {
-            return entry.package_id.compare(package_id, Qt::CaseInsensitive) == 0;
-        });
+    auto iter = std::ranges::find_if(list.entries, [&package_id](const PackageListEntry& entry) {
+        return entry.package_id.compare(package_id, Qt::CaseInsensitive) == 0;
+    });
 
     if (iter == list.entries.end()) {
         return false;
@@ -114,7 +127,9 @@ bool PackageListManager::removePackage(PackageList& list, const QString& package
 int PackageListManager::mergeLists(PackageList& target, const PackageList& source) {
     int added = 0;
     for (const auto& entry : source.entries) {
-        if (addPackage(target, entry.package_id, entry.version, entry.notes)) {
+        // Preserve the pinned flag: dropping it here would let a pinned source entry merge in
+        // as unpinned, silently losing the caller's intent to hold that package at its version.
+        if (addPackage(target, entry.package_id, entry.version, entry.notes, entry.pinned)) {
             added++;
         }
     }
@@ -149,15 +164,26 @@ bool PackageListManager::saveToFile(const PackageList& list, const QString& file
     }
     root["packages"] = packages;
 
-    QFile file(file_path);
+    // QSaveFile: a plain WriteOnly open truncates the existing list to 0 before writing, so a
+    // failed/short write would destroy the prior good list. QSaveFile writes to a temp file and
+    // only atomically renames on commit(), leaving the previous file intact on any failure.
+    QSaveFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logError("[PackageListManager] Cannot write: {}", file_path.toStdString());
         return false;
     }
 
-    QJsonDocument doc(root);
-    file.write(doc.toJson(QJsonDocument::Indented));
-    file.close();
+    const QJsonDocument doc(root);
+    const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
+    if (file.write(json_bytes) != json_bytes.size()) {
+        sak::logError("[PackageListManager] Incomplete write: {}", file_path.toStdString());
+        file.cancelWriting();
+        return false;
+    }
+    if (!file.commit()) {
+        sak::logError("[PackageListManager] Commit failed: {}", file_path.toStdString());
+        return false;
+    }
 
     sak::logInfo("[PackageListManager] Saved list '{}' ({} packages) to: {}",
                  list.name.toStdString(),
@@ -175,13 +201,32 @@ PackageList PackageListManager::loadFromFile(const QString& file_path) {
         return list;
     }
 
-    QJsonParseError parse_error;
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parse_error);
+    const qint64 size = file.size();
+    if (size < 0 || size > kMaxPackageListFileBytes) {
+        sak::logError("[PackageListManager] File too large or unreadable: {}",
+                      file_path.toStdString());
+        return list;
+    }
+
+    const QByteArray raw = file.readAll();
+    if (file.error() != QFileDevice::NoError) {
+        sak::logError("[PackageListManager] Read error: {}", file_path.toStdString());
+        return list;
+    }
     file.close();
+
+    QJsonParseError parse_error;
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &parse_error);
 
     if (parse_error.error != QJsonParseError::NoError) {
         sak::logError("[PackageListManager] JSON parse error: {}",
                       parse_error.errorString().toStdString());
+        return list;
+    }
+
+    if (!doc.isObject()) {
+        sak::logError("[PackageListManager] Root is not a JSON object: {}",
+                      file_path.toStdString());
         return list;
     }
 
@@ -191,11 +236,20 @@ PackageList PackageListManager::loadFromFile(const QString& file_path) {
     list.created_date = root["created"].toString();
     list.modified_date = root["modified"].toString();
 
-    QJsonArray packages = root["packages"].toArray();
+    const QJsonArray packages = root["packages"].toArray();
     for (const auto& val : packages) {
+        if (list.entries.size() >= offline::kMaxPackageListEntries) {
+            sak::logWarning("[PackageListManager] Entry cap reached ({}); extra packages ignored",
+                            offline::kMaxPackageListEntries);
+            break;
+        }
         QJsonObject pkg = val.toObject();
+        const QString package_id = pkg["package_id"].toString();
+        if (package_id.trimmed().isEmpty()) {
+            continue;  // a package with no id is unusable downstream; skip it (fail closed)
+        }
         PackageListEntry entry;
-        entry.package_id = pkg["package_id"].toString();
+        entry.package_id = package_id;
         entry.version = pkg["version"].toString();
         entry.notes = pkg["notes"].toString();
         entry.pinned = pkg["pinned"].toBool();
@@ -222,7 +276,7 @@ QVector<QPair<QString, QString>> PackageListManager::toPackagePairs(const Packag
 // Preset Builders
 // ============================================================================
 
-PackageList PackageListManager::buildOfficePreset() const {
+PackageList PackageListManager::buildOfficePreset() {
     auto list = createList("Office PC",
                            "Standard office workstation with productivity "
                            "tools, browsers, and document viewers");
@@ -241,7 +295,7 @@ PackageList PackageListManager::buildOfficePreset() const {
     return list;
 }
 
-PackageList PackageListManager::buildDeveloperPreset() const {
+PackageList PackageListManager::buildDeveloperPreset() {
     auto list = createList("Developer Workstation",
                            "Software development tools, IDEs, runtimes, "
                            "and version control utilities");
@@ -262,7 +316,7 @@ PackageList PackageListManager::buildDeveloperPreset() const {
     return list;
 }
 
-PackageList PackageListManager::buildKioskPreset() const {
+PackageList PackageListManager::buildKioskPreset() {
     auto list = createList("Kiosk / POS",
                            "Minimal setup for kiosk or point-of-sale "
                            "terminals with only essential software");
@@ -275,7 +329,7 @@ PackageList PackageListManager::buildKioskPreset() const {
     return list;
 }
 
-PackageList PackageListManager::buildSecurityPreset() const {
+PackageList PackageListManager::buildSecurityPreset() {
     auto list = createList("Security / IT Admin",
                            "Security tools, network utilities, and system "
                            "administration software for IT professionals");
@@ -294,7 +348,7 @@ PackageList PackageListManager::buildSecurityPreset() const {
     return list;
 }
 
-PackageList PackageListManager::buildEducationPreset() const {
+PackageList PackageListManager::buildEducationPreset() {
     auto list = createList("Education Lab",
                            "Software for educational computer labs with "
                            "browsers, office suite, and educational tools");

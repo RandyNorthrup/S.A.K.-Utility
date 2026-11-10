@@ -29,7 +29,7 @@ QString diskRows(const PartitionInventory& inventory) {
         rows += QStringLiteral(
                     "<tr><td>Disk %1</td><td>%2</td><td>%3</td><td>%4</td>"
                     "<td>%5</td><td>%6</td></tr>")
-                    .arg(disk.disk_number)
+                    .arg(disk.disk_number.value())
                     .arg(escapeHtml(disk.model))
                     .arg(escapeHtml(disk.partition_style))
                     .arg(formatPartitionBytes(disk.size_bytes))
@@ -39,12 +39,24 @@ QString diskRows(const PartitionInventory& inventory) {
     return rows;
 }
 
+// A step whose script was stopped while Windows carried out its work did not fail: Windows may
+// still be finishing it. A step a cancel stopped did not fail either.
+QString stepStatus(const PartitionExecutionStep& step) {
+    if (step.success) {
+        return QStringLiteral("Success");
+    }
+    if (step.may_still_run_in_windows) {
+        return QStringLiteral("May still be running in Windows");
+    }
+    return step.cancelled ? QStringLiteral("Cancelled") : QStringLiteral("Failed");
+}
+
 QString stepRows(const PartitionExecutionResult& result) {
     QString rows;
     for (const auto& step : result.steps) {
         rows += QStringLiteral("<tr><td>%1</td><td>%2</td><td>%3</td><td><pre>%4</pre></td></tr>")
                     .arg(escapeHtml(step.summary))
-                    .arg(step.success ? QStringLiteral("Success") : QStringLiteral("Failed"))
+                    .arg(stepStatus(step))
                     .arg(escapeHtml(step.error_message))
                     .arg(escapeHtml(step.stdout_text.left(kPartitionReportOutputPreviewChars)));
     }
@@ -53,7 +65,7 @@ QString stepRows(const PartitionExecutionResult& result) {
 
 QJsonArray disksToJson(const PartitionInventory& inventory) {
     QJsonArray array;
-    PartitionReportGenerator generator;
+    const PartitionReportGenerator generator;
     for (const auto& disk : inventory.disks) {
         array.append(generator.diskToJson(disk));
     }
@@ -62,9 +74,22 @@ QJsonArray disksToJson(const PartitionInventory& inventory) {
 
 }  // namespace
 
+QString PartitionReportGenerator::generateLogText(const PartitionExecutionResult& result) {
+    QStringList lines{result.message};
+    for (const auto& step : result.steps) {
+        lines.append(QStringLiteral("%1: %2").arg(stepStatus(step), step.summary));
+        for (const QString* detail : {&step.error_message, &step.stdout_text, &step.stderr_text}) {
+            if (!detail->trimmed().isEmpty()) {
+                lines.append(detail->trimmed());
+            }
+        }
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
 QString PartitionReportGenerator::generateHtml(const PartitionInventory& before,
                                                const PartitionInventory& after,
-                                               const PartitionExecutionResult& result) const {
+                                               const PartitionExecutionResult& result) {
     return QString::fromLatin1(report::kPartitionManagerReportDocumentOpen)
                .arg(QString::fromLatin1(report::kPartitionManagerReportStyle)) +
            QStringLiteral(
@@ -88,7 +113,7 @@ QString PartitionReportGenerator::generateHtml(const PartitionInventory& before,
 
 QString PartitionReportGenerator::generateJson(const PartitionInventory& before,
                                                const PartitionInventory& after,
-                                               const PartitionExecutionResult& result) const {
+                                               const PartitionExecutionResult& result) {
     QJsonArray steps;
     for (const auto& step : result.steps) {
         steps.append(operationStepToJson(step));
@@ -112,7 +137,7 @@ QJsonObject PartitionReportGenerator::diskToJson(const PartitionDiskInfo& disk) 
     QJsonArray partitions;
     for (const auto& partition : disk.partitions) {
         QJsonObject p;
-        p[QStringLiteral("number")] = static_cast<int>(partition.partition_number);
+        p[QStringLiteral("number")] = static_cast<int>(partition.partition_number.value());
         p[QStringLiteral("guid")] = partition.partition_guid;
         p[QStringLiteral("type")] = partition.type_name;
         p[QStringLiteral("offset_bytes")] = QString::number(partition.offset_bytes);
@@ -125,12 +150,15 @@ QJsonObject PartitionReportGenerator::diskToJson(const PartitionDiskInfo& disk) 
     }
 
     QJsonObject object;
-    object[QStringLiteral("disk_number")] = static_cast<int>(disk.disk_number);
+    object[QStringLiteral("disk_number")] = static_cast<int>(disk.disk_number.value());
     object[QStringLiteral("model")] = disk.model;
     object[QStringLiteral("serial_number")] = disk.serial_number;
     object[QStringLiteral("partition_style")] = disk.partition_style;
     object[QStringLiteral("size_bytes")] = QString::number(disk.size_bytes);
     object[QStringLiteral("health_status")] = disk.health_status;
+    object[QStringLiteral("is_offline")] =
+        disk.is_offline.has_value() ? QJsonValue(*disk.is_offline) : QJsonValue(QJsonValue::Null);
+    object[QStringLiteral("is_read_only")] = disk.is_read_only;
     object[QStringLiteral("partitions")] = partitions;
     return object;
 }
@@ -141,6 +169,12 @@ QJsonObject PartitionReportGenerator::operationStepToJson(const PartitionExecuti
     object[QStringLiteral("summary")] = step.summary;
     object[QStringLiteral("success")] = step.success;
     object[QStringLiteral("skipped")] = step.skipped;
+    object[QStringLiteral("may_still_run_in_windows")] = step.may_still_run_in_windows;
+    object[QStringLiteral("cancelled")] = step.cancelled;
+    object[QStringLiteral("stop_cleanup_removed")] =
+        QJsonArray::fromStringList(step.stop_cleanup_removed);
+    object[QStringLiteral("stop_cleanup_not_removed")] =
+        QJsonArray::fromStringList(step.stop_cleanup_not_removed);
     object[QStringLiteral("stdout")] = step.stdout_text;
     object[QStringLiteral("stderr")] = step.stderr_text;
     object[QStringLiteral("error_message")] = step.error_message;

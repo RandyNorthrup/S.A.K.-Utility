@@ -15,6 +15,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <limits>
 
 namespace sak {
 
@@ -24,13 +25,14 @@ constexpr int kWorkerStopTimeoutMs = kTimeoutProcessShortMs;
 constexpr int kSearchStatusMessageMs = kTimerStatusDefaultMs;
 constexpr int kDefaultPreviewFileSizeMb = 10;
 constexpr int kDefaultSearchFileSizeMb = 50;
-constexpr int kDefaultCacheSize = 50;
+
 constexpr int kDefaultContextLines = 2;
 constexpr int kMinimumPreferenceValue = 1;
 constexpr int kMaximumPreviewFileSizeMb = 500;
 constexpr int kMaximumSearchFileSizeMb = 1000;
-constexpr int kMaximumCacheSize = 1000;
+
 constexpr int kMaximumContextLines = 10;
+constexpr int kMaxHistoryEntryLength = 2048;
 
 }  // namespace
 
@@ -73,6 +75,7 @@ void AdvancedSearchController::startSearch(const SearchConfig& config) {
     cleanupWorker();
 
     m_total_matches = 0;
+    m_incomplete_reasons.clear();
     m_total_files = 0;
 
     // Apply preferences to config
@@ -85,25 +88,12 @@ void AdvancedSearchController::startSearch(const SearchConfig& config) {
                                         kBytesPerMB;
     }
 
-    m_worker = std::make_unique<AdvancedSearchWorker>(effectiveConfig);
+    m_worker = makeWorker<AdvancedSearchWorker>(effectiveConfig);
 
-    // Connect worker signals
-    connect(m_worker.get(), &WorkerBase::started, this, &AdvancedSearchController::onWorkerStarted);
-    connect(
-        m_worker.get(), &WorkerBase::finished, this, &AdvancedSearchController::onWorkerFinished);
-    connect(m_worker.get(), &WorkerBase::failed, this, &AdvancedSearchController::onWorkerFailed);
-    connect(
-        m_worker.get(), &WorkerBase::cancelled, this, &AdvancedSearchController::onWorkerCancelled);
-    connect(
-        m_worker.get(), &WorkerBase::progress, this, &AdvancedSearchController::onWorkerProgress);
-    connect(m_worker.get(),
-            &AdvancedSearchWorker::resultsReady,
-            this,
-            &AdvancedSearchController::onResultsReady);
-    connect(m_worker.get(),
-            &AdvancedSearchWorker::fileSearched,
-            this,
-            &AdvancedSearchController::onFileSearched);
+    // Connect worker signals, tagged with the generation of this search so that
+    // any queued signal from a superseded worker is dropped rather than allowed
+    // to corrupt the replacement search's state.
+    connectWorkerSignals(m_worker.get(), ++m_worker_generation);
 
     // Add to history
     addToHistory(config.pattern);
@@ -124,14 +114,74 @@ void AdvancedSearchController::cancelSearch() {
 
 void AdvancedSearchController::cleanupWorker() {
     if (m_worker) {
-        if (m_worker->isRunning()) {
-            m_worker->requestStop();
-            if (!m_worker->wait(kWorkerStopTimeoutMs)) {
-                logError("AdvancedSearchController: worker did not stop within 5s");
-            }
-        }
-        m_worker.reset();
+        // Bump the generation so any already-queued signals from this worker are
+        // ignored by their guards, then disconnect to stop further emissions.
+        ++m_worker_generation;
+        m_worker->disconnect(this);
+        // Never destroy a still-running worker and never block without bound: release() joins
+        // within the stop deadline, or reports the overrun and retains the worker until its
+        // in-flight file finishes (the worker checks its stop flag between files).
+        releaseWorker(m_worker, kWorkerStopTimeoutMs);
     }
+}
+
+void AdvancedSearchController::connectWorkerSignals(AdvancedSearchWorker* worker,
+                                                    quint64 generation) {
+    const auto stale = [this, generation] {
+        return generation != m_worker_generation;
+    };
+
+    connect(worker, &WorkerBase::started, this, [this, stale] {
+        if (stale()) {
+            return;
+        }
+        onWorkerStarted();
+    });
+    connect(worker, &WorkerBase::finished, this, [this, stale] {
+        if (stale()) {
+            return;
+        }
+        onWorkerFinished();
+    });
+    connect(worker, &WorkerBase::failed, this, [this, stale](int code, const QString& message) {
+        if (stale()) {
+            return;
+        }
+        onWorkerFailed(code, message);
+    });
+    connect(worker, &WorkerBase::cancelled, this, [this, stale] {
+        if (stale()) {
+            return;
+        }
+        onWorkerCancelled();
+    });
+    connect(worker,
+            &WorkerBase::progress,
+            this,
+            [this, stale](int current, int total, const QString& message) {
+                if (stale()) {
+                    return;
+                }
+                onWorkerProgress(current, total, message);
+            });
+    connect(worker,
+            &AdvancedSearchWorker::resultsReady,
+            this,
+            [this, stale](QVector<sak::SearchMatch> matches) {
+                if (stale()) {
+                    return;
+                }
+                onResultsReady(std::move(matches));
+            });
+    connect(worker,
+            &AdvancedSearchWorker::fileSearched,
+            this,
+            [this, stale](const QString& filePath, int matchCount) {
+                if (stale()) {
+                    return;
+                }
+                onFileSearched(filePath, matchCount);
+            });
 }
 
 // -- Worker Signal Handlers --------------------------------------------------
@@ -141,7 +191,43 @@ void AdvancedSearchController::onWorkerStarted() {
 }
 
 void AdvancedSearchController::onWorkerFinished() {
-    Q_EMIT searchFinished(m_total_matches, m_total_files);
+    if (!m_worker) {
+        // Unreachable in practice: finished() is only connected to the live worker
+        // and cleanupWorker disconnects before resetting it. If it ever happens we
+        // have no completeness information, and "cannot tell" must never be
+        // announced as complete -- fail closed and say so.
+        logError("AdvancedSearchController: finished with no worker; reporting INCOMPLETE");
+    }
+    // The worker records every file/directory it could not fully search (and any
+    // result cap it hit). The completeness travels WITH the counts so no consumer
+    // can announce "complete" over a partial run; the status bar would otherwise
+    // contradict the panel's own log, and it would also overwrite the worker's own
+    // INCOMPLETE progress message, which lands first.
+    const bool complete = m_worker && !m_worker->scanIncomplete();
+    m_incomplete_reasons.clear();
+    if (!complete) {
+        m_incomplete_reasons = m_worker ? m_worker->incompleteReasons() : QStringList{};
+        if (m_incomplete_reasons.isEmpty()) {
+            m_incomplete_reasons.append(QStringLiteral("the search ended without saying what"));
+        }
+    }
+    Q_EMIT searchFinished(m_total_matches, m_total_files, complete);
+    if (!complete) {
+        if (m_worker) {
+            logWarning("AdvancedSearchController: search incomplete -- {}",
+                       m_worker->incompleteReasons().join(QStringLiteral("; ")).toStdString());
+        }
+        // Short enough to read whole beside the progress bar; the log names what was missed
+        // (review 3, N6: cut at "may be missing matc").
+        Q_EMIT statusMessage(tr("Search incomplete: %1 matches in %2 files, %3 not searched "
+                                "(see the log)")
+                                 .arg(m_total_matches)
+                                 .arg(m_total_files)
+                                 .arg(m_incomplete_reasons.size()),
+                             kSearchStatusMessageMs);
+        setState(State::Idle);
+        return;
+    }
     Q_EMIT statusMessage(
         tr("Search complete: %1 matches in %2 files").arg(m_total_matches).arg(m_total_files),
         kSearchStatusMessageMs);
@@ -173,12 +259,18 @@ void AdvancedSearchController::onWorkerProgress(int current, int total, const QS
 }
 
 void AdvancedSearchController::onResultsReady(QVector<sak::SearchMatch> matches) {
-    m_total_matches += matches.size();
+    // Saturate rather than let the qsizetype batch size narrow into (or overflow) the int
+    // total; a wrong-but-huge total must never be announced as an authoritative count.
+    const qint64 sum = static_cast<qint64>(m_total_matches) + matches.size();
+    m_total_matches = static_cast<int>(std::min<qint64>(sum, std::numeric_limits<int>::max()));
     Q_EMIT resultsReceived(std::move(matches));
 }
 
 void AdvancedSearchController::onFileSearched(const QString& filePath, int matchCount) {
-    m_total_files++;
+    // Saturate at INT_MAX: incrementing past it would be signed-overflow UB.
+    if (m_total_files < std::numeric_limits<int>::max()) {
+        ++m_total_files;
+    }
     Q_EMIT fileSearched(filePath, matchCount);
 }
 
@@ -213,6 +305,18 @@ QStringList AdvancedSearchController::searchHistory() const {
 
 void AdvancedSearchController::setPreferences(const SearchPreferences& prefs) {
     m_preferences = prefs;
+    // Fail closed: a caller must not be able to install out-of-range limits. A negative
+    // max_results reads downstream as "unlimited"; an over-huge file-size ceiling defeats the
+    // bound entirely. Clamp to the SAME ranges loadPreferences() enforces so the in-session
+    // preferences can never be looser than what a reload would produce.
+    m_preferences.max_results = std::max(0, m_preferences.max_results);
+    m_preferences.max_preview_file_size_mb = std::clamp(m_preferences.max_preview_file_size_mb,
+                                                        kMinimumPreferenceValue,
+                                                        kMaximumPreviewFileSizeMb);
+    m_preferences.max_search_file_size_mb = std::clamp(m_preferences.max_search_file_size_mb,
+                                                       kMinimumPreferenceValue,
+                                                       kMaximumSearchFileSizeMb);
+    m_preferences.context_lines = std::clamp(m_preferences.context_lines, 0, kMaximumContextLines);
     savePreferences();
 }
 
@@ -232,19 +336,31 @@ void AdvancedSearchController::loadPreferences() {
         cfg.getValue("advsearch/max_search_file_size_mb", kDefaultSearchFileSizeMb).toInt(),
         kMinimumPreferenceValue,
         kMaximumSearchFileSizeMb);
-    m_preferences.max_cache_size =
-        std::clamp(cfg.getValue("advsearch/cache_size", kDefaultCacheSize).toInt(),
-                   kMinimumPreferenceValue,
-                   kMaximumCacheSize);
     m_preferences.context_lines =
         std::clamp(cfg.getValue("advsearch/context_lines", kDefaultContextLines).toInt(),
                    0,
                    kMaximumContextLines);
 
-    // Load search history
+    // Load search history, enforcing the SAME invariants addToHistory() maintains. The config
+    // store is attacker-writable, so it must not be able to smuggle in an unbounded list or
+    // over-long entries: drop blanks and duplicates, bound each entry's length, and cap the
+    // count at kMaxHistorySize.
     const QStringList history =
         cfg.getValue("advsearch/search_history", QStringList()).toStringList();
-    m_search_history = history;
+    QStringList sanitized;
+    for (const QString& entry : history) {
+        if (entry.trimmed().isEmpty() || entry.size() > kMaxHistoryEntryLength) {
+            continue;
+        }
+        if (sanitized.contains(entry)) {
+            continue;
+        }
+        sanitized.append(entry);
+        if (sanitized.size() >= kMaxHistorySize) {
+            break;
+        }
+    }
+    m_search_history = sanitized;
 }
 
 void AdvancedSearchController::savePreferences() {
@@ -253,7 +369,7 @@ void AdvancedSearchController::savePreferences() {
     cfg.setValue("advsearch/max_results", m_preferences.max_results);
     cfg.setValue("advsearch/max_preview_file_size_mb", m_preferences.max_preview_file_size_mb);
     cfg.setValue("advsearch/max_search_file_size_mb", m_preferences.max_search_file_size_mb);
-    cfg.setValue("advsearch/cache_size", m_preferences.max_cache_size);
+
     cfg.setValue("advsearch/context_lines", m_preferences.context_lines);
     cfg.setValue("advsearch/search_history", m_search_history);
 

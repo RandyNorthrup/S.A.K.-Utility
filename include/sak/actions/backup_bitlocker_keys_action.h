@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/action_constants.h"
 #include "sak/quick_action.h"
 
 #include <QDateTime>
@@ -10,6 +11,7 @@
 #include <QVector>
 
 class QTextStream;
+class BackupBitlockerKeysActionTests;  // unit-test friend (global namespace)
 
 namespace sak {
 
@@ -18,24 +20,31 @@ namespace sak {
  *
  * Enterprise-grade backup of BitLocker recovery keys for all encrypted
  * volumes on the system. Captures recovery passwords, key protector IDs,
- * encryption method, volume status, and key package data.
- *
- * Saves a comprehensive recovery document with all keys, plus individual
- * per-volume key files in a structured backup directory. Requires
- * administrator privileges to access BitLocker WMI providers.
+ * encryption method,
+ * volume status, and external-key filenames when reported.
+ * Saves a comprehensive recovery
+ * document with all keys, plus individual per-volume key files in a structured backup directory.
+ * Requires administrator privileges to access BitLocker WMI providers.
  *
  * Security: Recovery keys are sensitive. The backup is written to the
- * user-specified backup location with restricted file permissions.
+ * user-specified backup location with restricted file permissions. A drive
+ * that cannot restrict who reads a file (FAT32, exFAT) is written to only after
+ * a person has read a warning and chosen to go on, and the result then says the
+ * keys are not protected. With no person to ask, such a drive is refused.
  * Keys are never logged to the application log -- only key protector IDs
  * are logged for audit purposes.
  */
 class BackupBitlockerKeysAction : public QuickAction {
     Q_OBJECT
 
+    friend class ::BackupBitlockerKeysActionTests;
+
 public:
     explicit BackupBitlockerKeysAction(const QString& backup_location, QObject* parent = nullptr);
 
-    QString name() const override { return "BitLocker Key Backup"; }
+    QString name() const override {
+        return QString::fromLatin1(quick_action_elevation::kBackupBitLockerKeysName);
+    }
     QString description() const override {
         return "Backup BitLocker recovery keys for all "
                "encrypted volumes";
@@ -44,10 +53,23 @@ public:
     ActionCategory category() const override { return ActionCategory::EmergencyRecovery; }
     bool requiresAdmin() const override { return true; }
 
-    void scan() override;
     void execute() override;
 
+    /// Says what a drive that cannot restrict who reads a file means for the keys. Empty for any
+    /// other drive, and for one that cannot be asked: creating the folder there fails, and says so.
+    [[nodiscard]] QString outputFolderWarning(const QString& folder) const override;
+
 private:
+    /// What the drive holding the backup can do for it.
+    struct DestinationDrive {
+        QString file_system;
+        bool keeps_permissions{true};
+    };
+
+    /// What Windows reports for the drive holding @p path. A drive that cannot be asked reads as
+    /// fine here: creating the folder on it fails next, and says so.
+    [[nodiscard]] virtual DestinationDrive destinationDrive(const QString& path) const;
+
     /**
      * @brief Information about a BitLocker key protector
      */
@@ -62,41 +84,50 @@ private:
      * @brief Information about a BitLocker-protected volume
      */
     struct VolumeInfo {
-        QString drive_letter;           // e.g., "C:"
-        QString volume_label;           // User-assigned label
-        QString device_id;              // WMI device ID
-        QString protection_status;      // On, Off, Unknown
-        QString encryption_method;      // XTS-AES-128, XTS-AES-256, etc.
-        QString encryption_percentage;  // Encryption progress (0-100%)
-        QString lock_status;            // Locked, Unlocked
-        QString volume_type;            // OperatingSystem, FixedData, Removable
-        qint64 volume_size_bytes{0};    // Total volume size
+        QString drive_letter;               // e.g., "C:"
+        QString volume_label;               // User-assigned label
+        bool volume_metadata_known{false};  // Label/size came from Get-Volume.
+        QString device_id;                  // WMI device ID
+        QString protection_status;          // On, Off, Unknown
+        QString encryption_method;          // XTS-AES-128, XTS-AES-256, etc.
+        QString encryption_percentage;      // Encryption progress (0-100%)
+        QString lock_status;                // Locked, Unlocked
+        QString volume_type;                // OperatingSystem, FixedData, Removable
+        qint64 volume_size_bytes{0};        // Total volume size
         QVector<KeyProtectorInfo> key_protectors;
     };
 
-    QString m_backup_location;
     QVector<VolumeInfo> m_volumes;
 
     /**
      * @brief Detect all BitLocker-encrypted volumes using WMI
+     * @param query_ok Set true only when the query ran AND parsed successfully. A genuinely
+     *        empty result (no BitLocker volumes) is still query_ok=true; a denied/failed query
+     *        is query_ok=false so callers never treat "unknown" as "no BitLocker".
      * @return Vector of VolumeInfo for each encrypted volume
      */
-    QVector<VolumeInfo> detectEncryptedVolumes();
+    QVector<VolumeInfo> detectEncryptedVolumes(bool& query_ok);
 
-    /// @brief Parse PowerShell JSON output into VolumeInfo vector
-    QVector<VolumeInfo> parseDetectedVolumes(const QString& output);
+    /// @brief Parse PowerShell JSON output into VolumeInfo vector. @p parse_ok is true only on
+    ///        well-formed output (a genuinely empty result is a success); malformed or
+    ///        wrong-shaped JSON leaves it false so a parse failure is not read as "no volumes".
+    QVector<VolumeInfo> parseDetectedVolumes(const QString& output, bool& parse_ok);
 
     /**
      * @brief Retrieve key protectors for a specific volume
      * @param drive_letter Drive letter (e.g., "C:")
+     * @param query_ok Set true only when the query ran successfully (an empty
+     *        result is still a success); false on process/parse failure so the
+     *        caller can fail closed rather than silently omitting the volume.
      * @return Vector of key protector details
      */
-    QVector<KeyProtectorInfo> getKeyProtectors(const QString& drive_letter);
+    QVector<KeyProtectorInfo> getKeyProtectors(const QString& drive_letter, bool& query_ok);
 
     /// @brief Build the PowerShell script to query key protectors for a volume.
     QString buildKeyProtectorScript(const QString& drive_letter) const;
     /// @brief Parse JSON response from key protector query into KeyProtectorInfo vector.
-    QVector<KeyProtectorInfo> parseKeyProtectorResponse(const QString& output);
+    /// @param parse_ok Set true on valid JSON, false on a parse error.
+    QVector<KeyProtectorInfo> parseKeyProtectorResponse(const QString& output, bool& parse_ok);
 
     /**
      * @brief Write recovery keys to the master backup document
@@ -115,9 +146,15 @@ private:
     /**
      * @brief Write individual per-volume key files
      * @param backup_dir Target directory for the backup
-     * @return Number of key files written
+     * @param files_written Out: number of key files successfully written
+     * @return True if every applicable key file was written and committed;
+     *         false (fail closed) if any recovery key file could not be
+     *         durably written -- a truncated key file is never left behind.
      */
-    int writePerVolumeKeyFiles(const QString& backup_dir);
+    bool writePerVolumeKeyFiles(const QString& backup_dir, int& files_written);
+
+    /// @brief Write and atomically commit one volume's recovery key file.
+    bool writeOneVolumeKeyFile(const QString& backup_dir, const VolumeInfo& vol);
 
     /**
      * @brief Set restrictive file permissions on the backup directory
@@ -149,9 +186,27 @@ private:
 
     /**
      * @brief Generate a timestamp string for file naming
-     * @return Formatted timestamp (yyyyMMdd_HHmmss)
+     * @return Formatted timestamp (yyyyMMdd_HHmmss_zzz, millisecond resolution)
      */
     static QString backupTimestamp();
+
+    /// @brief Build a collision-resistant backup directory name. The millisecond
+    /// timestamp plus a monotonic counter makes two same-second backups distinct.
+    static QString uniqueBackupDirName(const QString& timestamp, unsigned counter);
+
+    /// @brief Outcome of the recovery-key gate that decides whether a backup has
+    /// anything worth persisting.
+    enum class KeyGate {
+        Ok,                  ///< At least one recovery password was captured.
+        NoProtectors,        ///< No key protectors could be read (needs admin).
+        NoRecoveryPasswords  ///< Protectors exist but none is a recovery password.
+    };
+
+    /// @brief Decide the backup gate. A backup is only meaningful when at least
+    /// one numerical recovery password was captured; TPM-only protectors cannot
+    /// be used as a standalone recovery secret, so they must not gate the
+    /// operation to "success" with zero recovery keys saved.
+    static KeyGate evaluateKeyGate(int total_keys_found, int total_recovery_passwords);
 
     /// @brief Aggregated BitLocker backup result data for report generation
     struct BitlockerReportData {
@@ -162,15 +217,87 @@ private:
         bool permissions_set = false;
     };
 
-    // TigerStyle helpers for execute() decomposition
+    /// True while this run writes to a drive that cannot restrict who reads a file, after a person
+    /// agreed to it. No permissions are set or read back on such a drive: there is nothing there
+    /// to hold them, and the result says so.
+    bool m_writing_unprotected{false};
+    QString m_unprotected_file_system;
+
+    // execute() helpers -- split to stay under the 70-line function gate
     bool executeDiscoverVolumes(const QDateTime& start_time);
     bool executeExtractKeys(const QDateTime& start_time,
                             int& total_keys_found,
                             int& total_recovery_passwords);
+    /// @brief Evaluate the recovery-key gate and emit the matching failure.
+    bool extractKeysGatePassed(const QDateTime& start_time,
+                               int total_keys_found,
+                               int total_recovery_passwords);
     bool executeSaveKeyFiles(const QDateTime& start_time,
                              QString& backup_dir_path,
                              int& key_files_written,
                              bool& permissions_set);
+    /// @brief Remove the partial backup and emit a clean cancel; if the removal
+    /// itself fails, plaintext keys may remain, so emit a failure instead.
+    void emitCancelWithCleanup(const QString& backup_dir_path, const QDateTime& start_time);
+    /// @brief Remove the partial backup and emit @p message as a failure; if the
+    /// removal itself fails, note that plaintext keys may remain.
+    void emitFailWithCleanup(const QString& message,
+                             const QString& log,
+                             const QString& backup_dir_path,
+                             const QDateTime& start_time);
+    /// @brief Screen and canonicalize a caller-supplied backup destination.
+    ///
+    /// The location arrives in the elevated helper's task payload (client-supplied, and the
+    /// client image check is a separate boundary from the PAYLOAD), and the directory is
+    /// about to hold PLAINTEXT BitLocker recovery keys. So it is validated here rather than
+    /// trusted: a UNC/device root, a relative path, a leaf-or-ancestor symlink/junction
+    /// redirect, and a mapped network drive are all refused, and what survives is returned
+    /// lexically canonicalized. The drive's file system is a separate question, see
+    /// screenDestinationDrive().
+    ///
+    /// @param raw_location Destination as supplied by the caller.
+    /// @param refusal      Out: the human-readable reason when the location is refused.
+    /// @return The canonical absolute location, or an EMPTY string when refused (fail
+    ///         closed -- the caller must not create or write anything).
+    [[nodiscard]] static QString screenBackupLocation(const QString& raw_location,
+                                                      QString& refusal);
+
+    /// @brief Why a folder on a drive of this kind cannot hold plaintext keys on this run, or
+    /// empty if it can: a drive that cannot restrict who reads a file, with no one having agreed to
+    /// that. Pure, so the rule can be tested on a machine with no FAT32 or exFAT drive attached.
+    [[nodiscard]] static QString fileSystemRefusal(const QString& location,
+                                                   const QString& file_system,
+                                                   bool keeps_permissions,
+                                                   bool warning_accepted);
+
+    /// @brief What a person reads before keys go to a drive of this kind.
+    [[nodiscard]] static QString unprotectedDriveWarning(const QString& location,
+                                                         const QString& file_system);
+
+    /// @brief What the result says about keys saved on a drive of this kind.
+    [[nodiscard]] static QString unprotectedResultWarning(const QString& file_system);
+
+    /// @brief Decide this run's @p location by what its drive can do, recording whether the keys
+    /// will be written unprotected. @return The refusal to report, or empty to carry on.
+    [[nodiscard]] QString screenDestinationDrive(const QString& location);
+
+    /// @brief Why @p location must not hold this backup (empty when it may): it is on a volume in
+    ///        @p volumes whose recovery key is being backed up -- the key would sit on the very
+    ///        volume it unlocks. Pure; drive-letter comparison only.
+    [[nodiscard]] static QString sameVolumeRefusal(const QString& location,
+                                                   const QVector<VolumeInfo>& volumes);
+
+    /// @brief Create a fresh, uniquely named backup directory (fail closed on
+    /// any collision so a prior backup is never reopened and truncated).
+    bool createBackupDirectory(const QDateTime& start_time, QString& backup_dir_path);
+    /// @brief Restrict a new, empty backup directory before any key goes in, unless a person agreed
+    /// to a drive that cannot hold permissions. On failure, removes it and fails closed.
+    bool lockDownNewBackupDirectory(const QDateTime& start_time, const QString& backup_dir_path);
+    /// @brief Harden the backup directory ACL; on failure, delete the exposed
+    /// key backup and fail closed rather than leaving plaintext keys readable.
+    bool secureBackupDirectory(const QDateTime& start_time,
+                               const QString& backup_dir_path,
+                               bool& permissions_set);
     void executeBuildReport(const QDateTime& start_time, const BitlockerReportData& data);
     bool writeJsonBackup(const QString& backup_dir_path);
 

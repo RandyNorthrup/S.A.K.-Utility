@@ -12,6 +12,7 @@
 
 #include "sak/advanced_search_types.h"
 
+#include <QJsonArray>
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -68,8 +69,16 @@ public:
     /// @brief Load custom patterns from persistent storage
     void loadCustomPatterns();
 
-    /// @brief Save custom patterns to persistent storage
-    void saveCustomPatterns();
+    /// @brief Append the entries of a persisted pattern array that pass the same invariants
+    ///        addCustomPattern() enforces, stopping at the count cap. Public only because
+    ///        loadCustomPatterns() is; it appends to the existing list rather than replacing it.
+    void appendAcceptedCustomPatterns(const QJsonArray& entries);
+
+    /// @brief Save custom patterns to persistent storage. Returns true only when the
+    ///        list was durably committed; false on any I/O failure or when persistence
+    ///        is disabled (no usable config dir), so callers can fail closed rather
+    ///        than leave memory diverged from disk.
+    bool saveCustomPatterns();
 
 Q_SIGNALS:
     /// @brief Emitted when patterns are modified (add, remove, enable, disable)
@@ -84,7 +93,7 @@ private:
     QString m_storage_file;
 };
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 /// RegexPatternLibrary must inherit QObject.
 static_assert(std::is_base_of_v<QObject, RegexPatternLibrary>,

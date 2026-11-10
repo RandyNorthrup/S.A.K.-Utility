@@ -4,20 +4,25 @@
 #include "sak/ai/ai_tool_result_recorder.h"
 
 #include "sak/ai/ai_conversation_store.h"
+#include "sak/ai/ai_credential_store.h"
 
 #include <QJsonObject>
+
+#include <cmath>
+#include <limits>
 
 namespace sak::ai {
 
 namespace {
 constexpr int kToolCommandSummaryMaxChars = 700;
-constexpr int kToolTruncationReserveChars = 64;
 constexpr int kToolErrorSummaryMaxChars = 900;
 constexpr int kToolStdoutSummaryMaxChars = 2400;
 constexpr int kToolStderrSummaryMaxChars = 1600;
+constexpr auto kToolTruncationMarker = "\n...[output truncated for chat view]";
 
 QString redact(const QString& text, const ToolResultTextRedactor& redactor) {
-    return redactor ? redactor(text) : text;
+    const QString credential_safe = CredentialStore::redactSecrets(text);
+    return redactor ? redactor(credential_safe) : credential_safe;
 }
 
 void appendToolCommandSummary(QStringList* lines,
@@ -32,38 +37,60 @@ void appendToolCommandSummary(QStringList* lines,
     }
 }
 
+QString exitCodeSummary(const QJsonValue& exit_code) {
+    const double raw_exit_code = exit_code.toDouble(std::numeric_limits<double>::quiet_NaN());
+    const bool valid_exit_code =
+        exit_code.isDouble() && std::isfinite(raw_exit_code) &&
+        std::trunc(raw_exit_code) == raw_exit_code &&
+        raw_exit_code >= static_cast<double>(std::numeric_limits<int>::min()) &&
+        raw_exit_code <= static_cast<double>(std::numeric_limits<int>::max());
+    return valid_exit_code ? QStringLiteral("Exit code: %1").arg(static_cast<qint64>(raw_exit_code))
+                           : QStringLiteral("Exit code: invalid");
+}
+
+QString executionStateSuffix(const QJsonObject& result) {
+    if (result.value(QStringLiteral("cancelled")).toBool(false)) {
+        return QStringLiteral(" (cancelled)");
+    }
+    if (result.value(QStringLiteral("timed_out")).toBool(false)) {
+        return QStringLiteral(" (timed out)");
+    }
+    return {};
+}
+
+QString successSummary(const QJsonValue& success) {
+    if (!success.isBool()) {
+        return QStringLiteral("Success: invalid");
+    }
+    return QStringLiteral("Success: %1")
+        .arg(success.toBool() ? QStringLiteral("yes") : QStringLiteral("no"));
+}
+
 void appendToolStatusSummary(QStringList* lines, const QJsonObject& result) {
     if (result.contains(QStringLiteral("exit_code"))) {
-        QString status =
-            QStringLiteral("Exit code: %1").arg(result.value(QStringLiteral("exit_code")).toInt());
-        if (result.value(QStringLiteral("cancelled")).toBool(false)) {
-            status += QStringLiteral(" (cancelled)");
-        } else if (result.value(QStringLiteral("timed_out")).toBool(false)) {
-            status += QStringLiteral(" (timed out)");
-        }
-        *lines << status;
-    } else if (result.contains(QStringLiteral("success"))) {
-        *lines << QStringLiteral("Success: %1")
-                      .arg(result.value(QStringLiteral("success")).toBool(false)
-                               ? QStringLiteral("yes")
-                               : QStringLiteral("no"));
+        *lines << exitCodeSummary(result.value(QStringLiteral("exit_code"))) +
+                      executionStateSuffix(result);
+        return;
+    }
+    if (result.contains(QStringLiteral("success"))) {
+        *lines << successSummary(result.value(QStringLiteral("success")));
     }
 }
 
 struct ToolTextSummaryRequest {
-    QString field;
-    QString label;
-    int max_chars{0};
+    QString m_field;
+    QString m_label;
+    int m_max_chars{0};
 };
 
 void appendToolTextSummary(QStringList* lines,
                            const QJsonObject& result,
                            const ToolTextSummaryRequest& request,
                            const ToolResultTextRedactor& redactor) {
-    const QString text = result.value(request.field).toString().trimmed();
+    const QString text = result.value(request.m_field).toString().trimmed();
     if (!text.isEmpty()) {
         *lines << QStringLiteral("%1: %2").arg(
-            request.label, clippedToolResultText(text, request.max_chars, redactor));
+            request.m_label, clippedToolResultText(text, request.m_max_chars, redactor));
     }
 }
 
@@ -79,7 +106,7 @@ QString commandLabel(const AiToolResultRecordRequest& request) {
 void appendCommandRecord(ConversationStore* store,
                          const AiToolResultRecordRequest& request,
                          AiToolResultRecordResult* result) {
-    if (!store) {
+    if (store == nullptr) {
         result->errors << QStringLiteral(
             "Command record failed: AI conversation store is not initialized");
         return;
@@ -95,12 +122,15 @@ void appendCommandRecord(ConversationStore* store,
 void appendTranscriptRecord(ConversationStore* store,
                             const AiToolResultRecordRequest& request,
                             AiToolResultRecordResult* result) {
-    if (result->transcript_text.trimmed().isEmpty()) {
-        return;
-    }
-    if (!store) {
+    // Validate the store BEFORE the empty-text short-circuit: a requested
+    // transcript with a null store is a genuine failure that must be surfaced,
+    // not silently swallowed just because the summary happened to be empty.
+    if (store == nullptr) {
         result->errors << QStringLiteral(
             "Transcript log failed: AI conversation store is not initialized");
+        return;
+    }
+    if (result->transcript_text.trimmed().isEmpty()) {
         return;
     }
     QString error;
@@ -119,8 +149,11 @@ void appendTranscriptRecord(ConversationStore* store,
 QString clippedToolResultText(QString text, int max_chars, const ToolResultTextRedactor& redactor) {
     text = redact(text, redactor).trimmed();
     if (max_chars > 0 && text.size() > max_chars) {
-        text = text.left(max_chars - kToolTruncationReserveChars).trimmed() +
-               QStringLiteral("\n...[output truncated for chat view]");
+        const QString marker = QString::fromLatin1(kToolTruncationMarker);
+        if (max_chars <= marker.size()) {
+            return marker.left(max_chars);
+        }
+        text = text.left(max_chars - marker.size()).trimmed() + marker;
     }
     return text;
 }
@@ -139,15 +172,15 @@ QString toolResultChatSummary(const QJsonObject& result, const ToolResultTextRed
     }
     appendToolTextSummary(&lines,
                           result,
-                          {.field = QStringLiteral("stdout"),
-                           .label = QStringLiteral("Output"),
-                           .max_chars = kToolStdoutSummaryMaxChars},
+                          {.m_field = QStringLiteral("stdout"),
+                           .m_label = QStringLiteral("Output"),
+                           .m_max_chars = kToolStdoutSummaryMaxChars},
                           redactor);
     appendToolTextSummary(&lines,
                           result,
-                          {.field = QStringLiteral("stderr"),
-                           .label = QStringLiteral("Errors"),
-                           .max_chars = kToolStderrSummaryMaxChars},
+                          {.m_field = QStringLiteral("stderr"),
+                           .m_label = QStringLiteral("Errors"),
+                           .m_max_chars = kToolStderrSummaryMaxChars},
                           redactor);
     return lines.join(QStringLiteral("\n"));
 }

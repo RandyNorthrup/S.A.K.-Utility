@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_human_gate_store.h"
 
+#include "sak/format_utils.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -18,27 +20,56 @@ namespace {
 
 constexpr auto kHumanGatesFile = "human_gates.jsonl";
 constexpr qsizetype kGeneratedGateIdChars = 12;
+// A human-gate log holds a handful of small JSONL records. A file larger than this is
+// corruption or a resource-exhaustion attempt against the elevated app; refuse to read it
+// wholesale rather than risk an unbounded allocation.
+constexpr qint64 kMaxGateLogBytes = 32LL * 1024 * 1024;
 
-bool appendJsonLine(const QString& path, const QJsonObject& object, QString* error_message) {
+bool appendJsonLine(const QString& path, const QJsonObject& object, QString& error_message) {
     const QFileInfo info(path);
     if (!QDir().mkpath(info.absolutePath())) {
-        if (error_message) {
-            *error_message = QStringLiteral("Could not create human-gate directory: %1")
-                                 .arg(info.absolutePath());
-        }
+        error_message =
+            QStringLiteral("Could not create human-gate directory: %1").arg(info.absolutePath());
         return false;
     }
     QFile file(path);
     if (!file.open(QIODevice::Append | QIODevice::Text)) {
-        if (error_message) {
-            *error_message =
-                QStringLiteral("Could not append human-gate log: %1").arg(file.errorString());
-        }
+        error_message =
+            QStringLiteral("Could not append human-gate log: %1").arg(file.errorString());
         return false;
     }
-    file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
-    file.write("\n");
+    const qint64 original_size = file.size();
+    const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
+    if (file.write(payload) != payload.size() || !file.flush()) {
+        // Roll back a partial record: otherwise loadGates skips the malformed line and an
+        // already-approved gate resolves back to its older pending record on next start.
+        const QString detail = file.errorString();
+        file.resize(original_size);
+        error_message = QStringLiteral("Short write to human-gate log: %1").arg(detail);
+        return false;
+    }
     return true;
+}
+
+// Parse every non-blank JSONL record from an already-open, size-checked log. A corrupt record
+// is not silently dropped: it is counted so the caller learns the load was incomplete instead
+// of trusting a truncated gate history.
+QVector<AiHumanGate> parseGateLog(QFile& file, qint64& malformed_lines) {
+    QVector<AiHumanGate> gates;
+    while (!file.atEnd()) {
+        const QByteArray trimmed = file.readLine().trimmed();
+        if (trimmed.isEmpty()) {
+            continue;
+        }
+        QJsonParseError parse_error{};
+        const auto doc = QJsonDocument::fromJson(trimmed, &parse_error);
+        if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
+            ++malformed_lines;
+            continue;
+        }
+        gates.append(AiHumanGate::fromJson(doc.object()));
+    }
+    return gates;
 }
 
 }  // namespace
@@ -59,11 +90,10 @@ QString AiHumanGateStore::gateLogPath() const {
                : QDir(m_session_dir).filePath(QString::fromLatin1(kHumanGatesFile));
 }
 
-bool AiHumanGateStore::appendGate(AiHumanGate gate, QString* error_message) const {
+bool AiHumanGateStore::appendGate(AiHumanGate& gate, QString& error_message) const {
+    error_message.clear();
     if (m_session_dir.isEmpty()) {
-        if (error_message) {
-            *error_message = QStringLiteral("Human-gate store has no session directory");
-        }
+        error_message = QStringLiteral("Human-gate store has no session directory");
         return false;
     }
     if (gate.gate_id.isEmpty()) {
@@ -79,35 +109,53 @@ bool AiHumanGateStore::appendGate(AiHumanGate gate, QString* error_message) cons
     return appendJsonLine(gateLogPath(), gate.toJson(), error_message);
 }
 
-QVector<AiHumanGate> AiHumanGateStore::loadGates(QString* error_message) const {
+QVector<AiHumanGate> AiHumanGateStore::loadGates(QString& error_message) const {
+    error_message.clear();
     QVector<AiHumanGate> gates;
+    if (m_session_dir.isEmpty()) {
+        // A store with no session directory cannot be read; surface it rather than returning
+        // an empty set that is indistinguishable from a legitimately empty log.
+        error_message = QStringLiteral("Human-gate store has no session directory");
+        return gates;
+    }
     QFile file(gateLogPath());
     if (!file.exists()) {
         return gates;
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message) {
-            *error_message =
-                QStringLiteral("Could not read human-gate log: %1").arg(file.errorString());
-        }
+        error_message = QStringLiteral("Could not read human-gate log: %1").arg(file.errorString());
         return gates;
     }
-    while (!file.atEnd()) {
-        QJsonParseError parse_error{};
-        const auto doc = QJsonDocument::fromJson(file.readLine().trimmed(), &parse_error);
-        if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-            continue;
-        }
-        gates.append(AiHumanGate::fromJson(doc.object()));
+    if (file.size() > kMaxGateLogBytes) {
+        error_message =
+            QStringLiteral("Human-gate log is too large to read: %1 bytes").arg(file.size());
+        return gates;
+    }
+    qint64 malformed_lines = 0;
+    gates = parseGateLog(file, malformed_lines);
+    if (file.error() != QFileDevice::NoError) {
+        // A mid-stream I/O failure means the returned set is incomplete; do not present a
+        // truncated read as a complete, authoritative gate history.
+        error_message = QStringLiteral("Human-gate log read failed: %1").arg(file.errorString());
+        return gates;
+    }
+    if (malformed_lines > 0) {
+        error_message = QStringLiteral("Human-gate log has %1")
+                            .arg(countOf(malformed_lines,
+                                         QStringLiteral("unreadable record"),
+                                         QStringLiteral("unreadable records")));
     }
     return gates;
 }
 
-AiHumanGate AiHumanGateStore::latestPendingGate(QString* error_message) const {
+AiHumanGate AiHumanGateStore::latestPendingGate(QString& error_message) const {
     const QVector<AiHumanGate> gates = loadGates(error_message);
     QHash<QString, AiHumanGate> latest_by_id;
     for (const auto& gate : gates) {
-        if (!gate.gate_id.isEmpty()) {
+        // Only a record with a recognized lifecycle status may become the latest state for
+        // a gate_id. A record whose status is missing/empty/unknown is malformed and is
+        // ignored, so it cannot silently overwrite (resolve) a valid pending gate.
+        if (!gate.gate_id.isEmpty() && isKnownHumanGateStatus(gate.status)) {
             latest_by_id.insert(gate.gate_id, gate);
         }
     }

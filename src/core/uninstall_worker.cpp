@@ -8,16 +8,18 @@
 
 #include "sak/layout_constants.h"
 #include "sak/leftover_scanner.h"
+#include "sak/logger.h"
 #include "sak/process_runner.h"
 #include "sak/registry_snapshot_engine.h"
 #include "sak/restore_point_manager.h"
+#include "sak/windows_path_policy.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QThread>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -29,6 +31,14 @@ constexpr int kProgressRegistryRemoval = 50;
 constexpr int kRestorePointProgramNameMaxChars = 40;
 constexpr int kRegistryHivePrefixLength = 5;
 constexpr int kUwpRemovalTimeoutMs = 60'000;
+// Headless silent uninstall: a hard ceiling so a /qn uninstaller that still stalls cannot hang
+// the run forever (the GUI path waits indefinitely because a human is watching). Generous so a
+// legitimately long silent uninstall of a large product is not killed mid-removal.
+constexpr int kHeadlessUninstallTimeoutMs = 20 * 60 * 1000;
+// Interactive: how long a relaunched uninstaller (NSIS runs its UI from a %TEMP% copy after the
+// program we started exits) may keep the user's attention before the run gives up and says so.
+constexpr int kInteractiveUninstallFamilyWaitMs = 60 * 60 * 1000;
+constexpr int kMsPerMinute = 60 * 1000;
 constexpr int kMsiRebootRequiredCode = 3010;
 constexpr int kQuotedCaptureGroup = 1;
 constexpr int kUnquotedCaptureGroup = 2;
@@ -65,7 +75,7 @@ struct ParsedCommand {
     }
 
     if (cmd.startsWith('"')) {
-        const int endQuote = cmd.indexOf('"', 1);
+        const int endQuote = static_cast<int>(cmd.indexOf('"', 1));
         if (endQuote <= 0) {
             return parsed;
         }
@@ -74,7 +84,7 @@ struct ParsedCommand {
         return parsed;
     }
 
-    const int exeEnd = cmd.indexOf(".exe", 0, Qt::CaseInsensitive);
+    const int exeEnd = static_cast<int>(cmd.indexOf(".exe", 0, Qt::CaseInsensitive));
     if (exeEnd > 0) {
         parsed.exe = cmd.left(exeEnd + kExecutableExtensionLength);
         parsed.args = splitArgsRespectingQuotes(cmd.mid(exeEnd + kExecutableExtensionLength));
@@ -83,6 +93,105 @@ struct ParsedCommand {
 
     parsed.exe = cmd;
     return parsed;
+}
+
+/// @brief Resolve a screened uninstall program token to the ABSOLUTE native path handed
+/// to CreateProcess, or an empty string to REFUSE the launch. The token must already be
+/// a fully-qualified local .exe that exists as a regular file; the canonical form
+/// (junction/symlink resolved) is re-screened so a reparse point cannot redirect an
+/// elevated launch to a UNC or otherwise untrusted target. No PATH/CWD resolution ever
+/// takes place.
+[[nodiscard]] QString resolveUninstallProgram(const QString& exe) {
+    if (!UninstallWorker::uninstallProgramPathTrusted(exe)) {
+        return {};
+    }
+    const QFileInfo info(exe.trimmed());
+    if (!info.exists() || !info.isFile()) {
+        return {};
+    }
+    const QString canonical = info.canonicalFilePath();
+    if (canonical.isEmpty() || !UninstallWorker::uninstallProgramPathTrusted(canonical)) {
+        return {};
+    }
+    return QDir::toNativeSeparators(canonical);
+}
+
+/// @brief Build an MSI removal command for @p guid with @p tail appended (e.g.
+/// "/qn /norestart"). msiexec is named by its ABSOLUTE System32 path (quoted): a bare
+/// "msiexec.exe" would be resolved by the CreateProcess search order -- which includes
+/// the current directory -- for an ELEVATED removal. Returns an empty string when the
+/// system directory cannot be resolved, so the caller REFUSES rather than falls back.
+[[nodiscard]] QString buildMsiexecCommand(const QString& guid, const QString& tail) {
+    const QString msiexec = sak::system32Path(QStringLiteral("msiexec.exe"));
+    if (msiexec.isEmpty()) {
+        return {};
+    }
+    return QStringLiteral("\"%1\" /x %2 %3").arg(QDir::toNativeSeparators(msiexec), guid, tail);
+}
+
+/// @brief True only if @p postHivePath sits STRICTLY beneath a Windows Uninstall root (native or
+/// WOW6432): a non-empty leaf must follow it. The Uninstall container itself, and anything outside
+/// the subtree, is refused. The strict-leaf requirement also subsumes the hive-root screen -- an
+/// empty post-hive subkey can never satisfy it. Pure; mirrors the confinement cleanup_worker
+/// applies at validate time.
+[[nodiscard]] bool pathIsUnderUninstallRoot(const QString& postHivePath) {
+    static const QString kUninstallRoot =
+        QStringLiteral("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\");
+    static const QString kUninstallRootWow =
+        QStringLiteral("SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\");
+    return (postHivePath.startsWith(kUninstallRoot, Qt::CaseInsensitive) &&
+            postHivePath.size() > kUninstallRoot.size()) ||
+           (postHivePath.startsWith(kUninstallRootWow, Qt::CaseInsensitive) &&
+            postHivePath.size() > kUninstallRootWow.size());
+}
+
+/// @brief True only if the key opened WITHOUT following the link (REG_OPTION_OPEN_LINK affects the
+/// FINAL path component only) carries the reserved "SymbolicLinkValue" REG_LINK value that marks a
+/// link key. Fails CLOSED: a probe that cannot be resolved (ACCESS_DENIED, sharing, ...) reports AS
+/// a link so the caller refuses rather than let RegDeleteKeyExW re-resolve through an indeterminate
+/// key. ERROR_FILE_NOT_FOUND is the one benign "not a link" (a nonexistent key makes
+/// the subsequent delete a no-op). Mirrors the sibling screen in cleanup_worker.cpp.
+[[nodiscard]] bool registryLeafComponentIsLink(HKEY hive, const QString& prefix, bool& notFound) {
+    notFound = false;
+    HKEY key = nullptr;
+    const LONG rc = RegOpenKeyExW(hive,
+                                  reinterpret_cast<LPCWSTR>(prefix.utf16()),
+                                  REG_OPTION_OPEN_LINK,
+                                  KEY_QUERY_VALUE,
+                                  &key);
+    if (rc == ERROR_FILE_NOT_FOUND) {
+        notFound = true;
+        return false;
+    }
+    if (rc != ERROR_SUCCESS) {
+        return true;  // fail closed: an indeterminate probe is treated as a link
+    }
+    DWORD type = 0;
+    const LONG q = RegQueryValueExW(key, L"SymbolicLinkValue", nullptr, &type, nullptr, nullptr);
+    RegCloseKey(key);
+    return q == ERROR_SUCCESS && type == REG_LINK;
+}
+
+/// @brief True if any component of @p subkey (leaf or ancestor) is -- or cannot be proven not to be
+/// -- a REG_LINK symbolic-link key. RegDeleteKeyExW re-resolves the whole pathname, so a link
+/// anywhere along the path redirects the delete to a different key. Probe EVERY component from the
+/// root down (each as the final component of its own prefix, since REG_OPTION_OPEN_LINK only
+/// suppresses resolution of the last component). Mirrors cleanup_worker.cpp.
+[[nodiscard]] bool registryKeyIsSymbolicLink(HKEY hive, const QString& subkey) {
+    const QStringList components = subkey.split(QLatin1Char('\\'), Qt::SkipEmptyParts);
+    QString prefix;
+    for (const QString& component : components) {
+        prefix = prefix.isEmpty() ? component : prefix + QLatin1Char('\\') + component;
+        bool notFound = false;
+        if (registryLeafComponentIsLink(hive, prefix, notFound)) {
+            return true;
+        }
+        if (notFound) {
+            // Nonexistent component: nothing deeper can exist, and the delete no-ops. Not a link.
+            return false;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -100,9 +209,9 @@ UninstallWorker::UninstallWorker(const ProgramInfo& program,
 
 auto UninstallWorker::executeStandardMode(UninstallReport& report)
     -> std::expected<void, sak::error_code> {
+    locateWindowsInstallerFiles();
     reportProgress(kProgressSnapshot, sak::kPercentMax, "Capturing registry snapshot...");
-    [[maybe_unused]] auto snap_ok = captureRegistrySnapshot();
-    Q_EMIT registrySnapshotCaptured();
+    captureSnapshotOrWarn(report);
 
     if (checkStop()) {
         return std::unexpected(sak::error_code::operation_cancelled);
@@ -111,13 +220,17 @@ auto UninstallWorker::executeStandardMode(UninstallReport& report)
     reportProgress(kProgressNativeUninstaller, sak::kPercentMax, "Running native uninstaller...");
     Q_EMIT nativeUninstallerStarted(m_program.displayName);
 
-    if (!runNativeUninstaller()) {
-        report.uninstallResult = UninstallReport::UninstallResult::Failed;
-        report.endTime = QDateTime::currentDateTime();
-        Q_EMIT uninstallComplete(report);
+    int exit_code = 0;
+    if (!runNativeUninstaller(exit_code)) {
+        // Capture the failing code (surfaced in the report), then return only: WorkerBase::run()
+        // emits the single terminal `failed` signal. Emitting uninstallComplete here too gave the
+        // batch orchestrator two terminal outcomes.
+        report.nativeExitCode = exit_code;
         return std::unexpected(sak::error_code::execution_failed);
     }
 
+    // Copy the native exit code so a 3010 (reboot-required success) reaches the report/UI.
+    report.nativeExitCode = exit_code;
     report.uninstallResult = UninstallReport::UninstallResult::Success;
     Q_EMIT nativeUninstallerFinished(report.nativeExitCode);
     return {};
@@ -127,10 +240,7 @@ auto UninstallWorker::executeUwpMode(UninstallReport& report)
     -> std::expected<void, sak::error_code> {
     reportProgress(kProgressNativeUninstaller, sak::kPercentMax, "Removing UWP package...");
     if (!removeUwpPackage()) {
-        report.uninstallResult = UninstallReport::UninstallResult::Failed;
-        report.endTime = QDateTime::currentDateTime();
-        Q_EMIT uninstallComplete(report);
-        return std::unexpected(sak::error_code::execution_failed);
+        return std::unexpected(sak::error_code::execution_failed);  // run() emits `failed` once
     }
     report.uninstallResult = UninstallReport::UninstallResult::Success;
     report.endTime = QDateTime::currentDateTime();
@@ -144,13 +254,75 @@ auto UninstallWorker::executeRegistryMode(UninstallReport& report)
                    sak::kPercentMax,
                    "Removing orphaned registry entry...");
     if (!removeRegistryEntry()) {
-        report.uninstallResult = UninstallReport::UninstallResult::Failed;
-        report.endTime = QDateTime::currentDateTime();
-        Q_EMIT uninstallComplete(report);
-        return std::unexpected(sak::error_code::execution_failed);
+        return std::unexpected(sak::error_code::execution_failed);  // run() emits `failed` once
     }
     report.uninstallResult = UninstallReport::UninstallResult::Success;
     report.registryKeysDeleted = 1;
+    report.endTime = QDateTime::currentDateTime();
+    Q_EMIT uninstallComplete(report);
+    return {};
+}
+
+auto UninstallWorker::runRestorePointPhase(UninstallReport& report)
+    -> std::expected<void, sak::error_code> {
+    if (!m_createRestorePoint) {
+        return {};
+    }
+    reportProgress(0, sak::kPercentMax, "Creating system restore point...");
+    const RestorePointManager::Outcome outcome = createRestorePoint();
+    if (!outcome.usable()) {
+        // FAIL CLOSED: the user asked for a rollback point before this (potentially destructive)
+        // uninstall. If there is none -- not created, and no recent one to reuse -- refuse rather
+        // than run with no way back.
+        reportProgress(0, sak::kPercentMax, outcome.message);
+        return std::unexpected(sak::error_code::execution_failed);
+    }
+    report.restorePointCreated = true;
+    report.restorePointName = outcome.kind == RestorePointManager::Outcome::Kind::ReusedRecent
+                                  ? outcome.message
+                                  : QString("SAK: Before uninstall %1").arg(m_program.displayName);
+    Q_EMIT restorePointCreated(report.restorePointName);
+    return {};
+}
+
+void UninstallWorker::captureSnapshotOrWarn(UninstallReport& report) {
+    if (captureRegistrySnapshot()) {
+        Q_EMIT registrySnapshotCaptured();
+        return;
+    }
+    // Fail-closed reporting: an empty/failed before-snapshot means the leftover diff is degraded.
+    // Surface it instead of signalling a snapshot that was never captured.
+    report.errorLog.append(
+        QStringLiteral("Registry snapshot capture failed or was empty; "
+                       "leftover detection may be incomplete."));
+}
+
+auto UninstallWorker::runLeftoverPhase(UninstallReport& report)
+    -> std::expected<void, sak::error_code> {
+    reportProgress(kProgressLeftoverScan, sak::kPercentMax, "Scanning for leftovers...");
+    Q_EMIT leftoverScanStarted(m_scanLevel);
+
+    LeftoverScanReliability reliability;
+    auto leftovers = scanLeftovers(reliability);
+    report.foundLeftovers = leftovers;
+
+    // A cancel during the (possibly long) scan must not be reported as a completed uninstall:
+    // return operation_cancelled BEFORE the terminal uninstallComplete so run() emits a single
+    // `cancelled` signal instead of handing the orchestrator both a success and a cancel.
+    if (checkStop()) {
+        return std::unexpected(sak::error_code::operation_cancelled);
+    }
+
+    // Fail-closed reporting: a system-object/registry phase that FAILED to enumerate returns an
+    // empty vector indistinguishable from an honest "nothing found". Surface that the leftover
+    // evidence is incomplete instead of letting the terminal completion imply a full scan.
+    if (!reliability.allOk()) {
+        report.errorLog.append(
+            QStringLiteral("Leftover scan incomplete: one or more system-object or registry "
+                           "phases failed to enumerate; some leftovers may be undetected."));
+    }
+
+    Q_EMIT leftoverScanFinished(leftovers);
     report.endTime = QDateTime::currentDateTime();
     Q_EMIT uninstallComplete(report);
     return {};
@@ -164,15 +336,9 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
     report.startTime = QDateTime::currentDateTime();
     report.scanLevel = m_scanLevel;
 
-    // Phase 1: Create restore point (if requested)
-    if (m_createRestorePoint) {
-        reportProgress(0, sak::kPercentMax, "Creating system restore point...");
-        if (createRestorePoint()) {
-            report.restorePointCreated = true;
-            report.restorePointName =
-                QString("SAK: Before uninstall %1").arg(m_program.displayName);
-            Q_EMIT restorePointCreated(report.restorePointName);
-        }
+    // Phase 1: Create restore point (if requested) -- fails closed if it cannot be created.
+    if (auto rp = runRestorePointPhase(report); !rp) {
+        return rp;
     }
 
     if (checkStop()) {
@@ -189,10 +355,10 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
         break;
     }
     case Mode::ForcedUninstall: {
+        locateWindowsInstallerFiles();
         report.uninstallResult = UninstallReport::UninstallResult::Skipped;
         reportProgress(kProgressSnapshot, sak::kPercentMax, "Capturing registry snapshot...");
-        [[maybe_unused]] auto snap_ok = captureRegistrySnapshot();
-        Q_EMIT registrySnapshotCaptured();
+        captureSnapshotOrWarn(report);
         break;
     }
     case Mode::UwpRemove:
@@ -205,26 +371,22 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
         return std::unexpected(sak::error_code::operation_cancelled);
     }
 
-    // Phase 3: Leftover scanning
-    reportProgress(kProgressLeftoverScan, sak::kPercentMax, "Scanning for leftovers...");
-    Q_EMIT leftoverScanStarted(m_scanLevel);
-
-    auto leftovers = scanLeftovers();
-    report.foundLeftovers = leftovers;
-
-    Q_EMIT leftoverScanFinished(leftovers);
-
-    report.endTime = QDateTime::currentDateTime();
-    Q_EMIT uninstallComplete(report);
-
-    return {};
+    // Phase 3: Leftover scanning (returns operation_cancelled if stopped mid-scan).
+    return runLeftoverPhase(report);
 }
 
-bool UninstallWorker::createRestorePoint() {
+void UninstallWorker::locateWindowsInstallerFiles() {
+    // An MSI product often records no InstallLocation. Ask Windows Installer where it put the
+    // files now, while it still knows the product, so the leftover scan after the uninstall can
+    // name what the product left behind.
+    m_program = LeftoverScanner::withWindowsInstallerLocation(m_program);
+}
+
+RestorePointManager::Outcome UninstallWorker::createRestorePoint() {
     RestorePointManager mgr;
-    QString desc = QString("SAK: Before uninstall %1")
-                       .arg(m_program.displayName.left(kRestorePointProgramNameMaxChars));
-    return mgr.createRestorePoint(desc);
+    const QString desc = QString("SAK: Before uninstall %1")
+                             .arg(m_program.displayName.left(kRestorePointProgramNameMaxChars));
+    return mgr.ensureRestorePoint(desc);
 }
 
 bool UninstallWorker::captureRegistrySnapshot() {
@@ -232,31 +394,104 @@ bool UninstallWorker::captureRegistrySnapshot() {
     return !m_registrySnapshotBefore.isEmpty();
 }
 
-bool UninstallWorker::runNativeUninstaller() {
-    QString cmd = m_program.uninstallString;
-    if (cmd.isEmpty()) {
-        return false;
+bool UninstallWorker::buildSilentUninstallCommand(const ProgramInfo& program, QString& cmdOut) {
+    // Prefer the publisher-provided silent command.
+    if (!program.quietUninstallString.isEmpty()) {
+        cmdOut = program.quietUninstallString;
+        return true;
     }
-
-    // Check for MSI installer
-    if (isMsiInstaller()) {
-        cmd = buildMsiUninstallCommand();
+    // MSI: build a fully-silent removal from the product GUID (/qn = no UI, /norestart).
+    if (program.uninstallString.toLower().contains(QLatin1String("msiexec"))) {
+        static const QRegularExpression guid_re(QStringLiteral(R"(\{[0-9A-Fa-f\-]{36}\})"));
+        const auto match = guid_re.match(program.uninstallString);
+        if (match.hasMatch()) {
+            // Absolute System32 msiexec, never the bare name; an unresolvable system
+            // directory REFUSES the silent path rather than emitting a hijackable command.
+            cmdOut = buildMsiexecCommand(match.captured(0), QStringLiteral("/qn /norestart"));
+            return !cmdOut.isEmpty();
+        }
     }
-
-    const auto parsed = parseUninstallCommand(cmd);
-    if (parsed.exe.isEmpty()) {
-        return false;
-    }
-
-    // Wait indefinitely for uninstaller -- user may need to interact with it.
-    const auto result =
-        sak::runProcess(parsed.exe, parsed.args, 0, [this]() { return stopRequested(); });
-
-    return !result.cancelled && result.exit_status == 0 &&
-           (result.exit_code == 0 || result.exit_code == kMsiRebootRequiredCode);
+    // No reliable silent path: a bare interactive uninstallString would hang a headless run.
+    return false;
 }
 
-QVector<LeftoverItem> UninstallWorker::scanLeftovers() {
+bool UninstallWorker::nativeUninstallSucceeded(int exitStatus, int exitCode, bool cancelled) {
+    return !cancelled && exitStatus == 0 && (exitCode == 0 || exitCode == kMsiRebootRequiredCode);
+}
+
+bool UninstallWorker::uninstallProgramPathTrusted(const QString& exe) {
+    // Only a real executable image. A ".bat"/".cmd"/".msi"/extensionless token would be
+    // handed to a shell or an associated handler, widening what an untrusted registry
+    // value can start under an elevated token.
+    if (!exe.trimmed().endsWith(QLatin1String(".exe"), Qt::CaseInsensitive)) {
+        return false;
+    }
+    // The shared screen (windows_path_policy.h) carries the rest: no unexpanded "%VAR%",
+    // literal segments only (no UNC, no "."/".."), and a drive-qualified local root. The
+    // leftover scanner screens the sibling InstallLocation value through the SAME dialect.
+    return literalLocalPathTrusted(exe);
+}
+
+bool UninstallWorker::runNativeUninstaller(int& exitCode) {
+    exitCode = 0;
+    QString cmd;
+    int timeout_ms = 0;  // GUI: wait indefinitely -- a user may interact with the uninstaller.
+    if (m_headlessSilent) {
+        if (!buildSilentUninstallCommand(m_program, cmd)) {
+            return false;  // refuse: no silent command, never launch an interactive uninstaller
+        }
+        timeout_ms = kHeadlessUninstallTimeoutMs;
+    } else {
+        cmd = m_program.uninstallString;
+        if (cmd.isEmpty()) {
+            return false;
+        }
+        if (isMsiInstaller()) {
+            cmd = buildMsiUninstallCommand();
+        }
+    }
+
+    // The command originates in the registry Uninstall subtree, which ANY user can write
+    // (HKCU), and it names a program this worker starts with an elevated token. Screen and
+    // resolve it to an absolute, existing image first: an empty result REFUSES the run
+    // rather than letting CreateProcess resolve the name via PATH/CWD.
+    const auto parsed = parseUninstallCommand(cmd);
+    const QString program = resolveUninstallProgram(parsed.exe);
+    if (program.isEmpty()) {
+        sak::logWarning("Refusing uninstall of '{}': untrusted program path '{}'",
+                        m_program.displayName.toStdString(),
+                        parsed.exe.toStdString());
+        return false;
+    }
+
+    // Wait for the uninstaller's whole process family, not just the program we started: an NSIS
+    // uninstaller copies itself to %TEMP%, relaunches from there and exits at once, so its real
+    // work -- and, interactively, its whole UI -- runs in a descendant. The wait is bounded and
+    // cancellable; running out of it is reported, never a silent kill-and-fail.
+    const sak::ProcessRunOptions family{.child_policy = sak::ChildProcessPolicy::WaitForJobEmpty,
+                                        .job_wait_ms = m_headlessSilent
+                                                           ? kHeadlessUninstallTimeoutMs
+                                                           : kInteractiveUninstallFamilyWaitMs};
+    const auto result = sak::runProcess(
+        program, parsed.args, timeout_ms, [this]() { return stopRequested(); }, family);
+
+    exitCode = result.exit_code;
+    if (result.descendants_stopped) {
+        const QString detail =
+            QStringLiteral(
+                "Part of the uninstaller for %1 was still running %2 minutes after "
+                "its launcher exited, so it was stopped. The program may be only "
+                "partly removed.")
+                .arg(m_program.displayName)
+                .arg(family.job_wait_ms / kMsPerMinute);
+        sak::logWarning("{}", detail.toStdString());
+        reportProgress(kProgressNativeUninstaller, sak::kPercentMax, detail);
+        return false;
+    }
+    return nativeUninstallSucceeded(result.exit_status, result.exit_code, result.cancelled);
+}
+
+QVector<LeftoverItem> UninstallWorker::scanLeftovers(LeftoverScanReliability& reliabilityOut) {
     LeftoverScanner scanner(m_program, m_scanLevel, m_registrySnapshotBefore);
 
     m_scanStopFlag.store(stopRequested());
@@ -266,7 +501,7 @@ QVector<LeftoverItem> UninstallWorker::scanLeftovers() {
         Q_EMIT leftoverScanProgress(path, found);
     };
 
-    return scanner.scan(m_scanStopFlag, progress_cb);
+    return scanner.scan(m_scanStopFlag, progress_cb, &reliabilityOut);
 }
 
 bool UninstallWorker::removeUwpPackage() {
@@ -274,27 +509,39 @@ bool UninstallWorker::removeUwpPackage() {
         return false;
     }
 
+    // packageFullName reaches an ELEVATED single-quoted PowerShell string. Double any embedded
+    // single quote so a crafted value cannot terminate the literal and inject commands (the same
+    // defense used for the ISO volume label). MSIX identity rules normally forbid an apostrophe,
+    // but the value is not validated here, so escape rather than trust.
+    QString safeFullName = m_program.packageFullName;
+    safeFullName.replace(QChar('\''), QStringLiteral("''"));
+
     QString script;
     if (m_program.source == ProgramInfo::Source::Provisioned) {
         // Remove provisioned package (all-users)
         script = QString(
                      "Remove-AppxProvisionedPackage -Online "
                      "-PackageName '%1' -ErrorAction Stop")
-                     .arg(m_program.packageFullName);
+                     .arg(safeFullName);
     } else {
         // Remove per-user package
-        script = QString("Remove-AppxPackage -Package '%1' -ErrorAction Stop")
-                     .arg(m_program.packageFullName);
+        script = QString("Remove-AppxPackage -Package '%1' -ErrorAction Stop").arg(safeFullName);
     }
 
     const auto result = sak::runPowerShell(script, kUwpRemovalTimeoutMs, true, false, [this]() {
         return stopRequested();
     });
+    if (!result.succeeded()) {
+        // Preserve the real backend error instead of flattening it away silently.
+        sak::logWarning("UWP package removal failed for '{}': exit={} {}",
+                        m_program.displayName.toStdString(),
+                        QString::number(result.exit_code).toStdString(),
+                        result.std_err.trimmed().toStdString());
+    }
     return result.succeeded();
 }
 
 bool UninstallWorker::removeRegistryEntry() {
-#ifdef Q_OS_WIN
     if (m_program.registryKeyPath.isEmpty()) {
         return false;
     }
@@ -313,12 +560,36 @@ bool UninstallWorker::removeRegistryEntry() {
         return false;
     }
 
-    LONG rc = RegDeleteKeyExW(hive, reinterpret_cast<LPCWSTR>(path.utf16()), KEY_WOW64_64KEY, 0);
+    // Confine this ELEVATED key deletion to the Uninstall subtree. registryKeyPath is read from
+    // the registry (attacker-writable), so RegDeleteKeyExW must never be pointed at an arbitrary
+    // HKLM/HKCU key. Require the target to sit STRICTLY beneath a known Uninstall root (a non-empty
+    // leaf must follow it) and fail closed on anything else, including the Uninstall container. The
+    // strict-leaf rule also subsumes the hive-root screen: an empty post-hive subkey never passes.
+    if (!pathIsUnderUninstallRoot(path)) {
+        sak::logWarning("Refusing registry-only removal of key outside the Uninstall subtree: '{}'",
+                        m_program.registryKeyPath.toStdString());
+        return false;
+    }
 
+    // Mirror cleanup_worker::deleteRegistryKey: refuse a REG_LINK key, or any REG_LINK ancestor
+    // along the path. RegDeleteKeyExW re-resolves the whole pathname, so a link (which any user
+    // can create under HKCU\...\Uninstall) redirects this ELEVATED delete to a leaf OUTSIDE the
+    // subtree the confinement check just screened. Fail closed on any link or unprovable probe.
+    if (registryKeyIsSymbolicLink(hive, path)) {
+        sak::logWarning("Refusing registry-only removal of symbolic-link (REG_LINK) key: '{}'",
+                        m_program.registryKeyPath.toStdString());
+        return false;
+    }
+
+    LONG const rc =
+        RegDeleteKeyExW(hive, reinterpret_cast<LPCWSTR>(path.utf16()), KEY_WOW64_64KEY, 0);
+    if (rc != ERROR_SUCCESS) {
+        // Preserve the real Win32 error instead of collapsing it to a generic failure.
+        sak::logWarning("Registry-only removal failed (rc={}) for key '{}'",
+                        QString::number(rc).toStdString(),
+                        m_program.registryKeyPath.toStdString());
+    }
     return rc == ERROR_SUCCESS;
-#else
-    return false;
-#endif
 }
 
 bool UninstallWorker::isMsiInstaller() const {
@@ -331,12 +602,14 @@ bool UninstallWorker::isMsiInstaller() const {
 }
 
 QString UninstallWorker::buildMsiUninstallCommand() const {
-    QString guid = extractGuidFromUninstallString();
+    const QString guid = extractGuidFromUninstallString();
     if (guid.isEmpty()) {
-        return m_program.uninstallString;  // fallback to original
+        // No product GUID to rebuild from: keep the publisher's own registered command,
+        // which the trust screen in runNativeUninstaller vets like any other value.
+        return m_program.uninstallString;
     }
-
-    return QString("msiexec.exe /x %1 /norestart").arg(guid);
+    // Empty when System32 cannot be resolved -- runNativeUninstaller then refuses.
+    return buildMsiexecCommand(guid, QStringLiteral("/norestart"));
 }
 
 QString UninstallWorker::extractGuidFromUninstallString() const {

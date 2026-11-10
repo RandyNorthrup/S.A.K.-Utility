@@ -26,6 +26,7 @@ private Q_SLOTS:
     void htmlContainsKeyData();
     void jsonContainsStructuredData();
     void csvContainsHeaders();
+    void csvNeutralizesFormulaInjection();
 
 private:
     DiagnosticReportData createSampleData();
@@ -124,7 +125,9 @@ void DiagnosticReportGeneratorTests::generatesCsvReport() {
     QFile file(path);
     QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
     const auto content = file.readAll();
-    QVERIFY(content.contains(","));  // CSV has commas
+    // The CSV opens with the fixed header then the first sample data row (content is a QByteArray).
+    QVERIFY(content.startsWith("Section,Property,Value\n"));
+    QVERIFY(content.contains("CPU,Name,Intel Core i7-13700K\n"));  // pin the full row incl. EOL
 }
 
 void DiagnosticReportGeneratorTests::emptyDataGeneratesValidReports() {
@@ -174,9 +177,21 @@ void DiagnosticReportGeneratorTests::jsonContainsStructuredData() {
     const auto doc = QJsonDocument::fromJson(file.readAll());
     const auto root = doc.object();
 
-    // Verify key sections exist
-    QVERIFY(root.contains("metadata") || root.contains("technician") || root.contains("hardware") ||
-            root.contains("report"));
+    // metadata/hardware/smart/benchmarks/critical_issues/warnings/recommendations are all set
+    // unconditionally; the old || chain was satisfied by "metadata" alone and would pass even if
+    // the whole hardware payload were dropped. "technician" is nested under metadata (not top-
+    // level) and "report" is never emitted -- both were decoy operands.
+    QVERIFY(root.contains("metadata"));
+    QVERIFY(root.contains("hardware"));
+    QVERIFY(root.contains("smart"));
+    QVERIFY(root.contains("benchmarks"));
+    QVERIFY(root.contains("critical_issues"));
+    QVERIFY(root.contains("warnings"));
+    QVERIFY(root.contains("recommendations"));
+    QVERIFY(!root.contains("technician"));
+    QVERIFY(!root.contains("report"));
+    QCOMPARE(root["metadata"].toObject().value("technician").toString(),
+             QStringLiteral("Test Tech"));
 }
 
 void DiagnosticReportGeneratorTests::csvContainsHeaders() {
@@ -193,8 +208,35 @@ void DiagnosticReportGeneratorTests::csvContainsHeaders() {
     QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
     const QString content = QString::fromUtf8(file.readAll());
 
-    // CSV should have at least a header line
-    QVERIFY(content.contains("\n"));
+    // The CSV must lead with the exact header line, not merely contain some newline.
+    QVERIFY(content.startsWith(QStringLiteral("Section,Property,Value\n")));
+}
+
+// P07-11: a hardware string beginning with a formula character must be neutralized (prefixed with
+// an apostrophe) so opening the CSV in Excel/Calc does not execute it.
+void DiagnosticReportGeneratorTests::csvNeutralizesFormulaInjection() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    DiagnosticReportData data = createSampleData();
+    data.inventory.cpu.name = QStringLiteral("=HYPERLINK(\"http://evil\",\"x\")");
+
+    DiagnosticReportGenerator gen;
+    gen.setReportData(data);
+    const QString path = tempDir.filePath("inject.csv");
+    QVERIFY(gen.generateCsv(path));
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString content = QString::fromUtf8(file.readAll());
+
+    // The raw formula (a cell starting with '=') must never appear; the value is quoted and
+    // apostrophe-prefixed so the cell reads as text.
+    // Pin the full RFC-4180 escaped cell: the old pair passes even on a broken quote-doubler,
+    // since the raw formula (apostrophe-prefixed but unescaped) still contains '=HYPERLINK and
+    // still lacks ,=HYPERLINK. The exact cell proves the apostrophe AND the quote-doubling.
+    QVERIFY(content.contains(
+        QStringLiteral("CPU,Name,\"'=HYPERLINK(\"\"http://evil\"\",\"\"x\"\")\"")));
 }
 
 QTEST_MAIN(DiagnosticReportGeneratorTests)

@@ -1,0 +1,77 @@
+{
+    "apply_refusal_reasons": [
+        "BitLocker volume is locked"
+    ],
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:33:27.425Z",
+    "disk_before": {
+        "bus_type": "File Backed Virtual",
+        "disk_number": 1,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Msft Virtual Disk",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": "1073741824"
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "refused",
+    "expectation_met": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "Format",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "6b3aef9e-0935-4f9c-8e79-d8d563acbaa8",
+            "payload": {
+                "allocation_unit_bytes": "4096",
+                "file_system": "NTFS",
+                "full_format": false,
+                "label": "SAKNOPE"
+            },
+            "script_sha256": "3078055d10be9d0a6e8c1da1e98149f5a738bcd90a690886d30f7ea6942b7838",
+            "summary": "Format Partition - Disk 1 Partition 2",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "60022480649FAC92DE061C1FDA7EFE01",
+                "drive_letter": "T",
+                "kind": "Partition",
+                "offset_bytes": "16777216",
+                "partition_number": 2,
+                "size_bytes": "536870912"
+            },
+            "type": "Format Partition",
+            "warnings": [
+            ]
+        }
+    ],
+    "refused_at": "apply",
+    "review": {
+        "fingerprint": "f24741e5349b2331644c3f959db81af469716d915d4440bc1963c9fba3ceb71e",
+        "layout_hash": "93fa52e036b2bd0f624e525c11bb61ac98a745515b742ead46713059179305e2",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "6dabd3e9-9548-4b37-b588-cd518f92232c",
+    "scenario_id": "external.bitlocker",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:33:10.684Z",
+    "status": "Passed",
+    "step": "refused_while_locked",
+    "tool": "partition-manager-scenario-step"
+}

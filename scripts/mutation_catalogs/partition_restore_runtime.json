@@ -1,0 +1,80 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_partition_manager_core",
+  "ctest_regex": "^test_partition_manager_core$",
+  "mutants": [
+    {
+      "id": "extended-unc-restore-source-bypasses-runtime-guard",
+      "file": "src/core/partition_script_builder.cpp",
+      "find": "\"if ($imgSrc.StartsWith('\\\\\\\\?\\\\UNC\\\\', \"",
+      "replace": "\"if ($imgSrc.StartsWith('\\\\\\\\?\\\\UNX\\\\', \"",
+      "expect": "killed",
+      "why": "scriptBuilder_restoreImageGuardsUncAndOnTargetDiskSource requires the emitted runtime guard to reject extended UNC before the general extended-volume path allowance."
+    },
+    {
+      "id": "restore-source-handle-allows-write-delete-sharing",
+      "file": "src/core/partition_script_builder.cpp",
+      "find": "\"$in = [System.IO.File]::Open($imgPin, [System.IO.FileMode]::Open, \"\n               \"[System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)\\n\"",
+      "replace": "\"$in = [System.IO.File]::Open($imgPin, [System.IO.FileMode]::Open, \"\n               \"[System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)\\n\"",
+      "expect": "killed",
+      "why": "scriptBuilder_restoreImagePinsSourceContent requires the shared source opener to deny writes and deletes for the entire hash-copy-verify lifetime."
+    },
+    {
+      "id": "restore-source-volume-resolved-from-path-not-handle",
+      "file": "src/core/partition_script_builder.cpp",
+      "find": "\"$imgSrc = $imgLockedPath\\n\"",
+      "replace": "\"$imgSrc = $in.Name\\n\"",
+      "expect": "killed",
+      "why": "scriptBuilder_restoreImagePinsSourceContent requires off-target volume resolution from GetFinalPathNameByHandle on the locked source."
+    },
+    {
+      "id": "restore-hash-does-not-read-locked-stream",
+      "file": "src/core/partition_script_builder.cpp",
+      "find": "\"$sha256.ComputeHash($in))).Replace('-', '').ToLowerInvariant() } finally { \"",
+      "replace": "\"$sha256.ComputeHash([System.IO.Stream]::Null))).Replace('-', '').ToLowerInvariant() } finally { \"",
+      "expect": "killed",
+      "why": "scriptBuilder_restoreImagePinsSourceContent requires SHA-256 to consume the same locked stream later rewound for copying."
+    },
+    {
+      "id": "device-identity-guard-not-injected-before-mutation",
+      "file": "src/core/partition_script_builder.cpp",
+      "find": "if (lineMutatesDiskNumber(line))",
+      "replace": "if (line.contains(QStringLiteral(\"Get-Disk \")))",
+      "expect": "killed",
+      "why": "scriptBuilder_guardsDiskIdentityImmediatelyBeforeMutation requires the UniqueId-serial-size assertion adjacent to each disk-number mutation."
+    },
+    {
+      "id": "device-unique-id-omitted-from-layout-hash",
+      "file": "src/core/storage_inventory_worker.cpp",
+      "find": ".arg(disk.unique_id, disk.serial_number, disk.partition_style)",
+      "replace": ".arg(disk.serial_number, disk.serial_number, disk.partition_style)",
+      "expect": "killed",
+      "why": "inventoryParser_parsesDiskAndPartition requires otherwise identical disks with different Get-Disk UniqueId values to have different layout hashes."
+    },
+    {
+      "id": "raw-target-missing-identity-accepted-by-builder",
+      "file": "src/core/partition_script_builder.cpp",
+      "find": "if (rawDevicePhysicalDriveNumber(spec.target).has_value() &&",
+      "replace": "if (!rawDevicePhysicalDriveNumber(spec.target).has_value() &&",
+      "expect": "killed",
+      "why": "scriptBuilder_requiresAndChecksRawTargetDiskIdentity requires a physical target without a pinned UniqueId and size to produce no executable script."
+    },
+    {
+      "id": "runtime-raw-target-unique-id-compared-to-serial",
+      "file": "src/core/partition_script_builder.cpp",
+      "find": "\"if (-not [string]::Equals($sakActualTargetUniqueId, $sakExpectedTargetUniqueId, \"",
+      "replace": "\"if (-not [string]::Equals($sakActualTargetUniqueId, $sakExpectedTargetSerial, \"",
+      "expect": "killed",
+      "why": "scriptBuilder_requiresAndChecksRawTargetDiskIdentity requires runtime target UniqueId comparison immediately before Set-Disk mutates that target."
+    },
+    {
+      "id": "source-size-message-reads-disposed-stream",
+      "file": "src/core/partition_script_builder.cpp",
+      "find": "\"$actualSourceBytes = [uint64]$in.Length; $in.Dispose(); throw \\\"Source image \"",
+      "replace": "\"$in.Dispose(); $actualSourceBytes = [uint64]$in.Length; throw \\\"Source image \"",
+      "expect": "killed",
+      "why": "scriptBuilder_restoreImagePinsSourceContent requires source length capture before dispose so the fail-closed mismatch reason is not masked by ObjectDisposedException."
+    }
+  ]
+}

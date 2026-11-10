@@ -34,7 +34,7 @@ namespace {
 constexpr int kBuildTimeoutMs = 240'000;  // Keep below Qt Test's 5-minute watchdog
 constexpr int kMinSuccessCount = 3;       // At least 3 of 5 must succeed
 
-/// The Office PC preset — same IDs as PackageListManager::buildOfficePreset()
+/// The Office PC preset -- same IDs as PackageListManager::buildOfficePreset()
 const QVector<QPair<QString, QString>> kOfficePcPackages = {
     {"7zip", ""},
     {"vlc", ""},
@@ -42,20 +42,6 @@ const QVector<QPair<QString, QString>> kOfficePcPackages = {
     {"greenshot", ""},
     {"everything", ""},
 };
-
-bool isTransientPackageServiceError(const QString& error) {
-    return error.contains(QStringLiteral("Nupkg download failed"), Qt::CaseInsensitive) &&
-           (error.contains(QStringLiteral("Error transferring"), Qt::CaseInsensitive) ||
-            error.contains(QStringLiteral("server replied"), Qt::CaseInsensitive) ||
-            error.contains(QStringLiteral("HTTP 503"), Qt::CaseInsensitive) ||
-            error.contains(QStringLiteral("HTTP 504"), Qt::CaseInsensitive));
-}
-
-bool allPackageFailuresAreTransient(const QHash<QString, QString>& package_errors) {
-    const QStringList errors = package_errors.values();
-    return !errors.isEmpty() &&
-           std::all_of(errors.cbegin(), errors.cend(), isTransientPackageServiceError);
-}
 
 }  // namespace
 
@@ -69,6 +55,7 @@ class TestOfflinePackageBuilder : public QObject {
 private Q_SLOTS:
     void initTestCase();
     void cleanupTestCase();
+    void init();
 
     void testBuildOfficePcBundle();
 
@@ -101,6 +88,12 @@ void TestOfflinePackageBuilder::initTestCase() {
 
 void TestOfflinePackageBuilder::cleanupTestCase() {
     qInfo() << "=== Offline package builder test completed ===";
+}
+
+void TestOfflinePackageBuilder::init() {
+    if (qEnvironmentVariable("SAK_RUN_LIVE_PACKAGE_TESTS").trimmed() != QLatin1String("1")) {
+        QSKIP("Set SAK_RUN_LIVE_PACKAGE_TESTS=1 to run the live Chocolatey bundle test");
+    }
 }
 
 void TestOfflinePackageBuilder::connectWorkerDiagnostics(sak::OfflineDeploymentWorker* worker,
@@ -148,7 +141,9 @@ void TestOfflinePackageBuilder::verifyManifest(const sak::BatchStats& final_stat
 
     QJsonObject manifest_obj = manifest_doc.object();
     QVERIFY(manifest_obj.contains("packages"));
-    QVERIFY(manifest_obj.contains("manifest_version"));
+    // manifest_version is the compile-time constant kManifestVersion; contains() would still
+    // pass if it were bumped, corrupted, or written empty.
+    QCOMPARE(manifest_obj["manifest_version"].toString(), QStringLiteral("1.0"));
     QVERIFY(manifest_obj["packages"].isArray());
     QCOMPARE(manifest_obj["packages"].toArray().size(), final_stats.completed);
 }
@@ -196,7 +191,7 @@ void TestOfflinePackageBuilder::testBuildOfficePcBundle() {
 
     worker.buildDeploymentBundle(kOfficePcPackages,
                                  m_output_dir.path(),
-                                 "Integration test — Office PC");
+                                 "Integration test -- Office PC");
 
     // Wait for completion with timeout
     if (!operation_finished) {
@@ -212,7 +207,7 @@ void TestOfflinePackageBuilder::testBuildOfficePcBundle() {
         qWarning().noquote() << "Operation error:" << operation_error;
     }
     for (auto iter = package_errors.cbegin(); iter != package_errors.cend(); ++iter) {
-        qWarning().noquote() << QString("  FAILED: %1 — %2").arg(iter.key(), iter.value());
+        qWarning().noquote() << QString("  FAILED: %1 -- %2").arg(iter.key(), iter.value());
     }
 
     // Assertions
@@ -220,18 +215,24 @@ void TestOfflinePackageBuilder::testBuildOfficePcBundle() {
     QVERIFY2(operation_error.isEmpty(),
              qPrintable("Worker reported an operation error: " + operation_error));
 
-    QCOMPARE(final_stats.total, kOfficePcPackages.size());
-    if (final_stats.completed == 0 && allPackageFailuresAreTransient(package_errors)) {
-        QSKIP("Chocolatey package service/CDN returned only transient transfer errors.");
-    }
-    QVERIFY2(final_stats.completed > 0, "No packages completed successfully");
+    // The builder now expands the requested list into the full transitive
+    // dependency closure before internalizing (e.g. 7zip pulls in 7zip.install +
+    // chocolatey-core.extension), so total is >= the requested count -- never
+    // fewer. (When the dependency feed is unreachable it falls back to exactly the
+    // requested list, so equality is the lower bound.)
+    QVERIFY2(final_stats.total >= kOfficePcPackages.size(),
+             qPrintable(QString("Closure total %1 is smaller than the %2 requested packages")
+                            .arg(final_stats.total)
+                            .arg(kOfficePcPackages.size())));
+    QVERIFY2(final_stats.completed > 0,
+             "Live Chocolatey package service/CDN run completed no packages");
 
     verifyManifest(final_stats);
     verifyPackageFiles(final_stats);
 
     logFinalSummary(final_stats);
 
-    // At least kMinSuccessCount packages must succeed — some may fail due to
+    // At least kMinSuccessCount packages must succeed -- some may fail due to
     // transient CDN errors, unresolvable URLs (e.g., ${locale} in firefox),
     // or packages no longer available on Chocolatey.
     QVERIFY2(final_stats.completed >= kMinSuccessCount,

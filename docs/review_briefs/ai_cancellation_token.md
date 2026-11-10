@@ -1,0 +1,3 @@
+- **HIGH** -- Weak parent and child links let live descendants detach when intermediate token dies; root cancellation then misses them, violating hierarchical cancellation. Use strong ancestry ownership. `include/sak/ai/ai_cancellation_token.h:39,45`; `src/ai/ai_cancellation_token.cpp:34,46`
+- **MEDIUM** -- Expired children never pruned. Each child permanently retains weak control block; counting, serialization, and cancellation scan every child ever created. Add pruning plus separate ID counter. `src/ai/ai_cancellation_token.cpp:38,46,56,105,143`
+- **LOW** -- `std::move` used without required direct `<utility>` include, creating toolchain-dependent build portability. `src/ai/ai_cancellation_token.cpp:8,12`

@@ -5,20 +5,24 @@
 /// @brief Main UI panel for Network Diagnostics & Troubleshooting
 
 #include "sak/network_diagnostic_panel.h"
-
+// sak::csvEscape -- the one CSV cell writer, with the CWE-1236 formula guard.
 #include "sak/action_constants.h"
-#include "sak/actions/reset_network_action.h"
+#include "sak/csv_escape.h"
 #include "sak/detachable_log_window.h"
 #include "sak/dns_diagnostic_tool.h"
+#include "sak/ethernet_config_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/network_adapter_admin.h"
 #include "sak/network_constants.h"
 #include "sak/network_diagnostic_controller.h"
+#include "sak/network_reset_safeguard.h"
 #include "sak/port_scanner.h"
 #include "sak/process_runner.h"
-#include "sak/quick_action_controller.h"
+#include "sak/running_operations.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 
 #include <QApplication>
@@ -26,30 +30,43 @@
 #include <QClipboard>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
+#include <QFormLayout>
 #include <QFutureWatcher>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeySequence>
+#include <QLabel>
+#include <QLineEdit>
 #include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
 #include <QProcess>
 #include <QRegularExpressionValidator>
+#include <QSaveFile>
 #include <QScrollArea>
 #include <QShortcut>
+#include <QStandardPaths>
 #include <QtConcurrent>
+#include <QTextEdit>
 #include <QTextStream>
 #include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 namespace sak {
 
 namespace {
+
+/// This panel's owner token on the application's shared quick-action controller.
+constexpr auto kQuickActionOwner = "network";
 
 constexpr int kNetworkDetailMinHeight = 50;
 constexpr int kFirewallAnalysisMaxHeight = 120;
@@ -61,6 +78,7 @@ constexpr int kTableColumnWidthPort = 70;
 constexpr int kTableColumnWidthMedium = 75;
 constexpr int kTableColumnWidthStandard = 80;
 constexpr int kTableColumnWidthNarrow = 90;
+// A cell's text has the theme's padding on both sides and the grid line beside it.
 constexpr int kTableColumnWidthRemotePort = 95;
 constexpr int kTableColumnWidthWide = 100;
 constexpr int kTableColumnWidthState = 105;
@@ -88,7 +106,6 @@ constexpr int kMtrMaxCycles = 1000;
 constexpr int kMtrDefaultCycles = 100;
 constexpr int kMtrDefaultIntervalMs = 1000;
 constexpr int kMtrDefaultTimeoutMs = 5000;
-constexpr int kMtrLossWarningPercent = 5;
 constexpr int kPortScanMaxTimeoutMs = 30'000;
 constexpr int kPortScanDefaultTimeoutMs = 3000;
 constexpr int kPortScanMaxConcurrent = 200;
@@ -111,118 +128,151 @@ constexpr int kDecimalPrecisionOne = 1;
 constexpr int kDecimalPrecisionTwo = 2;
 constexpr double kMtrLossWarningPercentF = 5.0;
 constexpr double kBitsPerByteF = 8.0;
-constexpr int kMinimumBridgeAdapterCount = 2;
 constexpr int kFirewallFilterOutboundIndex = 2;
 constexpr int kFirewallFilterBlockIndex = 2;
 
 enum AdapterColumn {
-    kAdapterColumnName,
-    kAdapterColumnType,
-    kAdapterColumnStatus,
-    kAdapterColumnAddress,
-    kAdapterColumnMac,
-    kAdapterColumnSpeed,
-    kAdapterColumnCount,
+    KAdapterColumnName,
+    KAdapterColumnType,
+    KAdapterColumnStatus,
+    KAdapterColumnAddress,
+    KAdapterColumnMac,
+    KAdapterColumnSpeed,
+    KAdapterColumnCount,
 };
 
 enum PingColumn {
-    kPingColumnSequence,
-    kPingColumnAddress,
-    kPingColumnStatus,
-    kPingColumnRtt,
-    kPingColumnTtl,
-    kPingColumnCount,
+    KPingColumnSequence,
+    KPingColumnAddress,
+    KPingColumnStatus,
+    KPingColumnRtt,
+    KPingColumnTtl,
+    KPingColumnCount,
 };
 
 enum TracerouteColumn {
-    kTraceColumnHop,
-    kTraceColumnAddress,
-    kTraceColumnHostname,
-    kTraceColumnRttFirst,
-    kTraceColumnRttSecond,
-    kTraceColumnRttThird,
-    kTraceColumnAverage,
-    kTraceColumnCount,
+    KTraceColumnHop,
+    KTraceColumnAddress,
+    KTraceColumnHostname,
+    KTraceColumnRttFirst,
+    KTraceColumnRttSecond,
+    KTraceColumnRttThird,
+    KTraceColumnAverage,
+    KTraceColumnCount,
 };
 
 enum MtrColumn {
-    kMtrColumnHop,
-    kMtrColumnAddress,
-    kMtrColumnLoss,
-    kMtrColumnSent,
-    kMtrColumnAverage,
-    kMtrColumnBest,
-    kMtrColumnWorst,
-    kMtrColumnJitter,
-    kMtrColumnCount,
+    KMtrColumnHop,
+    KMtrColumnAddress,
+    KMtrColumnLoss,
+    KMtrColumnSent,
+    KMtrColumnAverage,
+    KMtrColumnBest,
+    KMtrColumnWorst,
+    KMtrColumnJitter,
+    KMtrColumnCount,
 };
 
 enum DnsColumn {
-    kDnsColumnQuery,
-    kDnsColumnType,
-    kDnsColumnServer,
-    kDnsColumnResponseTime,
-    kDnsColumnAnswers,
-    kDnsColumnCount,
+    KDnsColumnQuery,
+    KDnsColumnType,
+    KDnsColumnServer,
+    KDnsColumnResponseTime,
+    KDnsColumnAnswers,
+    KDnsColumnCount,
 };
 
 enum PortScanColumn {
-    kPortColumnPort,
-    kPortColumnState,
-    kPortColumnService,
-    kPortColumnResponse,
-    kPortColumnBanner,
-    kPortColumnCount,
+    KPortColumnPort,
+    KPortColumnState,
+    KPortColumnService,
+    KPortColumnResponse,
+    KPortColumnBanner,
+    KPortColumnCount,
 };
 
 enum ConnectionColumn {
-    kConnectionColumnProtocol,
-    kConnectionColumnLocalAddress,
-    kConnectionColumnLocalPort,
-    kConnectionColumnRemoteAddress,
-    kConnectionColumnRemotePort,
-    kConnectionColumnState,
-    kConnectionColumnProcess,
-    kConnectionColumnCount,
+    KConnectionColumnProtocol,
+    KConnectionColumnLocalAddress,
+    KConnectionColumnLocalPort,
+    KConnectionColumnRemoteAddress,
+    KConnectionColumnRemotePort,
+    KConnectionColumnState,
+    KConnectionColumnProcess,
+    KConnectionColumnCount,
 };
 
 enum WifiColumn {
-    kWifiColumnSsid,
-    kWifiColumnBssid,
-    kWifiColumnSignal,
-    kWifiColumnQuality,
-    kWifiColumnChannel,
-    kWifiColumnBand,
-    kWifiColumnSecurity,
-    kWifiColumnVendor,
-    kWifiColumnCount,
+    KWifiColumnSsid,
+    KWifiColumnBssid,
+    KWifiColumnSignal,
+    KWifiColumnQuality,
+    KWifiColumnChannel,
+    KWifiColumnBand,
+    KWifiColumnSecurity,
+    KWifiColumnVendor,
+    KWifiColumnCount,
 };
 
 enum FirewallColumn {
-    kFirewallColumnEnabled,
-    kFirewallColumnName,
-    kFirewallColumnDirection,
-    kFirewallColumnAction,
-    kFirewallColumnProtocol,
-    kFirewallColumnLocalPorts,
-    kFirewallColumnRemotePorts,
-    kFirewallColumnApplication,
-    kFirewallColumnCount,
+    KFirewallColumnEnabled,
+    KFirewallColumnName,
+    KFirewallColumnDirection,
+    KFirewallColumnAction,
+    KFirewallColumnProtocol,
+    KFirewallColumnLocalPorts,
+    KFirewallColumnRemotePorts,
+    KFirewallColumnApplication,
+    KFirewallColumnCount,
 };
 
 enum ShareColumn {
-    kShareColumnName,
-    kShareColumnType,
-    kShareColumnRead,
-    kShareColumnWrite,
-    kShareColumnRemark,
-    kShareColumnCount,
+    KShareColumnName,
+    KShareColumnType,
+    KShareColumnRead,
+    KShareColumnWrite,
+    KShareColumnRemark,
+    KShareColumnCount,
 };
 
 constexpr int kPortRangePartCount = 2;
 constexpr int kWifiStrongSignalDbm = -50;
 constexpr int kWifiUsableSignalDbm = -70;
 constexpr int kToolTabDnsIndex = 3;
+/// The read-only capture behind the Reset Network confirmation. Bounded: a scan that never
+/// answers ends in a refusal rather than a confirmation that never comes.
+constexpr int kResetPreviewTimeoutMs = 30'000;
+
+/// Connected, with IPv4 addresses, and every one of them self-assigned (169.254.x.x): Windows found
+/// no DHCP server and no address typed in by hand. The VM smoke saw one read as "Connected".
+bool hasOnlySelfAssignedIpv4(const NetworkAdapterInfo& adapter) {
+    return !adapter.ipv4Addresses.isEmpty() &&
+           std::ranges::all_of(adapter.ipv4Addresses,
+                               [](const QString& address) { return isSelfAssignedIpv4(address); });
+}
+
+QString selfAssignedExplanation(const NetworkAdapterInfo& adapter) {
+    return QObject::tr(
+               "Windows gave this adapter the self-assigned address %1 because no DHCP "
+               "server answered and no address is set by hand. It cannot reach other "
+               "networks over IPv4.")
+        .arg(adapter.ipv4Addresses.join(QStringLiteral(", ")));
+}
+
+/// A logged message box whose text is shown as written. Adapter names are set by any local user,
+/// so text built from them is never read as rich text.
+QMessageBox::StandardButton showPlainBox(QMessageBox::Icon icon,
+                                         const QString& title,
+                                         const QString& text,
+                                         QMessageBox::StandardButtons buttons) {
+    logDialogInfo(title, text, {});
+    QMessageBox box(icon, title, text, buttons, QApplication::activeWindow());
+    box.setTextFormat(Qt::PlainText);
+    if (buttons.testFlag(QMessageBox::No)) {
+        box.setDefaultButton(QMessageBox::No);
+    }
+    return static_cast<QMessageBox::StandardButton>(box.exec());
+}
 
 }  // namespace
 
@@ -230,32 +280,52 @@ constexpr int kToolTabDnsIndex = 3;
 // Construction / Destruction
 // ===================================================================
 
-NetworkDiagnosticPanel::NetworkDiagnosticPanel(QWidget* parent)
-    : QWidget(parent), m_controller(std::make_unique<NetworkDiagnosticController>(this)) {
+NetworkDiagnosticPanel::NetworkDiagnosticPanel(QuickActionController& quick_actions,
+                                               QWidget* parent)
+    : QWidget(parent)
+    , m_controller(std::make_unique<NetworkDiagnosticController>(this))
+    , m_quick_actions(quick_actions) {
     setupUi();
+    // UI review S15: fixed widths cut header labels ("Response Time", "Enabled") to fragments.
+    for (QTableWidget* table : findChildren<QTableWidget*>()) {
+        fitHeaderLabels(table);
+    }
     connectSignals();
     createResetNetworkAction();
 
-    // Runtime only. Accessibility audit must not launch adapter enumeration side effects.
-    if (!qApp->property("sakAccessibilityAudit").toBool()) {
-        QMetaObject::invokeMethod(m_controller.get(),
-                                  &NetworkDiagnosticController::scanAdapters,
-                                  Qt::QueuedConnection);
-    }
+    // The read-only adapter scan users get at panel creation, in every run mode: smoke and the
+    // accessibility audit exist to exercise this start-up work, so they no longer skip it. It
+    // runs on the controller's worker thread; tearing the panel down right after (as the gates
+    // do) joins that worker in the controller's destructor, so the scan cannot outlive it.
+    QMetaObject::invokeMethod(m_controller.get(),
+                              &NetworkDiagnosticController::scanAdapters,
+                              Qt::QueuedConnection);
 }
 
-NetworkDiagnosticPanel::~NetworkDiagnosticPanel() = default;
+NetworkDiagnosticPanel::~NetworkDiagnosticPanel() {
+    // Bounded-join any in-flight launchAdapterWork() ops (some MUTATE adapters via netsh) so the
+    // mutation does not run detached past teardown. Each op carries its own process timeout, so
+    // this cannot hang teardown beyond a bounded few seconds even if several are in flight.
+    for (QFuture<sak::AdapterAdminOutcome>& future : m_pending_command_futures) {
+        if (future.isRunning()) {
+            // SAK-ALLOW-BLOCKING: each op carries its own process timeout, so every future
+            // completes on its own. Some of these MUTATE adapters via netsh; abandoning the
+            // wait would let that mutation run detached past teardown.
+            future.waitForFinished();
+        }
+    }
+}
 
 // ===================================================================
 // UI Setup
 // ===================================================================
 
 void NetworkDiagnosticPanel::setupUi() {
-    // Root layout -- compact header, splitter for adapter+tools, report pinned at bottom.
-    auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(
+    // Root layout -- compact header, then the tool tabs, then the log toggle and Generate Report.
+    auto* root_layout = new QVBoxLayout(this);
+    root_layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
-    rootLayout->setSpacing(ui::kSpacingSmall);
+    root_layout->setSpacing(ui::kSpacingSmall);
 
     // Adapter section -- exposed via adapterWidget() for outer tab placement
     m_adapterWidget = createAdapterSection();
@@ -268,7 +338,7 @@ void NetworkDiagnosticPanel::setupUi() {
     m_toolTabs->addTab(createDnsTab(), tr("DNS"));
     m_toolTabs->addTab(createPortScanTab(), tr("Port Scan"));
     m_toolTabs->addTab(createBandwidthTab(), tr("Bandwidth"));
-    m_toolTabs->addTab(createWiFiTab(), tr("WiFi"));
+    m_toolTabs->addTab(createWiFiTab(), tr("Wi-Fi"));
     m_toolTabs->addTab(createConnectionsTab(), tr("Connections"));
     m_toolTabs->addTab(createFirewallTab(), tr("Firewall"));
     m_toolTabs->addTab(createSharesTab(), tr("Shares"));
@@ -276,37 +346,52 @@ void NetworkDiagnosticPanel::setupUi() {
     setAccessible(m_toolTabs,
                   tr("Diagnostic tools"),
                   tr("Tab widget for selecting network diagnostic tools"));
-    rootLayout->addWidget(m_toolTabs, 1);
+    root_layout->addWidget(m_toolTabs, 1);
 
-    // Status bar with log toggle
-    auto* statusRow = new QHBoxLayout();
-    statusRow->setContentsMargins(sak::ui::kMarginNone,
-                                  sak::ui::kCssPaddingTinyPx,
-                                  sak::ui::kMarginNone,
-                                  sak::ui::kMarginNone);
+    // Generate Report; the Log switch is under the Network Management tabs
+    auto* status_row = new QHBoxLayout();
+    status_row->setContentsMargins(sak::ui::kMarginNone,
+                                   sak::ui::kCssPaddingTinyPx,
+                                   sak::ui::kMarginNone,
+                                   sak::ui::kMarginNone);
+    status_row->addStretch();
 
-    m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    statusRow->addWidget(m_logToggle);
-    statusRow->addStretch();
-    rootLayout->addLayout(statusRow);
+    m_generateReportBtn = new QPushButton(tr("Generate Report..."), this);
+    m_generateReportBtn->setStyleSheet(ui::kSecondaryButtonStyle);
+    m_generateReportBtn->setToolTip(
+        tr("Save the results of the diagnostics run here as an HTML or JSON report"));
+    setAccessible(m_generateReportBtn, tr("Generate Report"), tr("Generate network report"));
+    connect(m_generateReportBtn,
+            &QPushButton::clicked,
+            this,
+            &NetworkDiagnosticPanel::onGenerateReportClicked,
+            Qt::QueuedConnection);
+    status_row->addWidget(m_generateReportBtn);
+    root_layout->addLayout(status_row);
 
     setupKeyboardShortcuts();
 }
 
 void NetworkDiagnosticPanel::setupKeyboardShortcuts() {
     Q_ASSERT(m_controller);
-    auto* refreshShortcut = new QShortcut(QKeySequence(Qt::Key_F5), this);
-    refreshShortcut->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(
-        refreshShortcut, &QShortcut::activated, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+    // The adapter section leaves this widget for its own outer tab (adapterWidget()), so a shortcut
+    // on the panel alone never fires while it has the focus.
+    for (QWidget* section : {static_cast<QWidget*>(this), m_adapterWidget}) {
+        auto* refresh_shortcut = new QShortcut(QKeySequence(Qt::Key_F5), section);
+        refresh_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(refresh_shortcut,
+                &QShortcut::activated,
+                this,
+                &NetworkDiagnosticPanel::onRefreshAdapters);
 
-    auto* cancelShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
-    cancelShortcut->setContext(Qt::WidgetWithChildrenShortcut);
-    connect(cancelShortcut, &QShortcut::activated, this, [this]() {
-        if (m_controller->currentState() != NetworkDiagnosticController::State::Idle) {
-            m_controller->cancel();
-        }
-    });
+        auto* cancel_shortcut = new QShortcut(QKeySequence(Qt::Key_Escape), section);
+        cancel_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(cancel_shortcut, &QShortcut::activated, this, [this]() {
+            if (m_controller->currentState() != NetworkDiagnosticController::State::Idle) {
+                m_controller->cancel();
+            }
+        });
+    }
 }
 
 // -- Adapter Section -----------------------------------------------------
@@ -315,24 +400,12 @@ QWidget* NetworkDiagnosticPanel::createAdapterSection() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupAdapterToolbar(widget, layout);
     setupAdapterTable(widget, layout);
     setupAdapterDetailLabel(widget, layout);
-
-    // Log toggle for adapter tab
-    auto* statusRow = new QHBoxLayout();
-    statusRow->setContentsMargins(sak::ui::kMarginNone,
-                                  sak::ui::kCssPaddingTinyPx,
-                                  sak::ui::kMarginNone,
-                                  sak::ui::kMarginNone);
-    m_adapterLogToggle = new LogToggleSwitch(tr("Log"), widget);
-    statusRow->addWidget(m_adapterLogToggle);
-    statusRow->addStretch();
-    layout->addLayout(statusRow);
-
     return widget;
 }
 
@@ -350,32 +423,32 @@ void NetworkDiagnosticPanel::setupAdapterToolbar(QWidget* parent, QVBoxLayout* l
     m_copyConfigBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_copyConfigBtn->setToolTip(tr("Copy selected adapter configuration to clipboard"));
     m_copyConfigBtn->setEnabled(false);
-    setAccessible(m_copyConfigBtn, tr("Copy adapter config"));
+    setAccessible(m_copyConfigBtn, tr("Copy Config"), tr("Copy adapter config"));
     toolbar->addWidget(m_copyConfigBtn);
 
     m_backupEthernetBtn = new QPushButton(tr("Backup Settings"), parent);
-    m_backupEthernetBtn->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_backupEthernetBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_backupEthernetBtn->setToolTip(
-        tr("Backup selected Ethernet adapter IP/DNS settings to a JSON file "
+        tr("Backup selected adapter IP/DNS settings to a JSON file "
            "for restoration on this or another PC"));
     setAccessible(m_backupEthernetBtn,
-                  tr("Backup Ethernet settings"),
+                  tr("Backup Settings"),
                   tr("Save selected adapter's IP configuration to a portable JSON file"));
     m_backupEthernetBtn->setEnabled(false);
     toolbar->addWidget(m_backupEthernetBtn);
 
     m_restoreEthernetBtn = new QPushButton(tr("Restore Settings"), parent);
-    m_restoreEthernetBtn->setStyleSheet(ui::kPrimaryButtonStyle);
+    m_restoreEthernetBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_restoreEthernetBtn->setToolTip(
-        tr("Restore Ethernet adapter settings from a previously saved "
-           "JSON backup file -- works across PCs"));
+        tr("Restore adapter settings from a previously saved "
+           "JSON backup file - works across PCs"));
     setAccessible(m_restoreEthernetBtn,
-                  tr("Restore Ethernet settings"),
+                  tr("Restore Settings"),
                   tr("Load and apply adapter IP configuration from a backup JSON file"));
     toolbar->addWidget(m_restoreEthernetBtn);
 
     m_resetNetworkBtn = new QPushButton(tr("Reset Network"), parent);
-    m_resetNetworkBtn->setStyleSheet(ui::kSecondaryButtonStyle);
+    m_resetNetworkBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_resetNetworkBtn->setToolTip(
         tr("Reset all network settings including Winsock, TCP/IP, "
            "DNS cache, and firewall (requires admin)"));
@@ -392,67 +465,70 @@ void NetworkDiagnosticPanel::setupAdapterTable(QWidget* parent, QVBoxLayout* lay
     Q_ASSERT(layout);
     Q_ASSERT(parent);
     m_adapterTable = new QTableWidget(parent);
-    m_adapterTable->setColumnCount(kAdapterColumnCount);
+    m_adapterTable->setColumnCount(KAdapterColumnCount);
     m_adapterTable->setHorizontalHeaderLabels(
         {tr("Name"), tr("Type"), tr("Status"), tr("IP Address"), tr("MAC"), tr("Speed")});
-    m_adapterTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-    m_adapterTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_adapterTable->setAlternatingRowColors(true);
-    m_adapterTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_adapterTable->verticalHeader()->setVisible(false);
+    configureStandardTable(m_adapterTable, QAbstractItemView::ExtendedSelection);
     m_adapterTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     auto* header = m_adapterTable->horizontalHeader();
-    header->setSectionResizeMode(kAdapterColumnName, QHeaderView::Stretch);
-    header->setSectionResizeMode(kAdapterColumnType, QHeaderView::Interactive);
-    header->resizeSection(kAdapterColumnType, kTableColumnWidthNarrow);
-    header->setSectionResizeMode(kAdapterColumnStatus, QHeaderView::Interactive);
-    header->resizeSection(kAdapterColumnStatus, kTableColumnWidthNarrow);
-    header->setSectionResizeMode(kAdapterColumnAddress, QHeaderView::Interactive);
-    header->resizeSection(kAdapterColumnAddress, kTableColumnWidthName);
-    header->setSectionResizeMode(kAdapterColumnMac, QHeaderView::Interactive);
-    header->resizeSection(kAdapterColumnMac, kTableColumnWidthLarge);
-    header->setSectionResizeMode(kAdapterColumnSpeed, QHeaderView::Interactive);
-    header->resizeSection(kAdapterColumnSpeed, kTableColumnWidthAddress);
+    header->setSectionResizeMode(KAdapterColumnName, QHeaderView::Stretch);
+    header->setSectionResizeMode(KAdapterColumnType, QHeaderView::Interactive);
+    header->resizeSection(KAdapterColumnType, kTableColumnWidthNarrow);
+    // As wide as what it holds. A width measured here came from the font before the theme's style
+    // sheet applied (10 pt, and 6 px of padding each side of an item), so "Disconnected" still read
+    // "Disconnect..." on testpc1 (review 3, S15).
+    header->setSectionResizeMode(KAdapterColumnStatus, QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(KAdapterColumnAddress, QHeaderView::Interactive);
+    header->resizeSection(KAdapterColumnAddress, kTableColumnWidthName);
+    header->setSectionResizeMode(KAdapterColumnMac, QHeaderView::Interactive);
+    header->resizeSection(KAdapterColumnMac, kTableColumnWidthLarge);
+    header->setSectionResizeMode(KAdapterColumnSpeed, QHeaderView::Interactive);
+    header->resizeSection(KAdapterColumnSpeed, kTableColumnWidthAddress);
 
     setAccessible(m_adapterTable,
                   tr("Network adapters"),
                   tr("List of network adapters with configuration details"));
     m_adapterTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_adapterTable, 1);
+
+    // Designed empty/loading state (R5-G20-7). QTableWidget's model exists now, so
+    // the overlay binds immediately; parented to the table so it self-manages.
+    m_adapterEmptyState = new sak::ui::ViewEmptyState(
+        m_adapterTable, tr("No adapters found - click Refresh Adapters"));
 }
 
 void NetworkDiagnosticPanel::setupAdapterDetailLabel(QWidget* parent, QVBoxLayout* layout) {
     Q_ASSERT(layout);
     Q_ASSERT(parent);
-    const QString labelStyle = sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted,
-                                                                  sak::ui::kFontSizeSmall);
+    const QString label_style = sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted,
+                                                                   sak::ui::kFontSizeSmall);
 
-    auto makeColumn = [&](QLabel*& label) -> QLabel* {
+    auto make_column = [&](QLabel*& label) -> QLabel* {
         label = new QLabel(parent);
         label->setWordWrap(true);
         label->setTextFormat(Qt::RichText);
         label->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-        label->setStyleSheet(labelStyle);
+        label->setStyleSheet(label_style);
         return label;
     };
 
-    auto* detailRow = new QHBoxLayout();
-    detailRow->setSpacing(ui::kSpacingDefault);
-    detailRow->setContentsMargins(sak::ui::kSpacingTight,
-                                  sak::ui::kCssPaddingTinyPx,
-                                  sak::ui::kSpacingTight,
-                                  sak::ui::kCssPaddingTinyPx);
-    detailRow->addWidget(makeColumn(m_detailIdentity), kFormTargetStretch);
-    detailRow->addWidget(makeColumn(m_detailAddressing), kFormTargetStretch);
-    detailRow->addWidget(makeColumn(m_detailGatewayDns), kFormTargetStretch);
-    detailRow->addWidget(makeColumn(m_detailStatus), 1);
+    auto* detail_row = new QHBoxLayout();
+    detail_row->setSpacing(ui::kSpacingDefault);
+    detail_row->setContentsMargins(sak::ui::kSpacingTight,
+                                   sak::ui::kCssPaddingTinyPx,
+                                   sak::ui::kSpacingTight,
+                                   sak::ui::kCssPaddingTinyPx);
+    detail_row->addWidget(make_column(m_detailIdentity), kFormTargetStretch);
+    detail_row->addWidget(make_column(m_detailAddressing), kFormTargetStretch);
+    detail_row->addWidget(make_column(m_detailGatewayDns), kFormTargetStretch);
+    detail_row->addWidget(make_column(m_detailStatus), 1);
 
-    auto* detailWidget = new QWidget(parent);
-    detailWidget->setLayout(detailRow);
-    detailWidget->setMinimumHeight(kNetworkDetailMinHeight);
-    detailWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
-    layout->addWidget(detailWidget, 0);
+    auto* detail_widget = new QWidget(parent);
+    detail_widget->setLayout(detail_row);
+    detail_widget->setMinimumHeight(kNetworkDetailMinHeight);
+    detail_widget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+    layout->addWidget(detail_widget, 0);
 
     // Show placeholder
     m_detailIdentity->setText(tr("Select an adapter to view details"));
@@ -464,7 +540,7 @@ QWidget* NetworkDiagnosticPanel::createPingTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupPingConfig(widget, layout);
@@ -476,35 +552,35 @@ QWidget* NetworkDiagnosticPanel::createPingTab() {
 
 void NetworkDiagnosticPanel::setupPingConfig(QWidget* widget, QVBoxLayout* layout) {
     // Row 1: Target
-    auto* targetRow = new QHBoxLayout();
-    targetRow->addWidget(new QLabel(tr("Target:"), widget));
+    auto* target_row = new QHBoxLayout();
+    target_row->addWidget(new QLabel(tr("Target:"), widget));
     m_pingTarget = new QLineEdit(widget);
     m_pingTarget->setPlaceholderText(tr("hostname or IP address"));
     m_pingTarget->setToolTip(tr("Target hostname or IP to ping"));
     setAccessible(m_pingTarget, tr("Ping target"));
-    targetRow->addWidget(m_pingTarget, kFormTargetStretch);
-    layout->addLayout(targetRow);
+    target_row->addWidget(m_pingTarget, kFormTargetStretch);
+    layout->addLayout(target_row);
 
     // Row 2: Count, Timeout, Interval, Size
-    auto* optionsRow = new QHBoxLayout();
-    optionsRow->addWidget(new QLabel(tr("Count:"), widget));
+    auto* options_row = new QHBoxLayout();
+    options_row->addWidget(new QLabel(tr("Count:"), widget));
     m_pingCount = new QSpinBox(widget);
     m_pingCount->setRange(kPingMinCount, kPingMaxCount);
     m_pingCount->setValue(kPingDefaultCount);
     m_pingCount->setToolTip(tr("Number of ping packets to send"));
     setAccessible(m_pingCount, tr("Ping count"), tr("Number of ICMP echo request packets to send"));
-    optionsRow->addWidget(m_pingCount);
+    options_row->addWidget(m_pingCount);
 
-    optionsRow->addWidget(new QLabel(tr("Timeout:"), widget));
+    options_row->addWidget(new QLabel(tr("Timeout:"), widget));
     m_pingTimeout = new QSpinBox(widget);
     m_pingTimeout->setRange(kNetworkMinTimeoutMs, kPortScanMaxTimeoutMs);
     m_pingTimeout->setValue(kPingDefaultTimeoutMs);
     m_pingTimeout->setSuffix(tr(" ms"));
     m_pingTimeout->setToolTip(tr("Timeout per ping in milliseconds"));
     setAccessible(m_pingTimeout, tr("Ping timeout"), tr("Maximum wait time for each ping reply"));
-    optionsRow->addWidget(m_pingTimeout);
+    options_row->addWidget(m_pingTimeout);
 
-    optionsRow->addWidget(new QLabel(tr("Interval:"), widget));
+    options_row->addWidget(new QLabel(tr("Interval:"), widget));
     m_pingInterval = new QSpinBox(widget);
     m_pingInterval->setRange(kNetworkMinTimeoutMs, sak::kTimerHealthPollMs);
     m_pingInterval->setValue(kPingDefaultIntervalMs);
@@ -513,68 +589,71 @@ void NetworkDiagnosticPanel::setupPingConfig(QWidget* widget, QVBoxLayout* layou
     setAccessible(m_pingInterval,
                   tr("Ping interval"),
                   tr("Time between sending each ICMP echo request"));
-    optionsRow->addWidget(m_pingInterval);
+    options_row->addWidget(m_pingInterval);
 
-    optionsRow->addWidget(new QLabel(tr("Size:"), widget));
+    options_row->addWidget(new QLabel(tr("Size:"), widget));
     m_pingPacketSize = new QSpinBox(widget);
     m_pingPacketSize->setRange(kPingMinPacketBytes, kPingMaxPacketBytes);
     m_pingPacketSize->setValue(kPingDefaultPacketBytes);
     m_pingPacketSize->setSuffix(tr(" B"));
     m_pingPacketSize->setToolTip(tr("ICMP packet payload size in bytes"));
     setAccessible(m_pingPacketSize, tr("Packet size"), tr("Size of the ICMP echo request payload"));
-    optionsRow->addWidget(m_pingPacketSize);
+    options_row->addWidget(m_pingPacketSize);
 
-    optionsRow->addStretch();
-    layout->addLayout(optionsRow);
+    options_row->addStretch();
+    layout->addLayout(options_row);
 }
 
 void NetworkDiagnosticPanel::setupPingControls(QWidget* widget, QVBoxLayout* layout) {
-    auto* btnRow = new QHBoxLayout();
+    auto* btn_row = new QHBoxLayout();
     m_pingStartBtn = new QPushButton(tr("Start Ping"), widget);
     m_pingStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_pingStartBtn->setToolTip(tr("Send ICMP echo requests to the target host"));
     setAccessible(m_pingStartBtn, tr("Start ping test"));
-    btnRow->addWidget(m_pingStartBtn);
+    btn_row->addWidget(m_pingStartBtn);
 
     m_pingStopBtn = new QPushButton(tr("Stop"), widget);
     m_pingStopBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_pingStopBtn->setEnabled(false);
     m_pingStopBtn->setToolTip(tr("Cancel the current ping operation"));
     setAccessible(m_pingStopBtn, tr("Stop ping test"));
-    btnRow->addWidget(m_pingStopBtn);
+    btn_row->addWidget(m_pingStopBtn);
 
-    btnRow->addStretch();
+    btn_row->addStretch();
     m_pingStatsLabel = new QLabel(widget);
     m_pingStatsLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
-    btnRow->addWidget(m_pingStatsLabel);
-    layout->addLayout(btnRow);
+    btn_row->addWidget(m_pingStatsLabel);
+    layout->addLayout(btn_row);
 }
 
 void NetworkDiagnosticPanel::setupPingResults(QWidget* widget, QVBoxLayout* layout) {
     Q_ASSERT(layout);
     Q_ASSERT(widget);
     m_pingTable = new QTableWidget(widget);
-    m_pingTable->setColumnCount(kPingColumnCount);
+    m_pingTable->setColumnCount(KPingColumnCount);
     m_pingTable->setHorizontalHeaderLabels(
         {tr("#"), tr("IP"), tr("Status"), tr("RTT (ms)"), tr("TTL")});
     m_pingTable->setAlternatingRowColors(true);
     m_pingTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_pingTable->verticalHeader()->setVisible(false);
 
-    auto* pingHeader = m_pingTable->horizontalHeader();
-    pingHeader->setSectionResizeMode(kPingColumnSequence, QHeaderView::Interactive);
-    pingHeader->resizeSection(kPingColumnSequence, kTableColumnWidthTiny);
-    pingHeader->setSectionResizeMode(kPingColumnAddress, QHeaderView::Stretch);
-    pingHeader->setSectionResizeMode(kPingColumnStatus, QHeaderView::Interactive);
-    pingHeader->resizeSection(kPingColumnStatus, kTableColumnWidthWide);
-    pingHeader->setSectionResizeMode(kPingColumnRtt, QHeaderView::Interactive);
-    pingHeader->resizeSection(kPingColumnRtt, kTableColumnWidthWide);
-    pingHeader->setSectionResizeMode(kPingColumnTtl, QHeaderView::Interactive);
-    pingHeader->resizeSection(kPingColumnTtl, kTableColumnWidthSmall);
+    auto* ping_header = m_pingTable->horizontalHeader();
+    ping_header->setSectionResizeMode(KPingColumnSequence, QHeaderView::Interactive);
+    ping_header->resizeSection(KPingColumnSequence, kTableColumnWidthTiny);
+    ping_header->setSectionResizeMode(KPingColumnAddress, QHeaderView::Stretch);
+    ping_header->setSectionResizeMode(KPingColumnStatus, QHeaderView::Interactive);
+    ping_header->resizeSection(KPingColumnStatus, kTableColumnWidthWide);
+    ping_header->setSectionResizeMode(KPingColumnRtt, QHeaderView::Interactive);
+    ping_header->resizeSection(KPingColumnRtt, kTableColumnWidthWide);
+    ping_header->setSectionResizeMode(KPingColumnTtl, QHeaderView::Interactive);
+    ping_header->resizeSection(KPingColumnTtl, kTableColumnWidthSmall);
 
     setAccessible(m_pingTable, tr("Ping results"));
     m_pingTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_pingTable, 1);
+
+    m_pingEmptyState = new sak::ui::ViewEmptyState(
+        m_pingTable, tr("No ping replies yet - enter a target and Start Ping"));
 }
 
 // -- Traceroute Tab ------------------------------------------------------
@@ -583,7 +662,7 @@ QWidget* NetworkDiagnosticPanel::createTracerouteTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupTracerouteConfig(widget, layout);
@@ -594,50 +673,50 @@ QWidget* NetworkDiagnosticPanel::createTracerouteTab() {
 }
 
 void NetworkDiagnosticPanel::setupTracerouteConfig(QWidget* widget, QVBoxLayout* layout) {
-    auto* configRow = new QHBoxLayout();
-    configRow->addWidget(new QLabel(tr("Target:"), widget));
+    auto* config_row = new QHBoxLayout();
+    config_row->addWidget(new QLabel(tr("Target:"), widget));
     m_traceTarget = new QLineEdit(widget);
     m_traceTarget->setPlaceholderText(tr("hostname or IP address"));
     m_traceTarget->setToolTip(tr("Target hostname or IP address to trace"));
     setAccessible(m_traceTarget, tr("Traceroute target"));
-    configRow->addWidget(m_traceTarget, kFormTargetStretch);
+    config_row->addWidget(m_traceTarget, kFormTargetStretch);
 
-    configRow->addWidget(new QLabel(tr("Max Hops:"), widget));
+    config_row->addWidget(new QLabel(tr("Max Hops:"), widget));
     m_traceMaxHops = new QSpinBox(widget);
     m_traceMaxHops->setRange(1, kTraceMaxHops);
     m_traceMaxHops->setValue(kTraceDefaultHops);
     m_traceMaxHops->setToolTip(tr("Maximum number of hops before giving up"));
     setAccessible(m_traceMaxHops, tr("Maximum hops"), tr("Maximum TTL value for the traceroute"));
-    configRow->addWidget(m_traceMaxHops);
-    layout->addLayout(configRow);
+    config_row->addWidget(m_traceMaxHops);
+    layout->addLayout(config_row);
 }
 
 void NetworkDiagnosticPanel::setupTracerouteControls(QWidget* widget, QVBoxLayout* layout) {
-    auto* btnRow = new QHBoxLayout();
+    auto* btn_row = new QHBoxLayout();
     m_traceStartBtn = new QPushButton(tr("Trace Route"), widget);
     m_traceStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_traceStartBtn->setToolTip(tr("Trace the network path to the target host"));
-    setAccessible(m_traceStartBtn, tr("Start traceroute"));
-    btnRow->addWidget(m_traceStartBtn);
+    setAccessible(m_traceStartBtn, tr("Trace Route"), tr("Start traceroute"));
+    btn_row->addWidget(m_traceStartBtn);
 
     m_traceStopBtn = new QPushButton(tr("Stop"), widget);
     m_traceStopBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_traceStopBtn->setEnabled(false);
     m_traceStopBtn->setToolTip(tr("Cancel the current traceroute"));
     setAccessible(m_traceStopBtn, tr("Stop traceroute"));
-    btnRow->addWidget(m_traceStopBtn);
+    btn_row->addWidget(m_traceStopBtn);
 
-    btnRow->addStretch();
+    btn_row->addStretch();
     m_traceStatusLabel = new QLabel(widget);
     m_traceStatusLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
-    btnRow->addWidget(m_traceStatusLabel);
-    layout->addLayout(btnRow);
+    btn_row->addWidget(m_traceStatusLabel);
+    layout->addLayout(btn_row);
 }
 
 void NetworkDiagnosticPanel::setupTracerouteResults(QWidget* widget, QVBoxLayout* layout) {
     Q_ASSERT(widget);
     m_traceTable = new QTableWidget(widget);
-    m_traceTable->setColumnCount(kTraceColumnCount);
+    m_traceTable->setColumnCount(KTraceColumnCount);
     m_traceTable->setHorizontalHeaderLabels({tr("Hop"),
                                              tr("IP"),
                                              tr("Hostname"),
@@ -649,20 +728,23 @@ void NetworkDiagnosticPanel::setupTracerouteResults(QWidget* widget, QVBoxLayout
     m_traceTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_traceTable->verticalHeader()->setVisible(false);
 
-    auto* trHeader = m_traceTable->horizontalHeader();
-    trHeader->setSectionResizeMode(kTraceColumnHop, QHeaderView::Interactive);
-    trHeader->resizeSection(kTraceColumnHop, kTableColumnWidthTiny);
-    trHeader->setSectionResizeMode(kTraceColumnAddress, QHeaderView::Interactive);
-    trHeader->resizeSection(kTraceColumnAddress, kTableColumnWidthAddress);
-    trHeader->setSectionResizeMode(kTraceColumnHostname, QHeaderView::Stretch);
-    for (int i = kTraceColumnRttFirst; i < kTraceColumnCount; ++i) {
-        trHeader->setSectionResizeMode(i, QHeaderView::Interactive);
-        trHeader->resizeSection(i, kTableColumnWidthStandard);
+    auto* tr_header = m_traceTable->horizontalHeader();
+    tr_header->setSectionResizeMode(KTraceColumnHop, QHeaderView::Interactive);
+    tr_header->resizeSection(KTraceColumnHop, kTableColumnWidthTiny);
+    tr_header->setSectionResizeMode(KTraceColumnAddress, QHeaderView::Interactive);
+    tr_header->resizeSection(KTraceColumnAddress, kTableColumnWidthAddress);
+    tr_header->setSectionResizeMode(KTraceColumnHostname, QHeaderView::Stretch);
+    for (int i = KTraceColumnRttFirst; i < KTraceColumnCount; ++i) {
+        tr_header->setSectionResizeMode(i, QHeaderView::Interactive);
+        tr_header->resizeSection(i, kTableColumnWidthStandard);
     }
 
     setAccessible(m_traceTable, tr("Traceroute results"));
     m_traceTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_traceTable, 1);
+
+    m_traceEmptyState = new sak::ui::ViewEmptyState(
+        m_traceTable, tr("No route traced yet - enter a target and Trace Route"));
 }
 
 // -- MTR Tab -------------------------------------------------------------
@@ -671,7 +753,7 @@ QWidget* NetworkDiagnosticPanel::createMtrTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupMtrConfig(widget, layout);
@@ -682,15 +764,15 @@ QWidget* NetworkDiagnosticPanel::createMtrTab() {
 }
 
 void NetworkDiagnosticPanel::setupMtrConfig(QWidget* widget, QVBoxLayout* layout) {
-    auto* configRow = new QHBoxLayout();
-    configRow->addWidget(new QLabel(tr("Target:"), widget));
+    auto* config_row = new QHBoxLayout();
+    config_row->addWidget(new QLabel(tr("Target:"), widget));
     m_mtrTarget = new QLineEdit(widget);
     m_mtrTarget->setPlaceholderText(tr("hostname or IP address"));
     m_mtrTarget->setToolTip(tr("Target hostname or IP address for MTR analysis"));
     setAccessible(m_mtrTarget, tr("MTR target"));
-    configRow->addWidget(m_mtrTarget, kFormTargetStretch);
+    config_row->addWidget(m_mtrTarget, kFormTargetStretch);
 
-    configRow->addWidget(new QLabel(tr("Cycles:"), widget));
+    config_row->addWidget(new QLabel(tr("Cycles:"), widget));
     m_mtrCycles = new QSpinBox(widget);
     m_mtrCycles->setRange(1, kMtrMaxCycles);
     m_mtrCycles->setValue(kMtrDefaultCycles);
@@ -698,36 +780,36 @@ void NetworkDiagnosticPanel::setupMtrConfig(QWidget* widget, QVBoxLayout* layout
     setAccessible(m_mtrCycles,
                   tr("MTR cycles"),
                   tr("Number of complete pass cycles for the MTR analysis"));
-    configRow->addWidget(m_mtrCycles);
-    layout->addLayout(configRow);
+    config_row->addWidget(m_mtrCycles);
+    layout->addLayout(config_row);
 }
 
 void NetworkDiagnosticPanel::setupMtrControls(QWidget* widget, QVBoxLayout* layout) {
-    auto* btnRow = new QHBoxLayout();
+    auto* btn_row = new QHBoxLayout();
     m_mtrStartBtn = new QPushButton(tr("Start MTR"), widget);
     m_mtrStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_mtrStartBtn->setToolTip(tr("Start combined traceroute and ping analysis"));
     setAccessible(m_mtrStartBtn, tr("Start MTR test"));
-    btnRow->addWidget(m_mtrStartBtn);
+    btn_row->addWidget(m_mtrStartBtn);
 
     m_mtrStopBtn = new QPushButton(tr("Stop"), widget);
     m_mtrStopBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_mtrStopBtn->setEnabled(false);
     m_mtrStopBtn->setToolTip(tr("Cancel the current MTR analysis"));
     setAccessible(m_mtrStopBtn, tr("Stop MTR test"));
-    btnRow->addWidget(m_mtrStopBtn);
+    btn_row->addWidget(m_mtrStopBtn);
 
-    btnRow->addStretch();
+    btn_row->addStretch();
     m_mtrStatusLabel = new QLabel(widget);
     m_mtrStatusLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
-    btnRow->addWidget(m_mtrStatusLabel);
-    layout->addLayout(btnRow);
+    btn_row->addWidget(m_mtrStatusLabel);
+    layout->addLayout(btn_row);
 }
 
 void NetworkDiagnosticPanel::setupMtrResults(QWidget* widget, QVBoxLayout* layout) {
     Q_ASSERT(widget);
     m_mtrTable = new QTableWidget(widget);
-    m_mtrTable->setColumnCount(kMtrColumnCount);
+    m_mtrTable->setColumnCount(KMtrColumnCount);
     m_mtrTable->setHorizontalHeaderLabels({tr("Hop"),
                                            tr("IP/Hostname"),
                                            tr("Loss %"),
@@ -740,18 +822,21 @@ void NetworkDiagnosticPanel::setupMtrResults(QWidget* widget, QVBoxLayout* layou
     m_mtrTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_mtrTable->verticalHeader()->setVisible(false);
 
-    auto* mtrHeader = m_mtrTable->horizontalHeader();
-    mtrHeader->setSectionResizeMode(kMtrColumnHop, QHeaderView::Interactive);
-    mtrHeader->resizeSection(kMtrColumnHop, kTableColumnWidthTiny);
-    mtrHeader->setSectionResizeMode(kMtrColumnAddress, QHeaderView::Stretch);
-    for (int i = kMtrColumnLoss; i < kMtrColumnCount; ++i) {
-        mtrHeader->setSectionResizeMode(i, QHeaderView::Interactive);
-        mtrHeader->resizeSection(i, kTableColumnWidthMedium);
+    auto* mtr_header = m_mtrTable->horizontalHeader();
+    mtr_header->setSectionResizeMode(KMtrColumnHop, QHeaderView::Interactive);
+    mtr_header->resizeSection(KMtrColumnHop, kTableColumnWidthTiny);
+    mtr_header->setSectionResizeMode(KMtrColumnAddress, QHeaderView::Stretch);
+    for (int i = KMtrColumnLoss; i < KMtrColumnCount; ++i) {
+        mtr_header->setSectionResizeMode(i, QHeaderView::Interactive);
+        mtr_header->resizeSection(i, kTableColumnWidthMedium);
     }
 
     setAccessible(m_mtrTable, tr("MTR results"));
     m_mtrTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_mtrTable, 1);
+
+    m_mtrEmptyState = new sak::ui::ViewEmptyState(
+        m_mtrTable, tr("No MTR data yet - enter a target and Start MTR"));
 }
 
 // -- DNS Tab -------------------------------------------------------------
@@ -760,7 +845,7 @@ QWidget* NetworkDiagnosticPanel::createDnsTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupDnsConfig(widget, layout);
@@ -772,27 +857,27 @@ QWidget* NetworkDiagnosticPanel::createDnsTab() {
 
 void NetworkDiagnosticPanel::setupDnsConfig(QWidget* widget, QVBoxLayout* layout) {
     // Row 1: Hostname + Record type
-    auto* queryRow = new QHBoxLayout();
-    queryRow->addWidget(new QLabel(tr("Hostname:"), widget));
+    auto* query_row = new QHBoxLayout();
+    query_row->addWidget(new QLabel(tr("Hostname:"), widget));
     m_dnsHostname = new QLineEdit(widget);
     m_dnsHostname->setPlaceholderText(tr("e.g. example.com"));
     m_dnsHostname->setToolTip(tr("Domain name or IP address to query"));
     setAccessible(m_dnsHostname, tr("DNS hostname"));
-    queryRow->addWidget(m_dnsHostname, kFormTargetStretch);
+    query_row->addWidget(m_dnsHostname, kFormTargetStretch);
 
-    queryRow->addWidget(new QLabel(tr("Type:"), widget));
+    query_row->addWidget(new QLabel(tr("Type:"), widget));
     m_dnsRecordType = new QComboBox(widget);
     m_dnsRecordType->addItems({"A", "AAAA", "MX", "CNAME", "TXT", "NS", "SOA", "SRV", "PTR"});
     m_dnsRecordType->setToolTip(tr("DNS record type to query"));
     setAccessible(m_dnsRecordType,
                   tr("DNS record type"),
                   tr("Select the type of DNS record to look up"));
-    queryRow->addWidget(m_dnsRecordType);
-    layout->addLayout(queryRow);
+    query_row->addWidget(m_dnsRecordType);
+    layout->addLayout(query_row);
 
     // Row 2: DNS server
-    auto* serverRow = new QHBoxLayout();
-    serverRow->addWidget(new QLabel(tr("Server:"), widget));
+    auto* server_row = new QHBoxLayout();
+    server_row->addWidget(new QLabel(tr("Server:"), widget));
     m_dnsServer = new QComboBox(widget);
     m_dnsServer->setEditable(true);
     m_dnsServer->setToolTip(tr("DNS server to use for queries (or enter a custom IP)"));
@@ -808,42 +893,42 @@ void NetworkDiagnosticPanel::setupDnsConfig(QWidget* widget, QVBoxLayout* layout
         }
     }
     setAccessible(m_dnsServer, tr("DNS server"));
-    serverRow->addWidget(m_dnsServer, 1);
-    serverRow->addStretch();
-    layout->addLayout(serverRow);
+    server_row->addWidget(m_dnsServer, 1);
+    server_row->addStretch();
+    layout->addLayout(server_row);
 }
 
 void NetworkDiagnosticPanel::setupDnsControls(QWidget* widget, QVBoxLayout* layout) {
-    auto* btnRow = new QHBoxLayout();
+    auto* btn_row = new QHBoxLayout();
     m_dnsQueryBtn = new QPushButton(tr("Query"), widget);
     m_dnsQueryBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_dnsQueryBtn->setToolTip(tr("Perform a DNS query for the specified hostname and record type"));
     setAccessible(m_dnsQueryBtn, tr("Run DNS query"));
-    btnRow->addWidget(m_dnsQueryBtn);
+    btn_row->addWidget(m_dnsQueryBtn);
 
     m_dnsReverseBtn = new QPushButton(tr("Reverse Lookup"), widget);
     m_dnsReverseBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_dnsReverseBtn->setToolTip(tr("Resolve IP address to hostname"));
-    setAccessible(m_dnsReverseBtn, tr("Reverse DNS lookup"));
-    btnRow->addWidget(m_dnsReverseBtn);
+    setAccessible(m_dnsReverseBtn, tr("Reverse Lookup"), tr("Reverse DNS lookup"));
+    btn_row->addWidget(m_dnsReverseBtn);
 
     m_dnsCompareBtn = new QPushButton(tr("Compare Servers"), widget);
     m_dnsCompareBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_dnsCompareBtn->setToolTip(tr("Query multiple DNS servers and compare results"));
-    setAccessible(m_dnsCompareBtn, tr("Compare DNS servers"));
-    btnRow->addWidget(m_dnsCompareBtn);
+    setAccessible(m_dnsCompareBtn, tr("Compare Servers"), tr("Compare DNS servers"));
+    btn_row->addWidget(m_dnsCompareBtn);
 
     m_dnsFlushBtn = new QPushButton(tr("Flush Cache"), widget);
     m_dnsFlushBtn->setStyleSheet(ui::kDangerButtonStyle);
-    m_dnsFlushBtn->setToolTip(tr("Flush the local DNS resolver cache (requires admin)"));
-    setAccessible(m_dnsFlushBtn, tr("Flush DNS cache"));
-    btnRow->addWidget(m_dnsFlushBtn);
+    m_dnsFlushBtn->setToolTip(tr("Flush the local DNS resolver cache"));
+    setAccessible(m_dnsFlushBtn, tr("Flush Cache"), tr("Flush DNS cache"));
+    btn_row->addWidget(m_dnsFlushBtn);
 
-    btnRow->addStretch();
+    btn_row->addStretch();
     m_dnsStatusLabel = new QLabel(widget);
     m_dnsStatusLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
-    btnRow->addWidget(m_dnsStatusLabel);
-    layout->addLayout(btnRow);
+    btn_row->addWidget(m_dnsStatusLabel);
+    layout->addLayout(btn_row);
 
     connect(m_dnsQueryBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onDnsQuery);
     connect(
@@ -855,27 +940,30 @@ void NetworkDiagnosticPanel::setupDnsControls(QWidget* widget, QVBoxLayout* layo
 void NetworkDiagnosticPanel::setupDnsResults(QWidget* widget, QVBoxLayout* layout) {
     Q_ASSERT(widget);
     m_dnsTable = new QTableWidget(widget);
-    m_dnsTable->setColumnCount(kDnsColumnCount);
+    m_dnsTable->setColumnCount(KDnsColumnCount);
     m_dnsTable->setHorizontalHeaderLabels(
         {tr("Query"), tr("Type"), tr("Server"), tr("Response Time"), tr("Answers")});
     m_dnsTable->setAlternatingRowColors(true);
     m_dnsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_dnsTable->verticalHeader()->setVisible(false);
 
-    auto* dnsHeader = m_dnsTable->horizontalHeader();
-    dnsHeader->setSectionResizeMode(kDnsColumnQuery, QHeaderView::Interactive);
-    dnsHeader->resizeSection(kDnsColumnQuery, kTableColumnWidthXLarge);
-    dnsHeader->setSectionResizeMode(kDnsColumnType, QHeaderView::Interactive);
-    dnsHeader->resizeSection(kDnsColumnType, kTableColumnWidthSmall);
-    dnsHeader->setSectionResizeMode(kDnsColumnServer, QHeaderView::Interactive);
-    dnsHeader->resizeSection(kDnsColumnServer, kTableColumnWidthAddress);
-    dnsHeader->setSectionResizeMode(kDnsColumnResponseTime, QHeaderView::Interactive);
-    dnsHeader->resizeSection(kDnsColumnResponseTime, kTableColumnWidthWide);
-    dnsHeader->setSectionResizeMode(kDnsColumnAnswers, QHeaderView::Stretch);
+    auto* dns_header = m_dnsTable->horizontalHeader();
+    dns_header->setSectionResizeMode(KDnsColumnQuery, QHeaderView::Interactive);
+    dns_header->resizeSection(KDnsColumnQuery, kTableColumnWidthXLarge);
+    dns_header->setSectionResizeMode(KDnsColumnType, QHeaderView::Interactive);
+    dns_header->resizeSection(KDnsColumnType, kTableColumnWidthSmall);
+    dns_header->setSectionResizeMode(KDnsColumnServer, QHeaderView::Interactive);
+    dns_header->resizeSection(KDnsColumnServer, kTableColumnWidthAddress);
+    dns_header->setSectionResizeMode(KDnsColumnResponseTime, QHeaderView::Interactive);
+    dns_header->resizeSection(KDnsColumnResponseTime, kTableColumnWidthWide);
+    dns_header->setSectionResizeMode(KDnsColumnAnswers, QHeaderView::Stretch);
 
     setAccessible(m_dnsTable, tr("DNS results"));
     m_dnsTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_dnsTable, 1);
+
+    m_dnsEmptyState = new sak::ui::ViewEmptyState(
+        m_dnsTable, tr("No DNS results yet - enter a hostname and Query"));
 }
 
 // -- Port Scan Tab --------------------------------------------------------
@@ -884,7 +972,7 @@ QWidget* NetworkDiagnosticPanel::createPortScanTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupPortScanConfig(widget, layout);
@@ -895,15 +983,15 @@ QWidget* NetworkDiagnosticPanel::createPortScanTab() {
 }
 
 void NetworkDiagnosticPanel::setupPortScanConfig(QWidget* widget, QVBoxLayout* layout) {
-    auto* configRow1 = new QHBoxLayout();
-    configRow1->addWidget(new QLabel(tr("Target:"), widget));
+    auto* config_row1 = new QHBoxLayout();
+    config_row1->addWidget(new QLabel(tr("Target:"), widget));
     m_portTarget = new QLineEdit(widget);
     m_portTarget->setPlaceholderText(tr("hostname or IP"));
     m_portTarget->setToolTip(tr("Target hostname or IP address to scan"));
     setAccessible(m_portTarget, tr("Port scan target"));
-    configRow1->addWidget(m_portTarget, kFormTargetStretch);
+    config_row1->addWidget(m_portTarget, kFormTargetStretch);
 
-    configRow1->addWidget(new QLabel(tr("Preset:"), widget));
+    config_row1->addWidget(new QLabel(tr("Preset:"), widget));
     m_portPreset = new QComboBox(widget);
     m_portPreset->addItem(tr("Custom"));
     const auto presets = PortScanner::getPresets();
@@ -914,25 +1002,25 @@ void NetworkDiagnosticPanel::setupPortScanConfig(QWidget* widget, QVBoxLayout* l
     setAccessible(m_portPreset,
                   tr("Port preset"),
                   tr("Choose a common port set or specify custom ports"));
-    configRow1->addWidget(m_portPreset);
+    config_row1->addWidget(m_portPreset);
 
-    configRow1->addWidget(new QLabel(tr("Custom Ports:"), widget));
+    config_row1->addWidget(new QLabel(tr("Custom Ports:"), widget));
     m_portCustomRange = new QLineEdit(widget);
     m_portCustomRange->setPlaceholderText(tr("e.g. 80,443,8080-8090"));
     m_portCustomRange->setToolTip(tr("Comma-separated ports or ranges (e.g. 80,443,8080-8090)"));
     setAccessible(m_portCustomRange,
                   tr("Custom port range"),
                   tr("Specify individual ports or ranges separated by commas"));
-    configRow1->addWidget(m_portCustomRange, 1);
-    layout->addLayout(configRow1);
+    config_row1->addWidget(m_portCustomRange, 1);
+    layout->addLayout(config_row1);
 
     connect(m_portPreset,
             &QComboBox::currentIndexChanged,
             this,
             &NetworkDiagnosticPanel::onPortPresetChanged);
 
-    auto* configRow2 = new QHBoxLayout();
-    configRow2->addWidget(new QLabel(tr("Timeout:"), widget));
+    auto* config_row2 = new QHBoxLayout();
+    config_row2->addWidget(new QLabel(tr("Timeout:"), widget));
     m_portTimeout = new QSpinBox(widget);
     m_portTimeout->setRange(kNetworkMinTimeoutMs, kPortScanMaxTimeoutMs);
     m_portTimeout->setValue(kPortScanDefaultTimeoutMs);
@@ -941,9 +1029,9 @@ void NetworkDiagnosticPanel::setupPortScanConfig(QWidget* widget, QVBoxLayout* l
     setAccessible(m_portTimeout,
                   tr("Port scan timeout"),
                   tr("Maximum wait time for each port connection attempt"));
-    configRow2->addWidget(m_portTimeout);
+    config_row2->addWidget(m_portTimeout);
 
-    configRow2->addWidget(new QLabel(tr("Concurrent:"), widget));
+    config_row2->addWidget(new QLabel(tr("Concurrent:"), widget));
     m_portConcurrent = new QSpinBox(widget);
     m_portConcurrent->setRange(1, kPortScanMaxConcurrent);
     m_portConcurrent->setValue(kPortScanDefaultConcurrent);
@@ -951,7 +1039,7 @@ void NetworkDiagnosticPanel::setupPortScanConfig(QWidget* widget, QVBoxLayout* l
     setAccessible(m_portConcurrent,
                   tr("Concurrent scans"),
                   tr("Maximum number of parallel port connections"));
-    configRow2->addWidget(m_portConcurrent);
+    config_row2->addWidget(m_portConcurrent);
 
     m_portBannerGrab = new QCheckBox(tr("Banner Grab"), widget);
     m_portBannerGrab->setChecked(true);
@@ -959,31 +1047,31 @@ void NetworkDiagnosticPanel::setupPortScanConfig(QWidget* widget, QVBoxLayout* l
     setAccessible(m_portBannerGrab,
                   tr("Banner grab"),
                   tr("Read service identification banners from open ports"));
-    configRow2->addWidget(m_portBannerGrab);
-    configRow2->addStretch();
-    layout->addLayout(configRow2);
+    config_row2->addWidget(m_portBannerGrab);
+    config_row2->addStretch();
+    layout->addLayout(config_row2);
 }
 
 void NetworkDiagnosticPanel::setupPortScanControls(QWidget* widget, QVBoxLayout* layout) {
-    auto* btnRow = new QHBoxLayout();
+    auto* btn_row = new QHBoxLayout();
     m_portStartBtn = new QPushButton(tr("Scan Ports"), widget);
     m_portStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_portStartBtn->setToolTip(tr("Begin scanning the specified ports on the target"));
-    setAccessible(m_portStartBtn, tr("Start port scan"));
-    btnRow->addWidget(m_portStartBtn);
+    setAccessible(m_portStartBtn, tr("Scan Ports"), tr("Start port scan"));
+    btn_row->addWidget(m_portStartBtn);
 
     m_portStopBtn = new QPushButton(tr("Stop"), widget);
     m_portStopBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_portStopBtn->setEnabled(false);
     m_portStopBtn->setToolTip(tr("Cancel the current port scan"));
     setAccessible(m_portStopBtn, tr("Stop port scan"));
-    btnRow->addWidget(m_portStopBtn);
+    btn_row->addWidget(m_portStopBtn);
 
-    btnRow->addStretch();
+    btn_row->addStretch();
     m_portSummaryLabel = new QLabel(widget);
     m_portSummaryLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
-    btnRow->addWidget(m_portSummaryLabel);
-    layout->addLayout(btnRow);
+    btn_row->addWidget(m_portSummaryLabel);
+    layout->addLayout(btn_row);
 }
 
 void NetworkDiagnosticPanel::setupPortScanResults(QWidget* widget, QVBoxLayout* layout) {
@@ -997,7 +1085,7 @@ void NetworkDiagnosticPanel::setupPortScanResults(QWidget* widget, QVBoxLayout* 
     layout->addWidget(m_portProgress);
 
     m_portTable = new QTableWidget(widget);
-    m_portTable->setColumnCount(kPortColumnCount);
+    m_portTable->setColumnCount(KPortColumnCount);
     m_portTable->setHorizontalHeaderLabels(
         {tr("Port"), tr("State"), tr("Service"), tr("Response (ms)"), tr("Banner")});
     m_portTable->setAlternatingRowColors(true);
@@ -1005,81 +1093,84 @@ void NetworkDiagnosticPanel::setupPortScanResults(QWidget* widget, QVBoxLayout* 
     m_portTable->verticalHeader()->setVisible(false);
     m_portTable->setSortingEnabled(true);
 
-    auto* portHeader = m_portTable->horizontalHeader();
-    portHeader->setSectionResizeMode(kPortColumnPort, QHeaderView::Interactive);
-    portHeader->resizeSection(kPortColumnPort, kTableColumnWidthPort);
-    portHeader->setSectionResizeMode(kPortColumnState, QHeaderView::Interactive);
-    portHeader->resizeSection(kPortColumnState, kTableColumnWidthStandard);
-    portHeader->setSectionResizeMode(kPortColumnService, QHeaderView::Interactive);
-    portHeader->resizeSection(kPortColumnService, kTableColumnWidthAddress);
-    portHeader->setSectionResizeMode(kPortColumnResponse, QHeaderView::Interactive);
-    portHeader->resizeSection(kPortColumnResponse, kTableColumnWidthWide);
-    portHeader->setSectionResizeMode(kPortColumnBanner, QHeaderView::Stretch);
+    auto* port_header = m_portTable->horizontalHeader();
+    port_header->setSectionResizeMode(KPortColumnPort, QHeaderView::Interactive);
+    port_header->resizeSection(KPortColumnPort, kTableColumnWidthPort);
+    port_header->setSectionResizeMode(KPortColumnState, QHeaderView::Interactive);
+    port_header->resizeSection(KPortColumnState, kTableColumnWidthStandard);
+    port_header->setSectionResizeMode(KPortColumnService, QHeaderView::Interactive);
+    port_header->resizeSection(KPortColumnService, kTableColumnWidthAddress);
+    port_header->setSectionResizeMode(KPortColumnResponse, QHeaderView::Interactive);
+    port_header->resizeSection(KPortColumnResponse, kTableColumnWidthWide);
+    port_header->setSectionResizeMode(KPortColumnBanner, QHeaderView::Stretch);
 
     setAccessible(m_portTable, tr("Port scan results"));
     m_portTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_portTable, 1);
+
+    m_portEmptyState = new sak::ui::ViewEmptyState(
+        m_portTable, tr("No open ports found - enter a target and Scan Ports"));
 }
 
 // -- Bandwidth Tab -------------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createBandwidthTab() {
-    auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
 
-    auto* widget = new QWidget(scrollArea);
+    auto* widget = new QWidget(scroll_area);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
-    auto* iperfGroup = new QGroupBox(tr("LAN Bandwidth (iPerf3)"), widget);
-    auto* iperfLayout = new QVBoxLayout(iperfGroup);
-    setupBandwidthIperfConfig(widget, iperfLayout);
-    setupBandwidthIperfControls(widget, iperfLayout);
-    setupBandwidthIperfResults(widget, iperfLayout);
-    layout->addWidget(iperfGroup);
+    auto* iperf_group = new QGroupBox(tr("LAN Bandwidth (iPerf3)"), widget);
+    auto* iperf_layout = new QVBoxLayout(iperf_group);
+    setupBandwidthIperfConfig(widget, iperf_layout);
+    setupBandwidthIperfControls(widget, iperf_layout);
+    setupBandwidthIperfResults(widget, iperf_layout);
+    layout->addWidget(iperf_group);
 
     setupBandwidthHttpSection(widget, layout);
 
     layout->addStretch();
 
-    scrollArea->setWidget(widget);
-    return scrollArea;
+    scroll_area->setWidget(widget);
+    return scroll_area;
 }
 
-void NetworkDiagnosticPanel::setupBandwidthIperfConfig(QWidget* widget, QVBoxLayout* iperfLayout) {
+void NetworkDiagnosticPanel::setupBandwidthIperfConfig(QWidget* widget, QVBoxLayout* iperf_layout) {
     // Row 1: Server address + Port
-    auto* serverRow = new QHBoxLayout();
-    serverRow->addWidget(new QLabel(tr("Server:"), widget));
+    auto* server_row = new QHBoxLayout();
+    server_row->addWidget(new QLabel(tr("Server:"), widget));
     m_bwServerAddr = new QLineEdit(widget);
     m_bwServerAddr->setPlaceholderText(tr("iPerf3 server address"));
     m_bwServerAddr->setToolTip(tr("Address of the iPerf3 server to test against"));
     setAccessible(m_bwServerAddr, tr("iPerf3 server address"));
-    serverRow->addWidget(m_bwServerAddr, kFormTargetStretch);
+    server_row->addWidget(m_bwServerAddr, kFormTargetStretch);
 
-    serverRow->addWidget(new QLabel(tr("Port:"), widget));
+    server_row->addWidget(new QLabel(tr("Port:"), widget));
     m_bwPort = new QSpinBox(widget);
     m_bwPort->setRange(1, kNetworkMaxTcpPort);
     m_bwPort->setValue(kIperfDefaultPort);
     m_bwPort->setToolTip(tr("iPerf3 server port number"));
     setAccessible(m_bwPort, tr("iPerf3 port"), tr("TCP port for the iPerf3 server connection"));
-    serverRow->addWidget(m_bwPort);
-    iperfLayout->addLayout(serverRow);
+    server_row->addWidget(m_bwPort);
+    iperf_layout->addLayout(server_row);
 
     // Row 2: Duration + Streams + Bidirectional
-    auto* optionsRow = new QHBoxLayout();
-    optionsRow->addWidget(new QLabel(tr("Duration:"), widget));
+    auto* options_row = new QHBoxLayout();
+    options_row->addWidget(new QLabel(tr("Duration:"), widget));
     m_bwDuration = new QSpinBox(widget);
     m_bwDuration->setRange(1, kBandwidthMaxDurationSec);
     m_bwDuration->setValue(kBandwidthDefaultDurationSec);
     m_bwDuration->setSuffix(tr(" s"));
     m_bwDuration->setToolTip(tr("Duration of the bandwidth test in seconds"));
     setAccessible(m_bwDuration, tr("Test duration"), tr("How long to run the bandwidth test"));
-    optionsRow->addWidget(m_bwDuration);
+    options_row->addWidget(m_bwDuration);
 
-    optionsRow->addWidget(new QLabel(tr("Streams:"), widget));
+    options_row->addWidget(new QLabel(tr("Streams:"), widget));
     m_bwStreams = new QSpinBox(widget);
     m_bwStreams->setRange(1, kBandwidthMaxStreams);
     m_bwStreams->setValue(1);
@@ -1087,7 +1178,7 @@ void NetworkDiagnosticPanel::setupBandwidthIperfConfig(QWidget* widget, QVBoxLay
     setAccessible(m_bwStreams,
                   tr("Parallel streams"),
                   tr("Number of simultaneous TCP connections for the test"));
-    optionsRow->addWidget(m_bwStreams);
+    options_row->addWidget(m_bwStreams);
 
     m_bwBidirectional = new QCheckBox(tr("Bidirectional"), widget);
     m_bwBidirectional->setChecked(true);
@@ -1095,99 +1186,119 @@ void NetworkDiagnosticPanel::setupBandwidthIperfConfig(QWidget* widget, QVBoxLay
     setAccessible(m_bwBidirectional,
                   tr("Bidirectional test"),
                   tr("Run bandwidth test in both directions simultaneously"));
-    optionsRow->addWidget(m_bwBidirectional);
+    options_row->addWidget(m_bwBidirectional);
 
-    optionsRow->addStretch();
-    iperfLayout->addLayout(optionsRow);
+    options_row->addStretch();
+    iperf_layout->addLayout(options_row);
 }
 
 void NetworkDiagnosticPanel::setupBandwidthIperfControls(QWidget* widget,
-                                                         QVBoxLayout* iperfLayout) {
-    auto* iperfBtnRow = new QHBoxLayout();
+                                                         QVBoxLayout* iperf_layout) {
+    auto* iperf_btn_row = new QHBoxLayout();
     m_bwTestBtn = new QPushButton(tr("Run Test"), widget);
     m_bwTestBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_bwTestBtn->setToolTip(tr("Start bandwidth test against the iPerf3 server"));
-    setAccessible(m_bwTestBtn, tr("Run iPerf3 bandwidth test"));
-    iperfBtnRow->addWidget(m_bwTestBtn);
+    setAccessible(m_bwTestBtn, tr("Run Test"), tr("Run iPerf3 bandwidth test"));
+    iperf_btn_row->addWidget(m_bwTestBtn);
+
+    m_bwStopBtn = new QPushButton(tr("Stop"), widget);
+    m_bwStopBtn->setStyleSheet(ui::kDangerButtonStyle);
+    m_bwStopBtn->setEnabled(false);
+    m_bwStopBtn->setToolTip(tr("Cancel the current iPerf3 bandwidth test"));
+    setAccessible(m_bwStopBtn, tr("Stop iPerf3 bandwidth test"));
+    iperf_btn_row->addWidget(m_bwStopBtn);
 
     m_bwServerStartBtn = new QPushButton(tr("Start Server"), widget);
-    m_bwServerStartBtn->setStyleSheet(ui::kSuccessButtonStyle);
+    m_bwServerStartBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_bwServerStartBtn->setToolTip(
         tr("Start local iPerf3 server for other devices to test "
            "against"));
-    setAccessible(m_bwServerStartBtn, tr("Start iPerf3 server"));
-    iperfBtnRow->addWidget(m_bwServerStartBtn);
+    setAccessible(m_bwServerStartBtn, tr("Start Server"), tr("Start iPerf3 server"));
+    iperf_btn_row->addWidget(m_bwServerStartBtn);
 
     m_bwServerStopBtn = new QPushButton(tr("Stop Server"), widget);
     m_bwServerStopBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_bwServerStopBtn->setEnabled(false);
     m_bwServerStopBtn->setToolTip(tr("Stop the local iPerf3 server"));
-    setAccessible(m_bwServerStopBtn, tr("Stop iPerf3 server"));
-    iperfBtnRow->addWidget(m_bwServerStopBtn);
+    setAccessible(m_bwServerStopBtn, tr("Stop Server"), tr("Stop iPerf3 server"));
+    iperf_btn_row->addWidget(m_bwServerStopBtn);
 
-    iperfBtnRow->addStretch();
+    iperf_btn_row->addStretch();
     m_bwServerStatus = new QLabel(tr("Server: Stopped"), widget);
     m_bwServerStatus->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
-    iperfBtnRow->addWidget(m_bwServerStatus);
-    iperfLayout->addLayout(iperfBtnRow);
+    iperf_btn_row->addWidget(m_bwServerStatus);
+    iperf_layout->addLayout(iperf_btn_row);
 }
 
-void NetworkDiagnosticPanel::setupBandwidthIperfResults(QWidget* widget, QVBoxLayout* iperfLayout) {
+void NetworkDiagnosticPanel::setupBandwidthIperfResults(QWidget* widget,
+                                                        QVBoxLayout* iperf_layout) {
     m_bwResultLabel = new QLabel(widget);
     m_bwResultLabel->setWordWrap(true);
     m_bwResultLabel->setStyleSheet(sak::ui::fontSizeStyle(sak::ui::kFontSizeStatus));
-    iperfLayout->addWidget(m_bwResultLabel);
+    iperf_layout->addWidget(m_bwResultLabel);
 }
 
 void NetworkDiagnosticPanel::setupBandwidthHttpSection(QWidget* widget, QVBoxLayout* layout) {
-    auto* httpGroup = new QGroupBox(tr("Internet Speed (HTTP)"), widget);
-    auto* httpLayout = new QVBoxLayout(httpGroup);
-    auto* httpBtnRow = new QHBoxLayout();
+    auto* http_group = new QGroupBox(tr("Internet Speed (HTTP)"), widget);
+    auto* http_layout = new QVBoxLayout(http_group);
+    auto* http_btn_row = new QHBoxLayout();
     m_httpSpeedBtn = new QPushButton(tr("Run Speed Test"), widget);
     m_httpSpeedBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_httpSpeedBtn->setToolTip(tr("Download from public CDN servers to measure internet speed"));
-    setAccessible(m_httpSpeedBtn, tr("HTTP speed test"));
-    httpBtnRow->addWidget(m_httpSpeedBtn);
-    httpBtnRow->addStretch();
-    httpLayout->addLayout(httpBtnRow);
+    setAccessible(m_httpSpeedBtn, tr("Run Speed Test"), tr("HTTP speed test"));
+    http_btn_row->addWidget(m_httpSpeedBtn);
+
+    m_httpSpeedStopBtn = new QPushButton(tr("Stop"), widget);
+    m_httpSpeedStopBtn->setStyleSheet(ui::kDangerButtonStyle);
+    m_httpSpeedStopBtn->setEnabled(false);
+    m_httpSpeedStopBtn->setToolTip(tr("Cancel the current HTTP speed test"));
+    setAccessible(m_httpSpeedStopBtn, tr("Stop HTTP speed test"));
+    http_btn_row->addWidget(m_httpSpeedStopBtn);
+
+    http_btn_row->addStretch();
+    http_layout->addLayout(http_btn_row);
 
     connect(
         m_httpSpeedBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onRunHttpSpeedTest);
+    connect(m_httpSpeedStopBtn,
+            &QPushButton::clicked,
+            this,
+            &NetworkDiagnosticPanel::onStopHttpSpeedTest);
 
     m_httpSpeedLabel = new QLabel(widget);
     m_httpSpeedLabel->setWordWrap(true);
     m_httpSpeedLabel->setStyleSheet(sak::ui::fontSizeStyle(sak::ui::kFontSizeStatus));
-    httpLayout->addWidget(m_httpSpeedLabel);
-    layout->addWidget(httpGroup);
+    http_layout->addWidget(m_httpSpeedLabel);
+    layout->addWidget(http_group);
 }
 
 // -- WiFi Tab ------------------------------------------------------------
 
 void NetworkDiagnosticPanel::setupWifiControls(QWidget* widget, QVBoxLayout* layout) {
-    auto* btnRow = new QHBoxLayout();
-    m_wifiScanBtn = new QPushButton(tr("Scan WiFi"), widget);
+    auto* btn_row = new QHBoxLayout();
+    m_wifiScanBtn = new QPushButton(tr("Scan Wi-Fi"), widget);
     m_wifiScanBtn->setStyleSheet(ui::kPrimaryButtonStyle);
-    m_wifiScanBtn->setToolTip(tr("Scan for available WiFi networks"));
-    setAccessible(m_wifiScanBtn, tr("Scan WiFi networks"));
-    btnRow->addWidget(m_wifiScanBtn);
+    m_wifiScanBtn->setToolTip(tr("Scan for available Wi-Fi networks"));
+    setAccessible(m_wifiScanBtn, tr("Scan Wi-Fi networks"));
+    btn_row->addWidget(m_wifiScanBtn);
     m_wifiContBtn = new QPushButton(tr("Continuous Scan"), widget);
     m_wifiContBtn->setStyleSheet(ui::kSecondaryButtonStyle);
-    m_wifiContBtn->setToolTip(tr("Start continuous WiFi scanning for real-time monitoring"));
-    setAccessible(m_wifiContBtn, tr("Start continuous WiFi scan"));
-    btnRow->addWidget(m_wifiContBtn);
+    m_wifiContBtn->setToolTip(tr("Start continuous Wi-Fi scanning for real-time monitoring"));
+    setAccessible(m_wifiContBtn, tr("Continuous Scan"), tr("Start continuous Wi-Fi scan"));
+    btn_row->addWidget(m_wifiContBtn);
     m_wifiStopBtn = new QPushButton(tr("Stop"), widget);
     m_wifiStopBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_wifiStopBtn->setEnabled(false);
-    m_wifiStopBtn->setToolTip(tr("Stop continuous WiFi scanning"));
-    setAccessible(m_wifiStopBtn, tr("Stop WiFi scan"));
-    btnRow->addWidget(m_wifiStopBtn);
-    btnRow->addStretch();
-    layout->addLayout(btnRow);
+    m_wifiStopBtn->setToolTip(tr("Stop continuous Wi-Fi scanning"));
+    setAccessible(m_wifiStopBtn, tr("Stop Wi-Fi scan"));
+    btn_row->addWidget(m_wifiStopBtn);
+    btn_row->addStretch();
+    layout->addLayout(btn_row);
 }
 
 void NetworkDiagnosticPanel::setupWifiTable(QWidget* widget, QVBoxLayout* layout) {
     m_wifiTable = new QTableWidget(widget);
-    m_wifiTable->setColumnCount(kWifiColumnCount);
+    m_wifiTable->setColumnCount(KWifiColumnCount);
     m_wifiTable->setHorizontalHeaderLabels({tr("SSID"),
                                             tr("BSSID"),
                                             tr("Signal"),
@@ -1201,26 +1312,29 @@ void NetworkDiagnosticPanel::setupWifiTable(QWidget* widget, QVBoxLayout* layout
     m_wifiTable->verticalHeader()->setVisible(false);
     m_wifiTable->setSortingEnabled(true);
 
-    auto* wifiHeader = m_wifiTable->horizontalHeader();
-    wifiHeader->setSectionResizeMode(kWifiColumnSsid, QHeaderView::Stretch);
-    wifiHeader->setSectionResizeMode(kWifiColumnBssid, QHeaderView::Interactive);
-    wifiHeader->resizeSection(kWifiColumnBssid, kTableColumnWidthName);
-    wifiHeader->setSectionResizeMode(kWifiColumnSignal, QHeaderView::Interactive);
-    wifiHeader->resizeSection(kWifiColumnSignal, kTableColumnWidthMedium);
-    wifiHeader->setSectionResizeMode(kWifiColumnQuality, QHeaderView::Interactive);
-    wifiHeader->resizeSection(kWifiColumnQuality, kTableColumnWidthMedium);
-    wifiHeader->setSectionResizeMode(kWifiColumnChannel, QHeaderView::Interactive);
-    wifiHeader->resizeSection(kWifiColumnChannel, kTableColumnWidthCompact);
-    wifiHeader->setSectionResizeMode(kWifiColumnBand, QHeaderView::Interactive);
-    wifiHeader->resizeSection(kWifiColumnBand, kTableColumnWidthSmall);
-    wifiHeader->setSectionResizeMode(kWifiColumnSecurity, QHeaderView::Interactive);
-    wifiHeader->resizeSection(kWifiColumnSecurity, kTableColumnWidthRadio);
-    wifiHeader->setSectionResizeMode(kWifiColumnVendor, QHeaderView::Interactive);
-    wifiHeader->resizeSection(kWifiColumnVendor, kTableColumnWidthWide);
+    auto* wifi_header = m_wifiTable->horizontalHeader();
+    wifi_header->setSectionResizeMode(KWifiColumnSsid, QHeaderView::Stretch);
+    wifi_header->setSectionResizeMode(KWifiColumnBssid, QHeaderView::Interactive);
+    wifi_header->resizeSection(KWifiColumnBssid, kTableColumnWidthName);
+    wifi_header->setSectionResizeMode(KWifiColumnSignal, QHeaderView::Interactive);
+    wifi_header->resizeSection(KWifiColumnSignal, kTableColumnWidthMedium);
+    wifi_header->setSectionResizeMode(KWifiColumnQuality, QHeaderView::Interactive);
+    wifi_header->resizeSection(KWifiColumnQuality, kTableColumnWidthMedium);
+    wifi_header->setSectionResizeMode(KWifiColumnChannel, QHeaderView::Interactive);
+    wifi_header->resizeSection(KWifiColumnChannel, kTableColumnWidthCompact);
+    wifi_header->setSectionResizeMode(KWifiColumnBand, QHeaderView::Interactive);
+    wifi_header->resizeSection(KWifiColumnBand, kTableColumnWidthSmall);
+    wifi_header->setSectionResizeMode(KWifiColumnSecurity, QHeaderView::Interactive);
+    wifi_header->resizeSection(KWifiColumnSecurity, kTableColumnWidthRadio);
+    wifi_header->setSectionResizeMode(KWifiColumnVendor, QHeaderView::Interactive);
+    wifi_header->resizeSection(KWifiColumnVendor, kTableColumnWidthWide);
 
-    setAccessible(m_wifiTable, tr("WiFi networks"));
+    setAccessible(m_wifiTable, tr("Wi-Fi networks"));
     m_wifiTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_wifiTable, 1);
+
+    m_wifiEmptyState =
+        new sak::ui::ViewEmptyState(m_wifiTable, tr("No Wi-Fi networks found - click Scan Wi-Fi"));
 }
 
 void NetworkDiagnosticPanel::setupWifiStatusLabel(QWidget* widget, QVBoxLayout* layout) {
@@ -1235,7 +1349,7 @@ QWidget* NetworkDiagnosticPanel::createWiFiTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
     setupWifiControls(widget, layout);
     setupWifiTable(widget, layout);
@@ -1250,7 +1364,7 @@ QWidget* NetworkDiagnosticPanel::createConnectionsTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupConnectionsConfig(widget, layout);
@@ -1261,28 +1375,28 @@ QWidget* NetworkDiagnosticPanel::createConnectionsTab() {
 }
 
 void NetworkDiagnosticPanel::setupConnectionsConfig(QWidget* widget, QVBoxLayout* layout) {
-    auto* configRow = new QHBoxLayout();
+    auto* config_row = new QHBoxLayout();
     m_connShowTcp = new QCheckBox(tr("TCP"), widget);
     m_connShowTcp->setChecked(true);
     m_connShowTcp->setToolTip(tr("Show TCP connections"));
     setAccessible(m_connShowTcp, tr("Show TCP connections"));
-    configRow->addWidget(m_connShowTcp);
+    config_row->addWidget(m_connShowTcp);
 
     m_connShowUdp = new QCheckBox(tr("UDP"), widget);
     m_connShowUdp->setChecked(true);
     m_connShowUdp->setToolTip(tr("Show UDP connections"));
     setAccessible(m_connShowUdp, tr("Show UDP connections"));
-    configRow->addWidget(m_connShowUdp);
+    config_row->addWidget(m_connShowUdp);
 
-    configRow->addWidget(new QLabel(tr("Process:"), widget));
+    config_row->addWidget(new QLabel(tr("Process:"), widget));
     m_connProcessFilter = new QLineEdit(widget);
     m_connProcessFilter->setPlaceholderText(tr("filter by process name"));
     m_connProcessFilter->setClearButtonEnabled(true);
     m_connProcessFilter->setToolTip(tr("Filter connections by process name"));
     setAccessible(m_connProcessFilter, tr("Process filter"));
-    configRow->addWidget(m_connProcessFilter, 1);
+    config_row->addWidget(m_connProcessFilter, 1);
 
-    configRow->addWidget(new QLabel(tr("Refresh:"), widget));
+    config_row->addWidget(new QLabel(tr("Refresh:"), widget));
     m_connRefreshRate = new QSpinBox(widget);
     m_connRefreshRate->setRange(kConnectionRefreshMinMs, kPortScanMaxTimeoutMs);
     m_connRefreshRate->setValue(kConnectionRefreshDefaultMs);
@@ -1291,36 +1405,36 @@ void NetworkDiagnosticPanel::setupConnectionsConfig(QWidget* widget, QVBoxLayout
     setAccessible(m_connRefreshRate,
                   tr("Refresh rate"),
                   tr("Interval between connection list updates"));
-    configRow->addWidget(m_connRefreshRate);
-    layout->addLayout(configRow);
+    config_row->addWidget(m_connRefreshRate);
+    layout->addLayout(config_row);
 }
 
 void NetworkDiagnosticPanel::setupConnectionsControls(QWidget* widget, QVBoxLayout* layout) {
-    auto* btnRow = new QHBoxLayout();
+    auto* btn_row = new QHBoxLayout();
     m_connStartBtn = new QPushButton(tr("Start Monitor"), widget);
     m_connStartBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_connStartBtn->setToolTip(tr("Start monitoring active network connections"));
-    setAccessible(m_connStartBtn, tr("Start connection monitor"));
-    btnRow->addWidget(m_connStartBtn);
+    setAccessible(m_connStartBtn, tr("Start Monitor"), tr("Start connection monitor"));
+    btn_row->addWidget(m_connStartBtn);
 
     m_connStopBtn = new QPushButton(tr("Stop"), widget);
     m_connStopBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_connStopBtn->setEnabled(false);
     m_connStopBtn->setToolTip(tr("Stop monitoring connections"));
     setAccessible(m_connStopBtn, tr("Stop connection monitor"));
-    btnRow->addWidget(m_connStopBtn);
+    btn_row->addWidget(m_connStopBtn);
 
-    btnRow->addStretch();
+    btn_row->addStretch();
     m_connSummaryLabel = new QLabel(widget);
     m_connSummaryLabel->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
-    btnRow->addWidget(m_connSummaryLabel);
-    layout->addLayout(btnRow);
+    btn_row->addWidget(m_connSummaryLabel);
+    layout->addLayout(btn_row);
 }
 
 void NetworkDiagnosticPanel::setupConnectionsTable(QWidget* widget, QVBoxLayout* layout) {
     Q_ASSERT(widget);
     m_connTable = new QTableWidget(widget);
-    m_connTable->setColumnCount(kConnectionColumnCount);
+    m_connTable->setColumnCount(KConnectionColumnCount);
     m_connTable->setHorizontalHeaderLabels({tr("Protocol"),
                                             tr("Local Address"),
                                             tr("Local Port"),
@@ -1333,24 +1447,27 @@ void NetworkDiagnosticPanel::setupConnectionsTable(QWidget* widget, QVBoxLayout*
     m_connTable->verticalHeader()->setVisible(false);
     m_connTable->setSortingEnabled(true);
 
-    auto* connHeader = m_connTable->horizontalHeader();
-    connHeader->setSectionResizeMode(kConnectionColumnProtocol, QHeaderView::Interactive);
-    connHeader->resizeSection(kConnectionColumnProtocol, kTableColumnWidthCompact);
-    connHeader->setSectionResizeMode(kConnectionColumnLocalAddress, QHeaderView::Interactive);
-    connHeader->resizeSection(kConnectionColumnLocalAddress, kTableColumnWidthAddress);
-    connHeader->setSectionResizeMode(kConnectionColumnLocalPort, QHeaderView::Interactive);
-    connHeader->resizeSection(kConnectionColumnLocalPort, kTableColumnWidthMedium);
-    connHeader->setSectionResizeMode(kConnectionColumnRemoteAddress, QHeaderView::Interactive);
-    connHeader->resizeSection(kConnectionColumnRemoteAddress, kTableColumnWidthAddress);
-    connHeader->setSectionResizeMode(kConnectionColumnRemotePort, QHeaderView::Interactive);
-    connHeader->resizeSection(kConnectionColumnRemotePort, kTableColumnWidthRemotePort);
-    connHeader->setSectionResizeMode(kConnectionColumnState, QHeaderView::Interactive);
-    connHeader->resizeSection(kConnectionColumnState, kTableColumnWidthState);
-    connHeader->setSectionResizeMode(kConnectionColumnProcess, QHeaderView::Stretch);
+    auto* conn_header = m_connTable->horizontalHeader();
+    conn_header->setSectionResizeMode(KConnectionColumnProtocol, QHeaderView::Interactive);
+    conn_header->resizeSection(KConnectionColumnProtocol, kTableColumnWidthCompact);
+    conn_header->setSectionResizeMode(KConnectionColumnLocalAddress, QHeaderView::Interactive);
+    conn_header->resizeSection(KConnectionColumnLocalAddress, kTableColumnWidthAddress);
+    conn_header->setSectionResizeMode(KConnectionColumnLocalPort, QHeaderView::Interactive);
+    conn_header->resizeSection(KConnectionColumnLocalPort, kTableColumnWidthMedium);
+    conn_header->setSectionResizeMode(KConnectionColumnRemoteAddress, QHeaderView::Interactive);
+    conn_header->resizeSection(KConnectionColumnRemoteAddress, kTableColumnWidthAddress);
+    conn_header->setSectionResizeMode(KConnectionColumnRemotePort, QHeaderView::Interactive);
+    conn_header->resizeSection(KConnectionColumnRemotePort, kTableColumnWidthRemotePort);
+    conn_header->setSectionResizeMode(KConnectionColumnState, QHeaderView::Interactive);
+    conn_header->resizeSection(KConnectionColumnState, kTableColumnWidthState);
+    conn_header->setSectionResizeMode(KConnectionColumnProcess, QHeaderView::Stretch);
 
     setAccessible(m_connTable, tr("Active connections"));
     m_connTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_connTable, 1);
+
+    m_connEmptyState =
+        new sak::ui::ViewEmptyState(m_connTable, tr("No active connections - click Start Monitor"));
 }
 
 // -- Firewall Tab --------------------------------------------------------
@@ -1359,7 +1476,7 @@ QWidget* NetworkDiagnosticPanel::createFirewallTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     setupFirewallToolbar(widget, layout);
@@ -1375,7 +1492,7 @@ void NetworkDiagnosticPanel::setupFirewallToolbar(QWidget* widget, QVBoxLayout* 
     m_fwAuditBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_fwAuditBtn->setToolTip(
         tr("Enumerate all firewall rules, detect conflicts, and analyze gaps"));
-    setAccessible(m_fwAuditBtn, tr("Run firewall audit"));
+    setAccessible(m_fwAuditBtn, tr("Full Audit"), tr("Run firewall audit"));
     toolbar->addWidget(m_fwAuditBtn);
 
     connect(m_fwAuditBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onAuditFirewall);
@@ -1415,7 +1532,7 @@ void NetworkDiagnosticPanel::setupFirewallToolbar(QWidget* widget, QVBoxLayout* 
 void NetworkDiagnosticPanel::setupFirewallRuleTable(QWidget* widget, QVBoxLayout* layout) {
     Q_ASSERT(widget);
     m_fwRuleTable = new QTableWidget(widget);
-    m_fwRuleTable->setColumnCount(kFirewallColumnCount);
+    m_fwRuleTable->setColumnCount(KFirewallColumnCount);
     m_fwRuleTable->setHorizontalHeaderLabels({tr("Enabled"),
                                               tr("Name"),
                                               tr("Direction"),
@@ -1429,52 +1546,55 @@ void NetworkDiagnosticPanel::setupFirewallRuleTable(QWidget* widget, QVBoxLayout
     m_fwRuleTable->verticalHeader()->setVisible(false);
     m_fwRuleTable->setSortingEnabled(true);
 
-    auto* fwHeader = m_fwRuleTable->horizontalHeader();
-    fwHeader->setSectionResizeMode(kFirewallColumnEnabled, QHeaderView::Interactive);
-    fwHeader->resizeSection(kFirewallColumnEnabled, kTableColumnWidthSmall);
-    fwHeader->setSectionResizeMode(kFirewallColumnName, QHeaderView::Stretch);
-    fwHeader->setSectionResizeMode(kFirewallColumnDirection, QHeaderView::Interactive);
-    fwHeader->resizeSection(kFirewallColumnDirection, kTableColumnWidthStandard);
-    fwHeader->setSectionResizeMode(kFirewallColumnAction, QHeaderView::Interactive);
-    fwHeader->resizeSection(kFirewallColumnAction, kTableColumnWidthSmall);
-    fwHeader->setSectionResizeMode(kFirewallColumnProtocol, QHeaderView::Interactive);
-    fwHeader->resizeSection(kFirewallColumnProtocol, kTableColumnWidthPort);
-    fwHeader->setSectionResizeMode(kFirewallColumnLocalPorts, QHeaderView::Interactive);
-    fwHeader->resizeSection(kFirewallColumnLocalPorts, kTableColumnWidthWide);
-    fwHeader->setSectionResizeMode(kFirewallColumnRemotePorts, QHeaderView::Interactive);
-    fwHeader->resizeSection(kFirewallColumnRemotePorts, kTableColumnWidthWide);
-    fwHeader->setSectionResizeMode(kFirewallColumnApplication, QHeaderView::Interactive);
-    fwHeader->resizeSection(kFirewallColumnApplication, kTableColumnWidthXLarge);
+    auto* fw_header = m_fwRuleTable->horizontalHeader();
+    fw_header->setSectionResizeMode(KFirewallColumnEnabled, QHeaderView::Interactive);
+    fw_header->resizeSection(KFirewallColumnEnabled, kTableColumnWidthSmall);
+    fw_header->setSectionResizeMode(KFirewallColumnName, QHeaderView::Stretch);
+    fw_header->setSectionResizeMode(KFirewallColumnDirection, QHeaderView::Interactive);
+    fw_header->resizeSection(KFirewallColumnDirection, kTableColumnWidthStandard);
+    fw_header->setSectionResizeMode(KFirewallColumnAction, QHeaderView::Interactive);
+    fw_header->resizeSection(KFirewallColumnAction, kTableColumnWidthSmall);
+    fw_header->setSectionResizeMode(KFirewallColumnProtocol, QHeaderView::Interactive);
+    fw_header->resizeSection(KFirewallColumnProtocol, kTableColumnWidthPort);
+    fw_header->setSectionResizeMode(KFirewallColumnLocalPorts, QHeaderView::Interactive);
+    fw_header->resizeSection(KFirewallColumnLocalPorts, kTableColumnWidthWide);
+    fw_header->setSectionResizeMode(KFirewallColumnRemotePorts, QHeaderView::Interactive);
+    fw_header->resizeSection(KFirewallColumnRemotePorts, kTableColumnWidthWide);
+    fw_header->setSectionResizeMode(KFirewallColumnApplication, QHeaderView::Interactive);
+    fw_header->resizeSection(KFirewallColumnApplication, kTableColumnWidthXLarge);
 
     setAccessible(m_fwRuleTable, tr("Firewall rules"));
     m_fwRuleTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_fwRuleTable, kFirewallTableStretch);
+
+    m_fwRuleEmptyState = new sak::ui::ViewEmptyState(
+        m_fwRuleTable, tr("No firewall rules to show - run Full Audit or clear filters"));
 }
 
 void NetworkDiagnosticPanel::setupFirewallAnalysis(QWidget* widget, QVBoxLayout* layout) {
-    auto* analysisRow = new QHBoxLayout();
+    auto* analysis_row = new QHBoxLayout();
 
-    auto* conflictGroup = new QGroupBox(tr("Conflicts"), widget);
-    auto* conflictLayout = new QVBoxLayout(conflictGroup);
+    auto* conflict_group = new QGroupBox(tr("Conflicts"), widget);
+    auto* conflict_layout = new QVBoxLayout(conflict_group);
     m_fwConflictText = new QTextEdit(widget);
     m_fwConflictText->setReadOnly(true);
     m_fwConflictText->setMaximumHeight(kFirewallAnalysisMaxHeight);
     setAccessible(m_fwConflictText,
                   tr("Firewall conflicts"),
                   tr("Detected firewall rule conflicts"));
-    conflictLayout->addWidget(m_fwConflictText);
-    analysisRow->addWidget(conflictGroup);
+    conflict_layout->addWidget(m_fwConflictText);
+    analysis_row->addWidget(conflict_group);
 
-    auto* gapGroup = new QGroupBox(tr("Coverage Gaps"), widget);
-    auto* gapLayout = new QVBoxLayout(gapGroup);
+    auto* gap_group = new QGroupBox(tr("Coverage Gaps"), widget);
+    auto* gap_layout = new QVBoxLayout(gap_group);
     m_fwGapText = new QTextEdit(widget);
     m_fwGapText->setReadOnly(true);
     m_fwGapText->setMaximumHeight(kFirewallAnalysisMaxHeight);
     setAccessible(m_fwGapText, tr("Coverage gaps"), tr("Detected firewall coverage gaps"));
-    gapLayout->addWidget(m_fwGapText);
-    analysisRow->addWidget(gapGroup);
+    gap_layout->addWidget(m_fwGapText);
+    analysis_row->addWidget(gap_group);
 
-    layout->addLayout(analysisRow);
+    layout->addLayout(analysis_row);
 }
 
 // -- Shares Tab ----------------------------------------------------------
@@ -1483,48 +1603,51 @@ QWidget* NetworkDiagnosticPanel::createSharesTab() {
     auto* widget = new QWidget(this);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
-    auto* configRow = new QHBoxLayout();
-    configRow->addWidget(new QLabel(tr("Hostname:"), widget));
+    auto* config_row = new QHBoxLayout();
+    config_row->addWidget(new QLabel(tr("Hostname:"), widget));
     m_shareHostname = new QLineEdit(widget);
     m_shareHostname->setPlaceholderText(tr("target hostname or IP (blank = local)"));
     m_shareHostname->setToolTip(tr("Leave blank to discover shares on the local machine"));
     setAccessible(m_shareHostname, tr("Share discovery hostname"));
-    configRow->addWidget(m_shareHostname, kFormTargetStretch);
+    config_row->addWidget(m_shareHostname, kFormTargetStretch);
 
     m_shareDiscoverBtn = new QPushButton(tr("Discover Shares"), widget);
     m_shareDiscoverBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_shareDiscoverBtn->setToolTip(tr("Discover shared folders and resources on the target host"));
-    setAccessible(m_shareDiscoverBtn, tr("Discover network shares"));
-    configRow->addWidget(m_shareDiscoverBtn);
-    layout->addLayout(configRow);
+    setAccessible(m_shareDiscoverBtn, tr("Discover Shares"), tr("Discover network shares"));
+    config_row->addWidget(m_shareDiscoverBtn);
+    layout->addLayout(config_row);
 
     connect(
         m_shareDiscoverBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onDiscoverShares);
 
     m_shareTable = new QTableWidget(widget);
-    m_shareTable->setColumnCount(kShareColumnCount);
+    m_shareTable->setColumnCount(KShareColumnCount);
     m_shareTable->setHorizontalHeaderLabels(
         {tr("Share Name"), tr("Type"), tr("Read"), tr("Write"), tr("Remark")});
     m_shareTable->setAlternatingRowColors(true);
     m_shareTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_shareTable->verticalHeader()->setVisible(false);
 
-    auto* shareHeader = m_shareTable->horizontalHeader();
-    shareHeader->setSectionResizeMode(kShareColumnName, QHeaderView::Stretch);
-    shareHeader->setSectionResizeMode(kShareColumnType, QHeaderView::Interactive);
-    shareHeader->resizeSection(kShareColumnType, kTableColumnWidthStandard);
-    shareHeader->setSectionResizeMode(kShareColumnRead, QHeaderView::Interactive);
-    shareHeader->resizeSection(kShareColumnRead, kTableColumnWidthSmall);
-    shareHeader->setSectionResizeMode(kShareColumnWrite, QHeaderView::Interactive);
-    shareHeader->resizeSection(kShareColumnWrite, kTableColumnWidthSmall);
-    shareHeader->setSectionResizeMode(kShareColumnRemark, QHeaderView::Stretch);
+    auto* share_header = m_shareTable->horizontalHeader();
+    share_header->setSectionResizeMode(KShareColumnName, QHeaderView::Stretch);
+    share_header->setSectionResizeMode(KShareColumnType, QHeaderView::Interactive);
+    share_header->resizeSection(KShareColumnType, kTableColumnWidthStandard);
+    share_header->setSectionResizeMode(KShareColumnRead, QHeaderView::Interactive);
+    share_header->resizeSection(KShareColumnRead, kTableColumnWidthSmall);
+    share_header->setSectionResizeMode(KShareColumnWrite, QHeaderView::Interactive);
+    share_header->resizeSection(KShareColumnWrite, kTableColumnWidthSmall);
+    share_header->setSectionResizeMode(KShareColumnRemark, QHeaderView::Stretch);
 
     setAccessible(m_shareTable, tr("Network shares"));
     m_shareTable->setContextMenuPolicy(Qt::CustomContextMenu);
     layout->addWidget(m_shareTable, 1);
+
+    m_shareEmptyState = new sak::ui::ViewEmptyState(
+        m_shareTable, tr("No shares discovered - click Discover Shares"));
 
     return widget;
 }
@@ -1545,18 +1668,18 @@ QGroupBox* NetworkDiagnosticPanel::createLanServerGroup(QWidget* parent) {
     row->addWidget(m_lanPort);
 
     m_lanServerStartBtn = new QPushButton(tr("Start Server"), parent);
-    m_lanServerStartBtn->setStyleSheet(ui::kSuccessButtonStyle);
+    m_lanServerStartBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_lanServerStartBtn->setToolTip(
         tr("Start a TCP server that receives data from the "
            "remote device to measure transfer speed"));
-    setAccessible(m_lanServerStartBtn, tr("Start LAN transfer server"));
+    setAccessible(m_lanServerStartBtn, tr("Start Server"), tr("Start LAN transfer server"));
     row->addWidget(m_lanServerStartBtn);
 
     m_lanServerStopBtn = new QPushButton(tr("Stop Server"), parent);
     m_lanServerStopBtn->setStyleSheet(ui::kDangerButtonStyle);
     m_lanServerStopBtn->setEnabled(false);
     m_lanServerStopBtn->setToolTip(tr("Stop the LAN transfer server"));
-    setAccessible(m_lanServerStopBtn, tr("Stop LAN transfer server"));
+    setAccessible(m_lanServerStopBtn, tr("Stop Server"), tr("Stop LAN transfer server"));
     row->addWidget(m_lanServerStopBtn);
 
     row->addStretch();
@@ -1572,28 +1695,28 @@ QGroupBox* NetworkDiagnosticPanel::createLanClientGroup(QWidget* parent) {
     auto* group = new QGroupBox(tr("LAN Transfer Client (Sender)"), parent);
     auto* group_layout = new QVBoxLayout(group);
 
-    auto* targetRow = new QHBoxLayout();
-    targetRow->addWidget(new QLabel(tr("Target:"), parent));
+    auto* target_row = new QHBoxLayout();
+    target_row->addWidget(new QLabel(tr("Target:"), parent));
     m_lanTarget = new QLineEdit(parent);
     m_lanTarget->setPlaceholderText(tr("IP address of the receiving device"));
     m_lanTarget->setToolTip(
         tr("Enter the IP address of the device running "
            "the LAN Transfer server"));
     setAccessible(m_lanTarget, tr("LAN transfer target address"));
-    targetRow->addWidget(m_lanTarget, kFormTargetStretch);
-    group_layout->addLayout(targetRow);
+    target_row->addWidget(m_lanTarget, kFormTargetStretch);
+    group_layout->addLayout(target_row);
 
-    auto* optRow = new QHBoxLayout();
-    optRow->addWidget(new QLabel(tr("Duration:"), parent));
+    auto* opt_row = new QHBoxLayout();
+    opt_row->addWidget(new QLabel(tr("Duration:"), parent));
     m_lanDuration = new QSpinBox(parent);
     m_lanDuration->setRange(1, kBandwidthMaxDurationSec);
     m_lanDuration->setValue(kBandwidthDefaultDurationSec);
     m_lanDuration->setSuffix(tr(" s"));
     m_lanDuration->setToolTip(tr("How long to send data, in seconds"));
     setAccessible(m_lanDuration, tr("LAN transfer test duration"));
-    optRow->addWidget(m_lanDuration);
+    opt_row->addWidget(m_lanDuration);
 
-    optRow->addWidget(new QLabel(tr("Block Size:"), parent));
+    opt_row->addWidget(new QLabel(tr("Block Size:"), parent));
     m_lanBlockSize = new QSpinBox(parent);
     m_lanBlockSize->setRange(1, kLanMaxBlockSizeKb);
     m_lanBlockSize->setValue(kLanDefaultBlockSizeKb);
@@ -1602,20 +1725,20 @@ QGroupBox* NetworkDiagnosticPanel::createLanClientGroup(QWidget* parent) {
         tr("Size of each data block sent "
            "(larger may improve throughput)"));
     setAccessible(m_lanBlockSize, tr("LAN transfer block size"));
-    optRow->addWidget(m_lanBlockSize);
-    optRow->addStretch();
-    group_layout->addLayout(optRow);
+    opt_row->addWidget(m_lanBlockSize);
+    opt_row->addStretch();
+    group_layout->addLayout(opt_row);
 
-    auto* btnRow = new QHBoxLayout();
+    auto* btn_row = new QHBoxLayout();
     m_lanTestBtn = new QPushButton(tr("Run Transfer Test"), parent);
     m_lanTestBtn->setStyleSheet(ui::kPrimaryButtonStyle);
     m_lanTestBtn->setToolTip(
         tr("Send data to the target device and measure "
            "transfer speed"));
-    setAccessible(m_lanTestBtn, tr("Run LAN transfer speed test"));
-    btnRow->addWidget(m_lanTestBtn);
-    btnRow->addStretch();
-    group_layout->addLayout(btnRow);
+    setAccessible(m_lanTestBtn, tr("Run Transfer Test"), tr("Run LAN transfer speed test"));
+    btn_row->addWidget(m_lanTestBtn);
+    btn_row->addStretch();
+    group_layout->addLayout(btn_row);
 
     return group;
 }
@@ -1623,14 +1746,14 @@ QGroupBox* NetworkDiagnosticPanel::createLanClientGroup(QWidget* parent) {
 // -- LAN Transfer Tab ----------------------------------------------------
 
 QWidget* NetworkDiagnosticPanel::createLanTransferTab() {
-    auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
 
-    auto* widget = new QWidget(scrollArea);
+    auto* widget = new QWidget(scroll_area);
     auto* layout = new QVBoxLayout(widget);
     layout->setContentsMargins(
-        ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall, ui::kMarginSmall);
+        ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     layout->setSpacing(ui::kSpacingDefault);
 
     layout->addWidget(createLanServerGroup(widget));
@@ -1653,12 +1776,9 @@ QWidget* NetworkDiagnosticPanel::createLanTransferTab() {
     connect(
         m_lanTestBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onRunLanTransferTest);
 
-    scrollArea->setWidget(widget);
-    return scrollArea;
+    scroll_area->setWidget(widget);
+    return scroll_area;
 }
-
-// -- Report Section ------------------------------------------------------
-
 
 // ===================================================================
 // Signal Connections
@@ -1688,11 +1808,13 @@ void NetworkDiagnosticPanel::connectAdapterUiSignals() {
     connect(m_backupEthernetBtn,
             &QPushButton::clicked,
             this,
-            &NetworkDiagnosticPanel::onBackupEthernetSettings);
+            &NetworkDiagnosticPanel::onBackupEthernetSettings,
+            Qt::QueuedConnection);
     connect(m_restoreEthernetBtn,
             &QPushButton::clicked,
             this,
-            &NetworkDiagnosticPanel::onRestoreEthernetSettings);
+            &NetworkDiagnosticPanel::onRestoreEthernetSettings,
+            Qt::QueuedConnection);
     connect(m_adapterTable,
             &QTableWidget::itemSelectionChanged,
             this,
@@ -1740,6 +1862,7 @@ void NetworkDiagnosticPanel::connectProbeUiSignals() {
 void NetworkDiagnosticPanel::connectBandwidthWifiUiSignals() {
     connect(
         m_bwTestBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStartBandwidthTest);
+    connect(m_bwStopBtn, &QPushButton::clicked, this, &NetworkDiagnosticPanel::onStopBandwidthTest);
     connect(m_bwServerStartBtn,
             &QPushButton::clicked,
             this,
@@ -1794,10 +1917,6 @@ void NetworkDiagnosticPanel::connectConnectionsContextSignals() {
 
 void NetworkDiagnosticPanel::connectControllerCoreSignals() {
     Q_ASSERT(m_controller);
-    connect(m_controller.get(),
-            &NetworkDiagnosticController::stateChanged,
-            this,
-            &NetworkDiagnosticPanel::onStateChanged);
     connect(m_controller.get(),
             &NetworkDiagnosticController::operationFinished,
             this,
@@ -1886,11 +2005,11 @@ void NetworkDiagnosticPanel::connectControllerBandwidthSignals() {
     connect(m_controller.get(),
             &NetworkDiagnosticController::bandwidthProgress,
             this,
-            [this](double currentMbps, double elapsedSec, double totalSec) {
-                m_bwResultLabel->setText(QStringLiteral("Running: %1 Mbps (%2/%3 s)")
-                                             .arg(currentMbps, 0, 'f', 1)
-                                             .arg(elapsedSec, 0, 'f', 0)
-                                             .arg(totalSec, 0, 'f', 0));
+            [this](double, double elapsed_sec, double total_sec) {
+                // iPerf3 only reports its speed at the end, so a run in progress shows its time.
+                m_bwResultLabel->setText(QStringLiteral("Running: %1/%2 s")
+                                             .arg(elapsed_sec, 0, 'f', 0)
+                                             .arg(total_sec, 0, 'f', 0));
             });
     connect(m_controller.get(),
             &NetworkDiagnosticController::progressUpdated,
@@ -1991,11 +2110,13 @@ void NetworkDiagnosticPanel::connectReportAndEthernetSignals() {
             &NetworkDiagnosticController::reportGenerated,
             this,
             [this](QString path) {
-                Q_EMIT statusMessage(QStringLiteral("Report saved to %1").arg(path),
-                                     sak::kTimerStatusDefaultMs);
-                sak::showInformationLogged(this,
-                                           tr("Report Generated"),
-                                           QStringLiteral("Report saved to:\n%1").arg(path));
+                Q_EMIT statusMessage(
+                    QStringLiteral("Report saved to %1").arg(QDir::toNativeSeparators(path)),
+                    sak::kTimerStatusDefaultMs);
+                sak::showInformationLogged(
+                    this,
+                    tr("Report Generated"),
+                    QStringLiteral("Report saved to:\n%1").arg(QDir::toNativeSeparators(path)));
             });
     connect(m_controller.get(),
             &NetworkDiagnosticController::ethernetBackupComplete,
@@ -2003,10 +2124,10 @@ void NetworkDiagnosticPanel::connectReportAndEthernetSignals() {
             [this](QString path) {
                 sak::showInformationLogged(this,
                                            tr("Backup Complete"),
-                                           tr("Ethernet settings backed up to:\n%1\n\n"
+                                           tr("Adapter settings backed up to:\n%1\n\n"
                                               "This file can be used to restore settings on this "
                                               "or another PC.")
-                                               .arg(path));
+                                               .arg(QDir::toNativeSeparators(path)));
             });
     connect(m_controller.get(),
             &NetworkDiagnosticController::ethernetRestoreComplete,
@@ -2015,11 +2136,11 @@ void NetworkDiagnosticPanel::connectReportAndEthernetSignals() {
                 if (success) {
                     sak::showInformationLogged(this,
                                                tr("Restore Complete"),
-                                               tr("Ethernet settings restored successfully.\n\n"
+                                               tr("Adapter settings restored successfully.\n\n"
                                                   "The adapter may take a moment to apply the new "
                                                   "configuration."));
                 } else {
-                    sak::logWarning("Ethernet settings restore incomplete");
+                    sak::logWarning("Adapter settings restore incomplete");
                     sak::showWarningLogged(this,
                                            tr("Restore Incomplete"),
                                            tr("Some settings could not be restored.\n"
@@ -2049,11 +2170,13 @@ void NetworkDiagnosticPanel::connectFirewallFilterSignals() {
 
 void NetworkDiagnosticPanel::onRefreshAdapters() {
     Q_ASSERT(m_controller);
+    m_adapterEmptyState->setLoading(tr("Enumerating network adapters..."));
     m_controller->scanAdapters();
 }
 
 void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> adapters) {
     Q_ASSERT(m_adapterTable);
+    m_adapterEmptyState->clearLoading();
     m_adapters = adapters;
     m_adapterTable->setRowCount(0);
     m_adapterTable->setSortingEnabled(false);
@@ -2062,25 +2185,33 @@ void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> 
         const int row = m_adapterTable->rowCount();
         m_adapterTable->insertRow(row);
 
-        auto* nameItem = new QTableWidgetItem(a.name);
-        nameItem->setData(Qt::UserRole, row);  // Store original data index
-        m_adapterTable->setItem(row, 0, nameItem);
-        m_adapterTable->setItem(row, 1, new QTableWidgetItem(a.adapterType));
+        auto* name_item = new QTableWidgetItem(a.name);
+        name_item->setData(Qt::UserRole, row);  // Store original data index
+        m_adapterTable->setItem(row, 0, name_item);
+        m_adapterTable->setItem(row, 1, new QTableWidgetItem(adapterTypeLabel(a.adapterType)));
 
-        auto* statusItem = new QTableWidgetItem(a.isConnected ? tr("Connected")
-                                                              : tr("Disconnected"));
-        statusItem->setForeground(a.isConnected ? QColor(ui::kColorSuccess)
-                                                : QColor(ui::kColorError));
-        m_adapterTable->setItem(row, kAdapterColumnStatus, statusItem);
+        auto* status_item = new QTableWidgetItem(adapterStatusText(a));
+        const bool self_assigned_only = a.isConnected && hasOnlySelfAssignedIpv4(a);
+        status_item->setForeground(!a.isConnected       ? ui::themedColor(ui::kColorError)
+                                   : self_assigned_only ? ui::themedColor(ui::kColorWarning)
+                                                        : ui::themedColor(ui::kColorSuccess));
+        if (self_assigned_only) {
+            status_item->setToolTip(selfAssignedExplanation(a));
+        }
+        m_adapterTable->setItem(row, KAdapterColumnStatus, status_item);
 
         const auto ip = a.ipv4Addresses.isEmpty() ? QStringLiteral("--") : a.ipv4Addresses.first();
-        m_adapterTable->setItem(row, kAdapterColumnAddress, new QTableWidgetItem(ip));
-        m_adapterTable->setItem(row, kAdapterColumnMac, new QTableWidgetItem(a.macAddress));
+        auto* address_item = new QTableWidgetItem(ip);
+        if (self_assigned_only) {
+            address_item->setToolTip(selfAssignedExplanation(a));
+        }
+        m_adapterTable->setItem(row, KAdapterColumnAddress, address_item);
+        m_adapterTable->setItem(row, KAdapterColumnMac, new QTableWidgetItem(a.macAddress));
 
         const auto speed = a.linkSpeedBps > 0 ? QStringLiteral("%1 Mbps").arg(
                                                     a.linkSpeedBps / kNetworkSpeedBpsPerMbps)
                                               : QStringLiteral("--");
-        m_adapterTable->setItem(row, kAdapterColumnSpeed, new QTableWidgetItem(speed));
+        m_adapterTable->setItem(row, KAdapterColumnSpeed, new QTableWidgetItem(speed));
     }
 
     m_adapterTable->setSortingEnabled(true);
@@ -2088,9 +2219,20 @@ void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> 
                          sak::kTimerStatusMessageMs);
 }
 
+QString NetworkDiagnosticPanel::adapterStatusText(const NetworkAdapterInfo& adapter) const {
+    if (!adapter.isConnected) {
+        return tr("Disconnected");
+    }
+    return hasOnlySelfAssignedIpv4(adapter) ? tr("No valid address") : tr("Connected");
+}
+
 QString NetworkDiagnosticPanel::formatAdapterIdentity(const NetworkAdapterInfo& adapter) const {
+    // The adapter alias is renameable by any local user and the description is a driver INF
+    // string; this feeds m_detailIdentity, which is explicitly Qt::RichText, so escape both.
     return QStringLiteral("<b>%1</b><br>%2<br>MAC: %3")
-        .arg(adapter.name, adapter.description, adapter.macAddress);
+        .arg(adapter.name.toHtmlEscaped(),
+             adapter.description.toHtmlEscaped(),
+             adapter.macAddress.toHtmlEscaped());
 }
 
 QString NetworkDiagnosticPanel::formatAdapterAddressing(const NetworkAdapterInfo& adapter) const {
@@ -2174,21 +2316,21 @@ void NetworkDiagnosticPanel::onCopyAdapterConfig() {
         return;
     }
 
-    const auto* nameItem = m_adapterTable->item(row, 0);
-    if (nameItem == nullptr) {
+    const auto* name_item = m_adapterTable->item(row, 0);
+    if (name_item == nullptr) {
         return;
     }
-    const int dataIdx = nameItem->data(Qt::UserRole).toInt();
-    if (dataIdx < 0 || dataIdx >= m_adapters.size()) {
+    const int data_idx = name_item->data(Qt::UserRole).toInt();
+    if (data_idx < 0 || data_idx >= m_adapters.size()) {
         return;
     }
 
-    const auto& a = m_adapters[dataIdx];
+    const auto& a = m_adapters[data_idx];
     QString config;
     config += QStringLiteral("Name: %1\n").arg(a.name);
-    config += QStringLiteral("Type: %1\n").arg(a.adapterType);
+    config += QStringLiteral("Type: %1\n").arg(adapterTypeLabel(a.adapterType));
     config += QStringLiteral("MAC: %1\n").arg(a.macAddress);
-    config += QStringLiteral("Status: %1\n").arg(a.isConnected ? "Connected" : "Disconnected");
+    config += QStringLiteral("Status: %1\n").arg(adapterStatusText(a));
     config += QStringLiteral("DHCP: %1\n").arg(a.dhcpEnabled ? "Enabled" : "Disabled");
     config += QStringLiteral("IPv4: %1\n").arg(a.ipv4Addresses.join(", "));
     config += QStringLiteral("IPv6: %1\n").arg(a.ipv6Addresses.join(", "));
@@ -2222,82 +2364,111 @@ void NetworkDiagnosticPanel::onBackupEthernetSettings() {
         return;
     }
 
-    const auto* nameItem = m_adapterTable->item(row, 0);
-    if (nameItem == nullptr) {
+    const auto* name_item = m_adapterTable->item(row, 0);
+    if (name_item == nullptr) {
         return;
     }
-    const int dataIdx = nameItem->data(Qt::UserRole).toInt();
-    if (dataIdx < 0 || dataIdx >= m_adapters.size()) {
-        return;
-    }
-
-    const auto& adapter = m_adapters[dataIdx];
-
-    QString filePath =
-        QFileDialog::getSaveFileName(this,
-                                     tr("Save Ethernet Settings Backup"),
-                                     QStringLiteral("%1_ethernet_backup.json").arg(adapter.name),
-                                     tr("JSON Files (*.json);;All Files (*.*)"));
-
-    if (filePath.isEmpty()) {
+    const int data_idx = name_item->data(Qt::UserRole).toInt();
+    if (data_idx < 0 || data_idx >= m_adapters.size()) {
         return;
     }
 
-    m_controller->backupEthernetSettings(adapter.name, filePath);
+    const auto& adapter = m_adapters[data_idx];
+
+    // In Documents, as the app's other save pickers start: a bare file name opened the picker in
+    // the app's own folder, among Qt's plugin folders (review 2, F36).
+    const QString file_path = QFileDialog::getSaveFileName(
+        this,
+        tr("Save Adapter Settings Backup"),
+        QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation))
+            .filePath(QStringLiteral("%1_settings_backup.json").arg(adapter.name)),
+        tr("JSON Files (*.json);;All Files (*.*)"));
+
+    if (file_path.isEmpty()) {
+        return;
+    }
+
+    m_controller->backupEthernetSettings(adapter.name, file_path, adapter.adapterType);
+}
+
+QString NetworkDiagnosticPanel::chooseRestoreTarget(const QStringList& adapters,
+                                                    const QString& preferred) {
+    // If there's only one adapter, use it directly
+    if (adapters.size() == 1) {
+        return adapters.first();
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Select Target Adapter"));
+    dialog.setMinimumWidth(kAdapterSelectDialogMinWidth);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->addWidget(
+        new QLabel(tr("Select the adapter to apply the backup settings to:"), &dialog));
+
+    auto* adapter_combo = new QComboBox(&dialog);
+    for (const auto& name : adapters) {
+        adapter_combo->addItem(name);
+    }
+    // The list is alphabetical, so leaving the first one chosen would quietly aim this at another
+    // adapter: the VM smoke's Ethernet backup started on "Bluetooth Network Connection".
+    if (!preferred.isEmpty()) {
+        adapter_combo->setCurrentText(preferred);
+    }
+    layout->addWidget(adapter_combo);
+
+    auto* button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                            &dialog);
+    layout->addWidget(button_box);
+
+    connect(button_box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    return dialog.exec() == QDialog::Accepted ? adapter_combo->currentText() : QString();
 }
 
 void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
-    Q_ASSERT(m_controller);
-    QString filePath = QFileDialog::getOpenFileName(this,
-                                                    tr("Open Ethernet Settings Backup"),
-                                                    QString(),
-                                                    tr("JSON Files (*.json);;All Files (*.*)"));
+    restoreEthernetSettings(QString());
+}
 
-    if (filePath.isEmpty()) {
+void NetworkDiagnosticPanel::restoreEthernetSettings(const QString& clicked_adapter) {
+    Q_ASSERT(m_controller);
+    QString file_path = QFileDialog::getOpenFileName(this,
+                                                     tr("Open Adapter Settings Backup"),
+                                                     QString(),
+                                                     tr("JSON Files (*.json);;All Files (*.*)"));
+
+    if (file_path.isEmpty()) {
         return;
     }
 
     // Let user choose target adapter
     QStringList adapters = m_controller->listEthernetAdapters();
     if (adapters.isEmpty()) {
-        sak::logWarning("No Ethernet adapters found for settings restore");
+        sak::logWarning("No network adapters found for settings restore");
         sak::showWarningLogged(this,
                                tr("No Adapters"),
-                               tr("No Ethernet adapters found on this system."));
+                               tr("No network adapters found on this system."));
         return;
     }
 
-    // If there's only one adapter, use it directly
-    QString targetAdapter;
-    if (adapters.size() == 1) {
-        targetAdapter = adapters.first();
-    } else {
-        // Show selection dialog
-        QDialog dialog(this);
-        dialog.setWindowTitle(tr("Select Target Adapter"));
-        dialog.setMinimumWidth(kAdapterSelectDialogMinWidth);
-
-        auto* layout = new QVBoxLayout(&dialog);
-        layout->addWidget(new QLabel(
-            tr("Select the Ethernet adapter to apply the backup settings to:"), &dialog));
-
-        auto* adapterCombo = new QComboBox(&dialog);
-        for (const auto& name : adapters) {
-            adapterCombo->addItem(name);
+    // Right-clicking an adapter means that adapter. Otherwise start on the adapter the backup was
+    // made from, then one of its type, and only then the first in the list.
+    QString preferred = clicked_adapter;
+    if (preferred.isEmpty()) {
+        const auto [backup_name, backup_type] = m_controller->ethernetBackupIdentity(file_path);
+        QList<sak::RestoreCandidate> candidates;
+        for (const QString& name : adapters) {
+            const auto known = std::ranges::find_if(
+                m_adapters, [&name](const NetworkAdapterInfo& info) { return info.name == name; });
+            candidates.append({name, known == m_adapters.cend() ? QString() : known->adapterType});
         }
-        layout->addWidget(adapterCombo);
-
-        auto* buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
-                                               &dialog);
-        layout->addWidget(buttonBox);
-
-        connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-        connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-        if (dialog.exec() != QDialog::Accepted) {
-            return;
-        }
-        targetAdapter = adapterCombo->currentText();
+        preferred = adapters.value(sak::EthernetConfigManager::preferredRestoreTarget(
+            candidates, backup_name, backup_type));
+    }
+    const QString target_adapter = chooseRestoreTarget(adapters, preferred);
+    if (target_adapter.isEmpty()) {
+        return;
     }
 
     auto result =
@@ -2308,12 +2479,12 @@ void NetworkDiagnosticPanel::onRestoreEthernetSettings() {
                                   "connectivity temporarily.\n\n"
                                   "Administrator privileges are required.\n\n"
                                   "Continue?")
-                                   .arg(targetAdapter),
+                                   .arg(target_adapter.toHtmlEscaped()),
                                QMessageBox::Yes | QMessageBox::No,
                                QMessageBox::No);
 
     if (result == QMessageBox::Yes) {
-        m_controller->restoreEthernetSettings(filePath, targetAdapter);
+        m_controller->restoreEthernetSettings(file_path, target_adapter);
     }
 }
 
@@ -2326,7 +2497,7 @@ const NetworkAdapterInfo* NetworkDiagnosticPanel::selectedAdapter() const {
         return nullptr;
     }
     const auto* name_item = m_adapterTable->item(row, 0);
-    if (!name_item) {
+    if (name_item == nullptr) {
         return nullptr;
     }
     const int data_idx = name_item->data(Qt::UserRole).toInt();
@@ -2336,93 +2507,42 @@ const NetworkAdapterInfo* NetworkDiagnosticPanel::selectedAdapter() const {
     return &m_adapters[data_idx];
 }
 
-QVector<const NetworkAdapterInfo*> NetworkDiagnosticPanel::selectedAdapters() const {
-    Q_ASSERT(m_adapterTable);
-    QVector<const NetworkAdapterInfo*> result;
-    const auto selected_rows = m_adapterTable->selectionModel()->selectedRows();
-    for (const auto& index : selected_rows) {
-        const auto* name_item = m_adapterTable->item(index.row(), 0);
-        if (!name_item) {
-            continue;
-        }
-        const int data_idx = name_item->data(Qt::UserRole).toInt();
-        if (data_idx >= 0 && data_idx < m_adapters.size()) {
-            result.append(&m_adapters[data_idx]);
-        }
-    }
-    return result;
+void NetworkDiagnosticPanel::launchAdapterWork(
+    std::function<sak::AdapterAdminOutcome()> work,
+    std::function<void(const sak::AdapterAdminOutcome&)> report) {
+    using TrackedFuture = QFuture<sak::AdapterAdminOutcome>;
+
+    // The watcher is parented to this panel, so the report slot never fires on a destroyed panel.
+    auto* watcher = new QFutureWatcher<sak::AdapterAdminOutcome>(this);
+    connect(watcher,
+            &QFutureWatcher<sak::AdapterAdminOutcome>::finished,
+            this,
+            [watcher, report = std::move(report)]() {
+                const sak::AdapterAdminOutcome outcome = watcher->result();
+                watcher->deleteLater();
+                report(outcome);
+            });
+    const TrackedFuture future = QtConcurrent::run(std::move(work));
+    watcher->setFuture(future);
+    // Track the future so the destructor can bounded-wait a still-running (possibly MUTATING) op
+    // rather than let it run detached past teardown. Prune finished ones first so this stays
+    // bounded.
+    m_pending_command_futures.removeIf([](const TrackedFuture& f) { return f.isFinished(); });
+    m_pending_command_futures.append(future);
 }
 
-bool NetworkDiagnosticPanel::runNetshCommand(const QStringList& args, QString* output) {
-    constexpr int kFinishTimeoutMs = 15'000;
-    const auto process = runProcess(QStringLiteral("netsh"), args, kFinishTimeoutMs);
-
-    if (process.timed_out) {
-        if (output) {
-            *output = tr("netsh command timed out");
-        }
-        return false;
-    }
-
-    if (output) {
-        *output = process.std_out.isEmpty() ? process.std_err : process.std_out;
-    }
-    return process.exit_code == 0;
-}
-
-void NetworkDiagnosticPanel::runCommandAsync(
-    const QString& program,
-    const QStringList& args,
-    int timeout_ms,
-    std::function<void(bool success, QString output)> callback) {
-    auto* watcher = new QFutureWatcher<QPair<bool, QString>>(this);
-    connect(watcher, &QFutureWatcher<QPair<bool, QString>>::finished, this, [watcher, callback]() {
-        const auto [success, output] = watcher->result();
-        watcher->deleteLater();
-        callback(success, output);
-    });
-    watcher->setFuture(QtConcurrent::run([program, args, timeout_ms]() -> QPair<bool, QString> {
-        const auto process = runProcess(program, args, timeout_ms);
-        const QString output = process.std_out.isEmpty() ? process.std_err : process.std_out;
-        if (process.timed_out) {
-            return {false, QStringLiteral("%1 command timed out").arg(program)};
-        }
-        return {process.exit_code == 0, output};
-    }));
-}
-
-void NetworkDiagnosticPanel::runNetshCommandAsync(
-    const QStringList& args, std::function<void(bool success, QString output)> callback) {
-    runCommandAsync(QStringLiteral("netsh"), args, sak::kTimeoutNetworkReadMs, std::move(callback));
-}
-
-namespace {
-bool areBridgeable(const QVector<const NetworkAdapterInfo*>& adapters) {
-    if (adapters.size() <= 1) {
-        return false;
-    }
-    for (const auto* sel : adapters) {
-        const auto& sel_type = sel->adapterType;
-        if (sel_type == QStringLiteral("Loopback") || sel_type == QStringLiteral("VPN")) {
-            return false;
-        }
-    }
-    return true;
-}
-}  // namespace
-
-void NetworkDiagnosticPanel::addTypeSpecificMenuItems(
-    QMenu& menu,
-    const NetworkAdapterInfo& adapter,
-    const QVector<const NetworkAdapterInfo*>& selected) {
+void NetworkDiagnosticPanel::addTypeSpecificMenuItems(QMenu& menu,
+                                                      const NetworkAdapterInfo& adapter) {
     const auto& type = adapter.adapterType;
     const bool is_loopback = (type == QStringLiteral("Loopback"));
     const bool is_vpn = (type == QStringLiteral("VPN"));
     const bool is_bluetooth = (type == QStringLiteral("Bluetooth"));
     const bool is_ethernet = (type == QStringLiteral("Ethernet"));
     const bool is_wifi = (type == QStringLiteral("WiFi"));
-    const bool is_ip_configurable = static_cast<bool>(is_ethernet | is_wifi);
-    const bool can_rename = static_cast<bool>(!is_loopback & !is_vpn);
+    const bool is_ip_configurable =
+        static_cast<bool>(static_cast<int>(is_ethernet) | static_cast<int>(is_wifi));
+    const bool can_rename =
+        static_cast<bool>(static_cast<int>(!is_loopback) & static_cast<int>(!is_vpn));
 
     if (!is_loopback) {
         if (adapter.isConnected) {
@@ -2453,20 +2573,13 @@ void NetworkDiagnosticPanel::addTypeSpecificMenuItems(
     menu.addAction(tr("Copy Configuration"), this, &NetworkDiagnosticPanel::onCopyAdapterConfig);
     menu.addSeparator();
 
-    if (is_ethernet) {
+    if (is_ip_configurable) {
         menu.addAction(tr("Backup Settings..."),
                        this,
                        &NetworkDiagnosticPanel::onBackupEthernetSettings);
-        menu.addAction(tr("Restore Settings..."),
-                       this,
-                       &NetworkDiagnosticPanel::onRestoreEthernetSettings);
-        menu.addSeparator();
-    }
-
-    if (areBridgeable(selected)) {
-        menu.addAction(tr("Bridge Connections"),
-                       this,
-                       &NetworkDiagnosticPanel::onBridgeConnections);
+        menu.addAction(tr("Restore Settings..."), this, [this, name = adapter.name]() {
+            restoreEthernetSettings(name);
+        });
         menu.addSeparator();
     }
 
@@ -2479,18 +2592,17 @@ void NetworkDiagnosticPanel::addTypeSpecificMenuItems(
 
 void NetworkDiagnosticPanel::showAdapterContextMenu(const QPoint& pos) {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
-    const auto selected = selectedAdapters();
     QMenu menu(this);
 
     menu.addAction(tr("Status..."), this, &NetworkDiagnosticPanel::onAdapterStatus);
     menu.addAction(tr("Properties"), this, &NetworkDiagnosticPanel::onAdapterProperties);
     menu.addSeparator();
 
-    addTypeSpecificMenuItems(menu, *adapter, selected);
+    addTypeSpecificMenuItems(menu, *adapter);
 
     menu.exec(m_adapterTable->viewport()->mapToGlobal(pos));
 }
@@ -2542,7 +2654,7 @@ void NetworkDiagnosticPanel::populateStatusTree(QTreeWidget* tree,
                       tr("General"),
                       {{tr("Name"), adapter.name},
                        {tr("Description"), adapter.description},
-                       {tr("Type"), adapter.adapterType},
+                       {tr("Type"), adapterTypeLabel(adapter.adapterType)},
                        {tr("MAC Address"), adapter.macAddress},
                        {tr("Interface Index"), QString::number(adapter.interfaceIndex)}});
 
@@ -2552,7 +2664,7 @@ void NetworkDiagnosticPanel::populateStatusTree(QTreeWidget* tree,
             : tr("N/A");
     addStatusCategory(tree,
                       tr("Connection"),
-                      {{tr("Status"), adapter.isConnected ? tr("Connected") : tr("Disconnected")},
+                      {{tr("Status"), adapterStatusText(adapter)},
                        {tr("Media State"), adapter.mediaState},
                        {tr("Link Speed"), speed_text}});
 
@@ -2626,16 +2738,21 @@ void NetworkDiagnosticPanel::populateStatusStatistics(QTreeWidget* tree,
 }
 
 void NetworkDiagnosticPanel::onAdapterStatus() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (selected == nullptr) {
         return;
     }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+    const NetworkAdapterInfo* adapter = &adapter_snapshot;
 
     constexpr int kStatusDialogWidth = 520;
     constexpr int kStatusDialogHeight = 600;
 
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Adapter Status \xe2\x80\x94 %1").arg(adapter->name));
+    dialog.setWindowTitle(tr("Adapter Status - %1").arg(adapter->name));
     dialog.setMinimumSize(kStatusDialogWidth, kStatusDialogHeight);
     auto* layout = new QVBoxLayout(&dialog);
 
@@ -2661,7 +2778,7 @@ void NetworkDiagnosticPanel::onAdapterStatus() {
 
 void NetworkDiagnosticPanel::onAdapterProperties() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
@@ -2680,7 +2797,13 @@ void NetworkDiagnosticPanel::onAdapterProperties() {
         settings_uri = QStringLiteral("ms-settings:network");
     }
 
-    QProcess::startDetached(QStringLiteral("explorer.exe"), {settings_uri});
+    // explorer.exe by absolute Windows-directory path (it is NOT a System32 binary): a
+    // shell-open is resolved through the same search order as any other launch, so a bare
+    // name would let a planted explorer.exe run. Unresolvable -> nothing is launched.
+    if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"), {settings_uri})) {
+        Q_EMIT logOutput(tr("[ERROR] Could not launch Windows Settings"));
+        return;
+    }
     Q_EMIT logOutput(tr("Opened %1 properties for '%2'").arg(type, adapter->name));
     Q_EMIT statusMessage(tr("Opened %1 settings for '%2'").arg(type, adapter->name),
                          sak::kTimerStatusMessageMs);
@@ -2691,52 +2814,52 @@ void NetworkDiagnosticPanel::onAdapterProperties() {
 
 void NetworkDiagnosticPanel::onAdapterEnable() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
     Q_EMIT logOutput(tr("Enabling adapter '%1'...").arg(adapter->name));
 
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("set"),
-                        QStringLiteral("interface"),
-                        adapter->name,
-                        QStringLiteral("admin=ENABLED")};
+    // The SAME code the headless network.enable_adapter action runs -- not a second copy of it.
     const QString adapter_name = adapter->name;
-    runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
-        if (success) {
-            Q_EMIT statusMessage(tr("Adapter '%1' enabled").arg(adapter_name),
-                                 sak::kTimerStatusMessageMs);
-            Q_EMIT logOutput(tr("Adapter '%1' enabled successfully").arg(adapter_name));
-            sak::logInfo("Enabled adapter: {}", adapter_name.toStdString());
-        } else {
-            sak::logError("Failed to enable adapter {}: {}",
-                          adapter_name.toStdString(),
-                          output.toStdString());
-            Q_EMIT logOutput(tr("[ERROR] Failed to enable '%1': %2").arg(adapter_name, output));
-            sak::showWarningLogged(this,
-                                   tr("Enable Failed"),
-                                   tr("Failed to enable adapter.\n\n"
-                                      "Administrator privileges may be required.\n\n%1")
-                                       .arg(output));
-        }
+    launchAdapterWork(
+        [adapter_name]() { return sak::setAdapterEnabled(adapter_name, /*enabled=*/true); },
+        [this, adapter_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(tr("Adapter '%1' enabled").arg(adapter_name),
+                                     sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(tr("Adapter '%1' enabled successfully").arg(adapter_name));
+                sak::logInfo("Enabled adapter: {}", adapter_name.toStdString());
+            } else {
+                sak::logError("Failed to enable adapter {}: {}",
+                              adapter_name.toStdString(),
+                              outcome.message.toStdString());
+                Q_EMIT logOutput(
+                    tr("[ERROR] Failed to enable '%1': %2").arg(adapter_name, outcome.message));
+                sak::showWarningLogged(this, tr("Enable Failed"), outcome.message);
+            }
 
-        constexpr int kRefreshDelayMs = 2000;
-        QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
-    });
+            constexpr int kRefreshDelayMs = 2000;
+            QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+        });
 }
 
 void NetworkDiagnosticPanel::onAdapterDisable() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (selected == nullptr) {
         return;
     }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+    const NetworkAdapterInfo* adapter = &adapter_snapshot;
 
     auto confirm = sak::showQuestionLogged(this,
                                            tr("Disable Adapter"),
                                            tr("Disable adapter <b>%1</b>?\n\n"
                                               "You may lose network connectivity.")
-                                               .arg(adapter->name),
+                                               .arg(adapter->name.toHtmlEscaped()),
                                            QMessageBox::Yes | QMessageBox::No,
                                            QMessageBox::No);
     if (confirm != QMessageBox::Yes) {
@@ -2745,67 +2868,84 @@ void NetworkDiagnosticPanel::onAdapterDisable() {
 
     Q_EMIT logOutput(tr("Disabling adapter '%1'...").arg(adapter->name));
 
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("set"),
-                        QStringLiteral("interface"),
-                        adapter->name,
-                        QStringLiteral("admin=DISABLED")};
+    // Shared with the headless network.disable_adapter action -- see onAdapterEnable.
     const QString adapter_name = adapter->name;
-    runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
-        if (success) {
-            Q_EMIT statusMessage(tr("Adapter '%1' disabled").arg(adapter_name),
-                                 sak::kTimerStatusMessageMs);
-            Q_EMIT logOutput(tr("Adapter '%1' disabled successfully").arg(adapter_name));
-            sak::logInfo("Disabled adapter: {}", adapter_name.toStdString());
-        } else {
-            sak::logError("Failed to disable adapter {}: {}",
-                          adapter_name.toStdString(),
-                          output.toStdString());
-            Q_EMIT logOutput(tr("[ERROR] Failed to disable '%1': %2").arg(adapter_name, output));
-            sak::showWarningLogged(this,
-                                   tr("Disable Failed"),
-                                   tr("Failed to disable adapter.\n\n"
-                                      "Administrator privileges may be required.\n\n%1")
-                                       .arg(output));
-        }
+    launchAdapterWork(
+        [adapter_name]() { return sak::setAdapterEnabled(adapter_name, /*enabled=*/false); },
+        [this, adapter_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(tr("Adapter '%1' disabled").arg(adapter_name),
+                                     sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(tr("Adapter '%1' disabled successfully").arg(adapter_name));
+                sak::logInfo("Disabled adapter: {}", adapter_name.toStdString());
+            } else {
+                sak::logError("Failed to disable adapter {}: {}",
+                              adapter_name.toStdString(),
+                              outcome.message.toStdString());
+                Q_EMIT logOutput(
+                    tr("[ERROR] Failed to disable '%1': %2").arg(adapter_name, outcome.message));
+                sak::showWarningLogged(this, tr("Disable Failed"), outcome.message);
+            }
 
-        constexpr int kRefreshDelayMs = 2000;
-        QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
-    });
+            constexpr int kRefreshDelayMs = 2000;
+            QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+        });
+}
+
+AdapterDiagnosePlan adapterDiagnosePlan(const QString& adapter_type, bool msdt_present) {
+    AdapterDiagnosePlan plan;
+    if (!msdt_present) {
+        plan.use_settings = true;
+        plan.settings_page = QStringLiteral("ms-settings:troubleshoot");
+        return plan;
+    }
+    if (adapter_type == QStringLiteral("Bluetooth")) {
+        plan.diagnostic_id = QStringLiteral("DeviceDiagnostic");
+    } else if (adapter_type == QStringLiteral("VPN")) {
+        plan.diagnostic_id = QStringLiteral("NetworkDiagnosticsWeb");
+    } else {
+        plan.diagnostic_id = QStringLiteral("NetworkDiagnosticsNetworkAdapter");
+    }
+    return plan;
 }
 
 void NetworkDiagnosticPanel::onAdapterDiagnose() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
-    // Use the appropriate troubleshooter for the adapter type
+    // System32-qualified msdt.exe, never left to CreateProcess to search PATH/CWD for. Windows is
+    // retiring it, so where it is gone the same help lives under Settings, and the person is told.
     const auto& type = adapter->adapterType;
-    QString diagnostic_id;
-    if (type == QStringLiteral("Bluetooth")) {
-        diagnostic_id = QStringLiteral("DeviceDiagnostic");
-    } else if (type == QStringLiteral("VPN")) {
-        diagnostic_id = QStringLiteral("NetworkDiagnosticsWeb");
-    } else {
-        diagnostic_id = QStringLiteral("NetworkDiagnosticsNetworkAdapter");
+    const QString msdt = sak::system32Path(QStringLiteral("msdt.exe"));
+    const AdapterDiagnosePlan plan = adapterDiagnosePlan(type,
+                                                         !msdt.isEmpty() && QFile::exists(msdt));
+    const bool launched =
+        plan.use_settings
+            ? sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"), {plan.settings_page})
+            : sak::startDetachedSystem32Tool(QStringLiteral("msdt.exe"),
+                                             {QStringLiteral("/id"), plan.diagnostic_id});
+    if (!launched) {
+        const QString failure =
+            tr("Could not open a Windows troubleshooter for '%1'").arg(adapter->name);
+        Q_EMIT logOutput(QStringLiteral("[ERROR] %1").arg(failure));
+        Q_EMIT statusMessage(failure, sak::kTimerStatusDefaultMs);
+        return;
     }
-
-    QProcess::startDetached(QStringLiteral("msdt.exe"), {QStringLiteral("/id"), diagnostic_id});
-    Q_EMIT statusMessage(tr("Running %1 diagnostics for '%2'...").arg(type, adapter->name),
-                         sak::kTimerStatusMessageMs);
-    Q_EMIT logOutput(tr("Launched %1 diagnostics for '%2'").arg(type, adapter->name));
-    sak::logInfo("Launched diagnostics ({}) for adapter '{}'",
-                 diagnostic_id.toStdString(),
-                 adapter->name.toStdString());
+    const QString opened =
+        plan.use_settings
+            ? tr("This Windows has no adapter troubleshooter. Opened Settings, Troubleshoot.")
+            : tr("Running %1 diagnostics for '%2'...").arg(type, adapter->name);
+    Q_EMIT statusMessage(opened, sak::kTimerStatusMessageMs);
+    Q_EMIT logOutput(opened);
+    sak::logInfo("Diagnose for adapter '{}': {}",
+                 adapter->name.toStdString(),
+                 opened.toStdString());
 }
 
-void NetworkDiagnosticPanel::onAdapterRename() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
-        return;
-    }
-
+bool NetworkDiagnosticPanel::promptForNewAdapterName(const QString& current_name,
+                                                     QString& new_name) {
     constexpr int kRenameDialogWidth = 400;
 
     QDialog dialog(this);
@@ -2813,10 +2953,11 @@ void NetworkDiagnosticPanel::onAdapterRename() {
     dialog.setMinimumWidth(kRenameDialogWidth);
     auto* layout = new QVBoxLayout(&dialog);
 
-    layout->addWidget(new QLabel(tr("Current name: <b>%1</b>").arg(adapter->name), &dialog));
+    layout->addWidget(
+        new QLabel(tr("Current name: <b>%1</b>").arg(current_name.toHtmlEscaped()), &dialog));
 
     auto* name_edit = new QLineEdit(&dialog);
-    name_edit->setText(adapter->name);
+    name_edit->setText(current_name);
     name_edit->selectAll();
     name_edit->setPlaceholderText(tr("Enter new adapter name"));
     layout->addWidget(name_edit);
@@ -2828,61 +2969,97 @@ void NetworkDiagnosticPanel::onAdapterRename() {
     layout->addWidget(button_box);
 
     if (dialog.exec() != QDialog::Accepted) {
-        return;
+        return false;
     }
 
-    const QString new_name = name_edit->text().trimmed();
-    if (new_name.isEmpty() || new_name == adapter->name) {
+    const QString typed = name_edit->text().trimmed();
+    if (typed.isEmpty() || typed == current_name) {
+        return false;  // nothing to do, and not worth an error dialog
+    }
+    // Validated by the SAME rule the headless network.rename_adapter action applies, before any
+    // command is built. This panel previously passed whatever was typed straight into
+    // `newname=`, where a value containing '=' would have been re-split by netsh's own parser
+    // into something other than the operator intended (R5-IDX-19b).
+    if (!sak::isValidNewAdapterName(typed)) {
+        sak::showWarningLogged(
+            this,
+            tr("Invalid Adapter Name"),
+            tr("'%1' cannot be used as an adapter name.\n\n"
+               "It must be 1-%2 characters, must not contain '=', a double quote or a control "
+               "character, and must not begin with '-' or '/'.")
+                .arg(typed)
+                .arg(sak::kMaxAdapterNameLength));
+        return false;
+    }
+
+    new_name = typed;
+    return true;
+}
+
+void NetworkDiagnosticPanel::onAdapterRename() {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (selected == nullptr) {
+        return;
+    }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+    const NetworkAdapterInfo* adapter = &adapter_snapshot;
+
+    QString new_name;
+    if (!promptForNewAdapterName(adapter->name, new_name)) {
         return;
     }
 
     Q_EMIT logOutput(tr("Renaming adapter '%1' to '%2'...").arg(adapter->name, new_name));
 
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("set"),
-                        QStringLiteral("interface"),
-                        adapter->name,
-                        QStringLiteral("newname=") + new_name};
     const QString old_name = adapter->name;
-    runNetshCommandAsync(args, [this, old_name, new_name](bool success, const QString& output) {
-        if (success) {
-            Q_EMIT statusMessage(tr("Adapter renamed to '%1'").arg(new_name),
-                                 sak::kTimerStatusMessageMs);
-            Q_EMIT logOutput(tr("Adapter renamed to '%1'").arg(new_name));
-            sak::logInfo("Renamed adapter '{}' to '{}'",
-                         old_name.toStdString(),
-                         new_name.toStdString());
-            onRefreshAdapters();
-        } else {
-            sak::logError("Failed to rename adapter: {}", output.toStdString());
-            Q_EMIT logOutput(tr("[ERROR] Failed to rename: %1").arg(output));
-            sak::showWarningLogged(this,
-                                   tr("Rename Failed"),
-                                   tr("Failed to rename adapter.\n\n"
-                                      "Administrator privileges may be required.\n\n%1")
-                                       .arg(output));
-        }
-    });
+    launchAdapterWork(
+        [old_name, new_name]() { return sak::renameAdapter(old_name, new_name); },
+        [this, old_name, new_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(tr("Adapter renamed to '%1'").arg(new_name),
+                                     sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(tr("Adapter renamed to '%1'").arg(new_name));
+                sak::logInfo("Renamed adapter '{}' to '{}'",
+                             old_name.toStdString(),
+                             new_name.toStdString());
+                onRefreshAdapters();
+            } else {
+                sak::logError("Failed to rename adapter: {}", outcome.message.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] Failed to rename: %1").arg(outcome.message));
+                sak::showWarningLogged(this, tr("Rename Failed"), outcome.message);
+            }
+        });
 }
 
 void NetworkDiagnosticPanel::onOpenAdapterSettings() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
+    // Absolute paths throughout: explorer.exe from the Windows directory, control.exe from
+    // System32 (and by its real ".exe" name). A failed resolve launches nothing.
     const auto& type = adapter->adapterType;
+    bool launched = false;
     if (type == QStringLiteral("WiFi")) {
-        QProcess::startDetached(QStringLiteral("explorer.exe"),
-                                {QStringLiteral("ms-settings:network-wifi")});
+        launched = sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                                 {QStringLiteral("ms-settings:network-wifi")});
     } else if (type == QStringLiteral("Bluetooth")) {
-        QProcess::startDetached(QStringLiteral("explorer.exe"),
-                                {QStringLiteral("ms-settings:bluetooth")});
+        launched = sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                                 {QStringLiteral("ms-settings:bluetooth")});
     } else if (type == QStringLiteral("VPN")) {
-        QProcess::startDetached(QStringLiteral("explorer.exe"),
-                                {QStringLiteral("ms-settings:network-vpn")});
+        launched = sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                                 {QStringLiteral("ms-settings:network-vpn")});
     } else {
-        QProcess::startDetached(QStringLiteral("control"), {QStringLiteral("ncpa.cpl")});
+        launched = sak::startDetachedSystem32Tool(QStringLiteral("control.exe"),
+                                                  {QStringLiteral("ncpa.cpl")});
+    }
+    if (!launched) {
+        Q_EMIT logOutput(tr("[ERROR] Could not launch the adapter settings page"));
+        return;
     }
 
     Q_EMIT logOutput(tr("Opened adapter settings for '%1'").arg(adapter->name));
@@ -2891,95 +3068,62 @@ void NetworkDiagnosticPanel::onOpenAdapterSettings() {
 }
 
 void NetworkDiagnosticPanel::onViewBluetoothDevices() {
-    QProcess::startDetached(QStringLiteral("explorer.exe"),
-                            {QStringLiteral("ms-settings:bluetooth")});
+    if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                       {QStringLiteral("ms-settings:bluetooth")})) {
+        Q_EMIT logOutput(tr("[ERROR] Could not launch Bluetooth settings"));
+        return;
+    }
     Q_EMIT logOutput(tr("Opened Bluetooth devices settings"));
     Q_EMIT statusMessage(tr("Opened Bluetooth devices settings"), sak::kTimerStatusMessageMs);
     sak::logInfo("Opened Bluetooth devices settings");
 }
 
-void NetworkDiagnosticPanel::onBridgeConnections() {
-    const auto selected = selectedAdapters();
-    if (selected.size() < kMinimumBridgeAdapterCount) {
-        sak::showInformationLogged(this,
-                                   tr("Bridge Connections"),
-                                   tr("Select two or more adapters to create a network bridge."));
-        return;
-    }
-
-    QStringList adapter_names;
-    for (const auto* sel : selected) {
-        adapter_names << sel->name;
-    }
-
-    auto confirm = sak::showQuestionLogged(this,
-                                           tr("Bridge Connections"),
-                                           tr("Bridge the following adapters?\n\n%1\n\n"
-                                              "This will open Network Connections where you can "
-                                              "select these adapters and bridge them.")
-                                               .arg(adapter_names.join(QStringLiteral("\n"))),
-                                           QMessageBox::Yes | QMessageBox::No,
-                                           QMessageBox::No);
-    if (confirm != QMessageBox::Yes) {
-        return;
-    }
-
-    QProcess::startDetached(QStringLiteral("control"), {QStringLiteral("ncpa.cpl")});
-    Q_EMIT logOutput(tr("Bridge requested for: %1").arg(adapter_names.join(QStringLiteral(", "))));
-    Q_EMIT statusMessage(
-        tr("Opened Network Connections for bridging %1 adapters").arg(selected.size()),
-        sak::kTimerStatusDefaultMs);
-    sak::logInfo("Bridge connection requested for {} adapters", std::to_string(selected.size()));
-}
-
 // -- IP Configuration Actions --------------------------------------------
 
-void NetworkDiagnosticPanel::onSetStaticIp() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
-        return;
-    }
-
+bool NetworkDiagnosticPanel::promptStaticIpInput(const NetworkAdapterInfo& adapter,
+                                                 QString& ip,
+                                                 QString& mask,
+                                                 QString& gateway) {
     constexpr int kIpDialogWidth = 420;
     const QString ip_pattern = QStringLiteral(
         "^((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}"
         "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$");
 
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Set Static IP \xe2\x80\x94 %1").arg(adapter->name));
+    dialog.setWindowTitle(tr("Set Static IP - %1").arg(adapter.name));
     dialog.setMinimumWidth(kIpDialogWidth);
     auto* layout = new QVBoxLayout(&dialog);
 
     auto* ip_validator = new QRegularExpressionValidator(QRegularExpression(ip_pattern), &dialog);
+    // One label column: rows laid out one by one started each field at its own label's width.
+    auto* form = new QFormLayout();
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    layout->addLayout(form);
 
     auto make_ip_row = [&](const QString& label,
                            const QString& prefill,
                            const QString& placeholder) -> QLineEdit* {
-        auto* row = new QHBoxLayout();
-        row->addWidget(new QLabel(label, &dialog));
         auto* edit = new QLineEdit(&dialog);
         edit->setValidator(ip_validator);
         if (!prefill.isEmpty()) {
             edit->setText(prefill);
         }
         edit->setPlaceholderText(placeholder);
-        row->addWidget(edit, 1);
-        layout->addLayout(row);
+        form->addRow(label, edit);
         return edit;
     };
 
-    const auto current_ip = adapter->ipv4Addresses.isEmpty() ? QString()
-                                                             : adapter->ipv4Addresses.first();
-    const auto current_mask = adapter->ipv4SubnetMasks.isEmpty() ? QString()
-                                                                 : adapter->ipv4SubnetMasks.first();
+    const auto current_ip = adapter.ipv4Addresses.isEmpty() ? QString()
+                                                            : adapter.ipv4Addresses.first();
+    const auto current_mask = adapter.ipv4SubnetMasks.isEmpty() ? QString()
+                                                                : adapter.ipv4SubnetMasks.first();
 
     auto* ip_edit = make_ip_row(tr("IP Address:"), current_ip, QStringLiteral("192.168.1.100"));
     auto* mask_edit = make_ip_row(tr("Subnet Mask:"),
                                   current_mask.isEmpty() ? QStringLiteral("255.255.255.0")
                                                          : current_mask,
                                   QStringLiteral("255.255.255.0"));
-    auto* gw_edit =
-        make_ip_row(tr("Gateway:"), adapter->ipv4Gateway, QStringLiteral("192.168.1.1"));
+    auto* gw_edit = make_ip_row(tr("Gateway:"), adapter.ipv4Gateway, QStringLiteral("192.168.1.1"));
 
     auto* button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                             &dialog);
@@ -2988,12 +3132,32 @@ void NetworkDiagnosticPanel::onSetStaticIp() {
     layout->addWidget(button_box);
 
     if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    ip = ip_edit->text().trimmed();
+    mask = mask_edit->text().trimmed();
+    gateway = gw_edit->text().trimmed();
+    return true;
+}
+
+void NetworkDiagnosticPanel::onSetStaticIp() {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (selected == nullptr) {
+        return;
+    }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+
+    QString ip;
+    QString mask;
+    QString gateway;
+    if (!promptStaticIpInput(adapter_snapshot, ip, mask, gateway)) {
         return;
     }
 
-    const QString ip = ip_edit->text().trimmed();
-    const QString mask = mask_edit->text().trimmed();
-    const QString gateway = gw_edit->text().trimmed();
     if (ip.isEmpty() || mask.isEmpty()) {
         sak::showWarningLogged(this,
                                tr("Invalid Input"),
@@ -3001,31 +3165,27 @@ void NetworkDiagnosticPanel::onSetStaticIp() {
         return;
     }
 
-    applyStaticIp(adapter->name, ip, mask, gateway);
+    applyStaticIp(adapter_snapshot.name, ip, mask, gateway);
 }
 
 void NetworkDiagnosticPanel::applyStaticIp(const QString& adapter_name,
                                            const QString& ip,
                                            const QString& mask,
                                            const QString& gateway) {
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("ipv4"),
-                        QStringLiteral("set"),
-                        QStringLiteral("address"),
-                        adapter_name,
-                        QStringLiteral("static"),
-                        ip,
-                        mask};
-    if (!gateway.isEmpty()) {
-        args << gateway;
-    }
-
     Q_EMIT logOutput(
         tr("Setting static IP on '%1': %2 / %3 gw %4").arg(adapter_name, ip, mask, gateway));
 
-    runNetshCommandAsync(
-        args, [this, adapter_name, ip, mask, gateway](bool success, const QString& output) {
-            if (success) {
+    // The same code the restore/assistant path runs (R5-IDX-19b): the address, then the gateway as
+    // a route whose metric Windows chooses, as its own adapter dialog does. The dialect differs
+    // only in DNS registration. This used to omit gwmetric, which netsh reads as metric 1 (fix
+    // round S).
+    launchAdapterWork(
+        [adapter_name, ip, mask, gateway]() {
+            return sak::setAdapterStaticIpv4(
+                adapter_name, ip, mask, gateway, sak::kTechnicianIpv4Dialect);
+        },
+        [this, adapter_name, ip, mask, gateway](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
                 Q_EMIT statusMessage(tr("Static IP configured on '%1'").arg(adapter_name),
                                      sak::kTimerStatusMessageMs);
                 Q_EMIT logOutput(tr("Static IP configured on '%1'").arg(adapter_name));
@@ -3036,22 +3196,23 @@ void NetworkDiagnosticPanel::applyStaticIp(const QString& adapter_name,
                              gateway.toStdString());
                 onRefreshAdapters();
             } else {
-                sak::logError("Failed to set static IP: {}", output.toStdString());
-                Q_EMIT logOutput(tr("[ERROR] Failed to set static IP: %1").arg(output));
-                sak::showWarningLogged(this,
-                                       tr("Failed to Set IP"),
-                                       tr("Failed to configure static IP.\n\n"
-                                          "Administrator privileges may be required.\n\n%1")
-                                           .arg(output));
+                sak::logError("Failed to set static IP: {}", outcome.message.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] Failed to set static IP: %1").arg(outcome.message));
+                sak::showWarningLogged(this, tr("Failed to Set IP"), outcome.message);
             }
         });
 }
 
 void NetworkDiagnosticPanel::onSetDnsServers() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (selected == nullptr) {
         return;
     }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+    const NetworkAdapterInfo* adapter = &adapter_snapshot;
 
     constexpr int kDnsDialogWidth = 420;
     const QString ip_pattern = QStringLiteral(
@@ -3059,7 +3220,7 @@ void NetworkDiagnosticPanel::onSetDnsServers() {
         "(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$");
 
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("Set DNS Servers \xe2\x80\x94 %1").arg(adapter->name));
+    dialog.setWindowTitle(tr("Set DNS Servers - %1").arg(adapter->name));
     dialog.setMinimumWidth(kDnsDialogWidth);
     auto* layout = new QVBoxLayout(&dialog);
 
@@ -3070,19 +3231,19 @@ void NetworkDiagnosticPanel::onSetDnsServers() {
     const auto current_secondary = adapter->ipv4DnsServers.size() > 1 ? adapter->ipv4DnsServers[1]
                                                                       : QString();
 
+    auto* form = new QFormLayout();
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    layout->addLayout(form);
     auto make_dns_row = [&](const QString& label,
                             const QString& prefill,
                             const QString& placeholder) -> QLineEdit* {
-        auto* row = new QHBoxLayout();
-        row->addWidget(new QLabel(label, &dialog));
         auto* edit = new QLineEdit(&dialog);
         edit->setValidator(ip_validator);
         if (!prefill.isEmpty()) {
             edit->setText(prefill);
         }
         edit->setPlaceholderText(placeholder);
-        row->addWidget(edit, 1);
-        layout->addLayout(row);
+        form->addRow(label, edit);
         return edit;
     };
 
@@ -3114,78 +3275,58 @@ void NetworkDiagnosticPanel::onSetDnsServers() {
 void NetworkDiagnosticPanel::applyDnsServers(const QString& adapter_name,
                                              const QString& primary,
                                              const QString& secondary) {
-    // Set primary DNS
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("ipv4"),
-                        QStringLiteral("set"),
-                        QStringLiteral("dns"),
-                        adapter_name,
-                        QStringLiteral("static"),
-                        primary};
-
     Q_EMIT logOutput(
         tr("Setting DNS on '%1': primary=%2 secondary=%3").arg(adapter_name, primary, secondary));
 
-    runNetshCommandAsync(
-        args, [this, adapter_name, primary, secondary](bool success, const QString& output) {
-            if (!success) {
-                sak::logError("Failed to set primary DNS: {}", output.toStdString());
-                Q_EMIT logOutput(tr("[ERROR] Failed to set primary DNS: %1").arg(output));
-                sak::showWarningLogged(this,
-                                       tr("DNS Configuration Failed"),
-                                       tr("Failed to set primary DNS server.\n\n"
-                                          "Administrator privileges may be required.\n\n%1")
-                                           .arg(output));
-                return;
-            }
-
-            auto finish_success = [this, adapter_name, primary, secondary]() {
-                Q_EMIT statusMessage(tr("DNS servers configured on '%1'").arg(adapter_name),
-                                     sak::kTimerStatusMessageMs);
-                Q_EMIT logOutput(tr("DNS configured on '%1'").arg(adapter_name));
+    QStringList servers{primary};
+    if (!secondary.isEmpty()) {
+        servers << secondary;
+    }
+    // setAdapterStaticDns runs the primary and every secondary as ONE worker unit, so the sequence
+    // cannot be truncated mid-way by panel teardown, and it reports a failed secondary as a partial
+    // apply (the primary is already live) rather than as "nothing happened".
+    launchAdapterWork(
+        [adapter_name, servers]() {
+            const sak::DnsApplyOutcome outcome = sak::setAdapterStaticDns(
+                adapter_name, servers, sak::kTechnicianIpv4Dialect.dns_registration);
+            return sak::AdapterAdminOutcome{outcome.succeeded, outcome.message};
+        },
+        [this, adapter_name, primary, secondary](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(outcome.message, sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(outcome.message);
                 sak::logInfo("DNS set on {}: primary={} secondary={}",
                              adapter_name.toStdString(),
                              primary.toStdString(),
                              secondary.toStdString());
-                onRefreshAdapters();
-            };
-
-            if (secondary.isEmpty()) {
-                finish_success();
-                return;
+            } else {
+                sak::logError("DNS apply failed on {}: {}",
+                              adapter_name.toStdString(),
+                              outcome.message.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] %1").arg(outcome.message));
+                sak::showWarningLogged(this, tr("DNS Configuration Failed"), outcome.message);
             }
-
-            QStringList add_args = {QStringLiteral("interface"),
-                                    QStringLiteral("ipv4"),
-                                    QStringLiteral("add"),
-                                    QStringLiteral("dns"),
-                                    adapter_name,
-                                    secondary,
-                                    QStringLiteral("index=2")};
-            runNetshCommandAsync(add_args,
-                                 [finish_success](bool secondary_success,
-                                                  const QString& secondary_output) {
-                                     if (!secondary_success) {
-                                         sak::logWarning("Failed to set secondary DNS: {}",
-                                                         secondary_output.toStdString());
-                                     }
-                                     finish_success();
-                                 });
+            onRefreshAdapters();
         });
 }
 
 void NetworkDiagnosticPanel::onEnableDhcp() {
-    const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (selected == nullptr) {
         return;
     }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+    const NetworkAdapterInfo* adapter = &adapter_snapshot;
 
     auto confirm =
         sak::showQuestionLogged(this,
                                 tr("Enable DHCP"),
                                 tr("Switch adapter <b>%1</b> to DHCP?\n\n"
                                    "The current static IP configuration will be removed.")
-                                    .arg(adapter->name),
+                                    .arg(adapter->name.toHtmlEscaped()),
                                 QMessageBox::Yes | QMessageBox::No,
                                 QMessageBox::No);
     if (confirm != QMessageBox::Yes) {
@@ -3194,63 +3335,49 @@ void NetworkDiagnosticPanel::onEnableDhcp() {
 
     Q_EMIT logOutput(tr("Enabling DHCP on '%1'...").arg(adapter->name));
 
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("ipv4"),
-                        QStringLiteral("set"),
-                        QStringLiteral("address"),
-                        adapter->name,
-                        QStringLiteral("dhcp")};
     const QString adapter_name = adapter->name;
-    runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
-        if (!success) {
-            sak::logError("Failed to enable DHCP: {}", output.toStdString());
-            Q_EMIT logOutput(tr("[ERROR] Failed to enable DHCP: %1").arg(output));
-            sak::showWarningLogged(this,
-                                   tr("DHCP Failed"),
-                                   tr("Failed to enable DHCP.\n\n"
-                                      "Administrator privileges may be required.\n\n%1")
-                                       .arg(output));
-            return;
-        }
-
-        QStringList dns_args = {QStringLiteral("interface"),
-                                QStringLiteral("ipv4"),
-                                QStringLiteral("set"),
-                                QStringLiteral("dns"),
-                                adapter_name,
-                                QStringLiteral("dhcp")};
-        runNetshCommandAsync(dns_args, [this, adapter_name](bool, const QString&) {
-            Q_EMIT statusMessage(tr("DHCP enabled on '%1'").arg(adapter_name),
-                                 sak::kTimerStatusMessageMs);
-            Q_EMIT logOutput(tr("DHCP enabled on '%1'").arg(adapter_name));
-            sak::logInfo("DHCP enabled on: {}", adapter_name.toStdString());
+    launchAdapterWork(
+        [adapter_name]() {
+            const sak::DhcpApplyOutcome outcome = sak::setAdapterDhcpMode(adapter_name);
+            return sak::AdapterAdminOutcome{outcome.succeeded, outcome.message};
+        },
+        [this, adapter_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(outcome.message, sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(outcome.message);
+                sak::logInfo("DHCP enabled on: {}", adapter_name.toStdString());
+            } else {
+                sak::logError("DHCP enable failed on {}: {}",
+                              adapter_name.toStdString(),
+                              outcome.message.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] %1").arg(outcome.message));
+                sak::showWarningLogged(this, tr("DHCP Failed"), outcome.message);
+            }
             onRefreshAdapters();
         });
-    });
 }
 
 void NetworkDiagnosticPanel::onReleaseDhcpLease() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
     Q_EMIT logOutput(tr("Releasing DHCP lease on '%1'...").arg(adapter->name));
 
-    constexpr int kIpconfigTimeoutMs = 10'000;
     const QString adapter_name = adapter->name;
-    runCommandAsync(
-        QStringLiteral("ipconfig"),
-        {QStringLiteral("/release"), adapter_name},
-        kIpconfigTimeoutMs,
-        [this, adapter_name](bool success, const QString& output) {
-            if (success) {
+    launchAdapterWork(
+        [adapter_name]() { return sak::releaseAdapterDhcpLease(adapter_name); },
+        [this, adapter_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
                 Q_EMIT statusMessage(tr("DHCP lease released on '%1'").arg(adapter_name),
                                      sak::kTimerStatusMessageMs);
                 Q_EMIT logOutput(tr("DHCP lease released on '%1'").arg(adapter_name));
                 sak::logInfo("DHCP lease released: {}", adapter_name.toStdString());
             } else {
-                sak::logWarning("DHCP release may have failed: {}", output.toStdString());
+                // A release is reported as a WARNING, not an error: ipconfig also fails this way
+                // for an adapter that has no lease to give up, which is not a fault to raise.
+                sak::logWarning("DHCP release may have failed: {}", outcome.message.toStdString());
                 Q_EMIT logOutput(
                     tr("[WARN] DHCP release may have failed on '%1'").arg(adapter_name));
             }
@@ -3261,32 +3388,30 @@ void NetworkDiagnosticPanel::onReleaseDhcpLease() {
 
 void NetworkDiagnosticPanel::onRenewDhcpLease() {
     const auto* adapter = selectedAdapter();
-    if (!adapter) {
+    if (adapter == nullptr) {
         return;
     }
 
     Q_EMIT statusMessage(tr("Renewing DHCP lease on '%1'...").arg(adapter->name), 0);
     Q_EMIT logOutput(tr("Renewing DHCP lease on '%1'...").arg(adapter->name));
 
-    constexpr int kIpconfigTimeoutMs = 30'000;
     const QString adapter_name = adapter->name;
-    runCommandAsync(QStringLiteral("ipconfig"),
-                    {QStringLiteral("/renew"), adapter_name},
-                    kIpconfigTimeoutMs,
-                    [this, adapter_name](bool success, const QString& output) {
-                        if (success) {
-                            Q_EMIT statusMessage(tr("DHCP lease renewed on '%1'").arg(adapter_name),
-                                                 sak::kTimerStatusMessageMs);
-                            Q_EMIT logOutput(tr("DHCP lease renewed on '%1'").arg(adapter_name));
-                            sak::logInfo("DHCP lease renewed: {}", adapter_name.toStdString());
-                        } else {
-                            sak::logWarning("DHCP renew may have failed: {}", output.toStdString());
-                            Q_EMIT logOutput(
-                                tr("[WARN] DHCP renew may have failed on '%1'").arg(adapter_name));
-                        }
+    launchAdapterWork(
+        [adapter_name]() { return sak::renewAdapterDhcpLease(adapter_name); },
+        [this, adapter_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(tr("DHCP lease renewed on '%1'").arg(adapter_name),
+                                     sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(tr("DHCP lease renewed on '%1'").arg(adapter_name));
+                sak::logInfo("DHCP lease renewed: {}", adapter_name.toStdString());
+            } else {
+                // Warning, not error: a renew legitimately fails when no DHCP server answers.
+                sak::logWarning("DHCP renew may have failed: {}", outcome.message.toStdString());
+                Q_EMIT logOutput(tr("[WARN] DHCP renew may have failed on '%1'").arg(adapter_name));
+            }
 
-                        onRefreshAdapters();
-                    });
+            onRefreshAdapters();
+        });
 }
 
 // -- Ping --
@@ -3304,13 +3429,14 @@ void NetworkDiagnosticPanel::onStartPing() {
     m_pingStatsLabel->clear();
     m_pingStartBtn->setEnabled(false);
     m_pingStopBtn->setEnabled(true);
+    m_pingEmptyState->setLoading(tr("Pinging target host..."));
 
-    m_controller->ping({target,
-                        m_pingCount->value(),
-                        m_pingInterval->value(),
-                        m_pingTimeout->value(),
-                        m_pingPacketSize->value(),
-                        kDefaultPingTtl});
+    m_controller->ping({.target = target,
+                        .count = m_pingCount->value(),
+                        .interval_ms = m_pingInterval->value(),
+                        .timeout_ms = m_pingTimeout->value(),
+                        .packet_size = m_pingPacketSize->value(),
+                        .ttl = kDefaultPingTtl});
 }
 
 void NetworkDiagnosticPanel::onStopPing() {
@@ -3318,30 +3444,34 @@ void NetworkDiagnosticPanel::onStopPing() {
     m_controller->cancel();
     m_pingStartBtn->setEnabled(true);
     m_pingStopBtn->setEnabled(false);
+    m_pingEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onPingReply(PingReply reply) {
     Q_ASSERT(m_pingTable);
+    // Lift the loading overlay as soon as replies stream in so it never masks data.
+    m_pingEmptyState->clearLoading();
     const int row = m_pingTable->rowCount();
     m_pingTable->insertRow(row);
 
     m_pingTable->setItem(row,
-                         kPingColumnSequence,
+                         KPingColumnSequence,
                          new QTableWidgetItem(QString::number(reply.sequenceNumber)));
-    m_pingTable->setItem(row, kPingColumnAddress, new QTableWidgetItem(reply.replyFrom));
+    m_pingTable->setItem(row, KPingColumnAddress, new QTableWidgetItem(reply.replyFrom));
 
-    auto* statusItem = new QTableWidgetItem(reply.success ? tr("Reply") : tr("Timeout"));
-    statusItem->setForeground(reply.success ? QColor(ui::kColorSuccess) : QColor(ui::kColorError));
-    m_pingTable->setItem(row, kPingColumnStatus, statusItem);
+    auto* status_item = new QTableWidgetItem(reply.success ? tr("Reply") : tr("Timeout"));
+    status_item->setForeground(reply.success ? ui::themedColor(ui::kColorSuccess)
+                                             : ui::themedColor(ui::kColorError));
+    m_pingTable->setItem(row, KPingColumnStatus, status_item);
 
     m_pingTable->setItem(
         row,
-        kPingColumnRtt,
+        KPingColumnRtt,
         new QTableWidgetItem(
             reply.success ? QStringLiteral("%1").arg(reply.rttMs, 0, 'f', kDecimalPrecisionOne)
                           : QStringLiteral("--")));
     m_pingTable->setItem(row,
-                         kPingColumnTtl,
+                         KPingColumnTtl,
                          new QTableWidgetItem(reply.success ? QString::number(reply.ttl)
                                                             : QStringLiteral("--")));
 
@@ -3353,6 +3483,7 @@ void NetworkDiagnosticPanel::onPingComplete(PingResult result) {
     Q_ASSERT(m_pingStopBtn);
     m_pingStartBtn->setEnabled(true);
     m_pingStopBtn->setEnabled(false);
+    m_pingEmptyState->clearLoading();
 
     m_pingStatsLabel->setText(QStringLiteral("Sent: %1 | Rcvd: %2 | Lost: %3 (%4%) | "
                                              "Min: %5 ms | Max: %6 ms | Avg: %7 ms | Jitter: %8 ms")
@@ -3365,7 +3496,7 @@ void NetworkDiagnosticPanel::onPingComplete(PingResult result) {
                                   .arg(result.avgRtt, 0, 'f', kDecimalPrecisionOne)
                                   .arg(result.jitter, 0, 'f', kDecimalPrecisionTwo));
 
-    Q_EMIT statusMessage(QStringLiteral("Ping complete -- %1% loss")
+    Q_EMIT statusMessage(QStringLiteral("Ping complete - %1% loss")
                              .arg(result.lossPercent, 0, 'f', kDecimalPrecisionOne),
                          sak::kTimerStatusDefaultMs);
 }
@@ -3385,6 +3516,7 @@ void NetworkDiagnosticPanel::onStartTraceroute() {
     m_traceStatusLabel->clear();
     m_traceStartBtn->setEnabled(false);
     m_traceStopBtn->setEnabled(true);
+    m_traceEmptyState->setLoading(tr("Tracing the network route..."));
 
     m_controller->traceroute(
         target, m_traceMaxHops->value(), kTraceDefaultTimeoutMs, kTraceDefaultProbeCount, true);
@@ -3394,45 +3526,48 @@ void NetworkDiagnosticPanel::onStopTraceroute() {
     m_controller->cancel();
     m_traceStartBtn->setEnabled(true);
     m_traceStopBtn->setEnabled(false);
+    m_traceEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onTracerouteHop(TracerouteHop hop) {
     Q_ASSERT(m_traceTable);
     Q_ASSERT(m_traceStatusLabel);
+    // Lift the loading overlay as soon as hops stream in so it never masks data.
+    m_traceEmptyState->clearLoading();
     const int row = m_traceTable->rowCount();
     m_traceTable->insertRow(row);
 
     m_traceTable->setItem(row,
-                          kTraceColumnHop,
+                          KTraceColumnHop,
                           new QTableWidgetItem(QString::number(hop.hopNumber)));
 
     if (hop.timedOut) {
-        auto* timeoutItem = new QTableWidgetItem(tr("* * * Request timed out"));
-        timeoutItem->setForeground(QColor(ui::kColorWarning));
-        m_traceTable->setItem(row, kTraceColumnAddress, timeoutItem);
-        for (int i = kTraceColumnHostname; i < kTraceColumnCount; ++i) {
+        auto* timeout_item = new QTableWidgetItem(tr("* * * Request timed out"));
+        timeout_item->setForeground(ui::themedColor(ui::kColorWarning));
+        m_traceTable->setItem(row, KTraceColumnAddress, timeout_item);
+        for (int i = KTraceColumnHostname; i < KTraceColumnCount; ++i) {
             m_traceTable->setItem(row, i, new QTableWidgetItem(QStringLiteral("*")));
         }
     } else {
-        m_traceTable->setItem(row, kTraceColumnAddress, new QTableWidgetItem(hop.ipAddress));
+        m_traceTable->setItem(row, KTraceColumnAddress, new QTableWidgetItem(hop.ipAddress));
         m_traceTable->setItem(row,
-                              kTraceColumnHostname,
+                              KTraceColumnHostname,
                               new QTableWidgetItem(hop.hostname.isEmpty() ? QStringLiteral("--")
                                                                           : hop.hostname));
         m_traceTable->setItem(row,
-                              kTraceColumnRttFirst,
+                              KTraceColumnRttFirst,
                               new QTableWidgetItem(QStringLiteral("%1").arg(
                                   hop.rtt1Ms, 0, 'f', kDecimalPrecisionOne)));
         m_traceTable->setItem(row,
-                              kTraceColumnRttSecond,
+                              KTraceColumnRttSecond,
                               new QTableWidgetItem(QStringLiteral("%1").arg(
                                   hop.rtt2Ms, 0, 'f', kDecimalPrecisionOne)));
         m_traceTable->setItem(row,
-                              kTraceColumnRttThird,
+                              KTraceColumnRttThird,
                               new QTableWidgetItem(QStringLiteral("%1").arg(
                                   hop.rtt3Ms, 0, 'f', kDecimalPrecisionOne)));
         m_traceTable->setItem(row,
-                              kTraceColumnAverage,
+                              KTraceColumnAverage,
                               new QTableWidgetItem(QStringLiteral("%1").arg(
                                   hop.avgRttMs, 0, 'f', kDecimalPrecisionOne)));
     }
@@ -3446,15 +3581,15 @@ void NetworkDiagnosticPanel::onTracerouteComplete(TracerouteResult result) {
     Q_ASSERT(m_traceStopBtn);
     m_traceStartBtn->setEnabled(true);
     m_traceStopBtn->setEnabled(false);
+    m_traceEmptyState->clearLoading();
 
-    QString status;
-    if (result.reachedTarget) {
-        status = QStringLiteral("Reached %1 in %2 hops").arg(result.target).arg(result.hops.size());
-    } else {
-        status = QStringLiteral("Could not reach %1 (%2 hops)")
-                     .arg(result.target)
-                     .arg(result.hops.size());
-    }
+    // "1 hop", not "1 hops" (UI re-check S24).
+    const QString hops = sak::countOf(static_cast<int>(result.hops.size()),
+                                      QStringLiteral("hop"),
+                                      QStringLiteral("hops"));
+    const QString status = result.reachedTarget
+                               ? QStringLiteral("Reached %1 in %2").arg(result.target, hops)
+                               : QStringLiteral("Could not reach %1 (%2)").arg(result.target, hops);
     m_traceStatusLabel->setText(status);
     Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
 }
@@ -3474,6 +3609,7 @@ void NetworkDiagnosticPanel::onStartMtr() {
     m_mtrStatusLabel->clear();
     m_mtrStartBtn->setEnabled(false);
     m_mtrStopBtn->setEnabled(true);
+    m_mtrEmptyState->setLoading(tr("Running MTR analysis..."));
 
     m_controller->mtr(target,
                       m_mtrCycles->value(),
@@ -3486,19 +3622,22 @@ void NetworkDiagnosticPanel::onStopMtr() {
     m_controller->cancel();
     m_mtrStartBtn->setEnabled(true);
     m_mtrStopBtn->setEnabled(false);
+    m_mtrEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onMtrUpdate(QVector<MtrHopStats> hops, int cycle) {
     Q_ASSERT(m_mtrTable);
     Q_ASSERT(m_mtrStatusLabel);
+    // Lift the loading overlay as soon as the first cycle arrives so data is visible.
+    m_mtrEmptyState->clearLoading();
     m_mtrTable->setSortingEnabled(false);
-    m_mtrTable->setRowCount(hops.size());
+    m_mtrTable->setRowCount(static_cast<int>(hops.size()));
 
     for (int i = 0; i < hops.size(); ++i) {
         const auto& h = hops[i];
 
         // Reuse existing items to avoid allocation churn on frequent updates
-        auto setOrCreate = [this](int row, int col, const QString& text) {
+        auto set_or_create = [this](int row, int col, const QString& text) {
             if (auto* existing = m_mtrTable->item(row, col)) {
                 existing->setText(text);
             } else {
@@ -3506,46 +3645,47 @@ void NetworkDiagnosticPanel::onMtrUpdate(QVector<MtrHopStats> hops, int cycle) {
             }
         };
 
-        setOrCreate(i, kMtrColumnHop, QString::number(h.hopNumber));
+        set_or_create(i, KMtrColumnHop, QString::number(h.hopNumber));
 
         const auto label = h.hostname.isEmpty()
                                ? h.ipAddress
                                : QStringLiteral("%1 (%2)").arg(h.hostname, h.ipAddress);
-        setOrCreate(i, kMtrColumnAddress, label);
+        set_or_create(i, KMtrColumnAddress, label);
 
-        const auto lossText = QStringLiteral("%1").arg(h.lossPercent, 0, 'f', kDecimalPrecisionOne);
-        if (auto* existing = m_mtrTable->item(i, kMtrColumnLoss)) {
-            existing->setText(lossText);
+        const auto loss_text =
+            QStringLiteral("%1").arg(h.lossPercent, 0, 'f', kDecimalPrecisionOne);
+        if (auto* existing = m_mtrTable->item(i, KMtrColumnLoss)) {
+            existing->setText(loss_text);
             if (h.lossPercent > kMtrLossWarningPercentF) {
-                existing->setForeground(QColor(ui::kColorError));
+                existing->setForeground(ui::themedColor(ui::kColorError));
             } else if (h.lossPercent > 0.0) {
-                existing->setForeground(QColor(ui::kColorWarning));
+                existing->setForeground(ui::themedColor(ui::kColorWarning));
             } else {
-                existing->setForeground(QColor());
+                setItemForeground(existing, QColor());
             }
         } else {
-            auto* lossItem = new QTableWidgetItem(lossText);
+            auto* loss_item = new QTableWidgetItem(loss_text);
             if (h.lossPercent > kMtrLossWarningPercentF) {
-                lossItem->setForeground(QColor(ui::kColorError));
+                loss_item->setForeground(ui::themedColor(ui::kColorError));
             } else if (h.lossPercent > 0.0) {
-                lossItem->setForeground(QColor(ui::kColorWarning));
+                loss_item->setForeground(ui::themedColor(ui::kColorWarning));
             }
-            m_mtrTable->setItem(i, kMtrColumnLoss, lossItem);
+            m_mtrTable->setItem(i, KMtrColumnLoss, loss_item);
         }
 
-        setOrCreate(i, kMtrColumnSent, QString::number(h.sent));
-        setOrCreate(i,
-                    kMtrColumnAverage,
-                    QStringLiteral("%1").arg(h.avgRttMs, 0, 'f', kDecimalPrecisionOne));
-        setOrCreate(i,
-                    kMtrColumnBest,
-                    QStringLiteral("%1").arg(h.bestRttMs, 0, 'f', kDecimalPrecisionOne));
-        setOrCreate(i,
-                    kMtrColumnWorst,
-                    QStringLiteral("%1").arg(h.worstRttMs, 0, 'f', kDecimalPrecisionOne));
-        setOrCreate(i,
-                    kMtrColumnJitter,
-                    QStringLiteral("%1").arg(h.jitterMs, 0, 'f', kDecimalPrecisionTwo));
+        set_or_create(i, KMtrColumnSent, QString::number(h.sent));
+        set_or_create(i,
+                      KMtrColumnAverage,
+                      QStringLiteral("%1").arg(h.avgRttMs, 0, 'f', kDecimalPrecisionOne));
+        set_or_create(i,
+                      KMtrColumnBest,
+                      QStringLiteral("%1").arg(h.bestRttMs, 0, 'f', kDecimalPrecisionOne));
+        set_or_create(i,
+                      KMtrColumnWorst,
+                      QStringLiteral("%1").arg(h.worstRttMs, 0, 'f', kDecimalPrecisionOne));
+        set_or_create(i,
+                      KMtrColumnJitter,
+                      QStringLiteral("%1").arg(h.jitterMs, 0, 'f', kDecimalPrecisionTwo));
     }
 
     m_mtrTable->setSortingEnabled(true);
@@ -3557,12 +3697,15 @@ void NetworkDiagnosticPanel::onMtrComplete(MtrResult result) {
     Q_ASSERT(m_mtrStopBtn);
     m_mtrStartBtn->setEnabled(true);
     m_mtrStopBtn->setEnabled(false);
+    m_mtrEmptyState->clearLoading();
 
     const int hops = static_cast<int>(result.hops.size());
-    const QString status = QStringLiteral("MTR complete -- %1 hops, %2 cycles to %3")
-                               .arg(hops)
-                               .arg(result.totalCycles)
-                               .arg(result.target);
+    const QString status =
+        QStringLiteral("MTR complete - %1, %2 to %3")
+            .arg(
+                sak::countOf(hops, QStringLiteral("hop"), QStringLiteral("hops")),
+                sak::countOf(result.totalCycles, QStringLiteral("cycle"), QStringLiteral("cycles")),
+                result.target);
     m_mtrStatusLabel->setText(status);
     Q_EMIT logOutput(status);
     Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
@@ -3581,11 +3724,12 @@ void NetworkDiagnosticPanel::onDnsQuery() {
 
     m_dnsQueryBtn->setEnabled(false);
     m_dnsStatusLabel->setText(tr("Querying..."));
+    m_dnsEmptyState->setLoading(tr("Resolving DNS query..."));
     // Use currentData if a known entry is selected; otherwise parse
     // the user-typed text for a manually-entered DNS server IP.
-    const auto serverData = m_dnsServer->currentData();
-    const auto server = serverData.isValid() ? serverData.toString()
-                                             : m_dnsServer->currentText().trimmed();
+    const auto server_data = m_dnsServer->currentData();
+    const auto server = server_data.isValid() ? server_data.toString()
+                                              : m_dnsServer->currentText().trimmed();
     m_controller->dnsQuery(hostname, m_dnsRecordType->currentText(), server);
 }
 
@@ -3600,9 +3744,10 @@ void NetworkDiagnosticPanel::onDnsReverseLookup() {
 
     m_dnsReverseBtn->setEnabled(false);
     m_dnsStatusLabel->setText(tr("Resolving..."));
-    const auto serverData = m_dnsServer->currentData();
-    const auto server = serverData.isValid() ? serverData.toString()
-                                             : m_dnsServer->currentText().trimmed();
+    m_dnsEmptyState->setLoading(tr("Resolving DNS query..."));
+    const auto server_data = m_dnsServer->currentData();
+    const auto server = server_data.isValid() ? server_data.toString()
+                                              : m_dnsServer->currentText().trimmed();
     m_controller->dnsReverseLookup(ip, server);
 }
 
@@ -3625,6 +3770,7 @@ void NetworkDiagnosticPanel::onDnsCompare() {
 
     m_dnsCompareBtn->setEnabled(false);
     m_dnsStatusLabel->setText(tr("Comparing DNS servers..."));
+    m_dnsEmptyState->setLoading(tr("Resolving DNS query..."));
     m_controller->dnsCompare(hostname, m_dnsRecordType->currentText(), servers);
 }
 
@@ -3635,26 +3781,29 @@ void NetworkDiagnosticPanel::onDnsFlushCache() {
 void NetworkDiagnosticPanel::onDnsQueryComplete(DnsQueryResult result) {
     Q_ASSERT(m_dnsQueryBtn);
     Q_ASSERT(m_dnsReverseBtn);
+    // Replaces "Querying DNS for ...", which otherwise stayed up after the answer.
+    Q_EMIT statusMessage(tr("DNS query complete"), sak::kTimerStatusMessageMs);
     m_dnsQueryBtn->setEnabled(true);
     m_dnsReverseBtn->setEnabled(true);
+    m_dnsEmptyState->clearLoading();
 
     const int row = m_dnsTable->rowCount();
     m_dnsTable->insertRow(row);
 
-    m_dnsTable->setItem(row, kDnsColumnQuery, new QTableWidgetItem(result.queryName));
-    m_dnsTable->setItem(row, kDnsColumnType, new QTableWidgetItem(result.recordType));
-    m_dnsTable->setItem(row, kDnsColumnServer, new QTableWidgetItem(result.dnsServer));
+    m_dnsTable->setItem(row, KDnsColumnQuery, new QTableWidgetItem(result.queryName));
+    m_dnsTable->setItem(row, KDnsColumnType, new QTableWidgetItem(result.recordType));
+    m_dnsTable->setItem(row, KDnsColumnServer, new QTableWidgetItem(result.dnsServer));
     m_dnsTable->setItem(row,
-                        kDnsColumnResponseTime,
+                        KDnsColumnResponseTime,
                         new QTableWidgetItem(QStringLiteral("%1 ms").arg(
                             result.responseTimeMs, 0, 'f', kDecimalPrecisionOne)));
 
-    auto* answerItem = new QTableWidgetItem(result.answers.join(QStringLiteral(", ")));
+    auto* answer_item = new QTableWidgetItem(result.answers.join(QStringLiteral(", ")));
     if (!result.success) {
-        answerItem->setText(result.errorMessage);
-        answerItem->setForeground(QColor(ui::kColorError));
+        answer_item->setText(result.errorMessage);
+        answer_item->setForeground(ui::themedColor(ui::kColorError));
     }
-    m_dnsTable->setItem(row, kDnsColumnAnswers, answerItem);
+    m_dnsTable->setItem(row, KDnsColumnAnswers, answer_item);
 
     if (result.success) {
         m_dnsStatusLabel->setText(QStringLiteral("%1 answers in %2 ms")
@@ -3669,6 +3818,7 @@ void NetworkDiagnosticPanel::onDnsComparisonComplete(DnsServerComparison compari
     Q_ASSERT(m_dnsCompareBtn);
     Q_ASSERT(m_dnsTable);
     m_dnsCompareBtn->setEnabled(true);
+    m_dnsEmptyState->clearLoading();
 
     m_dnsTable->setRowCount(0);
     for (const auto& result : comparison.results) {
@@ -3678,7 +3828,7 @@ void NetworkDiagnosticPanel::onDnsComparisonComplete(DnsServerComparison compari
     m_dnsStatusLabel->setText(
         comparison.allAgree
             ? tr("All servers agree")
-            : tr("DNS servers returned different results -- possible DNS hijacking or caching"));
+            : tr("DNS servers returned different results - possible DNS hijacking or caching"));
 }
 
 // -- Port Scanner --
@@ -3688,17 +3838,21 @@ namespace {
 struct PortScanRange {
     uint16_t start = 0;
     uint16_t end = 0;
-    bool hasPrimary = false;
+    bool has_primary = false;
 };
 
-QVector<uint16_t> getPresetPorts(int presetIdx) {
-    if (presetIdx <= 0) {
+QVector<uint16_t> getPresetPorts(int preset_idx) {
+    // Index 0 is the combo's "Custom" entry, so the preset list starts at 1.
+    if (preset_idx <= 0) {
         return {};
     }
 
     const auto presets = sak::PortScanner::getPresets();
-    const int index = presetIdx - 1;
-    if (index < 0 || index >= presets.size()) {
+    // Only the upper bound is checked: the guard above already established preset_idx >= 1, so
+    // index >= 0 is not something this function can observe. The redundant lower-bound test read
+    // as defence and was dead.
+    const int index = preset_idx - 1;
+    if (index >= presets.size()) {
         return {};
     }
     return presets[index].ports;
@@ -3714,10 +3868,10 @@ void handleParsedRange(QVector<uint16_t>& ports,
                        PortScanRange& range,
                        uint16_t start,
                        uint16_t end) {
-    if (!range.hasPrimary) {
+    if (!range.has_primary) {
         range.start = start;
         range.end = end;
-        range.hasPrimary = true;
+        range.has_primary = true;
         return;
     }
     appendPortRange(ports, start, end);
@@ -3759,15 +3913,15 @@ bool parseSinglePort(const QString& text, QVector<uint16_t>& ports) {
     return true;
 }
 
-QVector<uint16_t> parseCustomPorts(const QString& customText, PortScanRange& range) {
-    if (customText.isEmpty()) {
+QVector<uint16_t> parseCustomPorts(const QString& custom_text, PortScanRange& range) {
+    if (custom_text.isEmpty()) {
         static const QVector<uint16_t> kDefaultCustomScanPorts = {
             21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 3306, 3389, 5432, 8080, 8443};
         return kDefaultCustomScanPorts;
     }
 
     QVector<uint16_t> ports;
-    const auto parts = customText.split(',', Qt::SkipEmptyParts);
+    const auto parts = custom_text.split(',', Qt::SkipEmptyParts);
     for (const auto& part : parts) {
         const auto trimmed = part.trimmed();
         if (trimmed.isEmpty()) {
@@ -3794,22 +3948,22 @@ void NetworkDiagnosticPanel::onPortPresetChanged(int index) {
         return;
     }
 
-    const auto allPresets = PortScanner::getPresets();
-    const int presetIndex = index - 1;
-    if (presetIndex < 0 || presetIndex >= allPresets.size()) {
+    const auto all_presets = PortScanner::getPresets();
+    const int preset_index = index - 1;
+    if (preset_index < 0 || preset_index >= all_presets.size()) {
         m_portCustomRange->setEnabled(true);
         m_portCustomRange->clear();
         return;
     }
 
-    const auto& preset = allPresets[presetIndex];
-    QStringList portStrs;
-    portStrs.reserve(preset.ports.size());
+    const auto& preset = all_presets[preset_index];
+    QStringList port_strs;
+    port_strs.reserve(preset.ports.size());
     for (auto port : preset.ports) {
-        portStrs.append(QString::number(port));
+        port_strs.append(QString::number(port));
     }
 
-    m_portCustomRange->setText(portStrs.join(QStringLiteral(",")));
+    m_portCustomRange->setText(port_strs.join(QStringLiteral(",")));
     m_portCustomRange->setEnabled(false);
 }
 
@@ -3828,23 +3982,24 @@ void NetworkDiagnosticPanel::onStartPortScan() {
     m_portProgress->setVisible(true);
     m_portStartBtn->setEnabled(false);
     m_portStopBtn->setEnabled(true);
+    m_portEmptyState->setLoading(tr("Scanning target ports..."));
 
     PortScanRange range;
     QVector<uint16_t> ports;
-    const int presetIdx = m_portPreset->currentIndex();
-    if (presetIdx > 0) {
-        ports = getPresetPorts(presetIdx);
+    const int preset_idx = m_portPreset->currentIndex();
+    if (preset_idx > 0) {
+        ports = getPresetPorts(preset_idx);
     } else {
         ports = parseCustomPorts(m_portCustomRange->text().trimmed(), range);
     }
 
-    m_controller->scanPorts({target,
-                             ports,
-                             range.start,
-                             range.end,
-                             m_portTimeout->value(),
-                             m_portConcurrent->value(),
-                             m_portBannerGrab->isChecked()});
+    m_controller->scanPorts({.target = target,
+                             .ports = ports,
+                             .range_start = range.start,
+                             .range_end = range.end,
+                             .timeout_ms = m_portTimeout->value(),
+                             .max_concurrent = m_portConcurrent->value(),
+                             .grab_banners = m_portBannerGrab->isChecked()});
 }
 
 void NetworkDiagnosticPanel::onStopPortScan() {
@@ -3853,6 +4008,7 @@ void NetworkDiagnosticPanel::onStopPortScan() {
     m_portStartBtn->setEnabled(true);
     m_portStopBtn->setEnabled(false);
     m_portProgress->setVisible(false);
+    m_portEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onPortScanned(PortScanResult result) {
@@ -3861,24 +4017,26 @@ void NetworkDiagnosticPanel::onPortScanned(PortScanResult result) {
     if (result.state != PortScanResult::State::Open) {
         return;
     }
+    // First open port arrived: lift the loading overlay so it never masks results.
+    m_portEmptyState->clearLoading();
 
     m_portTable->setSortingEnabled(false);
     const int row = m_portTable->rowCount();
     m_portTable->insertRow(row);
 
-    m_portTable->setItem(row, kPortColumnPort, new QTableWidgetItem(QString::number(result.port)));
+    m_portTable->setItem(row, KPortColumnPort, new QTableWidgetItem(QString::number(result.port)));
 
-    auto* stateItem = new QTableWidgetItem(tr("Open"));
-    stateItem->setForeground(QColor(ui::kColorSuccess));
-    m_portTable->setItem(row, kPortColumnState, stateItem);
+    auto* state_item = new QTableWidgetItem(tr("Open"));
+    state_item->setForeground(ui::themedColor(ui::kColorSuccess));
+    m_portTable->setItem(row, KPortColumnState, state_item);
 
-    m_portTable->setItem(row, kPortColumnService, new QTableWidgetItem(result.serviceName));
+    m_portTable->setItem(row, KPortColumnService, new QTableWidgetItem(result.serviceName));
     m_portTable->setItem(row,
-                         kPortColumnResponse,
+                         KPortColumnResponse,
                          new QTableWidgetItem(QStringLiteral("%1").arg(
                              result.responseTimeMs, 0, 'f', kDecimalPrecisionOne)));
     m_portTable->setItem(row,
-                         kPortColumnBanner,
+                         KPortColumnBanner,
                          new QTableWidgetItem(result.banner.left(kPortBannerPreviewChars)));
 
     m_portTable->setSortingEnabled(true);
@@ -3899,30 +4057,36 @@ void NetworkDiagnosticPanel::onPortScanComplete(QVector<PortScanResult> results)
     m_portStartBtn->setEnabled(true);
     m_portStopBtn->setEnabled(false);
     m_portProgress->setVisible(false);
+    m_portEmptyState->clearLoading();
 
-    int openCount = 0;
-    int closedCount = 0;
-    int filteredCount = 0;
+    int open_count = 0;
+    int closed_count = 0;
+    int filtered_count = 0;
     for (const auto& r : results) {
         switch (r.state) {
         case PortScanResult::State::Open:
-            ++openCount;
+            ++open_count;
             break;
         case PortScanResult::State::Closed:
-            ++closedCount;
+            ++closed_count;
             break;
         case PortScanResult::State::Filtered:
-            ++filteredCount;
+            ++filtered_count;
             break;
         default:
             break;
         }
     }
 
-    m_portSummaryLabel->setText(QStringLiteral("Complete: %1 open, %2 closed, %3 filtered")
-                                    .arg(openCount)
-                                    .arg(closedCount)
-                                    .arg(filteredCount));
+    const QString summary = QStringLiteral("Complete: %1 open, %2 closed, %3 filtered")
+                                .arg(open_count)
+                                .arg(closed_count)
+                                .arg(filtered_count);
+    m_portSummaryLabel->setText(summary);
+    // The scan's start message ("Scanning ports on 127.0.0.1...") stayed in the status bar after
+    // the scan ended (review 3, S22).
+    Q_EMIT statusMessage(QStringLiteral("Port scan %1").arg(summary.toLower()),
+                         sak::kTimerStatusMessageMs);
 }
 
 // -- Bandwidth --
@@ -3938,14 +4102,29 @@ void NetworkDiagnosticPanel::onStartBandwidthTest() {
     }
 
     m_bwResultLabel->setText(tr("Running bandwidth test..."));
-    m_bwTestBtn->setEnabled(false);
+    setBandwidthRunButtons(false);
+    m_bwStopBtn->setEnabled(true);
 
-    m_controller->runBandwidthTest({server,
-                                    static_cast<uint16_t>(m_bwPort->value()),
-                                    m_bwDuration->value(),
-                                    m_bwStreams->value(),
-                                    m_bwBidirectional->isChecked(),
-                                    false});  // TCP mode
+    m_controller->runBandwidthTest({.server_addr = server,
+                                    .port = static_cast<uint16_t>(m_bwPort->value()),
+                                    .duration_sec = m_bwDuration->value(),
+                                    .streams = m_bwStreams->value(),
+                                    .bidirectional = m_bwBidirectional->isChecked(),
+                                    .udp = false});  // TCP mode
+}
+
+void NetworkDiagnosticPanel::setBandwidthRunButtons(bool enabled) {
+    // iPerf3 and the HTTP speed test share one worker, and the controller refuses to start one
+    // while the other runs, so neither can be offered until the running one has finished.
+    m_bwTestBtn->setEnabled(enabled);
+    m_httpSpeedBtn->setEnabled(enabled);
+}
+
+void NetworkDiagnosticPanel::onStopBandwidthTest() {
+    Q_ASSERT(m_controller);
+    // The run buttons come back when the worker has really stopped (resetToolButtons).
+    m_bwStopBtn->setEnabled(false);
+    m_controller->cancel();
 }
 
 void NetworkDiagnosticPanel::onStartIperfServer() {
@@ -3957,16 +4136,30 @@ void NetworkDiagnosticPanel::onStopIperfServer() {
 }
 
 void NetworkDiagnosticPanel::onRunHttpSpeedTest() {
-    m_httpSpeedBtn->setEnabled(false);
+    setBandwidthRunButtons(false);
+    m_httpSpeedStopBtn->setEnabled(true);
     m_httpSpeedLabel->setText(tr("Running HTTP speed test..."));
     m_controller->runHttpSpeedTest();
+}
+
+void NetworkDiagnosticPanel::onStopHttpSpeedTest() {
+    Q_ASSERT(m_controller);
+    // The run buttons come back when the worker has really stopped (resetToolButtons).
+    m_httpSpeedStopBtn->setEnabled(false);
+    m_controller->cancel();
 }
 
 void NetworkDiagnosticPanel::onBandwidthComplete(BandwidthTestResult result) {
     Q_ASSERT(m_bwTestBtn);
     Q_ASSERT(m_bwResultLabel);
-    m_bwTestBtn->setEnabled(true);
+    setBandwidthRunButtons(true);
+    m_bwStopBtn->setEnabled(false);
 
+    // A stopped or failed run completes with an empty result: there is nothing to show as a speed.
+    if (!result.hasMeasurement()) {
+        m_bwResultLabel->setText(noBandwidthResultText());
+        return;
+    }
     m_bwResultLabel->setText(QStringLiteral("<b>Download:</b> %1 Mbps | <b>Upload:</b> %2 Mbps<br>"
                                             "<b>Jitter:</b> %3 ms | <b>Packet Loss:</b> %4% | "
                                             "<b>Retransmits:</b> %5")
@@ -3978,33 +4171,50 @@ void NetworkDiagnosticPanel::onBandwidthComplete(BandwidthTestResult result) {
 }
 
 void NetworkDiagnosticPanel::onHttpSpeedComplete(double down, double up, double latency) {
-    m_httpSpeedBtn->setEnabled(true);
+    Q_EMIT statusMessage(tr("HTTP speed test finished"), sak::kTimerStatusMessageMs);
+    setBandwidthRunButtons(true);
+    m_httpSpeedStopBtn->setEnabled(false);
 
+    // A stopped or failed run completes with zeros, which are not a measured speed.
+    if (down <= 0.0 && up <= 0.0) {
+        m_httpSpeedLabel->setText(noBandwidthResultText());
+        return;
+    }
+    // A negative latency means the probe could not measure one.
+    const QString latency_text =
+        latency < 0.0 ? tr("unknown")
+                      : QStringLiteral("%1 ms").arg(latency, 0, 'f', kDecimalPrecisionOne);
     m_httpSpeedLabel->setText(QStringLiteral("<b>Download:</b> %1 Mbps | <b>Upload:</b> %2 Mbps | "
-                                             "<b>Latency:</b> %3 ms")
+                                             "<b>Latency:</b> %3")
                                   .arg(down, 0, 'f', kDecimalPrecisionTwo)
                                   .arg(up, 0, 'f', kDecimalPrecisionTwo)
-                                  .arg(latency, 0, 'f', kDecimalPrecisionOne));
+                                  .arg(latency_text));
+}
+
+QString NetworkDiagnosticPanel::noBandwidthResultText() const {
+    return tr("No result. The test was stopped or could not finish.");
 }
 
 // -- WiFi --
 
 void NetworkDiagnosticPanel::onScanWiFi() {
     if (!m_controller->isWiFiAvailable()) {
-        Q_EMIT statusMessage(tr("WiFi hardware not available"), sak::kTimerStatusMessageMs);
+        Q_EMIT statusMessage(tr("Wi-Fi hardware not available"), sak::kTimerStatusMessageMs);
         return;
     }
     m_wifiScanBtn->setEnabled(false);
+    m_wifiEmptyState->setLoading(tr("Scanning for Wi-Fi networks..."));
     m_controller->scanWiFi();
 }
 
 void NetworkDiagnosticPanel::onStartContinuousWiFi() {
     if (!m_controller->isWiFiAvailable()) {
-        Q_EMIT statusMessage(tr("WiFi hardware not available"), sak::kTimerStatusMessageMs);
+        Q_EMIT statusMessage(tr("Wi-Fi hardware not available"), sak::kTimerStatusMessageMs);
         return;
     }
     m_wifiContBtn->setEnabled(false);
     m_wifiStopBtn->setEnabled(true);
+    m_wifiEmptyState->setLoading(tr("Scanning for Wi-Fi networks..."));
     m_controller->startContinuousWiFiScan(sak::kTimerRefreshMs);
 }
 
@@ -4012,12 +4222,14 @@ void NetworkDiagnosticPanel::onStopContinuousWiFi() {
     m_controller->stopContinuousWiFiScan();
     m_wifiContBtn->setEnabled(true);
     m_wifiStopBtn->setEnabled(false);
+    m_wifiEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onWiFiScanComplete(QVector<WiFiNetworkInfo> networks) {
     Q_ASSERT(m_wifiScanBtn);
     Q_ASSERT(m_wifiTable);
     m_wifiScanBtn->setEnabled(true);
+    m_wifiEmptyState->clearLoading();
     m_wifiTable->setSortingEnabled(false);
     m_wifiTable->setRowCount(0);
 
@@ -4025,36 +4237,36 @@ void NetworkDiagnosticPanel::onWiFiScanComplete(QVector<WiFiNetworkInfo> network
         const int row = m_wifiTable->rowCount();
         m_wifiTable->insertRow(row);
 
-        auto* ssidItem = new QTableWidgetItem(net.ssid);
+        auto* ssid_item = new QTableWidgetItem(net.ssid);
         if (net.isConnected) {
-            QFont f = ssidItem->font();
+            QFont f = ssid_item->font();
             f.setBold(true);
-            ssidItem->setFont(f);
-            ssidItem->setText(QStringLiteral("%1 *").arg(net.ssid));
+            ssid_item->setFont(f);
+            ssid_item->setText(QStringLiteral("%1 *").arg(net.ssid));
         }
-        m_wifiTable->setItem(row, 0, ssidItem);
+        m_wifiTable->setItem(row, 0, ssid_item);
 
-        m_wifiTable->setItem(row, kWifiColumnBssid, new QTableWidgetItem(net.bssid));
+        m_wifiTable->setItem(row, KWifiColumnBssid, new QTableWidgetItem(net.bssid));
 
-        auto* signalItem = new QTableWidgetItem(QStringLiteral("%1 dBm").arg(net.rssiDbm));
+        auto* signal_item = new QTableWidgetItem(QStringLiteral("%1 dBm").arg(net.rssiDbm));
         if (net.rssiDbm >= kWifiStrongSignalDbm) {
-            signalItem->setForeground(QColor(ui::kColorSuccess));
+            signal_item->setForeground(ui::themedColor(ui::kColorSuccess));
         } else if (net.rssiDbm >= kWifiUsableSignalDbm) {
-            signalItem->setForeground(QColor(ui::kColorWarning));
+            signal_item->setForeground(ui::themedColor(ui::kColorWarning));
         } else {
-            signalItem->setForeground(QColor(ui::kColorError));
+            signal_item->setForeground(ui::themedColor(ui::kColorError));
         }
-        m_wifiTable->setItem(row, kWifiColumnSignal, signalItem);
+        m_wifiTable->setItem(row, KWifiColumnSignal, signal_item);
 
         m_wifiTable->setItem(row,
-                             kWifiColumnQuality,
+                             KWifiColumnQuality,
                              new QTableWidgetItem(QStringLiteral("%1%").arg(net.signalQuality)));
         m_wifiTable->setItem(row,
-                             kWifiColumnChannel,
+                             KWifiColumnChannel,
                              new QTableWidgetItem(QString::number(net.channelNumber)));
-        m_wifiTable->setItem(row, kWifiColumnBand, new QTableWidgetItem(net.band));
-        m_wifiTable->setItem(row, kWifiColumnSecurity, new QTableWidgetItem(net.authentication));
-        m_wifiTable->setItem(row, kWifiColumnVendor, new QTableWidgetItem(net.apVendor));
+        m_wifiTable->setItem(row, KWifiColumnBand, new QTableWidgetItem(net.band));
+        m_wifiTable->setItem(row, KWifiColumnSecurity, new QTableWidgetItem(net.authentication));
+        m_wifiTable->setItem(row, KWifiColumnVendor, new QTableWidgetItem(net.apVendor));
     }
 
     m_wifiTable->setSortingEnabled(true);
@@ -4067,6 +4279,7 @@ void NetworkDiagnosticPanel::onStartConnectionMonitor() {
     Q_ASSERT(m_connStopBtn);
     m_connStartBtn->setEnabled(false);
     m_connStopBtn->setEnabled(true);
+    m_connEmptyState->setLoading(tr("Loading active connections..."));
 
     m_controller->startConnectionMonitor(m_connRefreshRate->value(),
                                          m_connShowTcp->isChecked(),
@@ -4079,19 +4292,22 @@ void NetworkDiagnosticPanel::onStopConnectionMonitor() {
     m_controller->stopConnectionMonitor();
     m_connStartBtn->setEnabled(true);
     m_connStopBtn->setEnabled(false);
+    m_connEmptyState->clearLoading();
 }
 
 void NetworkDiagnosticPanel::onConnectionsUpdated(QVector<ConnectionInfo> connections) {
     Q_ASSERT(m_connTable);
     Q_ASSERT(m_connSummaryLabel);
+    // Lift the loading overlay on the first monitor update so data is visible.
+    m_connEmptyState->clearLoading();
     m_connTable->setSortingEnabled(false);
-    m_connTable->setRowCount(connections.size());
+    m_connTable->setRowCount(static_cast<int>(connections.size()));
 
-    int tcpCount = 0;
-    int udpCount = 0;
+    int tcp_count = 0;
+    int udp_count = 0;
     int established = 0;
 
-    auto setOrCreate = [this](int row, int col, const QString& text) {
+    auto set_or_create = [this](int row, int col, const QString& text) {
         if (auto* existing = m_connTable->item(row, col)) {
             existing->setText(text);
         } else {
@@ -4099,12 +4315,12 @@ void NetworkDiagnosticPanel::onConnectionsUpdated(QVector<ConnectionInfo> connec
         }
     };
 
-    auto stateColor = [](const QString& state) -> QColor {
+    auto state_color = [](const QString& state) -> QColor {
         if (state == QStringLiteral("ESTABLISHED")) {
-            return QColor(ui::kColorSuccess);
+            return ui::themedColor(ui::kColorSuccess);
         }
         if (state == QStringLiteral("CLOSE_WAIT") || state == QStringLiteral("TIME_WAIT")) {
-            return QColor(ui::kColorWarning);
+            return ui::themedColor(ui::kColorWarning);
         }
         return {};
     };
@@ -4112,30 +4328,30 @@ void NetworkDiagnosticPanel::onConnectionsUpdated(QVector<ConnectionInfo> connec
     for (int i = 0; i < connections.size(); ++i) {
         const auto& conn = connections[i];
         const bool is_tcp = (conn.protocol == ConnectionInfo::Protocol::TCP);
-        is_tcp ? ++tcpCount : ++udpCount;
+        is_tcp ? ++tcp_count : ++udp_count;
         if (conn.state == QStringLiteral("ESTABLISHED")) {
             ++established;
         }
 
-        setOrCreate(i,
-                    kConnectionColumnProtocol,
-                    is_tcp ? QStringLiteral("TCP") : QStringLiteral("UDP"));
-        setOrCreate(i, kConnectionColumnLocalAddress, conn.localAddress);
-        setOrCreate(i, kConnectionColumnLocalPort, QString::number(conn.localPort));
-        setOrCreate(i, kConnectionColumnRemoteAddress, conn.remoteAddress);
-        setOrCreate(i, kConnectionColumnRemotePort, QString::number(conn.remotePort));
+        set_or_create(i,
+                      KConnectionColumnProtocol,
+                      is_tcp ? QStringLiteral("TCP") : QStringLiteral("UDP"));
+        set_or_create(i, KConnectionColumnLocalAddress, conn.localAddress);
+        set_or_create(i, KConnectionColumnLocalPort, QString::number(conn.localPort));
+        set_or_create(i, KConnectionColumnRemoteAddress, conn.remoteAddress);
+        set_or_create(i, KConnectionColumnRemotePort, QString::number(conn.remotePort));
 
-        setOrCreate(i, kConnectionColumnState, conn.state);
-        m_connTable->item(i, kConnectionColumnState)->setForeground(stateColor(conn.state));
+        set_or_create(i, KConnectionColumnState, conn.state);
+        setItemForeground(m_connTable->item(i, KConnectionColumnState), state_color(conn.state));
 
-        setOrCreate(i, kConnectionColumnProcess, conn.processName);
+        set_or_create(i, KConnectionColumnProcess, conn.processName);
     }
 
     m_connTable->setSortingEnabled(true);
     m_connSummaryLabel->setText(QStringLiteral("Total: %1 | TCP: %2 | UDP: %3 | Established: %4")
                                     .arg(connections.size())
-                                    .arg(tcpCount)
-                                    .arg(udpCount)
+                                    .arg(tcp_count)
+                                    .arg(udp_count)
                                     .arg(established));
 }
 
@@ -4147,6 +4363,7 @@ void NetworkDiagnosticPanel::onAuditFirewall() {
     m_fwConflictText->clear();
     m_fwGapText->clear();
     m_fwSummaryLabel->setText(tr("Auditing..."));
+    m_fwRuleEmptyState->setLoading(tr("Running firewall audit..."));
     m_controller->auditFirewall();
 }
 
@@ -4154,8 +4371,10 @@ void NetworkDiagnosticPanel::onFirewallAuditComplete(QVector<FirewallRule> rules
                                                      QVector<FirewallConflict> conflicts,
                                                      QVector<FirewallGap> gaps) {
     m_cachedFwRules = rules;
+    Q_EMIT statusMessage(tr("Firewall audit finished"), sak::kTimerStatusMessageMs);
     filterFirewallRules();
     m_fwAuditBtn->setEnabled(true);
+    m_fwRuleEmptyState->clearLoading();
 
     // Populate conflicts
     if (conflicts.isEmpty()) {
@@ -4232,6 +4451,8 @@ QString protocolToString(FirewallRule::Protocol protocol) {
         return QStringLiteral("ICMPv6");
     case FirewallRule::Protocol::Any:
         return QStringLiteral("Any");
+    case FirewallRule::Protocol::Other:
+        return QStringLiteral("Other");
     }
     return QStringLiteral("Unknown");
 }
@@ -4260,8 +4481,7 @@ void NetworkDiagnosticPanel::filterFirewallRules() {
 
     QVector<FirewallRule> filtered;
     filtered.reserve(m_cachedFwRules.size());
-    std::copy_if(
-        m_cachedFwRules.begin(), m_cachedFwRules.end(), std::back_inserter(filtered), matches);
+    std::ranges::copy_if(m_cachedFwRules, std::back_inserter(filtered), matches);
 
     populateFirewallTable(filtered);
 }
@@ -4270,35 +4490,35 @@ void NetworkDiagnosticPanel::populateFirewallTable(const QVector<FirewallRule>& 
     Q_ASSERT(m_fwRuleTable);
 
     m_fwRuleTable->setSortingEnabled(false);
-    m_fwRuleTable->setRowCount(filtered.size());
+    m_fwRuleTable->setRowCount(static_cast<int>(filtered.size()));
 
     for (int i = 0; i < filtered.size(); ++i) {
         const auto& r = filtered[i];
-        auto* enabledItem = new QTableWidgetItem(r.enabled ? tr("Yes") : tr("No"));
+        auto* enabled_item = new QTableWidgetItem(r.enabled ? tr("Yes") : tr("No"));
         if (!r.enabled) {
-            enabledItem->setForeground(QColor(ui::kColorTextMuted));
+            enabled_item->setForeground(ui::themedColor(ui::kColorTextMuted));
         }
-        m_fwRuleTable->setItem(i, kFirewallColumnEnabled, enabledItem);
-        m_fwRuleTable->setItem(i, kFirewallColumnName, new QTableWidgetItem(r.name));
+        m_fwRuleTable->setItem(i, KFirewallColumnEnabled, enabled_item);
+        m_fwRuleTable->setItem(i, KFirewallColumnName, new QTableWidgetItem(r.name));
 
-        const auto dirStr = (r.direction == FirewallRule::Direction::Inbound) ? tr("Inbound")
-                                                                              : tr("Outbound");
-        m_fwRuleTable->setItem(i, kFirewallColumnDirection, new QTableWidgetItem(dirStr));
+        const auto dir_str = (r.direction == FirewallRule::Direction::Inbound) ? tr("Inbound")
+                                                                               : tr("Outbound");
+        m_fwRuleTable->setItem(i, KFirewallColumnDirection, new QTableWidgetItem(dir_str));
 
-        auto* actionItem = new QTableWidgetItem(
+        auto* action_item = new QTableWidgetItem(
             (r.action == FirewallRule::Action::Allow) ? tr("Allow") : tr("Block"));
-        actionItem->setForeground((r.action == FirewallRule::Action::Allow)
-                                      ? QColor(ui::kColorSuccess)
-                                      : QColor(ui::kColorError));
-        m_fwRuleTable->setItem(i, kFirewallColumnAction, actionItem);
+        action_item->setForeground((r.action == FirewallRule::Action::Allow)
+                                       ? ui::themedColor(ui::kColorSuccess)
+                                       : ui::themedColor(ui::kColorError));
+        m_fwRuleTable->setItem(i, KFirewallColumnAction, action_item);
 
         m_fwRuleTable->setItem(i,
-                               kFirewallColumnProtocol,
+                               KFirewallColumnProtocol,
                                new QTableWidgetItem(protocolToString(r.protocol)));
-        m_fwRuleTable->setItem(i, kFirewallColumnLocalPorts, new QTableWidgetItem(r.localPorts));
-        m_fwRuleTable->setItem(i, kFirewallColumnRemotePorts, new QTableWidgetItem(r.remotePorts));
+        m_fwRuleTable->setItem(i, KFirewallColumnLocalPorts, new QTableWidgetItem(r.localPorts));
+        m_fwRuleTable->setItem(i, KFirewallColumnRemotePorts, new QTableWidgetItem(r.remotePorts));
         m_fwRuleTable->setItem(i,
-                               kFirewallColumnApplication,
+                               KFirewallColumnApplication,
                                new QTableWidgetItem(r.applicationPath));
     }
     m_fwRuleTable->setSortingEnabled(true);
@@ -4313,6 +4533,7 @@ void NetworkDiagnosticPanel::onDiscoverShares() {
         hostname = QStringLiteral("localhost");
     }
     m_shareTable->setRowCount(0);
+    m_shareEmptyState->setLoading(tr("Enumerating network shares..."));
     m_controller->discoverShares(hostname);
 }
 
@@ -4320,41 +4541,44 @@ void NetworkDiagnosticPanel::onSharesDiscovered(QVector<NetworkShareInfo> shares
     Q_ASSERT(m_shareDiscoverBtn);
     Q_ASSERT(m_shareTable);
     m_shareDiscoverBtn->setEnabled(true);
+    m_shareEmptyState->clearLoading();
 
-    m_shareTable->setRowCount(shares.size());
+    m_shareTable->setRowCount(static_cast<int>(shares.size()));
 
     for (int i = 0; i < shares.size(); ++i) {
         const auto& s = shares[i];
-        m_shareTable->setItem(i, kShareColumnName, new QTableWidgetItem(s.shareName));
+        m_shareTable->setItem(i, KShareColumnName, new QTableWidgetItem(s.shareName));
 
-        auto typeStr = QStringLiteral("Disk");
+        auto type_str = QStringLiteral("Disk");
         switch (s.type) {
         case NetworkShareInfo::ShareType::Printer:
-            typeStr = QStringLiteral("Printer");
+            type_str = QStringLiteral("Printer");
             break;
         case NetworkShareInfo::ShareType::Device:
-            typeStr = QStringLiteral("Device");
+            type_str = QStringLiteral("Device");
             break;
         case NetworkShareInfo::ShareType::IPC:
-            typeStr = QStringLiteral("IPC");
+            type_str = QStringLiteral("IPC");
             break;
         case NetworkShareInfo::ShareType::Special:
-            typeStr = QStringLiteral("Special");
+            type_str = QStringLiteral("Special");
             break;
         default:
             break;
         }
-        m_shareTable->setItem(i, kShareColumnType, new QTableWidgetItem(typeStr));
+        m_shareTable->setItem(i, KShareColumnType, new QTableWidgetItem(type_str));
 
-        auto* readItem = new QTableWidgetItem(s.canRead ? tr("Yes") : tr("No"));
-        readItem->setForeground(s.canRead ? QColor(ui::kColorSuccess) : QColor(ui::kColorError));
-        m_shareTable->setItem(i, kShareColumnRead, readItem);
+        auto* read_item = new QTableWidgetItem(s.canRead ? tr("Yes") : tr("No"));
+        read_item->setForeground(s.canRead ? ui::themedColor(ui::kColorSuccess)
+                                           : ui::themedColor(ui::kColorError));
+        m_shareTable->setItem(i, KShareColumnRead, read_item);
 
-        auto* writeItem = new QTableWidgetItem(s.canWrite ? tr("Yes") : tr("No"));
-        writeItem->setForeground(s.canWrite ? QColor(ui::kColorSuccess) : QColor(ui::kColorError));
-        m_shareTable->setItem(i, kShareColumnWrite, writeItem);
+        auto* write_item = new QTableWidgetItem(s.canWrite ? tr("Yes") : tr("No"));
+        write_item->setForeground(s.canWrite ? ui::themedColor(ui::kColorSuccess)
+                                             : ui::themedColor(ui::kColorError));
+        m_shareTable->setItem(i, KShareColumnWrite, write_item);
 
-        m_shareTable->setItem(i, kShareColumnRemark, new QTableWidgetItem(s.remark));
+        m_shareTable->setItem(i, KShareColumnRemark, new QTableWidgetItem(s.remark));
     }
 }
 
@@ -4386,14 +4610,13 @@ void NetworkDiagnosticPanel::onRunLanTransferTest() {
                                      m_lanBlockSize->value());
 }
 
-void NetworkDiagnosticPanel::onLanTransferProgress(double currentMbps,
-                                                   double elapsedSec,
-                                                   qint64 totalBytes) {
-    m_lanResultLabel->setText(
-        QStringLiteral("Running: %1 Mbps | %2 s | %3 MB transferred")
-            .arg(currentMbps, 0, 'f', 1)
-            .arg(elapsedSec, 0, 'f', 0)
-            .arg(totalBytes / sak::kBytesPerMBf, 0, 'f', kDecimalPrecisionOne));
+void NetworkDiagnosticPanel::onLanTransferProgress(double current_mbps,
+                                                   double elapsed_sec,
+                                                   qint64 total_bytes) {
+    m_lanResultLabel->setText(QStringLiteral("Running: %1 Mbps | %2 s | %3 transferred")
+                                  .arg(current_mbps, 0, 'f', 1)
+                                  .arg(elapsed_sec, 0, 'f', 0)
+                                  .arg(sak::formatBytes(total_bytes)));
 }
 
 void NetworkDiagnosticPanel::onLanTransferComplete(LanTransferResult result) {
@@ -4403,88 +4626,92 @@ void NetworkDiagnosticPanel::onLanTransferComplete(LanTransferResult result) {
     m_lanResultLabel->setText(
         QStringLiteral("<b>%1 Complete</b><br>"
                        "Remote: %2<br>"
-                       "Transferred: %3 MB in %4 s<br>"
+                       "Transferred: %3 in %4 s<br>"
                        "Average Speed: <b>%5 Mbps</b> (%6 MB/s)<br>"
                        "Peak Speed: %7 Mbps")
             .arg(result.isUpload ? tr("Upload") : tr("Download"))
-            .arg(result.remoteAddress)
-            .arg(result.bytesTransferred / sak::kBytesPerMBf, 0, 'f', kDecimalPrecisionOne)
+            // remoteAddress is a peer-supplied string echoed into a rich-text label.
+            .arg(result.remoteAddress.toHtmlEscaped())
+            .arg(sak::formatBytes(result.bytesTransferred))
             .arg(result.durationSec, 0, 'f', 1)
             .arg(result.avgSpeedMbps, 0, 'f', 1)
             .arg(result.avgSpeedMbps / kBitsPerByteF, 0, 'f', kDecimalPrecisionOne)
             .arg(result.peakSpeedMbps, 0, 'f', 1));
 }
 
-// -- Controller State --
-
-void NetworkDiagnosticPanel::onStateChanged(int newState) {
-    Q_UNUSED(newState);
-    // With concurrent operations, per-operation button management is handled
-    // by operationFinished and the individual completion signal handlers.
-    // This slot is kept for backward compatibility but does not re-enable
-    // all buttons globally — that would interfere with other running ops.
-}
-
-void NetworkDiagnosticPanel::resetDiagnosticButtons(int finishedState) {
+void NetworkDiagnosticPanel::resetDiagnosticButtons(int finished_state) {
     using S = NetworkDiagnosticController::State;
-    const auto state = static_cast<S>(finishedState);
+    const auto state = static_cast<S>(finished_state);
 
+    // Also lift any loading overlay here: this is the shared finished sink reached on
+    // success, error, and cancel, so the overlay can never be left stranded.
     switch (state) {
     case S::ScanningAdapters:
         m_refreshBtn->setEnabled(true);
+        m_adapterEmptyState->clearLoading();
         break;
     case S::RunningPing:
         m_pingStartBtn->setEnabled(true);
         m_pingStopBtn->setEnabled(false);
+        m_pingEmptyState->clearLoading();
         break;
     case S::RunningTraceroute:
         m_traceStartBtn->setEnabled(true);
         m_traceStopBtn->setEnabled(false);
+        m_traceEmptyState->clearLoading();
         break;
     case S::RunningMtr:
         m_mtrStartBtn->setEnabled(true);
         m_mtrStopBtn->setEnabled(false);
+        m_mtrEmptyState->clearLoading();
         break;
     case S::RunningDnsQuery:
         m_dnsQueryBtn->setEnabled(true);
         m_dnsReverseBtn->setEnabled(true);
         m_dnsCompareBtn->setEnabled(true);
         m_dnsFlushBtn->setEnabled(true);
+        m_dnsEmptyState->clearLoading();
         break;
     case S::ScanningPorts:
         m_portStartBtn->setEnabled(true);
         m_portStopBtn->setEnabled(false);
+        m_portEmptyState->clearLoading();
         break;
     default:
         break;
     }
 }
 
-void NetworkDiagnosticPanel::resetToolButtons(int finishedState) {
+void NetworkDiagnosticPanel::resetToolButtons(int finished_state) {
     using S = NetworkDiagnosticController::State;
-    const auto state = static_cast<S>(finishedState);
+    const auto state = static_cast<S>(finished_state);
 
     switch (state) {
     case S::RunningBandwidthTest:
-        m_bwTestBtn->setEnabled(true);
-        m_httpSpeedBtn->setEnabled(true);
-        m_bwResultLabel->clear();
-        m_httpSpeedLabel->clear();
+        // Only the buttons. This runs right after the completion handlers have written the
+        // result, and the result is what the person ran the test to read.
+        setBandwidthRunButtons(true);
+        m_bwStopBtn->setEnabled(false);
+        m_httpSpeedStopBtn->setEnabled(false);
         break;
     case S::ScanningWiFi:
         m_wifiScanBtn->setEnabled(true);
         m_wifiContBtn->setEnabled(true);
         m_wifiStopBtn->setEnabled(false);
+        m_wifiEmptyState->clearLoading();
         break;
     case S::MonitoringConnections:
         m_connStartBtn->setEnabled(true);
         m_connStopBtn->setEnabled(false);
+        m_connEmptyState->clearLoading();
         break;
     case S::AuditingFirewall:
         m_fwAuditBtn->setEnabled(true);
+        m_fwRuleEmptyState->clearLoading();
         break;
     case S::BrowsingShares:
         m_shareDiscoverBtn->setEnabled(true);
+        m_shareEmptyState->clearLoading();
         break;
     case S::RunningLanTransfer:
         m_lanTestBtn->setEnabled(true);
@@ -4494,9 +4721,9 @@ void NetworkDiagnosticPanel::resetToolButtons(int finishedState) {
     }
 }
 
-void NetworkDiagnosticPanel::onOperationFinished(int finishedState) {
-    resetDiagnosticButtons(finishedState);
-    resetToolButtons(finishedState);
+void NetworkDiagnosticPanel::onOperationFinished(int finished_state) {
+    resetDiagnosticButtons(finished_state);
+    resetToolButtons(finished_state);
 }
 
 void NetworkDiagnosticPanel::onError(QString error) {
@@ -4511,63 +4738,203 @@ void NetworkDiagnosticPanel::onError(QString error) {
 }
 
 // ===================================================================
-// Quick Actions — Reset Network
+// Report
+// ===================================================================
+
+namespace {
+
+struct NetworkReportDetails {
+    QString technician;
+    QString ticket;
+    QString notes;
+};
+
+/// The same three fields, words and accessible names as the Diagnostics Scan Report, asked for
+/// when a report is made so the panel does not carry them on screen the rest of the time.
+std::optional<NetworkReportDetails> askNetworkReportDetails(QWidget* parent) {
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QObject::tr("Generate Network Report"));
+    dialog.setMinimumWidth(kAdapterSelectDialogMinWidth);
+    auto* layout = new QVBoxLayout(&dialog);
+
+    auto* info_row = new QHBoxLayout();
+    info_row->addWidget(new QLabel(QObject::tr("Technician:"), &dialog));
+    auto* technician = new QLineEdit(&dialog);
+    technician->setPlaceholderText(QObject::tr("Name"));
+    technician->setAccessibleName(QStringLiteral("Technician Name"));
+    info_row->addWidget(technician);
+    info_row->addWidget(new QLabel(QObject::tr("Ticket #:"), &dialog));
+    auto* ticket = new QLineEdit(&dialog);
+    ticket->setPlaceholderText(QObject::tr("Ticket number"));
+    ticket->setAccessibleName(QStringLiteral("Ticket Number"));
+    info_row->addWidget(ticket);
+    layout->addLayout(info_row);
+
+    layout->addWidget(new QLabel(QObject::tr("Notes:"), &dialog));
+    auto* notes = new QTextEdit(&dialog);
+    notes->setPlaceholderText(QObject::tr("Additional notes for the report..."));
+    notes->setAccessibleName(QStringLiteral("Network report notes"));
+    layout->addWidget(notes);
+
+    auto* button_box = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel,
+                                            &dialog);
+    QObject::connect(button_box, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(button_box, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(button_box);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return std::nullopt;
+    }
+    return NetworkReportDetails{.technician = technician->text().trimmed(),
+                                .ticket = ticket->text().trimmed(),
+                                .notes = notes->toPlainText().trimmed()};
+}
+
+}  // namespace
+
+void NetworkDiagnosticPanel::onGenerateReportClicked() {
+    Q_ASSERT(m_controller);
+    if (!m_controller->canGenerateReport()) {
+        sak::showInformationLogged(this,
+                                   tr("Operation In Progress"),
+                                   tr("A network diagnostic is still running. Wait for it to "
+                                      "finish, then generate the report."));
+        return;
+    }
+    const auto details = askNetworkReportDetails(this);
+    if (!details.has_value()) {
+        return;
+    }
+    QString path = QFileDialog::getSaveFileName(this,
+                                                tr("Save Network Report"),
+                                                QStringLiteral("network_report"),
+                                                tr("HTML Report (*.html);;JSON Report (*.json)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    const bool is_json = path.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive);
+    if (QFileInfo(path).suffix().isEmpty()) {
+        path += QStringLiteral(".html");
+    }
+    m_controller->generateReport(path,
+                                 is_json ? QStringLiteral("json") : QStringLiteral("html"),
+                                 details->technician,
+                                 details->ticket,
+                                 details->notes);
+}
+
+// ===================================================================
+// Quick Actions -- Reset Network
 // ===================================================================
 
 void NetworkDiagnosticPanel::createResetNetworkAction() {
-    m_qa_controller = new QuickActionController(this);
-
-    m_qa_controller->registerAction(std::make_unique<ResetNetworkAction>());
-
-    connect(m_qa_controller,
-            &QuickActionController::actionExecutionComplete,
-            this,
-            &NetworkDiagnosticPanel::onResetNetworkComplete,
-            Qt::QueuedConnection);
-    connect(m_qa_controller,
-            &QuickActionController::actionError,
-            this,
-            &NetworkDiagnosticPanel::onResetNetworkError,
-            Qt::QueuedConnection);
-    connect(
-        m_qa_controller,
-        &QuickActionController::logMessage,
+    const QString owner = QString::fromLatin1(kQuickActionOwner);
+    RunningOperations::add(
         this,
-        [this](const QString& msg) { Q_EMIT logOutput(msg); },
-        Qt::QueuedConnection);
+        tr("Network reset"),
+        [this, owner]() { return m_quick_actions.hasRunsOf(owner); },
+        [this, owner]() { m_quick_actions.cancelRunsOf(owner); });
+
+    connectRunsOf(
+        m_quick_actions,
+        owner,
+        this,
+        {.queued =
+             [this](const QuickActionRun& run, const QString& running_action) {
+                 const QString text = quickActionQueuedText(run, running_action);
+                 m_resetNetworkBtn->setText(tr("Queued..."));
+                 Q_EMIT logOutput(text);
+                 Q_EMIT statusMessage(text, sak::kTimerStatusDefaultMs);
+             },
+         .started =
+             [this](const QuickActionRun&) { m_resetNetworkBtn->setText(tr("Resetting...")); },
+         .log = [this](const QuickActionRun&, const QString& line) { Q_EMIT logOutput(line); },
+         .finished = [this](const QuickActionRun&,
+                            const QuickAction::ExecutionResult& result,
+                            QuickAction::ActionStatus) { onResetNetworkFinished(result); }});
 
     connect(m_resetNetworkBtn,
             &QPushButton::clicked,
             this,
-            &NetworkDiagnosticPanel::onResetNetworkClicked);
+            &NetworkDiagnosticPanel::onResetNetworkClicked,
+            Qt::QueuedConnection);
 }
 
 void NetworkDiagnosticPanel::onResetNetworkClicked() {
+    // Read every adapter first (read-only, no elevation), so the confirmation can name the
+    // settings typed in by hand that the reset clears. The action records them again, elevated,
+    // right before it changes anything; this read is for the person deciding.
+    using Capture = std::expected<sak::NetworkSettingsCapture, QString>;
+    m_resetNetworkBtn->setEnabled(false);
+    m_resetNetworkBtn->setText(tr("Checking adapters..."));
+    auto* watcher = new QFutureWatcher<Capture>(this);
+    connect(watcher, &QFutureWatcher<Capture>::finished, this, [this, watcher]() {
+        const Capture capture = watcher->result();
+        watcher->deleteLater();
+        confirmResetNetwork(capture);
+    });
+    watcher->setFuture(
+        QtConcurrent::run([]() { return sak::captureNetworkSettings(kResetPreviewTimeoutMs); }));
+}
+
+void NetworkDiagnosticPanel::confirmResetNetwork(
+    const std::expected<sak::NetworkSettingsCapture, QString>& capture) {
+    m_resetNetworkBtn->setEnabled(true);
+    m_resetNetworkBtn->setText(tr("Reset Network"));
+    if (!capture) {
+        // Fail closed, as the action does: the reset clears settings typed in by hand, so it does
+        // not run without a record of them.
+        showPlainBox(QMessageBox::Warning,
+                     tr("Reset Network"),
+                     tr("S.A.K. could not read the adapters' settings, so it will not reset the "
+                        "network. The reset clears settings typed in by hand, and they have to be "
+                        "recorded first.\n\n%1")
+                         .arg(capture.error()),
+                     QMessageBox::Ok);
+        return;
+    }
+    // A network reset is destructive (Winsock/TCP-IP/firewall/adapter reset, dropped
+    // leases) and requires a reboot, so confirm before running it -- it must not fire
+    // from a single click with no prompt.
+    QString text = tr(
+        "Reset the network stack now?\n\n"
+        "This resets Winsock, TCP/IP, the Windows Firewall, and network adapters, and "
+        "may drop your connection until you reboot.");
+    if (const QString detail = sak::resetConfirmationDetail(*capture); !detail.isEmpty()) {
+        text += QStringLiteral("\n\n") + detail;
+    }
+    const auto confirm = showPlainBox(
+        QMessageBox::Question, tr("Reset Network"), text, QMessageBox::Yes | QMessageBox::No);
+    if (confirm != QMessageBox::Yes) {
+        return;
+    }
     Q_EMIT logOutput(QStringLiteral("Executing: Reset Network Settings"));
     m_resetNetworkBtn->setEnabled(false);
     m_resetNetworkBtn->setText(tr("Resetting..."));
-    m_qa_controller->executeAction(QStringLiteral("Reset Network Settings"), false);
+    m_quick_actions.requestRun({QString::fromLatin1(quick_action_elevation::kResetNetworkName),
+                                QString::fromLatin1(kQuickActionOwner),
+                                {}});
 }
 
-void NetworkDiagnosticPanel::onResetNetworkComplete(QuickAction* action) {
-    Q_ASSERT(action);
+void NetworkDiagnosticPanel::onResetNetworkFinished(const QuickAction::ExecutionResult& result) {
     m_resetNetworkBtn->setEnabled(true);
     m_resetNetworkBtn->setText(tr("Reset Network"));
-    const auto& result = action->lastExecutionResult();
-    const QString msg = result.success ? tr("Network settings reset successfully")
-                                       : QString("Reset failed: %1").arg(result.message);
+    // On success the action's own message is the point: it says when a reboot is required. What
+    // still needs the person -- adapters not checked yet -- and where the settings recorded before
+    // the reset are go on the same line. What was put back, and each adapter's check, are in the
+    // run's details, which the controller writes to this panel's Log.
+    QString msg = result.success ? result.message : QString("Reset failed: %1").arg(result.message);
+    if (!result.warning.isEmpty()) {
+        msg += QStringLiteral(" - ") + result.warning;
+    }
+    if (!result.output_path.isEmpty()) {
+        msg += tr(" - settings from before the reset saved to %1").arg(result.output_path);
+    }
     Q_EMIT logOutput(msg);
     Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
-}
-
-void NetworkDiagnosticPanel::onResetNetworkError(QuickAction* action, const QString& error) {
-    Q_ASSERT(action);
-    m_resetNetworkBtn->setEnabled(true);
-    m_resetNetworkBtn->setText(tr("Reset Network"));
-    Q_EMIT logOutput(QString("Error: Reset Network - %1").arg(error));
-    Q_EMIT statusMessage(QString("Reset Network failed: %1").arg(error),
-                         sak::kTimerStatusDefaultMs);
-    sak::logError("Reset network error: {}", error.toStdString());
+    if (!result.success) {
+        sak::logError("Reset network failed: {}", result.message.toStdString());
+    }
 }
 
 // ===================================================================
@@ -4586,13 +4953,14 @@ void NetworkDiagnosticPanel::copySelectedRows(QTableWidget* table) {
         QStringList cells;
         for (int col = 0; col < table->columnCount(); ++col) {
             auto* item = table->item(idx.row(), col);
-            cells << (item ? item->text() : QString());
+            cells << ((item != nullptr) ? item->text() : QString());
         }
         text += cells.join(QLatin1Char('\t')) + QLatin1Char('\n');
     }
     QApplication::clipboard()->setText(text.trimmed());
-    Q_EMIT statusMessage(tr("Copied %1 row(s) to clipboard").arg(rows.size()),
-                         sak::kTimerBroadcastMs);
+    Q_EMIT statusMessage(
+        tr("Copied %1 to clipboard").arg(countOf(rows.size(), tr("row"), tr("rows"))),
+        sak::kTimerBroadcastMs);
 }
 
 void NetworkDiagnosticPanel::copyAllRows(QTableWidget* table) {
@@ -4606,7 +4974,7 @@ void NetworkDiagnosticPanel::copyAllRows(QTableWidget* table) {
     QStringList headers;
     for (int col = 0; col < table->columnCount(); ++col) {
         auto* item = table->horizontalHeaderItem(col);
-        headers << (item ? item->text() : QString());
+        headers << ((item != nullptr) ? item->text() : QString());
     }
     text += headers.join(QLatin1Char('\t')) + QLatin1Char('\n');
 
@@ -4615,13 +4983,14 @@ void NetworkDiagnosticPanel::copyAllRows(QTableWidget* table) {
         QStringList cells;
         for (int col = 0; col < table->columnCount(); ++col) {
             auto* item = table->item(row, col);
-            cells << (item ? item->text() : QString());
+            cells << ((item != nullptr) ? item->text() : QString());
         }
         text += cells.join(QLatin1Char('\t')) + QLatin1Char('\n');
     }
     QApplication::clipboard()->setText(text.trimmed());
-    Q_EMIT statusMessage(tr("Copied %1 row(s) to clipboard").arg(table->rowCount()),
-                         sak::kTimerBroadcastMs);
+    Q_EMIT statusMessage(
+        tr("Copied %1 to clipboard").arg(countOf(table->rowCount(), tr("row"), tr("rows"))),
+        sak::kTimerBroadcastMs);
 }
 
 void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString& default_name) {
@@ -4632,9 +5001,14 @@ void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString
         return;
     }
 
-    QFile file(path);
+    // QSaveFile stages to a temporary and only replaces the target on commit(). A plain QFile
+    // with Truncate destroyed any existing export on open, and nothing here checked the stream
+    // afterwards -- so a disk-full or I/O failure still reported "Exported N rows".
+    QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        Q_EMIT statusMessage(tr("Failed to open file for writing"), sak::kTimerStatusMessageMs);
+        Q_EMIT statusMessage(
+            tr("Could not open '%1' for CSV export: %2").arg(path, file.errorString()),
+            sak::kTimerStatusMessageMs);
         return;
     }
 
@@ -4643,7 +5017,7 @@ void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString
     QStringList headers;
     for (int col = 0; col < table->columnCount(); ++col) {
         auto* item = table->horizontalHeaderItem(col);
-        headers << QStringLiteral("\"%1\"").arg(item ? item->text() : QString());
+        headers << sak::csvEscape((item != nullptr) ? item->text() : QString());
     }
     out << headers.join(QLatin1Char(',')) << "\n";
 
@@ -4652,11 +5026,22 @@ void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString
         QStringList cells;
         for (int col = 0; col < table->columnCount(); ++col) {
             auto* item = table->item(row, col);
-            QString cell_text = item ? item->text() : QString();
-            cell_text.replace(QLatin1Char('"'), QStringLiteral("\"\""));
-            cells << QStringLiteral("\"%1\"").arg(cell_text);
+            // Quoting alone does NOT stop a spreadsheet evaluating a leading '=': these tables
+            // carry WiFi SSIDs, remote hosts, share names and firewall rule names, none of which
+            // this program authored. sak::csvEscape adds the formula guard.
+            cells << sak::csvEscape((item != nullptr) ? item->text() : QString());
         }
         out << cells.join(QLatin1Char(',')) << "\n";
+    }
+
+    out.flush();
+    if (out.status() != QTextStream::Ok || !file.commit()) {
+        file.cancelWriting();
+        Q_EMIT statusMessage(
+            tr("CSV export to '%1' failed; the existing file was left unchanged.").arg(path),
+            sak::kTimerStatusMessageMs);
+        Q_EMIT logOutput(QStringLiteral("CSV export failed: %1").arg(path));
+        return;
     }
 
     Q_EMIT statusMessage(tr("Exported %1 rows to %2").arg(table->rowCount()).arg(path),
@@ -4671,7 +5056,7 @@ void NetworkDiagnosticPanel::copyTableCellValue(QTableWidget* table, int column)
         return;
     }
     auto* item = table->item(row, column);
-    if (item && !item->text().isEmpty()) {
+    if ((item != nullptr) && !item->text().isEmpty()) {
         QApplication::clipboard()->setText(item->text());
         Q_EMIT statusMessage(tr("Copied: %1").arg(item->text()), sak::kTimerBroadcastMs);
     }
@@ -4681,7 +5066,7 @@ void NetworkDiagnosticPanel::addCommonTableActions(QMenu& menu,
                                                    QTableWidget* table,
                                                    const QString& export_name) {
     menu.addSeparator();
-    menu.addAction(tr("Copy Selected Row(s)"), this, [this, table]() { copySelectedRows(table); });
+    menu.addAction(tr("Copy Selected Rows"), this, [this, table]() { copySelectedRows(table); });
     menu.addAction(tr("Copy All Results"), this, [this, table]() { copyAllRows(table); });
     menu.addAction(tr("Export to CSV..."), this, [this, table, export_name]() {
         exportTableToCsv(table, export_name);
@@ -4702,7 +5087,7 @@ void NetworkDiagnosticPanel::showPingContextMenu(const QPoint& pos) {
             copyTableCellValue(m_pingTable, 1);
         });
         menu.addAction(tr("Copy RTT"), this, [this]() {
-            copyTableCellValue(m_pingTable, kPingColumnRtt);
+            copyTableCellValue(m_pingTable, KPingColumnRtt);
         });
         menu.addSeparator();
         menu.addAction(tr("Traceroute to Target"), this, [this]() {
@@ -4731,12 +5116,13 @@ void NetworkDiagnosticPanel::showTracerouteContextMenu(const QPoint& pos) {
             copyTableCellValue(m_traceTable, 1);
         });
         menu.addAction(tr("Copy Hostname"), this, [this]() {
-            copyTableCellValue(m_traceTable, kTraceColumnHostname);
+            copyTableCellValue(m_traceTable, KTraceColumnHostname);
         });
         menu.addSeparator();
 
         auto* ip_item = m_traceTable->item(m_traceTable->currentRow(), 1);
-        if (ip_item && !ip_item->text().isEmpty() && ip_item->text() != QStringLiteral("*")) {
+        if ((ip_item != nullptr) && !ip_item->text().isEmpty() &&
+            ip_item->text() != QStringLiteral("*")) {
             menu.addAction(tr("Ping this Hop"), this, [this, ip_item]() {
                 m_pingTarget->setText(ip_item->text());
                 m_toolTabs->setCurrentIndex(0);
@@ -4761,12 +5147,13 @@ void NetworkDiagnosticPanel::showMtrContextMenu(const QPoint& pos) {
             copyTableCellValue(m_mtrTable, 1);
         });
         menu.addAction(tr("Copy Loss %"), this, [this]() {
-            copyTableCellValue(m_mtrTable, kMtrColumnLoss);
+            copyTableCellValue(m_mtrTable, KMtrColumnLoss);
         });
         menu.addSeparator();
 
         auto* ip_item = m_mtrTable->item(m_mtrTable->currentRow(), 1);
-        if (ip_item && !ip_item->text().isEmpty() && ip_item->text() != QStringLiteral("*")) {
+        if ((ip_item != nullptr) && !ip_item->text().isEmpty() &&
+            ip_item->text() != QStringLiteral("*")) {
             menu.addAction(tr("Ping this Hop"), this, [this, ip_item]() {
                 m_pingTarget->setText(ip_item->text());
                 m_toolTabs->setCurrentIndex(0);
@@ -4794,15 +5181,15 @@ void NetworkDiagnosticPanel::showDnsContextMenu(const QPoint& pos) {
     if (m_dnsTable->currentRow() >= 0) {
         menu.addAction(tr("Copy Query"), this, [this]() { copyTableCellValue(m_dnsTable, 0); });
         menu.addAction(tr("Copy Answers"), this, [this]() {
-            copyTableCellValue(m_dnsTable, kDnsColumnAnswers);
+            copyTableCellValue(m_dnsTable, KDnsColumnAnswers);
         });
         menu.addAction(tr("Copy Server"), this, [this]() {
-            copyTableCellValue(m_dnsTable, kDnsColumnServer);
+            copyTableCellValue(m_dnsTable, KDnsColumnServer);
         });
         menu.addSeparator();
 
-        auto* answer_item = m_dnsTable->item(m_dnsTable->currentRow(), kDnsColumnAnswers);
-        if (answer_item && !answer_item->text().isEmpty()) {
+        auto* answer_item = m_dnsTable->item(m_dnsTable->currentRow(), KDnsColumnAnswers);
+        if ((answer_item != nullptr) && !answer_item->text().isEmpty()) {
             menu.addAction(tr("Ping First Answer"), this, [this, answer_item]() {
                 const QString first_answer =
                     answer_item->text().split(QLatin1Char(',')).first().trimmed();
@@ -4829,16 +5216,16 @@ void NetworkDiagnosticPanel::showPortScanContextMenu(const QPoint& pos) {
     if (m_portTable->currentRow() >= 0) {
         menu.addAction(tr("Copy Port"), this, [this]() { copyTableCellValue(m_portTable, 0); });
         menu.addAction(tr("Copy Service"), this, [this]() {
-            copyTableCellValue(m_portTable, kPortColumnService);
+            copyTableCellValue(m_portTable, KPortColumnService);
         });
         menu.addAction(tr("Copy Banner"), this, [this]() {
-            copyTableCellValue(m_portTable, kPortColumnBanner);
+            copyTableCellValue(m_portTable, KPortColumnBanner);
         });
         menu.addSeparator();
         menu.addAction(tr("Copy Port:Service"), this, [this]() {
-            int row = m_portTable->currentRow();
+            const int row = m_portTable->currentRow();
             auto* port_item = m_portTable->item(row, 0);
-            auto* svc_item = m_portTable->item(row, kPortColumnService);
+            auto* svc_item = m_portTable->item(row, KPortColumnService);
             if (port_item) {
                 QString text = port_item->text();
                 if (svc_item && !svc_item->text().isEmpty()) {
@@ -4865,9 +5252,9 @@ void NetworkDiagnosticPanel::showWiFiContextMenu(const QPoint& pos) {
         menu.addAction(tr("Copy SSID"), this, [this]() { copyTableCellValue(m_wifiTable, 0); });
         menu.addAction(tr("Copy BSSID"), this, [this]() { copyTableCellValue(m_wifiTable, 1); });
         menu.addAction(tr("Copy Signal/Quality"), this, [this]() {
-            int row = m_wifiTable->currentRow();
-            auto* sig = m_wifiTable->item(row, kWifiColumnSignal);
-            auto* qual = m_wifiTable->item(row, kWifiColumnQuality);
+            const int row = m_wifiTable->currentRow();
+            auto* sig = m_wifiTable->item(row, KWifiColumnSignal);
+            auto* qual = m_wifiTable->item(row, KWifiColumnQuality);
             QString text;
             if (sig) {
                 text = sig->text();
@@ -4879,9 +5266,9 @@ void NetworkDiagnosticPanel::showWiFiContextMenu(const QPoint& pos) {
         });
         menu.addSeparator();
         menu.addAction(tr("Copy Channel/Band"), this, [this]() {
-            int row = m_wifiTable->currentRow();
-            auto* ch = m_wifiTable->item(row, kWifiColumnChannel);
-            auto* band = m_wifiTable->item(row, kWifiColumnBand);
+            const int row = m_wifiTable->currentRow();
+            auto* ch = m_wifiTable->item(row, KWifiColumnChannel);
+            auto* band = m_wifiTable->item(row, KWifiColumnBand);
             QString text;
             if (ch) {
                 text = QStringLiteral("Ch %1").arg(ch->text());
@@ -4906,12 +5293,12 @@ void NetworkDiagnosticPanel::showConnectionsContextMenu(const QPoint& pos) {
 
     if (m_connTable->currentRow() >= 0) {
         menu.addAction(tr("Copy Remote Address"), this, [this]() {
-            copyTableCellValue(m_connTable, kConnectionColumnRemoteAddress);
+            copyTableCellValue(m_connTable, KConnectionColumnRemoteAddress);
         });
         menu.addAction(tr("Copy Remote Address:Port"), this, [this]() {
-            int row = m_connTable->currentRow();
-            auto* addr = m_connTable->item(row, kConnectionColumnRemoteAddress);
-            auto* port = m_connTable->item(row, kConnectionColumnRemotePort);
+            const int row = m_connTable->currentRow();
+            auto* addr = m_connTable->item(row, KConnectionColumnRemoteAddress);
+            auto* port = m_connTable->item(row, KConnectionColumnRemotePort);
             if (addr) {
                 QString text = addr->text();
                 if (port && !port->text().isEmpty()) {
@@ -4922,13 +5309,13 @@ void NetworkDiagnosticPanel::showConnectionsContextMenu(const QPoint& pos) {
             }
         });
         menu.addAction(tr("Copy Process"), this, [this]() {
-            copyTableCellValue(m_connTable, kConnectionColumnProcess);
+            copyTableCellValue(m_connTable, KConnectionColumnProcess);
         });
         menu.addSeparator();
 
         auto* remote_item = m_connTable->item(m_connTable->currentRow(),
-                                              kConnectionColumnRemoteAddress);
-        if (remote_item && !remote_item->text().isEmpty() &&
+                                              KConnectionColumnRemoteAddress);
+        if ((remote_item != nullptr) && !remote_item->text().isEmpty() &&
             remote_item->text() != QStringLiteral("0.0.0.0") &&
             remote_item->text() != QStringLiteral("::")) {
             menu.addAction(tr("Ping Remote Address"), this, [this, remote_item]() {
@@ -4954,14 +5341,14 @@ void NetworkDiagnosticPanel::showConnectionsContextMenu(const QPoint& pos) {
 }
 
 void NetworkDiagnosticPanel::copyFirewallPorts() {
-    int row = m_fwRuleTable->currentRow();
-    auto* local = m_fwRuleTable->item(row, kFirewallColumnLocalPorts);
-    auto* remote = m_fwRuleTable->item(row, kFirewallColumnRemotePorts);
+    const int row = m_fwRuleTable->currentRow();
+    auto* local = m_fwRuleTable->item(row, KFirewallColumnLocalPorts);
+    auto* remote = m_fwRuleTable->item(row, KFirewallColumnRemotePorts);
     QStringList parts;
-    if (local && !local->text().isEmpty()) {
+    if ((local != nullptr) && !local->text().isEmpty()) {
         parts << QStringLiteral("Local: %1").arg(local->text());
     }
-    if (remote && !remote->text().isEmpty()) {
+    if ((remote != nullptr) && !remote->text().isEmpty()) {
         parts << QStringLiteral("Remote: %1").arg(remote->text());
     }
     if (!parts.isEmpty()) {
@@ -4970,12 +5357,12 @@ void NetworkDiagnosticPanel::copyFirewallPorts() {
 }
 
 void NetworkDiagnosticPanel::copyFirewallRuleDetails() {
-    int row = m_fwRuleTable->currentRow();
+    const int row = m_fwRuleTable->currentRow();
     QStringList details;
     for (int col = 0; col < m_fwRuleTable->columnCount(); ++col) {
         auto* header = m_fwRuleTable->horizontalHeaderItem(col);
         auto* item = m_fwRuleTable->item(row, col);
-        if (header && item) {
+        if ((header != nullptr) && (item != nullptr)) {
             details << QStringLiteral("%1: %2").arg(header->text(), item->text());
         }
     }
@@ -4992,10 +5379,10 @@ void NetworkDiagnosticPanel::showFirewallContextMenu(const QPoint& pos) {
 
     if (m_fwRuleTable->currentRow() >= 0) {
         menu.addAction(tr("Copy Rule Name"), this, [this]() {
-            copyTableCellValue(m_fwRuleTable, kFirewallColumnName);
+            copyTableCellValue(m_fwRuleTable, KFirewallColumnName);
         });
         menu.addAction(tr("Copy Application"), this, [this]() {
-            copyTableCellValue(m_fwRuleTable, kFirewallColumnApplication);
+            copyTableCellValue(m_fwRuleTable, KFirewallColumnApplication);
         });
         menu.addAction(tr("Copy Ports"), this, [this]() { copyFirewallPorts(); });
         menu.addSeparator();
@@ -5015,24 +5402,26 @@ void NetworkDiagnosticPanel::showSharesContextMenu(const QPoint& pos) {
 
     if (m_shareTable->currentRow() >= 0) {
         menu.addAction(tr("Copy Share Name"), this, [this]() {
-            copyTableCellValue(m_shareTable, kShareColumnName);
+            copyTableCellValue(m_shareTable, KShareColumnName);
         });
 
-        auto* share_item = m_shareTable->item(m_shareTable->currentRow(), kShareColumnName);
+        auto* share_item = m_shareTable->item(m_shareTable->currentRow(), KShareColumnName);
         const QString host = m_shareHostname->text().trimmed();
-        if (share_item && !host.isEmpty()) {
+        if ((share_item != nullptr) && !host.isEmpty()) {
             const QString unc_path = QStringLiteral("\\\\%1\\%2").arg(host, share_item->text());
             menu.addAction(tr("Copy UNC Path"), this, [this, unc_path]() {
                 QApplication::clipboard()->setText(unc_path);
                 Q_EMIT statusMessage(tr("Copied: %1").arg(unc_path), sak::kTimerBroadcastMs);
             });
-            menu.addAction(tr("Open in Explorer"), this, [unc_path]() {
-                QProcess::startDetached(QStringLiteral("explorer.exe"), {unc_path});
+            menu.addAction(tr("Open in Explorer"), this, [this, unc_path]() {
+                if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"), {unc_path})) {
+                    Q_EMIT logOutput(tr("[ERROR] Could not launch Explorer"));
+                }
             });
         }
 
         menu.addAction(tr("Copy Remark"), this, [this]() {
-            copyTableCellValue(m_shareTable, kShareColumnRemark);
+            copyTableCellValue(m_shareTable, KShareColumnRemark);
         });
     }
 

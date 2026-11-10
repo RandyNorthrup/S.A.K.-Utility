@@ -18,7 +18,7 @@ FollowScrollController::FollowScrollController(QAbstractScrollArea* scroll_area,
     if (!m_scrollArea) {
         return;
     }
-    if (m_scrollArea->viewport()) {
+    if (m_scrollArea->viewport() != nullptr) {
         m_scrollArea->viewport()->installEventFilter(this);
     }
     if (auto* bar = m_scrollArea->verticalScrollBar()) {
@@ -39,7 +39,7 @@ void FollowScrollController::setAutoScroll(bool enabled) {
 }
 
 bool FollowScrollController::isScrolledToBottom() const {
-    if (!m_scrollArea || !m_scrollArea->verticalScrollBar()) {
+    if (!m_scrollArea || (m_scrollArea->verticalScrollBar() == nullptr)) {
         return true;
     }
     const auto* bar = m_scrollArea->verticalScrollBar();
@@ -52,7 +52,7 @@ bool FollowScrollController::shouldFollowNewestForAppend() const {
 }
 
 int FollowScrollController::scrollValue() const {
-    if (!m_scrollArea || !m_scrollArea->verticalScrollBar()) {
+    if (!m_scrollArea || (m_scrollArea->verticalScrollBar() == nullptr)) {
         return 0;
     }
     return m_scrollArea->verticalScrollBar()->value();
@@ -64,7 +64,7 @@ void FollowScrollController::scrollToBottomLater(bool force) {
         return;
     }
 
-    QPointer<FollowScrollController> self = this;
+    const QPointer<FollowScrollController> self = this;
     QTimer::singleShot(0, this, [self, force]() {
         if (self) {
             self->finishFirstDeferredScroll(force);
@@ -73,7 +73,7 @@ void FollowScrollController::scrollToBottomLater(bool force) {
 }
 
 void FollowScrollController::restoreScrollPositionLater(int value) {
-    QPointer<FollowScrollController> self = this;
+    const QPointer<FollowScrollController> self = this;
     QTimer::singleShot(0, this, [self, value]() {
         if (!self || !self->m_scrollArea || !self->m_scrollArea->verticalScrollBar()) {
             return;
@@ -98,7 +98,7 @@ void FollowScrollController::updateJumpToNewestButton() {
 
 bool FollowScrollController::eventFilter(QObject* watched, QEvent* event) {
     bool scrollbar_event = false;
-    if (!event || !ownsScrollEvent(watched, &scrollbar_event)) {
+    if ((event == nullptr) || !ownsScrollEvent(watched, &scrollbar_event)) {
         return QObject::eventFilter(watched, event);
     }
 
@@ -123,7 +123,8 @@ bool FollowScrollController::eventFilter(QObject* watched, QEvent* event) {
 }
 
 bool FollowScrollController::canDeferredScroll(bool force) const {
-    return m_scrollArea && m_scrollArea->verticalScrollBar() && (force || m_autoScroll);
+    return m_scrollArea && (m_scrollArea->verticalScrollBar() != nullptr) &&
+           (force || m_autoScroll);
 }
 
 void FollowScrollController::finishFirstDeferredScroll(bool force) {
@@ -133,7 +134,7 @@ void FollowScrollController::finishFirstDeferredScroll(bool force) {
     }
 
     setScrollValue(m_scrollArea->verticalScrollBar()->maximum());
-    QPointer<FollowScrollController> self = this;
+    const QPointer<FollowScrollController> self = this;
     QTimer::singleShot(0, this, [self, force]() {
         if (self) {
             self->finishSecondDeferredScroll(force);
@@ -151,13 +152,13 @@ void FollowScrollController::finishSecondDeferredScroll(bool force) {
     setAutoScroll(true);
 }
 
-bool FollowScrollController::ownsScrollEvent(QObject* watched, bool* scrollbar_event) const {
-    if (!m_scrollArea || !watched) {
+bool FollowScrollController::ownsScrollEvent(const QObject* watched, bool* scrollbar_event) const {
+    if (!m_scrollArea || (watched == nullptr)) {
         return false;
     }
     const bool viewport = watched == m_scrollArea->viewport();
     const bool scrollbar = watched == m_scrollArea->verticalScrollBar();
-    if (scrollbar_event) {
+    if (scrollbar_event != nullptr) {
         *scrollbar_event = scrollbar;
     }
     return viewport || scrollbar;
@@ -177,14 +178,14 @@ void FollowScrollController::handleMouseButtonEvent(QEvent::Type type, bool scro
 
 void FollowScrollController::handleKeyPress(QEvent* event) {
     const auto* key_event = static_cast<QKeyEvent*>(event);
-    static const QSet<int> scroll_keys = {Qt::Key_Up,
+    static const QSet<int> kScrollKeys = {Qt::Key_Up,
                                           Qt::Key_Down,
                                           Qt::Key_PageUp,
                                           Qt::Key_PageDown,
                                           Qt::Key_Home,
                                           Qt::Key_End,
                                           Qt::Key_Space};
-    if (scroll_keys.contains(key_event->key())) {
+    if (kScrollKeys.contains(key_event->key())) {
         markUserScroll();
     }
 }
@@ -222,7 +223,7 @@ void FollowScrollController::onScrollRangeChanged() {
 }
 
 void FollowScrollController::setScrollValue(int value) {
-    if (!m_scrollArea || !m_scrollArea->verticalScrollBar()) {
+    if (!m_scrollArea || (m_scrollArea->verticalScrollBar() == nullptr)) {
         return;
     }
     m_programmaticScroll = true;

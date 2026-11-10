@@ -9,7 +9,15 @@
 #include <QObject>
 #include <QString>
 
+#include <functional>
+
+class QThread;
+
 namespace sak::ai {
+
+/// @brief Convert the generic model request while preserving untrusted text as user-role messages.
+[[nodiscard]] OpenAIResponseRequest openAiRequestFromModelRequest(
+    const IAiModelClient::Request& request, bool enable_web_search);
 
 /// @brief IAiModelClient adapter over OpenAIResponsesClient.
 ///
@@ -28,12 +36,25 @@ public:
     ~OpenAIResponsesModelClient() override;
 
     void setEnableWebSearch(bool enabled);
-    [[nodiscard]] bool enableWebSearch() const { return m_enable_web_search; }
+#ifdef SAK_AI_TEST_HOOKS
+    /// @brief Test-only (compiled only into tests that define SAK_AI_TEST_HOOKS): replaces
+    ///        QThread::start for deterministic launch-failure tests.
+    /// @note Set before invoke(); an empty function restores normal thread startup.
+    void setThreadStarterForTesting(std::function<void(QThread&)> starter);
+#endif  // SAK_AI_TEST_HOOKS
 
     [[nodiscard]] Response invoke(const Request& request, const CancellationToken& token) override;
+    [[nodiscard]] Response continueWithToolOutputs(const Request& request,
+                                                   const QString& response_id,
+                                                   const QVector<AiSubagentToolOutput>& outputs,
+                                                   const CancellationToken& token) override;
 
 private:
+    [[nodiscard]] Response runResponseRequest(const OpenAIResponseRequest& request,
+                                              const CancellationToken& token) const;
+
     bool m_enable_web_search{false};
+    std::function<void(QThread&)> m_thread_starter;
 };
 
 }  // namespace sak::ai

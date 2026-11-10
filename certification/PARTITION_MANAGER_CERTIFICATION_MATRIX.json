@@ -1,0 +1,1878 @@
+{
+  "schema_version": 2,
+  "generated_by": "scripts/generate_partition_manager_matrix.py",
+  "vhd_scenarios": [
+    {
+      "id": "vhd.create-format-resize-delete",
+      "name": "Create, format, resize, and delete data partition",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "create",
+          "operation": "Create",
+          "expect": "success"
+        },
+        {
+          "id": "format",
+          "operation": "Format",
+          "expect": "success"
+        },
+        {
+          "id": "resize",
+          "operation": "Resize",
+          "expect": "success"
+        },
+        {
+          "id": "delete",
+          "operation": "Delete",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "created_at_the_requested_size",
+          "path": "snapshots.create.data_partitions[0].size_bytes",
+          "equals": 268435456
+        },
+        {
+          "contract": "created_with_the_requested_file_system",
+          "path": "create_volume.file_system",
+          "equals": "NTFS"
+        },
+        {
+          "contract": "created_with_the_requested_label",
+          "path": "create_volume.label",
+          "equals": "SAKCERT"
+        },
+        {
+          "contract": "created_repair_scan_clean",
+          "path": "create_health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "created_chkdsk_clean",
+          "path": "create_health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "created_not_dirty",
+          "path": "create_health.dirty",
+          "is_false": true
+        },
+        {
+          "contract": "format_changed_the_label",
+          "path": "format_volume.label",
+          "equals": "SAKFMT"
+        },
+        {
+          "contract": "format_changed_the_cluster_size",
+          "path": "format_volume.cluster_bytes",
+          "equals": 8192
+        },
+        {
+          "contract": "format_destroyed_the_old_files",
+          "path": "format_marker_present",
+          "is_false": true
+        },
+        {
+          "contract": "format_left_the_partition_where_it_was",
+          "path": "snapshots.format.data_partitions[0].offset_bytes",
+          "equals_path": "snapshots.create.data_partitions[0].offset_bytes"
+        },
+        {
+          "contract": "formatted_repair_scan_clean",
+          "path": "format_health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "formatted_chkdsk_clean",
+          "path": "format_health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "formatted_not_dirty",
+          "path": "format_health.dirty",
+          "is_false": true
+        },
+        {
+          "contract": "resized_to_the_requested_size",
+          "path": "snapshots.resize.data_partitions[0].size_bytes",
+          "equals": 402653184
+        },
+        {
+          "contract": "resize_kept_the_start",
+          "path": "snapshots.resize.data_partitions[0].offset_bytes",
+          "equals_path": "snapshots.create.data_partitions[0].offset_bytes"
+        },
+        {
+          "contract": "resize_grew_the_file_system",
+          "path": "resize_volume.size_bytes",
+          "at_least": 398458880
+        },
+        {
+          "contract": "resized_repair_scan_clean",
+          "path": "resize_health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "resized_chkdsk_clean",
+          "path": "resize_health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "resized_not_dirty",
+          "path": "resize_health.dirty",
+          "is_false": true
+        },
+        {
+          "contract": "delete_removed_the_partition",
+          "path": "snapshots.delete.data_partition_count",
+          "equals": 0
+        }
+      ],
+      "not_proved": "The dialogs that collect these choices, and any file system but NTFS."
+    },
+    {
+      "id": "vhd.fat32-to-ntfs",
+      "name": "FAT32 to NTFS in-place conversion",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "convert",
+          "operation": "ConvertFileSystem",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "started_as_fat32",
+          "path": "volume_before.file_system",
+          "equals": "FAT32"
+        },
+        {
+          "contract": "converted_to_ntfs",
+          "path": "volume_after.file_system",
+          "equals": "NTFS"
+        },
+        {
+          "contract": "files_survived",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        },
+        {
+          "contract": "files_survived_counted",
+          "path": "files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "converted_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "converted_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "converted_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        },
+        {
+          "contract": "the_partition_did_not_move",
+          "path": "snapshots.after.data_partitions[0].offset_bytes",
+          "equals_path": "snapshots.before.data_partitions[0].offset_bytes"
+        }
+      ],
+      "not_proved": "A volume with a label convert.exe asks about, beyond the one here."
+    },
+    {
+      "id": "vhd.quick-partition",
+      "name": "Quick Partition equal-size data-disk layout",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "layout",
+          "operation": "QuickPartition",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_old_partition_is_gone",
+          "path": "old_partition_still_there",
+          "is_false": true
+        },
+        {
+          "contract": "made_the_requested_count",
+          "path": "snapshots.after.data_partition_count",
+          "equals": 4
+        },
+        {
+          "contract": "the_table_says_gpt",
+          "path": "snapshots.after.table.style",
+          "equals": "GPT"
+        },
+        {
+          "contract": "every_slice_is_equal_but_the_last",
+          "path": "equal_slices",
+          "is_true": true
+        },
+        {
+          "contract": "the_slices_are_contiguous",
+          "path": "contiguous",
+          "is_true": true
+        },
+        {
+          "contract": "every_volume_formatted_ntfs",
+          "path": "ntfs_volumes",
+          "equals": 4
+        },
+        {
+          "contract": "every_volume_is_labelled",
+          "path": "labels",
+          "contains": "SAKQP4"
+        },
+        {
+          "contract": "every_volume_is_clean",
+          "path": "unhealthy_volumes",
+          "equals": 0
+        }
+      ],
+      "not_proved": "The dialog's presets."
+    },
+    {
+      "id": "vhd.quick-partition-custom",
+      "name": "Quick Partition custom size and label layout",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "layout",
+          "operation": "QuickPartition",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "made_the_requested_count",
+          "path": "snapshots.after.data_partition_count",
+          "equals": 3
+        },
+        {
+          "contract": "first_is_the_size_asked_for",
+          "path": "snapshots.after.data_partitions[0].size_bytes",
+          "equals": 134217728
+        },
+        {
+          "contract": "second_is_the_size_asked_for",
+          "path": "snapshots.after.data_partitions[1].size_bytes",
+          "equals": 201326592
+        },
+        {
+          "contract": "third_is_the_size_asked_for",
+          "path": "snapshots.after.data_partitions[2].size_bytes",
+          "equals": 268435456
+        },
+        {
+          "contract": "labels_are_in_the_order_asked_for",
+          "path": "labels",
+          "equals": "ALPHA,BRAVO,CHARLIE"
+        },
+        {
+          "contract": "every_volume_is_clean",
+          "path": "unhealthy_volumes",
+          "equals": 0
+        }
+      ],
+      "not_proved": "The dialog's table editors."
+    },
+    {
+      "id": "vhd.quick-partition-mbr",
+      "name": "Quick Partition MBR four-data-partition layout",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "layout",
+          "operation": "QuickPartition",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_table_says_mbr",
+          "path": "snapshots.after.table.style",
+          "equals": "MBR"
+        },
+        {
+          "contract": "made_four_data_partitions",
+          "path": "snapshots.after.data_partition_count",
+          "equals": 4
+        },
+        {
+          "contract": "the_slices_do_not_overlap",
+          "path": "no_overlap",
+          "is_true": true
+        },
+        {
+          "contract": "every_volume_is_clean",
+          "path": "unhealthy_volumes",
+          "equals": 0
+        },
+        {
+          "contract": "every_volume_formatted_ntfs",
+          "path": "ntfs_volumes",
+          "equals": 4
+        }
+      ],
+      "not_proved": "More than four partitions, which the app refuses on MBR."
+    },
+    {
+      "id": "vhd.adjacent-extend",
+      "name": "Adjacent free-space Extend Partition Wizard path",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "extend",
+          "operation": "Resize",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_start_did_not_move",
+          "path": "snapshots.after.data_partitions[0].offset_bytes",
+          "equals_path": "snapshots.before.data_partitions[0].offset_bytes"
+        },
+        {
+          "contract": "grew_to_the_size_asked_for",
+          "path": "snapshots.after.data_partitions[0].size_bytes",
+          "equals": 536870912
+        },
+        {
+          "contract": "the_file_system_grew",
+          "path": "volume_after.size_bytes",
+          "at_least": 524288000
+        },
+        {
+          "contract": "files_survived",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        },
+        {
+          "contract": "files_survived_counted",
+          "path": "files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "extended_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "extended_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "extended_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        }
+      ],
+      "not_proved": "The wizard's checks before it calls Resize."
+    },
+    {
+      "id": "vhd.recovered-partition-restore",
+      "name": "Recovered partition write-back candidate restore",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "scan",
+          "operation": "PartitionRecoveryScan",
+          "expect": "success"
+        },
+        {
+          "id": "restore",
+          "operation": "RestoreRecoveredPartition",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_partition_really_was_gone",
+          "path": "snapshots.deleted.data_partition_count",
+          "equals": 0
+        },
+        {
+          "contract": "the_scan_said_what_it_found",
+          "path": "scan_found_the_partition",
+          "is_true": true
+        },
+        {
+          "contract": "restored_at_its_old_offset",
+          "path": "snapshots.after.data_partitions[0].offset_bytes",
+          "equals_path": "snapshots.before.data_partitions[0].offset_bytes"
+        },
+        {
+          "contract": "restored_at_its_old_size",
+          "path": "snapshots.after.data_partitions[0].size_bytes",
+          "equals_path": "snapshots.before.data_partitions[0].size_bytes"
+        },
+        {
+          "contract": "restored_with_its_old_type",
+          "path": "snapshots.after.data_partitions[0].type",
+          "equals_path": "snapshots.before.data_partitions[0].type"
+        },
+        {
+          "contract": "files_came_back",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        },
+        {
+          "contract": "files_came_back_counted",
+          "path": "files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "restored_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "restored_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "restored_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        }
+      ],
+      "not_proved": "A partition whose table entry and data have both been damaged."
+    },
+    {
+      "id": "vhd.empty-style-conversion",
+      "name": "Empty data disk GPT/MBR conversion",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "to_mbr",
+          "operation": "ConvertPartitionStyle",
+          "expect": "success"
+        },
+        {
+          "id": "to_gpt",
+          "operation": "ConvertPartitionStyle",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "started_as_gpt",
+          "path": "snapshots.before.table.style",
+          "equals": "GPT"
+        },
+        {
+          "contract": "became_mbr",
+          "path": "snapshots.mbr.table.style",
+          "equals": "MBR"
+        },
+        {
+          "contract": "became_gpt_again",
+          "path": "snapshots.gpt.table.style",
+          "equals": "GPT"
+        },
+        {
+          "contract": "stayed_empty_as_mbr",
+          "path": "snapshots.mbr.data_partition_count",
+          "equals": 0
+        },
+        {
+          "contract": "stayed_empty_as_gpt",
+          "path": "snapshots.gpt.data_partition_count",
+          "equals": 0
+        }
+      ],
+      "not_proved": "A disk that holds partitions, which the app refuses."
+    },
+    {
+      "id": "vhd.clear-disk-wipe",
+      "name": "Clear-level non-system disk wipe",
+      "ran_on": {
+        "accepted": [
+          "virtual_machine"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "refused_on_thin",
+          "operation": "WipeDisk",
+          "expect": "failed"
+        },
+        {
+          "id": "wipe",
+          "operation": "WipeDisk",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "a_thin_disk_keeps_its_table",
+          "path": "thin_table_after",
+          "equals_path": "thin_table_before"
+        },
+        {
+          "contract": "a_thin_disk_keeps_its_files",
+          "path": "thin_files_after.digest",
+          "equals_path": "thin_files_before.digest"
+        },
+        {
+          "contract": "a_thin_disk_keeps_its_files_counted",
+          "path": "thin_files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "the_marker_was_on_the_disk",
+          "path": "scan_before.marker_hits",
+          "at_least": 1
+        },
+        {
+          "contract": "the_wipe_destroyed_every_marker",
+          "path": "scan_after.marker_hits",
+          "equals": 0
+        },
+        {
+          "contract": "the_whole_disk_was_read_back",
+          "path": "scan_after.bytes_read",
+          "equals_path": "disk_size_bytes"
+        },
+        {
+          "contract": "no_partition_is_left",
+          "path": "snapshots.after.data_partition_count",
+          "equals": 0
+        }
+      ],
+      "not_proved": "Whether a device hides sectors from a write, which only a physical device could show."
+    },
+    {
+      "id": "vhd.image-clone",
+      "name": "Offline VHD image clone and sentinel verification",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "clone",
+          "operation": "CloneDisk",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_target_differed_first",
+          "path": "target_hash_before",
+          "differs_from_path": "source_hash"
+        },
+        {
+          "contract": "the_source_was_not_changed",
+          "path": "source_hash",
+          "equals_path": "source_hash_before"
+        },
+        {
+          "contract": "the_raw_pattern_is_a_real_size",
+          "path": "pattern_bytes",
+          "at_least": 67108864
+        },
+        {
+          "contract": "the_raw_pattern_was_copied",
+          "path": "pattern_on_target",
+          "equals_path": "pattern_on_source"
+        },
+        {
+          "contract": "every_sector_of_the_volume_matches",
+          "path": "difference_summary.bytes_inside_the_mounted_volume",
+          "equals": 0
+        },
+        {
+          "contract": "every_other_sector_matches",
+          "path": "difference_summary.runs_anywhere_else",
+          "equals": 0
+        },
+        {
+          "contract": "the_marker_after_the_source_is_kept",
+          "path": "outside_marker_kept",
+          "is_true": true
+        },
+        {
+          "contract": "the_target_holds_the_files",
+          "path": "files_target.digest",
+          "equals_path": "files_source.digest"
+        },
+        {
+          "contract": "the_target_holds_the_files_counted",
+          "path": "files_target.file_count",
+          "at_least": 1
+        }
+      ],
+      "not_proved": "Disks of different sector sizes. The partition table, which Windows corrects for a larger disk. A read-write source: Windows writes to a volume as it mounts it, so the fixture is read-only to compare every byte."
+    },
+    {
+      "id": "vhd.image-restore",
+      "name": "Offline VHD image restore and overwrite verification",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "create_image",
+          "operation": "CreateImage",
+          "expect": "success"
+        },
+        {
+          "id": "restore_image",
+          "operation": "RestoreImage",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_image_equals_the_source",
+          "path": "image_hash",
+          "equals_path": "source_hash"
+        },
+        {
+          "contract": "the_target_differed_first",
+          "path": "target_hash_before",
+          "differs_from_path": "source_hash"
+        },
+        {
+          "contract": "the_raw_pattern_is_a_real_size",
+          "path": "pattern_bytes",
+          "at_least": 67108864
+        },
+        {
+          "contract": "the_raw_pattern_was_restored",
+          "path": "pattern_on_target",
+          "equals_path": "pattern_on_source"
+        },
+        {
+          "contract": "every_sector_of_the_volume_matches",
+          "path": "difference_summary.bytes_inside_the_mounted_volume",
+          "equals": 0
+        },
+        {
+          "contract": "every_other_sector_matches",
+          "path": "difference_summary.runs_anywhere_else",
+          "equals": 0
+        },
+        {
+          "contract": "the_target_holds_the_files",
+          "path": "files_target.digest",
+          "equals_path": "files_source.digest"
+        },
+        {
+          "contract": "the_target_holds_the_files_counted",
+          "path": "files_target.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "restored_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "restored_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "restored_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        }
+      ],
+      "not_proved": "An image on a network path. The partition table, which Windows corrects for a larger disk. A read-write source: Windows writes to a volume as it mounts it, so the fixture is read-only to compare every byte."
+    },
+    {
+      "id": "vhd.partition-clone-region",
+      "name": "Partition clone to raw target region",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "clone",
+          "operation": "ClonePartition",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_region_differed_first",
+          "path": "region_hash_before",
+          "differs_from_path": "source_hash"
+        },
+        {
+          "contract": "the_region_equals_the_partition",
+          "path": "region_hash_after",
+          "equals_path": "source_hash"
+        },
+        {
+          "contract": "the_marker_before_the_region_is_kept",
+          "path": "marker_before_kept",
+          "is_true": true
+        },
+        {
+          "contract": "the_marker_after_the_region_is_kept",
+          "path": "marker_after_kept",
+          "is_true": true
+        }
+      ],
+      "not_proved": "A target that is a volume path rather than free space."
+    }
+  ],
+  "external_gates": [
+    {
+      "id": "external.system-mbr2gpt",
+      "name": "System MBR-to-GPT conversion in disposable boot VM",
+      "ran_on": {
+        "accepted": [
+          "virtual_machine"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "convert",
+          "operation": "ConvertPartitionStyle",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "started_as_mbr",
+          "path": "snapshots.before.table.style",
+          "equals": "MBR"
+        },
+        {
+          "contract": "became_gpt",
+          "path": "snapshots.after.table.style",
+          "equals": "GPT"
+        },
+        {
+          "contract": "it_started_under_uefi",
+          "path": "boot.firmware",
+          "equals": "UEFI"
+        },
+        {
+          "contract": "it_reached_windows",
+          "path": "boot.reached_sign_in",
+          "is_true": true
+        },
+        {
+          "contract": "windows_runs_from_the_same_letter",
+          "path": "boot.system_drive",
+          "equals": "C:"
+        },
+        {
+          "contract": "the_volume_is_clean",
+          "path": "boot.repair_scan",
+          "equals": "NoErrorsFound"
+        }
+      ],
+      "not_proved": "Real firmware, whose boot entries a VM's do not stand for."
+    },
+    {
+      "id": "external.os-migration-reboot",
+      "name": "OS migration target boot and firmware-order proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_machine"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "migrate",
+          "operation": "MigrateOs",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_target_was_blank",
+          "path": "snapshots.before.data_partition_count",
+          "equals": 0
+        },
+        {
+          "contract": "the_target_started_alone",
+          "path": "boot.only_disk_attached",
+          "is_true": true
+        },
+        {
+          "contract": "it_reached_windows",
+          "path": "boot.reached_sign_in",
+          "is_true": true
+        },
+        {
+          "contract": "windows_runs_from_c",
+          "path": "boot.system_drive",
+          "equals": "C:"
+        },
+        {
+          "contract": "the_copied_marker_is_there",
+          "path": "boot.source_marker_present",
+          "is_true": true
+        },
+        {
+          "contract": "the_volume_is_clean",
+          "path": "boot.repair_scan",
+          "equals": "NoErrorsFound"
+        }
+      ],
+      "not_proved": "A physical drive, NVMe, 4Kn, or a real firmware's boot order."
+    },
+    {
+      "id": "external.boot-repair-uefi",
+      "name": "UEFI boot repair with intentionally broken BCD",
+      "ran_on": {
+        "accepted": [
+          "virtual_machine"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "repair",
+          "operation": "RepairBoot",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "it_started_before",
+          "path": "boot_before.reached_sign_in",
+          "is_true": true
+        },
+        {
+          "contract": "breaking_it_stopped_it_starting",
+          "path": "boot_broken.reached_sign_in",
+          "is_false": true
+        },
+        {
+          "contract": "the_boot_files_were_gone",
+          "path": "broken_files_after",
+          "equals": 0
+        },
+        {
+          "contract": "it_started_after_the_repair",
+          "path": "boot_after.reached_sign_in",
+          "is_true": true
+        },
+        {
+          "contract": "it_started_under_uefi",
+          "path": "boot_after.firmware",
+          "equals": "UEFI"
+        },
+        {
+          "contract": "the_volume_is_clean_after",
+          "path": "boot_after.repair_scan",
+          "equals": "NoErrorsFound"
+        }
+      ],
+      "not_proved": "Real firmware's boot entries, which an attached-disk repair leaves alone on purpose."
+    },
+    {
+      "id": "external.boot-repair-bios",
+      "name": "BIOS/MBR boot repair with intentionally broken BCD",
+      "ran_on": {
+        "accepted": [
+          "virtual_machine"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "repair",
+          "operation": "RepairBoot",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "it_started_before",
+          "path": "boot_before.reached_sign_in",
+          "is_true": true
+        },
+        {
+          "contract": "breaking_it_stopped_it_starting",
+          "path": "boot_broken.reached_sign_in",
+          "is_false": true
+        },
+        {
+          "contract": "the_boot_files_were_gone",
+          "path": "broken_files_after",
+          "equals": 0
+        },
+        {
+          "contract": "it_started_after_the_repair",
+          "path": "boot_after.reached_sign_in",
+          "is_true": true
+        },
+        {
+          "contract": "it_started_under_bios",
+          "path": "boot_after.firmware",
+          "equals": "Legacy"
+        },
+        {
+          "contract": "the_volume_is_clean_after",
+          "path": "boot_after.repair_scan",
+          "equals": "NoErrorsFound"
+        }
+      ],
+      "not_proved": "A physical BIOS."
+    },
+    {
+      "id": "external.usb-removable",
+      "name": "USB removable disk destructive operation proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_machine",
+          "physical"
+        ],
+        "physical_claim": true,
+        "physical_requirement": {
+          "bus_type": [
+            "USB"
+          ]
+        }
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "create",
+          "operation": "Create",
+          "expect": "success"
+        },
+        {
+          "id": "format",
+          "operation": "Format",
+          "expect": "success"
+        },
+        {
+          "id": "delete",
+          "operation": "Delete",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_disk_is_on_usb",
+          "path": "bus_type",
+          "equals": "USB"
+        },
+        {
+          "contract": "created_at_the_requested_size",
+          "path": "snapshots.create.data_partitions[0].size_bytes",
+          "equals": 1073741824
+        },
+        {
+          "contract": "formatted_as_asked",
+          "path": "format_volume.label",
+          "equals": "SAKUSB"
+        },
+        {
+          "contract": "files_read_back_whole",
+          "path": "files_read_back.digest",
+          "equals_path": "files_written.digest"
+        },
+        {
+          "contract": "files_read_back_whole_counted",
+          "path": "files_read_back.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "formatted_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "formatted_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "formatted_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        },
+        {
+          "contract": "delete_removed_it",
+          "path": "snapshots.delete.data_partition_count",
+          "equals": 0
+        }
+      ],
+      "not_proved": "A device Windows flags as removable: a USB hard drive reports as a fixed disk."
+    },
+    {
+      "id": "external.file-level-data-recovery",
+      "name": "File-level Data Recovery scan and restore proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk",
+          "virtual_machine"
+        ],
+        "physical_claim": false
+      },
+      "client": "elevated",
+      "steps": [
+        {
+          "id": "recover",
+          "operation": "FileRecovery",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_files_were_deleted_first",
+          "path": "deleted_files_present",
+          "equals": 0
+        },
+        {
+          "contract": "the_scan_read_the_whole_volume",
+          "path": "recovered.scan_bytes_read",
+          "equals_path": "volume_bytes"
+        },
+        {
+          "contract": "the_scan_met_no_error",
+          "path": "recovered.scan_warnings",
+          "equals": ""
+        },
+        {
+          "contract": "every_fixture_was_recovered",
+          "path": "recovered.missing_hashes",
+          "equals": 0
+        },
+        {
+          "contract": "the_source_was_not_changed",
+          "path": "source_hash_after",
+          "equals_path": "source_hash_before"
+        }
+      ],
+      "not_proved": "The panel's dialogs around the same engine."
+    },
+    {
+      "id": "external.ssd-retrim",
+      "name": "SSD/NVMe ReTrim proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_machine",
+          "physical"
+        ],
+        "physical_claim": true,
+        "physical_requirement": {
+          "media_type": [
+            "SSD"
+          ]
+        }
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "retrim",
+          "operation": "OptimizeSsd",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "windows_reports_a_solid_state_disk",
+          "path": "media_type",
+          "equals": "SSD"
+        },
+        {
+          "contract": "windows_logged_a_retrim",
+          "path": "retrim_logged",
+          "is_true": true
+        },
+        {
+          "contract": "files_survived",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        },
+        {
+          "contract": "files_survived_counted",
+          "path": "files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "trimmed_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "trimmed_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "trimmed_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        }
+      ],
+      "not_proved": "Whether the drive itself freed the blocks. TRIM's effect on flash cannot be read back: only that Windows sent it, and that nothing was lost."
+    },
+    {
+      "id": "external.hdd-defrag-execution",
+      "name": "Direct in-app HDD defrag execution proof",
+      "ran_on": {
+        "accepted": [
+          "physical"
+        ],
+        "physical_claim": true,
+        "physical_requirement": {
+          "media_type": [
+            "HDD",
+            "Unspecified"
+          ]
+        }
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "defrag",
+          "operation": "DefragVolume",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "drive_reports_it_spins",
+          "path": "media_type",
+          "spins_by_rotation_path": "rotation_rate_rpm"
+        },
+        {
+          "contract": "windows_logged_a_defrag",
+          "path": "defrag_logged",
+          "is_true": true
+        },
+        {
+          "contract": "files_survived",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        },
+        {
+          "contract": "files_survived_counted",
+          "path": "files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "defragged_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "defragged_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "defragged_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        }
+      ],
+      "not_proved": "Fragmentation dropping on any given volume: Windows decides how much it moves. That the drive spins rests on Windows reporting HDD, or on Windows reporting Unspecified and the drive itself reporting a nonzero rotation rate through smartctl. A VirtualBox disk is not accepted at all, so this row runs only on a physical device."
+    },
+    {
+      "id": "external.ssd-secure-erase",
+      "name": "SSD/NVMe secure erase command execution proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_machine",
+          "physical"
+        ],
+        "physical_claim": true,
+        "physical_requirement": {
+          "media_type": [
+            "SSD"
+          ]
+        }
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "erase",
+          "operation": "WipeDisk",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "windows_reports_a_solid_state_disk",
+          "path": "media_type",
+          "equals": "SSD"
+        },
+        {
+          "contract": "the_app_warned_this_is_not_a_purge",
+          "path": "app_warnings",
+          "contains": "purge"
+        },
+        {
+          "contract": "every_marker_was_on_the_disk",
+          "path": "markers_before.marker_hits",
+          "equals_path": "markers_before.places_read"
+        },
+        {
+          "contract": "enough_of_the_disk_was_marked",
+          "path": "markers_before.places_read",
+          "at_least": 32
+        },
+        {
+          "contract": "the_erase_destroyed_every_marker",
+          "path": "markers_after.marker_hits",
+          "equals": 0
+        },
+        {
+          "contract": "no_partition_is_left",
+          "path": "snapshots.after.data_partition_count",
+          "equals": 0
+        },
+        {
+          "contract": "the_same_device_is_still_there",
+          "path": "serial_sha256_after",
+          "equals_path": "serial_sha256_before"
+        }
+      ],
+      "not_proved": "A sanitize of the flash. This is TRIM plus an overwrite, not an ATA or NVMe sanitize, and it cannot reach what a controller has remapped."
+    },
+    {
+      "id": "external.bitlocker",
+      "name": "BitLocker locked/unlocked data-volume blocker proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk",
+          "virtual_machine"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "refused_while_locked",
+          "operation": "Format",
+          "expect": "refused"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_volume_was_locked",
+          "path": "bitlocker_before.locked",
+          "is_true": true
+        },
+        {
+          "contract": "the_app_refused_and_said_why",
+          "path": "refusal",
+          "contains": "BitLocker"
+        },
+        {
+          "contract": "the_volume_was_not_changed",
+          "path": "table_after",
+          "equals_path": "table_before"
+        },
+        {
+          "contract": "it_is_still_locked",
+          "path": "bitlocker_after.locked",
+          "is_true": true
+        },
+        {
+          "contract": "the_unlocked_files_are_intact",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        }
+      ],
+      "not_proved": "A volume whose lock state changes between the check and the write."
+    },
+    {
+      "id": "external.bitlocker-mutation",
+      "name": "In-app BitLocker unlock/suspend/resume mutation proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk",
+          "virtual_machine"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "unlock",
+          "operation": "BitLockerUnlock",
+          "expect": "success"
+        },
+        {
+          "id": "suspend",
+          "operation": "BitLockerSuspend",
+          "expect": "success"
+        },
+        {
+          "id": "resume",
+          "operation": "BitLockerResume",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "started_locked",
+          "path": "bitlocker_before.locked",
+          "is_true": true
+        },
+        {
+          "contract": "unlock_opened_it",
+          "path": "bitlocker_unlocked.locked",
+          "is_false": true
+        },
+        {
+          "contract": "suspend_turned_protection_off",
+          "path": "bitlocker_suspended.protection",
+          "equals": "Off"
+        },
+        {
+          "contract": "resume_turned_protection_on",
+          "path": "bitlocker_resumed.protection",
+          "equals": "On"
+        },
+        {
+          "contract": "the_password_stayed_out_of_the_report",
+          "path": "password_in_reports",
+          "equals": 0
+        },
+        {
+          "contract": "the_files_are_intact",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        },
+        {
+          "contract": "the_files_are_intact_counted",
+          "path": "files_after.file_count",
+          "at_least": 1
+        }
+      ],
+      "not_proved": "A TPM protector: a data volume uses a password here."
+    },
+    {
+      "id": "external.allocate-free-space",
+      "name": "Allocate Free Space adjacent donor-volume backup/delete/extend/recreate/restore proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk",
+          "virtual_machine",
+          "physical"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "allocate",
+          "operation": "AllocateFreeSpace",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_target_grew_by_the_amount",
+          "path": "snapshots.after.data_partitions[0].size_bytes",
+          "minus_path": "snapshots.before.data_partitions[0].size_bytes",
+          "equals": 67108864
+        },
+        {
+          "contract": "the_donor_shrank_by_the_amount",
+          "path": "snapshots.before.data_partitions[1].size_bytes",
+          "minus_path": "snapshots.after.data_partitions[1].size_bytes",
+          "equals": 67108864
+        },
+        {
+          "contract": "the_target_kept_its_files",
+          "path": "target_files_after.digest",
+          "equals_path": "target_files_before.digest"
+        },
+        {
+          "contract": "the_target_kept_its_files_counted",
+          "path": "target_files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "the_donor_kept_its_files",
+          "path": "donor_files_after.digest",
+          "equals_path": "donor_files_before.digest"
+        },
+        {
+          "contract": "the_donor_kept_its_files_counted",
+          "path": "donor_files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "target_repair_scan_clean",
+          "path": "target_health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "target_chkdsk_clean",
+          "path": "target_health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "target_not_dirty",
+          "path": "target_health.dirty",
+          "is_false": true
+        },
+        {
+          "contract": "donor_repair_scan_clean",
+          "path": "donor_health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "donor_chkdsk_clean",
+          "path": "donor_health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "donor_not_dirty",
+          "path": "donor_health.dirty",
+          "is_false": true
+        }
+      ],
+      "not_proved": "A failure halfway, which leaves the backup for a person to restore."
+    },
+    {
+      "id": "external.partition-move",
+      "name": "Offline partition start-move proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk",
+          "virtual_machine",
+          "physical"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "move",
+          "operation": "MovePartition",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_start_moved",
+          "path": "snapshots.after.data_partitions[0].offset_bytes",
+          "differs_from_path": "snapshots.before.data_partitions[0].offset_bytes"
+        },
+        {
+          "contract": "it_moved_where_asked",
+          "path": "snapshots.after.data_partitions[0].offset_bytes",
+          "equals_path": "requested_offset_bytes"
+        },
+        {
+          "contract": "files_survived",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        },
+        {
+          "contract": "files_survived_counted",
+          "path": "files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "moved_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "moved_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "moved_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        }
+      ],
+      "not_proved": "That the bytes stayed put during the rebuild: the app backs up, recreates and restores, so this proves the files, not a block move."
+    },
+    {
+      "id": "external.cluster-size-change",
+      "name": "Existing-volume cluster-size change proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk",
+          "virtual_machine",
+          "physical"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "change",
+          "operation": "ChangeClusterSize",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "started_at_another_size",
+          "path": "volume_before.cluster_bytes",
+          "equals": 4096
+        },
+        {
+          "contract": "changed_to_the_size_asked_for",
+          "path": "volume_after.cluster_bytes",
+          "equals": 16384
+        },
+        {
+          "contract": "files_survived",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        },
+        {
+          "contract": "files_survived_counted",
+          "path": "files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "the_alternate_stream_survived",
+          "path": "stream_after",
+          "equals_path": "stream_before"
+        },
+        {
+          "contract": "the_acl_survived",
+          "path": "acl_after",
+          "equals_path": "acl_before"
+        },
+        {
+          "contract": "changed_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "changed_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "changed_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        }
+      ],
+      "not_proved": "A failure halfway, which leaves the backup for a person to restore."
+    },
+    {
+      "id": "external.primary-logical-conversion",
+      "name": "Primary/logical conversion on disposable MBR disk",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk",
+          "virtual_machine",
+          "physical"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "to_logical",
+          "operation": "ConvertPrimaryLogical",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "started_primary",
+          "path": "snapshots.before.table.partitions[0].layout",
+          "equals": "primary"
+        },
+        {
+          "contract": "the_table_holds_a_logical_partition",
+          "path": "snapshots.after.logical_partition_count",
+          "equals": 1
+        },
+        {
+          "contract": "the_table_holds_an_extended_container",
+          "path": "snapshots.after.extended_partition_count",
+          "equals": 1
+        },
+        {
+          "contract": "files_survived",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        },
+        {
+          "contract": "files_survived_counted",
+          "path": "files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "converted_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "converted_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "converted_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        }
+      ],
+      "not_proved": "A boot disk, which the app refuses here."
+    },
+    {
+      "id": "external.volume-serial-number",
+      "name": "Volume serial-number metadata mutation proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_disk",
+          "virtual_machine",
+          "physical"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "change",
+          "operation": "ChangeVolumeSerialNumber",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_boot_sector_holds_a_new_serial",
+          "path": "boot_sector_serial_after",
+          "differs_from_path": "boot_sector_serial_before"
+        },
+        {
+          "contract": "windows_reports_the_same_serial",
+          "path": "volume_after.serial_number",
+          "equals_path": "boot_sector_serial_after"
+        },
+        {
+          "contract": "files_survived",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        },
+        {
+          "contract": "files_survived_counted",
+          "path": "files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "changed_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "changed_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "changed_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        }
+      ],
+      "not_proved": "A serial chosen by a person: the app reformats, and the file system picks a new one."
+    },
+    {
+      "id": "external.dynamic-to-basic",
+      "name": "Dynamic disk to basic conversion proof",
+      "ran_on": {
+        "accepted": [
+          "virtual_machine"
+        ],
+        "physical_claim": false
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "convert",
+          "operation": "ConvertDynamicDiskToBasic",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "the_disk_was_dynamic",
+          "path": "snapshots.before.dynamic_entry_count",
+          "at_least": 1
+        },
+        {
+          "contract": "get_disk_did_not_list_it",
+          "path": "windows_listed_it_with_get_disk",
+          "is_false": true
+        },
+        {
+          "contract": "get_disk_lists_it_now",
+          "path": "listed_by_get_disk_after",
+          "is_true": true
+        },
+        {
+          "contract": "the_disk_is_basic",
+          "path": "snapshots.after.dynamic_entry_count",
+          "equals": 0
+        },
+        {
+          "contract": "files_survived",
+          "path": "files_after.digest",
+          "equals_path": "files_before.digest"
+        },
+        {
+          "contract": "files_survived_counted",
+          "path": "files_after.file_count",
+          "at_least": 1
+        },
+        {
+          "contract": "converted_repair_scan_clean",
+          "path": "health.repair_scan",
+          "equals": "NoErrorsFound"
+        },
+        {
+          "contract": "converted_chkdsk_clean",
+          "path": "health.chkdsk_exit_code",
+          "equals": 0
+        },
+        {
+          "contract": "converted_not_dirty",
+          "path": "health.dirty",
+          "is_false": true
+        }
+      ],
+      "not_proved": "A spanned or mirrored dynamic volume, which the app refuses."
+    },
+    {
+      "id": "external.hardware-wipe",
+      "name": "Non-system hardware wipe on disposable physical disk",
+      "ran_on": {
+        "accepted": [
+          "virtual_machine",
+          "physical"
+        ],
+        "physical_claim": true
+      },
+      "client": "unelevated",
+      "steps": [
+        {
+          "id": "wipe",
+          "operation": "WipeDisk",
+          "expect": "success"
+        }
+      ],
+      "checks": [
+        {
+          "contract": "every_marker_was_on_the_disk",
+          "path": "markers_before.marker_hits",
+          "equals_path": "markers_before.places_read"
+        },
+        {
+          "contract": "enough_of_the_disk_was_marked",
+          "path": "markers_before.places_read",
+          "at_least": 32
+        },
+        {
+          "contract": "the_wipe_destroyed_every_marker",
+          "path": "markers_after.marker_hits",
+          "equals": 0
+        },
+        {
+          "contract": "no_partition_is_left",
+          "path": "snapshots.after.data_partition_count",
+          "equals": 0
+        },
+        {
+          "contract": "the_same_device_is_still_there",
+          "path": "serial_sha256_after",
+          "equals_path": "serial_sha256_before"
+        }
+      ],
+      "not_proved": "Sectors a drive has remapped, and a disk too large to read back whole."
+    }
+  ]
+}

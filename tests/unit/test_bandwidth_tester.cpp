@@ -6,8 +6,15 @@
 
 #include "sak/bandwidth_tester.h"
 #include "sak/network_diagnostic_types.h"
+#include "sak/network_transfer_runner.h"
 
+#include <QProcess>
+#include <QSignalSpy>
 #include <QtTest/QtTest>
+
+#include <algorithm>
+
+#include <windows.h>
 
 using namespace sak;
 
@@ -22,13 +29,34 @@ private Q_SLOTS:
     void serverNotRunning_initially();
     void cancel_doesNotCrash();
     void stopServer_withoutStart();
-    void isIperf3Available_returnsBool();
+    void isIperf3Available_matchesBundledToolOnDisk();
     void bandwidthTestResult_defaults();
+    void staleFirewallRules_onlyThoseNoLiveSakOwns();
+    void iperfServer_runsInsideAKillOnCloseJob();
+
+    // -- composeFirewallRuleName (per-instance uniqueness, B9-16) --
+    void firewallRuleName_containsPortAndToken();
+    void firewallRuleName_uniquePerToken();
+    void firewallRuleName_noShellMetacharacters();
+
+    // -- parseIperfJson (bad-output not a success, B9-18) ----------
+    void parseIperf_rejectsGarbage();
+    void parseIperf_rejectsJsonWithoutEndSummary();
+    void parseIperf_acceptsValidTcpResult();
+    void parseIperf_acceptsUdpResultFromEndSum();
+
+    // -- composeNetshPath (absolute netsh, fail closed on empty root) --
+    void netshPath_absoluteUnderSystemRoot();
+    void netshPath_emptyRootFailsClosed();
+
+    // -- runNetworkTransfer (R5-P9-34: a non-positive timeout is refused) --
+    void networkTransfer_rejectsZeroTimeoutBeforeAnyRequest();
+    void networkTransfer_rejectsNegativeTimeout();
 };
 
 void TestBandwidthTester::construction_default() {
     BandwidthTester tester;
-    QVERIFY(dynamic_cast<QObject*>(&tester) != nullptr);
+    static_assert(std::is_base_of_v<QObject, BandwidthTester>);  // was a vacuous runtime upcast
     QVERIFY(!tester.isServerRunning());
 }
 
@@ -84,11 +112,34 @@ void TestBandwidthTester::stopServer_withoutStart() {
     QVERIFY(!tester.isServerRunning());
 }
 
-void TestBandwidthTester::isIperf3Available_returnsBool() {
+void TestBandwidthTester::isIperf3Available_matchesBundledToolOnDisk() {
+    // isIperf3Available() is not an "either": it is exactly "did findIperf3Path resolve one
+    // of its three fixed candidates under applicationDirPath". Recompute that answer here,
+    // independently of the function under test, instead of discarding it via Q_UNUSED.
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QString bundled = appDir + QStringLiteral("/tools/iperf3/iperf3.exe");
+    const QStringList candidates = {
+        bundled,
+        appDir + QStringLiteral("/../tools/iperf3/iperf3.exe"),
+        appDir + QStringLiteral("/iperf3.exe"),
+    };
+    const bool anyCandidateOnDisk = std::ranges::any_of(candidates, [](const QString& candidate) {
+        return QFileInfo::exists(candidate);
+    });
+
     BandwidthTester tester;
-    const bool available = tester.isIperf3Available();
-    Q_UNUSED(available);
-    // Verify it returns without crashing; result depends on tools/ dir
+    QCOMPARE(tester.isIperf3Available(), anyCandidateOnDisk);
+
+    // The Release test binary is emitted into the app output dir (tests/CMakeLists.txt:22,
+    // :6646), where the sak_utility POST_BUILD tools-bundle copy (CMakeLists.txt:1460-1468)
+    // deploys tools/iperf3/iperf3.exe. Whenever that bundle is on disk the answer must be a
+    // definite yes: dropping that candidate from findIperf3Path would make startIperfServer
+    // (bandwidth_tester.cpp:273) and runIperfTest (:429) report "iPerf3 not found" for a
+    // perfectly deployed tool. Scoped to the file's presence so the check is inert, never
+    // wrong, in a layout that has no deployed bundle.
+    if (QFileInfo::exists(bundled)) {
+        QVERIFY2(tester.isIperf3Available(), qPrintable(bundled));
+    }
     QVERIFY(!tester.isServerRunning());
 }
 
@@ -105,6 +156,229 @@ void TestBandwidthTester::bandwidthTestResult_defaults() {
     QCOMPARE(result.durationSec, 0);
     QCOMPARE(result.parallelStreams, 0);
     QVERIFY(!result.reverseMode);
+    // tcpWindowSize has NO writer anywhere in the codebase -- parseIperfJson
+    // (bandwidth_tester.cpp:518) default-constructs its result and never assigns it
+    // (the ":528 Parse TCP window size" comment is stale), so the header's = 0.0 is
+    // the field's only value and it rides the SUCCESS path to the panel via :484/:492.
+    QCOMPARE(result.tcpWindowSize, 0.0);
+
+    // A failed run must not render as data: runIperfTest sets timestamp ONLY on the
+    // success path (bandwidth_tester.cpp:490), so the default must stay null or every
+    // testComplete({}) failure exit (:431/:437/:451/:456/:463/:471/:481) would carry a
+    // fresh, real-looking time.
+    QVERIFY(!result.timestamp.isValid());
+
+    // Pin the emission form used by those failure exits, not just default-init:
+    // testComplete({}) value-initializes, and that zero/null result IS the contract.
+    QCOMPARE(BandwidthTestResult{}.tcpWindowSize, 0.0);
+    QVERIFY(!BandwidthTestResult{}.timestamp.isValid());
+}
+
+// ===================================================================
+// composeFirewallRuleName -- per-instance uniqueness (B9-16)
+// ===================================================================
+
+void TestBandwidthTester::firewallRuleName_containsPortAndToken() {
+    const QString name = BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("abc123"));
+    QCOMPARE(name, QStringLiteral("SAK_Utility_iPerf3_5201_abc123"));
+    // Same inputs -> stable name (so create and remove match).
+    QCOMPARE(name, BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("abc123")));
+
+    // The CALLER-supplied port must reach the name -- not netdiag::kDefaultIperfPort.
+    // startIperfServer() feeds the same port to this name and to netsh "localport="
+    // (bandwidth_tester.cpp:291-292, :700), so a name pinned only at the default value
+    // cannot tell a real port-routed name from a hardcoded default (B9-16 cross-deletion).
+    QCOMPARE(BandwidthTester::composeFirewallRuleName(5202, QStringLiteral("abc123")),
+             QStringLiteral("SAK_Utility_iPerf3_5202_abc123"));
+    // Distinct ports (same token) must yield distinct rule names.
+    QVERIFY(BandwidthTester::composeFirewallRuleName(5202, QStringLiteral("abc123")) !=
+            BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("abc123")));
+}
+
+void TestBandwidthTester::firewallRuleName_uniquePerToken() {
+    // Two concurrent servers get distinct tokens => distinct rule names, so one
+    // stopping cannot delete the other's inbound rule.
+    const QString a = BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("token-A"));
+    const QString b = BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("token-B"));
+    QVERIFY(a != b);
+}
+
+void TestBandwidthTester::firewallRuleName_noShellMetacharacters() {
+    // netsh runs shell-free via argv, but keep the composed name free of quotes and
+    // whitespace regardless.
+    const QString name = BandwidthTester::composeFirewallRuleName(
+        5201, QStringLiteral("0123456789abcdef0123456789abcdef"));
+    // Exact composed name subsumes (and exceeds) the no-quote/no-space checks.
+    QCOMPARE(name, QStringLiteral("SAK_Utility_iPerf3_5201_0123456789abcdef0123456789abcdef"));
+}
+
+// ===================================================================
+// parseIperfJson -- unparseable output must not read as a zero success (B9-18)
+// ===================================================================
+
+void TestBandwidthTester::parseIperf_rejectsGarbage() {
+    QVERIFY(!BandwidthTester::parseIperfJson(QByteArrayLiteral("not json at all")).has_value());
+    QVERIFY(!BandwidthTester::parseIperfJson(QByteArray()).has_value());
+}
+
+void TestBandwidthTester::parseIperf_rejectsJsonWithoutEndSummary() {
+    // Valid JSON, but not an iPerf3 result (no `end` throughput summary): must be
+    // rejected rather than yielding an all-zero "success".
+    const auto r = BandwidthTester::parseIperfJson(QByteArrayLiteral("{\"start\":{}}"));
+    QVERIFY(!r.has_value());
+}
+
+void TestBandwidthTester::parseIperf_acceptsValidTcpResult() {
+    const QByteArray json = QByteArrayLiteral(
+        "{\"end\":{\"sum_sent\":{\"bits_per_second\":100000000,\"retransmits\":2},"
+        "\"sum_received\":{\"bits_per_second\":90000000}}}");
+    const auto r = BandwidthTester::parseIperfJson(json);
+    QVERIFY(r.has_value());
+    QCOMPARE(r->uploadMbps, 100.0);   // 100 Mbit/s
+    QCOMPARE(r->downloadMbps, 90.0);  // 90 Mbit/s
+    QCOMPARE(r->retransmissions, 2.0);
+}
+void TestBandwidthTester::parseIperf_acceptsUdpResultFromEndSum() {
+    // A UDP run (`iperf3 -u -J`) carries throughput ONLY in end.sum -- it has no
+    // sum_sent/sum_received. Two things must hold or B9-18 is violated for UDP:
+    //   (a) the third arm of the hasThroughput gate (bandwidth_tester.cpp:513) must
+    //       ACCEPT this shape, else a successful UDP test is reported as
+    //       "iPerf3 completed but returned unparseable output" (bandwidth_tester.cpp:479);
+    //   (b) the UDP field block (bandwidth_tester.cpp:549-558) must fill
+    //       upload/download/jitter/loss, else the run reads as a bogus all-zero
+    //       "success" because lines 524-526 find no sum_sent/sum_received.
+    const QByteArray json = QByteArrayLiteral(
+        "{\"end\":{\"sum\":{\"bits_per_second\":50000000,\"jitter_ms\":1.5,"
+        "\"lost_percent\":2.5}}}");
+    const auto r = BandwidthTester::parseIperfJson(json);
+    QVERIFY(r.has_value());
+    // UDP throughput is symmetric: the single end.sum figure feeds both directions.
+    QCOMPARE(r->uploadMbps, 50.0);    // 50 Mbit/s
+    QCOMPARE(r->downloadMbps, 50.0);  // 50 Mbit/s
+    QCOMPARE(r->jitterMs, 1.5);
+    QCOMPARE(r->packetLossPercent, 2.5);
+    // No TCP retransmit counter exists on a UDP run.
+    QCOMPARE(r->retransmissions, 0.0);
+}
+
+
+// ===================================================================
+// composeNetshPath -- absolute path only, fail closed on empty root
+// ===================================================================
+
+void TestBandwidthTester::netshPath_absoluteUnderSystemRoot() {
+    // The privileged firewall calls must resolve netsh under System32, never a bare
+    // "netsh" that a PATH/CWD-planted binary could hijack.
+    const QString path = BandwidthTester::composeNetshPath(QStringLiteral("C:/Windows"));
+    QCOMPARE(path, QStringLiteral("C:/Windows/System32/netsh.exe"));
+    // Backslash-style root resolves to the same cleaned path.
+    const QString back = BandwidthTester::composeNetshPath(QStringLiteral("C:\\Windows"));
+    QCOMPARE(back, QStringLiteral("C:/Windows/System32/netsh.exe"));
+}
+
+void TestBandwidthTester::netshPath_emptyRootFailsClosed() {
+    // No known Windows root -> no trusted netsh -> empty means "do not run" (fail
+    // closed), never a fallback to bare "netsh".
+    QVERIFY(BandwidthTester::composeNetshPath(QString()).isEmpty());
+}
+
+// ===================================================================
+// runNetworkTransfer -- a non-positive timeout must be refused, never
+// coerced to a default and never treated as "no timeout" (R5-P9-34)
+// ===================================================================
+
+void TestBandwidthTester::networkTransfer_rejectsZeroTimeoutBeforeAnyRequest() {
+    // timeout_ms == 0 disables Qt's transfer timeout AND leaves the deadline timer unarmed, so
+    // the synchronous runNetworkTransfer() would wait on a stalled server forever when no
+    // cancel callback is supplied. The request must be refused before any network access: an
+    // untouched elapsed_ms proves the worker thread never ran.
+    NetworkTransferRequest request;
+    request.url = QUrl(QStringLiteral("http://127.0.0.1:9/never-contacted"));
+    request.timeout_ms = 0;
+
+    const NetworkTransferResult result = runNetworkTransfer(request);
+    QVERIFY(!result.success);
+    QVERIFY(!result.timed_out);
+    QCOMPARE(result.error_message, QStringLiteral("Invalid timeout_ms: must be positive"));
+    QCOMPARE(result.elapsed_ms, 0LL);
+    QCOMPARE(result.bytes_received, 0LL);
+    QVERIFY(result.body.isEmpty());
+}
+
+void TestBandwidthTester::networkTransfer_rejectsNegativeTimeout() {
+    NetworkTransferRequest request;
+    request.url = QUrl(QStringLiteral("http://127.0.0.1:9/never-contacted"));
+    request.timeout_ms = -1;
+
+    const NetworkTransferResult result = runNetworkTransfer(request);
+    QVERIFY(!result.success);
+    QCOMPARE(result.error_message, QStringLiteral("Invalid timeout_ms: must be positive"));
+    QCOMPARE(result.elapsed_ms, 0LL);
+}
+
+// A crash left the iPerf3 server's inbound allow rule behind for good. Rule names now carry the
+// owner's process ID, and a server start sweeps rules whose owner is gone -- never its own, never
+// a live SAK's, never a rule that is not ours.
+void TestBandwidthTester::staleFirewallRules_onlyThoseNoLiveSakOwns() {
+    const QStringList names{
+        QStringLiteral("SAK_Utility_iPerf3_5201_100-0123456789abcdef0123456789abcdef"),  // own
+        QStringLiteral("SAK_Utility_iPerf3_5201_200-0123456789abcdef0123456789abcdef"),  // live
+        QStringLiteral("SAK_Utility_iPerf3_5201_300-0123456789abcdef0123456789abcdef"),  // gone
+        QStringLiteral("SAK_Utility_iPerf3_5201_0123456789abcdef0123456789abcdef"),  // pre-owner
+        QStringLiteral("Some Other App iPerf3 rule"),
+        QStringLiteral("SAK_Utility_iPerf3_5201_300-x; netsh delete")};
+    const auto alive = [](qint64 pid) {
+        return pid == 200;
+    };
+    QCOMPARE(BandwidthTester::staleFirewallRules(names, 100, alive),
+             QStringList({names.at(2), names.at(3)}));
+}
+
+// The server used to be a plain QProcess outside any Job, so a crash of this app left iperf3
+// listening. It now starts inside a kill-on-close Job.
+void TestBandwidthTester::iperfServer_runsInsideAKillOnCloseJob() {
+    BandwidthTester tester;
+    if (!tester.isIperf3Available()) {
+        // No bundled tool, no server to contain: starting must refuse out loud instead.
+        QSignalSpy errors(&tester, &BandwidthTester::errorOccurred);
+        tester.startIperfServer(52'917);
+        QCOMPARE(errors.count(), 1);
+        QVERIFY(!tester.isServerRunning());
+        return;
+    }
+    QSignalSpy started(&tester, &BandwidthTester::serverStarted);
+    tester.startIperfServer(52'917);
+    QTRY_COMPARE_WITH_TIMEOUT(started.count(), 1, 10'000);
+    QProcess* server = nullptr;  // netsh and the rule sweep are QProcess children too
+    for (auto* child : tester.findChildren<QProcess*>()) {
+        if (child->program().endsWith(QStringLiteral("iperf3.exe"), Qt::CaseInsensitive)) {
+            server = child;
+        }
+    }
+    QVERIFY(server != nullptr);
+    // The server's QProcess owns the Job that contains it (and so outlives it by nothing).
+    QVERIFY2(server->findChild<QObject*>(QStringLiteral("iperf3ServerJob")) != nullptr,
+             "the iPerf3 server must be launched inside its own Job");
+    BOOL self_in_job = FALSE;
+    QVERIFY(IsProcessInJob(GetCurrentProcess(), nullptr, &self_in_job));
+    if (self_in_job) {
+        // Under CTest this process is itself in a Job, so the OS-level membership check below
+        // would pass for any child; the ownership check above is what holds here.
+        tester.stopIperfServer();
+        QTRY_VERIFY_WITH_TIMEOUT(!tester.isServerRunning(), 10'000);
+        return;
+    }
+    const qint64 pid = server->processId();
+    QVERIFY(pid > 0);
+    HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    QVERIFY(handle != nullptr);
+    BOOL in_job = FALSE;
+    const BOOL queried = IsProcessInJob(handle, nullptr, &in_job);
+    CloseHandle(handle);
+    QVERIFY(queried);
+    QVERIFY2(in_job, "the iPerf3 server must run inside a Job");
+    tester.stopIperfServer();
+    QTRY_VERIFY_WITH_TIMEOUT(!tester.isServerRunning(), 10'000);
 }
 
 QTEST_MAIN(TestBandwidthTester)

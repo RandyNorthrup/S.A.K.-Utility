@@ -4,36 +4,58 @@
 #include "sak/ai/ai_workflow_store.h"
 
 #include "sak/ai/ai_paths.h"
+#include "sak/ai/ai_store_file_loader.h"
 
 #include <QDir>
-#include <QFile>
 #include <QSet>
+
+#include <functional>
+#include <utility>
 
 namespace sak::ai {
 
 namespace {
 
-bool loadWorkflowFile(const QString& path, WorkflowTemplate* workflow, QStringList* errors) {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (errors != nullptr) {
-            errors->append(QStringLiteral("%1: %2").arg(path, file.errorString()));
-        }
-        return false;
-    }
+constexpr qint64 kMaxWorkflowFileBytes = 1LL * 1024 * 1024;
+constexpr int kMaxWorkflowFiles = 512;
+#ifdef SAK_AI_TEST_HOOKS
+// Test-only race hooks (SAK_AI_TEST_HOOKS); a product build hands the loader none.
+std::function<void(const QString&)> g_before_file_open_hook;
+std::function<void(const QString&)> g_before_file_read_hook;
 
-    QStringList parse_errors;
-    *workflow = WorkflowTemplate::fromJsonBytes(file.readAll(), path, &parse_errors);
-    if (!parse_errors.isEmpty()) {
-        if (errors != nullptr) {
-            errors->append(parse_errors);
-        }
-        return false;
-    }
-    return workflow->isValid(errors);
+detail::StoreFileLoadHooks storeFileLoadHooks() {
+    return {.before_file_open = g_before_file_open_hook,
+            .before_file_read = g_before_file_read_hook,
+            .before_child_open = {},
+            .before_leaf_temp_open = {},
+            .before_leaf_publish = {}};
+}
+#else
+detail::StoreFileLoadHooks storeFileLoadHooks() {
+    return {};
+}
+#endif  // SAK_AI_TEST_HOOKS
+
+const detail::StoreFileLoadPolicy& workflowFileLoadPolicy() {
+    static const detail::StoreFileLoadPolicy kPolicy{QStringLiteral("Workflow"),
+                                                     QStringLiteral(".json"),
+                                                     QStringLiteral("JSON"),
+                                                     kMaxWorkflowFileBytes,
+                                                     kMaxWorkflowFiles};
+    return kPolicy;
 }
 
 }  // namespace
+
+#ifdef SAK_AI_TEST_HOOKS
+void WorkflowStore::setBeforeFileOpenHookForTesting(std::function<void(const QString&)> hook) {
+    g_before_file_open_hook = std::move(hook);
+}
+
+void WorkflowStore::setBeforeFileReadHookForTesting(std::function<void(const QString&)> hook) {
+    g_before_file_read_hook = std::move(hook);
+}
+#endif  // SAK_AI_TEST_HOOKS
 
 bool WorkflowStore::loadDefaults(QStringList* errors) {
     bool ok = loadBuiltIn(errors);
@@ -49,27 +71,22 @@ bool WorkflowStore::loadBuiltIn(QStringList* errors) {
 }
 
 bool WorkflowStore::loadDirectory(const QString& directory, QStringList* errors) {
-    QDir dir(directory);
-    if (!dir.exists()) {
-        if (errors != nullptr) {
-            errors->append(QStringLiteral("Workflow directory not found: %1").arg(directory));
+    const detail::StoreFileLoadHooks hooks = storeFileLoadHooks();
+    const detail::StoreFileConsumer consume = [this, errors](const QString& path,
+                                                             const QByteArray& bytes) {
+        QStringList parse_errors;
+        const WorkflowTemplate workflow =
+            WorkflowTemplate::fromJsonBytes(bytes, path, &parse_errors);
+        if (!parse_errors.isEmpty()) {
+            if (errors != nullptr) {
+                errors->append(parse_errors);
+            }
+            return false;
         }
-        return false;
-    }
-
-    const QStringList files = dir.entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name);
-    bool ok = true;
-    for (const auto& file_name : files) {
-        WorkflowTemplate workflow;
-        const QString path = dir.filePath(file_name);
-        if (!loadWorkflowFile(path, &workflow, errors)) {
-            ok = false;
-            continue;
-        }
-        ok = addWorkflow(workflow, errors) && ok;
-    }
-    rebuildIndex();
-    return ok;
+        return addWorkflow(workflow, errors);
+    };
+    return detail::loadStoreDirectoryFiles(
+        directory, workflowFileLoadPolicy(), hooks, consume, errors);
 }
 
 bool WorkflowStore::addWorkflow(const WorkflowTemplate& workflow, QStringList* errors) {
@@ -79,9 +96,14 @@ bool WorkflowStore::addWorkflow(const WorkflowTemplate& workflow, QStringList* e
 
     const auto existing = m_index_by_id.constFind(workflow.id);
     if (existing != m_index_by_id.constEnd()) {
+        // A user-directory workflow intentionally OVERRIDES a built-in of the same id (a supported
+        // customization; see userDirectoryOverridesBuiltInWorkflow). Not a shadowing vulnerability:
+        // writing to the user workflow directory already requires local access, and every template
+        // -- built-in or user -- is validated at load (including the run_powershell single-quote
+        // invariant), so an override cannot smuggle an unescaped placeholder past validation.
         m_workflows[*existing] = workflow;
     } else {
-        m_index_by_id.insert(workflow.id, m_workflows.size());
+        m_index_by_id.insert(workflow.id, static_cast<int>(m_workflows.size()));
         m_workflows.append(workflow);
     }
     return true;
@@ -130,13 +152,6 @@ QString WorkflowStore::builtInResourceRoot() {
 
 QString WorkflowStore::defaultUserWorkflowDirectory() {
     return workflowLibraryDirectory();
-}
-
-void WorkflowStore::rebuildIndex() {
-    m_index_by_id.clear();
-    for (int i = 0; i < m_workflows.size(); ++i) {
-        m_index_by_id.insert(m_workflows.at(i).id, i);
-    }
 }
 
 }  // namespace sak::ai

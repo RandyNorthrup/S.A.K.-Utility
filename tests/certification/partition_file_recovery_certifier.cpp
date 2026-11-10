@@ -17,11 +17,9 @@
 #include <algorithm>
 #include <optional>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
 
 #include <io.h>
-#endif
 
 namespace {
 
@@ -149,15 +147,11 @@ bool flushFileToDisk(QFile* file) {
     if (!file->flush()) {
         return false;
     }
-#ifdef Q_OS_WIN
     const intptr_t osFileHandle = _get_osfhandle(file->handle());
     if (osFileHandle == -1) {
         return false;
     }
     return FlushFileBuffers(reinterpret_cast<HANDLE>(osFileHandle)) != 0;
-#else
-    return true;
-#endif
 }
 
 QJsonArray stringArray(const QStringList& values) {
@@ -204,7 +198,7 @@ QJsonObject reportBase(const ReportFields& fields) {
         {QStringLiteral("status"), fields.status},
         {QStringLiteral("manifest"), fields.manifestPath},
         {QStringLiteral("certification_matrix"),
-         QStringLiteral("docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json")},
+         QStringLiteral("certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json")},
         {QStringLiteral("suggested_evidence_path"), fields.suggestedEvidencePath},
         {QStringLiteral("safety_contract"),
          stringArray({QStringLiteral("disposable_recovery_volume"),

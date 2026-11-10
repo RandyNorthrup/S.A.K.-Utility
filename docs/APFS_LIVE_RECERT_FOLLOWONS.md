@@ -1,0 +1,330 @@
+# APFS live re-cert follow-on program
+
+Origin: the 2026-08-10 live re-certification of the R5 APFS-writer residual campaign
+(waves A-G) against GENUINE Apple containers on the macOS VM (10.10.11.102, macOS 26.6,
+apfs_kext 2811.160.7). That re-cert is recorded in docs/archive/CODEX_REVIEW_5_REMEDIATION.md
+("Fix wave 3 -> LIVE RE-CERT DONE") and the campaign scratchpad apfs_deferred_residuals.md.
+
+Verdict of the re-cert: no wave A-G fail-closed guard false-rejects genuine Apple metadata
+on any supported path. It certified clean (kernel mount + read-back sha-match + fsck_apfs
+"container appears to be OK"): list-image walk, import-image + add, in-place COW
+patch/insert/write/delete (single-chunk), resize shrink (F51 zone), and (after the fix
+below) resize grow. It also surfaced the concrete work items tracked here. Randy
+(2026-08-10): "all of this needs to be done" -- every item below is REQUIRED, not optional.
+
+Chosen order: (1) broaden the live cert first (it is 2-for-2 at finding real defects and
+may reshape the fixes), (2) import metadata fidelity, (3) foreign multi-chunk in-place COW,
+(4) infra backlog last (needs no live rig; everything else uses the VM while it is up).
+
+--------------------------------------------------------------------------------
+## DONE
+
+- [x] GROW chunk-0 free-count off-by-reclaimed (commit ea3ee59, doc 6521c5d).
+      A real multi-chunk-source grow frees aged main-free-queue runs into chunk 0's
+      bitmap but layoutMultiChunkGrow seeded chunk 0's cib free count from the SOURCE
+      count, under-counting by reclaimed.size(). Pre-existing (2026-07-03), invisible to
+      the generated gate. Fixed by recomputing chunk 0 free from the bitmap popcount.
+      Re-certified on a real Apple container (fsck_apfs OK pre-mount; apfsck clean
+      256->512 and 256->1024); Release ctest 225/225.
+
+- [x] RAW-DEVICE grow certified on PHYSICAL hardware (2026-08-10, PhysicalDrive3,
+      28.9GB disposable USB, elevated). commitRawResize is a distinct entry point from
+      the image cert: openRawInPlaceCommitTarget + deviceAlreadySized=true +
+      flushCommitTargetThenClose over sector I/O, none of it exercised by
+      commitImageOnlyResize. Certified end to end: raw-copied a generated 256MiB
+      (2-chunk) container to device offset 0 with a zeroed tail to 512MiB, then
+      commit-raw-resize grew it in place 256->512MiB (4 chunks) directly on
+      \\.\PhysicalDrive3 (ok, blockers=[], xid 2->3), read the grown 512MiB back off
+      the raw device, and verified: apfsck -cw clean AND Apple-kernel fsck_apfs -n
+      ("The container /dev/rdisk4 appears to be OK", checkpoint xid 3, space manager +
+      free-queue trees + object map + volume all clean). The device seed is a raw byte
+      copy because CLI format-raw is hard-gated behind structured cert evidence +
+      hardware proof (by design); the grow reads geometry from the on-device NXSB, so
+      how the container arrived does not matter. This closes the raw-device I/O path
+      for the ea3ee59 grow fix.
+
+--------------------------------------------------------------------------------
+## WORKSTREAM 1 -- broaden the live cert (find remaining real-Apple defects)
+
+Status: DONE 2026-08-10. Exercised every wave A-G path against genuine Apple metadata that
+the first pass did not cover. ONE real defect found (the grow bug, already fixed above); no
+others. All clean on real Apple containers (apfsck kernel-free oracle + Apple kernel fsck).
+
+- [x] Snapshot ops: harvesting an APPLE-created snapshot on an external volume is blocked --
+      the VM has SIP ENABLED (csrutil status: enabled), so fs_snapshot_create is unavailable
+      and tmutil localsnapshot only snapshots the boot set. Instead certified the stronger
+      direction: S.A.K. commit-image-snapshot-create/-delete/-revert on a REAL single-chunk
+      Apple container, then Apple's kernel fsck_apfs walked each snapshot by name+xid clean:
+      snapAB "snapshot 1 of 2 (sakA, xid 6)" + "2 of 2 (sakB, xid 7)" container OK; snapDel
+      "1 of 1 (sakB)" (sakA correctly gone); snapRev both present, OK. (Reading an
+      APPLE-created snapshot still wants a SIP-off Mac -- carried as a residual.)
+- [x] Chained mutations: resize pipeline on a real multi-chunk Apple container
+      (grow 256->512 -> shrink 512->256 -> grow 256->768 -> shrink 768->256) and a COW
+      pipeline on a real single-chunk Apple container (patch -> insert -> write -> delete),
+      each output re-fed -- apfsck clean at EVERY step.
+- [x] Deeper / larger tree: a real Apple container with 800 root files + a depth-3 nested
+      dir -- list-image returned all 801 entries, no blockers, no wave B node-budget trip.
+- [x] Multi-volume: a real 1 GiB Apple container with two volumes (VOL1 + VOL2 via diskutil
+      apfs addVolume; a 256 MiB container caps at 1 volume, nx_max_file_systems=ceil/512MiB).
+      list-image + import-image correctly resolve the first volume (wave C target-volume oid)
+      and re-emit apfsck-clean.
+
+At the August 10 checkpoint, flat multi-chunk import re-emit was apfsck-clean, while in-place
+COW on a real MULTI-chunk internal pool failed closed at F16. WS3c below subsequently implemented
+and certified the foreign-pool in-place path; that former refusal is not a current limitation.
+
+Residual carried to WS1-followups: reading an APPLE-created snapshot chain (needs a SIP-off
+Mac to harvest one); the physical MacBook rig (10.10.11.38) or a VM SIP-disable is the path.
+
+--------------------------------------------------------------------------------
+## WORKSTREAM 2 -- import metadata fidelity (wave G / F1 completion)
+
+Status: DONE 2026-08-10 (commit 2a2412c). Defect was CONFIRMED on the live rig
+(import-image reset an adopted real Apple file's owner/group/mode/times/bsd_flags to
+generated defaults -- a 0640 file re-emitted as 0644, non-default owners lost). Threaded
+the recovered inode identity end to end, reusing the wave G applyRecoveredInodeMetadata
+already in the writer. Each layer additive + sentinel-guarded, so the generated path stays
+byte-identical (full Release ctest 225/225).
+
+- [x] Reader: parseInodeRecord now reads owner(0x48)/group(0x4C)/bsd_flags(0x44)/times
+      (0x10/0x18/0x20/0x28) into InodeRecord; PartitionApfsFileEntry exposes them with a
+      has_inode_metadata gate. All offsets are within the value_length >= 0x5C bound.
+- [x] CLI: ImportedFile carries the metadata from the listing entry; the optional added
+      --file-name file has none -> has_metadata false -> generated defaults.
+- [x] Writer: PartitionApfsImageFileInsertCommitRequest += preserve_inode_metadata + eight
+      scalars; commitImageOnlyFileWrite builds an ApfsRecoveredInodeMetadata and threads it
+      ApfsRootFileWriteRequest -> ApfsFileInsertRequest -> payload -> applyRecoveredInodeMetadata.
+- [x] Live re-cert: imported a real Apple container whose files were chowned 502:80 mode
+      0640 and 503:81 mode 0600 -- the re-emit preserved those exact owner/group/mode
+      (verified via diskutil enableOwnership + stat) and the container fsck_apfs was clean;
+      host apfsck clean for the single- and multi-chunk imports.
+
+--------------------------------------------------------------------------------
+## WORKSTREAM 3 -- foreign multi-chunk in-place COW + grow increments
+
+Status: DONE 2026-08-31. Genuine Apple 2-chunk and 135-chunk/2-CIB containers passed the full
+chained COW matrix, host apfsck, Apple fsck before mount, kernel read-back, and Apple fsck after
+kernel continuation. The multi-CIB shrink inverse also passed.
+
+- [x] WS3a HONEST MESSAGE (commit 3789c41): the nextIpSlot refusal now names both real
+      causes -- "in-place file mutation of a real multi-chunk Apple internal pool is not yet
+      supported (use import-image or resize); on a S.A.K.-generated container this indicates
+      checkpoint corruption" -- instead of the bare "not a valid rotation slot". No behavior
+      change; still fails closed. Verified it fires with the new text on a real multi-chunk
+      Apple container.
+- [x] WS3b FULL SINGLE-CHUNK GROW (commit 3789c41): a container at exactly one full chunk
+      (32768 blocks / 128 MiB) could not grow (the chunk-adding path wants a chunk-0 tail a
+      full chunk does not have). Now routed through the multi-chunk-source path (pool in the
+      first grown chunk). Certified on a real Apple 128 MiB container: grows to 256/384/512
+      MiB are apfsck-clean and fsck_apfs "container appears to be OK" on the macOS kernel with
+      all files sha-preserved. Sub-chunk sources unchanged; 225/225.
+
+- [x] WS3c FOREIGN MULTI-CHUNK IN-PLACE COW -- CLOSED 2026-08-31 (corruption-critical,
+      dedicated pass). The LANDED and CERT records below describe the completed path.
+      PRE-FIX INVESTIGATION (historical): in-place COW file mutation (patch/insert/write/delete)
+      on a real MULTI-chunk Apple internal pool failed closed at nextIpSlot, per WS3a.
+      That refusal was safe, but the feature still needed implementation at that checkpoint.
+      WHY IT REQUIRED A DEDICATED PASS, not a quick reuse: the resize foreignOverflow machinery is
+      OVERFLOW-specific -- it is entered only when a mutation SPILLS past chunk 0 (the boundary
+      chunk allocation at partition_apfs_writer.cpp reanchorForeignOverflowAllocation (line
+      10936; the name here was configureOverflowAllocation, which exists nowhere), which sets
+      ctx->foreignOverflow). A small file mutation on a multi-chunk container never spills, so
+      it takes the GENERAL ring rotation (computeIpRotation -> nextIpSlot -> advanceCheckpoint),
+      which is hard-coded to the S.A.K.-generated 3-slot co-located ring (cib0Base + k*stride,
+      kIpSlotCount=3). Apple's real multi-chunk pool instead uses a 16-slot ip_bm ring
+      (ip_bm_base) with the cib at ip_base+8 -- a different structure the generated model cannot
+      represent. Teaching the GENERAL rotation to detect a foreign IP layout and drive the real
+      ip_bm ring (allocate the new cib/bitmap from real free IP blocks, advance the real ring
+      slot, build the used-set from the live IP bitmap) for EVERY in-place commit is the real
+      work -- comparable in scope + risk to the original wave E2 foreignOverflow effort, and it
+      must be certified byte-for-byte against real Apple containers before it can ship (a wrong
+      rotation silently corrupts live Apple metadata). Before WS3c landed, the supported
+      alternatives were import-image (flat root files) and resize.
+      PRE-FIX DESIGN SKETCH: (1) in loadFsCommitContext, run the foreign-IP probe (foreignIpGeometryInRange
+      / the spaceman ip_base+ip_bm_base read) unconditionally, not just on the overflow path, and
+      set a ctx.foreignIp flag + the real ring geometry. (2) generalize computeIpRotation: when
+      ctx.foreignIp, compute the next real ring slot from ip_bm_free_head/tail + the live slot
+      (probe-layout already decodes these) instead of nextIpSlot's 3-slot model. (3) allocate the
+      new cib / chunk-0 bitmap from real free IP blocks (ip_base+ip_block_count onward) and build
+      the IP used-set from the live IP bitmap. (4) cert on the rig: patch/insert/write/delete on
+      real 256 MiB + multi-CIB Apple containers, apfsck + Apple kernel fsck clean, chained.
+      LANDED: foreign detection is authenticated and persists by the volume superblock's
+      formatted_by provenance, not by a CIB address that can later resemble the generated ring.
+      New metadata copies come from the real IP bitmap plus the IP queue's two-checkpoint window;
+      the rebuilt queue consumes aged ghosts and enqueues old live COW blocks. Every live CAB,
+      CIB, and nonzero ci_bitmap_addr is authenticated, marked-used, and excluded.
+      CERT: genuine Apple 256 MiB and 18,043,854,848-byte (135 chunks, 2 CIBs) sources; chained
+      insert xid 4->5, patch 5->6, replace 6->7, delete 7->8. Host apfsck clean at every step.
+      Apple fsck_apfs clean pre-mount and post-kernel at every step; kernel read-back exact and
+      neighbor data preserved. Evidence `external.apfs-foreign-multicib-cow`.
+- [x] WS3c-2 -- CLOSED 2026-08-31. The xid-8 genuine Apple multi-CIB chain result shrank from
+      18,043,854,848 to 17,179,869,184 bytes (135 -> 128 chunks; still multi-CIB), xid 8->9.
+      Host apfsck clean; Apple fsck clean before mount; kernel read-back preserved replacement +
+      neighbor and absence; kernel advanced to xid 12; Apple fsck clean again. This also exposed
+      and fixed the CLI binding that ignored --new-size-bytes for commit-image-resize.
+      FINAL LOCAL GATE: all changed-file pre-commit hooks passed. Release build exit 0. The first
+      full CTest run was 261/262 and exposed the generated >1.35 TiB classifier regression; the
+      existing failing test was the red proof. After the fix, the full core binary passed and a
+      fresh complete CTest run passed 262/262 in 627.25 seconds.
+
+--------------------------------------------------------------------------------
+## WORKSTREAM 4 -- infra / gate backlog (no live rig needed)
+
+Status: IN PROGRESS. Not APFS. Carried from the R5 campaign. Two gates wired this pass;
+the rest is a debt-reduction + test-infra program (multi-session, much of it cosmetic).
+
+- [x] ASCII-only gate wired (commit 7f48e91). scripts/check_ascii_only.ps1 already scanned
+      every tracked text file but was never in .pre-commit-config.yaml; normalized three
+      residual source comments (two U+2404 control-pictures for the HFS NUL-prefix, an em
+      dash, a Cyrillic homoglyph) so the whole tree is clean (1467 files) and wired the hook
+      (self-excludes binary + vendored/evidence; runs on changed files only).
+- [x] GUI style-token gate wired (commit 2bee958). Its one residual was a QColor::rgba()
+      method call folded into a pixmap cache key, not a raw color literal; the matcher now
+      excludes a `.`/`::`-prefixed call, debt is zero, hook wired.
+- [x] Three gate scripts carried real debt -- ALL THREE REACHED ZERO AND ARE WIRED as blocking
+      pre-commit hooks (sections 6d/6e/6f of .pre-commit-config.yaml, each carrying a comment
+      recording how its debt was cleared). Re-run 2026-08-27: all three exit 0.
+        check_gui_magic_numbers.ps1        18 -> 0  (folded into sak::ui margin/spacing tokens
+                                                     and per-file Files-xaml metric constants)
+        check_gui_stylesheet_literals.ps1  74 -> 0  (QSS moved into
+                                                     file_explorer_style_constants.h and
+                                                     rich_text_constants.h)
+        check_magic_numbers.py            452 -> 0  (named across the tree; the on-disk-format
+                                                     and crypto modules stay exempt in the
+                                                     script, where hand-naming byte offsets is
+                                                     high-risk churn against certified output)
+      This item stayed marked open for seventeen days after the work landed. Recorded because
+      it is the mirror of R5-IDX-6: there, unwritten dispositions made finished work look open
+      and invited a re-triage; here, a stale line made a wired blocking gate look unwired. Both
+      cost the same thing -- the next reader cannot trust the status without redoing the check.
+- [ ] clang-tidy backlog -- MEASURED 2026-08-30: 5,624 unique findings across 301 first-party
+      TUs, not the ~995 recorded here. The bulk is the owner-scoped style tier (2,371
+      pro-bounds container access, 872 designated initializers, 307 anonymous namespace).
+      All 46 bug-shaped findings were triaged with an adversarial second pass: zero real
+      defects. Still a fix program, but a style one. PROGRESS 2026-08-31: the first safe
+      designated-initializer slice cleared all 3 findings in
+      `src/actions/optimize_power_settings_action.cpp`; formatter, lizard, target build, and
+      target CTest passed. The naming gate's prior zero was then proven false: 147/147 TUs had
+      processing failures hidden by disabled clang diagnostics. The gate now strips only 588
+      driver-only flags and rejects unhealthy/incomplete analysis. Seven PS5.1/PS7 tests pass;
+      all 10 initial unused-const/parameter diagnostics are cleared. Wave 2 then fixed all 68
+      logged/newly-exposed missing-field diagnostics, 9 newly revealed dead constants, 2 local
+      names, nested default-config construction, and generated MOC preparation. The real non-core
+      gate now passes 150/150 TUs with zero compiler/processing errors and zero naming findings.
+      Core's earlier 5,271-name count was not health-certified and is superseded. PROGRESS
+      2026-09-02: the first core naming slice made scan health machine-verifiable: the gate now
+      rejects any processing/compiler error or incomplete TU run, deletes stale results before
+      scanning, and publishes its JSON count only after a healthy pass. The current pass analyzed
+      156/156 core TUs with zero processing/compiler errors and measured 5,274 unique findings
+      across 89 files. Eight one-finding TUs are now clean and permanently ratcheted:
+      `bzip2_decompressor.cpp`, `gzip_decompressor.cpp`, `xz_decompressor.cpp`,
+      `deleted_item_scanner.cpp`, `email_export_worker.cpp`, `network_transfer_runner.cpp`,
+      `package_internalization_engine.cpp`, and `pdf_email_writer.cpp`. The second safe slice cleared
+      eight more one-finding TUs: `conversion_report_generator.cpp`,
+      `email_report_generator.cpp`, `input_validator.cpp`, `iso_analyzer.cpp`, `recycle_bin.cpp`,
+      `thermal_monitor.cpp`, `user_data_manager.cpp`, and `vulnerability_scanner.cpp`. A healthy
+      156/156-TU proof pass established zero findings in those files before the manifest expanded;
+      the final healthy pass now measures 5,244 findings across 80 files and enforces 16 clean TUs.
+      The wider core naming and style backlog remains open.
+      PROGRESS 2026-09-04: the configured gate is healthy on 150 non-core and 157 core translation
+      units, measuring 5,235 core-body findings and preserving sixteen clean translation units.
+      A separate Windows header-filter probe exposes an additional coverage gap: 382 naming
+      findings across sixteen headers from one translation unit were hidden by the configured
+      path filter. This is a lower bound; header-filter correction, negative gate coverage and
+      direct header naming cleanup remain INCOMPLETE in the R5 owner document. The configured pass
+      must not be described as header-clean.
+      The completed read-only 307-TU inventory now measures 3,098 unique naming findings across
+      117 source headers, plus ten generated-version findings owned by cmake/version.h.in.
+      It excludes tests-only or unreachable headers; exact counts and scope remain in R5.
+- [x] cppcheck-suppression audit -- DONE, corrected 2026-08-31. All 26 inline suppressions were
+      re-checked with inline suppressions disabled. Three genuinely suppressed nothing and remain
+      removed. A real template-instantiating include-path run later proved two `strong_index.h`
+      function suppressions live (four inconclusive by-value parameter findings), so those two are
+      restored with the single-integer calling-convention reason. `cppcheck_suppressions.txt` holds
+      six file entries, not the 26 recorded here. See R5-IDX-3 in
+      docs/archive/CODEX_REVIEW_5_REMEDIATION.md for the method, the measurement holes, and the
+      whole-project gate gap it exposed.
+- [ ] Test-infra program (each a dedicated effort): G14 coverage ledger, G18 mutation
+      testing, fuzz harnesses, fault injection, G20/G21 remaining gate wiring.
+      PROGRESS 2026-08-31: WS3c's six manual red drills are now two registered mutation catalogs.
+      The ratchet now validates 33 catalogs / 289 mutants (282 killed, 7 proven equivalent),
+      including 15 newly permanent AI package/prompt/provider/offline/OpenAI guards; every new
+      mutant was killed and production sources restored. G14 fuzz/coverage, fault-injection, and G20 are
+      already closed in the R5 owner doc; remaining work is the broader G18/G10-12 mutation surface
+      plus G21-7 fresh-host/hosted execution. G21-2 route parity itself is closed: the live gate
+      verifies 44 custom scripts, 8 generic hooks, 44 CI routes, and full-history gitleaks.
+      R5-IDX-7 is also closed: 17 Apple capability rows and 2 full-driver track gates are now
+      machine-owned, four claim docs are citation-gated, route parity is 44/8/44, and the final
+      Release gate passed 263/263 in 652.72 seconds.
+      Latest R5 review batch: 46 mutation catalogs / 375 mutants (369 killed, six equivalent).
+      PROGRESS 2026-09-02: three existing core seams now have permanent catalogs:
+      `app_installation_busy` (four mutants), `user_profile_restore_selection` (five), and
+      `elevated_task_dispatcher` (six). All 15 compile and are killed by their existing focused
+      tests, with zero survivors or new test holes. The ratchet now validates 49 catalogs / 390
+      mutants (384 killed, six proven equivalent), and all three production sources restored
+      byte-for-byte after the drills.
+      PROGRESS 2026-09-02: `ai_command_guard` adds one permanent 18-mutant catalog. All 18
+      compile-valid mutants are killed by the exact guard suite and production is restored
+      byte-for-byte, bringing the ratchet to 50 catalogs / 408 mutants (402 killed, six proven
+      equivalent). The S.A.K.-authored LZFSE C shim is also removed from the vendor `/w` boundary
+      and compiled under `/W4 /WX`; the C/C++ hook filters, cppcheck language selection, and
+      whole-project suppression reveal now cover it and every future first-party `.c` source. Its
+      four old snake-case ABI names were fixed directly; the healthy naming gate now covers 157/157
+      core TUs with 5,266 findings and 16 ratcheted-clean TUs, two findings below Wave 27. All
+      whole-tree pre-commit hooks pass; Release build exit 0; full CTest 273/273, zero failures,
+      887.66 seconds.
+      PROGRESS 2026-09-02, WAVE 29: the command-guard catalog expands by two API-invariant mutants,
+      and two new prompt-role catalogs plus two assembler mutants prove stored context cannot enter
+      trusted instructions. All 14 additions are killed and restored, bringing the ratchet to 52
+      catalogs / 422 mutants (416 killed, six proven equivalent). The healthy naming gate covers
+      157/157 core TUs with 5,264 findings and 16 ratcheted-clean TUs, two below Wave 28. All
+      whole-tree pre-commit hooks pass; Release build exit 0; full CTest 273/273, zero failures,
+      771.90 seconds.
+      PROGRESS 2026-09-02, WAVE 30: ten typed-access-mode mutants and two shared tool-error mutants
+      are all killed and restored, bringing the ratchet to 53 catalogs / 434 mutants (428 killed,
+      six proven equivalent). All 27 controller parameter findings were fixed; the full healthy
+      naming gate now covers 157/157 core TUs with 5,244 findings across 80 files and 16
+      ratcheted-clean TUs. All whole-tree pre-commit hooks pass; Release build exit 0; full CTest
+      273/273, zero failures, 738.00 seconds.
+      PROGRESS 2026-09-04, WAVE 31 LOCAL GATE PASSED: partition controller/modal/restore and AI
+      trust-boundary catalog additions have focused execution proof. The owner-observed Change
+      Cluster Size modal
+      hang exposed a test callback that returned on assertion failure without closing its dialog.
+      Scoped dialog cleanup and failure-reporting watchdogs now bound that path. The mutation
+      runner retains logs and refuses timeout, no-test, compilation, and restoration-build failures;
+      sixteen registered Python cases and seven isolated negative drills prove those runner guards.
+      Complete Release build and all 276 CTests pass, with 27 reviewed runtime skips kept visible.
+      Inventory is 61 catalogs/595 entries, not a rerun claim for all historical entries. Full-file
+      follow-up found required recovery and ledger integrity fixes; Windows header naming and
+      app-driven Restore Image VM proof also remain INCOMPLETE. Current item status stays in R5.
+      WAVE 23 FINAL GATE: all changed-file hooks passed; naming passed 151/151 non-core TUs clean
+      and 156/156 core TUs healthy with 5,266 findings across 81 files and 16 clean TUs enforced;
+      full clang-cl coverage build exit 0; Release build exit 0; full CTest 268/268, zero failures,
+      724.64 seconds.
+      Current plan-archive/doc-gate/clang slice: all pre-commit hooks passed; Release build exit
+      0; full CTest 265/265, zero failures, 804.48 seconds.
+      Suppression direct-fix wave 1: all changed-file hooks passed; Release build exit 0; full
+      CTest 266/266, zero failures, 820.46 seconds.
+      Non-core clang-health wave 2: real naming gate passed 150/150 healthy TUs; all changed-file
+      hooks passed; Release build exit 0; full CTest 266/266, zero failures, 878.41 seconds.
+      Failure-silence wave 3: production error/failure-silencing patterns reached zero; all
+      changed-file hooks passed; Release build exit 0; full CTest 266/266, zero failures,
+      760.35 seconds.
+- [x] Branch protection -- CLOSED BY OWNER DECISION under R5-G21-6. The owner explicitly dropped
+      this requirement; it is not deferred work and does not block the campaign.
+
+--------------------------------------------------------------------------------
+## Cert rig quick reference (reuse)
+
+- macOS VM 10.10.11.102 (macOS 26.6, apfs_kext 2811.160.7). Credentials (user, password and
+  the plink/pscp `-hostkey` fingerprint) live in the UNTRACKED temp/creds.md, never here: this
+  file is committed, so a password written into it is a password in the repository. The plink
+  and pscp invocations take `-hostkey <fingerprint> -pw <password>` from there.
+- Harvest a bare Apple container: `hdiutil create -size N -layout NONE -fs APFS x.dmg`
+  (NXSB at block 0, no GPT; the .dmg extension is required). Attach, `diskutil
+  enableOwnership` if testing owner, populate, detach, pscp to Windows.
+- Host apfsck (kernel-free oracle): `wsl -d archlinux -u root -- /root/apfsprogs/apfsck/apfsck
+  -cw <img>` via the PowerShell tool (Git Bash mangles /root,/mnt). EXIT 0 == clean.
+- Mac fsck without kernel-mutation confounder: `hdiutil attach -nomount` then
+  `fsck_apfs -n /dev/r<container>` BEFORE any mount (a rw auto-mount advances the checkpoint).
+- Physical USB raw-block cert available after 4:30 PM PST if image-level is not enough.

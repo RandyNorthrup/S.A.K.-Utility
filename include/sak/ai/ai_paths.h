@@ -10,5 +10,6 @@ namespace sak::ai {
 [[nodiscard]] QString credentialDirectory();
 [[nodiscard]] QString sessionRootDirectory();
 [[nodiscard]] QString workflowLibraryDirectory();
+[[nodiscard]] QString skillLibraryDirectory();
 
 }  // namespace sak::ai

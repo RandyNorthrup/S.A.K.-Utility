@@ -19,12 +19,15 @@
 #include <QPalette>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 
 namespace sak::ui {
 
 // -- Spacing & Margins -------------------------------------------------------
 
 constexpr int kMarginNone = 0;       ///< No margin (flush layouts)
+constexpr int kMarginHairline = 1;   ///< 1px inset (framed pop-up borders)
+constexpr int kMarginTiny = 2;       ///< 2px inset (compact breadcrumb rows)
 constexpr int kMarginTight = 6;      ///< Tight margin (compact widgets)
 constexpr int kMarginSmall = 8;      ///< Small margin (compact panels)
 constexpr int kMarginMedium = 12;    ///< Standard panel margin (most panels)
@@ -55,7 +58,7 @@ constexpr int kToolButtonMenuIndicatorOffsetPx = -4;
 constexpr auto kButtonPaddingDefaultCss = "8px 20px";
 constexpr auto kButtonPaddingCompactCss = "8px 14px";
 constexpr auto kButtonPaddingSlimCss = "5px 14px";
-constexpr auto kButtonPaddingWideCss = "8px 24px";
+constexpr auto kButtonPaddingNoneCss = "0px";  ///< A button sized to one glyph
 
 // -- Common UI Dimensions ----------------------------------------------------
 
@@ -88,7 +91,9 @@ constexpr int kUiGroupBoxContentPaddingTop = kMarginMedium;
 constexpr int kUiGroupBoxContentPaddingHorizontal = kSpacingDefault;
 constexpr int kUiGroupBoxContentPaddingBottom = kSpacingDefault;
 constexpr int kUiGroupBoxTitlePaddingHorizontal = kMarginSmall;
-constexpr int kUiSpinBoxMinHeight = 32;
+/// Vertical padding of a spin box or date edit: one pixel less than a combo's or line edit's 6,
+/// because the text box inside a spin box carries its own margin. With it the two are one height.
+constexpr int kUiSpinBoxPaddingVerticalPx = 5;
 constexpr int kUiSpinBoxStepperWidth = kUiSelectorButtonWidth;
 constexpr int kUiSpinBoxStepperMargin = kUiSelectorButtonMargin;
 inline const QString kIconSelectorChevronDown =
@@ -120,12 +125,22 @@ inline const QString kIconSelectorCalendar =
 inline const QString kIconSelectorCalendarDark =
     QStringLiteral(":/icons/icons/icons8-selector-calendar-dark.svg");
 inline const QString kIconSelectorCheck = QStringLiteral(":/icons/icons/icons8-selector-check.svg");
+/// The white tick and dash on a checked or partly checked box. A style sheet cannot load a data:
+/// URL, so the inline SVG that was there drew a filled square with no tick.
+inline const QString kIconCheckBoxTickOnTone =
+    QStringLiteral(":/icons/icons/checkbox-tick-on-tone.svg");
+inline const QString kIconCheckBoxDashOnTone =
+    QStringLiteral(":/icons/icons/checkbox-dash-on-tone.svg");
 inline const QString kIconPasswordEyeOpen = QStringLiteral(":/icons/icons/eye_open.svg");
 inline const QString kIconPasswordEyeClosed = QStringLiteral(":/icons/icons/eye_closed.svg");
 inline const QString kIconPasswordEyeOpenOnTone =
     QStringLiteral(":/icons/icons/eye_open_on_tone.svg");
 inline const QString kIconPasswordEyeClosedOnTone =
     QStringLiteral(":/icons/icons/eye_closed_on_tone.svg");
+// File Explorer icon resource templates (%1 = icon key). The registry in
+// file_explorer_icon_registry.cpp resolves every explorer icon through these.
+inline const QString kIconExplorerFilesTemplate = QStringLiteral(":/icons/icons/files/%1.svg");
+inline const QString kIconExplorerFluentTemplate = QStringLiteral(":/icons/icons/fluent/%1.svg");
 
 inline bool usingDarkUiTheme() {
     return qApp && qApp->property("sakThemeMode").toString() == QStringLiteral("dark");
@@ -212,24 +227,12 @@ constexpr double kOverlayAlphaStrong = 0.97;
 constexpr double kHoverAlphaSubtle = 0.08;
 constexpr double kPressedAlphaSubtle = 0.15;
 constexpr int kCssAlphaPrecision = 2;
-constexpr double kCardShadowBlurRadius = 22.0;
-constexpr double kCardShadowOffsetY = 6.0;
-constexpr int kCardShadowRed = 15;
-constexpr int kCardShadowGreen = 23;
-constexpr int kCardShadowBlue = 42;
-constexpr int kCardShadowAlpha = 38;
 constexpr int kPaletteDarkModeLightnessThreshold = 128;
 constexpr int kHtmlPreviewBodyFontPx = 13;
 constexpr int kHtmlPreviewBodyPaddingPx = 8;
 constexpr int kHtmlDetailPaddingPx = 12;
 constexpr int kHtmlDetailLargePaddingPx = 16;
 constexpr int kHtmlNoteMinHeightPx = 200;
-constexpr int kHtmlTimelineBadgeBorderPx = 1;
-constexpr int kHtmlTimelineBadgeRadiusPx = 4;
-constexpr int kHtmlTimelineBadgePaddingVerticalPx = 1;
-constexpr int kHtmlTimelineBadgePaddingHorizontalPx = 5;
-constexpr int kHtmlTimelineMetaMarginTopPx = 2;
-
 // -- HTML/Rich-Text Style Templates -----------------------------------------
 
 inline constexpr auto kHtmlStyledDocumentOpen =
@@ -274,21 +277,19 @@ inline constexpr auto kHtmlSpanColorWeight = "<span style='color:%1; font-weight
 inline constexpr auto kHtmlParagraphColorMargin = "<p style='color: %1; margin: %2px 0;'>%3</p>";
 inline constexpr auto kHtmlParagraphColorMarginOpen = "<p style='color: %1; margin: %2px 0;'>%3";
 inline constexpr auto kHtmlPreWrap = "<pre style='white-space: pre-wrap;'>%1</pre>";
-inline constexpr auto kHtmlHorizontalRule = "<hr style='border: %1px solid %2;'>";
+// QTextDocument draws <hr> in its background colour (the text colour without one) and ignores a
+// CSS border, so the colour goes in both.
+inline constexpr auto kHtmlHorizontalRule =
+    "<hr style='border: %1px solid %2; background-color: %2;'>";
 inline constexpr auto kHtmlHorizontalRulePreWrapParagraph =
-    "<hr style='border: %1px solid %2;'><p style='white-space: pre-wrap;'>%3</p>";
+    "<hr style='border: %1px solid %2; background-color: %2;'>"
+    "<p style='white-space: pre-wrap;'>%3</p>";
 inline constexpr auto kHtmlHorizontalRuleColorPreWrapParagraph =
-    "<hr style='border: %1px solid %2;'><p style='color: %3; white-space: pre-wrap;'>%4</p>";
+    "<hr style='border: %1px solid %2; background-color: %2;'>"
+    "<p style='color: %3; white-space: pre-wrap;'>%4</p>";
 inline constexpr auto kHtmlLogMessage =
     "<span style='color: %1;'>%2</span> "
     "<span style='color: %3; font-weight: %4;'>[%5]</span> %6";
-inline constexpr auto kHtmlTimelineBadge =
-    "<span style=\"display:inline-block;border:%1px solid %2;"
-    "color:%2;background:%3;border-radius:%4px;padding:%5px %6px;"
-    "font-size:%7pt;font-weight:%8;white-space:nowrap;\">%9</span>";
-inline constexpr auto kHtmlTimelineMeta =
-    "<div style=\"color:%1;font-size:%2pt;margin-top:%3px;\">%4</div>";
-
 // -- Windows 11 Theme Style Templates ---------------------------------------
 
 inline constexpr auto kWindows11ThemeBaseAndChromeStyles = R"SAK(
@@ -304,7 +305,15 @@ inline constexpr auto kWindows11ThemeBaseAndChromeStyles = R"SAK(
 
         /* Leaf widgets & generic frames inherit parent bg
            -- prevents gray-on-white and white-on-gray patches */
-        QLabel, QFrame, QCheckBox, QRadioButton {
+        QLabel, QFrame, QCheckBox, QRadioButton, QSlider {
+            background: transparent;
+        }
+
+        /* A plain container (a label with its (?) button, a row of buttons, a cell widget) takes
+           the surface it sits on. ".QWidget" is QWidget itself, not a subclass, so inputs keep
+           their own fill; without this the page grey showed through in white dialogs, group
+           boxes, the status bar and table cells. */
+        QDialog .QWidget, QGroupBox .QWidget, QStatusBar .QWidget, QAbstractItemView .QWidget {
             background: transparent;
         }
 
@@ -314,6 +323,18 @@ inline constexpr auto kWindows11ThemeBaseAndChromeStyles = R"SAK(
 
         QDialog, QGroupBox {
             background-color: %4;
+        }
+
+        /* A prompt has room for what it asks for, such as an API key or a GUID, and its question
+           wraps instead of stretching the window across the screen. The field sets the width: a
+           window's own min-width does not reach a top-level dialog. */
+        QInputDialog QLineEdit, QInputDialog QComboBox, QInputDialog QSpinBox,
+        QInputDialog QDoubleSpinBox {
+            min-width: 400px;
+        }
+
+        QInputDialog QLabel {
+            qproperty-wordWrap: true;
         }
 
         QToolTip {
@@ -353,13 +374,26 @@ inline constexpr auto kWindows11ThemeBaseAndChromeStyles = R"SAK(
             padding: 6px;
         }
 
+        /* The wide right padding keeps a submenu's arrow clear of the longest label. */
         QMenu::item {
-            padding: 6px 16px;
+            padding: 6px 30px 6px 16px;
             border-radius: 6px;
         }
 
         QMenu::item:selected {
             background-color: %13;
+        }
+
+        /* A disabled entry in the disabled label's colour: under the QWidget colour above it kept
+           the enabled text's, and only its icon faded (review 4, Y1). */
+        QMenu::item:disabled {
+            color: %14;
+        }
+
+        /* A disabled row of a list, table or tree too: File Explorer's command palette listed
+           "Compare Panes - Enable dual pane first." as dark as the commands that run (review 5). */
+        QAbstractItemView::item:disabled {
+            color: %14;
         }
     )SAK";
 
@@ -395,6 +429,8 @@ inline constexpr auto kWindows11ThemeInputStyles = R"SAK(
             border-radius: 10px;
             padding: 6px 10px;
             selection-background-color: %3;
+            selection-color: %6;
+            placeholder-text-color: %7;
         }
 
         QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus,
@@ -403,27 +439,47 @@ inline constexpr auto kWindows11ThemeInputStyles = R"SAK(
             background-color: %5;
         }
 
+        QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled, QComboBox:disabled,
+            QSpinBox:disabled, QDoubleSpinBox:disabled, QDateEdit:disabled,
+            QDateTimeEdit:disabled, QTimeEdit:disabled {
+            color: %8;
+            background-color: %9;
+            border: 1px solid %10;
+        }
+
+        QCheckBox:disabled, QRadioButton:disabled, QLabel:disabled, QGroupBox::title:disabled {
+            color: %8;
+        }
+
         QCheckBox, QRadioButton {
             spacing: 8px;
         }
     )SAK";
 
 inline constexpr auto kWindows11ThemeIndicatorStyles = R"SAK(
-        QCheckBox::indicator, QRadioButton::indicator {
+        QCheckBox::indicator, QRadioButton::indicator, QAbstractItemView::indicator {
             width: %1px;
             height: %1px;
         }
 
-        QCheckBox::indicator {
+        /* One check box everywhere: a QCheckBox and a check box in a list, table or tree. */
+        QCheckBox::indicator, QAbstractItemView::indicator {
             border: 1px solid %2;
             border-radius: %3px;
             background: %4;
         }
 
-        QCheckBox::indicator:checked {
+        QCheckBox::indicator:checked, QAbstractItemView::indicator:checked {
             background: %5;
             border: 1px solid %6;
-            image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M6.5 12.5l-4-4 1.4-1.4 2.6 2.6 5.6-5.6 1.4 1.4z' fill='white'/></svg>");
+            image: url(%8);
+        }
+
+        /* Partly checked keeps the filled box and shows a dash, as Windows does. */
+        QCheckBox::indicator:indeterminate, QAbstractItemView::indicator:indeterminate {
+            background: %5;
+            border: 1px solid %6;
+            image: url(%9);
         }
 
         QRadioButton::indicator {
@@ -432,8 +488,10 @@ inline constexpr auto kWindows11ThemeIndicatorStyles = R"SAK(
             background: %4;
         }
 
+        /* A white dot in the filled circle, so a chosen option is not a plain filled disc. */
         QRadioButton::indicator:checked {
-            background: %5;
+            background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+                stop:0 %10, stop:0.34 %10, stop:0.44 %5, stop:1 %5);
             border: 1px solid %6;
         }
     )SAK";
@@ -462,6 +520,7 @@ inline constexpr auto kWindows11ThemeContainerAndTableStyles = R"SAK(
             border-radius: %11px;
             margin-top: %12px;
             padding: %13px %14px %15px %14px;
+            background-color: %17;
         }
 
         QGroupBox::title {
@@ -477,6 +536,12 @@ inline constexpr auto kWindows11ThemeContainerAndTableStyles = R"SAK(
             padding: 6px 8px;
         }
 
+        /* A header keeps one weight: a table highlighted (bolded) every section while a row was
+           selected, which trees and lists never did. */
+        QHeaderView {
+            qproperty-highlightSections: false;
+        }
+
         QTableView, QListView, QTreeView {
             background: %4;
             border: 1px solid %5;
@@ -485,11 +550,18 @@ inline constexpr auto kWindows11ThemeContainerAndTableStyles = R"SAK(
             selection-background-color: %7;
             selection-color: %8;
             padding: 4px;
+            outline: 0;
         }
 
         QAbstractItemView::item {
             padding: 6px;
             border-radius: 6px;
+        }
+
+        /* A selected row is one band: square cells in tables and trees, and one opaque shade for
+           the row, the item and a tree's branch area. */
+        QTableView::item, QTreeView::item {
+            border-radius: 0px;
         }
 
         QAbstractItemView::item:selected {
@@ -578,6 +650,11 @@ inline constexpr auto kWindows11ThemeScrollBarStyles = R"SAK(
             background: %3;
             border-top: 1px solid %4;
         }
+
+        /* The native item separators drew a colour from no token (#d7d7d7), bright on dark. */
+        QStatusBar::item {
+            border: none;
+        }
     )SAK";
 
 inline constexpr auto kWindows11DarkBaseChromeStyles = R"SAK(
@@ -586,7 +663,7 @@ inline constexpr auto kWindows11DarkBaseChromeStyles = R"SAK(
             background-color: %2;
         }
 
-        QLabel, QFrame, QCheckBox, QRadioButton {
+        QLabel, QFrame, QCheckBox, QRadioButton, QSlider {
             background: transparent;
         }
 
@@ -620,6 +697,14 @@ inline constexpr auto kWindows11DarkBaseChromeStyles = R"SAK(
         QMenu::item:selected, QMenuBar::item:selected {
             background-color: %6;
         }
+
+        QMenu::item:disabled {
+            color: %7;
+        }
+
+        QAbstractItemView::item:disabled {
+            color: %7;
+        }
     )SAK";
 
 inline constexpr auto kWindows11DarkTabAndInputStyles = R"SAK(
@@ -638,7 +723,9 @@ inline constexpr auto kWindows11DarkTabAndInputStyles = R"SAK(
             background-color: %5;
             color: %6;
             border: 1px solid %2;
-            selection-background-color: %7;
+            selection-background-color: %10;
+            selection-color: %11;
+            placeholder-text-color: %12;
         }
 
         QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QSpinBox:focus,
@@ -647,7 +734,19 @@ inline constexpr auto kWindows11DarkTabAndInputStyles = R"SAK(
             border: 1px solid %7;
         }
 
-        QCheckBox::indicator {
+        QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled, QComboBox:disabled,
+            QSpinBox:disabled, QDoubleSpinBox:disabled, QDateEdit:disabled,
+            QDateTimeEdit:disabled, QTimeEdit:disabled {
+            color: %13;
+            background-color: %14;
+            border: 1px solid %15;
+        }
+
+        QCheckBox:disabled, QRadioButton:disabled, QLabel:disabled, QGroupBox::title:disabled {
+            color: %13;
+        }
+
+        QCheckBox::indicator, QAbstractItemView::indicator {
             border: 1px solid %9;
             background: %5;
         }
@@ -658,9 +757,28 @@ inline constexpr auto kWindows11DarkTabAndInputStyles = R"SAK(
         }
     )SAK";
 
+/// Rules the dark sheet's "QWidget { background-color }" would otherwise win over: it comes after
+/// them at the same specificity, so every plain button lost its primary fill (an enabled button
+/// looked less prominent than a disabled one) and progress bars kept the light border.
+inline constexpr auto kWindows11DarkProgressStyles = R"SAK(
+        QProgressBar {
+            border: 1px solid %1;
+            background: %2;
+        }
+
+        /* The deep fill under the dark theme's white label; the light theme's fill is light, for
+           its dark label. */
+        QProgressBar::chunk {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                stop:0 %3,
+                stop:1 %4);
+        }
+    )SAK";
+
 inline constexpr auto kWindows11DarkContainerAndViewStyles = R"SAK(
         QGroupBox {
             border: 1px solid %1;
+            background-color: %9;
         }
 
         QGroupBox::title {
@@ -706,7 +824,7 @@ inline constexpr auto kEmailRibbonStyle =
     " stop:0 %1, stop:1 %2); border: %3px solid %4; border-radius: %5px; }";
 inline constexpr auto kEmailRibbonButtonStyle =
     "QToolButton { background: transparent; border: %1px solid transparent; "
-    "border-radius: %2px; padding: %3px %4px; font-size: %5px; font-weight: %6; "
+    "border-radius: %2px; padding: %3px %4px; font-size: %5pt; font-weight: %6; "
     "color: %7; }"
     "QToolButton:hover { background: %8; border: %1px solid %9; }"
     "QToolButton:pressed { background: %10; border: %1px solid %11; }"
@@ -716,12 +834,6 @@ inline constexpr auto kAiWorkflowMarkdownStyle =
     "body{font-family:'Segoe UI',Arial,sans-serif;font-size:%1pt;color:%2;background:%3;}"
     "h1{font-size:%4pt;margin:0 0 %5px;color:%6;}h2{font-size:%7pt;margin:%8px 0 "
     "%9px;color:%6;}li{margin:%10px 0;}";
-inline constexpr auto kAiWorkbenchListStyle =
-    "QListWidget { background: %1; border: %2px solid %3; border-radius: %4px; "
-    "padding: %5px; color: %6; }"
-    "QListWidget::item { padding: %7px %8px; border-radius: %9px; }"
-    "QListWidget::item:selected { background: %10; color: %6; }"
-    "QListWidget::item:hover { background: %11; }";
 inline constexpr auto kAiComposerEditStyle =
     "QPlainTextEdit { background: transparent; border: 0; color: %1; padding: %2px; "
     "font-size: %3pt; }";
@@ -763,18 +875,6 @@ struct ButtonTone {
     const char* border;
 };
 
-struct SolidButtonTone {
-    const char* normalBackground;
-    const char* hoverBackground;
-    const char* pressedBackground;
-    const char* disabledBackground;
-};
-
-struct SolidButtonMetrics {
-    const char* padding;
-    int radiusPx;
-};
-
 struct CalendarPopupSelectorTone {
     QString panel;
     QString border;
@@ -784,14 +884,22 @@ struct CalendarPopupSelectorTone {
     QString selectionText;
 };
 
-inline constexpr SolidButtonMetrics kSolidButtonMetrics{kButtonPaddingWideCss, kCssRadiusSmallPx};
+/// Writes @p state on each selector of a list. In a style sheet a state belongs to one selector, so
+/// "QPushButton, QToolButton:disabled" matches every QPushButton, enabled or not.
+inline QString selectorsInState(const QString& selectors, const char* state) {
+    QStringList parts = selectors.split(QLatin1Char(','));
+    for (QString& part : parts) {
+        part = part.trimmed() + QString::fromLatin1(state);
+    }
+    return parts.join(QStringLiteral(", "));
+}
 
 inline QString buttonGradientRule(const QString& selector,
                                   const char* state,
                                   const char* top,
                                   const char* middle,
                                   const char* bottom) {
-    return selector + QString::fromLatin1(state) +
+    return selectorsInState(selector, state) +
            QStringLiteral(
                " {"
                "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
@@ -846,13 +954,16 @@ inline QString buttonBaseRule(const QString& selector,
                "}");
 }
 
+// Defined with the token alias table below; the disabled rule names its text colour through it.
+inline QString cssColor(const char* token);
+
 inline QString buttonDisabledRule(const QString& selector) {
-    return selector +
+    return selectorsInState(selector, ":disabled") +
            QStringLiteral(
-               ":disabled {"
+               " {"
                "  background: ") +
            QString::fromLatin1(kColorButtonDisabledBackground) + QStringLiteral("; color: ") +
-           QString::fromLatin1(kColorTextMuted) +
+           cssColor(kColorTextMuted) +
            QStringLiteral(
                ";"
                "  border: ") +
@@ -865,12 +976,12 @@ inline QString buttonDisabledRule(const QString& selector) {
 
 inline QString buttonMenuIndicatorRule(const char* selector) {
     return QStringLiteral(
-               "%1::menu-indicator {"
+               "%1 {"
                "  subcontrol-position: right center;"
                "  subcontrol-origin: padding;"
                "  left: %2px;"
                "}")
-        .arg(QString::fromLatin1(selector))
+        .arg(selectorsInState(QString::fromLatin1(selector), "::menu-indicator"))
         .arg(kToolButtonMenuIndicatorOffsetPx);
 }
 
@@ -953,35 +1064,6 @@ inline constexpr ButtonTone kDiscordButtonTone{kColorDiscordButtonNormalTop,
                                                kColorDiscordButtonPressedBottom,
                                                kColorDiscordButtonBorder};
 
-inline constexpr SolidButtonTone kSolidPrimaryButtonTone{
-    kColorPrimary, kColorPrimaryHover, kColorPrimaryPressed, kColorTextDisabled};
-inline constexpr SolidButtonTone kSolidDangerButtonTone{
-    kColorDangerBtnNormal, kColorDangerBtnHover, kColorDangerBtnPressed, kColorTextDisabled};
-
-inline QString solidButtonStyle(const char* selector,
-                                const SolidButtonTone& tone,
-                                SolidButtonMetrics metrics = kSolidButtonMetrics) {
-    const auto css = [](const char* value) {
-        return QString::fromLatin1(value);
-    };
-    const QString s = css(selector);
-    return QStringLiteral(
-               "%1 { background: %2; color: %3; padding: %4; border-radius: %5px; "
-               "font-weight: %6; }"
-               "%1:hover { background: %7; }"
-               "%1:pressed { background: %8; }"
-               "%1:disabled { background: %9; }")
-        .arg(s,
-             css(tone.normalBackground),
-             css(kColorButtonTextOnTone),
-             css(metrics.padding),
-             QString::number(metrics.radiusPx),
-             QString::number(kFontWeightBold),
-             css(tone.hoverBackground),
-             css(tone.pressedBackground),
-             css(tone.disabledBackground));
-}
-
 inline QString colorWithAlpha(const char* color, double alpha) {
     const QColor qcolor(QString::fromLatin1(color));
     return QStringLiteral("rgba(%1, %2, %3, %4)")
@@ -1014,8 +1096,8 @@ inline constexpr CssColorAlias kCssColorAliases[] = {
 };
 
 struct HtmlPaletteAlias {
-    const char* token;
-    QPalette::ColorRole role;
+    const char* token{};
+    QPalette::ColorRole role{};
 };
 
 inline constexpr HtmlPaletteAlias kHtmlPaletteAliases[] = {
@@ -1045,20 +1127,57 @@ inline constexpr DarkHtmlAlias kDarkHtmlAliases[] = {
     {kColorNotePink, kColorDarkNotePink},
     {kColorNoteYellow, kColorDarkNoteYellow},
     {kColorNoteGray, kColorDarkNoteGray},
+    {kColorBgWarningPanel, kColorDarkBgWarningPanel},
+    {kColorBgErrorPanel, kColorDarkBgErrorPanel},
 };
 
-inline QString cssColor(const QString& color) {
-    for (const auto& alias : kCssColorAliases) {
-        if (color == QString::fromLatin1(alias.token)) {
-            return QString::fromLatin1(alias.css);
+/// Status text colours whose light value (darkened for WCAG AA on the light page) is too dark for
+/// the dark theme's surfaces. kStatusColorSuccess, kStatusColorError and kColorPrimaryDark share
+/// values listed here.
+inline constexpr DarkHtmlAlias kDarkStatusTextAliases[] = {
+    {kColorSuccess, kColorDarkStatusSuccess},
+    {kStatusColorWarning, kColorDarkStatusWarning},
+    {kColorWarning, kColorDarkWarning},
+    {kColorError, kColorDarkStatusError},
+    {kStatusColorRunning, kColorDarkStatusRunning},
+    {kColorAccentPurple, kColorDarkAccentPurple},
+    {kColorErrorText, kColorDarkErrorText},
+};
+
+/// The dark theme's own value for a light-only token: a tint or panel fill (kDarkHtmlAliases) or
+/// a status text colour (kDarkStatusTextAliases); any other value is returned as it is.
+inline QString darkStatusTextColor(const QString& color) {
+    for (const auto& alias : kDarkHtmlAliases) {
+        if (color == QString::fromLatin1(alias.lightToken)) {
+            return QString::fromLatin1(alias.darkToken);
+        }
+    }
+    for (const auto& alias : kDarkStatusTextAliases) {
+        if (color == QString::fromLatin1(alias.lightToken)) {
+            return QString::fromLatin1(alias.darkToken);
         }
     }
     return color;
 }
 
-inline QString cssColor(const char* color) {
-    return cssColor(QString::fromLatin1(color));
+/// The QSS for a colour token: the palette role it stands for (kCssColorAliases), or in the dark
+/// theme its dark value. Only a token reaches the aliases. A colour already resolved for the theme
+/// (htmlColor, a QColor's name) is used as it is, by the style helpers' QString overloads: run
+/// through the aliases a second time, the dark theme's text #f8fafc, which is also the light
+/// surface token, became the dark surface, and the AI context chips lost their labels.
+inline QString cssColor(const char* token) {
+    const QString color = QString::fromLatin1(token);
+    for (const auto& alias : kCssColorAliases) {
+        if (color == QString::fromLatin1(alias.token)) {
+            return QString::fromLatin1(alias.css);
+        }
+    }
+    return usingDarkUiTheme() ? darkStatusTextColor(color) : color;
 }
+
+/// A resolved colour must not be aliased again (see above): pass a token, or use the colour as
+/// it is.
+QString cssColor(const QString& color) = delete;
 
 inline QString selectorDropDownStyle(const char* selector,
                                      const QString& border,
@@ -1080,11 +1199,13 @@ inline QString selectorDropDownStyle(const char* selector,
         .arg(hover_background);
 }
 
-inline QString selectorIconStyle(const char* selector, const QString& icon_path) {
+inline QString selectorIconStyle(const char* selector,
+                                 const QString& icon_path,
+                                 int size_px = kUiIconCompact) {
     return QStringLiteral("%1 { image: url(\"%2\"); width: %3px; height: %3px; }")
         .arg(QString::fromLatin1(selector))
         .arg(icon_path)
-        .arg(kUiIconCompact);
+        .arg(size_px);
 }
 
 inline QString comboBoxSelectorStyle(const QString& border,
@@ -1106,9 +1227,11 @@ inline QString spinBoxSelectorStyle(const QString& border,
     const QString radius = QString::number(kCssRadiusMediumPx);
     const QString up_button = QString::fromLatin1(kSelectorSpinUpButton);
     const QString down_button = QString::fromLatin1(kSelectorSpinDownButton);
-    return QStringLiteral("%1 { min-height: %2px; padding-right: %3px; }")
+    // No min-height: a QSS min-height sizes the content box and padding and border come on top,
+    // so the 32 px asked for made spin boxes and date edits 46-50 px beside 32 px combos.
+    return QStringLiteral("%1 { padding-top: %2px; padding-bottom: %2px; padding-right: %3px; }")
                .arg(QString::fromLatin1(kSelectorSpinEditor))
-               .arg(kUiSpinBoxMinHeight)
+               .arg(kUiSpinBoxPaddingVerticalPx)
                .arg(width) +
            QStringLiteral(
                "%1 { subcontrol-origin: border; subcontrol-position: top right; width: %2px; "
@@ -1124,8 +1247,8 @@ inline QString spinBoxSelectorStyle(const QString& border,
                .arg(down_button, width, margin, border_width, border, radius, background) +
            QStringLiteral("%1:hover, %2:hover { background: %3; }")
                .arg(up_button, down_button, hover_background) +
-           selectorIconStyle(kSelectorSpinUpArrow, up_icon_path) +
-           selectorIconStyle(kSelectorSpinDownArrow, down_icon_path);
+           selectorIconStyle(kSelectorSpinUpArrow, up_icon_path, kUiIconTiny) +
+           selectorIconStyle(kSelectorSpinDownArrow, down_icon_path, kUiIconTiny);
 }
 
 inline QString datePickerSelectorStyle(const QString& border,
@@ -1195,12 +1318,21 @@ inline QString htmlColor(const QString& color) {
                 return QString::fromLatin1(alias.darkToken);
             }
         }
+        return darkStatusTextColor(color);
     }
     return color;
 }
 
 inline QString htmlColor(const char* color) {
     return htmlColor(QString::fromLatin1(color));
+}
+
+/// A colour token as it paints in the current theme: the palette colour the token stands for
+/// (kHtmlPaletteAliases), the dark counterpart of a tint while the dark palette is applied
+/// (kDarkHtmlAliases), or the token itself. Call it when painting, not once at construction, so
+/// a theme change shows on the next repaint.
+inline QColor themedColor(const char* token) {
+    return QColor(htmlColor(token));
 }
 
 inline QString htmlBrowserDocumentStyleSheet() {
@@ -1267,6 +1399,11 @@ inline const QString kSecondaryButtonStyle = actionButtonStyle("QPushButton", kS
 inline const QString kCompactSecondaryButtonStyle =
     actionButtonStyle("QPushButton", kSecondaryButtonTone, false, kButtonPaddingSlimCss);
 
+/// Secondary button sized to a single glyph, such as a square previous or next arrow. On a 28 px
+/// button the default 8px 20px padding left no room for the arrow, and it drew blank.
+inline const QString kGlyphSecondaryButtonStyle =
+    actionButtonStyle("QPushButton", kSecondaryButtonTone, false, kButtonPaddingNoneCss);
+
 /// Success action button -- green gradient, uniform with theme QPushButton.
 inline const QString kSuccessButtonStyle = actionButtonStyle("QPushButton", kSuccessButtonTone);
 
@@ -1287,14 +1424,6 @@ inline const QString kDiscordButtonStyle = actionButtonStyle("QPushButton", kDis
 inline const QString kDiscordCompactButtonStyle =
     actionButtonStyle("QPushButton", kDiscordButtonTone, false, kButtonPaddingCompactCss);
 
-/// Solid primary button -- preserves legacy flat action colors.
-inline const QString kSolidPrimaryButtonStyle = solidButtonStyle("QPushButton",
-                                                                 kSolidPrimaryButtonTone);
-
-/// Solid danger button -- preserves legacy flat destructive-action colors.
-inline const QString kSolidDangerButtonStyle = solidButtonStyle("QPushButton",
-                                                                kSolidDangerButtonTone);
-
 /// Theme label text helpers.
 inline const QString kMutedLabelStyle = QStringLiteral("color: %1;").arg(cssColor(kColorTextMuted));
 inline const QString kTransparentWidgetStyle =
@@ -1304,8 +1433,9 @@ inline QString textColorStyle(const char* color) {
     return QStringLiteral("color: %1;").arg(cssColor(color));
 }
 
+/// @p color is already resolved for the current theme and is used as it is.
 inline QString textColorStyle(const QString& color) {
-    return QStringLiteral("color: %1;").arg(cssColor(color));
+    return QStringLiteral("color: %1;").arg(color);
 }
 
 inline QString fontSizeStyle(int point_size) {
@@ -1316,8 +1446,9 @@ inline QString textColorAndFontSizeStyle(const char* color, int point_size) {
     return QStringLiteral("color: %1; font-size: %2pt;").arg(cssColor(color)).arg(point_size);
 }
 
+/// @p color is already resolved for the current theme and is used as it is.
 inline QString textColorAndFontSizeStyle(const QString& color, int point_size) {
-    return QStringLiteral("color: %1; font-size: %2pt;").arg(cssColor(color)).arg(point_size);
+    return QStringLiteral("color: %1; font-size: %2pt;").arg(color).arg(point_size);
 }
 
 inline QString paddedTextStyle(const char* color, int padding_px) {
@@ -1332,8 +1463,9 @@ inline QString fontWeightAndColorStyle(int weight, const char* color) {
     return QStringLiteral("font-weight: %1; color: %2;").arg(weight).arg(cssColor(color));
 }
 
+/// @p color is already resolved for the current theme and is used as it is.
 inline QString fontWeightAndColorStyle(int weight, const QString& color) {
-    return QStringLiteral("font-weight: %1; color: %2;").arg(weight).arg(cssColor(color));
+    return QStringLiteral("font-weight: %1; color: %2;").arg(weight).arg(color);
 }
 
 inline QString fontSizeWeightColorStyle(int point_size, int weight, const char* color) {
@@ -1343,11 +1475,12 @@ inline QString fontSizeWeightColorStyle(int point_size, int weight, const char* 
         .arg(cssColor(color));
 }
 
+/// @p color is already resolved for the current theme and is used as it is.
 inline QString fontSizeWeightColorStyle(int point_size, int weight, const QString& color) {
     return QStringLiteral("font-size: %1pt; font-weight: %2; color: %3;")
         .arg(point_size)
         .arg(weight)
-        .arg(cssColor(color));
+        .arg(color);
 }
 
 inline QString backgroundStyle(const char* selector, const char* background) {
@@ -1384,22 +1517,6 @@ inline QString transparentBodyTextStyle(double point_size, const char* color) {
                "font-size: %1pt; line-height: 142%; color: %2;")
         .arg(point_size, 0, 'f', 1)
         .arg(cssColor(color));
-}
-
-inline QString surfaceStyle(const char* selector,
-                            const char* background,
-                            const char* border,
-                            int radius_px = kCssRadiusLargePx,
-                            int padding_px = kCssPaddingLargePx) {
-    return QStringLiteral(
-               "%1 { background: %2; border: %3px solid %4; "
-               "border-radius: %5px; padding: %6px; }")
-        .arg(QString::fromLatin1(selector))
-        .arg(cssColor(background))
-        .arg(kCssBorderWidthDefaultPx)
-        .arg(cssColor(border))
-        .arg(radius_px)
-        .arg(padding_px);
 }
 
 inline constexpr auto kCardFrameSelector = "QFrame[sakCard=\"true\"]";
@@ -1452,6 +1569,17 @@ inline QString topOrBottomBarStyle(const char* background,
         .arg(cssColor(border));
 }
 
+/// topOrBottomBarStyle() for the one bar named @p object_name. Written bare on the bar, the rule
+/// reached every widget in it, and the calendar's status label drew its own edge, a stray line
+/// above "5 events" (review 2, F28).
+inline QString namedBarStyle(const QString& object_name,
+                             const char* background,
+                             const char* border,
+                             const char* edge = "bottom") {
+    return QStringLiteral("#%1 { %2 }")
+        .arg(object_name, topOrBottomBarStyle(background, border, edge));
+}
+
 inline QString notePanelStyle(const char* background,
                               const char* text_color = kColorTextBody,
                               int padding_px = kCssPaddingXLargePx,
@@ -1481,14 +1609,15 @@ inline QString notePanelStyleWithFontSize(const char* background,
 }
 
 inline QString warningPanelStyle() {
+    // Through cssColor, so the dark theme gets its own error panel instead of the light pink box.
     return QStringLiteral(
                "color: %1; padding: %2px; background-color: %3; "
                "border: %4px solid %5; border-radius: %6px;")
-        .arg(QString::fromLatin1(kColorErrorText))
+        .arg(cssColor(kColorErrorText))
         .arg(kCssPaddingLargePx)
-        .arg(QString::fromLatin1(kColorBgErrorPanel))
+        .arg(cssColor(kColorBgErrorPanel))
         .arg(kCssBorderWidthDefaultPx)
-        .arg(QString::fromLatin1(kColorError))
+        .arg(cssColor(kColorError))
         .arg(kCssRadiusSmallPx);
 }
 
@@ -1503,10 +1632,15 @@ inline QString textBrowserSurfaceStyle(const char* background, const char* borde
         .arg(kCssPaddingLargePx);
 }
 
+/// A file preview's box, set in Consolas: the theme's "* { font-family: Segoe UI }" beat the
+/// widget's setFont(), and the line numbers padded with spaces did not line up in a proportional
+/// font (review 4, Y7).
 inline QString textEditPreviewStyle(const char* background,
                                     const char* text_color,
                                     const char* border) {
-    return QStringLiteral("QTextEdit { background: %1; color: %2; border: %3px solid %4; }")
+    return QStringLiteral(
+               "QTextEdit { background: %1; color: %2; border: %3px solid %4; "
+               "font-family: Consolas; }")
         .arg(cssColor(background))
         .arg(cssColor(text_color))
         .arg(kCssBorderWidthDefaultPx)
@@ -1637,11 +1771,14 @@ inline QString vulnerabilityLookupPanelStyle() {
                             kColorBorderDefault);
 }
 
+/// A status-bar button that reads as a link. Each state names its own transparent background: the
+/// theme's button rule otherwise painted the primary gradient under dark text.
 inline QString compactLinkButtonStyle() {
     return QStringLiteral(
-               "QPushButton { border: none; padding: %1px %2px; color: %3; "
-               "font-size: %4pt; }"
-               "QPushButton:hover { text-decoration: underline; }")
+               "QPushButton { background: transparent; border: none; padding: %1px %2px; "
+               "color: %3; font-size: %4pt; }"
+               "QPushButton:hover { background: transparent; text-decoration: underline; }"
+               "QPushButton:pressed { background: transparent; }")
         .arg(kCssPaddingTinyPx)
         .arg(kCssPaddingMediumPx)
         .arg(cssColor(kColorTextPrimary))
@@ -1666,23 +1803,6 @@ inline QString partitionActionTextLinkStyle() {
         .arg(cssColor(kColorPrimaryDark))
         .arg(colorWithAlpha(kColorPrimary, kPartitionActionTextLinkPressedAlpha))
         .arg(cssColor(kColorTextMuted));
-}
-
-inline QString wifiIndicatorStyle() {
-    return QStringLiteral(
-               "QTableWidget::indicator { width: %1px; height: %1px; "
-               "border: %2px solid %3; border-radius: %4px; background: %5; }"
-               "QTableWidget::indicator:checked { background: %6; "
-               "border: %2px solid %7; }"
-               "QTableWidget::indicator:unchecked { background: %5; "
-               "border: %2px solid %3; }")
-        .arg(kUiIconSmall)
-        .arg(kCssBorderWidthDefaultPx)
-        .arg(cssColor(kColorBorderMuted))
-        .arg(kCssRadiusSmallPx)
-        .arg(cssColor(kColorBgSurface))
-        .arg(QString::fromLatin1(kColorPrimary))
-        .arg(QString::fromLatin1(kColorPrimaryDark));
 }
 
 inline QString elevationBannerStyle() {
@@ -1720,12 +1840,13 @@ inline QString transcriptBubbleStyle(bool user) {
                       .arg(kCssPaddingXXLargePx);
 }
 
+/// @p color is already resolved for the current theme and is used as it is.
 inline QString transcriptToggleStyle(const QString& color) {
     return QStringLiteral(
                "QPushButton { border: 0; padding: %1px 0; text-align: left; "
                "font-weight: 700; color: %2; background: transparent; }")
         .arg(kCssPaddingTinyPx)
-        .arg(cssColor(color));
+        .arg(color);
 }
 
 inline QString transcriptActivityBubbleStyle() {
@@ -1806,19 +1927,19 @@ inline QString aiConversationHeaderStyle() {
         .arg(cssColor(kColorBorderDefault));
 }
 
+/// The fill and the label's colour are the theme's, as every other bar's: blue-600 under the body
+/// text was 3.4:1 in the light theme (review 5, Z2).
 inline QString aiWorkflowProgressStyle() {
     return QStringLiteral(
                "QProgressBar { background: %1; border: %2px solid %3; "
-               "border-radius: %4px; color: %5; text-align: center; "
-               "font-size: %6pt; font-weight: 600; }"
-               "QProgressBar::chunk { background: %7; border-radius: %8px; }")
+               "border-radius: %4px; text-align: center; "
+               "font-size: %5pt; font-weight: 600; }"
+               "QProgressBar::chunk { border-radius: %6px; }")
         .arg(cssColor(kColorBgWhite))
         .arg(kCssBorderWidthDefaultPx)
         .arg(cssColor(kColorBorderDefault))
         .arg(kCssRadiusTinyPx)
-        .arg(cssColor(kColorTextBody))
         .arg(kFontSizeSmall)
-        .arg(QString::fromLatin1(kColorPrimaryDark))
         .arg(kCssPaddingTinyPx);
 }
 
@@ -1948,8 +2069,9 @@ inline QString sectionLabelStyle(const char* color = kColorTextHeading, int marg
     return style;
 }
 
-inline QString checkboxColorStyle(const QString& color) {
-    return QStringLiteral("QCheckBox { color: %1; }").arg(color);
+/// A check box's text in @p color, or in that token's dark-theme value when the dark theme is on.
+inline QString checkboxColorStyle(const char* color) {
+    return QStringLiteral("QCheckBox { color: %1; }").arg(cssColor(color));
 }
 
 inline QString calendarEventTableStyle() {
@@ -1963,32 +2085,21 @@ inline QString calendarEventTableStyle() {
         .arg(QString::fromLatin1(kColorButtonTextOnTone));
 }
 
+/// The workflow details pane is about 290 px wide. A workflow's name at the section size wrapped to
+/// two lines there and stood larger than the page's own title (review 2, N17), so its headings
+/// step down from the status size.
 inline QString aiWorkflowMarkdownStyle() {
     return QString::fromLatin1(kAiWorkflowMarkdownStyle)
         .arg(kFontSizeNote)
         .arg(cssColor(kColorTextBody),
              cssColor(kColorBgSurface),
-             QString::number(kFontSizeSection),
+             QString::number(kFontSizeStatus),
              QString::number(kSpacingSmall),
              cssColor(kColorTextHeading),
              QString::number(kFontSizeBody),
              QString::number(kSpacingMedium),
              QString::number(kCssPaddingTinyPx))
         .arg(kSpacingTight);
-}
-
-inline QString aiWorkbenchListStyle() {
-    return QString::fromLatin1(kAiWorkbenchListStyle)
-        .arg(cssColor(kColorBgWhite),
-             QString::number(kCssBorderWidthDefaultPx),
-             cssColor(kColorBorderDefault),
-             QString::number(kCssRadiusSmallPx),
-             QString::number(kCssPaddingTinyPx),
-             cssColor(kColorTextBody),
-             QString::number(kCssPaddingSmallPx),
-             QString::number(kCssPaddingMediumPx),
-             QString::number(kCssRadiusTinyPx))
-        .arg(cssColor(kColorBgInfoPanel), cssColor(kColorBgPageHover));
 }
 
 inline QString aiComposerEditStyle() {
@@ -2026,7 +2137,7 @@ inline QString passwordRevealButtonStyle() {
 inline const QString kFontWeightSemiboldStyle = fontWeightStyle(kFontWeightSemibold);
 inline const QString kFontWeightBoldStyle = fontWeightStyle(kFontWeightBold);
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 // Margins must be monotonically increasing.
 static_assert(kMarginNone < kMarginTight, "Margins must be monotonically increasing.");

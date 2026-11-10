@@ -32,10 +32,12 @@ class QTimer;
 class QToolButton;
 class QVBoxLayout;
 
+class EmailToolsViewsTests;
+
 namespace sak {
 
 // ============================================================================
-// CalendarEvent — enriched event for display
+// CalendarEvent -- enriched event for display
 // ============================================================================
 
 /// @brief Enriched calendar event combining summary and detail data
@@ -46,20 +48,27 @@ struct CalendarEvent {
     QString sender_name;
     QDateTime start_time;
 
-    // Detail fields — populated when detail is loaded
+    // Detail fields -- populated when detail is loaded
     bool detail_loaded = false;
     QDateTime end_time;
     QString location;
     bool is_all_day = false;
     int busy_status = -1;  ///< -1=unknown, 0=Free, 1=Tentative, 2=Busy, 3=OOF
     int importance = 1;    ///< 0=Low, 1=Normal, 2=High
-    QStringList attendees;
-    QString recurrence_description;
+    QVector<PstAttendee> attendees;
+    bool attendees_unreadable = false;
+    PstRecurrence recurrence;
+    PstTimeZone time_zone;
+    QString message_id;
     QString body_plain;
     QString body_html;
     QString sender_email;
     int attachment_count = 0;
 };
+
+/// The date an event sits on in the calendar. An all-day event's stored time is midnight where it
+/// was made, which is often not the same date in UTC.
+[[nodiscard]] QDate calendarDate(const CalendarEvent& event);
 
 // ============================================================================
 // Forward declarations for view widgets (defined in .cpp)
@@ -79,6 +88,7 @@ class CalendarWeekDayView;
 /// busy status, view switching, mini-calendar navigation, and ICS/CSV export.
 class EmailCalendarDialog : public QDialog {
     Q_OBJECT
+    friend class ::EmailToolsViewsTests;
 
 public:
     /// Calendar view mode
@@ -128,7 +138,7 @@ private Q_SLOTS:
     void onDetailLoaded(sak::PstItemDetail detail);
 
 private:
-    // UI setup helpers — each builds one section of the dialog
+    // UI setup helpers -- each builds one section of the dialog
     void setupUi();
     void setupToolbar(QVBoxLayout* parent_layout);
     void setupNavButtons(QHBoxLayout* layout);
@@ -156,7 +166,7 @@ private:
     void updateStatusLabel();
 
     // Event display
-    void displayEventSummary(const CalendarEvent& event);
+    void displayEventSummary(const CalendarEvent& evt);
     void populateDayEventList(const QDate& date);
 
     // Context menu helpers
@@ -176,6 +186,11 @@ public:
     // Color helpers (public for use by view widgets)
     [[nodiscard]] static QColor fillColorForStatus(int busy_status, EmailItemType type);
     [[nodiscard]] static QColor borderColorForStatus(int busy_status, EmailItemType type);
+    /// @brief What an event's chip in the month and week views says: its subject first, then its
+    ///        start time. A chip is ~75 px wide in the month view, and with the time first it
+    ///        showed "8:00 AM Ov..." and no subject (UI review N16); the time is in the day's list
+    ///        and, in the week view, in where the chip sits.
+    [[nodiscard]] static QString eventChipLabel(const CalendarEvent& event);
 
 private:
     static void appendHtmlField(QString& html, const QString& label, const QString& value);
@@ -234,9 +249,11 @@ private:
 
     // Event data
     QVector<CalendarEvent> m_all_events;
-    QMap<QDate, QVector<int>> m_date_index;  ///< date → indices into m_all_events
-    QHash<uint64_t, int> m_node_index;       ///< node_id → index into m_all_events
+    QMap<QDate, QVector<int>> m_date_index;  ///< date -> indices into m_all_events
+    QHash<uint64_t, int> m_node_index;       ///< node_id -> index into m_all_events
     int m_folders_loaded{0};
+    bool m_load_truncated{false};  ///< a folder held more items than the per-folder display cap
+    bool m_loading_event_details{false};  ///< Reading every event's record; views wait until done
     int m_details_pending{0};
 };
 

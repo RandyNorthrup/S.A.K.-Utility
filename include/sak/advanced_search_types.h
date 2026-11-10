@@ -13,6 +13,7 @@
 #include "sak/file_management_file_system.h"
 #include "sak/layout_constants.h"
 
+#include <QDir>
 #include <QMetaType>
 #include <QSet>
 #include <QString>
@@ -24,12 +25,16 @@
 namespace sak {
 
 inline constexpr int kAdvancedSearchDefaultContextLines = 2;
+/// Upper bound for context_lines. A negative value silently inverts the context
+/// window and INT_MIN overflows the line_index +/- ctx arithmetic (UB), so the
+/// worker clamps the configured value into [0, this] before use.
+inline constexpr int kAdvancedSearchMaxContextLines = 1000;
 inline constexpr int kAdvancedSearchDefaultFileSizeMb = 50;
 inline constexpr qint64 kAdvancedSearchDefaultFileSizeBytes =
     static_cast<qint64>(kAdvancedSearchDefaultFileSizeMb) * kBytesPerMB;
 inline constexpr int kAdvancedSearchNetworkTimeoutSec = 5;
 inline constexpr int kAdvancedSearchPreviewFileSizeMb = 10;
-inline constexpr int kAdvancedSearchCacheSize = 50;
+
 
 // -- SearchMatch -------------------------------------------------------------
 
@@ -40,8 +45,8 @@ struct SearchMatch {
     QString line_content;        ///< Content of the matching line
     int match_start = 0;         ///< Character offset of match start within line
     int match_end = 0;           ///< Character offset of match end within line
-    QStringList context_before;  ///< Lines before the match (0-10)
-    QStringList context_after;   ///< Lines after the match (0-10)
+    QStringList context_before;  ///< Lines before the match, bounded by the clamped configuration
+    QStringList context_after;   ///< Lines after the match, bounded by the clamped configuration
 };
 
 // -- SearchConfig ------------------------------------------------------------
@@ -61,10 +66,18 @@ struct SearchConfig {
     bool search_file_metadata = false;   ///< PDF/Office/audio/video metadata
     bool search_in_archives = false;     ///< Search inside ZIP/EPUB
     bool hex_search = false;             ///< Binary/hex search mode
+    /// Skip reparse-point (symlink/junction) entries during the local directory walk. Defaults to
+    /// true by default for every caller: it adds QDir::NoSymLinks to the QDirIterator filter,
+    /// which excludes an entry via a non-following isSymLink() check BEFORE isFile()/open()
+    /// resolve the target -- so a planted symlink to a UNC share is never opened (its first
+    /// following stat would leak the credential hash via SMB/NTLM). A caller with a verified
+    /// requirement to follow file links must opt out explicitly.
+    bool skip_symlinks = true;
 
     // Filtering
-    QStringList file_extensions;      ///< Empty = all files
-    QStringList exclude_patterns = {  ///< Exclusion regex patterns
+    QStringList file_extensions;  ///< Empty = all files
+    /// Exclusion regex patterns
+    QStringList exclude_patterns = {
         R"(\.git)",
         R"(\.svn)",
         R"(__pycache__)",
@@ -73,7 +86,8 @@ struct SearchConfig {
         R"(\.exe$)",
         R"(\.dll$)",
         R"(\.so$)",
-        R"(\.bin$)"};
+        R"(\.bin$)",
+    };
 
     // Limits
     int context_lines = kAdvancedSearchDefaultContextLines;
@@ -99,7 +113,7 @@ struct SearchPreferences {
     int max_results = 0;
     int max_preview_file_size_mb = kAdvancedSearchPreviewFileSizeMb;
     int max_search_file_size_mb = kAdvancedSearchDefaultFileSizeMb;
-    int max_cache_size = kAdvancedSearchCacheSize;
+
     int context_lines = kAdvancedSearchDefaultContextLines;
 };
 
@@ -109,7 +123,16 @@ struct SearchPreferences {
 inline const QSet<QString> kImageExtensions = {
     "jpg", "jpeg", "png", "tiff", "tif", "gif", "bmp", "webp", "heic", "heif"};
 
-/// @brief File extensions supporting metadata extraction
+/// @brief File extensions routed through the file-metadata search path.
+///
+/// Depth of extraction is NOT uniform across this set. Only a subset has a
+/// format-specific parser: pdf (leading Info-dictionary region only), the
+/// ZIP-based Office/OpenDocument/EPUB formats (docx/xlsx/pptx/odt/ods/odp/epub),
+/// and mp3 (ID3v2). Every other extension here (audio/video containers,
+/// databases, json/csv/xml, rtf, screenwriting) receives filesystem metadata
+/// only (name, size, type, timestamps) -- still searchable, but not a deep
+/// content/tag parse. They remain in the set so they are handled here rather
+/// than being byte-searched as opaque binaries.
 inline const QSet<QString> kFileMetadataExtensions = {
     // Documents
     "pdf",
@@ -148,12 +171,13 @@ inline const QSet<QString> kFileMetadataExtensions = {
     // Screenwriting
     "fdx",
     "fountain",
-    "celtx"};
+    "celtx",
+};
 
 /// @brief Archive extensions that can be searched internally
 inline const QSet<QString> kArchiveExtensions = {"zip", "epub"};
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 /// SearchMatch must be default-constructible for QVector usage.
 static_assert(std::is_default_constructible_v<SearchMatch>,
@@ -180,6 +204,13 @@ static_assert(std::is_copy_constructible_v<RegexPatternInfo>,
               "RegexPatternInfo must be copy-constructible for signal/slot.");
 static_assert(std::is_copy_constructible_v<SearchPreferences>,
               "SearchPreferences must be copy-constructible for signal/slot.");
+
+/// @brief The first line of a search preview, naming the file with backslashes, as the results
+///        list beside it does. The preview read "File: C:/SAK-Samples/Docs/sample-notes.txt" above
+///        a list in backslashes (review 3).
+[[nodiscard]] inline QString searchPreviewFileLine(const QString& file_path) {
+    return QStringLiteral("File: %1\n").arg(QDir::toNativeSeparators(file_path));
+}
 
 }  // namespace sak
 

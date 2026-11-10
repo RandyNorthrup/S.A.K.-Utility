@@ -8,6 +8,7 @@
 
 #include "sak/diagnostic_types.h"
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -62,6 +63,42 @@ public:
     /// @return true if smartctl.exe can be found and executed
     [[nodiscard]] bool isSmartctlAvailable() const;
 
+    /// @brief Whether a report carries any usable SMART signal to assess.
+    /// @return true iff there is an overall SMART status, at least one SATA
+    ///         attribute, or an NVMe health log.
+    /// @note Fail-closed guard: with none of these, health is indeterminate
+    ///       (Unknown) and must never default to Healthy -- otherwise a
+    ///       malformed/empty smartctl payload reads as a clean drive.
+    [[nodiscard]] static bool reportHasAssessableData(const SmartReport& report);
+
+    /// @brief How a drive is named wherever several are listed together: "PhysicalDrive0 (VBOX
+    ///        HARDDISK)", or "PhysicalDrive1" when the model is not known. Its number tells four
+    ///        drives of one model apart.
+    [[nodiscard]] static QString driveName(const QString& device_path, const QString& model);
+
+    /// @brief Parse raw smartctl JSON and run the full assessment pipeline.
+    /// @param json_data Raw smartctl JSON bytes.
+    /// @param disk_number The drive number being parsed.
+    /// @return The parsed + assessed report.
+    /// @note Exposed for tests: certifies the fail-closed path (malformed or
+    ///       empty JSON must resolve to Unknown, never Healthy). Does not touch
+    ///       the cached report list or emit signals.
+    /// @brief Plain words for why smartctl could not read a drive, from smartctl's own messages in
+    ///        @p json. Access denied (Error=5) needs administrator rights: Windows lets a normal
+    ///        user read an NVMe drive's health but not a SATA or USB one's. Pure; unit-testable.
+    [[nodiscard]] static QString smartctlFailureReason(const QByteArray& json);
+
+    [[nodiscard]] SmartReport parseAndAssessForTesting(const QByteArray& json_data,
+                                                       uint32_t disk_number);
+
+    /// @brief The one place smartctl.exe is looked for under a bundled tools root.
+    /// @param tools_root The application's bundled `tools` directory.
+    /// @return `<tools_root>/smartmontools/smartctl.exe` when it is a regular file, else empty.
+    /// @note There is no second location: the bundle script and the configure check put
+    ///       smartctl in `smartmontools/` and nowhere else, so any other copy is not the one the
+    ///       build verified. The Diagnostic panel and the assistant's workflow check both use it.
+    [[nodiscard]] static QString bundledSmartctlPath(const QString& tools_root);
+
 Q_SIGNALS:
     /// @brief Emitted when analysis begins
     void analysisStarted();
@@ -83,15 +120,38 @@ Q_SIGNALS:
     /// @param message Description of the error
     void errorOccurred(const QString& message);
 
-private:
-    /// @brief Resolve the path to the bundled smartctl executable
-    /// @return Absolute path to smartctl.exe, or empty string if not found
-    [[nodiscard]] static QString resolveSmartctlPath();
+    /// @brief A drive whose SMART data could not be read: kept in the results with this same
+    ///        warning, and said at the same level. A USB stick behind an adapter that does not
+    ///        pass SMART through is a limit, not a failure of the run (review 5, Z23).
+    void driveWarning(const QString& message);
 
+protected:
     /// @brief Run smartctl and capture JSON output for a specific drive
     /// @param disk_number Physical drive number
     /// @return Raw JSON output from smartctl, or empty QByteArray on failure
-    [[nodiscard]] QByteArray runSmartctl(uint32_t disk_number);
+    [[nodiscard]] virtual QByteArray runSmartctl(uint32_t disk_number);
+    /// Why the last runSmartctl on this drive returned nothing, for the drive's report.
+    QString m_last_read_failure;
+
+    /// The model and bus Windows gives a physical disk.
+    struct DriveIdentity {
+        QString model;
+        QString bus;
+    };
+    /// @brief Windows' model and bus for each physical disk number, read once per run: a drive
+    ///        smartctl cannot read (a USB bridge, a standard user) is named by its model rather
+    ///        than "PhysicalDriveN" even when no hardware scan has run, and every drive's bus is
+    ///        spelled as the hardware inventory spells it ("NVMe", not smartctl's "NVME").
+    [[nodiscard]] virtual QHash<uint32_t, DriveIdentity> queryDriveIdentities();
+
+private:
+    void applyDriveIdentity(SmartReport& report, uint32_t disk_number);
+    QHash<uint32_t, DriveIdentity> m_identities;
+    bool m_identities_read{false};
+
+    /// @brief Resolve the path to the bundled smartctl executable
+    /// @return Absolute path to smartctl.exe, or empty string if not found
+    [[nodiscard]] static QString resolveSmartctlPath();
 
     /// @brief Parse smartctl JSON output into a SmartReport
     /// @param json_data Raw JSON bytes

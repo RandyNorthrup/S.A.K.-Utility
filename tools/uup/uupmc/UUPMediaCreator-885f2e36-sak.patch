@@ -1,0 +1,88 @@
+diff --git a/src/Applications/UUPMediaConverter/DesktopConvert.cs b/src/Applications/UUPMediaConverter/DesktopConvert.cs
+index 8c81f3d78505c68babb96906b2efa9ca2a6da2a6..033594bca69022cf445c56068e8be3e828c9c2eb 100644
+--- a/src/Applications/UUPMediaConverter/DesktopConvert.cs
++++ b/src/Applications/UUPMediaConverter/DesktopConvert.cs
+@@ -106,6 +106,9 @@ namespace UUPMediaConverter
+             int prevperc = -1;
+             UnifiedUpdatePlatform.Common.Messaging.Common.ProcessPhase prevphase = UnifiedUpdatePlatform.Common.Messaging.Common.ProcessPhase.ReadingMetadata;
+             string prevop = "";
++            // An Error phase reported through the callback (rather than thrown) must still make
++            // the process exit non-zero, so a caller can tell a failed conversion from a good ISO.
++            bool hadError = false;
+ 
+             void callback(UnifiedUpdatePlatform.Common.Messaging.Common.ProcessPhase phase, bool IsIndeterminate, int ProgressInPercentage, string SubOperation)
+             {
+@@ -122,6 +125,7 @@ namespace UUPMediaConverter
+                 {
+                     Logging.Log("An error occured!", severity: Logging.LoggingLevel.Error);
+                     Logging.Log(SubOperation, severity: Logging.LoggingLevel.Error);
++                    hadError = true;
+                     if (Debugger.IsAttached)
+                     {
+                         _ = Console.ReadLine();
+@@ -162,7 +166,7 @@ namespace UUPMediaConverter
+                 return 1;
+             }
+ 
+-            return 0;
++            return hadError ? 1 : 0;
+         }
+ 
+         private static bool IsAdministrator()
+diff --git a/src/UnifiedUpdatePlatform.Media.Creator/MediaCreator.cs b/src/UnifiedUpdatePlatform.Media.Creator/MediaCreator.cs
+index 566b366e2402c91e260c4f860cb9c1080ebd372f..fa7809569b5cc2f6178df88a5a53f9c7b2a3b44e 100644
+--- a/src/UnifiedUpdatePlatform.Media.Creator/MediaCreator.cs
++++ b/src/UnifiedUpdatePlatform.Media.Creator/MediaCreator.cs
+@@ -63,38 +63,20 @@ namespace UnifiedUpdatePlatform.Media.Creator
+             {
+                 case AvailabilityType.Canonical:
+                     {
+-                        if (PlatformUtilities.RunsAsAdministrator && targetEdition.PlannedEdition.AppXInstallWorkloads?.Length > 0)
+-                        {
+-                            // Allow AppX Slipstreaming
+-                            result = BaseEditionBuilder.CreateBaseEditionWithAppXs(
+-                                    UUPPath,
+-                                    MediaPath,
+-                                    LanguageCode,
+-                                    targetEdition.PlannedEdition.EditionName,
+-                                    WinREWIMFilePath,
+-                                    InstallWIMFilePath,
+-                                    CompressionType,
+-                                    targetEdition.PlannedEdition.AppXInstallWorkloads,
+-                                    CompositionDatabases,
+-                                    tempManager,
+-                                    true,
+-                                    out vhdPath,
+-                                    progressCallback);
+-                        }
+-                        else
+-                        {
+-                            // Otherwise not
+-                            result = BaseEditionBuilder.CreateBaseEdition(
+-                                    UUPPath,
+-                                    LanguageCode,
+-                                    targetEdition.PlannedEdition.EditionName,
+-                                    WinREWIMFilePath,
+-                                    InstallWIMFilePath,
+-                                    CompressionType,
+-                                    CompositionDatabases,
+-                                    tempManager,
+-                                    progressCallback);
+-                        }
++                        // S.A.K. patch: always build the base edition without AppX slipstreaming,
++                        // which is the path upstream already takes when it does not run elevated.
++                        // Offline DISM AppX provisioning fails when the host servicing stack does
++                        // not match the target build, and that failure fails the whole edition.
++                        result = BaseEditionBuilder.CreateBaseEdition(
++                                UUPPath,
++                                LanguageCode,
++                                targetEdition.PlannedEdition.EditionName,
++                                WinREWIMFilePath,
++                                InstallWIMFilePath,
++                                CompressionType,
++                                CompositionDatabases,
++                                tempManager,
++                                progressCallback);
+ 
+                         if (!result)
+                         {

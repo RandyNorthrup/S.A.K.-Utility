@@ -1,0 +1,24 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_tool_health_ledger",
+  "ctest_regex": "^test_ai_tool_health_ledger$",
+  "mutants": [
+    {
+      "id": "reset-keeps-records",
+      "file": "src/ai/ai_tool_health_ledger.cpp",
+      "find": "    m_records.clear();",
+      "replace": "    m_records.squeeze();",
+      "expect": "killed",
+      "why": "resetForgetsEveryRecord trips a tool, resets for a new chat session and requires the tool available with no records left."
+    },
+    {
+      "id": "snapshot-record-order-descending",
+      "file": "src/ai/ai_tool_health_ledger.cpp",
+      "find": "    keys.sort(Qt::CaseSensitive);",
+      "replace": "    std::ranges::sort(keys, std::greater{});",
+      "expect": "killed",
+      "why": "snapshotOrdersRecordsByKey requires alpha then zeta regardless of QHash iteration order."
+    }
+  ]
+}

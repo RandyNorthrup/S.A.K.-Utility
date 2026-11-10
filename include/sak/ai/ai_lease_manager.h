@@ -3,49 +3,48 @@
 
 #pragma once
 
-#include <QDateTime>
-#include <QHash>
 #include <QMutex>
 #include <QString>
-#include <QStringList>
+
+#include <optional>
 
 namespace sak::ai {
 
-/// @brief Tracks active mutating-tool leases so the dispatcher can enforce
-/// "only one mutating action runs at a time" across overseer + subagents.
+/// @brief Enforces one process-local mutating AI action at a time.
+///
+/// A held lease never expires automatically. Time-based reclamation can release exclusivity while
+/// an overrun or hung handler still mutates, so recovery is deliberately fail-closed: the exact
+/// bearer id must be released, or the process must restart. Process restart also stops every
+/// in-process holder and creates a fresh manager, preserving the single-writer invariant.
 class AiLeaseManager {
 public:
     struct Lease {
         QString lease_id;
         QString agent_id;
-        QStringList tool_scope;
-        QString risk_level;
-        QDateTime acquired_at_utc;
-        bool exclusive{false};
     };
 
     struct AcquireResult {
         bool granted{false};
         Lease lease;
+        /// Refusal reason using publicLabel(), never the bearer token.
         QString reason;
     };
 
     AiLeaseManager() = default;
 
-    [[nodiscard]] AcquireResult acquire(const QString& agent_id,
-                                        const QStringList& tool_scope,
-                                        const QString& risk_level,
-                                        bool exclusive);
-    void release(const QString& lease_id);
+    /// Grants a lease only when no mutating lease is active.
+    [[nodiscard]] static AcquireResult acquire(const QString& agent_id);
 
-    [[nodiscard]] bool hasActiveExclusive() const;
-    [[nodiscard]] int activeLeaseCount() const;
-    [[nodiscard]] QStringList activeLeaseIds() const;
+    /// Releases @p lease_id. Returns false for a blank, wrong, or already-released bearer id.
+    [[nodiscard]] static bool release(const QString& lease_id);
+
+    /// Returns the non-secret counter prefix of a lease id for logs and user-visible diagnostics.
+    [[nodiscard]] static QString publicLabel(const QString& lease_id);
 
 private:
-    mutable QMutex m_mutex;
-    QHash<QString, Lease> m_active;
-    quint64 m_next_id{1};
+    static QMutex s_mutex;
+    static std::optional<Lease> s_active;
+    static quint64 s_next_id;
 };
 
 }  // namespace sak::ai

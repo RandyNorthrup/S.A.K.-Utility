@@ -10,6 +10,7 @@
 
 #include <QByteArray>
 #include <QPair>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVector>
@@ -18,7 +19,11 @@
 #include <functional>
 #include <optional>
 
+class QIODevice;
+
 namespace sak {
+
+inline constexpr uint32_t kSupportedApfsBlockSizeBytes = 4096;
 
 enum class PartitionApfsWriteOperation {
     CreateDirectory,
@@ -33,10 +38,14 @@ enum class PartitionApfsWriteOperation {
 };
 
 struct PartitionApfsWriteOptions {
-    bool enable_experimental_writer{false};
+    /// The single switch that lets this call mutate anything. It replaced three attestations
+    /// (an "experimental writer" enable, a destructive-certification flag and a raw-media
+    /// hardware-certification flag) that every caller set together, so none of them ever
+    /// refused a write on its own. A caller sets it from whether the target may be mutated.
+    bool writable{false};
+    /// Raw-device opt-in at the options level: a raw commit also needs the request's
+    /// allow_raw_device_target, an explicit target confirmation and a raw-device path.
     bool image_only{true};
-    bool destructive_certification_evidence{false};
-    bool raw_media_hardware_certification_evidence{false};
     bool allow_encrypted_or_protected_volume{false};
     bool allow_compressed_file_mutation{false};
     bool allow_snapshots{false};
@@ -49,7 +58,6 @@ struct PartitionApfsWritePreflight {
     bool allowed{false};
     QStringList blockers;
     QStringList warnings;
-    QStringList required_evidence;
 };
 
 struct PartitionApfsImageMutationStep {
@@ -76,25 +84,6 @@ struct PartitionApfsImageMutationPlan {
     QStringList execution_blockers;
 };
 
-struct PartitionApfsWriterExecutionEvidence {
-    QString evidence_id;
-    QString operation;
-    QString target_path;
-    bool structure_mapping_verified{false};
-    bool object_checksum_vectors_verified{false};
-    bool source_image_hash_verified{false};
-    bool scratch_image_hash_verified{false};
-    bool copy_on_write_checkpoint_verified{false};
-    bool object_map_update_verified{false};
-    bool space_manager_accounting_verified{false};
-    bool fsck_validation_verified{false};
-    bool target_readback_verified{false};
-    bool crash_replay_verified{false};
-    bool rollback_boundary_verified{false};
-    bool hardware_raw_media_verified{false};
-    QStringList artifacts;
-};
-
 struct PartitionApfsImageBuildResult {
     bool ok{false};
     PartitionApfsImageMutationPlan plan;
@@ -116,48 +105,6 @@ struct PartitionApfsImageRepairResult {
     uint64_t repaired_checksum_blocks{0};
 };
 
-struct PartitionApfsImageFileWriteResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString source_image_path;
-    QString written_image_path;
-    QString written_image_sha256;
-    QString directory_name;
-    QString file_name;
-    uint64_t file_bytes{0};
-    QString payload_sha256;
-    QString readback_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t written_data_blocks{0};
-};
-
-struct PartitionApfsImageFileDeleteResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString source_image_path;
-    QString written_image_path;
-    QString written_image_sha256;
-    QString directory_name;
-    QString file_name;
-    uint64_t deleted_file_bytes{0};
-    QString deleted_file_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t freed_data_blocks{0};
-};
-
-struct PartitionApfsImageDirectoryMutationResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString source_image_path;
-    QString written_image_path;
-    QString written_image_sha256;
-    QString directory_name;
-    QStringList blockers;
-    QStringList warnings;
-};
-
 struct PartitionApfsImageVolumeLabelResult {
     bool ok{false};
     PartitionApfsImageMutationPlan plan;
@@ -166,76 +113,6 @@ struct PartitionApfsImageVolumeLabelResult {
     QString written_image_sha256;
     QString old_volume_name;
     QString new_volume_name;
-    QStringList blockers;
-    QStringList warnings;
-};
-
-struct PartitionApfsImageFilePatchResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString source_image_path;
-    QString written_image_path;
-    QString written_image_sha256;
-    QString directory_name;
-    QString file_name;
-    uint64_t file_bytes{0};
-    uint64_t patch_offset_bytes{0};
-    uint64_t patch_bytes{0};
-    QString patch_sha256;
-    QString readback_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t written_data_blocks{0};
-};
-
-struct PartitionApfsRawFileWriteResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString target_path;
-    QString directory_name;
-    QString file_name;
-    uint64_t file_bytes{0};
-    QString payload_sha256;
-    QString readback_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t written_data_blocks{0};
-};
-
-struct PartitionApfsRawFileDeleteResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString target_path;
-    QString directory_name;
-    QString file_name;
-    uint64_t deleted_file_bytes{0};
-    QString deleted_file_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t freed_data_blocks{0};
-};
-
-struct PartitionApfsRawFilePatchResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString target_path;
-    QString directory_name;
-    QString file_name;
-    uint64_t file_bytes{0};
-    uint64_t patch_offset_bytes{0};
-    uint64_t patch_bytes{0};
-    QString patch_sha256;
-    QString readback_sha256;
-    QStringList blockers;
-    QStringList warnings;
-    uint64_t written_data_blocks{0};
-};
-
-struct PartitionApfsRawDirectoryMutationResult {
-    bool ok{false};
-    PartitionApfsImageMutationPlan plan;
-    QString target_path;
-    QString directory_name;
     QStringList blockers;
     QStringList warnings;
 };
@@ -261,49 +138,48 @@ struct PartitionApfsRawRepairResult {
 };
 
 struct PartitionApfsImageFormatRequest {
-    QString image_path;
+    QString image_path{};
     uint64_t target_container_bytes{0};
     uint32_t block_size_bytes{0};
-    QString volume_name;
+    QString volume_name{};
     // Extra APFS volumes beyond the first (A4 multi-volume containers). One name
     // per additional volume; each gets its own omap, root/extent-ref/snap-meta
     // trees, superblock, fs_index, and UUID, all sharing the container spaceman.
-    QStringList additional_volume_names;
-    QString seed_file_name;
-    QByteArray seed_file_data;
+    QStringList additional_volume_names{};
+    QString seed_file_name{};
+    QByteArray seed_file_data{};
     // A6 (A-f): when non-empty, format a software-encrypted (FileVault) volume
     // unlockable by this password. The writer generates the VEK/KEK, builds the
     // container + volume keybags, sets nx_keylocker / APFS_FS_ONEKEY, and
     // AES-XTS-encrypts the volume's file-system tree. Credential-in, never stored.
-    QString volume_password;
+    QString volume_password{};
     // A6 follow-on: optional personal-recovery-key credential. When set alongside
     // volume_password, the volume keybag gets a second unlock record (the same KEK
     // wrapped by this recovery key, keyed by Apple's fixed PRK UUID), so the volume
     // is unlockable by EITHER the password or the recovery key. Never stored.
-    QString recovery_key;
+    QString recovery_key{};
+    // A6 follow-on per-file-key encryption (APFS data-protection model): when true
+    // (and volume_password is set) the volume is per-file encrypted rather than
+    // whole-volume ONEKEY. The metadata stays plaintext but the fs-tree object and
+    // its omap value carry the ENCRYPTED flags (v_encrypted, ONEKEY clear); each
+    // file's data is AES-XTS encrypted with its own key, wrapped by the VEK in a
+    // per-file crypto-state record. False keeps ONEKEY / unencrypted byte-identical.
+    bool per_file_encryption{false};
+    // Per-file follow-on kernel-mount candidate variant: when true (with
+    // per_file_encryption), the volume mirrors the A6 ONEKEY mount recipe for METADATA
+    // (Apple-format keybag + AES-XTS-encrypted fs-tree + class-F meta_crypto + a default
+    // whole-volume crypto-state record) while keeping per-file keys for DATA. This is a
+    // macOS-kernel-oriented layout (host apfsck cannot read VEK-encrypted metadata); the
+    // default (false) keeps the plaintext-metadata, apfsck-certifiable per-file layout.
+    bool per_file_kernel_variant{false};
     bool target_wipe_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 struct PartitionApfsImageRepairRequest {
     QString source_image_path;
     QString repaired_image_path;
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsImageRootFileWriteRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString file_name;
-    QByteArray file_data;
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsImageRootFileDeleteRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString file_name;
     PartitionApfsWriteOptions options;
 };
 
@@ -324,108 +200,20 @@ struct PartitionApfsImageRootDirectoryFileDeleteRequest {
     PartitionApfsWriteOptions options;
 };
 
-struct PartitionApfsImageRootDirectoryFilePatchRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString directory_name;
-    QString file_name;
-    uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsImageRootFilePatchRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString file_name;
-    uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
-    PartitionApfsWriteOptions options;
-};
-
 struct PartitionApfsImageRootDirectoryMutationRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString directory_name;
-    PartitionApfsWriteOptions options;
+    QString source_image_path{};
+    QString written_image_path{};
+    QString directory_name{};
+    // Parent directory the new directory is created under; empty = container root,
+    // "/docs" or "/docs/sub" nests it. Used by directory-create; ignored by delete.
+    QString parent_directory_path{};
+    PartitionApfsWriteOptions options{};
 };
 
 struct PartitionApfsImageVolumeLabelRequest {
     QString source_image_path;
     QString written_image_path;
     QString volume_name;
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootFileWriteRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString file_name;
-    QByteArray file_data;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootFileDeleteRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString file_name;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootDirectoryFileWriteRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString directory_name;
-    QString file_name;
-    QByteArray file_data;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootDirectoryFileDeleteRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString directory_name;
-    QString file_name;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootDirectoryFilePatchRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString directory_name;
-    QString file_name;
-    uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootFilePatchRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString file_name;
-    uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
-};
-
-struct PartitionApfsRawRootDirectoryMutationRequest {
-    QString target_path;
-    uint64_t target_container_bytes{0};
-    QString directory_name;
-    bool target_write_confirmed{false};
-    bool allow_raw_device_target{false};
     PartitionApfsWriteOptions options;
 };
 
@@ -471,28 +259,99 @@ struct PartitionApfsImageCheckpointCommitResult {
     QStringList warnings;
 };
 
+/// @brief Read-only probe of a container's REAL on-disk layout (foreign-volume in-place work):
+///        the live checkpoint position, the target volume-chain object ids, and the spaceman
+///        internal-pool bitmap-ring geometry parsed straight from the image. For a S.A.K.-
+///        generated container every field equals its format constant; a real Apple/mkapfs volume
+///        reports its own oids and its own N-block bitmap ring. Used to verify the adopt-state
+///        parser and to drive the generalized (non-frozen) COW allocation path.
+struct PartitionApfsLiveLayoutProbe {
+    bool ok{false};
+    uint32_t block_size{0};
+    uint64_t block_count{0};
+    uint64_t latest_xid{0};
+    uint64_t nx_omap_oid{0};
+    uint64_t spaceman_oid{0};
+    uint64_t volume_oid{0};
+    uint64_t volume_sb_block{0};
+    uint64_t vol_root_tree_oid{0};
+    uint64_t vol_omap_oid{0};
+    uint64_t vol_extentref_oid{0};
+    uint64_t vol_snap_meta_oid{0};
+    uint64_t sm_main_block_count{0};
+    uint64_t sm_main_chunk_count{0};
+    uint32_t sm_main_cib_count{0};
+    uint32_t sm_main_cab_count{0};
+    uint64_t sm_main_free_count{0};
+    uint64_t ip_fq_tree_oid{0};
+    uint64_t main_fq_tree_oid{0};
+    uint64_t ip_base{0};
+    uint64_t ip_block_count{0};
+    uint32_t ip_bm_size_blocks{0};
+    uint32_t ip_bm_block_count{0};
+    uint64_t ip_bm_base{0};
+    QList<uint64_t> cib_addrs;
+    // Live IP-bitmap ring state (foreign-overflow finalize ground truth).
+    uint32_t sm_addr_offset{0};
+    uint32_t ip_bm_free_head{0};
+    uint32_t ip_bm_free_tail{0};
+    uint32_t ip_bm_xid_array_off{0};
+    uint32_t ip_bm_addr_array_off{0};
+    uint32_t ip_bm_free_next_off{0};
+    QList<uint64_t> live_bm_slots;  // ring slot of each live bitmap block
+    QList<uint64_t> live_bm_pop;    // set-bit count of each live bitmap block
+    QStringList blockers;
+};
+
 /// @brief Request to insert one empty file into a generated APFS container with
 ///        a true in-place copy-on-write checkpoint commit (A2 increment 2).
 struct PartitionApfsImageFileInsertCommitRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString file_name;
-    QByteArray file_data;
+    QString source_image_path{};
+    QString written_image_path{};
+    QString file_name{};
+    QByteArray file_data{};
+    // Nested insert: when non-empty, insert under this existing directory path (e.g.
+    // "/docs/sub"), resolved component-by-component against the live tree. Empty = the
+    // container root, byte-identical to the flat-root insert. Arbitrary depth.
+    QString parent_directory_path{};
     // A5: insert the file transparently compressed (inline zlib decmpfs). file_data
     // is the uncompressed content; the writer stores it in a com.apple.decmpfs
     // xattr and flags the inode UF_COMPRESSED. Requires the compressed value to fit
     // an embedded xattr (<= 3804 bytes); larger files fail closed.
     bool compress_zlib{false};
+    // A5 follow-on: store the payload inline LZFSE-compressed (decmpfs algo 11) instead of
+    // zlib. Takes precedence over compress_zlib. Same embedded-xattr size limit.
+    bool compress_lzfse{false};
+    // A5 follow-on: store the payload inline LZVN-compressed (decmpfs algo 7). Highest
+    // precedence of the compressors. Same embedded-xattr size limit.
+    bool compress_lzvn{false};
+    // A5 follow-on: store the payload LZBITMAP-compressed (decmpfs algo 14) in a
+    // com.apple.ResourceFork data stream. LZBITMAP is resource-only, so unlike the inline
+    // compressors it has no embedded-xattr size limit and works for arbitrary file sizes.
+    bool compress_lzbitmap{false};
     // A7 (A-h): arbitrary named extended attributes attached to the inserted file
     // (ACL in com.apple.system.Security, com.apple.FinderInfo, user xattrs). Each is
     // stored embedded; the matching inode flag (HAS_SECURITY_EA / HAS_FINDER_INFO)
     // is set automatically.
-    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    QVector<QPair<QByteArray, QByteArray>> xattrs{};
     // A7 (A-h): when greater than file_data.size(), insert the file sparse with a
     // trailing hole -- its extents cover file_data and the gap up to this logical
     // size reads as zeros (INODE_IS_SPARSE).
     uint64_t sparse_logical_size{0};
-    PartitionApfsWriteOptions options;
+    // Import fidelity: when preserve_inode_metadata is true, the inserted file's inode
+    // carries these adopted owner/group/mode/bsd_flags/timestamps (recovered from a foreign
+    // source file) instead of generated defaults. False leaves every generated insert
+    // byte-identical. inode_mode is the full st_mode; the four times are j_inode_val ns.
+    bool preserve_inode_metadata{false};
+    uint32_t inode_owner{0};
+    uint32_t inode_group{0};
+    uint16_t inode_mode{0};
+    uint32_t inode_bsd_flags{0};
+    uint64_t inode_create_time{0};
+    uint64_t inode_mod_time{0};
+    uint64_t inode_change_time{0};
+    uint64_t inode_access_time{0};
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to clone one root file in a generated APFS container with a true
@@ -580,13 +439,13 @@ struct PartitionApfsImageFileMoveCommitRequest {
 ///        true in-place copy-on-write commit (preserves the file's object id; crash-safe).
 ///        An empty directory name means the container root.
 struct PartitionApfsImageFilePatchCommitRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString directory_name;  // empty = root
-    QString file_name;
+    QString source_image_path{};
+    QString written_image_path{};
+    QString directory_name{};  // empty = root
+    QString file_name{};
     uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
-    PartitionApfsWriteOptions options;
+    QByteArray patch_data{};
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to insert one file into a generated APFS container on a raw
@@ -594,63 +453,102 @@ struct PartitionApfsImageFilePatchCommitRequest {
 ///        commit is applied to the device in place (no scratch clone), so it is
 ///        gated by explicit destructive-target confirmation and raw opt-in.
 struct PartitionApfsRawFileInsertCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString file_name;
-    QByteArray file_data;
+    QString file_name{};
+    QByteArray file_data{};
+    // Streaming write: when file_data_path is non-empty the payload is streamed from
+    // that host file (file_data_stream_size bytes) block-by-block instead of
+    // file_data, so a multi-GB write never holds the whole payload in RAM. file_data
+    // is ignored/empty in that case. Empty path keeps the in-memory path unchanged.
+    QString file_data_path{};
+    uint64_t file_data_stream_size{0};
+    // Nested insert: when non-empty, insert the file under this existing directory path
+    // (e.g. "/docs/sub"), resolved component-by-component against the live tree. Empty =
+    // the container root, byte-identical to the flat-root insert. Arbitrary depth.
+    QString parent_directory_path{};
     // A5: insert the file transparently compressed (inline zlib decmpfs). See
     // PartitionApfsImageFileInsertCommitRequest::compress_zlib.
     bool compress_zlib{false};
+    // A5 follow-on: inline LZFSE (decmpfs algo 11) instead of zlib; takes precedence.
+    bool compress_lzfse{false};
+    // A5 follow-on: inline LZVN (decmpfs algo 7); highest precedence of the compressors.
+    bool compress_lzvn{false};
+    // A5 follow-on: LZBITMAP (decmpfs algo 14) resource fork; resource-only, no size limit.
+    bool compress_lzbitmap{false};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to delete one root file from a generated APFS container on a
 ///        raw device with a true in-place copy-on-write checkpoint commit (A2).
 struct PartitionApfsRawFileDeleteCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString file_name;
+    QString file_name{};
+    // Nested delete: the existing directory path the file lives under (e.g. "/docs/sub").
+    // Empty = the container root. Resolved component-by-component against the live tree.
+    QString parent_directory_path{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to rename one root file in a generated APFS container on a raw
 ///        device with a true in-place copy-on-write checkpoint commit (A2).
 struct PartitionApfsRawFileRenameCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString file_name;
-    QString new_file_name;
+    QString file_name{};
+    QString new_file_name{};
+    // Nested rename: the existing directory path the file lives under (e.g. "/docs/sub");
+    // the file is renamed in place within it. Empty = the container root. A cross-directory
+    // move is a separate op (commit-*-file-move).
+    QString parent_directory_path{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to create or delete one empty root directory in a generated APFS
 ///        container on a raw device with an in-place copy-on-write commit (A2-3.2).
 struct PartitionApfsRawDirectoryMutationCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString directory_name;
+    QString directory_name{};
+    // Parent directory the new directory is created under; empty = container root,
+    // "/docs" or "/docs/sub" nests it. Used by directory-create; ignored by delete.
+    QString parent_directory_path{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to create-or-replace one file inside a root directory in a generated
 ///        APFS container on a raw device with an in-place copy-on-write commit (A2-3.2).
 struct PartitionApfsRawDirectoryChildWriteCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString directory_name;
-    QString file_name;
-    QByteArray file_data;
+    QString directory_name{};
+    QString file_name{};
+    QByteArray file_data{};
+    // Streaming write: when file_data_path is non-empty the payload is streamed from
+    // that host file (file_data_stream_size bytes) block-by-block instead of file_data,
+    // so a multi-GB child write never holds the whole payload in RAM. Empty path keeps
+    // the in-memory path unchanged. Mirrors PartitionApfsRawFileInsertCommitRequest.
+    QString file_data_path{};
+    uint64_t file_data_stream_size{0};
+    // A5: store the child transparently compressed. Same flags and precedence as
+    // PartitionApfsRawFileInsertCommitRequest; incompatible with a streamed
+    // payload (fails closed).
+    bool compress_zlib{false};
+    bool compress_lzfse{false};
+    bool compress_lzvn{false};
+    bool compress_lzbitmap{false};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to delete one file inside a root directory in a generated APFS
@@ -697,15 +595,15 @@ struct PartitionApfsRawFileMoveCommitRequest {
 ///        device with a true in-place copy-on-write commit (A2). An empty directory name
 ///        means the container root.
 struct PartitionApfsRawFilePatchCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString directory_name;  // empty = root
-    QString file_name;
+    QString directory_name{};  // empty = root
+    QString file_name{};
     uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
+    QByteArray patch_data{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to clone one root file in a generated APFS container on a raw device
@@ -753,44 +651,50 @@ struct PartitionApfsRawResizeCommitRequest {
 ///        tree state into a snapshot the kernel and fsck_apfs can enumerate; the live
 ///        volume keeps writing. Fails closed if the volume already carries a snapshot.
 struct PartitionApfsImageSnapshotCreateCommitRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString snapshot_name;
+    QString source_image_path{};
+    QString written_image_path{};
+    QString snapshot_name{};
     uint64_t create_time_ns{0};  // 0 = stamp with the current wall-clock time
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to create one snapshot of a generated APFS container on a raw device
 ///        with a true in-place copy-on-write checkpoint commit (A3). Applied to the
 ///        device in place, so gated by destructive-target confirmation and raw opt-in.
 struct PartitionApfsRawSnapshotCreateCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString snapshot_name;
+    QString snapshot_name{};
     uint64_t create_time_ns{0};  // 0 = stamp with the current wall-clock time
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to delete the (single) snapshot of a generated APFS container with a
 ///        true in-place copy-on-write checkpoint commit (A3). Restores the volume to its
 ///        snapshot-free state. Fails closed unless the volume carries exactly one snapshot.
 struct PartitionApfsImageSnapshotDeleteCommitRequest {
-    QString source_image_path;
-    QString written_image_path;
-    PartitionApfsWriteOptions options;
+    QString source_image_path{};
+    QString written_image_path{};
+    // Name of the snapshot to delete. Empty deletes the sole snapshot; required when the
+    // volume carries more than one.
+    QString snapshot_name{};
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to delete the (single) snapshot of a generated APFS container on a raw
 ///        device with a true in-place copy-on-write checkpoint commit (A3). Applied to the
 ///        device in place, so gated by destructive-target confirmation and raw opt-in.
 struct PartitionApfsRawSnapshotDeleteCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
+    // Name of the snapshot to delete. Empty deletes the sole snapshot; required when the
+    // volume carries more than one.
+    QString snapshot_name{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to revert a generated APFS container's volume to its (single) snapshot
@@ -798,20 +702,26 @@ struct PartitionApfsRawSnapshotDeleteCommitRequest {
 ///        (A3). Writes Apple's deferred-revert tag (revert_to_xid + revert_to_sblock_oid);
 ///        a kernel mount completes the revert, discarding the post-snapshot divergence.
 struct PartitionApfsImageSnapshotRevertCommitRequest {
-    QString source_image_path;
-    QString written_image_path;
-    PartitionApfsWriteOptions options;
+    QString source_image_path{};
+    QString written_image_path{};
+    // Name of the snapshot to revert to. Empty reverts to the sole snapshot; required when
+    // the volume carries more than one.
+    QString snapshot_name{};
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to revert a generated APFS container's volume to its (single) snapshot on
 ///        a raw device with a true in-place copy-on-write checkpoint commit (A3). Applied to
 ///        the device in place, so gated by destructive-target confirmation and raw opt-in.
 struct PartitionApfsRawSnapshotRevertCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
+    // Name of the snapshot to revert to. Empty reverts to the sole snapshot; required when
+    // the volume carries more than one.
+    QString snapshot_name{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Derived geometry of an APFS container's space-manager device:
@@ -843,6 +753,14 @@ struct PartitionApfsContainerGeometry {
     bool multi_cib{false};     ///< chunk_count > chunks_per_cib -> needs the CAB tier
 };
 
+/// @brief Target geometry a raw format write is bounded by: the block size and the container's
+///        total block count (0 == count unknown). Public mirror of the format writer's internal
+///        bounds so writeApfsFormatBlockForTesting can drive the write-confinement guard.
+struct ApfsFormatBlockGeometry {
+    quint32 blockSize = 0;
+    quint64 containerBlockCount = 0;
+};
+
 class PartitionApfsWriter {
 public:
     [[nodiscard]] static QString operationName(PartitionApfsWriteOperation operation);
@@ -850,10 +768,14 @@ public:
     ///        container of @p block_count blocks (default APFS 4096-byte blocks).
     ///        Pure function; no I/O. See @ref PartitionApfsContainerGeometry.
     [[nodiscard]] static PartitionApfsContainerGeometry computeContainerGeometry(
-        uint64_t block_count, uint32_t block_size = 4096);
+        uint64_t block_count, uint32_t block_size = kSupportedApfsBlockSizeBytes);
     [[nodiscard]] static std::optional<uint64_t> computeObjectChecksum(
         const QByteArray& object_bytes);
     [[nodiscard]] static bool stampObjectChecksum(QByteArray* object_bytes);
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+    // Test-only diagnostic entry points and guard seams (this block and the two below). No
+    // product code calls them; they are compiled only into test targets that define
+    // SAK_PARTITION_FS_TEST_HOOKS, so the shipped binaries do not carry them.
     /// @brief Build the file-system B-tree node blocks for @p file_names (empty
     ///        root files) - a single ROOT|LEAF node, or an internal root over
     ///        leaf nodes when they overflow (A2 multi-leaf fs-tree). Leaf oids
@@ -863,13 +785,130 @@ public:
                                                                    const QStringList& file_names,
                                                                    uint64_t first_leaf_oid,
                                                                    QStringList* blockers);
+    /// @brief Build the physical object-map B-tree node blocks for @p mapping_count
+    ///        synthetic {oid, xid, paddr} mappings rooted at @p tree_base_paddr - a
+    ///        single ROOT|LEAF node when they fit, or a bulk-loaded multi-level tree
+    ///        (root + interior index nodes + leaves) when they overflow the 112-entry
+    ///        leaf. nodes[0] is the root at tree_base_paddr. Diagnostic entry point for
+    ///        the multi-level omap builder.
+    [[nodiscard]] static QVector<QByteArray> buildObjectMapTreeBlocks(uint32_t block_size,
+                                                                      uint64_t tree_base_paddr,
+                                                                      uint64_t xid,
+                                                                      qsizetype mapping_count,
+                                                                      QStringList* blockers);
+    /// @brief Build the ephemeral MAIN free-queue B-tree node blocks for @p entry_count
+    ///        synthetic single-block {xid, paddr} runs - a single ROOT|LEAF node when they
+    ///        fit, or a two-level tree (a ROOT index node over non-root leaves) once they
+    ///        exceed a single node's safe capacity. nodes[0] is the root; leaf oids run from
+    ///        @p leaf_base_oid. Diagnostic entry point for the multi-node free-queue builder
+    ///        (the historical single leaf silently overflowed past ~142 entries).
+    [[nodiscard]] static QVector<QByteArray> buildMainFreeQueueTreeBlocks(uint32_t block_size,
+                                                                          uint64_t leaf_base_oid,
+                                                                          uint64_t xid,
+                                                                          qsizetype entry_count,
+                                                                          QStringList* blockers);
+    /// @brief Flatten the {xid, paddr} runs back out of the free-queue node blocks produced
+    ///        by @ref buildMainFreeQueueTreeBlocks (root first, then leaves in build order),
+    ///        as packed {xid, paddr} 16-byte pairs. The inverse read of the builder; a
+    ///        correct multi-node tree round-trips the input entries exactly (a leaf overflow
+    ///        would corrupt the decoded run lengths). Returns an empty list on a malformed set.
+    [[nodiscard]] static QVector<QPair<quint64, quint64>> readMainFreeQueueTreeBlocks(
+        const QVector<QByteArray>& node_blocks, uint32_t block_size);
+    /// @brief Build the extent-ref B-tree node blocks for @p record_count synthetic
+    ///        j_phys_ext records (each a distinct one-block extent owned by id 1000+i) at a
+    ///        consecutive run from @p tree_base_paddr - a single ROOT|LEAF node when they
+    ///        fit, or a multi-node physical B-tree (index nodes over non-root leaves) once
+    ///        they exceed the root-leaf capacity. nodes[0] is the root. Diagnostic entry
+    ///        point for the multi-node extent-ref builder (the historical single node failed
+    ///        closed past ~110 records).
+    [[nodiscard]] static QVector<QByteArray> buildExtentRefTreeBlocksForTesting(
+        uint32_t block_size,
+        uint64_t tree_base_paddr,
+        uint64_t xid,
+        qsizetype record_count,
+        QStringList* blockers);
+    /// @brief Flatten the {owner id, data paddr} records back out of the extent-ref node
+    ///        blocks produced by @ref buildExtentRefTreeBlocksForTesting (each node stored at
+    ///        its own oid=paddr). The inverse read of the builder walking index nodes to the
+    ///        leaves; a correct multi-node tree round-trips every record. Empty on a malformed
+    ///        set (e.g. a dangling child pointer).
+    [[nodiscard]] static QVector<QPair<quint64, quint64>> readExtentRefTreeBlocksForTesting(
+        const QVector<QByteArray>& node_blocks, uint32_t block_size);
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
     [[nodiscard]] static bool verifyObjectChecksum(const QByteArray& object_bytes);
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+    /// @brief True when a free-queue run {paddr, length} sits entirely inside a container of
+    ///        @p block_count blocks AND is no longer than one commit can legitimately free
+    ///        contiguously. A corrupt on-disk record would otherwise expand into a
+    ///        multi-exabyte block list (OOM) and wrap paddr+offset past 2^64, and a merely
+    ///        container-sized run is still a multi-GB expansion on large media. Pure seam for
+    ///        the fail-closed bounds guard in the free-queue leaf parser.
+    [[nodiscard]] static bool freeQueueRunInBoundsForTesting(quint64 paddr,
+                                                             quint64 length,
+                                                             quint64 block_count);
+    /// @brief True when a run of @p run_length blocks still fits the free-queue reclaim
+    ///        expansion budget after @p accumulated_blocks have been counted. The budget is a
+    ///        fixed ceiling on the whole queue, not per run and not a function of the container
+    ///        size, because expanding the runs materializes one address per block. Pure seam for
+    ///        the fail-closed budget guard shared by the parser and the reclaim expander.
+    [[nodiscard]] static bool freeQueueExpansionWithinBudgetForTesting(quint64 accumulated_blocks,
+                                                                       quint64 run_length);
+    /// @brief Drives the format writer's per-block write guard headlessly for a property test:
+    ///        writes @p block at @p blockIndex into @p device, refusing (and mutating nothing)
+    ///        unless the block is exactly @p blockSize bytes and lands entirely inside the target
+    ///        container's [0, @p containerBlockCount * @p blockSize) byte range without the byte
+    ///        offset wrapping past 2^63. This is the "never write outside the validated target"
+    ///        guard on every raw-device format write (writeBlock); a QBuffer sized to the
+    ///        container makes an escaped write observable as the buffer growing past that size.
+    ///        Pure seam for the write-confinement bounds check. @p blockers gains the reason on
+    ///        refusal.
+    [[nodiscard]] static bool writeApfsFormatBlockForTesting(
+        QIODevice* device,
+        quint64 blockIndex,
+        const ApfsFormatBlockGeometry& geometry,
+        const QByteArray& block,
+        QStringList* blockers);
+    /// @brief Drives the commit-path repair-block write guard (writeApfsRepairBlock) headlessly.
+    ///        @p geometry.containerBlockCount is the CLAIMED nx_block_count. Fails closed (mutating
+    ///        nothing) when @p blockIndex is past the REAL device end -- the device size is
+    ///        authoritative, so an over-claimed count can never widen the range -- or when
+    ///        @p blockIndex is 0 and @p block is not a valid NXSB superblock. A QBuffer sized to
+    ///        the device makes an escaped write observable as buffer growth. Pure seam.
+    [[nodiscard]] static bool writeApfsRepairBlockForTesting(
+        QIODevice* image,
+        const ApfsFormatBlockGeometry& geometry,
+        quint64 blockIndex,
+        const QByteArray& block,
+        QStringList* blockers);
+    /// @brief The highest block index a commit may write (apfsWritableBlockBound). When @p image
+    /// has
+    ///        a known nonzero size that size is AUTHORITATIVE -- an over-claimed
+    ///        @p geometry.containerBlockCount can never widen it; only a null/zero-size @p image
+    ///        falls back to the claimed count. Pure seam.
+    [[nodiscard]] static quint64 apfsWritableBlockBoundForTesting(
+        QIODevice* image, const ApfsFormatBlockGeometry& geometry);
+    /// @brief Byte offset of block @p blockIndex at @p blockSize, failing closed (leaving @p offset
+    ///        untouched) when the product overflows uint64 or exceeds the qint64 seek range. Pure
+    ///        seam for the overflow-safe offset shared by every repair read/write.
+    [[nodiscard]] static bool apfsBlockByteOffsetForTesting(quint64 blockIndex,
+                                                            quint32 blockSize,
+                                                            qint64* offset);
+    /// @brief True when the in-place commit's subtree collector may descend into directory
+    ///        @p directory_id at nesting @p depth. False once the depth cap is exceeded or
+    ///        the id was already collected: a drec-level directory cycle in an untrusted
+    ///        source image (A lists B, B lists A) is invisible to the reader's node-level
+    ///        guards and would otherwise recurse until the stack is exhausted. @p visited
+    ///        carries the ids collected so far and gains @p directory_id when admitted.
+    ///        Pure seam for the recursive collector's fail-closed guard.
+    [[nodiscard]] static bool treeCollectAdmitsDirectoryForTesting(quint64 directory_id,
+                                                                   int depth,
+                                                                   QSet<quint64>* visited);
     /// \brief The internal-pool cib/bitmap slot {cib_block, bitmap_block} a
     ///        crash-safe in-place commit writes next, given the live cib block of
     ///        a generated single-chunk container. Round-robins the three IP slots
     ///        (live 187 -> {189,190}; 189 -> {185,186}; 185 -> {187,188}) so the
     ///        previous checkpoint's cib/bitmap stay intact. Foundation for the
-    ///        crash-safe IP rotation (docs/APFS_A2_CRASH_SAFETY_DESIGN.md).
+    ///        crash-safe IP rotation (docs/archive/APFS_A2_CRASH_SAFETY_DESIGN.md).
     [[nodiscard]] static QPair<quint64, quint64> nextCrashSafeIpSlot(quint64 live_cib,
                                                                      quint64 block_count);
     /// \brief The live spaceman's first cib_addr in the generated container at
@@ -878,7 +917,58 @@ public:
     ///        through the IP slots). Walks the live checkpoint-map to the
     ///        ephemeral spaceman. Returns 0 on read failure.
     [[nodiscard]] static quint64 readGeneratedLiveCibAddr(const QString& image_path);
-    [[nodiscard]] static QStringList enterpriseCertificationRequirements();
+    /// \brief The current ci_bitmap_addr of data chunk @p chunk_index in the live
+    ///        chunk-info block of the generated container at @p image_path (0 when
+    ///        the chunk is still implicit-all-free). Diagnostic for the keystone S3
+    ///        free-pool spilled-bitmap COW: a repeated spill re-points this at a
+    ///        different internal-pool block than the previous checkpoint used.
+    [[nodiscard]] static quint64 readGeneratedChunkBitmapAddr(const QString& image_path,
+                                                              quint64 chunk_index);
+    /// \brief The current ci_free_count of data chunk @p chunk_index in the chunk-info
+    ///        block that OWNS it (cib 0 or the cib k>0 that owns it) of the generated
+    ///        container at @p image_path, 0 on error. Diagnostic for the multi-chunk
+    ///        FREE fix: deleting/overwriting a spilled file must RAISE the freed chunk's
+    ///        free count (its data bits cleared in that chunk's own bitmap).
+    [[nodiscard]] static quint64 readGeneratedChunkFreeCount(const QString& image_path,
+                                                             quint64 chunk_index);
+    /// \brief The B-tree node level of the LIVE volume object-map tree root of the
+    ///        generated container at @p image_path (0 = single-node, the certified path;
+    ///        > 0 = the multi-level omap the P3 many-node fix walks/frees), -1 on error.
+    ///        Diagnostic that lets a test assert its file load actually drove the omap
+    ///        multi-level before checking the free-count invariant.
+    [[nodiscard]] static int readGeneratedVolumeOmapTreeLevel(const QString& image_path);
+    /// \brief The B-tree node level of the LIVE extent-ref tree root of the generated
+    ///        container at @p image_path (0 = single-node, the certified path; > 0 = the
+    ///        multi-node extent-ref tree once the file data-extent records overflow a node),
+    ///        -1 on error. Lets a test assert its data-file load actually drove the
+    ///        extent-ref tree multi-node before checking the free-count invariant.
+    [[nodiscard]] static int readGeneratedExtentRefTreeLevel(const QString& image_path);
+    /// \brief The live spaceman cib-address array entry @p cib_index (the current
+    ///        on-disk address of chunk-info block @p cib_index) of the generated
+    ///        container at @p image_path, 0 on error. Diagnostic for the keystone
+    ///        S4b cib-k copy-on-write: entry k>0 re-points at a free-pool slot once
+    ///        a spill reaches a chunk that cib owns.
+    [[nodiscard]] static quint64 readGeneratedSpacemanCibArrayEntry(const QString& image_path,
+                                                                    quint64 cib_index);
+    /// \brief The internal-pool free-queue (sm_fq[IP]) ghost paddrs the live
+    ///        checkpoint of the generated container at @p image_path holds pending
+    ///        reclamation. Diagnostic for the keystone S3 COW: the old spilled-chunk
+    ///        bitmap slot a repeated spill retired must appear here.
+    [[nodiscard]] static QVector<quint64> readGeneratedIpFreeQueueGhosts(const QString& image_path);
+    /// @brief Read-only WS3c seam: load a genuine foreign internal-pool context and return the
+    ///        next CIB/chunk-0-bitmap COW addresses selected from its real bitmap/free queue.
+    ///        Returns {0,0} with blockers when the image is not a validated foreign layout.
+    [[nodiscard]] static QPair<quint64, quint64> nextForeignIpRotationForTesting(
+        const QString& image_path, QStringList* blockers);
+    /// @brief Read-only WS3c candidate classifier for an exact internal-pool block.
+    [[nodiscard]] static bool foreignIpBlockAvailableForTesting(const QString& image_path,
+                                                                quint64 block,
+                                                                QStringList* blockers);
+    /// @brief Read-only WS3c graph walk: true when an exact block is a live CIB/CAB/chunk bitmap.
+    [[nodiscard]] static bool foreignIpBlockIsLiveMetadataForTesting(const QString& image_path,
+                                                                     quint64 block,
+                                                                     QStringList* blockers);
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
     [[nodiscard]] static PartitionApfsWritePreflight preflightExistingContainer(
         const PartitionFileSystemDetection& detection,
         PartitionApfsWriteOperation operation,
@@ -897,6 +987,11 @@ public:
         const PartitionApfsImageFormatRequest& request);
     [[nodiscard]] static PartitionApfsImageBuildResult buildImageOnlyFormatImageWithSeedFile(
         const PartitionApfsImageFormatRequest& request);
+    // A6 follow-on: build a single-chunk image-only container with one per-file-key
+    // encrypted seed file. request.volume_password is mandatory; the seed file's data
+    // is AES-XTS encrypted with a fresh per-file key wrapped by the volume VEK.
+    [[nodiscard]] static PartitionApfsImageBuildResult
+    buildImageOnlyPerFileEncryptedImageWithSeedFile(const PartitionApfsImageFormatRequest& request);
     [[nodiscard]] static PartitionApfsImageBuildResult formatExistingImageOnlyContainer(
         const PartitionApfsImageFormatRequest& request);
     [[nodiscard]] static PartitionApfsImageBuildResult formatExistingContainerTarget(
@@ -905,13 +1000,17 @@ public:
         const PartitionApfsImageRepairRequest& request);
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyCheckpoint(
         const PartitionApfsImageCheckpointCommitRequest& request);
+    /// @brief Read-only: parse the REAL on-disk layout of any APFS container (S.A.K.-generated
+    ///        or a real Apple/mkapfs volume) - checkpoint position, volume-chain oids, spaceman
+    ///        internal-pool bitmap-ring geometry. The adopt-state substrate for foreign-volume
+    ///        in-place mutation; does not modify the image.
+    [[nodiscard]] static PartitionApfsLiveLayoutProbe probeLiveLayout(const QString& image_path);
     /// @brief Create-or-replace one root file with an in-place COW commit (the
     ///        production file-write primitive): a new name is one insert commit, an
     ///        existing name is a delete-then-insert replace. Reuses the insert request.
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyFileWrite(
         const PartitionApfsImageFileInsertCommitRequest& request);
-    /// @brief Create one empty root directory with an in-place COW commit (the
-    ///        full-tree analogue of the legacy rewrite-based createImageOnlyRootDirectory).
+    /// @brief Create one empty root directory with an in-place COW commit.
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitImageOnlyDirectoryCreate(
         const PartitionApfsImageRootDirectoryMutationRequest& request);
     /// @brief Delete one empty root directory with an in-place COW commit.
@@ -1015,6 +1114,7 @@ public:
     ///        with a true in-place copy-on-write checkpoint commit (destructive, gated).
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawSnapshotRevert(
         const PartitionApfsRawSnapshotRevertCommitRequest& request);
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
     /// @brief Test-only seam: override the predicate that classifies a path as an
     ///        acceptable raw-device commit target, so unit tests can drive the production
     ///        @c commitRaw* orchestration against a temporary file while every other
@@ -1023,47 +1123,19 @@ public:
     ///        the production rule (@c isWindowsRawDevicePath). Never call from production code.
     static void setRawDeviceTargetPredicateForTesting(
         std::function<bool(const QString&)> predicate);
-    [[nodiscard]] static PartitionApfsImageFileWriteResult writeImageOnlyRootFile(
-        const PartitionApfsImageRootFileWriteRequest& request);
-    [[nodiscard]] static PartitionApfsImageFileDeleteResult deleteImageOnlyRootFile(
-        const PartitionApfsImageRootFileDeleteRequest& request);
-    [[nodiscard]] static PartitionApfsImageFileWriteResult writeImageOnlyRootDirectoryFile(
-        const PartitionApfsImageRootDirectoryFileWriteRequest& request);
-    [[nodiscard]] static PartitionApfsImageFileDeleteResult deleteImageOnlyRootDirectoryFile(
-        const PartitionApfsImageRootDirectoryFileDeleteRequest& request);
-    [[nodiscard]] static PartitionApfsImageFilePatchResult patchImageOnlyRootDirectoryFile(
-        const PartitionApfsImageRootDirectoryFilePatchRequest& request);
-    [[nodiscard]] static PartitionApfsImageFilePatchResult patchImageOnlyRootFile(
-        const PartitionApfsImageRootFilePatchRequest& request);
-    [[nodiscard]] static PartitionApfsImageDirectoryMutationResult createImageOnlyRootDirectory(
-        const PartitionApfsImageRootDirectoryMutationRequest& request);
-    [[nodiscard]] static PartitionApfsImageDirectoryMutationResult deleteImageOnlyRootDirectory(
-        const PartitionApfsImageRootDirectoryMutationRequest& request);
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
+    /// @brief True when @p path is currently accepted as a raw-device commit target:
+    ///        the production Windows raw-device rule, or whatever the test seam
+    ///        predicate accepts while installed. Callers building @c commitRaw*
+    ///        requests derive @c allow_raw_device_target from this so their opt-in
+    ///        stays consistent with the engine's own classification.
+    [[nodiscard]] static bool acceptsRawDeviceTargetPath(const QString& path);
     [[nodiscard]] static PartitionApfsImageVolumeLabelResult changeImageOnlyVolumeLabel(
         const PartitionApfsImageVolumeLabelRequest& request);
-    [[nodiscard]] static PartitionApfsRawFileWriteResult writeRawRootFile(
-        const PartitionApfsRawRootFileWriteRequest& request);
-    [[nodiscard]] static PartitionApfsRawFileDeleteResult deleteRawRootFile(
-        const PartitionApfsRawRootFileDeleteRequest& request);
-    [[nodiscard]] static PartitionApfsRawFileWriteResult writeRawRootDirectoryFile(
-        const PartitionApfsRawRootDirectoryFileWriteRequest& request);
-    [[nodiscard]] static PartitionApfsRawFileDeleteResult deleteRawRootDirectoryFile(
-        const PartitionApfsRawRootDirectoryFileDeleteRequest& request);
-    [[nodiscard]] static PartitionApfsRawFilePatchResult patchRawRootDirectoryFile(
-        const PartitionApfsRawRootDirectoryFilePatchRequest& request);
-    [[nodiscard]] static PartitionApfsRawFilePatchResult patchRawRootFile(
-        const PartitionApfsRawRootFilePatchRequest& request);
-    [[nodiscard]] static PartitionApfsRawDirectoryMutationResult createRawRootDirectory(
-        const PartitionApfsRawRootDirectoryMutationRequest& request);
-    [[nodiscard]] static PartitionApfsRawDirectoryMutationResult deleteRawRootDirectory(
-        const PartitionApfsRawRootDirectoryMutationRequest& request);
     [[nodiscard]] static PartitionApfsRawVolumeLabelResult changeRawVolumeLabel(
         const PartitionApfsRawVolumeLabelRequest& request);
     [[nodiscard]] static PartitionApfsRawRepairResult repairRawObjectChecksums(
         const PartitionApfsRawRepairRequest& request);
-    [[nodiscard]] static PartitionApfsWritePreflight validateImageOnlyExecutionEvidence(
-        const PartitionApfsImageMutationPlan& plan,
-        const PartitionApfsWriterExecutionEvidence& evidence);
 };
 
 }  // namespace sak

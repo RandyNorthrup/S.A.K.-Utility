@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/user_profile_restore_selection.h"
 #include "sak/user_profile_types.h"
 
 #include <QCheckBox>
@@ -11,6 +12,8 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPair>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
@@ -21,10 +24,16 @@
 #include <QWizardPage>
 
 class QVBoxLayout;
+class UserProfileAppRestoreFlowTests;  // unit-test friend (global namespace)
+
+namespace sak::ui {
+class ViewEmptyState;
+}  // namespace sak::ui
 
 namespace sak {
 
 class WindowsUserScanner;
+class UserProfileRestoreWizard;
 class UserProfileRestoreWorker;
 class ChocolateyManager;
 
@@ -48,6 +57,8 @@ public:
 
 private:
     void setupUi();
+    /// @brief Render a successfully loaded manifest's summary and store it in the wizard.
+    void showLoadedManifest(const BackupManifest& manifest);
 
     QLabel* m_infoLabel;
     QLineEdit* m_backupPathEdit;
@@ -64,6 +75,7 @@ private Q_SLOTS:
  */
 class UserProfileRestoreUserMappingPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestoreUserMappingPage(QWidget* parent = nullptr);
@@ -79,6 +91,7 @@ private:
     UserMapping buildMappingForRow(int row, const BackupManifest& manifest) const;
 
     QTableWidget* m_mappingTable;
+    sak::ui::ViewEmptyState* m_mappingEmptyState{nullptr};  ///< empty/loading overlay
     QLabel* m_summaryLabel;
     QPushButton* m_autoMapButton;
 
@@ -91,34 +104,11 @@ private Q_SLOTS:
 };
 
 /**
- * @brief Page 3: Merge configuration for each mapping
- */
-class UserProfileRestoreMergeConfigPage : public QWizardPage {
-    Q_OBJECT
-
-public:
-    explicit UserProfileRestoreMergeConfigPage(QWidget* parent = nullptr);
-
-    void initializePage() override;
-    bool validatePage() override;
-
-private:
-    void setupUi();
-    void loadMergeTable();
-    void updateSummary();
-
-    QTableWidget* m_mergeTable;
-    QLabel* m_summaryLabel;
-
-private Q_SLOTS:
-    void onMergeSettingsChanged(int row, int column);
-};
-
-/**
  * @brief Page 4: Folder selection per user
  */
 class UserProfileRestoreFolderSelectionPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestoreFolderSelectionPage(QWidget* parent = nullptr);
@@ -147,11 +137,19 @@ private Q_SLOTS:
  */
 class UserProfileRestoreAppDataPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestoreAppDataPage(QWidget* parent = nullptr);
     void initializePage() override;
     bool isComplete() const override;
+    /// Persist the per-source checkbox state onto the wizard so the restore worker
+    /// skips app-data trees the user unchecked. Reconstructed from the tree (name,
+    /// relative_path, checkstate) -- no display-only selection is discarded.
+    bool validatePage() override;
+    /// Reset the one-time load state on a Back navigation so a later backup change
+    /// on the welcome page cannot leave this page showing a previous backup's data.
+    void cleanupPage() override;
 
 private Q_SLOTS:
     void onSelectAll();
@@ -165,6 +163,7 @@ private:
     void updateParentCheckState(QTreeWidgetItem* parent);
 
     QTreeWidget* m_appDataTree{nullptr};
+    sak::ui::ViewEmptyState* m_appDataEmptyState{nullptr};  ///< empty/loading overlay
     QPushButton* m_selectAllButton{nullptr};
     QPushButton* m_selectNoneButton{nullptr};
     QLabel* m_statusLabel{nullptr};
@@ -177,11 +176,15 @@ private:
  */
 class UserProfileRestoreAppRestorePage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestoreAppRestorePage(QWidget* parent = nullptr);
     void initializePage() override;
     bool isComplete() const override;
+    /// Reset the one-time load state on a Back navigation so a later backup change
+    /// cannot offer a previous backup's app list. No-op while an install is running.
+    void cleanupPage() override;
 
 private Q_SLOTS:
     void onSelectAll();
@@ -191,19 +194,27 @@ private Q_SLOTS:
 
 private:
     void setupUi();
+    void setupAppTree(QVBoxLayout* layout);
     void loadApps();
     void populateTree(const QVector<RestoreAppInfo>& apps);
     /// @brief Populate one category's app items; returns count of selected apps
-    int populateCategoryApps(QTreeWidgetItem* categoryItem,
+    int populateCategoryApps(QTreeWidgetItem* category_item,
                              const QVector<const RestoreAppInfo*>& apps,
-                             int& totalWithPackage);
+                             int& total_with_package);
     void updateParentCheckState(QTreeWidgetItem* parent);
-    /// @brief Collect checked apps from the tree widget
+    /// @brief The administrator gate and the bundled Chocolatey check. Says why when it refuses.
+    [[nodiscard]] bool installPrerequisitesMet();
+    /// @brief Collect checked apps from the tree widget, one entry per package: several rows can
+    ///        name one package, as two installed Python versions do.
     QVector<RestoreAppInfo> collectSelectedApps() const;
-    /// @brief Install apps sequentially; returns (installed, failed) counts
-    QPair<int, int> installAppsSequentially(const QVector<RestoreAppInfo>& apps);
+    /// @brief Install apps sequentially on a worker thread; returns (installed,
+    /// failed) counts. Static and page-agnostic: all UI updates are posted only
+    /// through the guarding QPointer, so the task can safely outlive the page.
+    static QPair<int, int> installAppsSequentially(const QVector<RestoreAppInfo>& apps,
+                                                   QPointer<UserProfileRestoreAppRestorePage> page);
 
     QTreeWidget* m_appTree{nullptr};
+    sak::ui::ViewEmptyState* m_appEmptyState{nullptr};  ///< empty/loading overlay
     QPushButton* m_selectAllButton{nullptr};
     QPushButton* m_selectNoneButton{nullptr};
     QPushButton* m_installButton{nullptr};
@@ -225,6 +236,13 @@ public:
     explicit UserProfileRestoreNetworksPage(QWidget* parent = nullptr);
     void initializePage() override;
     bool isComplete() const override;
+    /// Persist the per-profile checkbox state (including each profile's XML) onto
+    /// the wizard so the restore worker re-imports exactly the selected WiFi
+    /// profiles via netsh.
+    bool validatePage() override;
+    /// Reset the one-time load state (and retained xml_data) on a Back navigation so
+    /// a later backup change cannot re-import a previous backup's WiFi profiles.
+    void cleanupPage() override;
 
 private Q_SLOTS:
     void onSelectAll();
@@ -237,10 +255,14 @@ private:
     void populateTree(const QVector<WifiProfileInfo>& profiles);
 
     QTreeWidget* m_networkTree{nullptr};
+    sak::ui::ViewEmptyState* m_networkEmptyState{nullptr};  ///< empty/loading overlay
     QPushButton* m_selectAllButton{nullptr};
     QPushButton* m_selectNoneButton{nullptr};
     QLabel* m_statusLabel{nullptr};
     QLabel* m_summaryLabel{nullptr};
+    // Retained so validatePage() can carry each profile's xml_data (never shown in
+    // the tree) back to the wizard; row order matches the tree.
+    QVector<WifiProfileInfo> m_profiles;
     bool m_loaded{false};
 };
 
@@ -249,11 +271,20 @@ private:
  */
 class UserProfileRestoreEthernetPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestoreEthernetPage(QWidget* parent = nullptr);
     void initializePage() override;
     bool isComplete() const override;
+    /// Persist the per-adapter checkbox state (with full static-IP/DNS fields) onto
+    /// the wizard so the restore worker applies exactly the selected configs via
+    /// netsh.
+    bool validatePage() override;
+    /// Reset the one-time load state (and retained IP/DNS fields) on a Back
+    /// navigation so a later backup change cannot re-apply a previous backup's
+    /// adapter settings.
+    void cleanupPage() override;
 
 private Q_SLOTS:
     void onSelectAll();
@@ -269,6 +300,9 @@ private:
     QPushButton* m_selectNoneButton{nullptr};
     QLabel* m_statusLabel{nullptr};
     QLabel* m_summaryLabel{nullptr};
+    // Retained so validatePage() can carry the full IP/DNS fields back to the
+    // wizard; row order matches the table.
+    QVector<EthernetConfigInfo> m_configs;
     bool m_loaded{false};
 };
 
@@ -277,17 +311,30 @@ private:
  */
 class UserProfileRestorePermissionSettingsPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestorePermissionSettingsPage(QWidget* parent = nullptr);
 
+    void initializePage() override;
     bool validatePage() override;
 
 private:
+    /// Gives the two option boxes one width, the wider one's, once the theme has polished them.
+    void equalizeOptionWidths();
     void setupUi();
     /// @brief Build verify/backup options, summary label, and signal connections
     void setupUi_optionsAndConnections(QVBoxLayout* layout);
     void updateSummary();
+    /// @brief One line per person, saying what happens to the files already in place.
+    [[nodiscard]] QString mappingSummary() const;
+    /// @brief The other things this restore will change, with their counts.
+    [[nodiscard]] QString selectionSummary() const;
+    /// @brief Everything checked before Start Restore commits. Stays on the page if any says no.
+    [[nodiscard]] bool readyToStart(UserProfileRestoreWizard* wiz);
+    [[nodiscard]] bool permissionModeFitsDestinations(const UserProfileRestoreWizard* wiz);
+    [[nodiscard]] bool hasRightsForThisRestore(const UserProfileRestoreWizard* wiz);
+    [[nodiscard]] bool collectPassword(UserProfileRestoreWizard* wiz);
 
     QComboBox* m_permissionModeCombo;
     QComboBox* m_conflictResolutionCombo;
@@ -304,16 +351,27 @@ private Q_SLOTS:
  */
 class UserProfileRestoreExecutePage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestoreExecutePage(QWidget* parent = nullptr);
+    ~UserProfileRestoreExecutePage() override;
+    UserProfileRestoreExecutePage(const UserProfileRestoreExecutePage&) = delete;
+    UserProfileRestoreExecutePage& operator=(const UserProfileRestoreExecutePage&) = delete;
+    UserProfileRestoreExecutePage(UserProfileRestoreExecutePage&&) = delete;
+    UserProfileRestoreExecutePage& operator=(UserProfileRestoreExecutePage&&) = delete;
 
     void initializePage() override;
     bool isComplete() const override;
 
+    /// True while the restore worker this page started is still running.
+    [[nodiscard]] bool isRestoreRunning() const;
+
 private:
     void setupUi();
     void startRestore();
+    /// @brief Wire the restore worker's progress/log/completion signals to the UI
+    void connectRestoreWorkerSignals(UserProfileRestoreWorker* worker);
 
     QLabel* m_statusLabel;
     QProgressBar* m_overallProgressBar;
@@ -323,17 +381,28 @@ private:
     QPushButton* m_cancelButton;
     QPushButton* m_viewLogButton;
 
-    UserProfileRestoreWorker* m_worker;
+    // Child of this page while it runs; deleted (and nulled) once it reports completion.
+    QPointer<UserProfileRestoreWorker> m_worker;
     bool m_restoreComplete;
     bool m_restoreSuccess;
+    // Set when the worker ran every step: a restore that finished with problems is not one that
+    // stopped, and the page said "Restore failed" and "did not finish" for both.
+    bool m_restoreRanToEnd{false};
+    int m_filesErrored{0};
+    int m_networkNotApplied{0};
+    qint64 m_lastProcessedBytes{0};
 
 private Q_SLOTS:
     void onStartRestore();
     void onCancelRestore();
-    void onOverallProgress(int current, int total, qint64 bytes, qint64 totalBytes);
+    void onOverallProgress(int completed_users,
+                           int total_users,
+                           qint64 processed_bytes,
+                           qint64 total_bytes);
     void onFileProgress(int current, int total);
     void onStatusUpdate(const QString& username, const QString& operation);
-    void onLogMessage(const QString& message, bool isWarning);
+    void onLogMessage(const QString& message, bool is_warning);
+    void onRestoreRanToEnd(int files_errored, int network_not_applied);
     void onRestoreComplete(bool success, const QString& message);
     void onViewLog();
 };
@@ -369,18 +438,40 @@ public:
     bool createBackup() const { return m_createBackup; }
     void setCreateBackup(bool backup) { m_createBackup = backup; }
 
-    QVector<RestoreAppInfo> restoreApps() const { return m_restoreApps; }
-    void setRestoreApps(const QVector<RestoreAppInfo>& apps) { m_restoreApps = apps; }
+    QString password() const { return m_password; }
+    void setPassword(const QString& password) { m_password = password; }
+
+    QVector<WifiProfileInfo> wifiProfiles() const { return m_wifiProfiles; }
+    void setWifiProfiles(const QVector<WifiProfileInfo>& profiles) { m_wifiProfiles = profiles; }
+
+    QVector<EthernetConfigInfo> ethernetConfigs() const { return m_ethernetConfigs; }
+    void setEthernetConfigs(const QVector<EthernetConfigInfo>& configs) {
+        m_ethernetConfigs = configs;
+    }
+
+    QVector<AppDataSourceInfo> appDataSources() const { return m_appDataSources; }
+    void setAppDataSources(const QVector<AppDataSourceInfo>& sources) {
+        m_appDataSources = sources;
+    }
+
+    QVector<FolderRestoreChoice> folderChoices() const { return m_folderChoices; }
+    void setFolderChoices(const QVector<FolderRestoreChoice>& choices) {
+        m_folderChoices = choices;
+    }
 
 private:
     QString m_backupPath;
     BackupManifest m_manifest;
     QVector<UserMapping> m_userMappings;
-    QVector<RestoreAppInfo> m_restoreApps;
+    QVector<WifiProfileInfo> m_wifiProfiles;
+    QVector<EthernetConfigInfo> m_ethernetConfigs;
+    QVector<AppDataSourceInfo> m_appDataSources;
+    QVector<FolderRestoreChoice> m_folderChoices;
     ConflictResolution m_conflictResolution;
     PermissionMode m_permissionMode;
     bool m_verifyFiles;
     bool m_createBackup;
+    QString m_password;
 };
 
 }  // namespace sak

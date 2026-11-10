@@ -6,22 +6,429 @@
 
 #include "sak/mbox_writer.h"
 
+#include "sak/email_content_id.h"
+#include "sak/email_mime_layout.h"
+#include "sak/io_write_utils.h"
 #include "sak/logger.h"
+#include "sak/partition_export_containment.h"
+#include "sak/windows_reserved_names.h"
 
 #include <QDir>
 #include <QFileInfo>
+#include <QRandomGenerator>
 #include <QRegularExpression>
-#include <QTextStream>
-#include <QTimeZone>
+#include <QStringList>
+#include <QUrl>
+
+#include <algorithm>
+#include <string>
 
 namespace sak {
+
+namespace {
+constexpr qsizetype kMimeBase64LineLength = 76;
+constexpr ushort kAsciiMaxCodePoint = 0x7F;
+constexpr ushort kAsciiDelCodePoint = 0x7F;
+constexpr ushort kAsciiFirstPrintable = 0x20;
+// RFC 2047: an encoded-word is at most 75 characters. "=?UTF-8?B?" plus "?=" costs 12 of them and
+// base64 turns 3 raw bytes into 4, so 45 raw bytes is the largest chunk that always fits.
+constexpr qsizetype kMaxEncodedWordRawBytes = 45;
+// RFC 5322 limits a header line to 998 characters. Fold long values at existing spaces well before
+// that; a whitespace-free run longer than kMaxUnfoldableRunBytes has no legal fold point and must
+// be carried as encoded-words (which may be split anywhere) instead.
+constexpr qsizetype kHeaderFoldColumn = 78;
+constexpr qsizetype kMaxUnfoldableRunBytes = 900;
+// Assembly ceiling for a single message. Base64 encoding, MIME assembly and From_ escaping each
+// hold a full copy, so an unbounded body/attachment set from a hostile mail store would exhaust
+// memory; refuse it instead of dying mid-export.
+constexpr qint64 kMaxMboxEntryBytes = 1LL << 30;  // 1 GiB
+constexpr qint64 kUtf8WorstBytesPerUnit = 3;
+constexpr qint64 kBase64GrowthNumerator = 4;
+constexpr qint64 kBase64GrowthDenominator = 3;
+// Mailboxes kept open at once. A mail store can declare far more folders than the process has file
+// handles; past this cap the least-recently-used mailbox is closed and reopened (appending) when
+// its folder is written again, so the export completes instead of failing on handle exhaustion.
+constexpr int kMaxOpenMboxFiles = 64;
+constexpr int kImportanceLow = 0;
+constexpr int kImportanceHigh = 2;
+// Extra capacity reserved for base64Wrapped output beyond data + one separator per line, covering
+// the final line's CRLF; reserve is only a hint, so an approximate slack is sufficient.
+constexpr qsizetype kBase64ReserveSlackBytes = 2;
+// First numeric suffix used to disambiguate a colliding mbox filename ("base (2).mbox").
+constexpr int kFirstDisambiguationSuffix = 2;
+
+// True when any character is outside 7-bit ASCII (needs RFC 2047 header encoding).
+bool hasNonAscii(const QString& value) {
+    return std::ranges::any_of(value, [](QChar c) { return c.unicode() > kAsciiMaxCodePoint; });
+}
+
+// Strip header-injection vectors from a header value: CR/LF/tab collapse to a
+// single space and other C0 control characters (and DEL) are dropped, so a value
+// cannot forge a second header or terminate the header block.
+QString sanitizeHeaderValue(const QString& value) {
+    QString out;
+    out.reserve(value.size());
+    for (const QChar ch : value) {
+        if (ch == QLatin1Char('\r') || ch == QLatin1Char('\n') || ch == QLatin1Char('\t')) {
+            out.append(QLatin1Char(' '));
+        } else if (ch.unicode() >= kAsciiFirstPrintable && ch.unicode() != kAsciiDelCodePoint) {
+            out.append(ch);
+        }
+    }
+    return out;
+}
+
+// Sanitize a quoted-string MIME parameter value (filename=): strip controls and
+// backslash-escape quotes/backslashes so it cannot break out of the quotes.
+QString sanitizeQuotedParam(const QString& value) {
+    QString out = sanitizeHeaderValue(value);
+    out.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    out.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    return out;
+}
+
+// RFC 2047 'B' encoded-words for an unstructured header value with non-ASCII bytes;
+// raw UTF-8 in a header is non-conformant and mis-decoded by RFC 5322 readers. A value
+// too long for one 75-character encoded-word becomes several words on folded
+// continuation lines, split only on whole code points so no character is cut in half.
+QByteArray rfc2047Encode(const QString& value) {
+    const QString clean = sanitizeHeaderValue(value);
+    QByteArray out;
+    QByteArray chunk;
+    const auto flush_chunk = [&out, &chunk]() {
+        if (chunk.isEmpty()) {
+            return;
+        }
+        if (!out.isEmpty()) {
+            out.append("\r\n ");
+        }
+        out.append("=?UTF-8?B?" + chunk.toBase64() + "?=");
+        chunk.clear();
+    };
+    for (qsizetype i = 0; i < clean.size();) {
+        const bool is_pair = clean.at(i).isHighSurrogate() && i + 1 < clean.size() &&
+                             clean.at(i + 1).isLowSurrogate();
+        const qsizetype units = is_pair ? 2 : 1;
+        const QByteArray piece = clean.mid(i, units).toUtf8();
+        if (chunk.size() + piece.size() > kMaxEncodedWordRawBytes) {
+            flush_chunk();
+        }
+        chunk.append(piece);
+        i += units;
+    }
+    flush_chunk();
+    return out.isEmpty() ? QByteArray(
+                               "=?UTF-8?B?"
+                               "?=")
+                         : out;
+}
+
+// True when @p value contains a whitespace-free run too long to fold inside an RFC 5322 line.
+bool hasUnfoldableRun(const QByteArray& value) {
+    qsizetype run = 0;
+    for (const char ch : value) {
+        run = (ch == ' ') ? 0 : run + 1;
+        if (run > kMaxUnfoldableRunBytes) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Fold an over-long header value at existing spaces (RFC 5322 FWS): the space becomes CRLF+SP, so
+// unfolding reproduces the original byte for byte. Short values are returned untouched.
+QByteArray foldLongHeaderValue(const QByteArray& value) {
+    if (value.size() <= kMaxUnfoldableRunBytes) {
+        return value;
+    }
+    const QList<QByteArray> tokens = value.split(' ');
+    QByteArray out;
+    qsizetype column = 0;
+    for (qsizetype i = 0; i < tokens.size(); ++i) {
+        const QByteArray& token = tokens.at(i);
+        if (i == 0) {
+            out = token;
+            column = token.size();
+            continue;
+        }
+        if (column + 1 + token.size() > kHeaderFoldColumn) {
+            out.append("\r\n ");
+            column = 1 + token.size();
+        } else {
+            out.append(' ');
+            column += 1 + token.size();
+        }
+        out.append(token);
+    }
+    return out;
+}
+
+// Header value: RFC 2047-encode when non-ASCII or when the value has no legal fold point and would
+// otherwise emit an over-long line, else the sanitized (and folded when long) raw UTF-8.
+QByteArray encodedHeaderValue(const QString& value) {
+    const QString clean = sanitizeHeaderValue(value);
+    const QByteArray raw = clean.toUtf8();
+    if (hasNonAscii(clean) || hasUnfoldableRun(raw)) {
+        return rfc2047Encode(clean);
+    }
+    return foldLongHeaderValue(raw);
+}
+
+// RFC 5322 specials: unquoted in a display-name phrase they end the phrase, so a name carrying
+// them could forge a second mailbox in the address list.
+bool needsQuotedPhrase(const QString& name) {
+    static const QString kSpecials = QStringLiteral("()<>[]:;@\\,.\"");
+    return std::ranges::any_of(name, [](QChar c) { return kSpecials.contains(c); });
+}
+
+// Encode an RFC 5322 display-name phrase (an encoded-word MUST NOT appear inside
+// the addr-spec, so only the name is encoded); an ASCII name holding specials is
+// carried as a quoted-string rather than emitted raw.
+QString encodedDisplayName(const QString& name) {
+    if (hasNonAscii(name)) {
+        return QString::fromLatin1(rfc2047Encode(name));
+    }
+    const QString clean = sanitizeHeaderValue(name);
+    if (!needsQuotedPhrase(clean)) {
+        return clean;
+    }
+    return QStringLiteral("\"") + sanitizeQuotedParam(clean) + QStringLiteral("\"");
+}
+
+// Encode bytes as base64 wrapped to RFC 2045 76-column lines (a single unbroken
+// base64 run is rejected by strict MIME readers); each line ends with CRLF.
+QByteArray base64Wrapped(const QByteArray& data) {
+    const QByteArray b64 = data.toBase64();
+    QByteArray out;
+    out.reserve(b64.size() + (b64.size() / kMimeBase64LineLength) + kBase64ReserveSlackBytes);
+    for (qsizetype i = 0; i < b64.size(); i += kMimeBase64LineLength) {
+        out.append(b64.mid(i, kMimeBase64LineLength));
+        out.append("\r\n");
+    }
+    return out;
+}
+
+// Windows resolves "Inbox.mbox" and "inbox.mbox" to the SAME file, so path identity -- for
+// collision checks and for "already truncated this run" -- must be case-folded.
+QString pathIdentity(const QString& path) {
+    return path.toCaseFolded();
+}
+
+// Only a well-formed RFC 2045 type/subtype is carried through; anything else becomes the
+// MIME-defined unknown type rather than injecting foreign text into the header.
+QByteArray sanitizedMimeType(const QString& mime_type) {
+    static const QRegularExpression kType(
+        QStringLiteral("^[A-Za-z0-9!#$%&'*+._-]+/[A-Za-z0-9!#$%&'*+._-]+$"));
+    return kType.match(mime_type).hasMatch() ? mime_type.toLatin1()
+                                             : QByteArray("application/octet-stream");
+}
+
+// Metadata the source declared for the attachment written under @p name. The caller names an
+// attachment by its long filename when it has one, so match the same way.
+// filename="..." is ASCII-only: a non-ASCII name is emitted RFC 2231 style so strict readers
+// neither reject the part nor mis-decode the name.
+void appendFilenameParam(QByteArray& message, const QString& name) {
+    const QString clean = sanitizeHeaderValue(name);
+    if (clean.isEmpty()) {
+        return;
+    }
+    if (hasNonAscii(clean)) {
+        message.append("; filename*=UTF-8''" + QUrl::toPercentEncoding(clean));
+    } else {
+        message.append("; filename=\"" + sanitizeQuotedParam(clean).toUtf8() + "\"");
+    }
+}
+
+// One text body part. The body is emitted raw, labelled 8bit (mbox bodies are 8-bit clean);
+// quoted-printable would make a reader decode "=XX" sequences and swallow trailing '='.
+void appendTextPart(QByteArray& message,
+                    const QString& boundary,
+                    const char* content_type,
+                    const QString& body) {
+    message.append("--" + boundary.toUtf8() + "\r\n");
+    message.append("Content-Type: ");
+    message.append(content_type);
+    message.append("; charset=utf-8\r\n");
+    message.append("Content-Transfer-Encoding: 8bit\r\n");
+    message.append("\r\n");
+    message.append(body.toUtf8());
+    message.append("\r\n");
+}
+
+// One attachment part, preserving the declared media type and Content-ID. A part the HTML body
+// shows is inline (without that the exported message renders with the picture missing). Stores give
+// ordinary attachments a Content-ID too, and those stay attachments.
+void appendAttachmentPart(QByteArray& message,
+                          const QString& boundary,
+                          const PstItemDetail& item,
+                          const QString& name,
+                          const QByteArray& data) {
+    const PstAttachmentInfo* info = attachmentInfoNamed(item, name);
+    const QByteArray content_type = (info != nullptr) ? sanitizedMimeType(info->mime_type)
+                                                      : QByteArray("application/octet-stream");
+    const QByteArray content_id = (info != nullptr) ? usableContentId(info->content_id)
+                                                    : QByteArray();
+    const bool inline_part = attachmentIsShownInBody(item, name);
+
+    message.append("--" + boundary.toUtf8() + "\r\n");
+    message.append("Content-Type: " + content_type + "\r\n");
+    message.append("Content-Disposition: ");
+    message.append(inline_part ? "inline" : "attachment");
+    appendFilenameParam(message, name);
+    message.append("\r\n");
+    if (!content_id.isEmpty()) {
+        message.append("Content-ID: <" + content_id + ">\r\n");
+    }
+    message.append("Content-Transfer-Encoding: base64\r\n");
+    message.append("\r\n");
+    message.append(base64Wrapped(data));  // ends with CRLF
+}
+
+// Starts one multipart container inside @p parent. Nothing when the message does not need it.
+void openContainer(QByteArray& message,
+                   const QString& parent,
+                   const char* type,
+                   const QString& boundary) {
+    if (boundary.isEmpty()) {
+        return;
+    }
+    if (!parent.isEmpty()) {
+        message.append("--" + parent.toUtf8() + "\r\n");
+    }
+    message.append("Content-Type: ");
+    message.append(type);
+    message.append(";\r\n boundary=\"" + boundary.toUtf8() + "\"\r\n\r\n");
+}
+
+void closeContainer(QByteArray& message, const QString& boundary) {
+    if (!boundary.isEmpty()) {
+        message.append("--" + boundary.toUtf8() + "--\r\n");
+    }
+}
+
+// Emit the message bodies. BOTH when present: dropping the plain-text alternative whenever HTML
+// exists silently loses content the source message carried.
+void appendBodyParts(QByteArray& message, const PstItemDetail& item, const QString& boundary) {
+    if (!item.body_plain.isEmpty()) {
+        appendTextPart(message, boundary, "text/plain", item.body_plain);
+    }
+    if (!item.body_html.isEmpty()) {
+        appendTextPart(message, boundary, "text/html", item.body_html);
+    }
+}
+
+void appendImportanceHeader(QByteArray& message, int importance) {
+    if (importance == kImportanceLow) {
+        message.append("Importance: Low\r\n");
+    } else if (importance == kImportanceHigh) {
+        message.append("Importance: High\r\n");
+    }
+}
+
+// Saturating add: a hostile size must not wrap the running total back below the cap.
+qint64 addSaturating(qint64 total, qint64 addend) {
+    if (addend < 0 || total > kMaxMboxEntryBytes) {
+        return kMaxMboxEntryBytes + 1;
+    }
+    return (addend > kMaxMboxEntryBytes - total) ? kMaxMboxEntryBytes + 1 : total + addend;
+}
+
+// Upper bound on the bytes one assembled entry needs, before anything is copied.
+qint64 estimatedEntryBytes(const PstItemDetail& item,
+                           const QVector<QPair<QString, QByteArray>>& attachments) {
+    qint64 total =
+        addSaturating(0, static_cast<qint64>(item.body_plain.size()) * kUtf8WorstBytesPerUnit);
+    total = addSaturating(total,
+                          static_cast<qint64>(item.body_html.size()) * kUtf8WorstBytesPerUnit);
+    for (const auto& attachment : attachments) {
+        const qint64 encoded = (static_cast<qint64>(attachment.second.size()) /
+                                kBase64GrowthDenominator * kBase64GrowthNumerator) +
+                               kMimeBase64LineLength;
+        total = addSaturating(total, encoded);
+    }
+    return total;
+}
+
+// What the mbox "From_" line carries when the message names no usable sender. It is the marker
+// Thunderbird itself writes, so importing clients accept it, and unlike "unknown@localhost" it
+// does not claim anyone sent the message. Drafts and items saved but never sent are normal mail.
+constexpr auto kUnknownEnvelopeSender = "-";
+
+// An X.500 path can contain spaces, which the separator line cannot carry; the From: header still
+// holds the sender as the store recorded it.
+QByteArray envelopeSender(const QString& sender) {
+    const QString clean = sanitizeHeaderValue(sender);
+    const bool usable = !clean.trimmed().isEmpty() && !clean.contains(QLatin1Char(' '));
+    return usable ? clean.toUtf8() : QByteArray(kUnknownEnvelopeSender);
+}
+
+// The separator line needs a time. Prefer when the message was sent or delivered; an unsent item
+// has only the store's own timestamp, which goes on that line alone and never becomes a Date:
+// header. A message with no time at all fails closed: inventing one would date it falsely.
+std::expected<QDateTime, error_code> envelopeTime(const PstItemDetail& item) {
+    if (item.date.isValid()) {
+        return item.date;
+    }
+    if (item.store_timestamp.isValid()) {
+        return item.store_timestamp;
+    }
+    logError("MboxWriter: message has no date of any kind; refusing to fabricate one");
+    return std::unexpected(error_code::missing_required_field);
+}
+
+// A sender that is present but carries its own angle brackets would name someone else once it is
+// emitted between brackets, so it is refused rather than rewritten. No sender at all is fine.
+std::expected<void, error_code> validateSender(const PstItemDetail& item) {
+    if (item.sender_email.contains(QLatin1Char('<')) ||
+        item.sender_email.contains(QLatin1Char('>'))) {
+        logError("MboxWriter: message sender address is malformed; refusing to rewrite it");
+        return std::unexpected(error_code::validation_failed);
+    }
+    return {};
+}
+
+// Refuse content this writer cannot carry honestly: a body it cannot decode, or one too large to
+// assemble in memory.
+std::expected<void, error_code> validateContent(
+    const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) {
+    if (item.body_plain.isEmpty() && item.body_html.isEmpty() &&
+        !item.body_rtf_compressed.isEmpty()) {
+        // The compressed RTF (MS-OXRTFCP) is this message's only body and this writer cannot
+        // decode it. Writing an empty body would report a message whose content was silently
+        // lost, so surface the gap instead.
+        logError("MboxWriter: message body is RTF-only; refusing to export an empty body");
+        return std::unexpected(error_code::not_implemented);
+    }
+    if (estimatedEntryBytes(item, attachments) > kMaxMboxEntryBytes) {
+        logError("MboxWriter: message exceeds the {} byte assembly limit; refusing to buffer it",
+                 std::to_string(kMaxMboxEntryBytes));
+        return std::unexpected(error_code::resource_limit_reached);
+    }
+    return {};
+}
+
+// mboxrd: a body line beginning "From " must be escaped, and so must an already-escaped
+// ">From " -- a reader strips one '>' on read, so leaving it alone would hand back "From "
+// and corrupt content the source message carried.
+bool isMboxFromLine(const QByteArray& line) {
+    qsizetype i = 0;
+    while (i < line.size() && line.at(i) == '>') {
+        ++i;
+    }
+    return line.mid(i).startsWith("From ");
+}
+}  // namespace
 
 // ============================================================================
 // Construction / Destruction
 // ============================================================================
 
-MboxWriter::MboxWriter(const QString& output_dir, bool one_per_folder)
-    : m_output_dir(output_dir), m_one_per_folder(one_per_folder) {}
+MboxWriter::MboxWriter(const QString& output_dir,
+                       bool one_per_folder,
+                       const QString& combined_basename)
+    : m_output_dir(output_dir)
+    , m_one_per_folder(one_per_folder)
+    , m_combined_basename(combined_basename) {}
 
 MboxWriter::~MboxWriter() {
     finalize();
@@ -35,156 +442,397 @@ std::expected<void, error_code> MboxWriter::writeMessage(
     const PstItemDetail& item,
     const QVector<QPair<QString, QByteArray>>& attachment_data,
     const QString& folder_path) {
+    if (m_finalized) {
+        // Reopening here would truncate the mailbox this run just finished writing (combined
+        // mode) or silently redirect to a suffixed file (per-folder mode); fail closed.
+        logError("MboxWriter: write after finalize; refusing to reopen a closed mailbox");
+        return std::unexpected(error_code::write_error);
+    }
+    const QString key = fileKey(folder_path);
+    if (m_failed_keys.contains(key)) {
+        // An earlier write into this mailbox stopped mid-record: appending more mail would hide
+        // the half-written message behind valid-looking records.
+        logError("MboxWriter: mailbox left incomplete by an earlier failure: {}",
+                 folder_path.toStdString());
+        return std::unexpected(error_code::write_error);
+    }
+
+    // Build the entry BEFORE the destination is opened: opening truncates, so a message that
+    // fails validation must not first cost the previous run's mailbox.
+    auto entry = formatMboxEntry(item, attachment_data);
+    if (!entry) {
+        return std::unexpected(entry.error());
+    }
+
     QFile* file = getOrCreateFile(folder_path);
-    if (!file) {
+    if (file == nullptr) {
+        return std::unexpected(error_code::write_error);
+    }
+    if (!writeFully(*file, *entry)) {
+        // A short write splits one message mid-stream and corrupts the mbox (the
+        // next From_ line lands inside the previous body); fail closed.
+        logError("MboxWriter: incomplete write for folder: {}", folder_path.toStdString());
+        m_failed_keys.insert(key);
+        m_failed = true;
         return std::unexpected(error_code::write_error);
     }
 
-    QByteArray entry = formatMboxEntry(item, attachment_data);
-    qint64 written = file->write(entry);
-    if (written < 0) {
-        logError("MboxWriter: write failed for folder: {}", folder_path.toStdString());
-        return std::unexpected(error_code::write_error);
-    }
-
-    m_bytes_written += written;
+    m_bytes_written += entry->size();
     return {};
 }
 
-void MboxWriter::finalize() {
-    for (auto* file : m_open_files) {
-        if (file && file->isOpen()) {
-            file->close();
+bool MboxWriter::closeOneFile(QFile* file, const QString& key) {
+    if (file == nullptr) {
+        return true;
+    }
+    bool ok = true;
+    if (file->isOpen()) {
+        // close() alone discards a deferred error (a full disk only surfaces when the buffered
+        // tail is pushed out), which would report a truncated mailbox as a complete one.
+        if (!file->flush()) {
+            ok = false;
         }
-        delete file;
+        file->close();
+        if (file->error() != QFileDevice::NoError) {
+            ok = false;
+        }
+        if (!ok) {
+            logError("MboxWriter: failed to flush/close mailbox for {}: {}",
+                     key.toStdString(),
+                     file->errorString().toStdString());
+        }
+    }
+    delete file;
+    if (!ok) {
+        m_failed = true;
+    }
+    return ok;
+}
+
+void MboxWriter::finalize() {
+    for (auto it = m_open_files.cbegin(); it != m_open_files.cend(); ++it) {
+        if (!closeOneFile(it.value(), it.key())) {
+            m_failed_keys.insert(it.key());
+        }
     }
     m_open_files.clear();
+    m_open_order.clear();
+    m_finalized = true;
 }
 
 // ============================================================================
 // File Management
 // ============================================================================
 
-QFile* MboxWriter::getOrCreateFile(const QString& folder_path) {
-    QString key = m_one_per_folder ? folder_path : QStringLiteral("combined");
+QString MboxWriter::fileKey(const QString& folder_path) const {
+    return m_one_per_folder ? folder_path : QStringLiteral("combined");
+}
 
-    if (m_open_files.contains(key)) {
-        return m_open_files.value(key);
+QString MboxWriter::resolveFilePath(const QString& folder_path) const {
+    const QString base_name = (m_one_per_folder && !folder_path.isEmpty())
+                                  ? sanitizeFolderName(folder_path)
+                                  // Namespace the single combined mailbox by source-derived
+                                  // basename so distinct jobs sharing one output directory do not
+                                  // truncate each other; empty keeps the legacy "mailbox.mbox".
+                                  : (m_combined_basename.isEmpty()
+                                         ? QStringLiteral("mailbox")
+                                         : sanitizeFolderName(m_combined_basename));
+    const QString base = m_output_dir + QStringLiteral("/") + base_name;
+    // Two distinct folders can sanitize to the same name (e.g. "A_B/C" and "A/B_C" -> "A_B_C"),
+    // and "Inbox"/"inbox" ARE one file on Windows; disambiguate with a numeric suffix so their
+    // mail does not interleave into one mailbox -- or truncate it twice through two handles.
+    QString file_path = base + QStringLiteral(".mbox");
+    for (int suffix = kFirstDisambiguationSuffix;
+         m_used_file_paths.contains(pathIdentity(file_path));
+         ++suffix) {
+        file_path = base + QStringLiteral(" (%1).mbox").arg(suffix);
+    }
+    return file_path;
+}
+
+void MboxWriter::evictOldestOpenFiles() {
+    while (m_open_files.size() >= kMaxOpenMboxFiles && !m_open_order.isEmpty()) {
+        const QString evicted = m_open_order.takeFirst();
+        if (!closeOneFile(m_open_files.take(evicted), evicted)) {
+            m_failed_keys.insert(evicted);
+        }
+    }
+}
+
+QFile* MboxWriter::openMboxFile(const QString& key, const QString& file_path) {
+    const QString parent = QFileInfo(file_path).absolutePath();
+    if (!QDir().mkpath(parent)) {
+        logError("MboxWriter: cannot create output directory: {}", parent.toStdString());
+        return nullptr;
     }
 
-    QString file_path;
-    if (m_one_per_folder && !folder_path.isEmpty()) {
-        QString safe_name = sanitizeFolderName(folder_path);
-        file_path = m_output_dir + QStringLiteral("/") + safe_name + QStringLiteral(".mbox");
-    } else {
-        file_path = m_output_dir + QStringLiteral("/mailbox.mbox");
+    // Containment: this process runs elevated, so a junction planted at an ancestor -- or a link
+    // planted at the mailbox name itself -- must not redirect a truncating write onto a file
+    // outside the output directory the operator chose.
+    const QString canonical_root = QFileInfo(m_output_dir).canonicalFilePath();
+    if (!partition_export::pathWithinRoot(canonical_root, parent)) {
+        logError("MboxWriter: output path escapes the output directory: {}",
+                 file_path.toStdString());
+        return nullptr;
+    }
+    const QFileInfo leaf(file_path);
+    // Checked before exists(): a symlink whose target does not exist yet reports exists()==false,
+    // and Truncate would follow it and CREATE that target wherever it points.
+    if (leaf.isSymLink() || leaf.isJunction()) {
+        logError("MboxWriter: refusing to write through a link at: {}", file_path.toStdString());
+        return nullptr;
+    }
+    if (leaf.exists() && !partition_export::pathWithinRoot(canonical_root, file_path)) {
+        logError("MboxWriter: mailbox path escapes the output directory: {}",
+                 file_path.toStdString());
+        return nullptr;
     }
 
-    QDir().mkpath(QFileInfo(file_path).absolutePath());
-
+    // Truncate, not Append: each file is truncated exactly ONCE per run and then written
+    // sequentially through the kept-open handle, so within-run messages still accumulate. Append
+    // on a first open would instead MERGE this run's output onto a stale file left by a previous
+    // run, duplicating old mail (B7-32). A mailbox reopened after handle-cap eviction appends,
+    // because this run already truncated it.
+    const QString identity = pathIdentity(file_path);
+    const QIODevice::OpenMode mode = QIODevice::WriteOnly |
+                                     (m_truncated_paths.contains(identity) ? QIODevice::Append
+                                                                           : QIODevice::Truncate);
     auto* file = new QFile(file_path);
-    if (!file->open(QIODevice::WriteOnly | QIODevice::Append)) {
-        logError("MboxWriter: failed to open mbox file: {}", file_path.toStdString());
+    if (!file->open(mode)) {
+        logError("MboxWriter: failed to open mbox file {}: {}",
+                 file_path.toStdString(),
+                 file->errorString().toStdString());
         delete file;
         return nullptr;
     }
 
+    // Recorded only now: a path claimed by an open that failed would push a later retry of the
+    // same folder onto a different, suffixed mailbox.
+    m_truncated_paths.insert(identity);
+    m_used_file_paths.insert(identity);
+    m_key_paths.insert(key, file_path);
     m_open_files.insert(key, file);
+    m_open_order.append(key);
     return file;
+}
+
+QFile* MboxWriter::getOrCreateFile(const QString& folder_path) {
+    const QString key = fileKey(folder_path);
+
+    if (m_open_files.contains(key)) {
+        m_open_order.removeOne(key);
+        m_open_order.append(key);
+        return m_open_files.value(key);
+    }
+    if (m_output_dir.trimmed().isEmpty()) {
+        // No output directory means no target; resolving against the process working directory
+        // would scatter mail somewhere nobody chose.
+        logError("MboxWriter: no output directory configured; refusing to guess one");
+        return nullptr;
+    }
+    if (m_failed_keys.contains(key)) {
+        logError("MboxWriter: mailbox left incomplete by an earlier failure: {}",
+                 folder_path.toStdString());
+        return nullptr;
+    }
+
+    evictOldestOpenFiles();
+
+    // A mailbox evicted by the handle cap reopens its recorded path; a new one resolves a fresh,
+    // collision-free path.
+    const QString cached_path = m_key_paths.value(key);
+    const QString file_path = cached_path.isEmpty() ? resolveFilePath(folder_path) : cached_path;
+    return openMboxFile(key, file_path);
 }
 
 // ============================================================================
 // MBOX Formatting
 // ============================================================================
 
-QByteArray MboxWriter::buildMimeMessage(const PstItemDetail& item,
-                                        const QString& sender,
-                                        const QDateTime& date,
-                                        const QVector<QPair<QString, QByteArray>>& attachments) {
-    QByteArray message;
-    message.append(
-        "From: " +
-        (item.sender_name.isEmpty() ? sender : item.sender_name + " <" + sender + ">").toUtf8() +
-        "\r\n");
+QString MboxWriter::makeUniqueBoundary(const PstItemDetail& item) {
+    constexpr int kMaxBoundaryAttempts = 8;
+    constexpr int kHexBase = 16;
+    auto* rng = QRandomGenerator::global();
+    for (int attempt = 0; attempt < kMaxBoundaryAttempts; ++attempt) {
+        const QString candidate = QStringLiteral("----=_Part_%1_%2")
+                                      .arg(rng->generate64(), 0, kHexBase)
+                                      .arg(rng->generate64(), 0, kHexBase);
+        // Verify the delimiter cannot collide with anything emitted raw in the body. Attachments
+        // are base64 (no '-'), so only the plain/html bodies can contain arbitrary bytes.
+        if (!item.body_html.contains(candidate) && !item.body_plain.contains(candidate)) {
+            return candidate;
+        }
+    }
+    return QString();
+}
+
+namespace {
+
+// From: encode only the display-name phrase (RFC 2047), never the addr-spec. A message that names
+// no sender, like an unsent draft, gets no From: header at all.
+void appendFromHeader(QByteArray& message, const PstItemDetail& item, const QString& sender) {
+    if (!sender.isEmpty()) {
+        const QByteArray from_value = item.sender_name.isEmpty()
+                                          ? sanitizeHeaderValue(sender).toUtf8()
+                                          : encodedDisplayName(item.sender_name).toUtf8() + " <" +
+                                                sanitizeHeaderValue(sender).toUtf8() + ">";
+        message.append("From: " + from_value + "\r\n");
+    } else if (!item.sender_name.isEmpty()) {
+        message.append("From: " + encodedDisplayName(item.sender_name).toUtf8() + "\r\n");
+    }
+}
+
+}  // namespace
+
+void MboxWriter::appendMessageHeaders(QByteArray& message,
+                                      const PstItemDetail& item,
+                                      const QString& sender,
+                                      const QDateTime& date) {
+    appendFromHeader(message, item, sender);
 
     if (!item.display_to.isEmpty()) {
-        message.append("To: " + item.display_to.toUtf8() + "\r\n");
+        message.append("To: " + encodedHeaderValue(item.display_to) + "\r\n");
     }
     if (!item.display_cc.isEmpty()) {
-        message.append("Cc: " + item.display_cc.toUtf8() + "\r\n");
+        message.append("Cc: " + encodedHeaderValue(item.display_cc) + "\r\n");
+    }
+    // Bcc, threading and importance are part of what the source message carried; dropping them
+    // loses recipients and conversation structure the archive exists to preserve.
+    if (!item.display_bcc.isEmpty()) {
+        message.append("Bcc: " + encodedHeaderValue(item.display_bcc) + "\r\n");
     }
     if (!item.subject.isEmpty()) {
-        message.append("Subject: " + item.subject.toUtf8() + "\r\n");
+        message.append("Subject: " + encodedHeaderValue(item.subject) + "\r\n");
     }
-    message.append("Date: " + date.toString(Qt::RFC2822Date).toUtf8() + "\r\n");
+    if (date.isValid()) {
+        message.append("Date: " + date.toString(Qt::RFC2822Date).toUtf8() + "\r\n");
+    }
     if (!item.message_id.isEmpty()) {
-        message.append("Message-ID: " + item.message_id.toUtf8() + "\r\n");
+        message.append("Message-ID: " + sanitizeHeaderValue(item.message_id).toUtf8() + "\r\n");
     }
+    if (!item.in_reply_to.isEmpty()) {
+        message.append("In-Reply-To: " + sanitizeHeaderValue(item.in_reply_to).toUtf8() + "\r\n");
+    }
+    appendImportanceHeader(message, item.importance);
+}
 
-    if (!item.body_html.isEmpty() || !attachments.isEmpty()) {
-        QString boundary =
-            QStringLiteral("----=_Part_%1_%2").arg(item.node_id).arg(date.toSecsSinceEpoch());
+void MboxWriter::appendMultipartBody(QByteArray& message,
+                                     const PstItemDetail& item,
+                                     const MimeBoundaries& boundaries,
+                                     const QVector<QPair<QString, QByteArray>>& attachments) {
+    // Plain and HTML are ALTERNATIVES of one another, not two documents, so they go in a
+    // multipart/alternative (RFC 2046). Emitted as siblings of multipart/mixed, clients show the
+    // message twice. See MimeLayout for the rest of the nesting.
+    const QString& around_alternative = boundaries.related.isEmpty() ? boundaries.mixed
+                                                                     : boundaries.related;
+    const QString& around_body = boundaries.alternative.isEmpty() ? around_alternative
+                                                                  : boundaries.alternative;
+
+    message.append("MIME-Version: 1.0\r\n");
+    openContainer(message, {}, "multipart/mixed", boundaries.mixed);
+    openContainer(message, boundaries.mixed, "multipart/related", boundaries.related);
+    openContainer(message, around_alternative, "multipart/alternative", boundaries.alternative);
+    appendBodyParts(message, item, around_body);
+    closeContainer(message, boundaries.alternative);
+    for (const auto& [att_name, att_data] : attachments) {
+        if (attachmentIsShownInBody(item, att_name)) {
+            appendAttachmentPart(message, boundaries.related, item, att_name, att_data);
+        }
+    }
+    closeContainer(message, boundaries.related);
+    for (const auto& [att_name, att_data] : attachments) {
+        if (!attachmentIsShownInBody(item, att_name)) {
+            appendAttachmentPart(message, boundaries.mixed, item, att_name, att_data);
+        }
+    }
+    closeContainer(message, boundaries.mixed);
+}
+
+std::expected<QByteArray, error_code> MboxWriter::buildMimeMessage(
+    const PstItemDetail& item,
+    const QString& sender,
+    const QDateTime& date,
+    const QVector<QPair<QString, QByteArray>>& attachments) {
+    QByteArray message;
+    appendMessageHeaders(message, item, sender, date);
+
+    if (item.body_html.isEmpty() && attachments.isEmpty()) {
+        // Single-part still needs MIME-Version and an explicit transfer encoding: without them a
+        // UTF-8 body is read as default 7-bit US-ASCII and mis-decoded.
         message.append("MIME-Version: 1.0\r\n");
-        message.append("Content-Type: multipart/mixed;\r\n");
-        message.append(" boundary=\"" + boundary.toUtf8() + "\"\r\n");
-        message.append("\r\n");
-
-        message.append("--" + boundary.toUtf8() + "\r\n");
-        if (!item.body_html.isEmpty()) {
-            message.append("Content-Type: text/html; charset=utf-8\r\n");
-            message.append("Content-Transfer-Encoding: quoted-printable\r\n");
-            message.append("\r\n");
-            message.append(item.body_html.toUtf8());
-        } else {
-            message.append("Content-Type: text/plain; charset=utf-8\r\n");
-            message.append("\r\n");
-            message.append(item.body_plain.toUtf8());
-        }
-        message.append("\r\n");
-
-        for (const auto& [att_name, att_data] : attachments) {
-            message.append("--" + boundary.toUtf8() + "\r\n");
-            message.append("Content-Type: application/octet-stream\r\n");
-            message.append("Content-Disposition: attachment; filename=\"" + att_name.toUtf8() +
-                           "\"\r\n");
-            message.append("Content-Transfer-Encoding: base64\r\n");
-            message.append("\r\n");
-            message.append(att_data.toBase64());
-            message.append("\r\n");
-        }
-        message.append("--" + boundary.toUtf8() + "--\r\n");
-    } else {
         message.append("Content-Type: text/plain; charset=utf-8\r\n");
+        message.append("Content-Transfer-Encoding: 8bit\r\n");
         message.append("\r\n");
         message.append(item.body_plain.toUtf8());
+        return message;
     }
 
+    MimeLayout layout = mimeLayoutFor(item, attachments);
+    if (!layout.alternative && !layout.related) {
+        layout.mixed = true;  // One body and no attachments still needs its container here.
+    }
+    MimeBoundaries boundaries;
+    // No collision-free boundary could be produced: fail closed rather than emit a multipart whose
+    // delimiter might appear in the body and corrupt the structure.
+    const auto boundaryFor = [&item](bool needed, QString& boundary) {
+        if (needed) {
+            boundary = makeUniqueBoundary(item);
+        }
+        return !needed || !boundary.isEmpty();
+    };
+    if (!boundaryFor(layout.mixed, boundaries.mixed) ||
+        !boundaryFor(layout.related, boundaries.related) ||
+        !boundaryFor(layout.alternative, boundaries.alternative)) {
+        return std::unexpected(error_code::internal_error);
+    }
+    appendMultipartBody(message, item, boundaries, attachments);
     return message;
 }
 
-QByteArray MboxWriter::formatMboxEntry(const PstItemDetail& item,
-                                       const QVector<QPair<QString, QByteArray>>& attachments) {
+std::expected<QByteArray, error_code> MboxWriter::formatMboxEntry(
+    const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) {
+    // static (declaration only, per the header): every callee is free or already static.
     QByteArray entry;
 
-    QString sender = item.sender_email.isEmpty() ? QStringLiteral("unknown@localhost")
-                                                 : item.sender_email;
-    QDateTime date = item.date.isValid() ? item.date : QDateTime::currentDateTime();
+    if (auto sender_check = validateSender(item); !sender_check) {
+        return std::unexpected(sender_check.error());
+    }
+    const auto separator_time = envelopeTime(item);
+    if (!separator_time) {
+        return std::unexpected(separator_time.error());
+    }
+    if (auto content = validateContent(item, attachments); !content) {
+        return std::unexpected(content.error());
+    }
+    const QString sender = item.sender_email.trimmed();
+    const QDateTime date = item.date;
 
     // asctime format: "Mon Jan 01 00:00:00 2024"
-    QString date_str = date.toUTC().toString(QStringLiteral("ddd MMM dd HH:mm:ss yyyy"));
+    const QString date_str =
+        separator_time->toUTC().toString(QStringLiteral("ddd MMM dd HH:mm:ss yyyy"));
 
     entry.append("From ");
-    entry.append(sender.toUtf8());
+    // Strip CR/LF/controls from the sender: an unescaped newline here would forge a second From_
+    // line and split one message into two on the next read.
+    entry.append(envelopeSender(sender));
     entry.append(' ');
     entry.append(date_str.toUtf8());
     entry.append('\n');
 
-    QByteArray message = buildMimeMessage(item, sender, date, attachments);
+    auto message = buildMimeMessage(item, sender, date, attachments);
+    if (!message) {
+        return std::unexpected(message.error());
+    }
 
     // Escape "From " at the start of lines within message body
-    entry.append(escapeFromLines(message));
+    entry.append(escapeFromLines(*message));
 
-    // Blank line separator between messages
+    // Terminate the last body line when the source body did not, then the blank line that
+    // separates this record from the next From_ line (without it the next message's From_ is
+    // read as part of this body).
+    if (!entry.endsWith('\n')) {
+        entry.append('\n');
+    }
     entry.append('\n');
 
     return entry;
@@ -194,17 +842,20 @@ QByteArray MboxWriter::escapeFromLines(const QByteArray& content) {
     QByteArray result;
     result.reserve(content.size());
 
-    int pos = 0;
+    // qsizetype throughout: a message larger than INT_MAX would otherwise truncate these indices
+    // into negative values and slice the content at the wrong offsets.
+    qsizetype pos = 0;
     while (pos < content.size()) {
-        int newline = content.indexOf('\n', pos);
+        const qsizetype newline = content.indexOf('\n', pos);
         if (newline < 0) {
             result.append(content.mid(pos));
             break;
         }
 
-        QByteArray line = content.mid(pos, newline - pos + 1);
-        // Only escape lines starting with "From " (after the first)
-        if (pos > 0 && line.startsWith("From ")) {
+        const QByteArray line = content.mid(pos, newline - pos + 1);
+        // Only escape lines starting with "From " (after the first), plus the already-escaped
+        // ">From " forms a reader will unescape.
+        if (pos > 0 && isMboxFromLine(line)) {
             result.append('>');
         }
         result.append(line);
@@ -220,6 +871,17 @@ QString MboxWriter::sanitizeFolderName(const QString& name) {
     safe.replace(QStringLiteral("\\"), QStringLiteral("_"));
     static const QRegularExpression kInvalid(QStringLiteral("[<>:\"|?*\\x00-\\x1F]"));
     safe.replace(kInvalid, QStringLiteral("_"));
+    // Windows drops trailing dots and spaces, so "Inbox " and "Inbox" would resolve to ONE file
+    // that two folders then truncate in turn; keep them distinct and creatable.
+    static const QRegularExpression kTrailing(QStringLiteral("[ .]+$"));
+    safe.replace(kTrailing, QStringLiteral("_"));
+    // DOS device names address a DEVICE, not a file, even with an extension: opening "NUL.mbox"
+    // succeeds and every message written to it is silently discarded. The catalogue is shared
+    // (sak/windows_reserved_names.h) rather than restated here -- it was one of five private
+    // copies of the same rule.
+    if (sak::isWindowsReservedName(safe)) {
+        safe.append(QLatin1Char('_'));
+    }
     return safe;
 }
 

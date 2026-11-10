@@ -7,22 +7,21 @@
 #include "sak/smart_disk_analyzer.h"
 
 #include "sak/bundled_tools_manager.h"
+#include "sak/format_utils.h"
+#include "sak/hardware_inventory_scanner.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 
-#ifdef SAK_PLATFORM_WINDOWS
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <algorithm>
 
 #include <Windows.h>
-#endif
 
 namespace sak {
 
@@ -32,29 +31,30 @@ namespace sak {
 
 namespace {
 
-/// @brief Critical SATA SMART attribute IDs and their warning/critical thresholds
+/// @brief A SATA SMART attribute whose raw count is worth a warning from this many.
+/// @note A count alone is a warning, never FAIL: FAIL is the drive's own verdict -- its overall
+///       self-assessment, or an attribute past the threshold the drive itself sets -- as common
+///       tools read it. A drive with 16 pending sectors read FAIL here while it still passed.
 struct SmartThreshold {
     uint8_t id;
-    int64_t warning_raw;   ///< Raw value triggering a warning
-    int64_t critical_raw;  ///< Raw value triggering critical status
+    int64_t warning_raw;  ///< Raw value from which the count is reported as a warning
 };
 
 /// Key SATA attributes monitored for health assessment
 constexpr SmartThreshold kSataThresholds[] = {
-    {5, 1, 50},      // Reallocated_Sector_Ct
-    {10, 1, 10},     // Spin_Retry_Count
-    {187, 1, 10},    // Reported_Uncorrect
-    {188, 5, 50},    // Command_Timeout
-    {196, 1, 50},    // Reallocated_Event_Count
-    {197, 1, 10},    // Current_Pending_Sector
-    {198, 1, 10},    // Offline_Uncorrectable
-    {199, 10, 100},  // UDMA_CRC_Error_Count
+    {.id = 5, .warning_raw = 1},     // Reallocated_Sector_Ct
+    {.id = 10, .warning_raw = 1},    // Spin_Retry_Count
+    {.id = 187, .warning_raw = 1},   // Reported_Uncorrect
+    {.id = 188, .warning_raw = 5},   // Command_Timeout
+    {.id = 196, .warning_raw = 1},   // Reallocated_Event_Count
+    {.id = 197, .warning_raw = 1},   // Current_Pending_Sector
+    {.id = 198, .warning_raw = 1},   // Offline_Uncorrectable
+    {.id = 199, .warning_raw = 10},  // UDMA_CRC_Error_Count
 };
 
 /// @brief NVMe percentage_used threshold values
 constexpr uint8_t kNvmeWearWarningPercent = 80;
 constexpr uint8_t kNvmeWearCriticalPercent = 95;
-constexpr uint32_t kNvmeMediaErrorWarning = 1;
 
 constexpr int kSmartctlTimeoutMs = 30'000;  // 30 seconds per drive
 constexpr int kSmartctlFatalExitMask = 0x07;
@@ -66,7 +66,11 @@ constexpr uint32_t kUnsafeShutdownWarningThreshold = 100;
 constexpr double kElevatedTemperatureCelsius = 55.0;
 constexpr int64_t kHighPowerOnHoursThreshold = 50'000;
 constexpr int64_t kHoursPerYear = 8760;
-constexpr uint32_t kPhysicalDriveProbeCount = 16;
+// Drive numbering is not guaranteed contiguous and can exceed 15 (many
+// controllers, removable media). Probe past absent indices and stop only after
+// a run of consecutive misses, bounded by an absolute cap.
+constexpr uint32_t kPhysicalDriveProbeMax = 256;
+constexpr uint32_t kPhysicalDriveMissRun = 8;
 
 }  // anonymous namespace
 
@@ -81,10 +85,14 @@ SmartDiskAnalyzer::SmartDiskAnalyzer(QObject* parent) : QObject(parent) {}
 // ============================================================================
 
 void SmartDiskAnalyzer::analyzeAll() {
-    Q_ASSERT(!m_reports.empty());
-    Q_ASSERT(!m_reports.isEmpty());
+    // NOTE: m_reports is (re)built by this call and is legitimately empty on a fresh
+    // analyzer, so it must NOT be asserted non-empty here -- the prior asserts were
+    // an inverted precondition that crashed debug builds the first time a
+    // standalone analyzer ran (e.g. the headless diagnostics.smart_scan op).
     m_cancelled.store(false, std::memory_order_relaxed);
     m_reports.clear();
+    m_identities.clear();
+    m_identities_read = false;
 
     Q_EMIT analysisStarted();
 
@@ -101,7 +109,9 @@ void SmartDiskAnalyzer::analyzeAll() {
         return;
     }
 
-    logInfo("Starting SMART analysis for {} drive(s)", drives.size());
+    logInfo(
+        "Starting SMART analysis for {}",
+        countOf(drives.size(), QStringLiteral("drive"), QStringLiteral("drives")).toStdString());
 
     for (int i = 0; i < drives.size(); ++i) {
         if (m_cancelled.load(std::memory_order_relaxed)) {
@@ -121,26 +131,102 @@ void SmartDiskAnalyzer::analyzeAll() {
 
     Q_EMIT analysisProgress(kPercentMax, "SMART analysis complete");
     Q_EMIT analysisComplete(m_reports);
-    logInfo("SMART analysis complete -- {} report(s) generated", m_reports.size());
+    logInfo("SMART analysis complete -- {} generated",
+            countOf(m_reports.size(), QStringLiteral("report"), QStringLiteral("reports"))
+                .toStdString());
 }
 
 void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
     const QByteArray json_data = runSmartctl(disk_number);
     if (json_data.isEmpty()) {
-        Q_EMIT errorOccurred(
-            QString("Failed to read SMART data for PhysicalDrive%1").arg(disk_number));
+        if (m_cancelled.load(std::memory_order_relaxed)) {
+            return;  // Not a failure of this drive; the run is ending.
+        }
+        // Keep the drive in the results. Left out, an unreadable drive looks like no drive at all,
+        // and with none readable the table is simply empty.
+        SmartReport unreadable;
+        unreadable.device_path = QString("\\\\.\\PhysicalDrive%1").arg(disk_number);
+        unreadable.model = QString("PhysicalDrive%1").arg(disk_number);
+        applyDriveIdentity(unreadable, disk_number);
+        unreadable.overall_health = SmartHealthStatus::Unknown;
+        // One wording for every drive with no verdict, then why: a drive smartctl could not read
+        // and one it read with nothing to judge by said it two ways (review 2, observation 31).
+        const QString warning = QString("PhysicalDrive%1: SMART health could not be determined. %2")
+                                    .arg(disk_number)
+                                    .arg(m_last_read_failure.isEmpty()
+                                             ? QStringLiteral("Its SMART data could not be read.")
+                                             : m_last_read_failure);
+        unreadable.warnings.append(warning);
+        // Said once, as the table says it: "ERROR: Failed to read SMART data" in the log for a
+        // drive the table showed as a USB adapter's limit (review 5, Z23).
+        Q_EMIT driveWarning(warning);
+        unreadable.scan_timestamp = QDateTime::currentDateTime();
+        m_reports.append(unreadable);
+        Q_EMIT driveAnalyzed(unreadable);
         return;
     }
 
     SmartReport report = parseSmartctlOutput(json_data, disk_number);
+    applyDriveIdentity(report, disk_number);
 
     assessHealth(report);
     generateRecommendations(report);
+
+    // Fail-closed surfacing: a malformed or content-free smartctl payload leaves
+    // the drive indeterminate. Report that as an error rather than silently
+    // appending a report that reads as "fine".
+    if (report.overall_health == SmartHealthStatus::Unknown) {
+        Q_EMIT errorOccurred(QString("SMART data for PhysicalDrive%1 is incomplete or unreadable "
+                                     "-- health could not be determined")
+                                 .arg(disk_number));
+    }
 
     report.scan_timestamp = QDateTime::currentDateTime();
     m_reports.append(report);
 
     Q_EMIT driveAnalyzed(report);
+}
+
+QHash<uint32_t, SmartDiskAnalyzer::DriveIdentity> SmartDiskAnalyzer::queryDriveIdentities() {
+    QHash<uint32_t, DriveIdentity> identities;
+    HardwareInventoryScanner scanner;
+    for (const StorageDeviceInfo& disk : scanner.queryPhysicalDisks()) {
+        identities.insert(disk.disk_number, {.model = disk.model, .bus = disk.interface_type});
+    }
+    return identities;
+}
+
+void SmartDiskAnalyzer::applyDriveIdentity(SmartReport& report, uint32_t disk_number) {
+    if (!m_identities_read) {
+        m_identities = queryDriveIdentities();
+        m_identities_read = true;
+    }
+    const DriveIdentity identity = m_identities.value(disk_number);
+    const QString placeholder = QString("PhysicalDrive%1").arg(disk_number);
+    const QString model = report.model.trimmed();
+    if ((model.isEmpty() || model == placeholder) && !identity.model.trimmed().isEmpty()) {
+        report.model = identity.model.trimmed();
+    }
+    if (!identity.bus.trimmed().isEmpty()) {
+        report.interface_type = identity.bus.trimmed();
+    }
+}
+
+QString SmartDiskAnalyzer::driveName(const QString& device_path, const QString& model) {
+    const QString drive = device_path.section(QLatin1Char('\\'), -1);
+    const QString known = model.trimmed();
+    if (drive.isEmpty() || known.isEmpty() || known == drive) {
+        return drive.isEmpty() ? known : drive;
+    }
+    return QStringLiteral("%1 (%2)").arg(drive, known);
+}
+
+SmartReport SmartDiskAnalyzer::parseAndAssessForTesting(const QByteArray& json_data,
+                                                        uint32_t disk_number) {
+    SmartReport report = parseSmartctlOutput(json_data, disk_number);
+    assessHealth(report);
+    generateRecommendations(report);
+    return report;
 }
 
 void SmartDiskAnalyzer::cancel() {
@@ -165,24 +251,50 @@ bool SmartDiskAnalyzer::isSmartctlAvailable() const {
 // Private Implementation
 // ============================================================================
 
+QString SmartDiskAnalyzer::bundledSmartctlPath(const QString& tools_root) {
+    if (tools_root.trimmed().isEmpty()) {
+        return {};
+    }
+    const QString path = QDir(tools_root).filePath(QStringLiteral("smartmontools/smartctl.exe"));
+    const QFileInfo info(path);
+    return info.exists() && info.isFile() ? path : QString();
+}
+
 QString SmartDiskAnalyzer::resolveSmartctlPath() {
-    auto& tools = BundledToolsManager::instance();
-
-    // Try the dedicated smartmontools category first
-    if (tools.toolExists("smartmontools", "smartctl.exe")) {
-        return tools.toolPath("smartmontools", "smartctl.exe");
+    const QString path = bundledSmartctlPath(BundledToolsManager::instance().toolsPath());
+    if (path.isEmpty()) {
+        logWarning("smartctl.exe not found in bundled tools (tools/smartmontools)");
     }
+    return path;
+}
 
-    // Fallback: look in generic tools directory
-    if (tools.toolExists("generic", "smartctl.exe")) {
-        return tools.toolPath("generic", "smartctl.exe");
+QString SmartDiskAnalyzer::smartctlFailureReason(const QByteArray& json) {
+    const QJsonArray messages = QJsonDocument::fromJson(json)
+                                    .object()
+                                    .value(QStringLiteral("smartctl"))
+                                    .toObject()
+                                    .value(QStringLiteral("messages"))
+                                    .toArray();
+    QString said;
+    for (const QJsonValue& message : messages) {
+        said = message.toObject().value(QStringLiteral("string")).toString();
+        if (said.contains(QStringLiteral("Error=5"))) {
+            return QStringLiteral(
+                "Windows refused access. Run S.A.K. Utility as administrator to read this drive.");
+        }
     }
-
-    logWarning("smartctl.exe not found in bundled tools");
-    return {};
+    if (said.contains(QStringLiteral("Unknown USB bridge"), Qt::CaseInsensitive)) {
+        // A USB enclosure or adapter that does not pass SMART commands through to the drive.
+        return QStringLiteral(
+                   "SMART cannot be read through this drive's USB adapter "
+                   "(smartctl: %1)")
+            .arg(said);
+    }
+    return said.isEmpty() ? QString() : QStringLiteral("smartctl said: %1").arg(said);
 }
 
 QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
+    m_last_read_failure.clear();
     const QString smartctl_path = resolveSmartctlPath();
     if (smartctl_path.isEmpty()) {
         return {};
@@ -203,6 +315,26 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
         return {};
     }
 
+    // Fail closed on a cancelled run, a crash-exit, or a truncated capture: any of
+    // these can leave std_out holding a partial JSON document whose fatal-exit bits
+    // (0-2) happen to be clear. Handing a truncated/aborted payload to the parser as
+    // if it were a complete reading is exactly the fail-open this must not do.
+    if (result.cancelled) {
+        logInfo("smartctl cancelled for drive {}", disk_number);
+        return {};
+    }
+    if (result.output_truncated) {
+        logError("smartctl output truncated for drive {} -- refusing partial SMART data",
+                 disk_number);
+        return {};
+    }
+    if (result.exit_status != 0) {
+        logError("smartctl crash-exited for drive {} (exit_status {})",
+                 disk_number,
+                 result.exit_status);
+        return {};
+    }
+
     // smartctl exit codes are bitmasks:
     //   Bit 0: Command line parse error
     //   Bit 1: Device open failed
@@ -214,12 +346,13 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
     //   Bit 7: Self-test log has errors
     // Bits 3-7 are informational; only bits 0-2 are true failures
     const int exit_code = result.exit_code;
-    if (exit_code & kSmartctlFatalExitMask) {
+    if ((exit_code & kSmartctlFatalExitMask) != 0) {
         const QString stderr_text = result.std_err;
         logError("smartctl failed for drive {} (exit {}): {}",
                  disk_number,
                  exit_code,
                  stderr_text.toStdString());
+        m_last_read_failure = smartctlFailureReason(result.std_out.toUtf8());
         return {};
     }
 
@@ -294,7 +427,9 @@ SmartReport SmartDiskAnalyzer::parseSmartctlOutput(const QByteArray& json_data,
 }
 
 void SmartDiskAnalyzer::parseSataAttributes(const QJsonObject& ata_smart_obj, SmartReport& report) {
-    Q_ASSERT(!ata_smart_obj.isEmpty());
+    // An empty/absent object is valid (a drive may expose no SATA table): the loop
+    // below simply produces no attributes. Do not assert non-empty -- malformed or
+    // minimal smartctl output must degrade, not crash a debug build.
     const QJsonArray table = ata_smart_obj.value("table").toArray();
 
     report.attributes.reserve(table.size());
@@ -304,6 +439,14 @@ void SmartDiskAnalyzer::parseSataAttributes(const QJsonObject& ata_smart_obj, Sm
 
         SmartAttribute attr;
         attr.id = static_cast<uint8_t>(attr_obj.value("id").toInt());
+        // A null or empty table entry (`table:[null]` / `table:[{}]`) parses to id 0.
+        // No real ATA SMART attribute uses id 0, and appending such a phantom would
+        // give assessHealth() an in-threshold attribute -- enough to satisfy
+        // reportHasAssessableData() and let a data-less payload read as Healthy. Skip
+        // it so the report stays fail-closed (no assessable data -> Unknown).
+        if (attr.id == 0) {
+            continue;
+        }
         attr.name = attr_obj.value("name").toString();
         attr.current_value = static_cast<uint8_t>(attr_obj.value("value").toInt());
         attr.worst_value = static_cast<uint8_t>(attr_obj.value("worst").toInt());
@@ -339,7 +482,16 @@ void SmartDiskAnalyzer::parseSataAttributes(const QJsonObject& ata_smart_obj, Sm
 }
 
 void SmartDiskAnalyzer::parseNvmeHealth(const QJsonObject& nvme_obj, SmartReport& report) {
-    Q_ASSERT(!nvme_obj.isEmpty());
+    // Fail closed on a null/empty log. `nvme_smart_health_information_log: null`
+    // (or `{}`) parses to an empty object here; building an all-zero record from it
+    // would set report.nvme_health, satisfy reportHasAssessableData(), and let a
+    // data-less payload read as Healthy -- and it would clobber a good top-level
+    // temperature/power-on reading with zero. A real NVMe log is never empty; an
+    // empty one is malformed input, not a minimal drive, so degrade to no NVMe data
+    // (Unknown) rather than a phantom clean record. Never crashes on malformed input.
+    if (nvme_obj.isEmpty()) {
+        return;
+    }
     NvmeHealthInfo nvme;
 
     nvme.percentage_used = static_cast<uint8_t>(nvme_obj.value("percentage_used").toInt());
@@ -357,38 +509,87 @@ void SmartDiskAnalyzer::parseNvmeHealth(const QJsonObject& nvme_obj, SmartReport
 
     report.nvme_health = nvme;
     report.wear_level_percent = static_cast<double>(nvme.percentage_used);
-    report.power_on_hours = static_cast<int64_t>(nvme.power_on_hours);
-    report.temperature_celsius = static_cast<double>(nvme.temperature);
+    // Only override the top-level power-on/temperature when the log actually carried
+    // them. A partial log missing one of these members must not overwrite a valid
+    // reading (parsed from "power_on_time"/"temperature") with a default zero, which
+    // would suppress the age/temperature warnings.
+    if (nvme_obj.contains("power_on_hours")) {
+        report.power_on_hours = static_cast<int64_t>(nvme.power_on_hours);
+    }
+    if (nvme_obj.contains("temperature")) {
+        report.temperature_celsius = static_cast<double>(nvme.temperature);
+    }
 }
 
 SmartHealthStatus SmartDiskAnalyzer::checkAttributeAgainstThresholds(
     const SmartAttribute& attr) const {
     for (const auto& thresh : kSataThresholds) {
-        if (attr.id != thresh.id) {
-            continue;
-        }
-        if (attr.raw_value >= thresh.critical_raw) {
-            return SmartHealthStatus::Critical;
-        }
-        if (attr.raw_value >= thresh.warning_raw) {
+        if (attr.id == thresh.id && attr.raw_value >= thresh.warning_raw) {
             return SmartHealthStatus::Warning;
         }
     }
     return SmartHealthStatus::Healthy;
 }
 
-void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
-    report.overall_health = SmartHealthStatus::Healthy;
+namespace {
 
-    if (report.smart_status == "FAILED") {
-        report.overall_health = SmartHealthStatus::Critical;
+/// A warning's reason: what the drive counts, and that its own check passed when it says so.
+QString countsReason(const SmartReport& report, const QStringList& counted) {
+    const QString counts = counted.join(QStringLiteral(", "));
+    return report.smart_status == QStringLiteral("PASSED")
+               ? QStringLiteral("The drive passes its own check, and reports %1").arg(counts)
+               : QStringLiteral("The drive reports %1").arg(counts);
+}
+
+QString attributeName(const SmartAttribute& attr) {
+    return attr.name.trimmed().isEmpty() ? QStringLiteral("Attribute %1").arg(attr.id)
+                                         : attr.name.trimmed();
+}
+
+}  // namespace
+
+bool SmartDiskAnalyzer::reportHasAssessableData(const SmartReport& report) {
+    // Fail-closed signal set: an overall SMART status, at least one SATA
+    // attribute, or an NVMe health log. With none of these present the drive
+    // gave us nothing to judge, so health must stay Unknown rather than
+    // defaulting to Healthy (which would hide a failing/unreadable disk).
+    return !report.smart_status.isEmpty() || !report.attributes.isEmpty() ||
+           report.nvme_health.has_value();
+}
+
+void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
+    // Fail closed: a malformed/empty smartctl payload parses into a data-less
+    // report. Without any SMART signal we cannot claim the drive is Healthy --
+    // leave it Unknown so the caller surfaces "could not determine", not a
+    // green result over a disk we never actually read.
+    if (!reportHasAssessableData(report)) {
+        report.overall_health = SmartHealthStatus::Unknown;
+        report.health_reason = QStringLiteral("SMART data could not be read");
         return;
     }
 
-    if (std::any_of(report.attributes.begin(), report.attributes.end(), [](const auto& attr) {
-            return attr.failing;
-        })) {
+    // FAIL is the drive's own verdict: its overall self-assessment, or an attribute past the
+    // threshold the drive itself sets. What the drive counts -- pending or reallocated sectors,
+    // wear, media errors -- is a warning, as common tools read it.
+    report.overall_health = SmartHealthStatus::Healthy;
+    report.health_reason = QStringLiteral("The drive reports no problems");
+
+    if (report.smart_status == "FAILED") {
         report.overall_health = SmartHealthStatus::Critical;
+        report.health_reason = QStringLiteral("The drive's own SMART self-assessment says FAILED");
+        return;
+    }
+
+    const auto failing = std::ranges::find_if(report.attributes,
+                                              [](const auto& attr) { return attr.failing; });
+    if (failing != report.attributes.end()) {
+        report.overall_health = SmartHealthStatus::Critical;
+        report.health_reason = QStringLiteral(
+                                   "%1 is past the drive's own failure threshold "
+                                   "(value %2, threshold %3)")
+                                   .arg(attributeName(*failing))
+                                   .arg(failing->current_value)
+                                   .arg(failing->threshold);
         return;
     }
 
@@ -397,15 +598,15 @@ void SmartDiskAnalyzer::assessHealth(SmartReport& report) {
 }
 
 void SmartDiskAnalyzer::assessSataAttributeHealth(SmartReport& report) const {
+    QStringList counted;
     for (const auto& attr : report.attributes) {
-        auto status = checkAttributeAgainstThresholds(attr);
-        if (status == SmartHealthStatus::Critical) {
-            report.overall_health = SmartHealthStatus::Critical;
-            return;
-        }
-        if (status == SmartHealthStatus::Warning) {
+        if (checkAttributeAgainstThresholds(attr) == SmartHealthStatus::Warning) {
             report.overall_health = SmartHealthStatus::Warning;
+            counted << QStringLiteral("%1 %2").arg(attributeName(attr)).arg(attr.raw_value);
         }
+    }
+    if (!counted.isEmpty()) {
+        report.health_reason = countsReason(report, counted);
     }
 }
 
@@ -415,14 +616,25 @@ void SmartDiskAnalyzer::assessNvmeHealth(SmartReport& report) const {
     }
     const auto& nvme = report.nvme_health.value();
 
-    if (nvme.percentage_used >= kNvmeWearCriticalPercent || nvme.media_errors > 0 ||
-        nvme.available_spare < nvme.available_spare_threshold) {
+    if (nvme.available_spare < nvme.available_spare_threshold) {
         report.overall_health = SmartHealthStatus::Critical;
+        report.health_reason =
+            QStringLiteral("Available spare %1% is below the drive's own threshold of %2%")
+                .arg(nvme.available_spare)
+                .arg(nvme.available_spare_threshold);
         return;
     }
 
+    QStringList counted;
     if (nvme.percentage_used >= kNvmeWearWarningPercent) {
+        counted << QStringLiteral("%1% of its rated endurance used").arg(nvme.percentage_used);
+    }
+    if (nvme.media_errors > 0) {
+        counted << QStringLiteral("%1 media errors").arg(nvme.media_errors);
+    }
+    if (!counted.isEmpty()) {
         report.overall_health = SmartHealthStatus::Warning;
+        report.health_reason = countsReason(report, counted);
     }
 }
 
@@ -433,8 +645,7 @@ void SmartDiskAnalyzer::generateSataRecommendations(SmartReport& report) {
 
         if (report.reallocated_sectors >= kReallocatedSectorsCriticalAdviceThreshold) {
             report.recommendations.append(
-                "CRITICAL: Drive has significant sector damage -- back up data immediately and "
-                "replace drive");
+                "Significant sector damage -- back up data now and plan to replace the drive");
         } else {
             report.recommendations.append(
                 "Monitor reallocated sector count -- back up important data as a precaution");
@@ -467,8 +678,7 @@ void SmartDiskAnalyzer::generateNvmeRecommendations(SmartReport& report) {
     if (nvme.percentage_used >= kNvmeWearCriticalPercent) {
         report.warnings.append(QString("NVMe drive endurance at %1% -- nearing end of life")
                                    .arg(nvme.percentage_used));
-        report.recommendations.append(
-            "CRITICAL: Plan drive replacement -- SSD endurance nearly exhausted");
+        report.recommendations.append("Plan drive replacement -- SSD endurance nearly exhausted");
     } else if (nvme.percentage_used >= kNvmeWearWarningPercent) {
         report.warnings.append(QString("NVMe drive endurance at %1%").arg(nvme.percentage_used));
         report.recommendations.append("Consider planning drive replacement in the near future");
@@ -499,8 +709,8 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
 
     // -- Temperature warnings ------------------------------------
     if (report.temperature_celsius > kElevatedTemperatureCelsius) {
-        report.warnings.append(QString("Drive temperature is elevated (%1 degC)")
-                                   .arg(report.temperature_celsius, 0, 'f', 0));
+        report.warnings.append(QString("Drive temperature is elevated (%1)")
+                                   .arg(formatCelsius(report.temperature_celsius, 0)));
         report.recommendations.append("Check case airflow and ensure drive has adequate cooling");
     }
 
@@ -527,35 +737,83 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
             "replace drive");
     }
 
+    // An attribute past the drive's own threshold is a FAIL too, and says which one.
+    if (report.overall_health == SmartHealthStatus::Critical && report.smart_status != "FAILED") {
+        report.warnings.prepend(report.health_reason);
+        report.recommendations.prepend(
+            "CRITICAL: The drive reports a failing value -- back up all data now and replace the "
+            "drive");
+    }
+
+    // Fail-closed: an indeterminate report must NOT read as "health is good".
+    // Say plainly that health is unknown so a data-less scan is never mistaken
+    // for a clean bill.
+    if (report.overall_health == SmartHealthStatus::Unknown) {
+        // Named, because the panel lists every drive's warnings together: five drives gave five
+        // identical lines and no way to tell which drive each one was about.
+        const QString name = driveName(report.device_path, report.model);
+        report.warnings.append(
+            QStringLiteral("%1: SMART health could not be determined. It reported no SMART health "
+                           "data.")
+                .arg(name));
+        report.recommendations.append(
+            "SMART data was unavailable or unreadable -- verify the drive connection and "
+            "re-run with administrator privileges");
+        return;
+    }
+
     // If no issues found, add a positive note
     if (report.warnings.isEmpty()) {
         report.recommendations.append("Drive health is good -- no action required");
     }
 }
 
+namespace {
+
+// True when \\.\PhysicalDriveN exists. Opened with zero access -- an existence
+// probe only, never read/write. A genuine not-found is the only "absent" answer;
+// any other open failure (in use, access denied) means the device IS present, so
+// enumeration neither drops a real drive nor stops the scan run prematurely.
+bool physicalDriveExists(uint32_t index) {
+    const QString dev_path = QString("\\\\.\\PhysicalDrive%1").arg(index);
+    HANDLE h = CreateFileW(reinterpret_cast<LPCWSTR>(dev_path.utf16()),
+                           0,  // No read/write access needed -- just checking existence
+                           FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           nullptr,
+                           OPEN_EXISTING,
+                           0,
+                           nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        CloseHandle(h);
+        return true;
+    }
+    const DWORD err = GetLastError();
+    return err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND;
+}
+
+}  // namespace
+
 QVector<uint32_t> SmartDiskAnalyzer::enumerateDrives() {
     QVector<uint32_t> drives;
 
-#ifdef SAK_PLATFORM_WINDOWS
-    // Probe PhysicalDrive0..15
-    for (uint32_t i = 0; i < kPhysicalDriveProbeCount; ++i) {
-        const QString dev_path = QString("\\\\.\\PhysicalDrive%1").arg(i);
-        HANDLE h = CreateFileW(reinterpret_cast<LPCWSTR>(dev_path.utf16()),
-                               0,  // No read/write access needed -- just checking existence
-                               FILE_SHARE_READ | FILE_SHARE_WRITE,
-                               nullptr,
-                               OPEN_EXISTING,
-                               0,
-                               nullptr);
-
-        if (h != INVALID_HANDLE_VALUE) {
-            CloseHandle(h);
+    // Probe PhysicalDriveN tolerating gaps in numbering; stop after a run of
+    // consecutive misses rather than a fixed 0..15 window that hides higher or
+    // sparsely numbered drives.
+    uint32_t consecutive_misses = 0;
+    for (uint32_t i = 0; i < kPhysicalDriveProbeMax && consecutive_misses < kPhysicalDriveMissRun;
+         ++i) {
+        if (physicalDriveExists(i)) {
             drives.append(i);
+            consecutive_misses = 0;
+        } else {
+            ++consecutive_misses;
         }
     }
-#endif
 
-    logInfo("Enumerated {} physical drive(s)", drives.size());
+    logInfo(
+        "Enumerated {}",
+        countOf(drives.size(), QStringLiteral("physical drive"), QStringLiteral("physical drives"))
+            .toStdString());
     return drives;
 }
 

@@ -69,11 +69,22 @@ private:
     };
 
     struct PlainTextWriteRequest {
+        // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
         const sak::PstItemDetail& item;
+        // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
         const QString& output_dir;
         int index{0};
+        // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
         const QVector<QPair<QString, QByteArray>>& attachment_data;
         bool save_attachments{false};
+        bool flatten_attachments{true};
+    };
+
+    /// Collected attachment payloads plus how many eligible attachments could not
+    /// be read (so the caller can mark a message a partial export -- B7-25).
+    struct AttachmentCollection {
+        QVector<QPair<QString, QByteArray>> data;
+        int dropped{0};
     };
 
     std::atomic<bool> m_cancelled{false};
@@ -82,15 +93,17 @@ private:
     [[nodiscard]] bool writeEml(sak::EmlWriter& writer,
                                 const sak::PstItemDetail& item,
                                 const QVector<QPair<QString, QByteArray>>& attachment_data,
-                                qint64& bytes_written);
+                                qint64& bytes_written,
+                                bool include_headers) const;
     [[nodiscard]] bool writeHtml(sak::HtmlEmailWriter& writer,
                                  const sak::PstItemDetail& item,
                                  const QVector<QPair<QString, QByteArray>>& attachment_data,
-                                 qint64& bytes_written);
+                                 qint64& bytes_written) const;
     [[nodiscard]] bool writePdf(sak::PdfEmailWriter& writer,
                                 const sak::PstItemDetail& item,
                                 const QVector<QPair<QString, QByteArray>>& attachment_data,
-                                qint64& bytes_written);
+                                qint64& bytes_written,
+                                bool flatten_attachments);
     [[nodiscard]] bool writeVcf(const sak::PstItemDetail& contact,
                                 const QString& output_dir,
                                 int index);
@@ -99,37 +112,60 @@ private:
     [[nodiscard]] bool writeCsv(const QVector<sak::PstItemDetail>& items,
                                 const QString& output_path,
                                 const QStringList& columns,
-                                QChar delimiter);
+                                QChar delimiter,
+                                bool include_header);
     [[nodiscard]] bool extractAttachment(PstParser* parser,
                                          uint64_t msg_nid,
-                                         int att_index,
+                                         const sak::PstAttachmentInfo& att,
                                          const QString& output_dir);
 
     // Content builders
-    [[nodiscard]] QByteArray buildEmlContent(const sak::PstItemDetail& item);
-    [[nodiscard]] QByteArray buildVcfContent(const sak::PstItemDetail& contact);
+    [[nodiscard]] static QByteArray buildVcfContent(const sak::PstItemDetail& contact);
     [[nodiscard]] QByteArray buildIcsContent(const QVector<sak::PstItemDetail>& events);
-    [[nodiscard]] static QByteArray buildMboxEmlContent(const sak::MboxMessageDetail& msg);
 
     // Per-item helpers
     [[nodiscard]] bool writePlainText(const PlainTextWriteRequest& request, qint64& bytes_written);
     [[nodiscard]] bool exportAttachments(PstParser* parser,
                                          const sak::PstItemDetail& item,
                                          const QString& output_dir,
-                                         const sak::EmailExportConfig& config);
-    [[nodiscard]] QVector<QPair<QString, QByteArray>> collectAttachmentData(
-        PstParser* parser, const sak::PstItemDetail& item, const sak::EmailExportConfig& config);
+                                         const sak::EmailExportConfig& config,
+                                         sak::EmailExportResult& result);
+    // Returns the readable attachment payloads plus a dropped count (unreadable
+    // eligible attachments), so the caller can mark a partial vs clean export.
+    [[nodiscard]] AttachmentCollection collectAttachmentData(PstParser* parser,
+                                                             const sak::PstItemDetail& item,
+                                                             const sak::EmailExportConfig& config,
+                                                             sak::EmailExportResult& result);
+    [[nodiscard]] AttachmentCollection collectMboxAttachmentData(
+        MboxParser* parser,
+        int message_index,
+        const sak::PstItemDetail& item,
+        const sak::EmailExportConfig& config,
+        sak::EmailExportResult& result);
+    // Write one already-read PST item's body in the configured per-item format.
+    [[nodiscard]] bool writePstItemFormat(
+        const PstItemExportContext& context,
+        const sak::PstItemDetail& detail,
+        const QVector<QPair<QString, QByteArray>>& attachment_data,
+        int index);
     [[nodiscard]] bool saveSidecarAttachments(
         const QVector<QPair<QString, QByteArray>>& attachment_data,
         const QString& exported_file_path,
-        qint64& bytes_written);
+        qint64& bytes_written,
+        bool flatten_attachments);
 
     // Early-failure helper: emits an exportComplete result carrying a single error.
     void emitEarlyFailure(const QString& error_message);
 
-    // Resolve effective item-id list (explicit ids or derived from folder).
+    // Append a partial/cancelled note to result.errors when the run was cancelled, so
+    // a truncated export is not reported as a clean exportComplete.
+    void noteIfCancelled(sak::EmailExportResult& result) const;
+
+    // Resolve effective item-id list (explicit ids or derived from folder). Records
+    // an error into result if folder paging stopped early on a read failure (B7-27).
     [[nodiscard]] static QVector<uint64_t> collectItemIds(PstParser* parser,
-                                                          const sak::EmailExportConfig& config);
+                                                          const sak::EmailExportConfig& config,
+                                                          sak::EmailExportResult& result);
 
     // Dispatch to ICS / CSV / per-item export helpers based on config.format.
     void dispatchExportFormat(PstParser* parser,
@@ -154,10 +190,6 @@ private:
                          const QVector<uint64_t>& item_ids,
                          const sak::EmailExportConfig& config,
                          sak::EmailExportResult& result);
-    void exportSingleMboxMessage(MboxParser* parser,
-                                 int message_index,
-                                 const sak::EmailExportConfig& config,
-                                 sak::EmailExportResult& result);
     [[nodiscard]] bool exportOneMboxItem(const MboxItemExportContext& context,
                                          int message_index,
                                          int loop_index);

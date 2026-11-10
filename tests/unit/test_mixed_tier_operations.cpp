@@ -7,12 +7,11 @@
 ///  - PermissionManager std::expected overloads
 ///  - UserProfileBackupWorker path-access detection
 ///  - New task handler registrations in elevated helper dispatcher
-///  - ThermalMonitor hasCpuTemperature() check
 
 #include "sak/elevated_task_dispatcher.h"
+#include "sak/elevation_manager.h"
 #include "sak/error_codes.h"
 #include "sak/permission_manager.h"
-#include "sak/thermal_monitor.h"
 #include "sak/user_profile_backup_worker.h"
 
 #include <QJsonObject>
@@ -26,7 +25,7 @@ class TestMixedTierOperations : public QObject {
 private Q_SLOTS:
 
     // ======================================================================
-    // PermissionManager — tryStripPermissions
+    // PermissionManager -- tryStripPermissions
     // ======================================================================
 
     void testTryStripPermissionsOnNonexistentFile() {
@@ -42,57 +41,53 @@ private Q_SLOTS:
         QVERIFY(tmp.open());
         tmp.write("test");
         tmp.flush();
+        const QString path = tmp.fileName();
 
         sak::PermissionManager pm;
-        auto result = pm.tryStripPermissions(tmp.fileName());
-        // Should succeed on user-writable file (or elevation_required if
-        // running tests without write access to DACL)
+        auto result = pm.tryStripPermissions(path);
+        // Both outcomes carry a contract. On success the manager must be left with NO error
+        // text and the DACL must be an EMPTY (re-inheriting) one, never the NULL DACL that
+        // serializes as NO_ACCESS_CONTROL and grants everyone full access. On failure the code
+        // must be one of the two documented ones AND the failure must be explained. The old
+        // success branch was QVERIFY(true), so a strip that silently nulled the DACL passed.
         if (result.has_value()) {
-            QVERIFY(true);
+            QVERIFY2(pm.getLastError().isEmpty(), qPrintable(pm.getLastError()));
+            tmp.close();  // read the descriptor back without our own open handle in the way
+            const QString sddl = pm.getSecurityDescriptorSddl(path);
+            QVERIFY(!sddl.isEmpty());
+            QVERIFY2(!sddl.contains(QStringLiteral("NO_ACCESS_CONTROL")), qPrintable(sddl));
         } else {
-            // Either elevation_required or permission_update_failed
             QVERIFY(result.error() == sak::error_code::elevation_required ||
                     result.error() == sak::error_code::permission_update_failed);
+            QVERIFY(!pm.getLastError().isEmpty());
         }
     }
 
     void testTryStripPermissionsEmptyPath() {
+        // The debug-only QSKIP was stale: tryStripPermissions has no Q_ASSERT on the path, it
+        // runs QFileInfo::exists() first, which is false for an empty path. Both configurations
+        // now run the test, and it pins the specific code instead of only "not a value".
         sak::PermissionManager pm;
-        // Q_ASSERT fires on empty path in debug — skip if debug build
-#ifdef NDEBUG
         auto result = pm.tryStripPermissions(QString());
         QVERIFY(!result.has_value());
-#else
-        QSKIP("Q_ASSERT prevents empty path in debug builds");
-#endif
+        QCOMPARE(result.error(), sak::error_code::file_not_found);
     }
 
     // ======================================================================
-    // PermissionManager — tryTakeOwnership
+    // PermissionManager -- tryTakeOwnership
     // ======================================================================
 
     void testTryTakeOwnershipNotAdmin() {
-        // If not running as admin, should return elevation_required
-        if (sak::PermissionManager::isRunningAsAdmin()) {
-            QSKIP("Test only meaningful when not running as admin");
-        }
-
-        QTemporaryFile tmp;
-        QVERIFY(tmp.open());
-        tmp.write("test");
-        tmp.flush();
-
-        sak::PermissionManager pm;
-        auto result = pm.tryTakeOwnership(tmp.fileName(), QStringLiteral("S-1-5-32-544"));
-        QVERIFY(!result.has_value());
-        QCOMPARE(result.error(), sak::error_code::elevation_required);
+        const auto standard = sak::PermissionManager::takeOwnershipElevationRefusal(false);
+        QVERIFY(standard.has_value());
+        QCOMPARE(*standard, sak::error_code::elevation_required);
+        QVERIFY(!sak::PermissionManager::takeOwnershipElevationRefusal(true).has_value());
     }
 
     void testTryTakeOwnershipInvalidSid() {
-        if (!sak::PermissionManager::isRunningAsAdmin()) {
-            QSKIP("Test requires admin to get past the isAdmin check");
-        }
-
+        // The admin gate runs BEFORE the SID is parsed, so the expected error depends on how the
+        // suite was launched. Assert BOTH orderings rather than skipping: the old QSKIP fired in
+        // every non-elevated run, i.e. in practice always, so this name covered nothing.
         QTemporaryFile tmp;
         QVERIFY(tmp.open());
         tmp.write("test");
@@ -101,11 +96,14 @@ private Q_SLOTS:
         sak::PermissionManager pm;
         auto result = pm.tryTakeOwnership(tmp.fileName(), QStringLiteral("NOT-A-VALID-SID"));
         QVERIFY(!result.has_value());
-        QCOMPARE(result.error(), sak::error_code::invalid_argument);
+        const auto expected = sak::ElevationManager::isElevated()
+                                  ? sak::error_code::invalid_argument
+                                  : sak::error_code::elevation_required;
+        QCOMPARE(result.error(), expected);
     }
 
     // ======================================================================
-    // PermissionManager — trySetStandardUserPermissions
+    // PermissionManager -- trySetStandardUserPermissions
     // ======================================================================
 
     void testTrySetStandardPermissionsInvalidSid() {
@@ -126,19 +124,31 @@ private Q_SLOTS:
         QVERIFY(tmp.open());
         tmp.write("test");
         tmp.flush();
+        const QString path = tmp.fileName();
 
         sak::PermissionManager pm;
         // Use a well-known SID (Everyone: S-1-1-0)
-        auto result = pm.trySetStandardUserPermissions(tmp.fileName(), QStringLiteral("S-1-1-0"));
-        // May succeed or fail with elevation_required depending on environment
-        if (!result.has_value()) {
+        auto result = pm.trySetStandardUserPermissions(path, QStringLiteral("S-1-1-0"));
+        // May succeed or fail with elevation_required depending on environment, but the success
+        // path was previously unasserted. The ACL this call installs is PROTECTED (inheritance
+        // blocked, "D:P") and must keep SYSTEM and Administrators alongside the named user, or
+        // the OS and every admin lose access to the file.
+        if (result.has_value()) {
+            tmp.close();  // read the descriptor back without our own open handle in the way
+            const QString sddl = pm.getSecurityDescriptorSddl(path);
+            QVERIFY(!sddl.isEmpty());
+            QVERIFY2(sddl.contains(QStringLiteral("D:P")), qPrintable(sddl));
+            QVERIFY2(sddl.contains(QStringLiteral(";SY)")), qPrintable(sddl));
+            QVERIFY2(sddl.contains(QStringLiteral(";BA)")), qPrintable(sddl));
+        } else {
             QVERIFY(result.error() == sak::error_code::elevation_required ||
                     result.error() == sak::error_code::permission_update_failed);
+            QVERIFY(!pm.getLastError().isEmpty());
         }
     }
 
     // ======================================================================
-    // UserProfileBackupWorker — canReadPath
+    // UserProfileBackupWorker -- canReadPath
     // ======================================================================
 
     void testCanReadPathOnExistingFile() {
@@ -169,35 +179,78 @@ private Q_SLOTS:
     }
 
     void testCanReadPathOnProtectedSystemPath() {
-        // System Volume Information typically requires admin
-        if (sak::PermissionManager::isRunningAsAdmin()) {
-            QSKIP("Test only meaningful when not running as admin");
-        }
-        bool result = sak::UserProfileBackupWorker::canReadPath(
-            QStringLiteral("C:/System Volume Information"));
-        QVERIFY(!result);
+        // The old fixture proved nothing in half the supported configurations: it QSKIPped
+        // outright whenever the suite ran elevated, and otherwise leaned on the host happening to
+        // have a denied "C:/System Volume Information". canReadPath has no other test anywhere in
+        // the tree (this file's other cases all assert TRUE), so `return true;` shipped green in
+        // every elevated run. Build the denial instead, deterministically and WITHOUT elevation:
+        // a PROTECTED DACL that DENIES FILE_READ_DATA (0x1) to Everyone ahead of a full-control
+        // ACE for the file's own owner. GetFileAttributesW still succeeds (the parent directory
+        // answers it), so the false verdict comes from the CreateFileW probe; the deny ACE binds
+        // an elevated run too (a file DACL has no administrator override, and SeBackupPrivilege
+        // cannot rescue it because canReadPath opens a FILE with flags=0); and DELETE is left
+        // granted, so QTemporaryDir still tears the fixture down even if an assertion aborts.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.path() + QStringLiteral("/denied.txt");
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("x");
+        f.close();
+        // Positive control: readable BEFORE the lockout, so the false below is caused by the ACL
+        // and not by the fixture being unreadable for some unrelated reason.
+        QVERIFY(sak::UserProfileBackupWorker::canReadPath(path));
+
+        sak::PermissionManager pm;
+        const QString owner_sid = pm.getOwner(path);
+        QVERIFY(!owner_sid.isEmpty());
+        QVERIFY2(pm.setSecurityDescriptorSddl(
+                     path, QStringLiteral("D:P(D;;0x1;;;WD)(A;;FA;;;%1)").arg(owner_sid)),
+                 qPrintable(pm.getLastError()));
+        // Pins the CreateFileW arm -- the one the callers turn into an elevationSkipped report.
+        QVERIFY(!sak::UserProfileBackupWorker::canReadPath(path));
     }
 
     // ======================================================================
-    // Backup Worker — elevationSkipped signal
+    // Backup Worker -- elevationSkipped signal
     // ======================================================================
 
     void testBackupWorkerElevationSkippedSignalExists() {
-        // Verify the signal is connectable (compile-time check)
+        // The old body connected a counter and asserted it was still 0. Nothing emits during
+        // the test, so that held no matter what the signal did -- a dead observer. Emit the
+        // signal through the meta-object instead: that proves it is registered with the
+        // (QString, QString) signature the wizard connects to and that both arguments arrive.
         sak::UserProfileBackupWorker worker;
         int skip_count = 0;
+        QString seen_path;
+        QString seen_owner;
         connect(&worker,
                 &sak::UserProfileBackupWorker::elevationSkipped,
-                [&skip_count](const QString&, const QString&) { skip_count++; });
-        QCOMPARE(skip_count, 0);
+                [&](const QString& path, const QString& owner) {
+                    ++skip_count;
+                    seen_path = path;
+                    seen_owner = owner;
+                });
+
+        QVERIFY(
+            QMetaObject::invokeMethod(&worker,
+                                      "elevationSkipped",
+                                      Qt::DirectConnection,
+                                      Q_ARG(QString, QStringLiteral("D:/profiles/x/ntuser.dat")),
+                                      Q_ARG(QString, QStringLiteral("S-1-5-18"))));
+        QCOMPARE(skip_count, 1);
+        QCOMPARE(seen_path, QStringLiteral("D:/profiles/x/ntuser.dat"));
+        QCOMPARE(seen_owner, QStringLiteral("S-1-5-18"));
     }
 
     // ======================================================================
-    // ElevatedTaskDispatcher — Phase 3 handlers
+    // ElevatedTaskDispatcher -- Phase 3 handlers
     // ======================================================================
 
     void testPhase3HandlersRegistration() {
-        // Simulate the same registration logic as elevated_helper_main.cpp
+        // NOTE: this exercises the dispatcher's allowlist, not the helper's registration --
+        // registerAllTasks() lives in the elevated_helper executable's main TU and cannot be
+        // linked here, so a handler dropped from the helper would NOT fail this test.
         sak::ElevatedTaskDispatcher dispatcher;
 
         dispatcher.registerHandler(QStringLiteral("TakeOwnership"),
@@ -261,7 +314,7 @@ private Q_SLOTS:
         auto result = dispatcher.dispatch("TakeOwnership", QJsonObject{}, no_progress, no_cancel);
         QVERIFY(result.has_value());
         QVERIFY(!result->success);
-        QVERIFY(result->error_message.contains("Missing"));
+        QCOMPARE(result->error_message, QStringLiteral("Missing path or user_sid in payload"));
     }
 
     void testBackupFileHandlerRejectsEmptyPayload() {
@@ -287,6 +340,9 @@ private Q_SLOTS:
         auto result = dispatcher.dispatch("BackupFile", QJsonObject{}, no_progress, no_cancel);
         QVERIFY(result.has_value());
         QVERIFY(!result->success);
+        // The dispatcher must hand the handler's diagnosis back verbatim; asserting only
+        // "!success" left a dispatcher that dropped error_message undetected.
+        QCOMPARE(result->error_message, QStringLiteral("Missing source or destination"));
     }
 
     void testBackupFileHandlerWithValidPayload() {
@@ -334,21 +390,6 @@ private Q_SLOTS:
         QVERIFY(result->success);
         QCOMPARE(last_pct, 100);
         QVERIFY(QFile::exists(dest_path));
-    }
-
-    // ======================================================================
-    // ThermalMonitor — hasCpuTemperature
-    // ======================================================================
-
-    void testThermalMonitorHasCpuTemperatureInitiallyFalse() {
-        sak::ThermalMonitor monitor;
-        QVERIFY(!monitor.hasCpuTemperature());
-    }
-
-    void testThermalMonitorHasCpuTemperatureAfterClear() {
-        sak::ThermalMonitor monitor;
-        monitor.clearHistory();
-        QVERIFY(!monitor.hasCpuTemperature());
     }
 };
 

@@ -1,0 +1,88 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:29:17.198Z",
+    "disk_before": {
+        "bus_type": "SATA",
+        "disk_number": 1,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "VBOX HARDDISK",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "7f0342283348b4c76408f1aea0a1e915983f328e695fe47ebe8729ddb2b37281",
+        "size_bytes": "1073741824"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "9800ecae-7df5-4197-8c8e-6dee75692f55",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Wipe Disk 1\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining       Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------       ----\r\n            SAK_WIPE     NTFS           Fixed     Healthy      OK                    991.06 MB 1007.93 MB\r\n\r\n\r\n",
+                "success": true,
+                "summary": "Wipe Disk - Disk 1"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "WipeDisk",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "9800ecae-7df5-4197-8c8e-6dee75692f55",
+            "payload": {
+            },
+            "script_sha256": "62dc965c896a05b8c891a91a3eb05d4a8a43e0c0883d597def5586c6619db325",
+            "summary": "Wipe Disk - Disk 1",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "ATAVBOX HARDDISK",
+                "drive_letter": "",
+                "kind": "Disk",
+                "offset_bytes": "0",
+                "partition_number": 0,
+                "size_bytes": "1073741824"
+            },
+            "type": "Wipe Disk",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "aeba2c4781e043db43135c23d75055b1edce0aeeaf36de88a16faffe5d83439c",
+        "layout_hash": "6c0e795f2323f9e01e3a2b33397dee5e86cccb5f60cf09b2c121445cc76c7b47",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "2b9ac762-54b4-4554-886f-995218727b0c",
+    "scenario_id": "vhd.clear-disk-wipe",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:28:43.594Z",
+    "status": "Passed",
+    "step": "wipe",
+    "tool": "partition-manager-scenario-step"
+}

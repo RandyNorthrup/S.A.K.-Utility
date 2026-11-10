@@ -1,0 +1,384 @@
+name: Release (T3)
+
+# Tier T3 (AGENTS.md, "The gate"): a version tag, or a manual dry run. Build, package, smoke the
+# clean package, run release readiness and the certification evidence checks, sign, verify,
+# and publish. T2 (ci.yml) must already be green on main for the release commit; this workflow
+# does not repeat the T2 test run.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# A run that is publishing a release must never be killed halfway through.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GITLEAKS_VERSION: '8.30.1'
+  GITLEAKS_SHA256: 'd29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e'
+  TRUFFLEHOG_VERSION: '3.99.7'
+  TRUFFLEHOG_SHA256: '16e85ace8d7724774559d418e1bd876ae410a684321c1c44a34c499b03703d9d'
+
+jobs:
+  release:
+    name: Build, package, sign and publish
+    # Pinned to windows-2022 (Visual Studio 2022, MSVC v143): Qt 6.12 lists MSVC 2022 as its
+    # supported x64 compiler, and every workflow configures with "Visual Studio 17 2022".
+    runs-on: windows-2022
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        fetch-depth: 0
+
+    - name: Read version
+      id: version
+      shell: pwsh
+      run: |
+        $ver = (Get-Content VERSION -Raw).Trim()
+        Write-Host "Detected version: $ver"
+        "APP_VERSION=$ver" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "version=$ver" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+    - name: Toolchain
+      uses: ./.github/actions/windows-build-env
+
+    # Release readiness runs the full secret scan (scripts/scan_secrets.ps1 without
+    # -SkipExternalTools), which fails closed without both external scanners.
+    # Cached under their pinned SHA-256s; the toolchain action's pinned_download.ps1 retries an
+    # outage and uses a cached copy only when it is the pinned file.
+    - name: Cache gitleaks and trufflehog downloads
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      with:
+        path: ${{ runner.temp }}/pinned-downloads/secret-scanners
+        key: pinned-secret-scanners-${{ env.GITLEAKS_SHA256 }}-${{ env.TRUFFLEHOG_SHA256 }}
+
+    - name: Install gitleaks and trufflehog
+      shell: pwsh
+      run: |
+        function Get-Pinned([string]$Url, [string]$Sha256, [string]$Name) {
+          return & ./.github/actions/windows-build-env/pinned_download.ps1 -Url $Url -Sha256 $Sha256 `
+            -Directory (Join-Path $env:RUNNER_TEMP 'pinned-downloads/secret-scanners') -Name $Name
+        }
+        $tools = Join-Path $env:RUNNER_TEMP "secret-scanners"
+        New-Item -ItemType Directory -Force -Path $tools | Out-Null
+
+        $gl = Get-Pinned "https://github.com/gitleaks/gitleaks/releases/download/v$env:GITLEAKS_VERSION/gitleaks_$($env:GITLEAKS_VERSION)_windows_x64.zip" $env:GITLEAKS_SHA256 "gitleaks.zip"
+        Expand-Archive -LiteralPath $gl -DestinationPath $tools -Force
+
+        $th = Get-Pinned "https://github.com/trufflesecurity/trufflehog/releases/download/v$env:TRUFFLEHOG_VERSION/trufflehog_$($env:TRUFFLEHOG_VERSION)_windows_amd64.tar.gz" $env:TRUFFLEHOG_SHA256 "trufflehog.tar.gz"
+        tar -xzf $th -C $tools trufflehog.exe
+        if ($LASTEXITCODE -ne 0) { throw "tar exited $LASTEXITCODE extracting trufflehog" }
+
+        $tools | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        & (Join-Path $tools gitleaks.exe) version
+        & (Join-Path $tools trufflehog.exe) --version
+
+    # The package ships these tools. Each script is idempotent and skips a tool already present
+    # in the checkout. (The old workflow also restored tools/uup/uupmc from an actions cache
+    # keyed only on the bundle script. Those files are tracked, so a restore could overwrite a
+    # newer checkout with stale bytes; the cache is gone.)
+    - name: Bundle smartmontools
+      shell: pwsh
+      run: '& scripts/bundle_smartmontools.ps1'
+
+    - name: Verify UUP tools (aria2c + uupmc, pinned SHA-256)
+      shell: pwsh
+      run: '& scripts/bundle_uup_tools.ps1'
+
+    - name: Bundle iPerf3
+      shell: pwsh
+      run: '& scripts/bundle_iperf3.ps1'
+
+    - name: Partition filesystem tool manifest
+      shell: pwsh
+      run: '& scripts/check_partition_filesystem_tool_manifest.ps1'
+
+    - name: Configure
+      shell: pwsh
+      run: |
+        cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+          -DVCPKG_APPLOCAL_DEPS=OFF `
+          -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TRIPLET" `
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+          -DSAK_PYTHON_EXECUTABLE="$env:pythonLocation\python.exe"
+        $configureExit = $LASTEXITCODE
+        "CONFIGURE EXIT: $configureExit"
+        exit $configureExit
+
+    # What ships and what release readiness runs: the app and everything it stages, the browser
+    # extension package, and the certifier its filesystem self-tests drive. Not the test executables:
+    # this workflow runs none of them, and the whole tree takes about 90 minutes and 17 GB on one
+    # runner against this job's 180 minutes.
+    - name: Build
+      shell: pwsh
+      run: |
+        cmake --build build --config Release --parallel --target sak_utility sak_stage_browser_crx partition_filesystem_probe_certifier
+        $buildExit = $LASTEXITCODE
+        "BUILD EXIT: $buildExit"
+        exit $buildExit
+
+    - name: Verify build output
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        Write-Host "=== Build Output Verification ==="
+
+        if (!(Test-Path "sak_utility.exe")) { Write-Error "FATAL: sak_utility.exe not found"; exit 1 }
+        Write-Host "OK  sak_utility.exe"
+
+        # Splash screen (copied by CMake POST_BUILD)
+        if (!(Test-Path "sak_splash.png")) { Write-Error "FATAL: sak_splash.png not found - CMake POST_BUILD copy failed"; exit 1 }
+        Write-Host "OK  sak_splash.png"
+
+        if (!(Test-Path "icon.ico")) { Write-Warning "icon.ico not found (non-fatal, embedded in exe via .rc)" } else { Write-Host "OK  icon.ico" }
+
+        # Qt plugin directories (deployed by windeployqt POST_BUILD)
+        foreach ($dir in @("platforms", "styles", "imageformats", "iconengines", "tls")) {
+          if (!(Test-Path $dir)) { Write-Error "FATAL: Qt plugin directory '$dir' not found - windeployqt may have failed"; exit 1 }
+          $count = (Get-ChildItem $dir -Filter "*.dll" | Measure-Object).Count
+          Write-Host "OK  $dir/ ($count plugins)"
+        }
+
+        foreach ($dll in @("Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Concurrent.dll", "Qt6Xml.dll")) {
+          if (!(Test-Path $dll)) { Write-Error "FATAL: $dll not found"; exit 1 }
+          Write-Host "OK  $dll"
+        }
+
+        foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "msvcp140_atomic_wait.dll")) {
+          if (!(Test-Path $dll)) { Write-Warning "$dll not found (may cause runtime failures)" } else { Write-Host "OK  $dll" }
+        }
+
+        if (!(Test-Path "tools")) { Write-Warning "tools/ directory not found" } else { Write-Host "OK  tools/" }
+
+        if (!(Test-Path "tools/smartmontools/smartctl.exe")) {
+          Write-Warning "tools/smartmontools/smartctl.exe not found - SMART diagnostics unavailable"
+        } else {
+          $smartVer = & .\tools\smartmontools\smartctl.exe --version 2>&1 | Select-Object -First 1
+          Write-Host "OK  tools/smartmontools/smartctl.exe ($smartVer)"
+        }
+
+        if (!(Test-Path "tools/uup/aria2c.exe")) { Write-Error "FATAL: tools/uup/aria2c.exe not found - ISO downloads will be broken"; exit 1 }
+        $aria2Ver = & .\tools\uup\aria2c.exe --version 2>&1 | Select-Object -First 1
+        Write-Host "OK  tools/uup/aria2c.exe ($aria2Ver)"
+
+        # The copied UUP bundle must be byte-identical to the pinned tree: the converter, the
+        # files it reads beside itself (CDImage\cdimage.exe, Settings\Settings.ini,
+        # libwim-15.dll) and nothing else.
+        & "$env:GITHUB_WORKSPACE/scripts/bundle_uup_tools.ps1" -OutputDir "tools/uup"
+        Write-Host "OK  tools/uup (pinned UUP bundle)"
+
+        if (!(Test-Path "tools/iperf3/iperf3.exe")) { Write-Warning "tools/iperf3/iperf3.exe not found - LAN bandwidth testing unavailable" } else { Write-Host "OK  tools/iperf3/iperf3.exe" }
+
+
+        # Imported non-system DLLs must exist in the build output.
+        & ../../scripts/verify_windows_runtime_dependencies.ps1 -RootDir . -PrimaryExe "sak_utility.exe"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Write-Host "=== Verification complete ==="
+
+    # One script per step: a second call in the same step would overwrite the first one's exit
+    # code, so a failed staging could be reported green by a successful archive call.
+    - name: Stage portable release
+      shell: pwsh
+      run: '& scripts/stage_portable_release.ps1 -BuildDir "build/Release" -PackageName "SAK-Utility-v$env:APP_VERSION"'
+
+    - name: Create release archive
+      shell: pwsh
+      run: '& scripts/create_release_archive.ps1 -BuildDir "build/Release" -PackageName "SAK-Utility-v$env:APP_VERSION"'
+
+    - name: Smoke test clean portable package
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        $zipName = "$pkgName-Windows-x64.zip"
+        $extract = Join-Path (Get-Location) "clean-smoke-extract"
+        Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path $extract | Out-Null
+        Expand-Archive -LiteralPath $zipName -DestinationPath $extract -Force
+        & "../../scripts/verify_portable_release_smoke.ps1" -PackageRoot $extract -RepoRoot (Resolve-Path "../..").Path
+
+    - name: Startup E2E smoke from clean extracted package
+      shell: pwsh
+      run: '& scripts/run_portable_e2e_smoke.ps1 -PackageRoot "build/Release/clean-smoke-extract"'
+
+    - name: Release readiness gate from clean extracted package
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        $zipName = "$pkgName-Windows-x64.zip"
+        $extract = "build/Release/clean-readiness-extract"
+        Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path $extract | Out-Null
+        Expand-Archive -LiteralPath "build/Release/$zipName" -DestinationPath $extract -Force
+        & scripts/check_release_readiness.ps1 -PackageRoot $extract
+
+    # The generated Current Certification State block in docs/PARTITION_MANAGER_CERTIFICATION.md
+    # must match the claim level computed from the committed certification evidence, against this
+    # checkout's source digest. Evidence from other code stops counting, and the block goes stale.
+    - name: Partition Manager certification state block is current
+      shell: pwsh
+      run: '& scripts/check_partition_manager_release_claims.ps1'
+
+    # The application refuses a bundled filesystem tool (e2fsprogs, hfsprogs) whose bytes differ
+    # from the SHA-256 that tools/filesystem/manifest.json pins, and signing below changes the
+    # bytes of every unsigned tool it signs. This builds a check from the application's own
+    # validation code (.github/release-tools/filesystem_manifest_check) and asks it about the package
+    # before and after signing, so a package whose tools the app would refuse is never published.
+    - name: Build the packaged filesystem tool check
+      shell: pwsh
+      run: |
+        cmake -S .github/release-tools/filesystem_manifest_check -B build/filesystem-manifest-check `
+          -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+          -DSAK_SOURCE_DIR="$env:GITHUB_WORKSPACE"
+        $configureExit = $LASTEXITCODE
+        "CONFIGURE EXIT: $configureExit"
+        if ($configureExit -ne 0) { exit $configureExit }
+        cmake --build build/filesystem-manifest-check --config Release
+        $buildExit = $LASTEXITCODE
+        "BUILD EXIT: $buildExit"
+        exit $buildExit
+
+    - name: The application accepts the packaged filesystem tools (before signing)
+      shell: pwsh
+      run: |
+        $env:PATH = "$env:QT_ROOT_DIR\bin;$env:PATH"
+        & build/filesystem-manifest-check/Release/sak_filesystem_manifest_check.exe "build/Release/SAK-Utility-v$env:APP_VERSION"
+        exit $LASTEXITCODE
+
+    - name: Create signing catalog
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        & "../../scripts/create_signing_catalog.ps1" -RootDir $pkgName -OutputPath "$pkgName/signing-catalog.txt"
+
+    - name: Sign packaged binaries
+      uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82  # v2.0.0
+      with:
+        azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+        endpoint: https://wus.codesigning.azure.net/
+        signing-account-name: scnetsolutions
+        certificate-profile-name: SAKUtility
+        files-catalog: build/Release/SAK-Utility-v${{ steps.version.outputs.version }}/signing-catalog.txt
+        file-digest: SHA256
+        timestamp-rfc3161: http://timestamp.acs.microsoft.com
+        timestamp-digest: SHA256
+        timeout: 900
+        batch-size: 0
+
+    # Signing changed the bytes of the unsigned filesystem tools, so the application now refuses
+    # them. First require that refusal: it is the failure the re-pin repairs, and seeing it proves
+    # the check can see it. Then re-pin the PACKAGE's manifest (never the repository's, which keeps
+    # the upstream hashes) to the signed bytes, and write the upstream-to-signed mapping the
+    # release publishes beside the zip. If signing ever stops touching these tools, this step's
+    # first check is what to revisit (docs/RELEASE_READINESS.md, "For after 0.9.3").
+    - name: Re-pin the signed filesystem tools in the packaged manifest
+      shell: pwsh
+      run: |
+        $package = "build/Release/SAK-Utility-v$env:APP_VERSION"
+        $env:PATH = "$env:QT_ROOT_DIR\bin;$env:PATH"
+        $before = @(& build/filesystem-manifest-check/Release/sak_filesystem_manifest_check.exe $package)
+        $beforeExit = $LASTEXITCODE
+        $before | ForEach-Object { Write-Host $_ }
+        if ($beforeExit -ne 1 -or -not ($before -match 'hash mismatch')) {
+          throw "Expected the application to refuse the signed filesystem tools before the re-pin (exit $beforeExit)"
+        }
+        & .github/release-tools/repin_signed_filesystem_tools.ps1 -PackageRoot $package `
+          -RepositoryManifest tools/filesystem/manifest.json `
+          -MappingPath build/Release/filesystem-tools-signed-sha256.txt `
+          -Version $env:APP_VERSION
+        exit 0
+
+    - name: The application accepts the packaged filesystem tools (after signing)
+      shell: pwsh
+      run: |
+        $env:PATH = "$env:QT_ROOT_DIR\bin;$env:PATH"
+        & build/filesystem-manifest-check/Release/sak_filesystem_manifest_check.exe "build/Release/SAK-Utility-v$env:APP_VERSION"
+        exit $LASTEXITCODE
+
+    - name: Verify packaged signatures
+      shell: pwsh
+      run: '& scripts/verify_authenticode_signatures.ps1 -RootDir "build/Release/SAK-Utility-v${{ steps.version.outputs.version }}"'
+
+    - name: Signed release readiness gate
+      shell: pwsh
+      run: |
+        & scripts/check_release_readiness.ps1 `
+          -PackageRoot "build/Release/SAK-Utility-v${{ steps.version.outputs.version }}" `
+          -RequireSignedPackage
+
+    - name: Rebuild signed release archive
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        & "../../scripts/create_release_archive.ps1" -BuildDir . -PackageName $pkgName -CleanMutableRuntimeData
+
+    - name: Create stable download alias
+      if: startsWith(github.ref, 'refs/tags/v')
+      shell: pwsh
+      run: |
+        # Permanent direct-download asset for the sakutility.com download button:
+        #   https://github.com/<owner>/<repo>/releases/latest/download/SAK-Utility-Windows-x64.zip
+        # Byte-identical copy of the versioned zip, so the contained signed exe has the same hash
+        # and SmartScreen verdict. Reputation accrues to the signing publisher, not the file name.
+        $versionedZip = "build/Release/SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64.zip"
+        $stableZip = "build/Release/SAK-Utility-Windows-x64.zip"
+        Copy-Item -LiteralPath $versionedZip -Destination $stableZip -Force
+        $stableHash = (Get-FileHash -LiteralPath $stableZip -Algorithm SHA256).Hash
+        Add-Content -LiteralPath "build/Release/SHA256SUMS.txt" -Value "SAK-Utility-Windows-x64.zip:  $stableHash"
+
+    - name: Upload ZIP artifact
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      with:
+        name: SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64
+        path: build/Release/SAK-Utility-v${{ steps.version.outputs.version }}/*
+        retention-days: 90
+
+    # The signed zip itself, its checksums and the filesystem tool mapping: on a manual dry run
+    # these are the bytes to check and smoke before a tag publishes.
+    - name: Upload release files artifact
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      with:
+        name: SAK-Utility-v${{ steps.version.outputs.version }}-release-files
+        path: |
+          build/Release/SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64.zip
+          build/Release/SHA256SUMS.txt
+          build/Release/filesystem-tools-signed-sha256.txt
+        if-no-files-found: error
+        retention-days: 90
+
+    - name: Create release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
+      with:
+        files: |
+          build/Release/SAK-Utility-Windows-x64.zip
+          build/Release/SHA256SUMS.txt
+          build/Release/filesystem-tools-signed-sha256.txt
+        body: |
+          # S.A.K. Utility v${{ steps.version.outputs.version }}
+
+          **Swiss Army Knife Utility** is a portable Windows toolkit for PC technicians, IT pros, and sysadmins. There is no installer: extract the ZIP to a folder you can write to and run `sak_utility.exe`.
+
+          - [How to use it](https://sakutility.com/wiki)
+          - [What changed](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
+
+          **Requirements:** Windows 10 or 11, x64. `SHA256SUMS.txt` lists the hash of the download. `filesystem-tools-signed-sha256.txt` maps each bundled filesystem tool's upstream hash to the signed file shipped.
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,12 @@
+# =============================================================================
+# S.A.K. Utility -- src/core/ clang-tidy override
+# =============================================================================
+# readability-identifier-naming stays disabled for ordinary full-config core analysis while its
+# measured debt is removed in focused, reviewed slices. clang-tidy's bulk rename fix is unsafe on
+# the multi-thousand-line lambda-heavy raw-filesystem engines, so remediation is manual. The naming
+# gate overrides this file with the root config for a healthy all-core measurement and requires
+# every TU in scripts/clang_tidy_core_naming_clean.txt to remain at zero. Every other check still
+# runs on core through this inherited config.
+InheritParentConfig: true
+Checks: >
+  -readability-identifier-naming

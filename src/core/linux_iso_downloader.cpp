@@ -20,13 +20,13 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_constants.h"
+#include "sak/network_transfer_runner.h"
 
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QtConcurrent/QtConcurrentRun>
@@ -34,34 +34,49 @@
 #include <algorithm>
 
 namespace {
-constexpr qsizetype kAria2cBinaryUnitSuffixLength = 3;
 constexpr int kAria2cDownloadedCaptureGroup = 1;
 constexpr int kAria2cTotalCaptureGroup = 2;
-constexpr int kAria2cPercentCaptureGroup = 3;
-constexpr int kAria2cSpeedCaptureGroup = 4;
+constexpr int kAria2cSpeedCaptureGroup = 3;
+constexpr int kPercentMax = 100;
+// The one user agent this downloader sends, for the ISO and its checksum alike. SourceForge's
+// front end answers a browser's user agent, and aria2's own, with 403 to a program, which aria2c
+// reports as exit code 22: GParted Live and SystemRescue could not be downloaded at all.
+constexpr const char* kDownloadUserAgent = "SAK-Utility/1.0";
 constexpr int kChecksumRecordMinimumParts = 2;
+// Capture-group indices of the BSD-style checksum record regex
+// "^([A-Za-z0-9-]+)\\s*\\(([^)]+)\\)\\s*=\\s*(\\S+)$": group 1 is the algorithm,
+// group 2 the filename, group 3 the digest.
+constexpr int kBsdRecordFileNameGroup = 2;
+constexpr int kBsdRecordDigestGroup = 3;
+constexpr qsizetype kSha256HexLength = 64;
+constexpr qsizetype kSha1HexLength = 40;
 constexpr int kChecksumComputingProgress = 97;
 constexpr int kChecksumVerifyingProgress = 95;
 constexpr qint64 kChecksumReadBufferSize = 8 * sak::kBytesPerMB;
+// A checksum file (or a release note carrying the digest) is small; a peer that
+// streams past this ceiling is refused rather than buffered into memory.
+constexpr qint64 kMaxChecksumBytes = 16 * sak::kBytesPerMB;
 
 QString formatSize(qint64 bytes) {
     return sak::formatBytes(bytes);
 }
 
-/// @brief Parse aria2c speed string (e.g. "2.3MiB", "512KiB") to MB/s
-double parseAria2cSpeedMBps(const QString& dlSpeedStr) {
-    if (dlSpeedStr.endsWith("MiB")) {
-        return dlSpeedStr.chopped(kAria2cBinaryUnitSuffixLength).toDouble();
+// Turn a failed checksum fetch into a message the user can act on. A mirror redirector
+// (e.g. download.fedoraproject.org) can bounce an HTTPS request onto a plain-HTTP mirror;
+// NoLessSafeRedirectPolicy refuses that downgrade, and Qt reports InsecureRedirectError.
+// That refusal is a safety measure -- not the user's fault -- so name the cause plainly
+// instead of surfacing a bare framework string the user cannot interpret.
+QString checksumFetchErrorMessage(QNetworkReply* reply, const sak::NetworkTransferResult& result) {
+    if (reply->error() == QNetworkReply::InsecureRedirectError) {
+        return QStringLiteral(
+            "Checksum download refused for safety: the download mirror redirected to an "
+            "insecure (unencrypted HTTP) server, which was blocked so the checksum cannot be "
+            "tampered with in transit. This is a mirror-side problem, not a problem with your "
+            "settings -- please retry, which usually selects a different mirror.");
     }
-    if (dlSpeedStr.endsWith("KiB")) {
-        return dlSpeedStr.chopped(kAria2cBinaryUnitSuffixLength).toDouble() / sak::kBytesPerKBf;
-    }
-    if (dlSpeedStr.endsWith("GiB")) {
-        return dlSpeedStr.chopped(kAria2cBinaryUnitSuffixLength).toDouble() * sak::kBytesPerKBf;
-    }
-    // Numeric aria2c value is raw bytes/sec.
-    return dlSpeedStr.toDouble() / sak::kBytesPerMBf;
+    return QStringLiteral("Checksum fetch failed: ") + result.error_message;
 }
+
 }  // anonymous namespace
 
 // ============================================================================
@@ -90,6 +105,15 @@ LinuxISODownloader::LinuxISODownloader(QObject* parent)
 
 LinuxISODownloader::~LinuxISODownloader() {
     cancel();
+    // Join the background hash task before members are destroyed: a QtConcurrent::run future is
+    // non-cancelable and its lambda reads m_savePath, so tearing down while it runs is a UAF.
+    // Wait only here (not in cancel()) so a live-object cancel never blocks the GUI thread.
+    if (m_hashFuture.isRunning()) {
+        // SAK-ALLOW-BLOCKING: a QtConcurrent::run future is not cancelable, so there is
+        // nothing to give up TO -- the only alternative to waiting is the use-after-free
+        // described above.
+        m_hashFuture.waitForFinished();
+    }
 }
 
 // ============================================================================
@@ -97,16 +121,19 @@ LinuxISODownloader::~LinuxISODownloader() {
 // ============================================================================
 
 void LinuxISODownloader::startDownload(const QString& distroId, const QString& savePath) {
+    // The constructor creates m_catalog and nothing reassigns it. An empty or unknown distroId
+    // is rejected below by the distroById lookup.
     Q_ASSERT(m_catalog);
-    Q_ASSERT(!distroId.isEmpty());
     if (isDownloading()) {
         Q_EMIT downloadError("A download is already in progress");
         return;
     }
 
     m_cancelled = false;
+    ++m_operationGeneration;  // supersede any stale in-flight verify from a prior run
     m_currentDistroId = distroId;
     m_savePath = savePath;
+    m_rollingFilenamePattern.clear();  // set only for a rolling DirectURL distro below
 
     auto distro = m_catalog->distroById(distroId);
     if (distro.id.isEmpty()) {
@@ -130,14 +157,132 @@ void LinuxISODownloader::startDownload(const QString& distroId, const QString& s
         m_expectedFileName = m_catalog->resolveFileName(distro);
         m_totalSize = distro.approximateSize;
         m_sourceType = distro.sourceType;
+        m_rollingFilenamePattern = distro.rollingFilenamePattern;
 
         if (m_downloadUrl.isEmpty()) {
             Q_EMIT downloadError("Could not resolve download URL for " + distro.name);
             return;
         }
+        if (!requirePinnedChecksum(distro.name)) {
+            return;
+        }
 
-        startAria2cDownload(m_downloadUrl, m_savePath, m_expectedFileName);
+        if (m_rollingFilenamePattern.isEmpty()) {
+            startAria2cDownload(m_downloadUrl, m_savePath, m_expectedFileName);
+        } else {
+            // Rolling release: the pinned filename would 404, so derive the current
+            // one from the checksum file first, then download (R5-G22-10).
+            startRollingFilenameDiscovery();
+        }
     }
+}
+
+bool LinuxISODownloader::requirePinnedChecksum(const QString& distroName) {
+    // A downloaded ISO is written to bootable media, so an unverifiable one is refused up
+    // front rather than downloaded and handed on with a warning. SourceForge downloads in
+    // particular redirect from the initial HTTPS URL onto plain-HTTP mirrors where no TLS
+    // certificate applies; the pinned checksum, fetched over HTTPS, is what makes that leg
+    // safe. Without it there is nothing to verify against.
+    if (m_checksumUrl.isEmpty() || m_checksumType.isEmpty()) {
+        const QString error =
+            "No pinned checksum is published for " + distroName +
+            "; refusing to download an ISO whose integrity cannot be verified before it is "
+            "written to removable media.";
+        sak::logError(error.toStdString());
+        setPhase(Phase::Failed, "No pinned checksum available");
+        Q_EMIT downloadError(error);
+        return false;
+    }
+    const QUrl checksumUrl(m_checksumUrl);
+    if (!checksumUrl.isValid() || checksumUrl.scheme().toLower() != "https") {
+        const QString error = "Rejected non-HTTPS checksum URL for " + distroName + ": " +
+                              m_checksumUrl;
+        sak::logError(error.toStdString());
+        setPhase(Phase::Failed, "Checksum URL is not HTTPS");
+        Q_EMIT downloadError(error);
+        return false;
+    }
+    return true;
+}
+
+void LinuxISODownloader::startRollingFilenameDiscovery() {
+    // Reuse the ResolvingVersion phase: to the UI this is still "working out what
+    // to download" before the transfer begins.
+    setPhase(Phase::ResolvingVersion, "Resolving current filename...");
+    Q_EMIT statusMessage("Resolving the current image filename...");
+
+    // Fetch the SAME pinned HTTPS checksum file the post-download verify uses, so
+    // the current filename is derived from the project's own published manifest.
+    // requirePinnedChecksum already validated the URL is HTTPS and well-formed.
+    auto* nam = new QNetworkAccessManager(this);
+    const quint64 generation = m_operationGeneration.load();
+    QNetworkReply* reply = sak::startNetworkMetadataGet(
+        *nam,
+        {.url = QUrl(m_checksumUrl),
+         .raw_headers = {{QByteArrayLiteral("User-Agent"), QByteArray(kDownloadUserAgent)}},
+         .timeout_ms = sak::kHttpMetadataTransferTimeoutMs,
+         .max_response_bytes = kMaxChecksumBytes});
+    m_pendingMetadataReplies.append(reply);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, nam, generation]() {
+        onRollingFilenameReplyFinished(reply, nam, generation);
+    });
+}
+
+void LinuxISODownloader::onRollingFilenameReplyFinished(QNetworkReply* reply,
+                                                        QNetworkAccessManager* nam,
+                                                        quint64 generation) {
+    Q_ASSERT(reply);
+    Q_ASSERT(nam);
+    m_pendingMetadataReplies.removeOne(reply);
+    reply->deleteLater();
+    nam->deleteLater();
+
+    if (!shouldApplyVerifyResult(m_cancelled, generation, m_operationGeneration.load())) {
+        return;  // cancelled, or superseded by a newer download
+    }
+
+    const sak::NetworkTransferResult result = sak::takeNetworkMetadataResult(reply);
+    if (!result.success) {
+        const QString error = checksumFetchErrorMessage(reply, result);
+        sak::logWarning(error.toStdString());
+        setPhase(Phase::Failed, "Filename discovery failed");
+        Q_EMIT downloadError(error);
+        return;
+    }
+
+    const QString checksumData = QString::fromUtf8(result.body);
+    const QString filename = LinuxDistroCatalog::filenameFromChecksums(checksumData,
+                                                                       m_rollingFilenamePattern);
+    if (filename.isEmpty()) {
+        const QString error =
+            "Could not determine the current download filename from the published checksums for " +
+            m_currentDistroId + "; refusing to guess a version that may not exist. Please retry.";
+        sak::logWarning(error.toStdString());
+        setPhase(Phase::Failed, "Filename discovery failed");
+        Q_EMIT downloadError(error);
+        return;
+    }
+
+    applyDiscoveredFilename(filename);
+    startAria2cDownload(m_downloadUrl, m_savePath, m_expectedFileName);
+}
+
+void LinuxISODownloader::applyDiscoveredFilename(const QString& filename) {
+    // Swap ONLY the last path segment of the download URL and the save path to the
+    // discovered filename, keeping the pinned host/directory and the user's chosen
+    // folder. filenameFromChecksums already guaranteed a bare filename (no path
+    // separators), so this cannot redirect the download elsewhere.
+    m_expectedFileName = filename;
+
+    const int urlSlash = static_cast<int>(m_downloadUrl.lastIndexOf('/'));
+    if (urlSlash >= 0) {
+        m_downloadUrl = m_downloadUrl.left(urlSlash + 1) + filename;
+    }
+    const QFileInfo saveInfo(m_savePath);
+    m_savePath = saveInfo.absolutePath() + '/' + filename;
+
+    sak::logInfo("Rolling-release filename resolved: " + filename.toStdString() + " -> " +
+                 m_downloadUrl.toStdString());
 }
 
 // ============================================================================
@@ -168,12 +313,17 @@ void LinuxISODownloader::onVersionCheckCompleted(const QString& distroId,
                              ". The GitHub release may not contain an ISO asset.");
         return;
     }
+    if (!requirePinnedChecksum(distro.name)) {
+        return;
+    }
 
     sak::logInfo("Resolved download URL: " + m_downloadUrl.toStdString());
     startAria2cDownload(m_downloadUrl, m_savePath, m_expectedFileName);
 }
 
 void LinuxISODownloader::onVersionCheckFailed(const QString& distroId, const QString& error) {
+    // m_catalog is created by the constructor and never reassigned; it echoes back the id
+    // startDownload handed to checkLatestVersion, and that id had already resolved to a distro.
     Q_ASSERT(m_catalog);
     Q_ASSERT(!distroId.isEmpty());
     if (distroId != m_currentDistroId || m_cancelled) {
@@ -203,9 +353,9 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
         return;
     }
 
-    QFileInfo saveInfo(savePath);
-    QString outDir = saveInfo.absolutePath();
-    QString outFile = saveInfo.fileName();
+    const QFileInfo saveInfo(savePath);
+    const QString outDir = saveInfo.absolutePath();
+    const QString outFile = saveInfo.fileName();
 
     if (!QDir().mkpath(outDir)) {
         sak::logWarning("Failed to create ISO download directory: {}", outDir.toStdString());
@@ -228,7 +378,7 @@ void LinuxISODownloader::startAria2cDownload(const QString& url,
         }
     });
 
-    QStringList args = buildAria2cArguments(url, outDir, outFile);
+    const QStringList args = buildAria2cArguments(url, outDir, outFile);
 
     sak::logInfo("Starting aria2c: " + aria2Path.toStdString() + " -> " + savePath.toStdString());
 
@@ -260,7 +410,7 @@ bool LinuxISODownloader::prepareAria2cDownload(const QString& url,
 }
 
 void LinuxISODownloader::resetAria2cProcess() {
-    if (m_aria2cProcess) {
+    if (m_aria2cProcess != nullptr) {
         m_aria2cProcess->disconnect();
         m_aria2cProcess->deleteLater();
         m_aria2cProcess = nullptr;
@@ -306,11 +456,8 @@ QStringList LinuxISODownloader::buildAria2cArguments(const QString& url,
     }
 
     // -- Common settings --
-    args  // -- User-Agent (critical: many CDNs/SourceForge block
-          //    aria2c's default UA string) --
-        << "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-           "AppleWebKit/537.36 (KHTML, like Gecko) "
-           "Chrome/131.0.0.0 Safari/537.36"
+    args  // -- User-Agent: the app's own, as for the checksum (see kDownloadUserAgent) --
+        << QStringLiteral("--user-agent=%1").arg(QString::fromLatin1(kDownloadUserAgent))
         // -- Resumability --
         << "--continue=true"
         << "--auto-file-renaming=false"
@@ -336,25 +483,48 @@ struct Aria2cExitEntry {
 };
 
 static constexpr Aria2cExitEntry kAria2cExitCodes[] = {
-    {1, "Unknown error occurred"},
-    {2, "Connection timed out"},
-    {3, "Resource not found (404)"},
-    {4, "Max retries reached \xe2\x80\x94 check your internet connection"},
-    {5, "Download speed too slow"},
-    {6, "Network error"},
-    {7, "Download incomplete \xe2\x80\x94 some files could not be finished"},
-    {9, "Disk space insufficient"},
-    {13, "File already exists and could not be overwritten"},
-    {24, "DNS resolution failed"},
+    {.code = 1, .message = "aria2c reported a generic failure (exit code 1)"},
+    {.code = 2, .message = "Connection timed out"},
+    {.code = 3, .message = "Resource not found (404)"},
+    {.code = 4, .message = "The server kept answering that the file is not there (404)"},
+    {.code = 5, .message = "Download speed too slow"},
+    {.code = 6, .message = "Network error"},
+    {.code = 7, .message = "Download incomplete \xe2\x80\x94 some files could not be finished"},
+    {.code = 9, .message = "Disk space insufficient"},
+    {.code = 13, .message = "File already exists and could not be overwritten"},
+    {.code = 19, .message = "The download server's name could not be resolved (DNS)"},
+    {.code = 22, .message = "The download server refused the request (HTTP error)"},
+    {.code = 23, .message = "The download server redirected too many times"},
+    {.code = 24, .message = "The download server asked for a sign-in (HTTP authorization)"},
+    {.code = 29, .message = "The download server is busy or down for maintenance; try again later"},
+    {.code = 32, .message = "aria2c's own checksum check of the download failed"},
 };
 
 }  // namespace
 
+std::optional<LinuxISODownloader::Aria2cReadout> LinuxISODownloader::parseAria2cReadout(
+    const QString& line) {
+    // aria2c 1.37 writes sizes and speed in bytes with a B after them, and a percent only once it
+    // knows the total: "[#c492f1 2146304B/6518974464B(0%) CN:1 DL:1062157B ETA:1h42m15s]", or
+    // "[#c492f1 0B/0B CN:1 DL:0B]" before. The old pattern wanted digits right before the slash
+    // and never matched one, so the bar sat at 0% with no size or speed for the whole download.
+    static const QRegularExpression readout(
+        QStringLiteral(R"(\[#[0-9A-Fa-f]+\s+(\d+)B/(\d+)B(?:\(\d+%\))?.*?\bDL:(\d+)B)"));
+    const auto match = readout.match(line);
+    if (!match.hasMatch()) {
+        return std::nullopt;
+    }
+    return Aria2cReadout{.downloaded_bytes =
+                             match.captured(kAria2cDownloadedCaptureGroup).toLongLong(),
+                         .total_bytes = match.captured(kAria2cTotalCaptureGroup).toLongLong(),
+                         .bytes_per_second = match.captured(kAria2cSpeedCaptureGroup).toLongLong()};
+}
+
 QString LinuxISODownloader::aria2cExitCodeMessage(int exit_code) {
-    Q_ASSERT(exit_code >= 0);
-    auto it = std::find_if(std::begin(kAria2cExitCodes),
-                           std::end(kAria2cExitCodes),
-                           [exit_code](const auto& e) { return e.code == exit_code; });
+    const auto* it =
+        std::ranges::find_if(kAria2cExitCodes,
+
+                             [exit_code](const auto& e) { return e.code == exit_code; });
     if (it != std::end(kAria2cExitCodes)) {
         return QString::fromUtf8(it->message);
     }
@@ -362,13 +532,14 @@ QString LinuxISODownloader::aria2cExitCodeMessage(int exit_code) {
 }
 
 void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exitStatus) {
+    // The constructor creates m_progressTimer; m_aria2cProcess is null-checked below because it
+    // is created lazily per download.
     Q_ASSERT(m_progressTimer);
-    Q_ASSERT(m_aria2cProcess);
     m_progressTimer->stop();
 
     // Read any remaining output
-    if (m_aria2cProcess) {
-        QString output = QString::fromUtf8(m_aria2cProcess->readAllStandardOutput());
+    if (m_aria2cProcess != nullptr) {
+        const QString output = QString::fromUtf8(m_aria2cProcess->readAllStandardOutput());
         if (!output.trimmed().isEmpty()) {
             sak::logInfo("aria2c final output: " + output.trimmed().toStdString());
         }
@@ -394,7 +565,7 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
     }
 
     // Download succeeded -- verify file exists
-    QFileInfo downloadedFile(m_savePath);
+    const QFileInfo downloadedFile(m_savePath);
     if (!downloadedFile.exists() || downloadedFile.size() == 0) {
         setPhase(Phase::Failed, "Downloaded file is missing or empty");
         Q_EMIT downloadError(
@@ -404,17 +575,23 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
     }
 
     sak::logInfo("Download complete: " + m_savePath.toStdString() + " (" +
-                 std::to_string(downloadedFile.size() / sak::kBytesPerMB) + " MB)");
+                 sak::formatBytes(downloadedFile.size()).toStdString() + ")");
 
-    // Proceed to checksum verification if available
-    if (!m_checksumUrl.isEmpty() && !m_checksumType.isEmpty()) {
-        verifyChecksum();
-    } else {
-        // No checksum available -- complete without verification
-        setPhase(Phase::Completed, "Download complete (no checksum verification available)");
-        Q_EMIT statusMessage("Download complete -- no checksum available for this distribution");
-        Q_EMIT downloadComplete(m_savePath, downloadedFile.size());
+    // An ISO that cannot be checked against a pinned checksum is never handed on as a
+    // completed download: the transport may have been redirected onto a plain-HTTP mirror and
+    // the file goes on to be written to bootable media. requirePinnedChecksum already refused
+    // the start, so reaching here without one means the state was lost -- fail closed.
+    if (m_checksumUrl.isEmpty() || m_checksumType.isEmpty()) {
+        const QString error =
+            "Downloaded ISO has no pinned checksum to verify against; refusing to report it as "
+            "complete. The file was left at " +
+            m_savePath;
+        sak::logError(error.toStdString());
+        setPhase(Phase::Failed, "No pinned checksum available");
+        Q_EMIT downloadError(error);
+        return;
     }
+    verifyChecksum();
 }
 
 // ============================================================================
@@ -422,43 +599,47 @@ void LinuxISODownloader::onAria2cFinished(int exitCode, QProcess::ExitStatus exi
 // ============================================================================
 
 void LinuxISODownloader::onProgressPollTimer() {
-    Q_ASSERT(m_aria2cProcess);
     if (m_phase != Phase::Downloading) {
         return;
     }
 
     // Read aria2c stdout for progress info
-    if (!m_aria2cProcess) {
+    if (m_aria2cProcess == nullptr) {
         return;
     }
 
-    QByteArray data = m_aria2cProcess->readAllStandardOutput();
+    const QByteArray data = m_aria2cProcess->readAllStandardOutput();
     if (data.isEmpty()) {
         return;
     }
 
-    QString output = QString::fromUtf8(data);
-    QStringList lines = output.split(QRegularExpression("[\r\n]"), Qt::SkipEmptyParts);
+    const QString output = QString::fromUtf8(data);
+    const QStringList lines = output.split(QRegularExpression("[\r\n]"), Qt::SkipEmptyParts);
 
     for (const QString& rawLine : lines) {
-        QString line = rawLine.trimmed();
+        const QString line = rawLine.trimmed();
 
-        // aria2c progress lines look like:
-        // [#abcdef 1234567/9876543(12%) CN:16 DL:45.2MiB]
-        // or in human-readable=false mode:
-        // [#abcdef 1234567/9876543(12%) CN:16 DL:47394816]
-        static QRegularExpression progressRegex(R"(\[#\w+\s+(\d+)/(\d+)\((\d+)%\).*DL:(\S+)\])");
-
-        auto match = progressRegex.match(line);
-        if (match.hasMatch()) {
-            qint64 downloaded = match.captured(kAria2cDownloadedCaptureGroup).toLongLong();
-            qint64 total = match.captured(kAria2cTotalCaptureGroup).toLongLong();
-            int percent = match.captured(kAria2cPercentCaptureGroup).toInt();
-            double speedMBps = parseAria2cSpeedMBps(match.captured(kAria2cSpeedCaptureGroup));
-
-            QString detail = QString("%1 / %2").arg(formatSize(downloaded), formatSize(total));
-
-            Q_EMIT progressUpdated(percent, detail);
+        if (const auto readout = parseAria2cReadout(line)) {
+            const double speedMBps = static_cast<double>(readout->bytes_per_second) /
+                                     sak::kBytesPerMBf;
+            if (readout->total_bytes <= 0) {
+                // Connected, size not known yet: say so, with the catalog's approximate size.
+                const QString detail = m_totalSize > 0
+                                           ? QString("%1 of about %2")
+                                                 .arg(formatSize(readout->downloaded_bytes),
+                                                      formatSize(m_totalSize))
+                                           : formatSize(readout->downloaded_bytes);
+                Q_EMIT progressUpdated(0, detail);
+                Q_EMIT speedUpdated(speedMBps);
+                continue;
+            }
+            const int percent =
+                static_cast<int>((readout->downloaded_bytes * kPercentMax) / readout->total_bytes);
+            const QString detail = QString("%1 / %2").arg(formatSize(readout->downloaded_bytes),
+                                                          formatSize(readout->total_bytes));
+            Q_EMIT progressUpdated(percent,
+                                   detail,
+                                   percentText(readout->downloaded_bytes, readout->total_bytes));
             Q_EMIT speedUpdated(speedMBps);
             continue;
         }
@@ -475,56 +656,146 @@ void LinuxISODownloader::onProgressPollTimer() {
 // Checksum Verification
 // ============================================================================
 
+qsizetype LinuxISODownloader::expectedHashHexLength() const {
+    return m_checksumType == "sha1" ? kSha1HexLength : kSha256HexLength;
+}
+
+bool LinuxISODownloader::isHexDigestOfLength(const QString& token, qsizetype hex_length) {
+    if (token.size() != hex_length) {
+        return false;
+    }
+    return std::ranges::all_of(token, [](QChar ch) {
+        const QChar lower = ch.toLower();
+        return (lower >= QLatin1Char('0') && lower <= QLatin1Char('9')) ||
+               (lower >= QLatin1Char('a') && lower <= QLatin1Char('f'));
+    });
+}
+
+QString LinuxISODownloader::checksumSectionAlgorithm(const QString& line) {
+    // Matches a per-algorithm heading such as "### SHA256SUMS:", "SHA1SUMS" or "# B3SUMS:".
+    static const QRegularExpression headingRe(QStringLiteral("^#*\\s*([A-Za-z0-9]+)SUMS:?$"));
+    const auto match = headingRe.match(line.trimmed());
+    return match.hasMatch() ? match.captured(1).toUpper() : QString();
+}
+
+QString LinuxISODownloader::bsdRecordDigest(const QString& line,
+                                            const QString& expectedFileName,
+                                            const QString& algorithm,
+                                            qsizetype hex_length) {
+    // BSD-style record: "SHA256 (Fedora-Workstation-Live-44-1.7.x86_64.iso) = <hash>".
+    static const QRegularExpression bsdRe(
+        QStringLiteral("^([A-Za-z0-9-]+)\\s*\\(([^)]+)\\)\\s*=\\s*(\\S+)$"));
+    const auto match = bsdRe.match(line.trimmed());
+    if (!match.hasMatch()) {
+        return {};
+    }
+    // The algorithm is named on the line itself, so follow that label exactly as a section
+    // heading is followed: a SHA256 record must never satisfy a SHA-512 configuration.
+    // "SHA-256" and "SHA256" are the same algorithm spelled two ways.
+    QString lineAlgorithm = match.captured(1).toUpper();
+    QString wantedAlgorithm = algorithm.toUpper();
+    lineAlgorithm.remove(QLatin1Char('-'));
+    wantedAlgorithm.remove(QLatin1Char('-'));
+    if (lineAlgorithm != wantedAlgorithm ||
+        match.captured(kBsdRecordFileNameGroup) != expectedFileName) {
+        return {};
+    }
+    const QString digest = match.captured(kBsdRecordDigestGroup);
+    return isHexDigestOfLength(digest, hex_length) ? digest.toLower() : QString();
+}
+
+QString LinuxISODownloader::hashFromRecordLine(const QString& line,
+                                               const QString& expectedFileName) const {
+    // Split on whitespace (hash  filename OR hash *filename)
+    const QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
+    if (parts.size() == 1) {
+        // A bare sidecar holding only the digest. It must still LOOK like a digest of the
+        // configured algorithm; a lone prose word is not a hash and must not be returned.
+        const QString only = parts.first();
+        return isHexDigestOfLength(only, expectedHashHexLength()) ? only.toLower() : QString();
+    }
+    for (qsizetype i = 0; i + 1 < parts.size(); i += kChecksumRecordMinimumParts) {
+        QString filename = parts.at(i + 1);
+        if (filename.startsWith('*')) {
+            filename = filename.mid(1);
+        }
+        if (filename == expectedFileName &&
+            isHexDigestOfLength(parts.at(i), expectedHashHexLength())) {
+            return parts.at(i).toLower();
+        }
+    }
+    return {};
+}
+
 QString LinuxISODownloader::parseExpectedHash(const QString& checksumData,
                                               const QString& expectedFileName) const {
-    QStringList checksumLines = checksumData.split('\n', Qt::SkipEmptyParts);
+    const QStringList checksumLines = checksumData.split('\n', Qt::SkipEmptyParts);
+    // Empty until a per-algorithm heading is seen. A plain sums file (one algorithm, no
+    // headings) never sets it and is read exactly as before. A release note that groups
+    // several algorithms DOES set it, and that is the only thing that can tell a SHA-256
+    // digest from a BLAKE3 one: both are 64 hex characters and both name the same ISO, so
+    // matching on shape alone would return whichever block happened to come first.
+    QString section;
 
     for (const QString& line : checksumLines) {
-        QString trimmed = line.trimmed();
-        if (trimmed.isEmpty() || trimmed.startsWith('#')) {
+        const QString trimmed = line.trimmed();
+        if (trimmed.isEmpty()) {
             continue;
         }
-
-        // Split on whitespace (hash  filename OR hash *filename)
-        QStringList parts = trimmed.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-        if (parts.size() == 1) {
-            return parts.first().toLower();
-        }
-        if (parts.size() < kChecksumRecordMinimumParts) {
+        if (const QString heading = checksumSectionAlgorithm(trimmed); !heading.isEmpty()) {
+            section = heading;
             continue;
         }
-
-        for (qsizetype i = 0; i + 1 < parts.size(); i += kChecksumRecordMinimumParts) {
-            QString filename = parts.at(i + 1);
-            if (filename.startsWith('*')) {
-                filename = filename.mid(1);
-            }
-            if (filename == expectedFileName) {
-                return parts.at(i).toLower();
-            }
+        if (trimmed.startsWith('#')) {
+            continue;
+        }
+        // A BSD-style record carries its own algorithm label, so it is self-describing and is
+        // read regardless of any surrounding section.
+        const QString bsd =
+            bsdRecordDigest(trimmed, expectedFileName, m_checksumType, expectedHashHexLength());
+        if (!bsd.isEmpty()) {
+            return bsd;
+        }
+        if (!section.isEmpty() && section != m_checksumType.toUpper()) {
+            continue;  // A digest for an algorithm we are not verifying with.
+        }
+        if (const QString hash = hashFromRecordLine(trimmed, expectedFileName); !hash.isEmpty()) {
+            return hash;
         }
     }
 
     return {};
 }
 
-void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam) {
+void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply,
+                                                 QNetworkAccessManager* nam,
+                                                 quint64 generation) {
+    // Only verifyChecksum reaches here, with the manager it just allocated and the reply
+    // QNetworkAccessManager::get returned for it; neither can be null.
     Q_ASSERT(reply);
     Q_ASSERT(nam);
+    m_pendingMetadataReplies.removeOne(reply);
     reply->deleteLater();
     nam->deleteLater();
 
-    if (reply->error() != QNetworkReply::NoError) {
-        const QString error = "Checksum fetch failed: " + reply->errorString();
+    if (!shouldApplyVerifyResult(m_cancelled, generation, m_operationGeneration.load())) {
+        return;  // cancelled, or superseded by a newer download; emit no terminal signal
+    }
+
+    const sak::NetworkTransferResult result = sak::takeNetworkMetadataResult(reply);
+    if (!result.success) {
+        const QString error = checksumFetchErrorMessage(reply, result);
         sak::logWarning(error.toStdString());
         setPhase(Phase::Failed, "Checksum fetch failed");
         Q_EMIT downloadError(error);
         return;
     }
 
-    QString checksumData = QString::fromUtf8(reply->readAll());
-    QString expectedFileName = QFileInfo(m_savePath).fileName();
-    QString expectedHash = parseExpectedHash(checksumData, expectedFileName);
+    const QString checksumData = QString::fromUtf8(result.body);
+    // The name upstream published, not the name this copy was saved under. The checksum file only
+    // knows the former, and the Save Location belongs to the user.
+    const QString expectedFileName = m_expectedFileName;
+    const QString expectedHash = expectedHashFor(checksumData);
 
     if (expectedHash.isEmpty()) {
         const QString error = "Could not find matching hash in checksum file for: " +
@@ -541,16 +812,45 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
 
     auto algorithm = (m_checksumType == "sha1") ? QCryptographicHash::Sha1
                                                 : QCryptographicHash::Sha256;
+    launchChecksumHash(algorithm, expectedHash);
+}
+
+void LinuxISODownloader::launchChecksumHash(QCryptographicHash::Algorithm algorithm,
+                                            const QString& expectedHash) {
+    // Tag this verify with the current operation generation and hash the file
+    // captured NOW (by value) -- so a later download that reassigns m_savePath
+    // cannot make this background hash read the wrong file, and a cancelled or
+    // superseded result is discarded instead of acting on stale state.
+    const quint64 generation = m_operationGeneration.load();
+    const QString hashPath = m_savePath;
 
     auto* watcher = new QFutureWatcher<QString>(this);
-    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, expectedHash]() {
-        QString actualHash = watcher->result();
-        watcher->deleteLater();
-        onChecksumVerified(actualHash == expectedHash, expectedHash, actualHash);
-    });
+    connect(
+        watcher,
+        &QFutureWatcher<QString>::finished,
+        this,
+        [this, watcher, expectedHash, generation]() {
+            const QString actualHash = watcher->result();
+            watcher->deleteLater();
+            if (!shouldApplyVerifyResult(m_cancelled, generation, m_operationGeneration.load())) {
+                return;  // cancelled or superseded by a newer download
+            }
+            onChecksumVerified(actualHash == expectedHash, expectedHash, actualHash);
+        });
 
-    auto future = QtConcurrent::run([this, algorithm]() -> QString {
-        QFile file(m_savePath);
+    // Give this hash its OWN cancel flag and signal any prior hash to stop first. The
+    // background task captures the flag and path BY VALUE and never dereferences `this`,
+    // so an overlapping or superseded task (a cancel + restart can leave one running)
+    // can never use-after-free the downloader, and resetting m_cancelled for a new
+    // download cannot revive an old hash.
+    if (m_hashCancel) {
+        m_hashCancel->store(true);
+    }
+    m_hashCancel = std::make_shared<std::atomic<bool>>(false);
+    const std::shared_ptr<std::atomic<bool>> cancelFlag = m_hashCancel;
+
+    m_hashFuture = QtConcurrent::run([algorithm, hashPath, cancelFlag]() -> QString {
+        QFile file(hashPath);
         if (!file.open(QIODevice::ReadOnly)) {
             return QString();
         }
@@ -558,12 +858,15 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply, QNetworkA
         QCryptographicHash hash(algorithm);
         const qint64 bufferSize = kChecksumReadBufferSize;
         while (!file.atEnd()) {
+            if (cancelFlag->load()) {
+                return QString();  // abort a long hash promptly on cancel
+            }
             hash.addData(file.read(bufferSize));
         }
         return hash.result().toHex().toLower();
     });
 
-    watcher->setFuture(future);
+    watcher->setFuture(m_hashFuture);
 }
 
 void LinuxISODownloader::verifyChecksum() {
@@ -573,26 +876,37 @@ void LinuxISODownloader::verifyChecksum() {
 
     // Fetch checksum file
     auto* nam = new QNetworkAccessManager(this);
-    QUrl checksumUrl(m_checksumUrl);
-    QNetworkRequest request(checksumUrl);
-    request.setRawHeader("User-Agent", "SAK-Utility/1.0");
+    // Tag this fetch with the current operation generation so a reply that outlives a
+    // cancel + restart is discarded instead of verifying the new download against the old
+    // checksum file (which could fail it, or worse delete the new file).
+    const quint64 generation = m_operationGeneration.load();
 
-    auto* reply = nam->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply, nam]() {
-        onChecksumReplyFinished(reply, nam);
+    QNetworkReply* reply = sak::startNetworkMetadataGet(
+        *nam,
+        {.url = QUrl(m_checksumUrl),
+         .raw_headers = {{QByteArrayLiteral("User-Agent"), QByteArray(kDownloadUserAgent)}},
+         .timeout_ms = sak::kHttpMetadataTransferTimeoutMs,
+         .max_response_bytes = kMaxChecksumBytes});
+    m_pendingMetadataReplies.append(reply);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, nam, generation]() {
+        onChecksumReplyFinished(reply, nam, generation);
     });
 }
 
 void LinuxISODownloader::onChecksumVerified(bool match,
                                             const QString& expected,
                                             const QString& actual) {
-    QFileInfo fileInfo(m_savePath);
+    const QFileInfo fileInfo(m_savePath);
 
     if (actual.isEmpty()) {
-        sak::logWarning("Failed to compute checksum for: " + m_savePath.toStdString());
-        Q_EMIT statusMessage("Checksum verification skipped (file read error)");
-        setPhase(Phase::Completed, "Download complete");
-        Q_EMIT downloadComplete(m_savePath, fileInfo.size());
+        // Fail closed: a checksum the user requested could not be computed (file
+        // unreadable/locked), so the download is NOT verified. Do not delete -- the content is
+        // unknown-good and the open failure is likely transient, so leave it for a retry.
+        const QString error = "Could not read the downloaded file to verify its checksum: " +
+                              m_savePath;
+        sak::logError(error.toStdString());
+        setPhase(Phase::Failed, "Checksum verification failed");
+        Q_EMIT downloadError(error);
         return;
     }
 
@@ -623,19 +937,44 @@ void LinuxISODownloader::onChecksumVerified(bool match,
 // ============================================================================
 
 void LinuxISODownloader::cancel() {
-    Q_ASSERT(m_aria2cProcess);
+    // The constructor creates m_progressTimer and m_catalog, and nothing reassigns them.
+    // m_aria2cProcess is created lazily by startDownload; it is legitimately null when cancel()
+    // runs from the dtor of a never-started downloader. The null-guarded kill below handles it.
     Q_ASSERT(m_progressTimer);
     Q_ASSERT(m_catalog);
     m_cancelled = true;
+    ++m_operationGeneration;        // invalidate any background hash still running
+    if (m_hashCancel) {
+        m_hashCancel->store(true);  // signal the self-contained hash task to stop
+    }
     m_progressTimer->stop();
+    const QList<QNetworkReply*> pending_metadata = m_pendingMetadataReplies;
+    m_pendingMetadataReplies.clear();
+    for (QNetworkReply* reply : pending_metadata) {
+        if (reply != nullptr) {
+            reply->abort();
+        }
+    }
     m_catalog->cancelAll();
 
-    if (m_aria2cProcess && m_aria2cProcess->state() != QProcess::NotRunning) {
+    QString leftover;
+    if ((m_aria2cProcess != nullptr) && m_aria2cProcess->state() != QProcess::NotRunning) {
         m_aria2cProcess->kill();
+        // The partial file goes now, not when the process's end reaches the event loop: in the
+        // capture VM the dialog went before that did, and a 4.89 GB .iso and its .aria2 stayed.
+        // A killed process ends in milliseconds, and the file cannot be removed while aria2c
+        // still has it open; the wait is bounded.
+        m_aria2cProcess->waitForFinished(sak::kTimeoutProcessTerminateMs);
+        if (!m_savePath.isEmpty() && !discardDownload(m_savePath, &leftover)) {
+            sak::logError(leftover.toStdString());
+        }
     }
 
     setPhase(Phase::Idle, "Cancelled");
-    Q_EMIT statusMessage("Download cancelled");
+    // A file that stays is named, since the next download would meet it.
+    Q_EMIT statusMessage(leftover.isEmpty()
+                             ? QStringLiteral("Download cancelled")
+                             : QStringLiteral("Download cancelled. %1").arg(leftover));
 }
 
 // ============================================================================
@@ -661,17 +1000,42 @@ QString LinuxISODownloader::findAria2c() const {
     return {};
 }
 
-void LinuxISODownloader::cleanupPartialFiles() {
-    // Remove .aria2 control file
-    QString aria2ControlFile = m_savePath + ".aria2";
-    if (QFile::exists(aria2ControlFile)) {
-        QFile::remove(aria2ControlFile);
-        sak::logInfo("Removed aria2 control file: " + aria2ControlFile.toStdString());
+QString LinuxISODownloader::percentText(qint64 done, qint64 total) {
+    constexpr qint64 kTenthsPerPercent = 10;
+    if (total <= 0 || done <= 0) {
+        return QStringLiteral("0%");
     }
+    // Rounded down, as the whole percent above it is: the bar never claims more than is down.
+    const qint64 tenths = (std::min(done, total) * kPercentMax * kTenthsPerPercent) / total;
+    if (tenths < kTenthsPerPercent) {
+        return QStringLiteral("0.%1%").arg(tenths);
+    }
+    return QStringLiteral("%1%").arg(tenths / kTenthsPerPercent);
+}
 
-    // Remove partial download
-    if (QFile::exists(m_savePath)) {
-        QFile::remove(m_savePath);
-        sak::logInfo("Removed partial download: " + m_savePath.toStdString());
+bool LinuxISODownloader::discardDownload(const QString& save_path, QString* error) {
+    for (const QString& path : {save_path + QStringLiteral(".aria2"), save_path}) {
+        if (!QFile::exists(path)) {
+            continue;
+        }
+        QFile file(path);
+        if (!file.remove()) {
+            *error = QStringLiteral("Could not remove %1: %2")
+                         .arg(QDir::toNativeSeparators(path), file.errorString());
+            return false;
+        }
+        sak::logInfo("Removed partial download file: " + path.toStdString());
+    }
+    return true;
+}
+
+void LinuxISODownloader::cleanupPartialFiles() {
+    if (m_savePath.isEmpty()) {
+        return;
+    }
+    // A removal that fails is logged as failed, not as done; cancel() names it to the user.
+    QString error;
+    if (!discardDownload(m_savePath, &error)) {
+        sak::logError(error.toStdString());
     }
 }

@@ -34,6 +34,5 @@
     "Install was approved according to access mode.",
     "Installed version or failure reason is reported.",
     "Output logs are preserved."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "sak/file_explorer_grouping.h"
 #include "sak/file_management_file_system.h"
 #include "sak/layout_constants.h"
 
@@ -98,13 +99,47 @@ struct FileExplorerItemCapabilities {
         const FileManagementTarget& target, const FileManagementEntry& entry);
 };
 
+// Files ILayoutSettingsService: one size kind per layout. Details, List, and
+// Columns span Compact(1)..ExtraLarge(5); Cards spans Small(1)..ExtraLarge(4);
+// Grid spans Small(1)..ExtraLarge(12). Defaults match LayoutSettingsService
+// (Details/List/Cards/Columns Small, Grid Large).
+// Default layout size level per view kind (see the size-kind ranges above).
+inline constexpr int kDefaultDetailsLayoutSize = 2;
+inline constexpr int kDefaultListLayoutSize = 2;
+inline constexpr int kDefaultGridLayoutSize = 8;
+inline constexpr int kDefaultColumnsLayoutSize = 2;
+
+struct FileExplorerLayoutSizes {
+    int details{kDefaultDetailsLayoutSize};
+    int list{kDefaultListLayoutSize};
+    int cards{1};
+    int grid{kDefaultGridLayoutSize};
+    int columns{kDefaultColumnsLayoutSize};
+
+    [[nodiscard]] friend bool operator==(const FileExplorerLayoutSizes& lhs,
+                                         const FileExplorerLayoutSizes& rhs) = default;
+};
+
+// Files "Sort folders first / files first / together" placement
+// (SortFoldersFirstAction / SortFilesFirstAction /
+// SortFilesAndFoldersTogetherAction over SortDirectoriesAlongsideFiles).
+enum class FileExplorerFolderSortPlacement {
+    FoldersFirst,
+    FilesFirst,
+    Together,
+};
+
 struct FileExplorerViewSettings {
     FileExplorerViewMode mode{FileExplorerViewMode::Details};
     bool show_hidden{false};
     bool show_extensions{true};
-    int item_size_px{kFileExplorerItemSizeDefault};
+    FileExplorerLayoutSizes sizes;
     QString sort_key{QStringLiteral("name")};
     Qt::SortOrder sort_order{Qt::AscendingOrder};
+    FileExplorerGroupOption group_option{FileExplorerGroupOption::None};
+    FileExplorerGroupDateUnit group_date_unit{FileExplorerGroupDateUnit::Year};
+    Qt::SortOrder group_order{Qt::AscendingOrder};
+    FileExplorerFolderSortPlacement folder_placement{FileExplorerFolderSortPlacement::FoldersFirst};
 };
 
 struct FileExplorerPaneState {

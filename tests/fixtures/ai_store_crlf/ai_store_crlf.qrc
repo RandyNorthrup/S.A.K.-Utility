@@ -1,0 +1,7 @@
+<!-- Fixtures that must keep CRLF line endings on every checkout; see .gitattributes. -->
+<RCC>
+    <qresource prefix="/ai_store_crlf">
+        <file alias="skills/crlf-line-endings.md">skills/crlf-line-endings.md</file>
+        <file alias="workflows/crlf_line_endings.json">workflows/crlf_line_endings.json</file>
+    </qresource>
+</RCC>

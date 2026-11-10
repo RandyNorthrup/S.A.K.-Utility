@@ -1,0 +1,971 @@
+// Copyright (c) 2026 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+#include "sak/win32mcp/browser_control.h"
+#include "sak/win32mcp/browser_extension_installer.h"
+#include "sak/win32mcp/win32_mcp_dispatch.h"
+#include "sak/win32mcp/win32_mcp_entry.h"
+#include "sak/win32mcp/win32_mcp_tools.h"
+
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QtTest/QtTest>
+
+using sak::win32mcp::handleRequest;
+using sak::win32mcp::invokeTool;
+using sak::win32mcp::toolCallResult;
+using sak::win32mcp::toolCatalog;
+using sak::win32mcp::ToolResult;
+
+namespace {
+
+QJsonObject request(const QString& method, const QJsonValue& id, const QJsonObject& params = {}) {
+    QJsonObject obj{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                    {QStringLiteral("method"), method}};
+    if (!id.isUndefined()) {
+        obj.insert(QStringLiteral("id"), id);
+    }
+    if (!params.isEmpty()) {
+        obj.insert(QStringLiteral("params"), params);
+    }
+    return obj;
+}
+
+QJsonObject callToolText(const QJsonObject& response) {
+    const QJsonObject result = response.value(QStringLiteral("result")).toObject();
+    const QJsonArray content = result.value(QStringLiteral("content")).toArray();
+    const QString text = content.isEmpty()
+                             ? QString()
+                             : content.at(0).toObject().value(QStringLiteral("text")).toString();
+    return QJsonDocument::fromJson(text.toUtf8()).object();
+}
+
+// The refusal text a failing tool puts in its JSON payload. Every tool below reports its
+// reason there, so pinning it is what separates "refused for the reason under test" from
+// "refused for some unrelated reason" -- which a bare is_error check cannot do.
+QString toolError(const ToolResult& result) {
+    return QJsonDocument::fromJson(result.text.toUtf8())
+        .object()
+        .value(QStringLiteral("error"))
+        .toString();
+}
+
+}  // namespace
+
+class Win32McpServerTests : public QObject {
+    Q_OBJECT
+
+private Q_SLOTS:
+    void initialize_reportsNativeServerIdentityAndProtocol();
+    void toolsList_advertisesReadOnlyBatchWithStrictSchemas();
+    void notification_withoutIdGetsNoResponse();
+    void unknownMethod_returnsMethodNotFound();
+    void ping_returnsEmptyResult();
+    void toolsCall_healthCheckReturnsOkNotError();
+    void toolsCall_missingNameReturnsInvalidParams();
+    void toolsCall_unknownToolReturnsIsError();
+    void invokeTool_listWindowsReturnsStructuredArray();
+    void invokeTool_getWindowInfoRequiresTitle();
+    void invokeTool_clipboardWriteRequiresText();
+    void invokeTool_clipboardReadReturnsTextShape();
+    void invokeTool_browserExtensionStatusReturnsShape();
+    void invokeTool_uiaInspectWindowRequiresTitle();
+    void invokeTool_uiaInspectWindowUnknownTitleErrors();
+    void invokeTool_uiaFindControlRequiresNameAndTitle();
+    void invokeTool_uiaGetControlValueRequiresRef();
+    void invokeTool_uiaGetControlValueWithoutSnapshotErrors();
+    void invokeTool_uiaGetFocusedReturnsShapeOrError();
+    void invokeTool_ocrWindowRequiresTitle();
+    void invokeTool_ocrRegionRequiresBounds();
+    void invokeTool_findAndWaitTextRequireQuery();
+    void invokeTool_pixelColorReadsAShape();
+    void invokeTool_watchToolsValidateArgs();
+    void invokeTool_inputToolsValidateArgsWithoutInjecting();
+    void invokeTool_mouseClickRejectsNonNumericCoordinates();
+    void invokeTool_mouseClickRefusesWhenNamedTargetMissing();
+    void invokeTool_closeWindowRequiresTitle();
+    void toolsCall_browserExtensionRoutesToInstallerNotBridge();
+    void toolCallResult_textOnlyIsSingleTextBlock();
+    void toolCallResult_imageBecomesImageBlockPlusSummary();
+    void readOnlyProfileFiltersCatalogAndRefusesMutatingCall();
+    void redactionMasksSecretsInResultText();
+    void redactionMasksQuotedJsonSecrets();
+    void redactionCoversCompoundAndHeaderSecretNames_data();
+    void redactionCoversCompoundAndHeaderSecretNames();
+    void redactionKeepsTheServersOwnNames_data();
+    void redactionKeepsTheServersOwnNames();
+    void redactionWalksJsonDocumentsAsTrees();
+    void redactionLeavesOrdinaryOutputIntact();
+    void readOnlySetExcludesActiveBrowserTools();
+    void relayModeRequiresOurPinnedExtensionOrigin();
+    void serverProfile_unknownTokenFailsClosedToReadOnly();
+    void request_rejectsWrongJsonRpcVersion();
+    void toolsCall_nonObjectArgumentsRejected();
+    void validateArgsAgainstSchema_enforcesRequiredUnknownAndType();
+};
+
+void Win32McpServerTests::initialize_reportsNativeServerIdentityAndProtocol() {
+    const auto response = handleRequest(request(QStringLiteral("initialize"), 1));
+    QVERIFY(response.has_value());
+    const QJsonObject result = response->value(QStringLiteral("result")).toObject();
+    QCOMPARE(result.value(QStringLiteral("protocolVersion")).toString(),
+             QStringLiteral("2024-11-05"));
+    const QJsonObject info = result.value(QStringLiteral("serverInfo")).toObject();
+    QCOMPARE(info.value(QStringLiteral("name")).toString(), QStringLiteral("sak-win32-mcp"));
+    QCOMPARE(info.value(QStringLiteral("version")).toString(), QStringLiteral("1.0.0"));
+    // Must advertise a tools capability -- and ONLY that one, so a capability the server does
+    // not actually implement cannot be announced to clients unnoticed.
+    QCOMPARE(result.value(QStringLiteral("capabilities")).toObject(),
+             (QJsonObject{{QStringLiteral("tools"), QJsonObject{}}}));
+}
+
+void Win32McpServerTests::toolsList_advertisesReadOnlyBatchWithStrictSchemas() {
+    const auto response = handleRequest(request(QStringLiteral("tools/list"), 2));
+    QVERIFY(response.has_value());
+    const QJsonArray tools = response->value(QStringLiteral("result"))
+                                 .toObject()
+                                 .value(QStringLiteral("tools"))
+                                 .toArray();
+    // The catalog is fixed for this config (null browser, non-read-only policy): 11 base + 9
+    // desktop + 8 ocr + 5 watch + 5 input = 38. `>= 5` was ~8x below the truth and never failed
+    // independently of the name checks below; the exact count also catches a duplicate/extra tool.
+    QCOMPARE(tools.size(), 38);
+
+    QStringList names;
+    for (const auto& value : tools) {
+        const QJsonObject tool = value.toObject();
+        names << tool.value(QStringLiteral("name")).toString();
+        QVERIFY(!tool.value(QStringLiteral("description")).toString().isEmpty());
+        const QJsonObject schema = tool.value(QStringLiteral("inputSchema")).toObject();
+        QCOMPARE(schema.value(QStringLiteral("type")).toString(), QStringLiteral("object"));
+        QCOMPARE(schema.value(QStringLiteral("additionalProperties")).toBool(true), false);
+    }
+    for (const QString& expected : {QStringLiteral("health_check"),
+                                    QStringLiteral("list_windows"),
+                                    QStringLiteral("get_window_info"),
+                                    QStringLiteral("list_monitors"),
+                                    QStringLiteral("mouse_position"),
+                                    QStringLiteral("clipboard_read"),
+                                    QStringLiteral("clipboard_write"),
+                                    QStringLiteral("browser_extension_install"),
+                                    QStringLiteral("browser_extension_uninstall"),
+                                    QStringLiteral("browser_extension_status"),
+                                    QStringLiteral("close_window"),
+                                    QStringLiteral("capture_window"),
+                                    QStringLiteral("capture_screen"),
+                                    QStringLiteral("capture_monitor"),
+                                    QStringLiteral("uia_inspect_window"),
+                                    QStringLiteral("uia_find_control"),
+                                    QStringLiteral("uia_get_control_value"),
+                                    QStringLiteral("uia_get_focused"),
+                                    QStringLiteral("ocr_window"),
+                                    QStringLiteral("ocr_region"),
+                                    QStringLiteral("ocr_region_structured"),
+                                    QStringLiteral("ocr_screen"),
+                                    QStringLiteral("ocr_screen_structured"),
+                                    QStringLiteral("find_text_on_screen"),
+                                    QStringLiteral("assert_text_visible"),
+                                    QStringLiteral("wait_for_text"),
+                                    QStringLiteral("get_pixel_color"),
+                                    QStringLiteral("get_window_snapshot"),
+                                    QStringLiteral("compare_screenshots"),
+                                    QStringLiteral("wait_for_window"),
+                                    QStringLiteral("wait_for_idle"),
+                                    QStringLiteral("uia_click_control"),
+                                    QStringLiteral("dismiss_dialog"),
+                                    QStringLiteral("mouse_click"),
+                                    QStringLiteral("click_text"),
+                                    QStringLiteral("type_text"),
+                                    QStringLiteral("send_keys"),
+                                    QStringLiteral("focus_window")}) {
+        QVERIFY2(names.contains(expected), qPrintable(expected));
+    }
+    // list_processes stays dropped: it duplicated the app's own diagnostics/process listing (and
+    // run_powershell Get-Process), and the rule is to use app code for any feature that overlaps.
+    // The desktop-control engine owns only what the app cannot do headlessly (live-desktop
+    // inspection/automation: per-window/monitor capture, and -- later -- UIA/OCR/input).
+    QVERIFY(!names.contains(QStringLiteral("list_processes")));
+}
+
+void Win32McpServerTests::notification_withoutIdGetsNoResponse() {
+    const auto response =
+        handleRequest(request(QStringLiteral("notifications/initialized"), QJsonValue::Undefined));
+    QVERIFY(!response.has_value());
+}
+
+void Win32McpServerTests::unknownMethod_returnsMethodNotFound() {
+    const auto response = handleRequest(request(QStringLiteral("does/not/exist"), 3));
+    QVERIFY(response.has_value());
+    QCOMPARE(
+        response->value(QStringLiteral("error")).toObject().value(QStringLiteral("code")).toInt(),
+        -32'601);
+    // The message echoes the rejected method name, so a client can see WHAT was unknown.
+    QCOMPARE(response->value(QStringLiteral("error"))
+                 .toObject()
+                 .value(QStringLiteral("message"))
+                 .toString(),
+             QStringLiteral("Unknown method: does/not/exist"));
+}
+
+void Win32McpServerTests::ping_returnsEmptyResult() {
+    const auto response = handleRequest(request(QStringLiteral("ping"), 4));
+    QVERIFY(response.has_value());
+    // ping answers with an EMPTY result and the echoed id -- pin the whole envelope, since
+    // "has result, has no error" says nothing about what the result contains.
+    QCOMPARE(*response,
+             (QJsonObject{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
+                          {QStringLiteral("id"), 4},
+                          {QStringLiteral("result"), QJsonObject{}}}));
+}
+
+void Win32McpServerTests::toolsCall_healthCheckReturnsOkNotError() {
+    const auto response =
+        handleRequest(request(QStringLiteral("tools/call"),
+                              5,
+                              QJsonObject{{QStringLiteral("name"), QStringLiteral("health_check")},
+                                          {QStringLiteral("arguments"), QJsonObject{}}}));
+    QVERIFY(response.has_value());
+    const QJsonObject result = response->value(QStringLiteral("result")).toObject();
+    QCOMPARE(result.value(QStringLiteral("isError")).toBool(true), false);
+    const QJsonObject payload = callToolText(*response);
+    QCOMPARE(payload.value(QStringLiteral("status")).toString(), QStringLiteral("ok"));
+    QCOMPARE(payload.value(QStringLiteral("server")).toString(), QStringLiteral("sak-win32-mcp"));
+    QCOMPARE(payload.value(QStringLiteral("version")).toString(), QStringLiteral("1.0.0"));
+    QCOMPARE(payload.value(QStringLiteral("os")).toString(), QStringLiteral("Windows"));
+    QVERIFY(payload.value(QStringLiteral("native")).toBool());
+}
+
+void Win32McpServerTests::toolsCall_missingNameReturnsInvalidParams() {
+    const auto response =
+        handleRequest(request(QStringLiteral("tools/call"),
+                              6,
+                              QJsonObject{{QStringLiteral("arguments"), QJsonObject{}}}));
+    QVERIFY(response.has_value());
+    QCOMPARE(
+        response->value(QStringLiteral("error")).toObject().value(QStringLiteral("code")).toInt(),
+        -32'602);
+    QCOMPARE(response->value(QStringLiteral("error"))
+                 .toObject()
+                 .value(QStringLiteral("message"))
+                 .toString(),
+             QStringLiteral("tools/call requires params.name"));
+}
+
+void Win32McpServerTests::toolsCall_unknownToolReturnsIsError() {
+    const auto response = handleRequest(
+        request(QStringLiteral("tools/call"),
+                7,
+                QJsonObject{{QStringLiteral("name"), QStringLiteral("no_such_tool")}}));
+    QVERIFY(response.has_value());
+    // A bad tool name is a successful RPC whose payload is flagged isError, not a
+    // protocol error -- the model can read the reason and recover.
+    const QJsonObject result = response->value(QStringLiteral("result")).toObject();
+    QCOMPARE(result.value(QStringLiteral("isError")).toBool(false), true);
+    // ...and the payload names the tool that was not found, which is what makes it recoverable.
+    QCOMPARE(callToolText(*response).value(QStringLiteral("error")).toString(),
+             QStringLiteral("Unknown tool: no_such_tool"));
+}
+
+void Win32McpServerTests::invokeTool_listWindowsReturnsStructuredArray() {
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("list_windows"), {});
+    QVERIFY(!result.is_error);
+    const QJsonObject payload = QJsonDocument::fromJson(result.text.toUtf8()).object();
+    QVERIFY(payload.contains(QStringLiteral("windows")));
+    QVERIFY(payload.value(QStringLiteral("windows")).isArray());
+    QCOMPARE(payload.value(QStringLiteral("count")).toInt(),
+             payload.value(QStringLiteral("windows")).toArray().size());
+}
+
+void Win32McpServerTests::invokeTool_getWindowInfoRequiresTitle() {
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("get_window_info"), {});
+    QVERIFY(result.is_error);
+    QCOMPARE(toolError(result), QStringLiteral("window_title is required"));
+}
+
+void Win32McpServerTests::invokeTool_clipboardWriteRequiresText() {
+    // Missing 'text' must be a clean error and must NOT touch the clipboard.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("clipboard_write"), {});
+    QVERIFY(result.is_error);
+    QCOMPARE(toolError(result), QStringLiteral("clipboard_write requires 'text'"));
+}
+
+void Win32McpServerTests::invokeTool_clipboardReadReturnsTextShape() {
+    // A read is non-destructive, so it is safe to exercise against the real clipboard. It
+    // must be honest: either a well-formed {text,has_text,truncated} payload or a flagged
+    // error -- never a bare empty success. (We deliberately do NOT test clipboard_write's
+    // success path, which would clobber the user's actual clipboard.)
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("clipboard_read"), {});
+    const QJsonObject payload = QJsonDocument::fromJson(result.text.toUtf8()).object();
+    if (result.is_error) {
+        QVERIFY(payload.contains(QStringLiteral("error")));
+        return;
+    }
+    QVERIFY(payload.contains(QStringLiteral("text")));
+    QVERIFY(payload.value(QStringLiteral("has_text")).isBool());
+    QVERIFY(payload.value(QStringLiteral("truncated")).isBool());
+}
+
+void Win32McpServerTests::invokeTool_browserExtensionStatusReturnsShape() {
+    // status only READS the registry (never mutates policy), so it is safe here. It must
+    // return a well-formed {state, crx_present, extension_id} payload with the pinned id.
+    // (We deliberately do NOT invoke browser_extension_install/uninstall, which would write
+    // the machine's real Chrome policy; their behavior is covered by the installer unit test
+    // against a throwaway registry key.)
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("browser_extension_status"),
+                                                        {});
+    QVERIFY(!result.is_error);
+    const QJsonObject payload = QJsonDocument::fromJson(result.text.toUtf8()).object();
+    const QString state = payload.value(QStringLiteral("state")).toString();
+    QVERIFY(state == QStringLiteral("installed") || state == QStringLiteral("not_installed") ||
+            state == QStringLiteral("partial") || state == QStringLiteral("error"));
+    QVERIFY(payload.value(QStringLiteral("crx_present")).isBool());
+    QCOMPARE(payload.value(QStringLiteral("extension_id")).toString(),
+             QString::fromLatin1(sak::win32mcp::kBrowserExtensionId));
+}
+
+void Win32McpServerTests::invokeTool_uiaInspectWindowRequiresTitle() {
+    // Missing window_title is a clean error, not a crash or a walk of some arbitrary window.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("uia_inspect_window"), {});
+    QVERIFY(result.is_error);
+    QCOMPARE(toolError(result), QStringLiteral("window_title or foreground is required"));
+}
+
+void Win32McpServerTests::invokeTool_uiaInspectWindowUnknownTitleErrors() {
+    // A title that matches no visible window returns a flagged error the model can recover from
+    // (deterministic and side-effect free -- no COM tree is walked). The positive walk path is
+    // covered by the live desktop cert harness against a real application window.
+    const sak::win32mcp::ToolResult result =
+        invokeTool(QStringLiteral("uia_inspect_window"),
+                   QJsonObject{{QStringLiteral("window_title"),
+                                QStringLiteral("no such window zzq-sak-unit-test-42")}});
+    QVERIFY(result.is_error);
+    // The refusal echoes the title that matched nothing, so the model can correct it.
+    QCOMPARE(toolError(result),
+             QStringLiteral("No visible window matching 'no such window zzq-sak-unit-test-42'"));
+}
+
+void Win32McpServerTests::invokeTool_uiaFindControlRequiresNameAndTitle() {
+    // Both window_title and name are required; either alone is a clean error.
+    // Each refusal names the argument that is actually missing, so a validator that always
+    // complained about the same one could not pass all three.
+    // With NEITHER argument the name check runs first, so that is the reported reason.
+    QCOMPARE(toolError(invokeTool(QStringLiteral("uia_find_control"), {})),
+             QStringLiteral("name is required"));
+    QCOMPARE(toolError(
+                 invokeTool(QStringLiteral("uia_find_control"),
+                            QJsonObject{{QStringLiteral("window_title"), QStringLiteral("x")}})),
+             QStringLiteral("name is required"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("uia_find_control"),
+                                  QJsonObject{{QStringLiteral("name"), QStringLiteral("Scan")}})),
+             QStringLiteral("window_title or foreground is required"));
+}
+
+void Win32McpServerTests::invokeTool_uiaGetControlValueRequiresRef() {
+    // No 'ref' argument is an explicit, honest error rather than reading ref 0.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("uia_get_control_value"),
+                                                        {});
+    QVERIFY(result.is_error);
+    // The refusal also tells the caller HOW to get a ref, which is the recoverable half.
+    QCOMPARE(toolError(result), QStringLiteral("ref is required (from uia_inspect_window)"));
+}
+
+void Win32McpServerTests::invokeTool_uiaGetControlValueWithoutSnapshotErrors() {
+    // A ref lookup before any uia_inspect_window must refuse (there is no tree to resolve it
+    // against) rather than dereference a stale/empty snapshot.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("uia_get_control_value"),
+                                                        QJsonObject{{QStringLiteral("ref"), 0}});
+    QVERIFY(result.is_error);
+}
+
+void Win32McpServerTests::invokeTool_uiaGetFocusedReturnsShapeOrError() {
+    // Focus state depends on the desktop, so accept either a well-formed payload (role present)
+    // or a flagged "no focus / UIA unavailable" error -- never a bare empty success.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("uia_get_focused"), {});
+    const QJsonObject payload = QJsonDocument::fromJson(result.text.toUtf8()).object();
+    if (result.is_error) {
+        QVERIFY(payload.contains(QStringLiteral("error")));
+        return;
+    }
+    QVERIFY(payload.contains(QStringLiteral("role")));
+    QVERIFY(payload.contains(QStringLiteral("name")));
+    QVERIFY(payload.value(QStringLiteral("enabled")).isBool());
+}
+
+void Win32McpServerTests::invokeTool_ocrWindowRequiresTitle() {
+    // Missing window_title is a clean error before any capture/OCR work.
+    const sak::win32mcp::ToolResult result = invokeTool(QStringLiteral("ocr_window"), {});
+    QVERIFY(result.is_error);
+    QCOMPARE(toolError(result), QStringLiteral("window_title or foreground is required"));
+}
+
+void Win32McpServerTests::invokeTool_ocrRegionRequiresBounds() {
+    // ocr_region needs all of x/y/width/height, and a non-positive size is rejected -- both are
+    // deterministic validation errors that never reach the OCR engine (so no language pack is
+    // required to run this). The success path is covered by the live desktop cert harness.
+    // The two refusals are DIFFERENT gates -- missing bounds vs a non-positive size -- and
+    // is_error alone cannot tell them apart.
+    QCOMPARE(toolError(invokeTool(QStringLiteral("ocr_region"), {})),
+             QStringLiteral("x, y, width, and height are required"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("ocr_region"),
+                                  QJsonObject{{QStringLiteral("x"), 0},
+                                              {QStringLiteral("y"), 0},
+                                              {QStringLiteral("width"), 0},
+                                              {QStringLiteral("height"), 10}})),
+             QStringLiteral("width and height must be positive"));
+}
+
+void Win32McpServerTests::invokeTool_findAndWaitTextRequireQuery() {
+    // The OCR text tools reject a missing 'text' before doing any capture/OCR/polling, so this
+    // is deterministic and needs no OCR language pack. wait_for_text especially must NOT enter
+    // its poll loop without a query. (Positive matches are covered by the live cert harness.)
+    QCOMPARE(toolError(invokeTool(QStringLiteral("find_text_on_screen"), {})),
+             QStringLiteral("text is required"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("assert_text_visible"), {})),
+             QStringLiteral("text is required"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("wait_for_text"), {})),
+             QStringLiteral("text is required"));
+}
+
+void Win32McpServerTests::invokeTool_pixelColorReadsAShape() {
+    // Reading a pixel at the top-left of the virtual screen is non-destructive and deterministic
+    // in shape: either a well-formed r/g/b/hex payload or a flagged error, never a bare success.
+    const sak::win32mcp::ToolResult result =
+        invokeTool(QStringLiteral("get_pixel_color"),
+                   QJsonObject{{QStringLiteral("x"), 0}, {QStringLiteral("y"), 0}});
+    const QJsonObject payload = QJsonDocument::fromJson(result.text.toUtf8()).object();
+    if (result.is_error) {
+        QVERIFY(payload.contains(QStringLiteral("error")));
+        return;
+    }
+    for (const QString& key : {QStringLiteral("r"), QStringLiteral("g"), QStringLiteral("b")}) {
+        const int channel = payload.value(key).toInt(-1);
+        QVERIFY(channel >= 0 && channel <= 255);
+    }
+    // Derive the exact expected hex from the reported channels using production's own packing
+    // (#RRGGBB, zero-padded). `startsWith('#')` was near-vacuous -- the '#' is a literal in the
+    // format string, so a channel swap or wrong digit count would still start with '#'.
+    const int packed = (payload.value(QStringLiteral("r")).toInt() << 16) |
+                       (payload.value(QStringLiteral("g")).toInt() << 8) |
+                       payload.value(QStringLiteral("b")).toInt();
+    QCOMPARE(payload.value(QStringLiteral("hex")).toString(),
+             QStringLiteral("#%1").arg(packed, 6, 16, QLatin1Char('0')));
+}
+
+void Win32McpServerTests::invokeTool_watchToolsValidateArgs() {
+    // Missing required args are clean errors before any capture/poll. get_pixel_color needs x/y;
+    // the window tools need window_title; compare_screenshots also refuses without a baseline.
+    QCOMPARE(toolError(invokeTool(QStringLiteral("get_pixel_color"), {})),
+             QStringLiteral("x and y are required (virtual-screen coordinates)"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("get_window_snapshot"), {})),
+             QStringLiteral("window_title is required"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("wait_for_window"), {})),
+             QStringLiteral("window_title is required"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("wait_for_idle"), {})),
+             QStringLiteral("window_title is required"));
+    const sak::win32mcp::ToolResult no_baseline =
+        invokeTool(QStringLiteral("compare_screenshots"),
+                   QJsonObject{{QStringLiteral("window_title"),
+                                QStringLiteral("zzq-no-baseline-window-xyz")}});
+    QVERIFY(no_baseline.is_error);
+    // The refusal tells the caller how to create a baseline, which is the recoverable half.
+    QCOMPARE(toolError(no_baseline),
+             QStringLiteral("No baseline for that window; call get_window_snapshot first."));
+}
+
+void Win32McpServerTests::invokeTool_inputToolsValidateArgsWithoutInjecting() {
+    // The physical-input tools must reject bad/missing args BEFORE calling SendInput, so these
+    // are safe to run in a test (they never move the mouse or press a key). We deliberately do
+    // NOT exercise any success path -- that would inject real input into the test host; the live
+    // desktop cert harness covers actual injection against a throwaway window.
+    // Each refusal names its own missing argument, and the two send_keys cases are DIFFERENT
+    // gates (absent vs unrecognized) that a shared is_error check could not separate.
+    QCOMPARE(toolError(invokeTool(QStringLiteral("mouse_click"), {})),
+             QStringLiteral("x and y are required (virtual-screen coordinates)"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("click_text"), {})),
+             QStringLiteral("text is required"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("type_text"), {})),
+             QStringLiteral("text is required"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("send_keys"), {})),
+             QStringLiteral("keys is required, e.g. 'Enter' or 'Ctrl+S'"));
+    QCOMPARE(toolError(
+                 invokeTool(QStringLiteral("send_keys"),
+                            QJsonObject{{QStringLiteral("keys"), QStringLiteral("NotARealKey")}})),
+             QStringLiteral("Unrecognized key combination: NotARealKey"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("uia_click_control"), {})),
+             QStringLiteral("ref is required (from uia_inspect_window)"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("uia_click_control"),
+                                  QJsonObject{{QStringLiteral("ref"), 0}})),
+             QStringLiteral("No inspection yet; call uia_inspect_window first."));
+    // focus_window needs a target: neither window_title nor foreground is a clean error that
+    // raises nothing (a bare success path could steal focus on the test host).
+    QCOMPARE(toolError(invokeTool(QStringLiteral("focus_window"), {})),
+             QStringLiteral("window_title or foreground is required"));
+    // dismiss_dialog needs a target too; without window_title or foreground it must refuse
+    // before walking any tree or invoking a button (a bare success could dismiss a real dialog).
+    QCOMPARE(toolError(invokeTool(QStringLiteral("dismiss_dialog"), {})),
+             QStringLiteral("window_title or foreground is required"));
+}
+
+void Win32McpServerTests::invokeTool_mouseClickRejectsNonNumericCoordinates() {
+    // A non-numeric x/y must be rejected outright rather than coerced to 0 and fired as a
+    // (0, 0) click at the desktop corner. The key is present but the wrong JSON type.
+    // "must be numbers", NOT "are required": the coordinates were PRESENT and wrong-typed, so
+    // the exact message is what proves they were rejected rather than treated as absent.
+    QCOMPARE(toolError(invokeTool(QStringLiteral("mouse_click"),
+                                  QJsonObject{{QStringLiteral("x"), QStringLiteral("5")},
+                                              {QStringLiteral("y"), 0}})),
+             QStringLiteral("x and y must be numbers (virtual-screen coordinates)"));
+    QCOMPARE(toolError(invokeTool(QStringLiteral("mouse_click"),
+                                  QJsonObject{{QStringLiteral("x"), 0},
+                                              {QStringLiteral("y"), QStringLiteral("5")}})),
+             QStringLiteral("x and y must be numbers (virtual-screen coordinates)"));
+}
+
+void Win32McpServerTests::invokeTool_mouseClickRefusesWhenNamedTargetMissing() {
+    // With valid coordinates but a window_title that matches nothing, the click must fail closed
+    // (surface the lookup error) instead of silently proceeding to click whatever is focused.
+    // (0, 0) is always inside the virtual screen, so this exercises the activation-abort path.
+    const sak::win32mcp::ToolResult result =
+        invokeTool(QStringLiteral("mouse_click"),
+                   QJsonObject{{QStringLiteral("x"), 0},
+                               {QStringLiteral("y"), 0},
+                               {QStringLiteral("window_title"),
+                                QStringLiteral("zzq-no-such-window-to-raise-42")}});
+    QVERIFY(result.is_error);
+}
+
+void Win32McpServerTests::invokeTool_closeWindowRequiresTitle() {
+    // Missing/unmatched title is a clean error that closes nothing. We deliberately do NOT
+    // exercise the success path -- it would close a real window on the test host; the live
+    // desktop cert harness covers actually closing a throwaway window.
+    QVERIFY(invokeTool(QStringLiteral("close_window"), {}).is_error);
+    QVERIFY(invokeTool(QStringLiteral("close_window"),
+                       QJsonObject{{QStringLiteral("window_title"),
+                                    QStringLiteral("zzq-no-such-window-to-close-42")}})
+                .is_error);
+}
+
+void Win32McpServerTests::toolsCall_browserExtensionRoutesToInstallerNotBridge() {
+    // Regression: the browser_extension_* tools are native installer tools. Their
+    // "browser_" prefix must NOT route them to the browser bridge (which would answer
+    // "browser not connected" before Chrome is even set up). handles() must reject them,
+    // and tools/call must reach invokeTool even when a BrowserControl is present.
+    sak::win32mcp::BrowserControl browser;  // not started; handles() is a pure check
+    QVERIFY(!browser.handles(QStringLiteral("browser_extension_install")));
+    QVERIFY(!browser.handles(QStringLiteral("browser_extension_uninstall")));
+    QVERIFY(!browser.handles(QStringLiteral("browser_extension_status")));
+    QVERIFY(browser.handles(QStringLiteral("browser_snapshot")));
+    QVERIFY(browser.handles(QStringLiteral("browser_click")));
+
+    const auto response = handleRequest(
+        request(QStringLiteral("tools/call"),
+                42,
+                QJsonObject{{QStringLiteral("name"), QStringLiteral("browser_extension_status")}}),
+        &browser);
+    QVERIFY(response.has_value());
+    const QJsonObject result = response->value(QStringLiteral("result")).toObject();
+    QVERIFY(!result.value(QStringLiteral("isError")).toBool(true));
+    const QString text = result.value(QStringLiteral("content"))
+                             .toArray()
+                             .first()
+                             .toObject()
+                             .value(QStringLiteral("text"))
+                             .toString();
+    const QJsonObject payload = QJsonDocument::fromJson(text.toUtf8()).object();
+    QCOMPARE(payload.value(QStringLiteral("extension_id")).toString(),
+             QString::fromLatin1(sak::win32mcp::kBrowserExtensionId));
+}
+
+void Win32McpServerTests::toolCallResult_textOnlyIsSingleTextBlock() {
+    const QJsonObject out = toolCallResult(ToolResult{QStringLiteral("hello"), false, {}, {}});
+    const QJsonArray content = out.value(QStringLiteral("content")).toArray();
+    QCOMPARE(content.size(), 1);
+    QCOMPARE(content.at(0).toObject().value(QStringLiteral("type")).toString(),
+             QStringLiteral("text"));
+    QCOMPARE(content.at(0).toObject().value(QStringLiteral("text")).toString(),
+             QStringLiteral("hello"));
+    QCOMPARE(out.value(QStringLiteral("isError")).toBool(true), false);
+}
+
+void Win32McpServerTests::toolCallResult_imageBecomesImageBlockPlusSummary() {
+    ToolResult result;
+    result.text = QStringLiteral("Captured a 800x600 PNG screenshot of the active tab.");
+    result.image_base64 = QStringLiteral("iVBORw0KGgo");
+    result.image_mime = QStringLiteral("image/png");
+    const QJsonObject out = toolCallResult(result);
+    const QJsonArray content = out.value(QStringLiteral("content")).toArray();
+    QCOMPARE(content.size(), 2);
+    // Image block first, carrying the base64 in `data` with a proper mimeType.
+    const QJsonObject image = content.at(0).toObject();
+    QCOMPARE(image.value(QStringLiteral("type")).toString(), QStringLiteral("image"));
+    QCOMPARE(image.value(QStringLiteral("data")).toString(), QStringLiteral("iVBORw0KGgo"));
+    QCOMPARE(image.value(QStringLiteral("mimeType")).toString(), QStringLiteral("image/png"));
+    // Text summary follows so a text-only client still learns what happened.
+    const QJsonObject text = content.at(1).toObject();
+    QCOMPARE(text.value(QStringLiteral("type")).toString(), QStringLiteral("text"));
+    // toolCallResult passes result.text through verbatim; pin it exactly (the sibling text-only
+    // test already does). `contains("screenshot")` would survive a truncated or reordered summary.
+    QCOMPARE(text.value(QStringLiteral("text")).toString(),
+             QStringLiteral("Captured a 800x600 PNG screenshot of the active tab."));
+}
+
+void Win32McpServerTests::readOnlyProfileFiltersCatalogAndRefusesMutatingCall() {
+    // B12-05: under the read-only security profile the server must advertise ONLY read-only
+    // tools and refuse a mutating/input tool, independently of the client's own gate.
+    sak::win32mcp::Win32McpServerPolicy policy;
+    policy.read_only_profile = true;
+
+    const auto listed = handleRequest(request(QStringLiteral("tools/list"), 1), nullptr, policy);
+    QVERIFY(listed.has_value());
+    const QJsonArray tools =
+        listed->value(QStringLiteral("result")).toObject().value(QStringLiteral("tools")).toArray();
+    // The loop below passes VACUOUSLY on an empty catalog -- a read-only profile that filtered
+    // out every tool would satisfy it. Pin the surviving count.
+    QCOMPARE(tools.size(), 26);
+    for (const QJsonValue& tool : tools) {
+        const QString name = tool.toObject().value(QStringLiteral("name")).toString();
+        QVERIFY2(sak::win32mcp::win32McpToolIsReadOnly(name), qPrintable(name));
+    }
+
+    // A mutating tool (close_window is a real high-risk tool) is refused under read-only.
+    const auto refused =
+        handleRequest(request(QStringLiteral("tools/call"),
+                              2,
+                              QJsonObject{{QStringLiteral("name"), QStringLiteral("close_window")},
+                                          {QStringLiteral("arguments"), QJsonObject{}}}),
+                      nullptr,
+                      policy);
+    QVERIFY(refused.has_value());
+    QVERIFY(refused->contains(QStringLiteral("error")));
+    // The refusal names the tool it blocked and the profile that blocked it.
+    QCOMPARE(refused->value(QStringLiteral("error"))
+                 .toObject()
+                 .value(QStringLiteral("message"))
+                 .toString(),
+             QStringLiteral("Tool 'close_window' is not permitted under the read-only security "
+                            "profile"));
+
+    // A read-only tool still runs under the profile (health_check is read-only).
+    const auto allowed =
+        handleRequest(request(QStringLiteral("tools/call"),
+                              3,
+                              QJsonObject{{QStringLiteral("name"), QStringLiteral("health_check")},
+                                          {QStringLiteral("arguments"), QJsonObject{}}}),
+                      nullptr,
+                      policy);
+    QVERIFY(allowed.has_value());
+    // ...and it actually RAN: a result that was present but flagged isError would have passed
+    // the old check while proving the opposite of what this half of the test claims.
+    QCOMPARE(allowed->value(QStringLiteral("result"))
+                 .toObject()
+                 .value(QStringLiteral("isError"))
+                 .toBool(true),
+             false);
+    QCOMPARE(callToolText(*allowed).value(QStringLiteral("status")).toString(),
+             QStringLiteral("ok"));
+}
+
+void Win32McpServerTests::redactionMasksSecretsInResultText() {
+    // B12-05: WIN32_MCP_REDACT_SENSITIVE_OUTPUT masks obvious secrets so raw credentials never
+    // reach the model.
+    const QString masked = sak::win32mcp::redactWin32McpSensitiveText(
+        QStringLiteral("user=admin password=Hunter2 api_key: ABC123 note=ok"));
+    // Pin the whole masked string: absence-plus-presence checks are equally satisfied by a
+    // redactor that destroys the surrounding text, and the exact form also shows that each
+    // secret is replaced IN PLACE with its key intact. The marker and the name=[redacted] form
+    // are the shared redactor's, the same text the AI layer persists (NEW-10).
+    QCOMPARE(masked, QStringLiteral("user=admin password=[redacted] api_key=[redacted] note=ok"));
+}
+
+void Win32McpServerTests::redactionMasksQuotedJsonSecrets() {
+    // Quoted-JSON secrets (a UIA value or tool payload carrying "token":"secret") must also be
+    // masked -- the earlier regex only caught bare key=value / key: value forms. The payload is
+    // in the key order QJsonDocument writes, which is what every native tool emits.
+    const QString masked = sak::win32mcp::redactWin32McpSensitiveText(
+        QStringLiteral(R"({"note":"ok","token":"s3cr3tValue"})"));
+    // The JSON stays well-formed with only the value replaced.
+    QCOMPARE(masked, QStringLiteral(R"({"note":"ok","token":"[redacted]"})"));
+
+    // A JSON member inside plain text keeps its punctuation too.
+    const QString masked_pw =
+        sak::win32mcp::redactWin32McpSensitiveText(QStringLiteral(R"("password" : "Hunter2")"));
+    QCOMPARE(masked_pw, QStringLiteral(R"("password" : "[redacted]")"));
+}
+
+void Win32McpServerTests::redactionCoversCompoundAndHeaderSecretNames_data() {
+    // NEW-10. The server kept its own name list behind a \b, and '_' is a word character, so \b
+    // never fires inside an identifier: the compound names below reached the model with their
+    // values (client_secret was caught only because the list spelled it out whole), only a Bearer
+    // credential was caught in an Authorization header, and nothing in a Cookie header. One row
+    // per name, so each one is proved on its own. Each fixture is assembled at run time from
+    // pieces kept apart in the source, so the repository's secret scanner does not read it as a
+    // live credential.
+    QTest::addColumn<QString>("input");
+    QTest::addColumn<QString>("expected");
+    const QString value = QStringLiteral("Fx") + QStringLiteral("9q2Lm") + QStringLiteral("7Rw");
+    const QString basic = QStringLiteral("dXNlcjpw") + QStringLiteral("YXNzd29yZA==");
+    const QString bearer_token = QStringLiteral("ab+cd/efGH") + QStringLiteral("IJ0123+/xyz==");
+    const QString bearer = QStringLiteral("Bea") + QStringLiteral("rer ");
+    QTest::newRow("access_token") << QStringLiteral("access_token=") + value +
+                                         QStringLiteral(" done")
+                                  << QStringLiteral("access_token=[redacted] done");
+    QTest::newRow("client_secret")
+        << QStringLiteral("client_secret=") + value + QStringLiteral(" done")
+        << QStringLiteral("client_secret=[redacted] done");
+    QTest::newRow("AWS_SECRET_ACCESS_KEY")
+        << QStringLiteral("set AWS_SECRET_ACCESS_KEY=") + value + QStringLiteral(" done")
+        << QStringLiteral("set AWS_SECRET_ACCESS_KEY=[redacted] done");
+    QTest::newRow("X_API_KEY") << QStringLiteral("X_API_KEY=") + value + QStringLiteral(" done")
+                               << QStringLiteral("X_API_KEY=[redacted] done");
+    QTest::newRow("refresh_token")
+        << QStringLiteral("refresh_token: ") + value + QStringLiteral(" done")
+        << QStringLiteral("refresh_token=[redacted] done");
+    QTest::newRow("query-string access_token")
+        << QStringLiteral("https://login.example.test/cb?code=1&access_token=") + value +
+               QStringLiteral(" done")
+        << QStringLiteral("https://login.example.test/cb?code=1&access_token=[redacted] done");
+    // The scheme stays so the reader still sees which kind of credential was there.
+    QTest::newRow("Authorization Basic")
+        << QStringLiteral("Authorization: Basic ") + basic + QStringLiteral(" done")
+        << QStringLiteral("Authorization=Basic [redacted] done");
+    QTest::newRow("Authorization Bearer")
+        << QStringLiteral("Authorization: ") + bearer + bearer_token + QStringLiteral(" done")
+        << QStringLiteral("Authorization=Bearer [redacted] done");
+    // A Cookie header carries several credentials; all of them go, to the end of the line.
+    QTest::newRow("Cookie") << QStringLiteral("Cookie: sid=") + value + QStringLiteral("; csrf=") +
+                                   value + QStringLiteral("\nnext line stays")
+                            << QStringLiteral("Cookie=[redacted]\nnext line stays");
+}
+
+void Win32McpServerTests::redactionCoversCompoundAndHeaderSecretNames() {
+    QFETCH(QString, input);
+    QFETCH(QString, expected);
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(input), expected);
+}
+
+void Win32McpServerTests::redactionKeepsTheServersOwnNames_data() {
+    // The names the server's own list knew stay covered now that it uses the shared catalogue:
+    // pwd (a connection string's Pwd=), pass as a whole token, access_key and the run-together
+    // accesskey / clientsecret spellings its pattern matched. AccountKey (an Azure Storage
+    // connection string) was in neither list.
+    QTest::addColumn<QString>("input");
+    QTest::addColumn<QString>("expected");
+    const QString value = QStringLiteral("Fx") + QStringLiteral("9q2Lm") + QStringLiteral("7Rw");
+    const QString account_key = QStringLiteral("Zm9v+YmFy/") + QStringLiteral("YmF6cXV4PT0=");
+    QTest::newRow("Pwd") << QStringLiteral("Server=db1;Uid=sa;Pwd=") + value +
+                                QStringLiteral(";Encrypt=yes")
+                         << QStringLiteral("Server=db1;Uid=sa;Pwd=[redacted];Encrypt=yes");
+    QTest::newRow("pass") << QStringLiteral("pass=") + value << QStringLiteral("pass=[redacted]");
+    QTest::newRow("$pass") << QStringLiteral("$pass = '") + value + QStringLiteral("'")
+                           << QStringLiteral("$pass=[redacted]");
+    QTest::newRow("smtp.pass") << QStringLiteral("smtp.pass=") + value
+                               << QStringLiteral("smtp.pass=[redacted]");
+    QTest::newRow("access_key") << QStringLiteral("access_key: ") + value
+                                << QStringLiteral("access_key=[redacted]");
+    QTest::newRow("AccessKey") << QStringLiteral("AccessKey=") + value
+                               << QStringLiteral("AccessKey=[redacted]");
+    QTest::newRow("accesskey") << QStringLiteral("accesskey=") + value
+                               << QStringLiteral("accesskey=[redacted]");
+    QTest::newRow("clientsecret") << QStringLiteral("clientsecret=") + value
+                                  << QStringLiteral("clientsecret=[redacted]");
+    QTest::newRow("secret") << QStringLiteral("secret=") + value
+                            << QStringLiteral("secret=[redacted]");
+    QTest::newRow("token") << QStringLiteral("token: ") + value
+                           << QStringLiteral("token=[redacted]");
+    QTest::newRow("AccountKey")
+        << QStringLiteral("AccountName=acct;AccountKey=") + account_key +
+               QStringLiteral(";EndpointSuffix=core.windows.net")
+        << QStringLiteral("AccountName=acct;AccountKey=[redacted];EndpointSuffix=core.windows.net");
+}
+
+void Win32McpServerTests::redactionKeepsTheServersOwnNames() {
+    QFETCH(QString, input);
+    QFETCH(QString, expected);
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(input), expected);
+}
+
+void Win32McpServerTests::redactionWalksJsonDocumentsAsTrees() {
+    // Every native tool returns a JSON document, so the server redacts it value by value. A text
+    // pass cannot see JSON escapes: a window title or UIA value holding password="my secret" is
+    // serialised with \" around the value, the old rule stopped at the backslash, and the secret
+    // reached the model. The documents are serialised here the way a tool writes them (moc's
+    // tokenizer cannot read a raw string literal that contains a backslash before a quote).
+    const QString quoted_secret = QStringLiteral("password=\"my secret\"");
+    const QString escaped =
+        QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("value"), quoted_secret}})
+                              .toJson(QJsonDocument::Compact));
+    QVERIFY2(escaped.contains(QStringLiteral("\\\"my secret\\\"")), qPrintable(escaped));
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(escaped),
+             QStringLiteral(R"({"value":"password=[redacted]"})"));
+
+    // A member whose KEY names a secret goes wholesale, whatever it holds -- the headers here
+    // were not in the old list at all -- and a string value is scrubbed by the text rules.
+    const QString value = QStringLiteral("Fx") + QStringLiteral("9q2Lm") + QStringLiteral("7Rw");
+    const QString headers = QStringLiteral(R"({"Authorization":"Basic )") + value +
+                            QStringLiteral(R"(","Cookie":"sid=)") + value +
+                            QStringLiteral(R"(","value":"access_token=)") + value +
+                            QStringLiteral(R"("})");
+    const QString headers_redacted =
+        QStringLiteral(R"({"Authorization":"[redacted]","Cookie":"[redacted]",)") +
+        QStringLiteral(R"("value":"access_token=[redacted]"})");
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(headers), headers_redacted);
+
+    // A document whose root is an array is walked the same way.
+    const QString array = QString::fromUtf8(
+        QJsonDocument(QJsonArray{QJsonObject{{QStringLiteral("token"), QStringLiteral("s3cr3tV")}},
+                                 quoted_secret})
+            .toJson(QJsonDocument::Compact));
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(array),
+             QStringLiteral(R"([{"token":"[redacted]"},"password=[redacted]"])"));
+
+    // A document with nothing to redact keeps its exact bytes, even when it is not in the
+    // compact, key-sorted form a re-serialisation would produce. A boolean under a name whose
+    // head word is "password" is a fact, not a secret.
+    const QString untouched = QStringLiteral(
+        R"({"z": 1, "UserMayChangePassword": true, "a": "PasswordRequired : True"})");
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(untouched), untouched);
+}
+
+void Win32McpServerTests::redactionLeavesOrdinaryOutputIntact() {
+    // Facts ABOUT a password are not one. Get-LocalUser and `net user` print these on every
+    // account, and the old rule's bare-whitespace separator turned "Password required Yes" into
+    // "Password [REDACTED] Yes" and "The bearer of" into "The bearer [REDACTED] this". A
+    // redactor that fires on ordinary output trains the reader to ignore it.
+    for (const QString& benign : {QStringLiteral("PasswordRequired       : True"),
+                                  QStringLiteral("PasswordLastSet        : 10/1/2026 9:00:00 AM"),
+                                  QStringLiteral("PasswordChangeable     : 10/2/2026 9:00:00 AM"),
+                                  QStringLiteral("UserMayChangePassword  : True"),
+                                  QStringLiteral("CannotChangePassword   : False"),
+                                  QStringLiteral("Password last set            10/1/2026"),
+                                  QStringLiteral("Password required            Yes"),
+                                  QStringLiteral("Password expires             Never"),
+                                  QStringLiteral("The bearer of this note is authorized."),
+                                  QStringLiteral("token_count: 1234 max_tokens=4096"),
+                                  QStringLiteral("recovery_pass: true"),
+                                  QStringLiteral("Press key: Enter")}) {
+        QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(benign), benign);
+    }
+}
+
+void Win32McpServerTests::readOnlySetExcludesActiveBrowserTools() {
+    // browser_focus/hover/reveal mutate UI state (move focus, dispatch hover, scroll into view),
+    // so they must NOT be classified read-only -- otherwise the read-only profile would advertise
+    // and permit them. The genuinely passive browser inspectors stay read-only.
+    using sak::win32mcp::win32McpToolIsReadOnly;
+    QVERIFY(!win32McpToolIsReadOnly(QStringLiteral("browser_focus")));
+    QVERIFY(!win32McpToolIsReadOnly(QStringLiteral("browser_hover")));
+    QVERIFY(!win32McpToolIsReadOnly(QStringLiteral("browser_reveal")));
+    QVERIFY(win32McpToolIsReadOnly(QStringLiteral("browser_read")));
+    QVERIFY(win32McpToolIsReadOnly(QStringLiteral("browser_snapshot")));
+}
+
+void Win32McpServerTests::relayModeRequiresOurPinnedExtensionOrigin() {
+    // B13-06: relay mode must be entered only for OUR pinned extension's origin, not any
+    // chrome-extension:// argument, so a stray/spoofed origin from another extension cannot
+    // drive this process as the browser-control relay.
+    using sak::win32mcp::isOurExtensionOrigin;
+    const std::string ours = std::string("chrome-extension://") +
+                             sak::win32mcp::kBrowserExtensionId;
+    QVERIFY(isOurExtensionOrigin((ours + "/").c_str()));  // canonical origin (trailing slash)
+    QVERIFY(isOurExtensionOrigin(ours.c_str()));          // id with no trailing slash
+    QVERIFY(isOurExtensionOrigin((ours + "/background.js").c_str()));  // origin + a path
+
+    QVERIFY(!isOurExtensionOrigin(
+        "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"));  // a different extension
+    QVERIFY(!isOurExtensionOrigin((ours + "EXTRA").c_str()));      // prefix-collision, wrong id
+    QVERIFY(!isOurExtensionOrigin("--browser-relay"));             // not an origin at all
+    QVERIFY(!isOurExtensionOrigin(nullptr));
+}
+
+void Win32McpServerTests::serverProfile_unknownTokenFailsClosedToReadOnly() {
+    // F2: the server profile is the independent fail-closed backstop. Only an UNSET token keeps
+    // the intended full-access default; the exact token "read_only" restricts; and any OTHER
+    // non-empty token (an operator typo) MUST fail CLOSED to read-only rather than silently
+    // granting the full mutating/input/process surface.
+    using sak::win32mcp::Win32McpServerPolicy;
+    qputenv("WIN32_MCP_SECURITY_PROFILE", "read_only");
+    QVERIFY(Win32McpServerPolicy::fromEnvironment().read_only_profile);
+    qputenv("WIN32_MCP_SECURITY_PROFILE", "readonly");   // typo -> must NOT open up
+    QVERIFY(Win32McpServerPolicy::fromEnvironment().read_only_profile);
+    qputenv("WIN32_MCP_SECURITY_PROFILE", "read-only");  // typo -> must NOT open up
+    QVERIFY(Win32McpServerPolicy::fromEnvironment().read_only_profile);
+    qputenv("WIN32_MCP_SECURITY_PROFILE", "full");       // any non-empty value locks down
+    QVERIFY(Win32McpServerPolicy::fromEnvironment().read_only_profile);
+    qunsetenv("WIN32_MCP_SECURITY_PROFILE");  // unset -> the intended full-access default
+    QVERIFY(!Win32McpServerPolicy::fromEnvironment().read_only_profile);
+}
+
+void Win32McpServerTests::request_rejectsWrongJsonRpcVersion() {
+    // F3: a request whose jsonrpc field is not exactly "2.0" is a malformed envelope, answered
+    // with an Invalid Request error rather than dispatched.
+    const QJsonObject bad{{QStringLiteral("jsonrpc"), QStringLiteral("1.0")},
+                          {QStringLiteral("method"), QStringLiteral("ping")},
+                          {QStringLiteral("id"), 9}};
+    const auto response = handleRequest(bad);
+    QVERIFY(response.has_value());
+    QCOMPARE(
+        response->value(QStringLiteral("error")).toObject().value(QStringLiteral("code")).toInt(),
+        -32'600);
+}
+
+void Win32McpServerTests::toolsCall_nonObjectArgumentsRejected() {
+    // F3: a present-but-non-object `arguments` must be REJECTED, not coerced to {} -- coercion
+    // would let a command run with its destructive defaults off a malformed envelope.
+    QJsonObject params{{QStringLiteral("name"), QStringLiteral("health_check")}};
+    params.insert(QStringLiteral("arguments"), QJsonArray{1, 2, 3});
+    const auto response = handleRequest(request(QStringLiteral("tools/call"), 11, params));
+    QVERIFY(response.has_value());
+    QCOMPARE(
+        response->value(QStringLiteral("error")).toObject().value(QStringLiteral("code")).toInt(),
+        -32'602);
+}
+
+void Win32McpServerTests::validateArgsAgainstSchema_enforcesRequiredUnknownAndType() {
+    // CODEX_REVIEW_4 M-A3-65: the server independently enforces a native tool's advertised
+    // inputSchema. A "text" string property, required, additionalProperties:false.
+    const QJsonObject schema{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"),
+         QJsonObject{{QStringLiteral("text"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}}},
+                     {QStringLiteral("count"),
+                      QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}}}}},
+        {QStringLiteral("required"), QJsonArray{QStringLiteral("text")}},
+        {QStringLiteral("additionalProperties"), false}};
+    using sak::win32mcp::win32McpValidateArgsAgainstSchema;
+
+    // Conforming args -> empty (accepted).
+    QVERIFY(win32McpValidateArgsAgainstSchema(
+                schema, QJsonObject{{QStringLiteral("text"), QStringLiteral("hi")}})
+                .isEmpty());
+    QVERIFY(win32McpValidateArgsAgainstSchema(schema,
+                                              QJsonObject{{QStringLiteral("text"),
+                                                           QStringLiteral("hi")},
+                                                          {QStringLiteral("count"), 3}})
+                .isEmpty());
+
+    // Missing required 'text' -> rejected.
+    // Each rejection names the OFFENDING key, which is what makes the message actionable and
+    // is invisible to a contains() on the generic word.
+    QCOMPARE(win32McpValidateArgsAgainstSchema(schema, QJsonObject{{QStringLiteral("count"), 1}}),
+             QStringLiteral("Missing required argument 'text'"));
+    // Unknown key under additionalProperties:false -> rejected.
+    QCOMPARE(win32McpValidateArgsAgainstSchema(schema,
+                                               QJsonObject{{QStringLiteral("text"),
+                                                            QStringLiteral("hi")},
+                                                           {QStringLiteral("bogus"), true}}),
+             QStringLiteral("Unknown argument 'bogus'"));
+    // Wrong-typed value -> rejected (a string where a string is required).
+    QCOMPARE(win32McpValidateArgsAgainstSchema(schema, QJsonObject{{QStringLiteral("text"), 5}}),
+             QStringLiteral("Argument 'text' must be of type string"));
+    // Non-integer number for an integer property -> rejected.
+    QCOMPARE(win32McpValidateArgsAgainstSchema(schema,
+                                               QJsonObject{{QStringLiteral("text"),
+                                                            QStringLiteral("hi")},
+                                                           {QStringLiteral("count"), 2.5}}),
+             QStringLiteral("Argument 'count' must be of type integer"));
+}
+
+QTEST_MAIN(Win32McpServerTests)
+#include "test_win32_mcp_server.moc"

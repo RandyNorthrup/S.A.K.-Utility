@@ -1,28 +1,29 @@
-// S.A.K. Utility — cppcheck suppressions
-// Only fundamental tool limitations. All real findings fixed in code.
+// S.A.K. Utility -- cppcheck suppressions
+// Existing analysis exceptions. R5 re-audits every entry for direct removal.
 
 // cppcheck does not have Qt/system headers available.
 missingInclude
 missingIncludeSystem
 
-// Single-file analysis cannot determine cross-TU function/member usage.
+// Single-file analysis cannot determine cross-TU function usage.
 unusedFunction
-unusedStructMember
 
 // Meta-noise from the suppression file itself.
 unmatchedSuppression
 
-// cppcheck does not understand Qt macros even with -D defines.
-unknownMacro
-
-// Q_EMIT signal(...) is misidentified as a variable shadowing the signal decl.
-shadowFunction
-
-// Style suggestion to use STL algorithms; Qt-idiomatic loops are preferred.
+// Remaining algorithm-style debt is an INCOMPLETE direct-fix program in R5-IDX-33.
+// This existing exception is not a permanent Qt-style exemption.
 useStlAlgorithm
 
-// Qt Test slots are invoked by the meta-object system and cannot be static.
-functionStatic
+// Naming-only checks, no product risk (owner ruling: a gate exists to catch product risk, not
+// style alone). cppcheck 2.22 reports both in volume.
+// shadowFunction: a parameter or local shares a name with a function (a `blockers` argument
+// beside a blockers() accessor); the compiler resolves each use, nothing reads the wrong entity.
+shadowFunction
+// funcArgNamesDifferentUnnamed: a definition leaves unnamed a parameter its declaration names
+// (an unused slot argument); declaration parameter names have no effect on any call.
+funcArgNamesDifferentUnnamed
 
-// Test assertions intentionally verify enum distinctness with known values.
-knownConditionTrueFalse
+// functionStatic has no file-level suppression. scripts/run_cppcheck.ps1 reports every finding,
+// then source-validates and classifies only exact methods declared under Q_SLOTS. Ordinary test
+// helpers remain actionable, while Qt meta-object callbacks are never made static.

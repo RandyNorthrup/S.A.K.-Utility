@@ -7,8 +7,12 @@
 #include "sak/active_connections_monitor.h"
 #include "sak/network_diagnostic_types.h"
 
+#include <QHostAddress>
 #include <QSignalSpy>
+#include <QTcpServer>
 #include <QtTest/QtTest>
+
+#include <algorithm>
 
 using namespace sak;
 
@@ -29,7 +33,10 @@ private Q_SLOTS:
 
 void TestActiveConnectionsMonitor::construction_default() {
     ActiveConnectionsMonitor monitor;
-    QVERIFY(dynamic_cast<QObject*>(&monitor) != nullptr);
+    // The vacuous upcast can never be null; pin the moc metaobject name instead, which proves
+    // Q_OBJECT is present and correctly namespaced (a missing macro would break its signals).
+    QCOMPARE(QByteArray(monitor.metaObject()->className()),
+             QByteArrayLiteral("sak::ActiveConnectionsMonitor"));
 }
 
 void TestActiveConnectionsMonitor::construction_nonCopyable() {
@@ -77,6 +84,9 @@ void TestActiveConnectionsMonitor::connectionInfo_defaults() {
     QVERIFY(info.state.isEmpty());
     QCOMPARE(info.processId, 0u);
     QVERIFY(info.processName.isEmpty());
+    QVERIFY(info.processPath.isEmpty());
+    QVERIFY(info.remoteHostname.isEmpty());
+    QVERIFY(info.serviceName.isEmpty());
 }
 
 void TestActiveConnectionsMonitor::currentConnections_emptyInitially() {
@@ -103,14 +113,31 @@ void TestActiveConnectionsMonitor::startMonitoring_emitsConnectionsUpdated() {
     monitor.startMonitoring(config);
 
     constexpr int kMaxWaitMs = 3000;
-    QVERIFY(updated_spy.wait(kMaxWaitMs));
-    QVERIFY(updated_spy.count() >= 1);
+    // startMonitoring() calls refreshNow() synchronously, so the spy already holds one
+    // emission by the time it returns. The original wait() therefore blocked for a SECOND
+    // emission, i.e. it was testing that the 100ms refresh timer actually fires -- so the
+    // assertion has to be >= 2. Settling for >= 1 here would pass on the synchronous emit
+    // alone and stop covering the timer entirely.
+    QTRY_VERIFY_WITH_TIMEOUT(updated_spy.count() >= 2, kMaxWaitMs);
 
     monitor.stopMonitoring();
 }
 
 void TestActiveConnectionsMonitor::startStop_lifecycle() {
     ActiveConnectionsMonitor monitor;
+
+    // Open a real loopback TCP listener owned by THIS test process, so the enumeration
+    // has a deterministic connection to find. The prior assertion -- "a running system
+    // should have active TCP/UDP connections" -- was environment-dependent (G18-5): an
+    // isolated CI runner or a quiet host can legitimately have zero connections at the
+    // sampled instant, so it passed or failed by accident of the machine, not the code.
+    // A LISTEN socket we open ourselves is returned by
+    // GetExtendedTcpTable(TCP_TABLE_OWNER_PID_ALL) regardless of host activity, so the
+    // non-empty claim now genuinely tests that enumeration surfaces a known connection.
+    QTcpServer server;
+    QVERIFY2(server.listen(QHostAddress::LocalHost, 0),
+             qPrintable(QStringLiteral("loopback listen failed: %1").arg(server.errorString())));
+    const quint16 knownPort = server.serverPort();
 
     ActiveConnectionsMonitor::MonitorConfig config;
     config.refreshIntervalMs = 100;
@@ -119,15 +146,31 @@ void TestActiveConnectionsMonitor::startStop_lifecycle() {
 
     monitor.startMonitoring(config);
 
+    // Unlike the test above, this spy is constructed AFTER startMonitoring(), so it misses
+    // the synchronous first refresh and >= 1 is the timer-driven emission.
     QSignalSpy updated_spy(&monitor, &ActiveConnectionsMonitor::connectionsUpdated);
-    QVERIFY(updated_spy.wait(3000));
+    QTRY_VERIFY_WITH_TIMEOUT(updated_spy.count() >= 1, 3000);
 
     const auto connections = monitor.getCurrentConnections();
-    QVERIFY2(!connections.isEmpty(), "Running system should have active TCP/UDP connections");
+    const auto it = std::ranges::find_if(connections, [knownPort](const ConnectionInfo& c) {
+        return c.protocol == ConnectionInfo::Protocol::TCP && c.localPort == knownPort;
+    });
+    QVERIFY2(it != connections.end(),
+             "Enumeration must surface this process's own loopback TCP listener");
+    // Every remaining field of our own loopback listener row is deterministic.
+    QCOMPARE(it->state, QStringLiteral("LISTEN"));
+    QCOMPARE(it->localAddress, QStringLiteral("127.0.0.1"));
+    QCOMPARE(it->remoteAddress, QStringLiteral("0.0.0.0"));
+    QCOMPARE(it->remotePort, static_cast<uint16_t>(0));
+    QCOMPARE(it->processId, static_cast<uint32_t>(QCoreApplication::applicationPid()));
 
     monitor.stopMonitoring();
 
-    QVERIFY(monitor.getCurrentConnections().size() >= 0);
+    // Was QVERIFY(size() >= 0), which is a tautology: size() returns qsizetype and can
+    // never be negative, so it asserted nothing. The real claim is that stopping only stops
+    // the refresh timer and leaves the last snapshot readable, so a caller that stops
+    // monitoring can still render what it already had.
+    QCOMPARE(monitor.getCurrentConnections().size(), connections.size());
 }
 
 QTEST_MAIN(TestActiveConnectionsMonitor)

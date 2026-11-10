@@ -8,18 +8,36 @@
 
 #include <QElapsedTimer>
 #include <QSemaphore>
+#include <QSet>
 #include <QTcpSocket>
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
+#include <future>
 #include <memory>
+#include <system_error>
 #include <utility>
+#include <vector>
 
 namespace sak {
 
 namespace {
 constexpr int kBannerGrabTimeout = netdiag::kBannerGrabTimeoutMs;
 constexpr int kBannerMaxRead = netdiag::kBannerMaxBytes;
+constexpr int kMaxScanConcurrency = 256;  // upper bound on ports probed at once
+// A per-connect timeout must be a positive, bounded QTimer interval: a value <= 0 makes
+// the connect timer never fire (so a filtered host hangs runTcpProbe's wait forever) and
+// INT_MAX would block a probe for ~25 days. Clamp the untrusted config value fail-closed.
+constexpr int kMinPortScanTimeoutMs = 1;
+constexpr int kMaxPortScanTimeoutMs = 60'000;
+// Grace beyond a probe's own connect+banner timeouts before its blocking wait gives up;
+// only a genuine QThread start failure can consume it (matches the ai-client semaphore
+// grace). Kept generous so no normal probe is ever cut short.
+constexpr int kProbeThreadStartGraceMs = 30'000;
+// A real hostname is <= 253 bytes and an IPv6 literal ~45; reject anything longer rather
+// than hand an unbounded string to connectToHost / the HTTP Host header.
+constexpr int kMaxTargetLength = 255;
 constexpr auto kHttpHeadProbe = "HEAD / HTTP/1.0\r\nHost: ";
 constexpr auto kHttpHeaderTerminator = "\r\n\r\n";
 
@@ -27,6 +45,9 @@ struct TcpProbeResult {
     bool connected{false};
     bool timed_out{false};
     QString error_message;
+    /// The socket error enum, so callers classify (e.g. connection-refused) via the
+    /// stable value rather than the localized errorString() text.
+    QAbstractSocket::SocketError socket_error{QAbstractSocket::UnknownSocketError};
     QByteArray banner;
     double response_time_ms{0.0};
 };
@@ -72,7 +93,11 @@ void finishTcpProbe(const TcpProbeContextPtr& probe) {
         return;
     }
     probe->finished = true;
-    probe->result.response_time_ms = probe->elapsed.elapsed();
+    // An open port's response time is set when it connects. Taking it again here added the banner
+    // wait, up to twice two seconds, and showed 4017 ms against a 3000 ms timeout.
+    if (!probe->result.connected) {
+        probe->result.response_time_ms = static_cast<int>(probe->elapsed.elapsed());
+    }
     probe->socket->disconnectFromHost();
     probe->socket->deleteLater();
     probe->owner->deleteLater();
@@ -112,7 +137,7 @@ void connectTcpProbeSocket(const TcpProbeContextPtr& probe) {
     QObject::connect(probe->socket, &QTcpSocket::connected, probe->owner, [probe]() {
         probe->connect_timer->stop();
         probe->result.connected = true;
-        probe->result.response_time_ms = probe->elapsed.elapsed();
+        probe->result.response_time_ms = static_cast<int>(probe->elapsed.elapsed());
         if (!probe->grab_banner) {
             finishTcpProbe(probe);
             return;
@@ -135,6 +160,7 @@ void connectTcpProbeSocket(const TcpProbeContextPtr& probe) {
                          if (probe->finished || error == QAbstractSocket::RemoteHostClosedError) {
                              return;
                          }
+                         probe->result.socket_error = error;
                          probe->result.error_message = probe->socket->errorString();
                          finishTcpProbe(probe);
                      });
@@ -166,7 +192,9 @@ TcpProbeResult runTcpProbe(const QString& target,
     QSemaphore done;
     auto* context = new QObject();
     context->moveToThread(&thread);
-    TcpProbeSettings settings{target, bannerTimeoutMs, grabBanner};
+    TcpProbeSettings settings{.target = target,
+                              .banner_timeout_ms = bannerTimeoutMs,
+                              .grab_banner = grabBanner};
     auto probe = std::make_shared<TcpProbeContext>(result, thread, done, std::move(settings));
     probe->owner = context;
 
@@ -175,7 +203,20 @@ TcpProbeResult runTcpProbe(const QString& target,
     });
 
     thread.start();
-    done.acquire();
+    // Bound the wait. On every normal path the probe releases `done` from its own
+    // connect/banner timers (the connect timer's interval is clamped positive by the
+    // caller, so it always fires within connectTimeoutMs). Only a genuine QThread start
+    // failure -- started() never runs, so nothing ever releases `done` -- can leave it
+    // unsignalled, and an unconditional acquire would then hang this scan thread forever.
+    // Fail closed: give up after a budget that already exceeds the probe's own timeouts.
+    const int waitBudgetMs = connectTimeoutMs + (2 * bannerTimeoutMs) + kProbeThreadStartGraceMs;
+    if (!done.tryAcquire(1, waitBudgetMs)) {
+        result.timed_out = true;
+        result.error_message = QStringLiteral("Probe thread did not start");
+    }
+    // SAK-ALLOW-BLOCKING: `thread` is a stack local destroyed on return, and ~QThread on
+    // a live thread aborts the process, so this join is not optional. A started probe
+    // always quits via finishTcpProbe; a thread that never started returns immediately.
     thread.wait();
     return result;
 }
@@ -282,22 +323,25 @@ const QHash<uint16_t, QString> kServiceDatabase = {
 };
 
 const QVector<PortPreset> kPortPresets = {
-    {QStringLiteral("Common Services"), {20,  21,  22,  23,  25,  53,   80,   110,  115,  135, 139,
-                                         143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080}},
-    {QStringLiteral("Web Servers"), {80, 443, 8080, 8443, 8000, 8888, 9000, 9090}},
-    {QStringLiteral("Database"), {1433, 1521, 3306, 5432, 6379, 27'017, 9200}},
-    {QStringLiteral("File Sharing"), {20, 21, 22, 69, 111, 137, 138, 139, 445, 873, 2049}},
-    {QStringLiteral("Email"), {25, 110, 143, 465, 587, 993, 995}},
-    {QStringLiteral("Remote Access"), {22, 23, 3389, 5900, 5901, 5938, 8291}},
-    {QStringLiteral("Top 100"),
-     {7,    9,    13,     21,     22,     23,     25,    26,   37,   53,   79,   80,   81,
-      88,   106,  110,    111,    113,    119,    135,   139,  143,  144,  179,  199,  389,
-      427,  443,  444,    445,    465,    513,    514,   515,  543,  544,  548,  554,  587,
-      631,  646,  873,    990,    993,    995,    1025,  1026, 1027, 1028, 1029, 1110, 1433,
-      1720, 1723, 1755,   1900,   2000,   2001,   2049,  2121, 2717, 3000, 3128, 3306, 3389,
-      3986, 4899, 5000,   5009,   5051,   5060,   5101,  5190, 5357, 5432, 5631, 5666, 5800,
-      5900, 5901, 6000,   6001,   6646,   7070,   8000,  8008, 8009, 8080, 8081, 8443, 8888,
-      9100, 9999, 10'000, 32'768, 49'152, 49'153, 49'154}},
+    {.name = QStringLiteral("Common Services"),
+     .ports = {20,  21,  22,  23,  25,  53,   80,   110,  115,  135, 139,
+               143, 443, 445, 993, 995, 1723, 3306, 3389, 5900, 8080}},
+    {.name = QStringLiteral("Web Servers"), .ports = {80, 443, 8080, 8443, 8000, 8888, 9000, 9090}},
+    {.name = QStringLiteral("Database"), .ports = {1433, 1521, 3306, 5432, 6379, 27'017, 9200}},
+    {.name = QStringLiteral("File Sharing"),
+     .ports = {20, 21, 22, 69, 111, 137, 138, 139, 445, 873, 2049}},
+    {.name = QStringLiteral("Email"), .ports = {25, 110, 143, 465, 587, 993, 995}},
+    {.name = QStringLiteral("Remote Access"), .ports = {22, 23, 3389, 5900, 5901, 5938, 8291}},
+    {.name = QStringLiteral("Top 100"),
+     .ports = {7,    9,    13,   21,   22,   23,     25,     26,     37,     53,    79,
+               80,   81,   88,   106,  110,  111,    113,    119,    135,    139,   143,
+               144,  179,  199,  389,  427,  443,    444,    445,    465,    513,   514,
+               515,  543,  544,  548,  554,  587,    631,    646,    873,    990,   993,
+               995,  1025, 1026, 1027, 1028, 1029,   1110,   1433,   1720,   1723,  1755,
+               1900, 2000, 2001, 2049, 2121, 2717,   3000,   3128,   3306,   3389,  3986,
+               4899, 5000, 5009, 5051, 5060, 5101,   5190,   5357,   5432,   5631,  5666,
+               5800, 5900, 5901, 6000, 6001, 6646,   7070,   8000,   8008,   8009,  8080,
+               8081, 8443, 8888, 9100, 9999, 10'000, 32'768, 49'152, 49'153, 49'154}},
 };
 }  // namespace
 
@@ -307,49 +351,130 @@ void PortScanner::cancel() {
     m_cancelled.store(true);
 }
 
-void PortScanner::scan(const ScanConfig& config) {
-    m_cancelled.store(false);
+namespace {
+// Code units below this are C0 control characters (U+0000..U+001F); 0x7F is DEL.
+// Either in a scan target would inject headers, so both are rejected.
+constexpr int kFirstNonControlCodeUnit = 0x20;
+constexpr int kDeleteControlChar = 0x7F;
 
-    if (config.target.isEmpty()) {
-        Q_EMIT errorOccurred(QStringLiteral("Target cannot be empty"));
-        Q_EMIT scanComplete({});
-        return;
+// Validate the untrusted scan target, returning the human-readable rejection reason and an
+// empty string when the target is safe to hand to connectToHost / the HTTP Host header.
+QString validateScanTarget(const QString& target) {
+    if (target.isEmpty()) {
+        return QStringLiteral("Target cannot be empty");
     }
+    if (target.size() > kMaxTargetLength) {
+        return QStringLiteral("Target is too long");
+    }
+    // The target is echoed verbatim into the HTTP banner-probe Host header and handed to
+    // connectToHost. A control character (CR/LF/NUL/...) in an attacker- or AI-supplied
+    // target would inject additional request headers; a real hostname or IP contains none,
+    // so reject the whole request rather than sanitize-and-send.
+    for (const QChar ch : target) {
+        if (ch.unicode() < kFirstNonControlCodeUnit || ch.unicode() == kDeleteControlChar) {
+            return QStringLiteral("Target contains invalid control characters");
+        }
+    }
+    return {};
+}
 
-    // Build port list: explicit ports + range
-    QVector<uint16_t> ports = config.ports;
+// Build the port set: explicit ports plus any range, de-duplicated with the invalid
+// port 0 dropped. A hostile ScanConfig can carry a huge duplicate-heavy ports vector;
+// the QSet bounds the real work to at most the 65535 valid TCP ports (fail closed
+// against amplification) while keeping membership checks O(1) rather than O(n^2).
+QVector<uint16_t> collectScanPorts(const PortScanner::ScanConfig& config) {
+    QVector<uint16_t> ports;
+    QSet<uint16_t> seen;
+    // Reserve for the unique-port ceiling, never the (possibly huge) input count, so a
+    // duplicate-heavy vector cannot drive a large hash pre-allocation.
+    constexpr qsizetype kMaxUniquePorts = 65'536;
+    seen.reserve(std::min<qsizetype>(config.ports.size(), kMaxUniquePorts));
+    for (const uint16_t port : config.ports) {
+        if (port != 0 && !seen.contains(port)) {
+            seen.insert(port);
+            ports.append(port);
+        }
+    }
     if (config.portRangeStart > 0 && config.portRangeEnd >= config.portRangeStart) {
         for (uint32_t p = config.portRangeStart; p <= config.portRangeEnd; ++p) {
             const auto port = static_cast<uint16_t>(p);
-            if (!ports.contains(port)) {
+            if (!seen.contains(port)) {
+                seen.insert(port);
                 ports.append(port);
             }
         }
     }
+    return ports;
+}
+}  // namespace
 
+void PortScanner::scan(const ScanConfig& config) {
+    m_cancelled.store(false);
+
+    const QString targetError = validateScanTarget(config.target);
+    if (!targetError.isEmpty()) {
+        Q_EMIT errorOccurred(targetError);
+        Q_EMIT scanComplete({});
+        return;
+    }
+
+    const QVector<uint16_t> ports = collectScanPorts(config);
     if (ports.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("No ports specified for scanning"));
         Q_EMIT scanComplete({});
         return;
     }
 
-    Q_EMIT scanStarted(config.target, ports.size());
+    Q_EMIT scanStarted(config.target, static_cast<int>(ports.size()));
 
+    const QVector<PortScanResult> results = scanPortsConcurrently(config, ports);
+
+    Q_EMIT scanComplete(results);
+}
+
+QVector<PortScanResult> PortScanner::scanPortsConcurrently(const ScanConfig& config,
+                                                           const QVector<uint16_t>& ports) {
+    // Honor maxConcurrent: probe up to `concurrency` ports at once (each scanPort runs
+    // its own short-lived probe thread) instead of the previous strictly-serial loop.
+    // Ports are processed in batches and every batch is fully joined before the next, so
+    // the signals below are emitted from THIS thread in a stable, bounded order.
+    const int concurrency = std::clamp(config.maxConcurrent, 1, kMaxScanConcurrency);
     QVector<PortScanResult> results;
     results.reserve(ports.size());
 
-    for (int i = 0; i < ports.size(); ++i) {
-        if (m_cancelled.load()) {
-            break;
+    int scanned = 0;
+    for (int start = 0; start < ports.size() && !m_cancelled.load(); start += concurrency) {
+        const int end = std::min(start + concurrency, static_cast<int>(ports.size()));
+
+        std::vector<std::future<PortScanResult>> batch;
+        batch.reserve(static_cast<size_t>(end - start));
+        for (int i = start; i < end; ++i) {
+            const uint16_t port = ports[i];
+            try {
+                batch.push_back(std::async(std::launch::async, [this, &config, port]() {
+                    return scanPort(config.target, port, config.timeoutMs, config.grabBanners);
+                }));
+            } catch (const std::system_error&) {
+                // Thread creation failed under load. std::async is the only throw source
+                // here (scanPort itself fails closed via runTcpProbe's bounded wait), so
+                // degrade to a deferred task that runs synchronously at get() time rather
+                // than let the exception escape and terminate the scan thread.
+                batch.push_back(std::async(std::launch::deferred, [this, &config, port]() {
+                    return scanPort(config.target, port, config.timeoutMs, config.grabBanners);
+                }));
+            }
         }
 
-        auto result = scanPort(config.target, ports[i], config.timeoutMs, config.grabBanners);
-        results.append(result);
-        Q_EMIT portScanned(result);
-        Q_EMIT scanProgress(i + 1, ports.size());
+        for (auto& fut : batch) {
+            const PortScanResult result = fut.get();
+            results.append(result);
+            ++scanned;
+            Q_EMIT portScanned(result);
+            Q_EMIT scanProgress(scanned, static_cast<int>(ports.size()));
+        }
     }
 
-    Q_EMIT scanComplete(results);
+    return results;
 }
 
 PortScanResult PortScanner::scanPort(const QString& target,
@@ -361,8 +486,12 @@ PortScanResult PortScanner::scanPort(const QString& target,
     result.port = port;
     result.scanTimestamp = QDateTime::currentDateTime();
 
+    // Clamp the untrusted per-connect timeout to a positive, bounded QTimer interval so the
+    // connect timer always fires (no infinite wait) and cannot block for weeks.
+    const int connectTimeoutMs =
+        std::clamp(timeoutMs, kMinPortScanTimeoutMs, kMaxPortScanTimeoutMs);
     const TcpProbeResult probe =
-        runTcpProbe(target, port, timeoutMs, grabBanner, kBannerGrabTimeout);
+        runTcpProbe(target, port, connectTimeoutMs, grabBanner, kBannerGrabTimeout);
 
     result.responseTimeMs = probe.response_time_ms;
 
@@ -374,7 +503,9 @@ PortScanResult PortScanner::scanPort(const QString& target,
             result.banner = QString::fromUtf8(probe.banner).trimmed();
             result.banner.remove(QLatin1Char('\0'));
         }
-    } else if (probe.error_message.contains(QStringLiteral("refused"), Qt::CaseInsensitive)) {
+    } else if (probe.socket_error == QAbstractSocket::ConnectionRefusedError) {
+        // Classify via the stable socket-error enum, not the localized "refused" text,
+        // so closed ports are detected on non-English Windows too.
         result.state = PortScanResult::State::Closed;
     } else if (probe.timed_out) {
         result.state = PortScanResult::State::Filtered;
@@ -384,20 +515,6 @@ PortScanResult PortScanner::scanPort(const QString& target,
     }
 
     return result;
-}
-
-QString PortScanner::grabBannerData(const QString& target, uint16_t port, int timeoutMs) {
-    Q_ASSERT(!target.isEmpty());
-    Q_ASSERT(timeoutMs >= 0);
-    const TcpProbeResult probe = runTcpProbe(target, port, timeoutMs, true, timeoutMs);
-    if (probe.banner.isEmpty()) {
-        return {};
-    }
-
-    // Clean up non-printable characters
-    QString banner = QString::fromUtf8(probe.banner).trimmed();
-    banner.remove(QLatin1Char('\0'));
-    return banner;
 }
 
 QVector<PortPreset> PortScanner::getPresets() {

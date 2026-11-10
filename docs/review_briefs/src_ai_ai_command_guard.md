@@ -1,0 +1,7 @@
+- **HIGH** -- `src/ai/ai_command_guard.cpp:38` -- Narrow-path exception applies globally; broad recursion passes when comment, preview, or unrelated command contains full uninstall/vendor path.
+- **HIGH** -- `src/ai/ai_command_guard.cpp:60` -- Hyphenated singular `--ignore-checksum` matches no bypass token and passes unblocked.
+- **HIGH** -- `src/ai/ai_command_guard.cpp:56` -- Checksum-substitution options such as `--download-checksum` and `--download-checksum-x64` pass unguarded despite stated block contract at line 105.
+- **HIGH** -- `src/ai/ai_command_guard.cpp:72` -- Cached-installer detection misses `$env:TEMP\chocolatey\...`, `$env:ChocolateyInstall\lib-bad\...`, and Chocolatey `cache`/`temp` trees, bypassing required approval.
+- **MEDIUM** -- `src/ai/ai_command_guard.cpp:26` -- Read command and binary extension matched independently; safe mixed command such as `Get-Content notes.txt; Get-FileHash tool.exe` falsely blocks.
+- **MEDIUM** -- `src/ai/ai_command_guard.cpp:42` -- Registry root and `-Recurse` matched independently; unrelated recursion and `-Recurse:$false` falsely block nonrecursive registry access.
+- **LOW** -- `src/ai/ai_command_guard.cpp:123` -- Nonblocked evaluation rebuilds and lowercases combined command twice through separate block and approval calls.

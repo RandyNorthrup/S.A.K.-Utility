@@ -21,7 +21,29 @@ struct AiToolCallRequest {
     QString operation;
     QString command_preview;
     QString user_message;
+    /// The MODEL'S CLAIM about whether this call needs administrator rights. It is an input
+    /// from an untrusted source, not a fact about what will happen -- see @ref host_elevated.
     bool requires_admin{false};
+    /// True when THIS process is already running elevated.
+    ///
+    /// requires_admin alone is not the elevation of the launch. A call with
+    /// requires_admin=false skips the gated elevated runner and launches a plain QProcess,
+    /// which inherits S.A.K.'s own token -- so inside an elevated S.A.K. that "non-admin"
+    /// command runs with administrator rights while the policy, reading only the model's
+    /// claim, classified it as non-risky and took NO lease and NO restore point (B1-3 / H6).
+    ///
+    /// Injected rather than read here, so the policy stays a pure, testable rule: the caller
+    /// supplies ElevationManager::isElevated() and the policy decides. Defaults false, which
+    /// is the value a caller that forgets to set it gets -- deliberately the same as today's
+    /// behaviour, since the guard's job is to ADD risk, never to remove any.
+    bool host_elevated{false};
+    // Set ONLY after a human has explicitly confirmed this specific catastrophic/
+    // irreversible operation. evaluateToolPolicy refuses to allow a catastrophic change
+    // while this is false, so the mandatory confirmation is machine-enforced by the policy
+    // layer rather than left to a caller convention: a code path that dispatches a
+    // catastrophic tool without first obtaining (and recording) the human confirmation is
+    // blocked. Non-catastrophic calls ignore this field.
+    bool human_confirmed{false};
 };
 
 struct AiToolPolicyDecision {
@@ -30,6 +52,12 @@ struct AiToolPolicyDecision {
     bool requires_lease{false};
     bool requires_exclusive_lease{false};
     bool restore_point_recommended{false};
+    // Set when the command matches a catastrophic/irreversible operation (disk
+    // format, partition wipe, boot-config edit, shadow-copy/backup deletion,
+    // registry-hive delete, execution-policy bypass, recursive system-dir wipe).
+    // Callers must require an explicit human confirmation for these even in
+    // unattended mode -- they can destroy the system or data irreversibly.
+    bool catastrophic_change{false};
     QString reason;
 };
 
@@ -38,7 +66,23 @@ struct AiToolPolicyDecision {
 [[nodiscard]] bool isKnownLocalTool(const QString& tool_name);
 [[nodiscard]] bool isMutatingPackageOperation(const QString& operation);
 [[nodiscard]] bool commandLooksRiskyChange(const QString& preview);
+// Obfuscated command shapes (encoded/base64/iex/remote-download-and-run) that
+// hide their true action from the risk classifier. Treated as risky so they get
+// the lease/restore-point/approval path instead of slipping through fail-open.
+[[nodiscard]] bool commandLooksObfuscated(const QString& preview);
+// Catastrophic/irreversible operations (see AiToolPolicyDecision::catastrophic).
+[[nodiscard]] bool commandLooksCatastrophic(const QString& preview);
 [[nodiscard]] AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy,
                                                       const AiToolCallRequest& request);
+
+// Restrictiveness rank (0 = most restrictive), for ordering/display. The modes are not a
+// single capability line (ReadOnlyPc and PackageToolsOnly grant different things), so
+// clamping uses capability containment rather than this rank.
+[[nodiscard]] int toolPolicyRank(AiToolPolicy policy);
+
+// Bounds a requested sub-agent policy to the session's ceiling: @p requested is honored
+// only when the ceiling already grants everything it grants, otherwise the ceiling itself
+// is returned. A sub-agent can therefore never gain a capability the session lacks.
+[[nodiscard]] AiToolPolicy clampToolPolicy(AiToolPolicy requested, AiToolPolicy ceiling);
 
 }  // namespace sak::ai

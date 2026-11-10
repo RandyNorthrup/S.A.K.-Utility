@@ -10,8 +10,13 @@
 #include "sak/network_diagnostic_report_generator.h"
 #include "sak/network_diagnostic_types.h"
 
+#include <QDir>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
+#include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -20,37 +25,41 @@ class NetworkDiagnosticReportTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──
+    // -- Construction --
     void construction_default();
     void construction_nonCopyable();
 
-    // ── Section enum ──
+    // -- Section enum --
     void sectionEnum_allDistinct();
 
-    // ── HTML: Empty report ──
+    // -- HTML: Empty report --
     void html_emptyReport_containsStructure();
     void html_emptyReport_containsDoctype();
 
-    // ── HTML: Metadata ──
+    // -- HTML: Metadata --
     void html_metadata_technicianName();
     void html_metadata_ticketNumber();
     void html_metadata_notes();
 
-    // ── HTML: Sections ──
+    // -- HTML: Sections --
     void html_section_adapterConfig();
     void html_section_pingResults();
     void html_section_dnsResults();
+    void html_dnsRecordType_htmlEscaped();
     void html_section_portScanResults();
     void html_section_bandwidthResults();
+    void html_section_httpSpeedTest();
     void html_section_wifiAnalysis();
     void html_section_firewallAudit();
     void html_section_connectionMonitor();
+    void html_adapterFields_htmlEscaped();
+    void html_connectionFields_htmlEscaped();
     void html_section_networkShares();
 
-    // ── HTML: Section exclusion ──
+    // -- HTML: Section exclusion --
     void html_sectionExclusion_onlyIncluded();
 
-    // ── JSON: Basic structure ──
+    // -- JSON: Basic structure --
     void json_emptyReport_validJson();
     void json_metadata_included();
     void json_pingData_serialized();
@@ -59,11 +68,15 @@ private Q_SLOTS:
     void json_wifiData_serialized();
     void json_firewallData_serialized();
     void json_shareData_serialized();
+
+    // -- File output: atomic write + flush (B9-12) --
+    void generateHtml_writesCompleteFileAndEmitsSignal();
+    void generateJson_writesValidJsonAndEmitsSignal();
 };
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // Construction
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::construction_default() {
     NetworkDiagnosticReportGenerator gen;
@@ -77,9 +90,9 @@ void NetworkDiagnosticReportTests::construction_nonCopyable() {
     QVERIFY(!std::is_copy_assignable_v<NetworkDiagnosticReportGenerator>);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // Section Enum
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::sectionEnum_allDistinct() {
     using S = NetworkDiagnosticReportGenerator::Section;
@@ -98,9 +111,9 @@ void NetworkDiagnosticReportTests::sectionEnum_allDistinct() {
     QCOMPARE(values.size(), 10);
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // HTML: Empty Report
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::html_emptyReport_containsStructure() {
     NetworkDiagnosticReportGenerator gen;
@@ -115,38 +128,39 @@ void NetworkDiagnosticReportTests::html_emptyReport_containsStructure() {
 void NetworkDiagnosticReportTests::html_emptyReport_containsDoctype() {
     NetworkDiagnosticReportGenerator gen;
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("<!DOCTYPE"), Qt::CaseInsensitive) ||
-            html.contains(QStringLiteral("<html"), Qt::CaseInsensitive));
+    // The || fallback couldn't fail (DOCTYPE and <html come from the same constant); pin DOCTYPE.
+    QVERIFY(html.contains(QStringLiteral("<!DOCTYPE html>"), Qt::CaseInsensitive));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // HTML: Metadata
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::html_metadata_technicianName() {
     NetworkDiagnosticReportGenerator gen;
     gen.setTechnicianName(QStringLiteral("John Doe"));
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("John Doe")));
+    QVERIFY(html.contains(QStringLiteral("<p><b>Technician:</b> John Doe</p>")));
 }
 
 void NetworkDiagnosticReportTests::html_metadata_ticketNumber() {
     NetworkDiagnosticReportGenerator gen;
     gen.setTicketNumber(QStringLiteral("TICKET-12345"));
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("TICKET-12345")));
+    QVERIFY(html.contains(QStringLiteral("<p><b>Ticket:</b> TICKET-12345</p>")));
 }
 
 void NetworkDiagnosticReportTests::html_metadata_notes() {
     NetworkDiagnosticReportGenerator gen;
     gen.setNotes(QStringLiteral("Customer reports intermittent connectivity"));
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("intermittent connectivity")));
+    QVERIFY(html.contains(
+        QStringLiteral("<p><b>Notes:</b> Customer reports intermittent connectivity</p>")));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // HTML: Sections
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::html_section_adapterConfig() {
     NetworkDiagnosticReportGenerator gen;
@@ -160,9 +174,11 @@ void NetworkDiagnosticReportTests::html_section_adapterConfig() {
     gen.setAdapterData({adapter});
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("Ethernet 1")));
-    QVERIFY(html.contains(QStringLiteral("AA:BB:CC:DD:EE:FF")));
-    QVERIFY(html.contains(QStringLiteral("192.168.1.100")));
+    // Pin the whole adapter row (name/status/IP/MAC in order); disjoint contains() would pass
+    // even if the columns were shuffled or the wrong adapter's cells interleaved.
+    QVERIFY(html.contains(QStringLiteral(
+        "<tr><td>Ethernet 1</td><td></td><td><span class=\"success\">Connected</span></td>"
+        "<td>192.168.1.100</td><td>AA:BB:CC:DD:EE:FF</td><td>--</td></tr>")));
 }
 
 void NetworkDiagnosticReportTests::html_section_pingResults() {
@@ -182,6 +198,11 @@ void NetworkDiagnosticReportTests::html_section_pingResults() {
 
     const auto html = gen.toHtml();
     QVERIFY(html.contains(QStringLiteral("google.com")));
+    // The stat-box numbers/labels/precision were unverified; pin them.
+    QVERIFY(html.contains(
+        QStringLiteral("Sent: 10 | Received: 10 | Lost: 0 (<span class=\"success\">0.0%</span>)")));
+    QVERIFY(html.contains(
+        QStringLiteral("Min: 10.0 ms | Max: 25.0 ms | Avg: 15.5 ms | Jitter: 0.00 ms")));
 }
 
 void NetworkDiagnosticReportTests::html_section_dnsResults() {
@@ -198,8 +219,28 @@ void NetworkDiagnosticReportTests::html_section_dnsResults() {
     gen.setDnsData({dns});
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("example.com")));
-    QVERIFY(html.contains(QStringLiteral("93.184.216.34")));
+    // Pin the query header (name/type/server/status/time) and the resolved answer as a list item.
+    QVERIFY(html.contains(QStringLiteral(
+        "<h3>example.com (A) via 8.8.8.8 -- <span class=\"success\">OK</span> (25.0 ms)</h3>")));
+    QVERIFY(html.contains(QStringLiteral("<li>93.184.216.34</li>")));
+}
+
+void NetworkDiagnosticReportTests::html_dnsRecordType_htmlEscaped() {
+    // B9-18: the DNS record type was emitted into the HTML report unescaped. A
+    // crafted type must be escaped so it cannot inject markup into the report.
+    NetworkDiagnosticReportGenerator gen;
+    gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::DnsResults});
+
+    DnsQueryResult dns;
+    dns.queryName = QStringLiteral("example.com");
+    dns.recordType = QStringLiteral("<script>alert(1)</script>");
+    dns.dnsServer = QStringLiteral("8.8.8.8");
+    dns.success = true;
+    gen.setDnsData({dns});
+
+    const auto html = gen.toHtml();
+    QVERIFY(!html.contains(QStringLiteral("<script>alert(1)</script>")));
+    QVERIFY(html.contains(QStringLiteral("&lt;script&gt;")));
 }
 
 void NetworkDiagnosticReportTests::html_section_portScanResults() {
@@ -213,8 +254,11 @@ void NetworkDiagnosticReportTests::html_section_portScanResults() {
     gen.setPortScanData({port});
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("443")));
-    QVERIFY(html.contains(QStringLiteral("HTTPS")));
+    // Pin the whole port row and the summary counts; "443" alone would pass on any figure 443.
+    QVERIFY(html.contains(
+        QStringLiteral("<tr><td>443</td><td class=\"success\">Open</td><td>HTTPS</td><td>0.0 "
+                       "ms</td><td></td></tr>")));
+    QVERIFY(html.contains(QStringLiteral("Open: 1 | Closed: 0 | Filtered: 0 | Errors: 0")));
 }
 
 void NetworkDiagnosticReportTests::html_section_bandwidthResults() {
@@ -227,8 +271,38 @@ void NetworkDiagnosticReportTests::html_section_bandwidthResults() {
     gen.setBandwidthData(bw);
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("500")) || html.contains(QStringLiteral("500.5")));
-    QVERIFY(html.contains(QStringLiteral("100")) || html.contains(QStringLiteral("100.2")));
+    // Pin the exact fixed-precision rendering (kReportMetricPrecision = 2). The prior
+    // `contains("500") || contains("500.5")` was satisfied by any substring and could
+    // not catch a precision or unit-formatting regression.
+    QVERIFY(html.contains(QStringLiteral("500.50")));
+    QVERIFY(html.contains(QStringLiteral("100.20")));
+    QVERIFY(html.contains(QStringLiteral("Jitter: 0.00 ms")));
+    QVERIFY(!html.contains(QStringLiteral("Latency:")));
+}
+
+// An HTTP speed test measures latency and no jitter or loss, so the report must not print zeros
+// for what it never measured.
+void NetworkDiagnosticReportTests::html_section_httpSpeedTest() {
+    NetworkDiagnosticReportGenerator gen;
+    gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::BandwidthResults});
+
+    BandwidthTestResult bw;
+    bw.mode = BandwidthTestResult::TestMode::WanHttp;
+    bw.downloadMbps = 171.31;
+    bw.uploadMbps = 26.98;
+    bw.latencyMs = 227.0;
+    gen.setBandwidthData(bw);
+
+    QString html = gen.toHtml();
+    QVERIFY(html.contains(QStringLiteral("Latency: 227.00 ms")));
+    QVERIFY(!html.contains(QStringLiteral("Jitter")));
+    QVERIFY(!html.contains(QStringLiteral("Packet Loss")));
+
+    bw.latencyMs = -1.0;
+    gen.setBandwidthData(bw);
+    html = gen.toHtml();
+    QVERIFY(html.contains(QStringLiteral("Latency: unknown")));
+    QVERIFY(!html.contains(QStringLiteral("-1.00")));
 }
 
 void NetworkDiagnosticReportTests::html_section_wifiAnalysis() {
@@ -244,6 +318,9 @@ void NetworkDiagnosticReportTests::html_section_wifiAnalysis() {
 
     const auto html = gen.toHtml();
     QVERIFY(html.contains(QStringLiteral("TestNetwork")));
+    // Pin the signal-class threshold (-55 -> "warning") and the dBm/band formatting.
+    QVERIFY(html.contains(QStringLiteral("<td class=\"warning\">-55 dBm (0%)</td>")));
+    QVERIFY(html.contains(QStringLiteral("<td>2.4 GHz</td>")));
 }
 
 void NetworkDiagnosticReportTests::html_section_firewallAudit() {
@@ -263,7 +340,8 @@ void NetworkDiagnosticReportTests::html_section_firewallAudit() {
     const auto html = gen.toHtml();
     // Firewall section shows summary counts, not individual rule names
     QVERIFY(html.contains(QStringLiteral("Firewall Audit")));
-    QVERIFY(html.contains(QStringLiteral("Total Rules: 1")));
+    QVERIFY(html.contains(
+        QStringLiteral("Total Rules: 1 | Inbound: 1 | Outbound: 0 | Block Rules: 1")));
 }
 
 void NetworkDiagnosticReportTests::html_section_connectionMonitor() {
@@ -281,8 +359,53 @@ void NetworkDiagnosticReportTests::html_section_connectionMonitor() {
     gen.setConnectionData({conn});
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("ESTABLISHED")) ||
-            html.contains(QStringLiteral("chrome.exe")));
+    // The || let a dropped field pass; pin the adjacent state/process cells and the summary counts.
+    QVERIFY(html.contains(QStringLiteral("<td>ESTABLISHED</td><td>chrome.exe</td>")));
+    QVERIFY(html.contains(QStringLiteral("Total: 1 | TCP: 1 | UDP: 0 | Established: 1")));
+}
+
+void NetworkDiagnosticReportTests::html_adapterFields_htmlEscaped() {
+    // Codex-3: adapter type/IP/MAC entered the HTML report unescaped (only the name was
+    // escaped). A crafted value must be escaped so it cannot inject markup.
+    NetworkDiagnosticReportGenerator gen;
+    gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::AdapterConfig});
+
+    NetworkAdapterInfo adapter;
+    adapter.name = QStringLiteral("Ethernet 1");
+    adapter.adapterType = QStringLiteral("<b>Ethernet</b>");
+    adapter.macAddress = QStringLiteral("<script>alert(1)</script>");
+    adapter.ipv4Addresses = {QStringLiteral("10.0.0.1<img>")};
+    adapter.isConnected = true;
+    gen.setAdapterData({adapter});
+
+    const auto html = gen.toHtml();
+    QVERIFY(!html.contains(QStringLiteral("<script>alert(1)</script>")));
+    QVERIFY(!html.contains(QStringLiteral("<b>Ethernet</b>")));
+    QVERIFY(!html.contains(QStringLiteral("10.0.0.1<img>")));
+    QVERIFY(html.contains(QStringLiteral("&lt;script&gt;")));
+}
+
+void NetworkDiagnosticReportTests::html_connectionFields_htmlEscaped() {
+    // Codex-3: connection local/remote address and state entered the HTML report unescaped
+    // (only the process name was escaped). A crafted value must be escaped.
+    NetworkDiagnosticReportGenerator gen;
+    gen.setIncludedSections({NetworkDiagnosticReportGenerator::Section::ActiveConnections});
+
+    ConnectionInfo conn;
+    conn.protocol = ConnectionInfo::Protocol::TCP;
+    conn.localAddress = QStringLiteral("127.0.0.1<img>");
+    conn.localPort = 80;
+    conn.remoteAddress = QStringLiteral("<script>x</script>");
+    conn.remotePort = 443;
+    conn.state = QStringLiteral("<b>ESTABLISHED</b>");
+    conn.processName = QStringLiteral("app.exe");
+    gen.setConnectionData({conn});
+
+    const auto html = gen.toHtml();
+    QVERIFY(!html.contains(QStringLiteral("<script>x</script>")));
+    QVERIFY(!html.contains(QStringLiteral("<b>ESTABLISHED</b>")));
+    QVERIFY(!html.contains(QStringLiteral("127.0.0.1<img>")));
+    QVERIFY(html.contains(QStringLiteral("&lt;script&gt;")));
 }
 
 void NetworkDiagnosticReportTests::html_section_networkShares() {
@@ -298,7 +421,11 @@ void NetworkDiagnosticReportTests::html_section_networkShares() {
     gen.setShareData({share});
 
     const auto html = gen.toHtml();
-    QVERIFY(html.contains(QStringLiteral("SharedFolder")));
+    // Pin the whole share row (UNC/type/read/write/remark in order); "SharedFolder" alone would
+    // pass even if the read/write access cells were swapped.
+    QVERIFY(html.contains(QStringLiteral(
+        "<tr><td>\\\\SERVER\\SharedFolder$</td><td>Disk</td><td class=\"success\">[x]</td>"
+        "<td class=\"error\">[ ]</td><td>Test share</td></tr>")));
 }
 
 void NetworkDiagnosticReportTests::html_sectionExclusion_onlyIncluded() {
@@ -321,9 +448,9 @@ void NetworkDiagnosticReportTests::html_sectionExclusion_onlyIncluded() {
     QVERIFY(!html.contains(QStringLiteral("unique_wifi_ssid_abc")));
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 // JSON
-// ════════════════════════════════════════════════════════════════════════════
+// ============================================================================
 
 void NetworkDiagnosticReportTests::json_emptyReport_validJson() {
     NetworkDiagnosticReportGenerator gen;
@@ -389,7 +516,14 @@ void NetworkDiagnosticReportTests::json_portScanData_serialized() {
     gen.setPortScanData({port});
 
     const auto json = gen.toJson();
-    QVERIFY(json.contains(QStringLiteral("8080")));
+    // Parse and pin the port record instead of a bare substring (which would pass on any 8080).
+    const auto arr =
+        QJsonDocument::fromJson(json.toUtf8()).object().value(QStringLiteral("portScan")).toArray();
+    QCOMPARE(arr.size(), 1);
+    const auto obj = arr.at(0).toObject();
+    QCOMPARE(obj.value(QStringLiteral("port")).toInt(), 8080);
+    QCOMPARE(obj.value(QStringLiteral("state")).toString(), QStringLiteral("open"));
+    QCOMPARE(obj.value(QStringLiteral("service")).toString(), QStringLiteral("HTTP-Alt"));
 }
 
 void NetworkDiagnosticReportTests::json_wifiData_serialized() {
@@ -415,8 +549,14 @@ void NetworkDiagnosticReportTests::json_firewallData_serialized() {
     gen.setFirewallData({rule}, {}, {});
 
     const auto json = gen.toJson();
-    // JSON firewall section contains summary counts
-    QVERIFY(json.contains(QStringLiteral("totalRules")));
+    // Parse and pin the firewall summary counts instead of a bare key-presence substring.
+    const auto fw = QJsonDocument::fromJson(json.toUtf8())
+                        .object()
+                        .value(QStringLiteral("firewall"))
+                        .toObject();
+    QCOMPARE(fw.value(QStringLiteral("totalRules")).toInt(), 1);
+    QCOMPARE(fw.value(QStringLiteral("conflicts")).toInt(), 0);
+    QCOMPARE(fw.value(QStringLiteral("gaps")).toInt(), 0);
 }
 
 void NetworkDiagnosticReportTests::json_shareData_serialized() {
@@ -430,6 +570,98 @@ void NetworkDiagnosticReportTests::json_shareData_serialized() {
 
     const auto json = gen.toJson();
     QVERIFY(json.contains(QStringLiteral("JsonShare")));
+}
+
+void NetworkDiagnosticReportTests::generateHtml_writesCompleteFileAndEmitsSignal() {
+    // B9-12: generateHtml must flush the stream before finalizing and write the
+    // whole document atomically, then emit reportGenerated only on success. The
+    // old close-before-flush dropped the buffered tail, and success was emitted
+    // unconditionally.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString out = QDir(dir.path()).filePath(QStringLiteral("report.html"));
+
+    NetworkDiagnosticReportGenerator gen;
+    QSignalSpy done(&gen, &NetworkDiagnosticReportGenerator::reportGenerated);
+    QSignalSpy failed(&gen, &NetworkDiagnosticReportGenerator::errorOccurred);
+    gen.generateHtml(out);
+
+    QCOMPARE(done.count(), 1);
+    QCOMPARE(failed.count(), 0);
+    QCOMPARE(done.first().at(0).toString(), out);
+
+    QFile file(out);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QString html = QString::fromUtf8(file.readAll());
+    // The file holds the COMPLETE document, byte-identical to the string builder
+    // (a flush/truncation bug would drop the tail).
+    QVERIFY(html.contains(QStringLiteral("<!DOCTYPE html>"), Qt::CaseInsensitive));
+    QVERIFY(html.trimmed().endsWith(QStringLiteral("</html>")));
+    // Byte-identical after normalizing the Text-mode CRLF the writer inserts AND the
+    // generation timestamp.
+    //
+    // The document embeds QDateTime::currentDateTime().toString(Qt::ISODate), which has
+    // one-second resolution, and this comparison regenerates the document a second time.
+    // Any run that straddles a second boundary between generateHtml() and toHtml() sees
+    // two different "Generated:" lines and fails on correct code. Release is usually quick
+    // enough to land inside one second; a Debug build is not, which is how this surfaced.
+    // Blanking the stamp on BOTH sides keeps the real claim - the file holds the COMPLETE
+    // document, so a flush or truncation bug that dropped the tail still fails this.
+    static const QRegularExpression generatedStamp(
+        QStringLiteral(R"(<p><b>Generated:</b> [^<]*</p>)"));
+    const QString placeholder = QStringLiteral("<p><b>Generated:</b> STAMP</p>");
+
+    QString htmlNormalized = html;
+    htmlNormalized.remove(QLatin1Char('\r'));
+    htmlNormalized.replace(generatedStamp, placeholder);
+
+    QString expected = gen.toHtml();
+    expected.replace(generatedStamp, placeholder);
+
+    // The stamp must actually be present, or the normalization above would be silently
+    // hiding a missing header rather than a moving timestamp.
+    QVERIFY2(htmlNormalized.contains(placeholder), "written report has no Generated: line");
+    QCOMPARE(htmlNormalized, expected);
+}
+
+void NetworkDiagnosticReportTests::generateJson_writesValidJsonAndEmitsSignal() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString out = QDir(dir.path()).filePath(QStringLiteral("report.json"));
+
+    NetworkDiagnosticReportGenerator gen;
+    QSignalSpy done(&gen, &NetworkDiagnosticReportGenerator::reportGenerated);
+    QSignalSpy failed(&gen, &NetworkDiagnosticReportGenerator::errorOccurred);
+    gen.generateJson(out);
+
+    QCOMPARE(done.count(), 1);
+    QCOMPARE(failed.count(), 0);
+
+    QFile file(out);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QByteArray bytes = file.readAll();
+    QJsonParseError err{};
+    const QJsonDocument doc = QJsonDocument::fromJson(bytes, &err);
+    QCOMPARE(err.error, QJsonParseError::NoError);
+    QVERIFY(!doc.isNull());
+
+    // generateJson() and this expected-value read each call currentDateTime() with one-second
+    // precision. A run crossing that boundary compared correct output at second N with correct
+    // output at second N+1 and failed nondeterministically (reproduced under CTest --repeat).
+    // Require the moving field to exist in the written report, then compare every stable field.
+    QJsonObject actual = doc.object();
+    const QString generated = actual.value(QStringLiteral("generated")).toString();
+    static const QRegularExpression isoSecond(
+        QStringLiteral(R"(^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$)"));
+    QVERIFY2(isoSecond.match(generated).hasMatch(),
+             "written JSON has no valid generated timestamp");
+
+    QJsonParseError expectedError{};
+    QJsonObject expected = QJsonDocument::fromJson(gen.toJson().toUtf8(), &expectedError).object();
+    QCOMPARE(expectedError.error, QJsonParseError::NoError);
+    actual.remove(QStringLiteral("generated"));
+    expected.remove(QStringLiteral("generated"));
+    QCOMPARE(QJsonDocument(actual).toJson(), QJsonDocument(expected).toJson());
 }
 
 QTEST_GUILESS_MAIN(NetworkDiagnosticReportTests)

@@ -190,6 +190,16 @@ public:
         const QString& source_path,
         const QString& output_directory,
         const PartitionHfsDirectoryExportOptions& options);
+
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+    // Test-only: compiled only into test targets that define SAK_PARTITION_FS_TEST_HOOKS.
+    /// @brief True when @p child resolves (junctions/symlinks followed) to a real path at or
+    ///        under the canonical @p canonical_root. Pure seam for the export junction/symlink
+    ///        TOCTOU guard: fails closed on an empty root or an unresolvable/vanished child, and
+    ///        rejects a sibling-prefix (Root vs RootX). Same logic guards the APFS/ext exporters.
+    [[nodiscard]] static bool exportPathWithinRootForTesting(const QString& canonical_root,
+                                                             const QString& child);
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
 };
 
 class PartitionHfsFileSystemWriter {
@@ -281,6 +291,21 @@ public:
         const QString& image_path,
         const QString& path,
         const QByteArray& data,
+        const PartitionHfsFileWriteOptions& options);
+    // Streamed create: the payload is pulled from host_file_path one allocation block at a
+    // time (peak RAM one block), removing the buffered-write size cap. Byte-identical to
+    // createFileWithData for the same payload.
+    [[nodiscard]] static PartitionHfsFileWriteResult createFileFromHostPathStreamed(
+        QIODevice* device,
+        const QString& path,
+        const QString& host_file_path,
+        uint64_t size,
+        const PartitionHfsFileWriteOptions& options);
+    [[nodiscard]] static PartitionHfsFileWriteResult createFileFromHostPathStreamedFromImage(
+        const QString& image_path,
+        const QString& path,
+        const QString& host_file_path,
+        uint64_t size,
         const PartitionHfsFileWriteOptions& options);
     [[nodiscard]] static PartitionHfsFileWriteResult createSymlink(
         QIODevice* device,

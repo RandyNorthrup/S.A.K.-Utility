@@ -6,22 +6,66 @@
 
 #include "sak/ethernet_config_manager.h"
 
+#include "sak/io_write_utils.h"
+#include "sak/logger.h"
+// The single owner of every netsh adapter command and of the dotted-IPv4 check.
+#include "sak/network_adapter_admin.h"
 #include "sak/process_runner.h"
+// EthernetConfigInfo::parseNetIpConfigJson + kNetIpConfigPowerShell: the language-neutral adapter
+// scan this manager shares with the backup wizard.
+#include "sak/user_profile_types.h"
 
 #include <QDateTime>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkInterface>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSysInfo>
 #include <QTextStream>
+
+#include <algorithm>
+#include <iterator>
 
 namespace sak {
 
 namespace {
-constexpr int kAdapterTypeCaptureGroup = 3;
-constexpr int kAdapterNameCaptureGroup = 4;
+// Get-NetIPConfiguration enumerates every adapter and queries each one's DHCP state, so it is
+// slower than the single netsh call it replaced. Bounded, not unbounded: a scan that never
+// returns must still fail the capture rather than hang the caller.
+constexpr int kAdapterScanTimeoutMs = 30'000;
+// The adapter names and nothing else, as JSON. -InputObject keeps it an array for one adapter,
+// which piping would unwrap to a bare string. Non-ASCII goes out as \\uXXXX, so a name in any
+// language survives whatever code page the output is read back through.
+constexpr auto kAdapterNamesPowerShell =
+    "$names = ConvertTo-Json -Compress -InputObject @(Get-NetAdapter -ErrorAction Stop | "
+    "ForEach-Object { $_.Name }); "
+    "[regex]::Replace($names, '[^\\x00-\\x7F]', "
+    "{ param($c) '\\u{0:x4}' -f [int][char]$c.Value })";
+
+// 4 MiB. An Ethernet config backup is a few hundred bytes; a larger file is not a trusted backup
+// and must be rejected before it is read into memory (self-DoS guard).
+constexpr qint64 kMaxBackupFileBytes = 4LL * 1024 * 1024;
+
+// Every captured IPv4 field that is PRESENT must be a well-formed dotted-quad; empty optional
+// fields (gateway, DNS, and the whole set on the DHCP path) are legitimate and are not rejected.
+// The dotted-quad test itself is sak::isDottedIpv4 -- this file used to carry its own copy, one of
+// four that existed across the tree for the same one-line check.
+bool ipv4FieldsWellFormed(const EthernetConfigSnapshot& snap) {
+    if (!snap.ipv4Address.isEmpty() && !isDottedIpv4(snap.ipv4Address)) {
+        return false;
+    }
+    if (!snap.ipv4SubnetMask.isEmpty() && !isDottedIpv4(snap.ipv4SubnetMask)) {
+        return false;
+    }
+    if (!snap.ipv4Gateway.isEmpty() && !isDottedIpv4(snap.ipv4Gateway)) {
+        return false;
+    }
+    return std::ranges::all_of(snap.ipv4DnsServers,
+                               [](const QString& dns) { return isDottedIpv4(dns); });
+}
 }  // namespace
 
 // -- EthernetConfigSnapshot --------------------------------------------------
@@ -31,6 +75,7 @@ QJsonObject EthernetConfigSnapshot::toJson() const {
     obj["adapterName"] = adapterName;
     obj["description"] = description;
     obj["macAddress"] = macAddress;
+    obj["adapterType"] = adapterType;
     obj["dhcpEnabled"] = dhcpEnabled;
     obj["ipv4Address"] = ipv4Address;
     obj["ipv4SubnetMask"] = ipv4SubnetMask;
@@ -48,11 +93,15 @@ QJsonObject EthernetConfigSnapshot::toJson() const {
 }
 
 EthernetConfigSnapshot EthernetConfigSnapshot::fromJson(const QJsonObject& obj) {
-    Q_ASSERT(!obj.isEmpty());
+    // Deserializes whatever is on disk, including an empty or truncated object;
+    // the caller decides with isValid(). No assert on obj: a corrupt or missing
+    // backup file is DATA, not a programming error, and must never abort the
+    // process in a Debug build when Release handles it.
     EthernetConfigSnapshot snap;
     snap.adapterName = obj["adapterName"].toString();
     snap.description = obj["description"].toString();
     snap.macAddress = obj["macAddress"].toString();
+    snap.adapterType = obj["adapterType"].toString();
     snap.dhcpEnabled = obj["dhcpEnabled"].toBool();
     snap.ipv4Address = obj["ipv4Address"].toString();
     snap.ipv4SubnetMask = obj["ipv4SubnetMask"].toString();
@@ -69,19 +118,63 @@ EthernetConfigSnapshot EthernetConfigSnapshot::fromJson(const QJsonObject& obj) 
 }
 
 bool EthernetConfigSnapshot::isValid() const {
-    return !adapterName.isEmpty() && !backupTimestamp.isEmpty();
+    if (adapterName.isEmpty() || backupTimestamp.isEmpty()) {
+        return false;
+    }
+    // Require a meaningful captured configuration so a localized/failed parse (which recognized no
+    // fields, leaving dhcpEnabled=false AND ipv4Address empty) fails closed instead of persisting
+    // or restoring an empty backup.
+    if (!dhcpEnabled && ipv4Address.isEmpty()) {
+        return false;
+    }
+    // Reject malformed IPv4 values before they can reach a live netsh apply: restoreStaticIp sets
+    // the address before DNS, so a malformed field would otherwise leave a partial reconfiguration.
+    return ipv4FieldsWellFormed(*this);
 }
 
 // -- EthernetConfigManager ---------------------------------------------------
 
 EthernetConfigManager::EthernetConfigManager(QObject* parent) : QObject(parent) {}
 
+QString EthernetConfigManager::lookupAdapterMac(const QString& adapterName) {
+    QList<EthernetAdapterIdentity> identities;
+    const QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
+    identities.reserve(interfaces.size());
+    std::ranges::transform(interfaces, std::back_inserter(identities), [](const auto& iface) {
+        return EthernetAdapterIdentity{.humanReadableName = iface.humanReadableName(),
+                                       .systemName = iface.name(),
+                                       .hardwareAddress = iface.hardwareAddress()};
+    });
+    return lookupAdapterMac(adapterName, identities);
+}
+
+QString EthernetConfigManager::lookupAdapterMac(const QString& adapterName,
+                                                const QList<EthernetAdapterIdentity>& interfaces) {
+    if (adapterName.isEmpty()) {
+        return {};
+    }
+    const auto match =
+        std::ranges::find_if(interfaces, [&adapterName](const EthernetAdapterIdentity& iface) {
+            return iface.humanReadableName == adapterName || iface.systemName == adapterName;
+        });
+    if (match == interfaces.cend()) {
+        return {};
+    }
+    return match->hardwareAddress;  // "AA:BB:CC:DD:EE:FF", or empty for virtual adapters
+}
+
 EthernetConfigSnapshot EthernetConfigManager::captureSettings(const QString& adapterName) {
-    Q_ASSERT(!adapterName.isEmpty());
+    // An unknown or empty adapter name produces no netsh output and is reported
+    // below as a failed capture. No assert: see fromJson.
     Q_EMIT logOutput(QString("Capturing settings for adapter: %1").arg(adapterName));
 
-    QString output =
-        runNetsh({"interface", "ip", "show", "config", QString("name=%1").arg(adapterName)});
+    // LANGUAGE-NEUTRAL capture. This used to run `netsh interface ip show config` and match the
+    // English labels "DHCP enabled:", "IP Address:", "Subnet Prefix:", "Default Gateway:" and the
+    // word "Yes". netsh TRANSLATES all of them, so on a non-English Windows every field came back
+    // empty and the snapshot was silently blank -- and this snapshot is what a RESTORE later
+    // replays onto the adapter. The backup wizard's copy of this same scrape was already fixed
+    // this way; this call site was missed, so both now share kNetIpConfigPowerShell.
+    const QString output = runPowerShellCapture(QString::fromLatin1(sak::kNetIpConfigPowerShell));
 
     if (output.isEmpty()) {
         Q_EMIT errorOccurred(
@@ -89,15 +182,14 @@ EthernetConfigSnapshot EthernetConfigManager::captureSettings(const QString& ada
         return {};
     }
 
-    auto snapshot = parseNetshConfig(output, adapterName);
+    auto snapshot = snapshotFromNetIpConfig(output, adapterName);
     snapshot.backupTimestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
     snapshot.computerName = QSysInfo::machineHostName();
 
-    // Get MAC address via separate netsh call
-    QString macOutput =
-        runNetsh({"interface", "show", "interface", QString("name=%1").arg(adapterName)});
-    // MAC is typically available from getmac or adapter inspector
-    // We'll use the adapter name as the identifier instead
+    // Populate the MAC from QNetworkInterface. The previous code ran
+    // `netsh interface show interface` (which does not even return a MAC) and then
+    // DISCARDED its output, leaving macAddress permanently empty.
+    snapshot.macAddress = lookupAdapterMac(adapterName);
     if (snapshot.adapterName.isEmpty()) {
         snapshot.adapterName = adapterName;
     }
@@ -118,34 +210,50 @@ bool EthernetConfigManager::saveToFile(const EthernetConfigSnapshot& snapshot,
         return false;
     }
 
-    QFile file(filePath);
+    // QSaveFile stages to a temporary and renames on commit(), so a failed or
+    // short write never truncates a pre-existing backup (the previous QFile
+    // opened WriteOnly, truncating the target before writing) (B9-12).
+    QSaveFile file(filePath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         Q_EMIT errorOccurred(QString("Cannot write to file: %1").arg(filePath));
         return false;
     }
 
-    QJsonDocument doc(snapshot.toJson());
-    const QByteArray data = doc.toJson(QJsonDocument::Indented);
-    if (file.write(data) != data.size()) {
+    const QJsonDocument doc(snapshot.toJson());
+    if (!sak::writeFully(file, doc.toJson(QJsonDocument::Indented))) {
+        file.cancelWriting();
         Q_EMIT errorOccurred(QString("Incomplete write to file: %1").arg(filePath));
         return false;
     }
-    file.close();
+    if (!file.commit()) {
+        Q_EMIT errorOccurred(QString("Could not finalize file: %1").arg(filePath));
+        return false;
+    }
 
     Q_EMIT logOutput(QString("Settings saved to: %1").arg(filePath));
     return true;
 }
 
 EthernetConfigSnapshot EthernetConfigManager::loadFromFile(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
+    // An empty path fails the open below and is reported. No assert.
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         Q_EMIT errorOccurred(QString("Cannot read file: %1").arg(filePath));
         return {};
     }
 
+    // Reject an oversized file before readAll() pulls it into memory: a backup is a few hundred
+    // bytes, so anything past the cap is not a trusted configuration and must fail closed.
+    const qint64 fileSize = file.size();
+    if (fileSize > kMaxBackupFileBytes) {
+        Q_EMIT errorOccurred(
+            QString("Backup file is too large to be a valid configuration (%1 bytes).")
+                .arg(fileSize));
+        return {};
+    }
+
     QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
     file.close();
 
     if (parseError.error != QJsonParseError::NoError) {
@@ -170,21 +278,23 @@ EthernetConfigSnapshot EthernetConfigManager::loadFromFile(const QString& filePa
     return snapshot;
 }
 
-bool EthernetConfigManager::restoreDhcpMode(const QString& adapterName) {
+// Each of the three restore legs below is a thin adapter over the ONE implementation in
+// network_adapter_admin: it decides what to attempt, hands the work to the shared executor, and
+// translates the outcome into this class's signals. No netsh argument vector is spelled out here.
+// Before R5-IDX-19b these legs and the diagnostic panel each built their own, and the two sets
+// had already drifted apart.
+
+bool EthernetConfigManager::restoreDhcpMode(const QString& adapterName, bool* dnsApplied) {
     Q_EMIT logOutput("Setting adapter to DHCP mode...");
-    QString result = runNetsh(
-        {"interface", "ip", "set", "address", QString("name=%1").arg(adapterName), "source=dhcp"});
-    if (result.contains("error", Qt::CaseInsensitive)) {
-        Q_EMIT errorOccurred(QString("Failed to set DHCP: %1").arg(result));
+    const DhcpApplyOutcome outcome = setAdapterDhcpMode(adapterName);
+    if (dnsApplied != nullptr) {
+        *dnsApplied = outcome.dns_switched;
+    }
+    if (!outcome.succeeded) {
+        Q_EMIT errorOccurred(outcome.message);
         return false;
     }
-
-    static_cast<void>(runNetsh({"interface",
-                                "ip",
-                                "set",
-                                "dnsservers",
-                                QString("name=%1").arg(adapterName),
-                                "source=dhcp"}));
+    Q_EMIT logOutput(outcome.message);
     return true;
 }
 
@@ -193,69 +303,43 @@ bool EthernetConfigManager::restoreStaticIp(const EthernetConfigSnapshot& snapsh
     Q_EMIT logOutput(QString("Setting static IP: %1 / %2 / %3")
                          .arg(snapshot.ipv4Address, snapshot.ipv4SubnetMask, snapshot.ipv4Gateway));
 
-    QStringList addressArgs = {"interface",
-                               "ip",
-                               "set",
-                               "address",
-                               QString("name=%1").arg(adapterName),
-                               "source=static",
-                               QString("addr=%1").arg(snapshot.ipv4Address),
-                               QString("mask=%1").arg(snapshot.ipv4SubnetMask)};
-
-    if (!snapshot.ipv4Gateway.isEmpty()) {
-        addressArgs << QString("gateway=%1").arg(snapshot.ipv4Gateway) << "gwmetric=0";
-    }
-
-    QString result = runNetsh(addressArgs);
-    if (result.contains("error", Qt::CaseInsensitive)) {
-        Q_EMIT errorOccurred(QString("Failed to set IP address: %1").arg(result));
+    const AdapterAdminOutcome outcome = setAdapterStaticIpv4(adapterName,
+                                                             snapshot.ipv4Address,
+                                                             snapshot.ipv4SubnetMask,
+                                                             snapshot.ipv4Gateway,
+                                                             kRestoreIpv4Dialect);
+    if (!outcome.succeeded) {
+        Q_EMIT errorOccurred(QString("Failed to set IP address: %1").arg(outcome.message));
         return false;
     }
     return true;
 }
 
 bool EthernetConfigManager::restoreDnsServers(const EthernetConfigSnapshot& snapshot,
-                                              const QString& adapterName) {
+                                              const QString& adapterName,
+                                              bool* primaryApplied) {
     if (snapshot.ipv4DnsServers.isEmpty()) {
         return true;
     }
 
     Q_EMIT logOutput(QString("Setting primary DNS: %1").arg(snapshot.ipv4DnsServers.first()));
 
-    QString result = runNetsh({"interface",
-                               "ip",
-                               "set",
-                               "dnsservers",
-                               QString("name=%1").arg(adapterName),
-                               "source=static",
-                               QString("addr=%1").arg(snapshot.ipv4DnsServers.first()),
-                               "register=primary"});
-    if (result.contains("error", Qt::CaseInsensitive)) {
-        Q_EMIT errorOccurred(QString("Failed to set primary DNS: %1").arg(result));
-        return false;
+    const DnsApplyOutcome outcome = setAdapterStaticDns(adapterName,
+                                                        snapshot.ipv4DnsServers,
+                                                        kRestoreIpv4Dialect.dns_registration);
+    if (primaryApplied != nullptr) {
+        *primaryApplied = outcome.primary_applied;
     }
-
-    for (int idx = 1; idx < snapshot.ipv4DnsServers.size(); ++idx) {
-        Q_EMIT logOutput(QString("Adding DNS server: %1").arg(snapshot.ipv4DnsServers[idx]));
-
-        result = runNetsh({"interface",
-                           "ip",
-                           "add",
-                           "dnsservers",
-                           QString("name=%1").arg(adapterName),
-                           QString("addr=%1").arg(snapshot.ipv4DnsServers[idx]),
-                           QString("index=%1").arg(idx + 1)});
-        if (result.contains("error", Qt::CaseInsensitive)) {
-            Q_EMIT errorOccurred(QString("Failed to add DNS server %1: %2")
-                                     .arg(snapshot.ipv4DnsServers[idx], result));
-            return false;
-        }
+    if (!outcome.succeeded) {
+        Q_EMIT errorOccurred(outcome.message);
+        return false;
     }
     return true;
 }
 
 bool EthernetConfigManager::restoreSettings(const EthernetConfigSnapshot& snapshot,
-                                            const QString& adapterName) {
+                                            const QString& adapterName,
+                                            bool* dnsApplied) {
     if (!snapshot.isValid()) {
         Q_EMIT errorOccurred("Cannot restore from invalid snapshot.");
         return false;
@@ -266,11 +350,24 @@ bool EthernetConfigManager::restoreSettings(const EthernetConfigSnapshot& snapsh
         QString("Source: %1 (backed up from %2 on %3)")
             .arg(snapshot.adapterName, snapshot.computerName, snapshot.backupTimestamp));
 
-    bool allSucceeded = snapshot.dhcpEnabled ? restoreDhcpMode(adapterName)
-                                             : restoreStaticIp(snapshot, adapterName);
-
-    if (!restoreDnsServers(snapshot, adapterName)) {
-        allSucceeded = false;
+    bool allSucceeded = true;
+    if (snapshot.dhcpEnabled) {
+        // DHCP restore: both the IP and the DNS come from DHCP. Applying the
+        // captured servers as STATIC afterward would override the automatic DNS
+        // that restoreDhcpMode just set, leaving a "DHCP" restore pinned to
+        // static DNS. So the static DNS leg runs ONLY on the static path (B9-07).
+        allSucceeded = restoreDhcpMode(adapterName, dnsApplied);
+    } else {
+        allSucceeded = restoreStaticIp(snapshot, adapterName);
+        bool dnsPrimaryApplied = false;
+        if (!restoreDnsServers(snapshot, adapterName, &dnsPrimaryApplied)) {
+            allSucceeded = false;
+        }
+        if (dnsApplied != nullptr) {
+            // No captured servers -> nothing to apply; otherwise report whether
+            // the primary DNS actually went live.
+            *dnsApplied = snapshot.ipv4DnsServers.isEmpty() ? true : dnsPrimaryApplied;
+        }
     }
 
     if (allSucceeded) {
@@ -282,61 +379,106 @@ bool EthernetConfigManager::restoreSettings(const EthernetConfigSnapshot& snapsh
     return allSucceeded;
 }
 
+bool EthernetConfigManager::setDnsServers(const QString& adapterName,
+                                          const QStringList& dnsServers,
+                                          bool& primaryApplied) {
+    // Reuse the DNS-only restore leg: it issues `netsh interface ip set dnsservers source=static`
+    // for the primary plus `add dnsservers` for each secondary, and touches nothing else -- so the
+    // adapter's IP mode (DHCP or static) is preserved. An empty list is a no-op (returns true); the
+    // caller (network.set_adapter_dns) requires a non-empty list. primaryApplied reports whether
+    // the primary DNS went live, so a partial failure (primary set, a secondary add failed) is
+    // honest.
+    primaryApplied = false;
+    EthernetConfigSnapshot snapshot;
+    snapshot.adapterName = adapterName;
+    snapshot.ipv4DnsServers = dnsServers;
+    return restoreDnsServers(snapshot, adapterName, &primaryApplied);
+}
+
 QStringList EthernetConfigManager::listEthernetAdapters() {
-    QStringList adapters;
+    // netsh prints this table in the system language, so reading its words found no adapters at
+    // all on non-English Windows. Get-NetAdapter's names are the same names netsh takes, on any
+    // language, and it lists disabled adapters too, which enabling one needs. Fails with the error
+    // already reported through errorOccurred, so an empty list here can also mean the scan failed.
+    return adapterNamesFromJson(runPowerShellCapture(QString::fromLatin1(kAdapterNamesPowerShell)));
+}
 
-    QString output = runNetsh({"interface", "show", "interface"});
-    if (output.isEmpty()) {
-        return adapters;
-    }
-
-    // Parse netsh output: columns are Admin State, State, Type, Interface Name
-    // Skip header lines (first 3 lines typically)
-    const auto lines = output.split('\n', Qt::SkipEmptyParts);
-    bool pastHeader = false;
-
-    for (const auto& line : lines) {
-        // Detect separator line (dashes)
-        if (line.contains("---")) {
-            pastHeader = true;
-            continue;
-        }
-        if (!pastHeader) {
-            continue;
-        }
-
-        // Parse columns -- name is the last field, may contain spaces
-        // Format: "Enabled  Connected  Dedicated  Ethernet"
-        static const QRegularExpression kAdapterLineRe(
-            R"(^\s*(Enabled|Disabled)\s+(Connected|Disconnected|Not Present)\s+(\S+)\s+(.+)$)");
-
-        auto match = kAdapterLineRe.match(line.trimmed());
-        if (match.hasMatch()) {
-            QString adapterType = match.captured(kAdapterTypeCaptureGroup);
-            QString adapterName = match.captured(kAdapterNameCaptureGroup).trimmed();
-            // Include Dedicated (Ethernet) adapters
-            if (adapterType == "Dedicated") {
-                adapters.append(adapterName);
-            }
+QStringList EthernetConfigManager::adapterNamesFromJson(const QString& json) {
+    QStringList names;
+    const QJsonArray entries = QJsonDocument::fromJson(json.toUtf8()).array();
+    for (const QJsonValue& entry : entries) {
+        const QString name = entry.toString().trimmed();
+        if (!name.isEmpty()) {
+            names.append(name);
         }
     }
+    // Windows returns them in its own order, which is no use to someone choosing from a list.
+    names.sort(Qt::CaseInsensitive);
+    return names;
+}
 
-    return adapters;
+int EthernetConfigManager::preferredRestoreTarget(const QList<RestoreCandidate>& candidates,
+                                                  const QString& backup_name,
+                                                  const QString& backup_type) {
+    if (candidates.isEmpty()) {
+        return -1;
+    }
+    // The VM smoke restored an Ethernet backup with the list starting on "Bluetooth Network
+    // Connection", the first name alphabetically: one Enter from a wrong adapter.
+    const auto by_name = std::ranges::find_if(candidates, [&backup_name](const auto& candidate) {
+        return !backup_name.isEmpty() &&
+               candidate.name.compare(backup_name, Qt::CaseInsensitive) == 0;
+    });
+    if (by_name != candidates.cend()) {
+        return static_cast<int>(std::distance(candidates.cbegin(), by_name));
+    }
+    const auto by_type = std::ranges::find_if(candidates, [&backup_type](const auto& candidate) {
+        return !backup_type.isEmpty() &&
+               candidate.type.compare(backup_type, Qt::CaseInsensitive) == 0;
+    });
+    return by_type == candidates.cend()
+               ? 0
+               : static_cast<int>(std::distance(candidates.cbegin(), by_type));
 }
 
 // -- Private -----------------------------------------------------------------
 
-QString EthernetConfigManager::runNetsh(const QStringList& args) {
-    Q_ASSERT(!args.isEmpty());
+QString EthernetConfigManager::runNetsh(const QStringList& args, bool* ok) {
+    // Empty arguments are REFUSED, not asserted. This launches netsh elevated,
+    // so "abort in Debug, run netsh with no arguments in Release" is the wrong
+    // pair of behaviours; failing closed is the same answer in both.
+    if (args.isEmpty()) {
+        if (ok != nullptr) {
+            *ok = false;
+        }
+        return {};
+    }
 
-    const auto result = sak::runProcess(QStringLiteral("netsh.exe"), args, 10'000);
+    // System32-qualified netsh, never the bare name: adapter configuration runs elevated,
+    // and CreateProcess searches the current directory ahead of System32. Fail closed when
+    // it cannot be resolved instead of launching whatever PATH/CWD supplies.
+    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
+    if (netsh_exe.isEmpty()) {
+        if (ok != nullptr) {
+            *ok = false;
+        }
+        Q_EMIT errorOccurred(QStringLiteral("Cannot resolve the System32 netsh.exe path"));
+        return {};
+    }
+
+    const auto result = sak::runProcess(netsh_exe, args, 10'000);
+    // Propagate the authoritative exit status: netsh reports failures (elevation, bad adapter) on
+    // stdout with a zero-length stderr, so callers cannot rely on the "error" substring alone.
+    if (ok != nullptr) {
+        *ok = result.succeeded();
+    }
     if (result.timed_out) {
         Q_EMIT errorOccurred(QString("netsh command timed out: netsh %1").arg(args.join(' ')));
         return {};
     }
 
     if (result.exit_code != 0) {
-        QString errOutput = result.std_err.trimmed();
+        const QString errOutput = result.std_err.trimmed();
         if (!errOutput.isEmpty()) {
             Q_EMIT errorOccurred(QString("netsh error: %1").arg(errOutput));
         }
@@ -345,62 +487,93 @@ QString EthernetConfigManager::runNetsh(const QStringList& args) {
     return result.std_out;
 }
 
-EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(const QString& output,
-                                                               const QString& adapterName) {
+namespace {
+
+// The ONE place a PowerShell adapter scan is launched. The backup wizard used to launch its own,
+// with a different PowerShell resolver, a different argument list and a shorter timeout, even
+// though it ran the identical script -- so the two could fail on different machines for different
+// reasons while claiming to do the same thing.
+// System32-qualified, fail-closed: never whatever powershell PATH or the current directory
+// happens to supply, because the adapter list this produces is what a RESTORE later replays.
+QString runAdapterScanRaw(const QString& script, QString& error) {
+    const QString ps_exe = sak::systemPowerShellPath();
+    if (ps_exe.isEmpty()) {
+        error = QStringLiteral("Cannot resolve the System32 powershell.exe path");
+        return {};
+    }
+    const auto result = sak::runProcess(ps_exe,
+                                        {QStringLiteral("-NoProfile"),
+                                         QStringLiteral("-NonInteractive"),
+                                         QStringLiteral("-ExecutionPolicy"),
+                                         QStringLiteral("Bypass"),
+                                         QStringLiteral("-Command"),
+                                         script},
+                                        kAdapterScanTimeoutMs);
+    if (result.timed_out || !result.succeeded()) {
+        error = QStringLiteral("Adapter configuration scan failed");
+        return {};
+    }
+    return result.std_out;
+}
+
+}  // namespace
+
+QVector<EthernetConfigInfo> scanEthernetConfigs(bool* scan_ok) {
+    if (scan_ok != nullptr) {
+        *scan_ok = false;
+    }
+    QString error;
+    const QString json = runAdapterScanRaw(QString::fromLatin1(sak::kNetIpConfigPowerShell), error);
+    if (!error.isEmpty()) {
+        sak::logError("Ethernet adapter scan failed: {}", error.toStdString());
+        return {};
+    }
+    // A SUCCEEDED scan that found nothing and a FAILED scan are different states calling for
+    // opposite next actions, so the caller is told which it got rather than being handed an empty
+    // list for both.
+    if (scan_ok != nullptr) {
+        *scan_ok = true;
+    }
+    return EthernetConfigInfo::parseNetIpConfigJson(json);
+}
+
+QString EthernetConfigManager::runPowerShellCapture(const QString& script) {
+    QString error;
+    const QString output = runAdapterScanRaw(script, error);
+    if (!error.isEmpty()) {
+        Q_EMIT errorOccurred(error);
+        return {};
+    }
+    return output;
+}
+
+EthernetConfigSnapshot EthernetConfigManager::snapshotFromNetIpConfig(const QString& json,
+                                                                      const QString& adapterName) {
+    // parseNetIpConfigJson already owns the language-neutral field mapping (including the CIDR
+    // prefix to dotted-quad mask conversion the restore path needs), so this only selects the
+    // requested adapter and maps into the snapshot type.
+    const QVector<EthernetConfigInfo> configs = EthernetConfigInfo::parseNetIpConfigJson(json);
     EthernetConfigSnapshot snap;
     snap.adapterName = adapterName;
-
-    const auto lines = output.split('\n');
-
-    for (const auto& rawLine : lines) {
-        QString line = rawLine.trimmed();
-
-        if (line.startsWith("DHCP enabled:", Qt::CaseInsensitive)) {
-            snap.dhcpEnabled = line.contains("Yes", Qt::CaseInsensitive);
-        } else if (line.startsWith("IP Address:", Qt::CaseInsensitive)) {
-            snap.ipv4Address = line.mid(line.indexOf(':') + 1).trimmed();
-        } else if (line.startsWith("Subnet Prefix:", Qt::CaseInsensitive)) {
-            // Format: "Subnet Prefix:  192.168.1.0/24 (mask 255.255.255.0)"
-            static const QRegularExpression kMaskRe(R"(\(mask\s+([\d.]+)\))");
-            auto match = kMaskRe.match(line);
-            if (match.hasMatch()) {
-                snap.ipv4SubnetMask = match.captured(1);
-            }
-        } else if (line.startsWith("Default Gateway:", Qt::CaseInsensitive)) {
-            snap.ipv4Gateway = line.mid(line.indexOf(':') + 1).trimmed();
-        } else if (line.startsWith("Statically Configured DNS Servers:", Qt::CaseInsensitive) ||
-                   line.startsWith("DNS Servers configured through DHCP:", Qt::CaseInsensitive)) {
-            QString dns = line.mid(line.indexOf(':') + 1).trimmed();
-            if (!dns.isEmpty()) {
-                snap.ipv4DnsServers.append(dns);
-            }
-        }
-    }
-
-    // Subsequent lines after "DNS Servers" may contain additional DNS entries
-    // (they appear as bare IP addresses on following lines)
-    bool inDnsSection = false;
-    static const QRegularExpression kIpRe(R"(^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$)");
-
-    for (const auto& rawLine : lines) {
-        QString line = rawLine.trimmed();
-
-        if (line.contains("DNS Servers", Qt::CaseInsensitive)) {
-            inDnsSection = true;
+    for (const EthernetConfigInfo& cfg : configs) {
+        if (cfg.adapter_name.compare(adapterName, Qt::CaseInsensitive) != 0) {
             continue;
         }
-
-        if (inDnsSection) {
-            if (kIpRe.match(line).hasMatch()) {
-                if (!snap.ipv4DnsServers.contains(line)) {
-                    snap.ipv4DnsServers.append(line);
-                }
-            } else if (!line.isEmpty()) {
-                inDnsSection = false;
-            }
+        snap.adapterName = cfg.adapter_name;
+        snap.description = cfg.description;
+        snap.dhcpEnabled = cfg.dhcp_enabled;
+        snap.ipv4Address = cfg.ip_address;
+        snap.ipv4SubnetMask = cfg.subnet_mask;
+        snap.ipv4Gateway = cfg.default_gateway;
+        snap.ipv4DnsServers.clear();
+        if (!cfg.dns_primary.isEmpty()) {
+            snap.ipv4DnsServers.append(cfg.dns_primary);
         }
+        if (!cfg.dns_secondary.isEmpty()) {
+            snap.ipv4DnsServers.append(cfg.dns_secondary);
+        }
+        break;
     }
-
     return snap;
 }
 

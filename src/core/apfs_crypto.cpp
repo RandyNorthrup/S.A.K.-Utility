@@ -9,20 +9,17 @@
 #include <QCryptographicHash>
 #include <QMessageAuthenticationCode>
 
+#include <algorithm>
 #include <cstring>
 
-#ifdef _WIN32
 #include <windows.h>
 
 #include <bcrypt.h>
 #pragma comment(lib, "bcrypt.lib")
-#endif
 
 namespace sak::apfs_crypto {
 
 namespace {
-
-#ifdef _WIN32
 
 /// @brief RAII wrapper for a BCrypt algorithm provider handle.
 class AlgProvider {
@@ -89,7 +86,7 @@ bool isAesKeyLen(qsizetype n) {
 }
 
 /// @brief AES-ECB transform of @p data (a multiple of 16 bytes) in one CNG call.
-/// ECB processes each 16-byte block independently — the building block for both
+/// ECB processes each 16-byte block independently -- the building block for both
 /// RFC 3394 (single block) and the AES-XTS construction (whole data unit). The
 /// Windows CNG XTS-AES provider rejects BCryptEncrypt on this platform, so XTS is
 /// built here from AES-ECB, which is the textbook XTS definition.
@@ -97,11 +94,11 @@ QByteArray aesEcbTransform(const QByteArray& key, const QByteArray& data, bool e
     if (!isAesKeyLen(key.size()) || data.isEmpty() || (data.size() % 16) != 0) {
         return {};
     }
-    AlgProvider alg(BCRYPT_AES_ALGORITHM);
+    const AlgProvider alg(BCRYPT_AES_ALGORITHM);
     if (!alg.valid() || !setEcbMode(alg.get())) {
         return {};
     }
-    SymKey symKey(alg.get(), key);
+    const SymKey symKey(alg.get(), key);
     if (!symKey.valid()) {
         return {};
     }
@@ -136,7 +133,7 @@ QByteArray le128(uint64_t value) {
     return out;
 }
 
-/// @brief GF(2^128) multiply-by-alpha (x), little-endian, reduction poly 0x87 —
+/// @brief GF(2^128) multiply-by-alpha (x), little-endian, reduction poly 0x87 --
 /// advances the XTS tweak from one 16-byte block to the next (IEEE Std 1619).
 QByteArray gf128MulAlpha(const QByteArray& t) {
     QByteArray out = t;
@@ -166,9 +163,9 @@ QByteArray xtsTransformUnit(const QByteArray& key1,
     QByteArray masked(unitData.size(), 0);
     QByteArray tweakStream(unitData.size(), 0);
     for (int j = 0; j < blocks; ++j) {
-        std::memcpy(tweakStream.data() + j * 16, tj.constData(), 16);
+        std::memcpy(tweakStream.data() + (j * 16), tj.constData(), 16);
         for (int k = 0; k < 16; ++k) {
-            masked[j * 16 + k] = static_cast<char>(unitData[j * 16 + k] ^ tj[k]);
+            masked[(j * 16) + k] = static_cast<char>(unitData[(j * 16) + k] ^ tj[k]);
         }
         tj = gf128MulAlpha(tj);
     }
@@ -204,7 +201,7 @@ QByteArray xtsTransform(const QByteArray& xtsKey,
         if (r.size() != unitBytes) {
             return {};
         }
-        std::memcpy(out.data() + static_cast<qsizetype>(u) * unitBytes, r.constData(), unitBytes);
+        std::memcpy(out.data() + (static_cast<qsizetype>(u) * unitBytes), r.constData(), unitBytes);
     }
     return out;
 }
@@ -216,12 +213,9 @@ void xorCounter(unsigned char* a, uint64_t t) {
     }
 }
 
-#endif  // _WIN32
-
 }  // namespace
 
 QByteArray randomBytes(int count) {
-#ifdef _WIN32
     if (count <= 0) {
         return {};
     }
@@ -233,10 +227,6 @@ QByteArray randomBytes(int count) {
         return {};
     }
     return out;
-#else
-    Q_UNUSED(count);
-    return {};
-#endif
 }
 
 QByteArray sha256(const QByteArray& data) {
@@ -251,11 +241,15 @@ QByteArray pbkdf2Sha256(const QByteArray& password,
                         const QByteArray& salt,
                         uint64_t iterations,
                         int keyLength) {
-#ifdef _WIN32
-    if (keyLength <= 0 || iterations == 0) {
+    // A hostile keybag can claim an arbitrary iteration count; PBKDF2 would then spin for that
+    // many HMAC rounds -- an unlock-time denial of service. Real APFS FileVault keybags use a
+    // low-hundreds-of-thousands count, so refuse anything past a generous ceiling and fail the
+    // unlock closed rather than derive against an attacker-chosen work factor.
+    constexpr uint64_t kMaxPbkdf2Iterations = 100'000'000ULL;
+    if (keyLength <= 0 || iterations == 0 || iterations > kMaxPbkdf2Iterations) {
         return {};
     }
-    AlgProvider alg(BCRYPT_SHA256_ALGORITHM, BCRYPT_ALG_HANDLE_HMAC_FLAG);
+    const AlgProvider alg(BCRYPT_SHA256_ALGORITHM, BCRYPT_ALG_HANDLE_HMAC_FLAG);
     if (!alg.valid()) {
         return {};
     }
@@ -274,27 +268,13 @@ QByteArray pbkdf2Sha256(const QByteArray& password,
         return {};
     }
     return out;
-#else
-    Q_UNUSED(password);
-    Q_UNUSED(salt);
-    Q_UNUSED(iterations);
-    Q_UNUSED(keyLength);
-    return {};
-#endif
 }
 
 QByteArray aesEcbEncryptBlock(const QByteArray& key, const QByteArray& block16) {
-#ifdef _WIN32
     return aesEcbBlock(key, block16, true);
-#else
-    Q_UNUSED(key);
-    Q_UNUSED(block16);
-    return {};
-#endif
 }
 
 QByteArray aesKeyWrap(const QByteArray& kek, const QByteArray& plaintextKey) {
-#ifdef _WIN32
     if (kek.size() != kApfsKekBytes || plaintextKey.isEmpty() || (plaintextKey.size() % 8) != 0) {
         return {};
     }
@@ -305,30 +285,24 @@ QByteArray aesKeyWrap(const QByteArray& kek, const QByteArray& plaintextKey) {
     for (int j = 0; j < 6; ++j) {
         for (int i = 1; i <= n; ++i) {
             std::memcpy(buf.data(), a.constData(), 8);
-            std::memcpy(buf.data() + 8, r.constData() + (i - 1) * 8, 8);
+            std::memcpy(buf.data() + 8, r.constData() + ((i - 1) * 8), 8);
             const QByteArray b = aesEcbBlock(kek, buf, true);
             if (b.size() != 16) {
                 return {};
             }
             std::memcpy(a.data(), b.constData(), 8);
             xorCounter(reinterpret_cast<unsigned char*>(a.data()),
-                       static_cast<uint64_t>(n) * j + i);
-            std::memcpy(r.data() + (i - 1) * 8, b.constData() + 8, 8);
+                       (static_cast<uint64_t>(n) * j) + i);
+            std::memcpy(r.data() + ((i - 1) * 8), b.constData() + 8, 8);
         }
     }
     QByteArray out;
     out.append(a);
     out.append(r);
     return out;
-#else
-    Q_UNUSED(kek);
-    Q_UNUSED(plaintextKey);
-    return {};
-#endif
 }
 
 std::optional<QByteArray> aesKeyUnwrap(const QByteArray& kek, const QByteArray& wrappedKey) {
-#ifdef _WIN32
     if (kek.size() != kApfsKekBytes || wrappedKey.size() < 16 || (wrappedKey.size() % 8) != 0) {
         return std::nullopt;
     }
@@ -340,57 +314,37 @@ std::optional<QByteArray> aesKeyUnwrap(const QByteArray& kek, const QByteArray& 
         for (int i = n; i >= 1; --i) {
             std::memcpy(buf.data(), a.constData(), 8);
             xorCounter(reinterpret_cast<unsigned char*>(buf.data()),
-                       static_cast<uint64_t>(n) * j + i);
-            std::memcpy(buf.data() + 8, r.constData() + (i - 1) * 8, 8);
+                       (static_cast<uint64_t>(n) * j) + i);
+            std::memcpy(buf.data() + 8, r.constData() + ((i - 1) * 8), 8);
             const QByteArray b = aesEcbBlock(kek, buf, false);
             if (b.size() != 16) {
                 return std::nullopt;
             }
             std::memcpy(a.data(), b.constData(), 8);
-            std::memcpy(r.data() + (i - 1) * 8, b.constData() + 8, 8);
+            std::memcpy(r.data() + ((i - 1) * 8), b.constData() + 8, 8);
         }
     }
-    for (char byte : a) {
-        if (static_cast<unsigned char>(byte) != 0xA6) {
-            return std::nullopt;  // integrity check failed (wrong key)
-        }
+    const bool integrityOk = std::ranges::all_of(a, [](const char byte) {
+        return static_cast<unsigned char>(byte) == 0xA6;
+    });
+    if (!integrityOk) {
+        return std::nullopt;  // integrity check failed (wrong key)
     }
     return r;
-#else
-    Q_UNUSED(kek);
-    Q_UNUSED(wrappedKey);
-    return std::nullopt;
-#endif
 }
 
 QByteArray xtsEncrypt(const QByteArray& xtsKey,
                       uint64_t firstDataUnit,
                       const QByteArray& data,
                       int unitBytes) {
-#ifdef _WIN32
     return xtsTransform(xtsKey, firstDataUnit, data, unitBytes, true);
-#else
-    Q_UNUSED(xtsKey);
-    Q_UNUSED(firstDataUnit);
-    Q_UNUSED(data);
-    Q_UNUSED(unitBytes);
-    return {};
-#endif
 }
 
 QByteArray xtsDecrypt(const QByteArray& xtsKey,
                       uint64_t firstDataUnit,
                       const QByteArray& data,
                       int unitBytes) {
-#ifdef _WIN32
     return xtsTransform(xtsKey, firstDataUnit, data, unitBytes, false);
-#else
-    Q_UNUSED(xtsKey);
-    Q_UNUSED(firstDataUnit);
-    Q_UNUSED(data);
-    Q_UNUSED(unitBytes);
-    return {};
-#endif
 }
 
 QByteArray xtsEncryptBlock(const QByteArray& vek,

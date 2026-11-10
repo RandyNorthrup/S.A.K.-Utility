@@ -11,6 +11,8 @@
 
 #include <QtGlobal>
 
+#include <algorithm>
+
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
@@ -27,7 +29,11 @@ namespace sak {
 
 namespace {
 constexpr uint32_t kWindowsSystemProcessId = 4;
-}
+// Positive floor for the refresh timer. A 0 ms (or negative) interval would fire on every
+// event-loop turn and re-enumerate the TCP/UDP tables continuously (CPU spin); clamp up to
+// this floor. The default and every legitimate configured interval sit well above it.
+constexpr int kMinConnRefreshMs = 100;
+}  // namespace
 
 namespace {
 constexpr DWORD kInitialBufferSize = 32'768;
@@ -43,27 +49,28 @@ constexpr int kMaxHostnameLen = 256;
 
 [[nodiscard]] QString tcpStateToString(DWORD state) {
     struct StateEntry {
-        DWORD code;
-        const char* name;
+        DWORD code{};
+        const char* name{};
     };
     static constexpr StateEntry kStates[] = {
-        {MIB_TCP_STATE_CLOSED, "CLOSED"},
-        {MIB_TCP_STATE_LISTEN, "LISTEN"},
-        {MIB_TCP_STATE_SYN_SENT, "SYN_SENT"},
-        {MIB_TCP_STATE_SYN_RCVD, "SYN_RCVD"},
-        {MIB_TCP_STATE_ESTAB, "ESTABLISHED"},
-        {MIB_TCP_STATE_FIN_WAIT1, "FIN_WAIT1"},
-        {MIB_TCP_STATE_FIN_WAIT2, "FIN_WAIT2"},
-        {MIB_TCP_STATE_CLOSE_WAIT, "CLOSE_WAIT"},
-        {MIB_TCP_STATE_CLOSING, "CLOSING"},
-        {MIB_TCP_STATE_LAST_ACK, "LAST_ACK"},
-        {MIB_TCP_STATE_TIME_WAIT, "TIME_WAIT"},
-        {MIB_TCP_STATE_DELETE_TCB, "DELETE_TCB"},
+        {.code = MIB_TCP_STATE_CLOSED, .name = "CLOSED"},
+        {.code = MIB_TCP_STATE_LISTEN, .name = "LISTEN"},
+        {.code = MIB_TCP_STATE_SYN_SENT, .name = "SYN_SENT"},
+        {.code = MIB_TCP_STATE_SYN_RCVD, .name = "SYN_RCVD"},
+        {.code = MIB_TCP_STATE_ESTAB, .name = "ESTABLISHED"},
+        {.code = MIB_TCP_STATE_FIN_WAIT1, .name = "FIN_WAIT1"},
+        {.code = MIB_TCP_STATE_FIN_WAIT2, .name = "FIN_WAIT2"},
+        {.code = MIB_TCP_STATE_CLOSE_WAIT, .name = "CLOSE_WAIT"},
+        {.code = MIB_TCP_STATE_CLOSING, .name = "CLOSING"},
+        {.code = MIB_TCP_STATE_LAST_ACK, .name = "LAST_ACK"},
+        {.code = MIB_TCP_STATE_TIME_WAIT, .name = "TIME_WAIT"},
+        {.code = MIB_TCP_STATE_DELETE_TCB, .name = "DELETE_TCB"},
     };
-    for (const auto& entry : kStates) {
-        if (entry.code == state) {
-            return QString::fromLatin1(entry.name);
-        }
+    const auto match = std::ranges::find_if(kStates, [state](const StateEntry& entry) {
+        return entry.code == state;
+    });
+    if (match != std::ranges::end(kStates)) {
+        return QString::fromLatin1(match->name);
     }
     return QStringLiteral("UNKNOWN");
 }
@@ -75,21 +82,25 @@ ActiveConnectionsMonitor::~ActiveConnectionsMonitor() {
     stopMonitoring();
 }
 
+void ActiveConnectionsMonitor::startMonitoring() {
+    startMonitoring(MonitorConfig{});
+}
+
 void ActiveConnectionsMonitor::startMonitoring(const MonitorConfig& config) {
     stopMonitoring();
     m_config = config;
-    m_monitoring.store(true);
 
     m_refreshTimer = new QTimer(this);
     connect(m_refreshTimer, &QTimer::timeout, this, &ActiveConnectionsMonitor::refreshNow);
-    m_refreshTimer->start(config.refreshIntervalMs);
+    // Clamp to a positive floor so a 0 ms (or negative) configured interval cannot spin the
+    // event loop; a real interval is never below the floor, so no legitimate config is altered.
+    m_refreshTimer->start(std::max(config.refreshIntervalMs, kMinConnRefreshMs));
 
     // Initial refresh
     refreshNow();
 }
 
 void ActiveConnectionsMonitor::stopMonitoring() {
-    m_monitoring.store(false);
     if (m_refreshTimer != nullptr) {
         m_refreshTimer->stop();
         delete m_refreshTimer;
@@ -100,17 +111,50 @@ void ActiveConnectionsMonitor::stopMonitoring() {
 void ActiveConnectionsMonitor::refreshNow() {
     QVector<ConnectionInfo> connections;
 
+    // Resolve every PID to a name from a SINGLE process snapshot for this whole refresh, rather
+    // than snapshotting once per connection (was O(connections * processes) -- a real cost on a
+    // high-socket host and on every periodic GUI refresh). Paths are still resolved per-PID.
+    const QHash<uint32_t, QString> processNames =
+        m_config.resolveProcessNames ? snapshotProcessNames() : QHash<uint32_t, QString>{};
+
+    quint32 tcpError = 0;
+    quint32 udpError = 0;
     if (m_config.showTcp) {
-        connections.append(enumerateTcpConnections());
+        connections.append(enumerateTcpConnections(processNames, tcpError));
     }
     if (m_config.showUdp) {
-        connections.append(enumerateUdpListeners());
+        connections.append(enumerateUdpListeners(processNames, udpError));
+    }
+    m_lastRefreshError = (tcpError != 0) || (udpError != 0);
+    if (m_lastRefreshError) {
+        // A TCP/UDP table read failed, so `connections` is empty or missing a
+        // whole protocol. Diffing against it would report every baseline
+        // connection as closed and then wipe the baseline, and the next
+        // successful refresh would re-report them all as new. Preserve the last
+        // good snapshot and skip the diff on a read failure (B9-08).
+        //
+        // Fail closed: surface the exact kernel error instead of quietly
+        // re-publishing stale data as if the refresh succeeded.
+        QString detail;
+        if (tcpError != 0) {
+            detail = QStringLiteral("TCP connection table read failed (error %1)").arg(tcpError);
+        }
+        if (udpError != 0) {
+            if (!detail.isEmpty()) {
+                detail += QStringLiteral("; ");
+            }
+            detail += QStringLiteral("UDP listener table read failed (error %1)").arg(udpError);
+        }
+        Q_EMIT errorOccurred(detail);
+        Q_EMIT connectionsUpdated(m_lastConnections);
+        return;
     }
 
     applyFilters(connections);
     detectChanges(connections);
 
     m_lastConnections = connections;
+    m_hasBaseline = true;
     Q_EMIT connectionsUpdated(connections);
 }
 
@@ -118,7 +162,8 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::getCurrentConnections() const 
     return m_lastConnections;
 }
 
-QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections() {
+QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections(
+    const QHash<uint32_t, QString>& processNames, quint32& readError) {
     QVector<ConnectionInfo> connections;
 
     DWORD bufferSize = kInitialBufferSize;
@@ -134,6 +179,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections() {
     }
 
     if (result != NO_ERROR) {
+        readError = static_cast<quint32>(result);
         return connections;
     }
 
@@ -152,7 +198,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections() {
         info.processId = row.dwOwningPid;
 
         if (m_config.resolveProcessNames) {
-            info.processName = getProcessName(row.dwOwningPid);
+            info.processName = lookupProcessName(row.dwOwningPid, processNames);
             info.processPath = getProcessPath(row.dwOwningPid);
         }
 
@@ -167,7 +213,8 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateTcpConnections() {
     return connections;
 }
 
-QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners() {
+QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners(
+    const QHash<uint32_t, QString>& processNames, quint32& readError) {
     QVector<ConnectionInfo> connections;
 
     DWORD bufferSize = kInitialBufferSize;
@@ -183,6 +230,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners() {
     }
 
     if (result != NO_ERROR) {
+        readError = static_cast<quint32>(result);
         return connections;
     }
 
@@ -199,7 +247,7 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners() {
         info.processId = row.dwOwningPid;
 
         if (m_config.resolveProcessNames) {
-            info.processName = getProcessName(row.dwOwningPid);
+            info.processName = lookupProcessName(row.dwOwningPid, processNames);
             info.processPath = getProcessPath(row.dwOwningPid);
         }
 
@@ -209,35 +257,36 @@ QVector<ConnectionInfo> ActiveConnectionsMonitor::enumerateUdpListeners() {
     return connections;
 }
 
-QString ActiveConnectionsMonitor::getProcessName(uint32_t pid) {
+QHash<uint32_t, QString> ActiveConnectionsMonitor::snapshotProcessNames() {
+    QHash<uint32_t, QString> names;
+
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return names;
+    }
+
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+
+    if (Process32FirstW(snapshot, &entry) != 0) {
+        do {
+            names.insert(entry.th32ProcessID, QString::fromWCharArray(entry.szExeFile));
+        } while (Process32NextW(snapshot, &entry) != 0);
+    }
+
+    CloseHandle(snapshot);
+    return names;
+}
+
+QString ActiveConnectionsMonitor::lookupProcessName(uint32_t pid,
+                                                    const QHash<uint32_t, QString>& processNames) {
     if (pid == 0) {
         return QStringLiteral("System Idle");
     }
     if (pid == kWindowsSystemProcessId) {
         return QStringLiteral("System");
     }
-
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) {
-        return QStringLiteral("[PID %1]").arg(pid);
-    }
-
-    PROCESSENTRY32W entry{};
-    entry.dwSize = sizeof(entry);
-
-    QString name = QStringLiteral("[PID %1]").arg(pid);
-
-    if (Process32FirstW(snapshot, &entry)) {
-        do {
-            if (entry.th32ProcessID == pid) {
-                name = QString::fromWCharArray(entry.szExeFile);
-                break;
-            }
-        } while (Process32NextW(snapshot, &entry));
-    }
-
-    CloseHandle(snapshot);
-    return name;
+    return processNames.value(pid, QStringLiteral("[PID %1]").arg(pid));
 }
 
 QString ActiveConnectionsMonitor::getProcessPath(uint32_t pid) {
@@ -250,11 +299,18 @@ QString ActiveConnectionsMonitor::getProcessPath(uint32_t pid) {
         return {};
     }
 
-    wchar_t path[MAX_PATH] = {};
-    DWORD pathLen = MAX_PATH;
+    // A process image path can exceed MAX_PATH on a long-path-enabled system;
+    // QueryFullProcessImageNameW then fails with ERROR_INSUFFICIENT_BUFFER rather than
+    // truncating, which would drop the name to a bare [PID] in the monitor. Oversize the
+    // buffer to twice MAX_PATH, matching the module-path handling in browser_bridge_pipe, so a
+    // long path resolves. A genuine failure (access denied, process exited) still leaves the
+    // name empty, which the caller renders fail-closed as [PID N].
+    constexpr DWORD kProcessPathBufferChars = MAX_PATH * 2;
+    wchar_t path[kProcessPathBufferChars] = {};
+    DWORD pathLen = kProcessPathBufferChars;
     QString result;
 
-    if (QueryFullProcessImageNameW(process, 0, path, &pathLen)) {
+    if (QueryFullProcessImageNameW(process, 0, path, &pathLen) != 0) {
         result = QString::fromWCharArray(path, static_cast<int>(pathLen));
     }
 
@@ -263,6 +319,8 @@ QString ActiveConnectionsMonitor::getProcessPath(uint32_t pid) {
 }
 
 QString ActiveConnectionsMonitor::resolveHostname(const QString& ip) {
+    // Sole caller passes ipv4ToString(), whose inet_ntop into an INET_ADDRSTRLEN buffer always
+    // yields a dotted quad for AF_INET.
     Q_ASSERT(!ip.isEmpty());
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -288,26 +346,26 @@ void ActiveConnectionsMonitor::applyFilters(QVector<ConnectionInfo>& connections
         return;
     }
 
-    connections.erase(std::remove_if(connections.begin(),
-                                     connections.end(),
-                                     [this](const ConnectionInfo& c) {
-                                         if (!m_config.filterProcessName.isEmpty() &&
-                                             !c.processName.contains(m_config.filterProcessName,
-                                                                     Qt::CaseInsensitive)) {
-                                             return true;
-                                         }
-                                         if (m_config.filterPort != 0 &&
-                                             c.localPort != m_config.filterPort &&
-                                             c.remotePort != m_config.filterPort) {
-                                             return true;
-                                         }
-                                         return false;
-                                     }),
-                      connections.end());
+    const auto stale = std::ranges::remove_if(connections, [this](const ConnectionInfo& c) {
+        if (!m_config.filterProcessName.isEmpty() &&
+            !c.processName.contains(m_config.filterProcessName, Qt::CaseInsensitive)) {
+            return true;
+        }
+        if (m_config.filterPort != 0 && c.localPort != m_config.filterPort &&
+            c.remotePort != m_config.filterPort) {
+            return true;
+        }
+        return false;
+    });
+    connections.erase(stale.begin(), stale.end());
 }
 
 void ActiveConnectionsMonitor::detectChanges(const QVector<ConnectionInfo>& current) {
-    if (m_lastConnections.isEmpty()) {
+    // Skip only until a first baseline exists -- NOT whenever the previous snapshot
+    // was empty. Using isEmpty() as the sentinel meant that if the prior refresh
+    // legitimately had zero connections, the next refresh's genuinely new connections
+    // were suppressed. m_hasBaseline distinguishes "no baseline yet" from "empty baseline".
+    if (!m_hasBaseline) {
         return;
     }
 

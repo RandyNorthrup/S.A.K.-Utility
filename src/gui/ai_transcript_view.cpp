@@ -15,6 +15,7 @@
 #include <QIcon>
 #include <QLabel>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QScrollArea>
 #include <QSize>
 #include <QSizePolicy>
@@ -44,7 +45,7 @@ QScrollArea* createTranscriptScrollArea(QWidget* parent, QWidget* content) {
 }
 
 void configureTranscriptButton(QPushButton* button, const QString& icon_path) {
-    if (!button) {
+    if (button == nullptr) {
         return;
     }
     button->setMinimumHeight(sak::ui::kUiButtonHeightDialog);
@@ -88,6 +89,12 @@ bool isUserChatRole(const QString& role) {
 }  // namespace
 
 AiTranscriptView::AiTranscriptView(QWidget* parent) : QWidget(parent) {
+    // The whole view in the transcript's surface: the Jump row's margins under the transcript
+    // showed the page through, an 8 px #0f172a band above the composer in dark and a faint one in
+    // light (review 5, Z17). The composer's top border is the one line between them.
+    setObjectName(QStringLiteral("aiTranscriptView"));
+    setAttribute(Qt::WA_StyledBackground, true);
+    setStyleSheet(sak::ui::backgroundStyle("QWidget#aiTranscriptView", sak::ui::kColorBgSurface));
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
@@ -154,12 +161,25 @@ bool AiTranscriptView::appendMessage(const QString& role, const QString& text, b
     message.text = body;
     message.expanded = expanded;
     m_messages.append(message);
-    renderMessages(true);
+    if (!m_rowsInSync || m_layout == nullptr) {
+        renderMessages(true);
+        return true;
+    }
+    // Only the new bubble is built; it goes after the existing rows, above the activity row
+    // and the trailing stretch.
+    const bool follow_newest = shouldFollowNewest(true);
+    Message& added = m_messages.last();
+    added.row = createTranscriptRow(added, transcriptBubbleMaxWidth());
+    m_layout->insertWidget(static_cast<int>(m_messages.size()) - 1, added.row);
+    if (follow_newest) {
+        scrollToBottomLater();
+    }
+    updateJumpToNewestButton();
     return true;
 }
 
 bool AiTranscriptView::appendLoadedLine(const QString& line) {
-    QString trimmed = line.trimmed();
+    const QString trimmed = line.trimmed();
     if (trimmed.isEmpty()) {
         return false;
     }
@@ -167,14 +187,14 @@ bool AiTranscriptView::appendLoadedLine(const QString& line) {
     QString role;
     QString text;
     if (trimmed.startsWith(QLatin1Char('['))) {
-        const int end = trimmed.indexOf(QStringLiteral("]\n"));
+        const int end = static_cast<int>(trimmed.indexOf(QStringLiteral("]\n")));
         if (end > 1) {
             role = trimmed.mid(1, end - 1).trimmed();
             text = trimmed.mid(end + kBracketHeaderDelimiterLength).trimmed();
         }
     }
     if (role.isEmpty()) {
-        const int colon = trimmed.indexOf(QStringLiteral(": "));
+        const int colon = static_cast<int>(trimmed.indexOf(QStringLiteral(": ")));
         if (colon > 0 && colon < kMaximumRolePrefixChars) {
             role = trimmed.left(colon).trimmed();
             text = trimmed.mid(colon + kRoleDelimiterLength).trimmed();
@@ -195,15 +215,14 @@ bool AiTranscriptView::appendLoadedLine(const QString& line) {
     message.text = body;
     message.expanded = false;
     m_messages.append(message);
+    m_rowsInSync = false;
     return true;
 }
 
-void AiTranscriptView::clearMessages(bool render) {
+void AiTranscriptView::clearMessages() {
     m_messages.clear();
     m_messageSequence = 0;
-    if (render) {
-        renderMessages(false);
-    }
+    renderMessages(false);
 }
 
 void AiTranscriptView::setActivityText(const QString& text) {
@@ -211,90 +230,154 @@ void AiTranscriptView::setActivityText(const QString& text) {
     const bool text_changed = m_activityText != next_text;
     m_activityText = next_text;
     m_activityStep = 0;
-    if (text_changed || (m_activityLabel == nullptr && !m_activityText.isEmpty())) {
-        renderMessages(true);
+    if (!m_rowsInSync) {
+        if (text_changed) {
+            renderMessages(true);
+        }
+        return;
+    }
+    if (m_activityText.isEmpty()) {
+        removeActivityRow();
+        return;
+    }
+    if (m_activityLabel == nullptr) {
+        insertActivityRow(transcriptBubbleMaxWidth());
     }
     applyActivityFrame();
+    if (text_changed && shouldFollowNewest(true)) {
+        scrollToBottomLater();
+    }
 }
 
 void AiTranscriptView::updateActivityFrame() {
     if (m_activityText.isEmpty()) {
         return;
     }
-    if (!m_activityLabel) {
-        renderMessages(true);
+    if (m_activityLabel == nullptr) {
+        if (m_rowsInSync) {
+            insertActivityRow(transcriptBubbleMaxWidth());
+        } else {
+            renderMessages(true);
+        }
     }
-    if (!m_activityLabel) {
+    if (m_activityLabel == nullptr) {
         return;
     }
     applyActivityFrame();
     scrollToBottomLater();
 }
 
+void AiTranscriptView::insertActivityRow(int bubble_max_width) {
+    if (m_layout == nullptr) {
+        return;
+    }
+    m_activityRow = createActivityRow(bubble_max_width);
+    // Above the trailing stretch, which is always the layout's last item.
+    m_layout->insertWidget(m_layout->count() - 1, m_activityRow);
+}
+
+void AiTranscriptView::removeActivityRow() {
+    if (m_activityRow == nullptr || m_layout == nullptr) {
+        return;
+    }
+    m_layout->removeWidget(m_activityRow);
+    m_activityRow->deleteLater();
+    m_activityRow = nullptr;
+    m_activityLabel = nullptr;
+}
+
+void AiTranscriptView::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    // Bubbles are built at the width current then; keep them at the same share of the
+    // viewport when it changes, as a full rebuild would.
+    applyBubbleWidths();
+}
+
+void AiTranscriptView::applyBubbleWidths() {
+    if (m_content == nullptr) {
+        return;
+    }
+    const int bubble_max_width = transcriptBubbleMaxWidth();
+    for (QFrame* bubble : m_content->findChildren<QFrame*>()) {
+        const QString name = bubble->objectName();
+        if (name == QLatin1String("aiTranscriptActivityBubble")) {
+            bubble->setMaximumWidth(qMin(bubble_max_width, sak::kDialogWidthLarge));
+        } else if (name.startsWith(QLatin1String("aiTranscriptBubble"))) {
+            bubble->setMaximumWidth(bubble_max_width);
+        }
+    }
+}
+
 void AiTranscriptView::scrollToBottomLater(bool force) {
-    if (m_scrollController) {
+    if (m_scrollController != nullptr) {
         m_scrollController->scrollToBottomLater(force);
     }
 }
 
 void AiTranscriptView::restoreScrollPositionLater(int value) {
-    if (m_scrollController) {
+    if (m_scrollController != nullptr) {
         m_scrollController->restoreScrollPositionLater(value);
     }
 }
 
 bool AiTranscriptView::isScrolledToBottom() const {
-    return !m_scrollController || m_scrollController->isScrolledToBottom();
+    return (m_scrollController == nullptr) || m_scrollController->isScrolledToBottom();
 }
 
 void AiTranscriptView::setAutoScroll(bool enabled) {
-    if (m_scrollController) {
+    if (m_scrollController != nullptr) {
         m_scrollController->setAutoScroll(enabled);
     }
 }
 
 void AiTranscriptView::updateJumpToNewestButton() {
-    if (m_scrollController) {
+    if (m_scrollController != nullptr) {
         m_scrollController->updateJumpToNewestButton();
     }
 }
 
 void AiTranscriptView::jumpToNewest() {
-    if (m_scrollController) {
+    if (m_scrollController != nullptr) {
         m_scrollController->jumpToNewest();
     }
 }
 
 void AiTranscriptView::renderMessages(bool scroll_to_bottom) {
-    if (!m_layout || !m_content || !m_scroll) {
+    if ((m_layout == nullptr) || (m_content == nullptr) || (m_scroll == nullptr)) {
         return;
     }
 
     const bool follow_newest = shouldFollowNewest(scroll_to_bottom);
-    const int previous_scroll_value = m_scrollController ? m_scrollController->scrollValue() : 0;
+    const int previous_scroll_value =
+        (m_scrollController != nullptr) ? m_scrollController->scrollValue() : 0;
 
     clearLayout();
     appendRenderedRows(transcriptBubbleMaxWidth());
+    m_rowsInSync = true;
     restoreRenderScroll(follow_newest, previous_scroll_value);
     updateJumpToNewestButton();
 }
 
 bool AiTranscriptView::shouldFollowNewest(bool scroll_to_bottom) const {
-    return scroll_to_bottom && (!m_scrollController || m_scrollController->autoScroll());
+    return scroll_to_bottom &&
+           ((m_scrollController == nullptr) || m_scrollController->autoScroll());
 }
 
 int AiTranscriptView::transcriptBubbleMaxWidth() const {
-    const int viewport_width = m_scroll && m_scroll->viewport() ? m_scroll->viewport()->width()
-                                                                : kFallbackViewportWidth;
+    const int viewport_width = (m_scroll != nullptr) && (m_scroll->viewport() != nullptr)
+                                   ? m_scroll->viewport()->width()
+                                   : kFallbackViewportWidth;
     return qMax(sak::kDetachLogMinW, (viewport_width * kBubbleWidthPercent) / sak::kPercentMax);
 }
 
 void AiTranscriptView::appendRenderedRows(int bubble_max_width) {
-    for (const auto& message : m_messages) {
-        m_layout->addWidget(createTranscriptRow(message, bubble_max_width));
+    for (auto& message : m_messages) {
+        message.row = createTranscriptRow(message, bubble_max_width);
+        m_layout->addWidget(message.row);
     }
     if (!m_activityText.isEmpty()) {
-        m_layout->addWidget(createActivityRow(bubble_max_width));
+        m_activityRow = createActivityRow(bubble_max_width);
+        m_layout->addWidget(m_activityRow);
         applyActivityFrame();
     }
     m_layout->addStretch();
@@ -318,7 +401,7 @@ QString AiTranscriptView::messageBody(const Message& message, bool* long_text) c
     const QStringList all_lines = message.text.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
     const bool is_long = message.text.size() > kCollapsedChars ||
                          all_lines.size() > kCollapsedLines;
-    if (long_text) {
+    if (long_text != nullptr) {
         *long_text = is_long;
     }
     if (!is_long || message.expanded) {
@@ -385,7 +468,10 @@ void AiTranscriptView::addTranscriptHeading(QVBoxLayout* bubble_layout,
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     heading_row->setSpacing(sak::ui::kSpacingSmall);
 
+    // chatRoleHeading() falls through to the raw role for anything it does not recognize, and the
+    // role is parsed off a transcript line loaded from disk, so it is shown verbatim too.
     auto* role_label = new QLabel(chatRoleHeading(message.role), bubble);
+    role_label->setTextFormat(Qt::PlainText);
     role_label->setStyleSheet(sak::ui::transparentTextStyle(sak::ui::kFontSizeSmall,
                                                             sak::ui::kFontWeightBold,
                                                             user ? sak::ui::kColorBgUserBubbleText
@@ -416,7 +502,10 @@ void AiTranscriptView::addTranscriptBody(QVBoxLayout* bubble_layout,
                                          QFrame* bubble,
                                          const QString& body,
                                          bool user) {
+    // `body` is raw model / tool / MCP output. It is displayed as written -- never interpreted as
+    // markup -- so a reply cannot forge emphasis or make the app fetch an <img src=...> resource.
     auto* body_label = new QLabel(body, bubble);
+    body_label->setTextFormat(Qt::PlainText);
     body_label->setWordWrap(true);
     body_label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     body_label->setStyleSheet(sak::ui::transparentBodyTextStyle(
@@ -433,9 +522,11 @@ void AiTranscriptView::addTranscriptToggle(
         message.expanded ? QObject::tr("Collapse") : QObject::tr("Expand full result"), bubble);
     toggle->setFlat(true);
     toggle->setCursor(Qt::PointingHandCursor);
+    // White on the blue user bubble in either theme; on the assistant's, the theme's link blue.
+    // The white went through the token aliases and became the dark theme's base colour.
     toggle->setStyleSheet(
         sak::ui::transcriptToggleStyle(user ? QString::fromLatin1(sak::ui::kColorBgWhite)
-                                            : QString::fromLatin1(sak::ui::kColorPrimaryDark)));
+                                            : sak::ui::cssColor(sak::ui::kColorPrimaryDark)));
     const QString message_id = message.id;
     connect(toggle, &QPushButton::clicked, this, [this, message_id]() {
         toggleMessageExpanded(message_id);
@@ -467,11 +558,13 @@ QWidget* AiTranscriptView::createActivityRow(int bubble_max_width) {
     bubble_layout->addWidget(role_label);
 
     m_activityLabel = new QLabel(bubble);
+    // The activity text embeds run-supplied identifiers (workflow phase ids, tool names).
+    m_activityLabel->setTextFormat(Qt::PlainText);
     m_activityLabel->setWordWrap(true);
     m_activityLabel->setToolTip(QObject::tr("Current AI activity"));
     m_activityLabel->setStyleSheet(sak::ui::transparentTextStyle(
         kTranscriptBodyFontPointSize, sak::ui::kFontWeightBold, sak::ui::kStatusColorRunning));
-    setAccessible(m_activityLabel, QObject::tr("AI activity indicator"));
+    m_activityLabel->setAccessibleDescription(QObject::tr("AI activity indicator"));
     bubble_layout->addWidget(m_activityLabel);
 
     row_layout->addWidget(bubble);
@@ -483,32 +576,48 @@ void AiTranscriptView::copyMessageToClipboard(const Message& message, QPushButto
     if (auto* clipboard = QGuiApplication::clipboard()) {
         clipboard->setText(message.text);
     }
-    if (button) {
+    if (button != nullptr) {
         button->setToolTip(QObject::tr("Copied"));
     }
 }
 
 void AiTranscriptView::toggleMessageExpanded(const QString& message_id) {
     for (auto& item : m_messages) {
-        if (item.id == message_id) {
-            item.expanded = !item.expanded;
+        if (item.id != message_id) {
+            continue;
+        }
+        item.expanded = !item.expanded;
+        if (!m_rowsInSync || item.row == nullptr || m_layout == nullptr) {
             renderMessages(false);
             return;
         }
+        // Rebuild this one bubble in place and keep the reader where they were.
+        const int previous_scroll_value =
+            (m_scrollController != nullptr) ? m_scrollController->scrollValue() : 0;
+        QWidget* replacement = createTranscriptRow(item, transcriptBubbleMaxWidth());
+        delete m_layout->replaceWidget(item.row, replacement);
+        item.row->deleteLater();
+        item.row = replacement;
+        restoreScrollPositionLater(previous_scroll_value);
+        return;
     }
 }
 
 void AiTranscriptView::clearLayout() {
-    if (!m_layout) {
+    if (m_layout == nullptr) {
         return;
     }
     m_activityLabel = nullptr;
+    m_activityRow = nullptr;
+    for (auto& message : m_messages) {
+        message.row = nullptr;
+    }
     while (QLayoutItem* item = m_layout->takeAt(0)) {
         if (QWidget* widget = item->widget()) {
             widget->deleteLater();
         }
         if (QLayout* child_layout = item->layout()) {
-            while (QLayoutItem* child = child_layout->takeAt(0)) {
+            while (const QLayoutItem* child = child_layout->takeAt(0)) {
                 if (QWidget* child_widget = child->widget()) {
                     child_widget->deleteLater();
                 }
@@ -521,7 +630,7 @@ void AiTranscriptView::clearLayout() {
 }
 
 void AiTranscriptView::applyActivityFrame() {
-    if (!m_activityLabel || m_activityText.isEmpty()) {
+    if ((m_activityLabel == nullptr) || m_activityText.isEmpty()) {
         return;
     }
     const QString dots = QString(m_activityStep % kActivityAnimationFrameCount, QLatin1Char('.'));

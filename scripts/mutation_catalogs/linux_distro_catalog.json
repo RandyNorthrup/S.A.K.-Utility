@@ -1,0 +1,73 @@
+{
+  "_comment": "R5-G18-1 seed catalog: the rolling-release checksum parser in LinuxDistroCatalog (checksumRecordFilename + filenameFromChecksums). Pure, boundary-rich, security-relevant (a surviving mutant that lets a path or a non-record through can splice a bad filename into a download URL). Run: python scripts/run_mutation_test.py scripts/mutation_catalogs/linux_distro_catalog.json",
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_linux_distro_catalog",
+  "ctest_regex": "^test_linux_distro_catalog$",
+  "mutants": [
+    {
+      "id": "empty-or-comment-guard: || -> &&",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "if (trimmed.isEmpty() || trimmed.startsWith('#')) {",
+      "replace": "if (trimmed.isEmpty() && trimmed.startsWith('#')) {",
+      "expect": "equivalent",
+      "why": "A '#' comment line has parts.at(0) starting with '#', which fails the hex-digest guard below, and a whitespace-only line yields <2 tokens; so both the empty and comment cases are also rejected downstream. The early return is defense/clarity, not the only rejection -- same output for every input."
+    },
+    {
+      "id": "min-token-count: < -> <=",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "parts.size() < kMinChecksumRecordTokens",
+      "replace": "parts.size() <= kMinChecksumRecordTokens",
+      "expect": "killed",
+      "why": "A real '<digest> <file>' record has exactly 2 tokens; <=2 rejects it."
+    },
+    {
+      "id": "digest-shape-guard: remove !",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "|| !hexDigest.match(parts.at(0)).hasMatch()",
+      "replace": "|| hexDigest.match(parts.at(0)).hasMatch()",
+      "expect": "killed",
+      "why": "Inverting the digest guard rejects valid digest records and accepts prose."
+    },
+    {
+      "id": "path-reject: || -> &&",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "if (filename.contains('/') || filename.contains('\\\\')) {",
+      "replace": "if (filename.contains('/') && filename.contains('\\\\')) {",
+      "expect": "killed",
+      "why": "&& only rejects a name containing BOTH separators, so a name with just '/' (or just '\\') slips through. testFilenameFromChecksumsRejectsPathEvenWhenPatternPermits pins each separator independently."
+    },
+    {
+      "id": "empty-pattern-guard: invert",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "if (pattern.isEmpty()) {",
+      "replace": "if (!pattern.isEmpty()) {",
+      "expect": "killed",
+      "why": "An empty pattern must disable discovery; inverting builds a match-all regex and returns the first record."
+    },
+    {
+      "id": "invalid-regex-guard: remove !",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "if (!matcher.isValid()) {",
+      "replace": "if (matcher.isValid()) {",
+      "expect": "killed",
+      "why": "Dropping the '!' makes a VALID pattern (the normal case) early-return {}, so every real discovery returns empty -- the Kali/Debian tests catch it. (Not equivalent: the harness disproved that first guess -- an invalid pattern is rare, but valid patterns are the common path.)"
+    },
+    {
+      "id": "full-match-anchor-start: == -> !=",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "match.capturedStart() == 0 &&",
+      "replace": "match.capturedStart() != 0 &&",
+      "expect": "killed",
+      "why": "A full match starts at 0; != 0 rejects every valid match so nothing is ever returned."
+    },
+    {
+      "id": "full-match-anchor-length: == -> !=",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "match.capturedLength() == filename.length()",
+      "replace": "match.capturedLength() != filename.length()",
+      "expect": "killed",
+      "why": "A full match spans the whole filename; != rejects every valid match."
+    }
+  ]
+}

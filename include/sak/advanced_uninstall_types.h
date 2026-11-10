@@ -40,7 +40,9 @@ struct ProgramInfo {
 
     // Metadata
     qint64 estimatedSizeKB = 0;  ///< From registry EstimatedSize
-    qint64 actualSizeBytes = 0;  ///< Calculated disk usage
+    /// Size in bytes as the installer recorded it (registry EstimatedSize); 0 when it recorded
+    /// none. Enumeration never walks the install folder -- see measureFolderBytes.
+    qint64 actualSizeBytes = 0;
 
     // Classification
     enum class Source {
@@ -71,7 +73,7 @@ struct ProgramInfo {
 enum class ScanLevel {
     Safe,      ///< Only obvious leftovers in known locations (fast)
     Moderate,  ///< Extended scanning with pattern matching (recommended)
-    Advanced   ///< Deep scan including services, tasks, firewall, shell extensions
+    Advanced   ///< Deep scan including services, tasks, firewall rules, startup entries
 };
 
 // -- LeftoverItem ------------------------------------------------------------
@@ -103,9 +105,28 @@ struct LeftoverItem {
     qint64 sizeBytes = 0;
     bool selected = false;
 
+    /// @brief FALSE when the item is surfaced for VISIBILITY ONLY and must never be
+    ///        deleted, whatever `selected` says.
+    ///
+    /// Set by the scanner when a path was named by untrusted input it could not tie back
+    /// to the program being uninstalled -- today that is a registry InstallLocation, a
+    /// value any user can write under HKCU, which would otherwise hand an admin-run
+    /// cleanup recursive-delete authority over an arbitrary directory. A technician still
+    /// SEES the path (that is the point of reporting it), but it cannot be checked in the
+    /// table, cannot be auto-cleaned, and is refused again at CleanupWorker. Default true:
+    /// every other producer yields an ordinarily deletable item.
+    bool deletable = true;
+
     // Registry-specific
     QString registryValueName;
     QString registryValueData;
+
+    // Firewall-rule-specific -- captured at SCAN time so cleanup can narrow the
+    // netsh delete (dir=/profile=/program=) to the ONE matching rule instead of
+    // deleting every rule that shares this display name.
+    QString firewallDirection;  ///< "in" or "out" (netsh dir=), empty if unknown
+    QString firewallProfile;    ///< e.g. "Domain,Private,Public" (netsh profile=)
+    QString firewallProgram;    ///< bound program path (netsh program=), empty if unbound
 };
 
 // -- UninstallReport ---------------------------------------------------------
@@ -170,6 +191,8 @@ struct UninstallQueueItem {
     };
     Status status = Status::Queued;
     UninstallReport report;
+    int errorCode = 0;     ///< Exact worker error code when status is Failed
+    QString errorMessage;  ///< Exact worker error message when status is Failed
 };
 
 // -- ViewFilter --------------------------------------------------------------

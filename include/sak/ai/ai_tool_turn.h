@@ -7,6 +7,7 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QString>
 #include <QVector>
 
@@ -32,7 +33,6 @@ public:
     [[nodiscard]] bool active() const noexcept { return m_active; }
     [[nodiscard]] const QString& responseId() const noexcept { return m_response_id; }
     [[nodiscard]] int callIndex() const noexcept { return m_call_index; }
-    [[nodiscard]] int callCount() const noexcept { return m_calls.size(); }
     [[nodiscard]] int completedOutputCount() const noexcept { return m_outputs.size(); }
     [[nodiscard]] int remainingCallCount() const noexcept;
     [[nodiscard]] bool hasCurrentCall() const noexcept;
@@ -47,7 +47,13 @@ public:
     [[nodiscard]] QVector<OpenAIFunctionOutput> takeOutputs();
 
     [[nodiscard]] QJsonObject toJson(const QString& run_id = {}) const;
-    [[nodiscard]] bool restore(const QJsonObject& state, QString* error_message = nullptr);
+    /// Restore a persisted pending-turn snapshot, failing closed on any tampered/malformed
+    /// field. When @p expected_run_id is non-empty, the snapshot's run_id must match it,
+    /// binding the resume to the run that owns it; an empty expected_run_id skips that
+    /// cross-check (the snapshot's run_id is still validated for well-formedness).
+    [[nodiscard]] bool restore(const QJsonObject& state,
+                               QString* error_message = nullptr,
+                               const QString& expected_run_id = {});
 
     [[nodiscard]] static QJsonObject functionCallToJson(const OpenAIFunctionCall& call);
     [[nodiscard]] static OpenAIFunctionCall functionCallFromJson(const QJsonObject& obj);
@@ -55,6 +61,9 @@ public:
     [[nodiscard]] static OpenAIFunctionOutput functionOutputFromJson(const QJsonObject& obj);
 
 private:
+    [[nodiscard]] static bool validateCall(const OpenAIFunctionCall& call,
+                                           int index,
+                                           QString* error_message);
     [[nodiscard]] static bool validateCalls(const QVector<OpenAIFunctionCall>& calls,
                                             QString* error_message);
     [[nodiscard]] static bool decodeCalls(const QJsonArray& calls_json,
@@ -63,6 +72,13 @@ private:
     [[nodiscard]] static bool decodeOutputs(const QJsonArray& outputs_json,
                                             QVector<OpenAIFunctionOutput>* outputs,
                                             QString* error_message);
+    [[nodiscard]] static bool snapshotOutputsIsArray(const QJsonValue& outputs_value,
+                                                     QString* error_message);
+    [[nodiscard]] static bool validateSnapshotOutputsMatchCalls(
+        const QVector<OpenAIFunctionOutput>& outputs,
+        const QVector<OpenAIFunctionCall>& calls,
+        int call_index,
+        QString* error_message);
 
     QString m_response_id;
     QVector<OpenAIFunctionCall> m_calls;

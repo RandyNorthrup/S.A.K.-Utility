@@ -7,6 +7,7 @@
 #include "sak/file_hash.h"
 
 #include "sak/logger.h"
+#include "sak/path_utils.h"
 
 #include <QByteArrayView>
 #include <QCryptographicHash>
@@ -15,9 +16,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <system_error>
 #include <vector>
 
 namespace sak {
@@ -27,28 +30,57 @@ constexpr qsizetype kMd5DigestBytes = 16;
 constexpr std::size_t kMd5HexChars = 32;
 constexpr qsizetype kSha256DigestBytes = 32;
 constexpr std::size_t kSha256HexChars = 64;
+
+// Convert a filesystem path to a QString without a lossy narrow round-trip.
+// std::filesystem::path::string() emits CP_ACP bytes that QString would then
+// misread as UTF-8, mangling any non-ASCII path; native() preserves the wide path.
+QString pathToQString(const std::filesystem::path& path) {
+    return QString::fromStdWString(path.native());
+}
 }  // namespace
 
 file_hasher::file_hasher(hash_algorithm algorithm, std::size_t chunk_size) noexcept
-    : m_algorithm(algorithm), m_chunk_size(chunk_size) {
-    Q_ASSERT_X(chunk_size > 0, "file_hasher", "chunk_size must be positive");
-}
+    // A zero chunk_size only trips the debug assert; in a release build it would
+    // reach file.read(0), which returns an empty buffer, so hashing would stop at
+    // once and report the EMPTY-input digest as the file's hash. Coerce it to the
+    // default so release builds never hash with a zero chunk (B8-23).
+    //
+    // There is deliberately no assert alongside the coercion. The coercion is the
+    // contract in every configuration; an assert would abort a Debug build on the
+    // exact input Release accepts, which is the behaviour the test pins down.
+    //
+    // An over-large chunk_size is clamped to MAX_CHUNK_SIZE so file.read() can never be
+    // handed a value that narrows when converted to qint64 or allocates an outsized buffer.
+    : m_algorithm(algorithm)
+    , m_chunk_size(chunk_size == 0 ? DEFAULT_CHUNK_SIZE : std::min(chunk_size, MAX_CHUNK_SIZE)) {}
 
 auto file_hasher::calculateHash(const std::filesystem::path& file_path,
                                 hash_progress_callback progress,
                                 std::stop_token stop_token) const
     -> std::expected<std::string, error_code> {
-    Q_ASSERT_X(!file_path.empty(), "calculateHash", "file_path must not be empty");
+    // An empty path is rejected by the exists() check below and reported as
+    // file_not_found. No assert, for the reason given on the constructor.
 
-    // Validate file exists
-    if (!std::filesystem::exists(file_path)) {
-        logError("File not found: {}", file_path.string());
+    // Validate file exists. Use the non-throwing std::error_code overloads: this
+    // function is declared to return std::expected, so the throwing exists()/
+    // is_regular_file() overloads would let a filesystem_error (e.g. a permission
+    // fault statting a parent directory) escape it. A stat error fails closed as
+    // invalid_path; a clean "does not exist" as file_not_found.
+    std::error_code ec;
+    const bool present = std::filesystem::exists(file_path, ec);
+    if (ec) {
+        logError("Cannot stat path: {}", pathAsUtf8(file_path));
+        return std::unexpected(error_code::invalid_path);
+    }
+    if (!present) {
+        logError("File not found: {}", pathAsUtf8(file_path));
         return std::unexpected(error_code::file_not_found);
     }
 
-    // Validate it's a regular file
-    if (!std::filesystem::is_regular_file(file_path)) {
-        logError("Path is not a regular file: {}", file_path.string());
+    // Validate it's a regular file (non-throwing overload, same rationale).
+    const bool regular = std::filesystem::is_regular_file(file_path, ec);
+    if (ec || !regular) {
+        logError("Path is not a regular file: {}", pathAsUtf8(file_path));
         return std::unexpected(error_code::invalid_path);
     }
 
@@ -78,21 +110,25 @@ auto file_hasher::calculateHash(std::span<const std::byte> data) const
 auto file_hasher::verifyHash(const std::filesystem::path& file_path,
                              std::string_view expected_hash,
                              std::stop_token stop_token) const -> std::expected<bool, error_code> {
-    Q_ASSERT_X(!file_path.empty(), "verifyHash", "file_path must not be empty");
-    Q_ASSERT_X(!expected_hash.empty(), "verifyHash", "expected_hash must not be empty");
-
+    // An empty file_path is reported as file_not_found by calculateHash, and an
+    // empty expected_hash simply does not match. No asserts: both are handled
+    // identically in Release, and asserting would abort a Debug build instead.
     auto calculated = calculateHash(file_path, nullptr, stop_token);
     if (!calculated) {
         return std::unexpected(calculated.error());
     }
 
-    // Case-insensitive comparison
+    // Case-insensitive comparison. Route each byte through unsigned char before
+    // std::tolower: a plain (signed) char with a value > 127 -- reachable via a
+    // garbled/hostile expected_hash -- is negative, and passing a negative value
+    // other than EOF to std::tolower is undefined behavior (B8-23).
     auto lower_expected = std::string(expected_hash);
     auto lower_calculated = *calculated;
-
-    std::transform(lower_expected.begin(), lower_expected.end(), lower_expected.begin(), ::tolower);
-    std::transform(
-        lower_calculated.begin(), lower_calculated.end(), lower_calculated.begin(), ::tolower);
+    const auto to_lower = [](char c) {
+        return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    };
+    std::ranges::transform(lower_expected, lower_expected.begin(), to_lower);
+    std::ranges::transform(lower_calculated, lower_calculated.begin(), to_lower);
 
     return lower_expected == lower_calculated;
 }
@@ -101,27 +137,35 @@ auto file_hasher::calculateMd5(const std::filesystem::path& file_path,
                                hash_progress_callback& progress,
                                std::stop_token stop_token) const
     -> std::expected<std::string, error_code> {
-    Q_ASSERT_X(!file_path.empty(), "calculateMd5", "file_path must not be empty");
+    // file_path is not asserted: an empty path fails the QFile open below and is
+    // reported. m_chunk_size stays asserted because it is an invariant this
+    // class guarantees - the constructor coerces any non-positive value to
+    // DEFAULT_CHUNK_SIZE, so a zero here would mean the object is corrupt.
     Q_ASSERT_X(m_chunk_size > 0, "calculateMd5", "chunk_size must be positive");
 
     try {
         // Open file with Qt
-        QFile file(QString::fromStdString(file_path.string()));
+        const QString qpath = pathToQString(file_path);
+        QFile file(qpath);
         if (!file.open(QIODevice::ReadOnly)) {
-            logError("Failed to open file: {}", file_path.string());
+            logError("Failed to open file: {}", qpath.toStdString());
             return std::unexpected(error_code::read_error);
         }
 
         // Initialize MD5 hash
         QCryptographicHash hash(QCryptographicHash::Md5);
-        hashFileInChunks(file, hash, progress, stop_token);
+        if (!hashFileInChunks(file, hash, std::ref(progress), stop_token)) {
+            return std::unexpected(error_code::read_error);
+        }
 
         if (stop_token.stop_requested()) {
             return std::unexpected(error_code::operation_cancelled);
         }
 
-        // Get final hash as hex string
-        QByteArray result = hash.result();
+        // Get final hash as hex string. QCryptographicHash::result() for Md5
+        // always yields hashLength(Md5) == 16 bytes and toHex() emits exactly two
+        // chars per byte, so both sizes below are guaranteed by the Qt crypto API.
+        const QByteArray result = hash.result();
         Q_ASSERT_X(result.size() == kMd5DigestBytes, "calculateMd5", "MD5 digest must be 16 bytes");
         auto hex = result.toHex().toStdString();
         Q_ASSERT_X(hex.size() == kMd5HexChars, "calculateMd5", "MD5 hex string must be 32 chars");
@@ -137,27 +181,33 @@ auto file_hasher::calculateSha256(const std::filesystem::path& file_path,
                                   hash_progress_callback& progress,
                                   std::stop_token stop_token) const
     -> std::expected<std::string, error_code> {
-    Q_ASSERT_X(!file_path.empty(), "calculateSha256", "file_path must not be empty");
+    // See calculateMd5: file_path is handled at the open, m_chunk_size is a
+    // constructor-guaranteed invariant.
     Q_ASSERT_X(m_chunk_size > 0, "calculateSha256", "chunk_size must be positive");
 
     try {
         // Open file with Qt
-        QFile file(QString::fromStdString(file_path.string()));
+        const QString qpath = pathToQString(file_path);
+        QFile file(qpath);
         if (!file.open(QIODevice::ReadOnly)) {
-            logError("Failed to open file: {}", file_path.string());
+            logError("Failed to open file: {}", qpath.toStdString());
             return std::unexpected(error_code::read_error);
         }
 
         // Initialize SHA-256 hash
         QCryptographicHash hash(QCryptographicHash::Sha256);
-        hashFileInChunks(file, hash, progress, stop_token);
+        if (!hashFileInChunks(file, hash, std::ref(progress), stop_token)) {
+            return std::unexpected(error_code::read_error);
+        }
 
         if (stop_token.stop_requested()) {
             return std::unexpected(error_code::operation_cancelled);
         }
 
-        // Get final hash as hex string
-        QByteArray result = hash.result();
+        // Get final hash as hex string. QCryptographicHash::result() for Sha256
+        // always yields hashLength(Sha256) == 32 bytes and toHex() emits exactly
+        // two chars per byte, so both sizes below are Qt-guaranteed.
+        const QByteArray result = hash.result();
         Q_ASSERT_X(result.size() == kSha256DigestBytes,
                    "calculateSha256",
                    "SHA-256 digest must be 32 bytes");
@@ -179,7 +229,7 @@ auto file_hasher::calculateMd5(std::span<const std::byte> data)
         QCryptographicHash hash(QCryptographicHash::Md5);
         hash.addData(QByteArrayView(reinterpret_cast<const char*>(data.data()),
                                     static_cast<qsizetype>(data.size())));
-        QByteArray result = hash.result();
+        const QByteArray result = hash.result();
         return result.toHex().toStdString();
 
     } catch (const std::exception& e) {
@@ -194,7 +244,7 @@ auto file_hasher::calculateSha256(std::span<const std::byte> data)
         QCryptographicHash hash(QCryptographicHash::Sha256);
         hash.addData(QByteArrayView(reinterpret_cast<const char*>(data.data()),
                                     static_cast<qsizetype>(data.size())));
-        QByteArray result = hash.result();
+        const QByteArray result = hash.result();
         return result.toHex().toStdString();
 
     } catch (const std::exception& e) {
@@ -203,27 +253,56 @@ auto file_hasher::calculateSha256(std::span<const std::byte> data)
     }
 }
 
-void file_hasher::hashFileInChunks(
-    QFile& file,
-    QCryptographicHash& hash,
-    // cppcheck-suppress constParameterReference ; move_only_function has non-const operator()
-    hash_progress_callback& progress,
-    const std::stop_token& stop_token) const {
-    const auto file_size = static_cast<std::size_t>(file.size());
+bool file_hasher::hashFileInChunks(QFile& file,
+                                   QCryptographicHash& hash,
+                                   std::reference_wrapper<hash_progress_callback> progress,
+                                   const std::stop_token& stop_token) const {
+    // QFile::size() returns -1 when the size is unknown/unreadable; casting that to
+    // size_t would yield a huge value that the concurrent-mutation check below then
+    // compares against (and it also feeds progress reporting). Fail closed instead.
+    const qint64 raw_file_size = file.size();
+    if (raw_file_size < 0) {
+        logError("Cannot determine size of '{}' for hashing", file.fileName().toStdString());
+        return false;
+    }
+    const auto file_size = static_cast<std::size_t>(raw_file_size);
     std::size_t bytes_processed = 0;
 
-    while (!file.atEnd() && !stop_token.stop_requested()) {
-        QByteArray buffer = file.read(m_chunk_size);
+    while (!stop_token.stop_requested()) {
+        const QByteArray buffer = file.read(static_cast<qint64>(m_chunk_size));
         if (buffer.isEmpty()) {
-            continue;
+            // An empty read is either a clean end-of-file or an I/O fault. The
+            // previous code did `continue`, which on a mid-file read error spun
+            // forever (atEnd stayed false) or, if atEnd flipped, returned a hash
+            // over only the readable prefix as if it were complete. Distinguish
+            // the two via error() so a fault fails closed.
+            if (file.error() != QFileDevice::NoError) {
+                logError("Read error while hashing '{}': {}",
+                         file.fileName().toStdString(),
+                         file.errorString().toStdString());
+                return false;
+            }
+            // Clean end-of-file. The file must have delivered exactly the byte count it
+            // reported when hashing began; a shorter (truncated) or longer (grown) total
+            // means it was mutated underneath us and the digest would cover a mixed or
+            // prefix view -- fail closed rather than report that as the file's hash.
+            if (bytes_processed != file_size) {
+                logError("File changed while hashing '{}' ({} of {} bytes) - mutated concurrently",
+                         file.fileName().toStdString(),
+                         bytes_processed,
+                         file_size);
+                return false;
+            }
+            break;  // clean end-of-file
         }
 
         hash.addData(buffer);
         bytes_processed += buffer.size();
-        if (progress) {
-            progress(bytes_processed, file_size);
+        if (progress.get()) {
+            progress.get()(bytes_processed, file_size);
         }
     }
+    return true;
 }
 
 }  // namespace sak

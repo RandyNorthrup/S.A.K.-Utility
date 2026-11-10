@@ -1,0 +1,35 @@
+{
+    "source_hash":  "392255628bffd0584fe373b0b54348fd97e152316ea8c07ee2d1f2c341b48fc0",
+    "image_hash":  "392255628bffd0584fe373b0b54348fd97e152316ea8c07ee2d1f2c341b48fc0",
+    "target_hash_before":  "7c63e6e77ab16515f951e4263d50c87154194a83f8fa4cea19f76ec1568a062f",
+    "target_hash_after":  "11087c65be3cc8a837a7dafbc3997925a29ebeb34cc3fa46c4429ea0209da18c",
+    "pattern_bytes":  "134217728",
+    "pattern_on_source":  "f28f95368418a01dd332a3acf7252d298dc404edd6f4f05e4fc96d613ff3b199",
+    "pattern_on_target":  "f28f95368418a01dd332a3acf7252d298dc404edd6f4f05e4fc96d613ff3b199",
+    "differences":  [
+                        {
+                            "offset_bytes":  "512",
+                            "length_bytes":  "512"
+                        }
+                    ],
+    "difference_summary":  {
+                               "partition_table_runs":  1,
+                               "bytes_inside_the_mounted_volume":  "0",
+                               "runs_anywhere_else":  0
+                           },
+    "files_source":  {
+                         "root":  "T:\\fixture",
+                         "file_count":  24,
+                         "digest":  "633df21ee467e9a131d342f0bec22d95e5a83e7b195ef98750f1437bec4e64ad"
+                     },
+    "files_target":  {
+                         "root":  "T:\\fixture",
+                         "file_count":  24,
+                         "digest":  "633df21ee467e9a131d342f0bec22d95e5a83e7b195ef98750f1437bec4e64ad"
+                     },
+    "health":  {
+                   "repair_scan":  "NoErrorsFound",
+                   "chkdsk_exit_code":  0,
+                   "dirty":  false
+               }
+}

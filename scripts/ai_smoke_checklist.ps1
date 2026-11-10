@@ -37,7 +37,6 @@ Write-Host "  - Result-bubble copy icon copies one redacted bubble"
 Write-Host "  - Enter submits; Ctrl+Enter inserts newline"
 Write-Host "  - New Chat clears old chat and shows AI Session (new) until first-prompt auto-rename"
 Write-Host "  - Header shows Agents active/completed; composer shows exact Ctx x/y beside Send"
-Write-Host "  - Session role is plain text; workflow, first prompt, and explicit role-switch all update it"
 Write-Host ""
 Write-Host "Harmless tool smoke:"
 Write-Host "  - Package manager search for Firefox, no install"
@@ -47,9 +46,16 @@ Write-Host ""
 
 if ($RunAutomated) {
     cmake -S . -B build
-    cmake --build build --config Release --target sak_utility
-    ctest --test-dir build -C Release -R "test_ai_|test_openai_responses_client" --output-on-failure
+    if ($LASTEXITCODE -ne 0) { throw "CMake configure failed (exit $LASTEXITCODE)" }
+    # Build the whole project, not just sak_utility: the ctest runs below execute the
+    # unit-test binaries, which a sak_utility-only target would leave unbuilt or stale.
+    cmake --build build --config Release
+    if ($LASTEXITCODE -ne 0) { throw "CMake build failed (exit $LASTEXITCODE)" }
+    # --no-tests=error so a filter that matches nothing fails instead of passing vacuously.
+    ctest --test-dir build -C Release -R "test_ai_|test_openai_responses_client" --no-tests=error --output-on-failure
+    if ($LASTEXITCODE -ne 0) { throw "AI test subset failed (exit $LASTEXITCODE)" }
     ctest --test-dir build -C Release --output-on-failure
+    if ($LASTEXITCODE -ne 0) { throw "Full CTest suite failed (exit $LASTEXITCODE)" }
 }
 
 if ($RunLiveOpenAI) {
@@ -70,7 +76,8 @@ if ($RunLiveOpenAI) {
             }
             [Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $candidate, "Process")
         }
-        ctest --test-dir build -C Release -R "^test_openai_responses_client$" --output-on-failure
+        ctest --test-dir build -C Release -R "^test_openai_responses_client$" --no-tests=error --output-on-failure
+        if ($LASTEXITCODE -ne 0) { throw "Live OpenAI smoke test failed (exit $LASTEXITCODE)" }
     } finally {
         [Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $previousOpenAIKey, "Process")
         Remove-Item Env:\SAK_RUN_OPENAI_LIVE_TESTS -ErrorAction SilentlyContinue

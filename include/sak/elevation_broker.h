@@ -13,12 +13,12 @@
 #include <QObject>
 #include <QString>
 
+#include <atomic>
 #include <expected>
 #include <memory>
+#include <mutex>
 
-#ifdef _WIN32
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -35,8 +35,10 @@ struct ElevatedTaskResult {
 /// connects over a named pipe, dispatches tasks, and relays progress.
 /// The helper auto-exits after an inactivity timeout.
 ///
-/// Thread-safety: use one broker instance from one thread at a time.
-/// Long-running calls should be dispatched from a worker thread by callers.
+/// Thread-safety: executeTask() runs synchronously on a worker thread while
+/// cancelCurrentTask() may be invoked from the GUI thread. The current task id
+/// is guarded by m_task_state_mutex and every pipe write is serialized by
+/// m_send_mutex so a concurrent cancel cannot tear the id or interleave frames.
 class ElevationBroker : public QObject {
     Q_OBJECT
 
@@ -60,16 +62,56 @@ public:
     /// @param reason   Human-readable reason shown in UAC context
     /// @param payload  Task-specific JSON parameters
     /// @return Task result or error code
-    [[nodiscard]] auto executeTask(const QString& task_id,
-                                   const QString& reason,
-                                   const QJsonObject& payload = {})
+    /// @note Virtual, with cancelCurrentTask(), so the quick-action route can be driven end to
+    ///       end in tests with a broker that launches no helper (test_quick_action_panels).
+    [[nodiscard]] virtual auto executeTask(const QString& task_id,
+                                           const QString& reason,
+                                           const QJsonObject& payload = {})
         -> std::expected<ElevatedTaskResult, sak::error_code>;
 
     /// @brief Request cancellation of the currently running task
-    void cancelCurrentTask();
+    virtual void cancelCurrentTask();
+
+    /// @brief Whether the pipe server's PID is the helper we actually launched.
+    /// @param expectedHelperPid PID of the process the broker launched (from the
+    ///        pinned m_helper_process handle -- immune to PID reuse).
+    /// @param serverPid PID reported by GetNamedPipeServerProcessId for the pipe.
+    /// @return true ONLY when expectedHelperPid is valid (>0) AND serverPid == it.
+    /// @note Fail-closed: an unknown/invalid helper PID (<=0) trusts NOBODY. Pure +
+    ///       static (inline) so the check is unit-testable without launching a helper.
+    [[nodiscard]] static bool serverPidMatchesHelper(qint64 expectedHelperPid, qint64 serverPid) {
+        return expectedHelperPid > 0 && serverPid == expectedHelperPid;
+    }
+
+    /// @brief Whether two Win32 image paths identify the same executable.
+    /// @param expectedImagePath the executable the server MUST be (the helper).
+    /// @param actualImagePath the image path resolved for the server process.
+    /// @return true ONLY when both are non-empty AND compare equal case-insensitively.
+    /// @note Fail-closed: an empty expected or actual path matches NOTHING. Pure +
+    ///       static (inline) for unit testing without a live process.
+    [[nodiscard]] static bool imagePathsMatch(const QString& expectedImagePath,
+                                              const QString& actualImagePath) {
+        return sameImagePath(expectedImagePath, actualImagePath);
+    }
 
     /// @brief Shut down the helper process gracefully
     void shutdown();
+
+    /// @brief The one broker -- and so the one elevated helper -- Partition Manager's disk
+    ///        scans, apply preflight/verification scans and queued operations share for the
+    ///        whole session. Each of them used to construct its own broker and so launch its
+    ///        own helper: one UAC prompt per scan and per operation. The helper still exits
+    ///        after its idle timeout (kHelperTimeoutMs); the next task then starts a new one.
+    ///        Thread-safe; created on first use and shut down with the application.
+    [[nodiscard]] static std::shared_ptr<ElevationBroker> sessionBroker();
+
+    /// @brief Whether an already-connected helper may carry the next task.
+    /// @param helper_alive The launched helper process has not exited.
+    /// @param idle_ms Time since the last message exchanged with it.
+    /// @return true only when it is alive AND comfortably inside its idle timeout. A helper
+    ///         about to time out could exit with the request unread, so it is shut down and
+    ///         replaced instead of being handed a (possibly destructive) task. Pure; testable.
+    [[nodiscard]] static bool helperReusable(bool helper_alive, qint64 idle_ms);
 
 Q_SIGNALS:
     /// @brief Progress update from the elevated helper
@@ -88,8 +130,19 @@ private:
     /// @brief Connect to the helper's named pipe
     [[nodiscard]] auto connectPipe() -> std::expected<void, sak::error_code>;
 
+    /// @brief Verify the connected pipe's server process is the launched helper
+    [[nodiscard]] auto verifyPipeServer(HANDLE handle) -> std::expected<void, sak::error_code>;
+
+    /// @brief Verify the pipe server's image path is the helper executable
+    [[nodiscard]] auto verifyServerImage(unsigned long server_pid)
+        -> std::expected<void, sak::error_code>;
+
     /// @brief Ensure the helper is running, connected, and ready
     [[nodiscard]] auto ensureConnected() -> std::expected<void, sak::error_code>;
+
+    /// @brief Pump the response loop until the helper returns a terminal result
+    [[nodiscard]] auto awaitTaskResult(const QString& task_id)
+        -> std::expected<ElevatedTaskResult, sak::error_code>;
 
     /// @brief Handle a single message in the task response loop
     [[nodiscard]] auto handleTaskMessage(const PipeMessage& msg, const QString& task_id)
@@ -104,13 +157,11 @@ private:
     /// @brief Read exactly N bytes from the pipe
     [[nodiscard]] bool readExact(char* buffer, int size, int timeout_ms);
 
-#ifdef _WIN32
     /// @brief Peek at available bytes in the pipe (0 if none or broken)
     [[nodiscard]] DWORD peekAvailable() const;
 
     /// @brief Check if the helper process is still running
     [[nodiscard]] bool isHelperAlive() const;
-#endif
 
     /// @brief Close the pipe handle and helper process
     void cleanup();
@@ -118,13 +169,43 @@ private:
     /// @brief Find the helper executable path
     [[nodiscard]] static auto findHelperPath() -> std::expected<QString, sak::error_code>;
 
+    /// @brief Set the current task id under m_task_state_mutex
+    void setCurrentTaskId(const QString& id);
+
+    /// @brief Record that a message just crossed the pipe (resets the idle clock).
+    void noteHelperActivity();
+
+    /// @brief Milliseconds since the last message crossed the pipe.
+    [[nodiscard]] qint64 helperIdleMs() const;
+
+    /// @brief Shut a connected helper down when it cannot safely take the next task.
+    void retireStaleHelper();
+
     QString m_pipe_name;
     QString m_current_task_id;
+    mutable std::mutex m_task_state_mutex;
+    // Serializes every pipe write AND pins the handle across each ReadFile/PeekNamedPipe
+    // in the lock-free readers, so cleanup()'s close cannot land mid-I/O. mutable so the
+    // const peekAvailable() can take it.
+    mutable std::mutex m_send_mutex;
+    // Single-flight guard for executeTask(): the byte-mode pipe carries one transaction
+    // at a time, so a concurrent second call is refused fail-closed rather than allowed
+    // to interleave frames on the wire.
+    std::atomic<bool> m_task_in_flight{false};
 
-#ifdef _WIN32
-    HANDLE m_pipe_handle{INVALID_HANDLE_VALUE};
+    // B5-06: the pipe handle is read on the GUI/AI thread (isConnected / cancel /
+    // shutdown) while the worker thread connects, reads, and tears it down.
+    // A plain HANDLE read concurrently with a write is a data race (UB); make it
+    // atomic so every access is well-defined. The atomic makes the value read
+    // (isConnected) safe. Any access that DEREFERENCES the handle in an I/O call
+    // (sendRaw's WriteFile, readExact's ReadFile, peekAvailable's PeekNamedPipe)
+    // additionally holds m_send_mutex, under which cleanup() stores INVALID and
+    // CloseHandle -- so the close cannot land between a reader's load and its I/O
+    // and tear the handle mid-call. The atomic does NOT replace that mutex.
+    std::atomic<HANDLE> m_pipe_handle{INVALID_HANDLE_VALUE};
     HANDLE m_helper_process{nullptr};
-#endif
+    /// Monotonic milliseconds of the last message sent to or read from the helper.
+    std::atomic<qint64> m_last_activity_ms{0};
 };
 
 }  // namespace sak

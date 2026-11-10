@@ -6,6 +6,7 @@
 
 #include "sak/email_report_generator.h"
 #include "sak/email_types.h"
+#include "sak/report_style_constants.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -16,12 +17,8 @@ class TestEmailReportGenerator : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // -- Construction ----------------------------------------------------
-    void defaultConstruction();
-
     // -- ReportData Defaults ---------------------------------------------
     void reportDataDefaults();
-    void reportDataPopulation();
 
     // -- HTML Report -----------------------------------------------------
     void htmlReportContainsDoctype();
@@ -46,19 +43,11 @@ private Q_SLOTS:
     void csvReportContainsHeader();
     void csvReportContainsMetrics();
     void csvReportEmptyDataProducesValidCsv();
+    void csvEscapesFilePathQuote();  // B7-34
 
 private:
     EmailReportGenerator::ReportData createSampleData();
 };
-
-// ============================================================================
-// Construction
-// ============================================================================
-
-void TestEmailReportGenerator::defaultConstruction() {
-    EmailReportGenerator generator;
-    QVERIFY(true);
-}
 
 // ============================================================================
 // ReportData Defaults
@@ -83,14 +72,6 @@ void TestEmailReportGenerator::reportDataDefaults() {
     QVERIFY(data.discovered_profiles.isEmpty());
 }
 
-void TestEmailReportGenerator::reportDataPopulation() {
-    auto data = createSampleData();
-    QCOMPARE(data.technician_name, QStringLiteral("John Doe"));
-    QCOMPARE(data.total_emails, 5000);
-    QCOMPARE(data.total_contacts, 150);
-    QVERIFY(!data.folder_tree.isEmpty());
-}
-
 // ============================================================================
 // HTML Report
 // ============================================================================
@@ -101,7 +82,7 @@ void TestEmailReportGenerator::htmlReportContainsDoctype() {
     QString html = generator.generateHtml(data);
 
     QVERIFY(html.contains(QStringLiteral("<!DOCTYPE html>")));
-    QVERIFY(html.contains(QStringLiteral("<html")));
+    QVERIFY(html.contains(QStringLiteral("<html lang=\"en\">")));
     QVERIFY(html.contains(QStringLiteral("</html>")));
 }
 
@@ -110,7 +91,7 @@ void TestEmailReportGenerator::htmlReportContainsTitle() {
     auto data = createSampleData();
     QString html = generator.generateHtml(data);
 
-    QVERIFY(html.contains(QStringLiteral("Email Inspection Report")));
+    QVERIFY(html.contains(QStringLiteral("<title>Email Inspection Report</title>")));
 }
 
 void TestEmailReportGenerator::htmlReportIncludesMetadata() {
@@ -118,9 +99,14 @@ void TestEmailReportGenerator::htmlReportIncludesMetadata() {
     auto data = createSampleData();
     QString html = generator.generateHtml(data);
 
-    QVERIFY(html.contains(data.technician_name.toHtmlEscaped()));
-    QVERIFY(html.contains(data.customer_name.toHtmlEscaped()));
-    QVERIFY(html.contains(data.ticket_number.toHtmlEscaped()));
+    // Bind each value to ITS row label via the generator's row template; a bare
+    // toHtmlEscaped() contains() would pass if the value rendered under the wrong label.
+    QVERIFY(html.contains(QString::fromLatin1(sak::report::kEmailReportMetadataRow)
+                              .arg(QStringLiteral("Technician"), QStringLiteral("John Doe"))));
+    QVERIFY(html.contains(QString::fromLatin1(sak::report::kEmailReportMetadataRow)
+                              .arg(QStringLiteral("Customer"), QStringLiteral("Acme Corp"))));
+    QVERIFY(html.contains(QString::fromLatin1(sak::report::kEmailReportMetadataRow)
+                              .arg(QStringLiteral("Ticket #"), QStringLiteral("TKT-2024-0042"))));
 }
 
 void TestEmailReportGenerator::htmlReportIncludesFileInfo() {
@@ -128,8 +114,12 @@ void TestEmailReportGenerator::htmlReportIncludesFileInfo() {
     auto data = createSampleData();
     QString html = generator.generateHtml(data);
 
-    QVERIFY(html.contains(data.file_info.file_path.toHtmlEscaped()));
-    QVERIFY(html.contains(QStringLiteral("Unicode")));
+    QVERIFY(html.contains(QString::fromLatin1(sak::report::kEmailReportMetadataRow)
+                              .arg(QStringLiteral("File"),
+                                   QStringLiteral("X:/Profiles/Test/Documents/Outlook.pst"))));
+    // Bind the value to its "Format" label using the row template the generator uses.
+    QVERIFY(html.contains(QString::fromLatin1(sak::report::kEmailReportMetadataRow)
+                              .arg(QStringLiteral("Format"), QStringLiteral("Unicode (modern)"))));
 }
 
 void TestEmailReportGenerator::htmlReportIncludesStatistics() {
@@ -137,10 +127,28 @@ void TestEmailReportGenerator::htmlReportIncludesStatistics() {
     auto data = createSampleData();
     QString html = generator.generateHtml(data);
 
-    QVERIFY(html.contains(QStringLiteral("5000")));
-    QVERIFY(html.contains(QStringLiteral("150")));
-    QVERIFY(html.contains(QStringLiteral("Emails")));
-    QVERIFY(html.contains(QStringLiteral("Contacts")));
+    // Bind each stat value to ITS label: separate contains("5000")/contains("Emails")
+    // checks would still pass if the emails and contacts cards were swapped.
+    QVERIFY(
+        html.contains(QStringLiteral("<div class=\"stat-value\">5000</div>"
+                                     "<div class=\"stat-label\">Emails</div>")));
+    QVERIFY(
+        html.contains(QStringLiteral("<div class=\"stat-value\">150</div>"
+                                     "<div class=\"stat-label\">Contacts</div>")));
+    QVERIFY(
+        html.contains(QStringLiteral("<div class=\"stat-value\">1200</div>"
+                                     "<div class=\"stat-label\">Attachments</div>")));
+    // The remaining stat cards are equally deterministic; pin them so a dropped or mislabeled
+    // card is caught, not just the first three.
+    QVERIFY(
+        html.contains(QStringLiteral("<div class=\"stat-value\">75</div>"
+                                     "<div class=\"stat-label\">Calendar Items</div>")));
+    QVERIFY(
+        html.contains(QStringLiteral("<div class=\"stat-value\">30</div>"
+                                     "<div class=\"stat-label\">Tasks</div>")));
+    QVERIFY(
+        html.contains(QStringLiteral("<div class=\"stat-value\">10</div>"
+                                     "<div class=\"stat-label\">Notes</div>")));
 }
 
 void TestEmailReportGenerator::htmlReportIncludesFolderTree() {
@@ -148,8 +156,8 @@ void TestEmailReportGenerator::htmlReportIncludesFolderTree() {
     auto data = createSampleData();
     QString html = generator.generateHtml(data);
 
-    QVERIFY(html.contains(QStringLiteral("Inbox")));
-    QVERIFY(html.contains(QStringLiteral("Sent Items")));
+    QVERIFY(html.contains(QStringLiteral("<b>Inbox</b> (3500 items)")));
+    QVERIFY(html.contains(QStringLiteral("<b>Sent Items</b> (1200 items)")));
 }
 
 void TestEmailReportGenerator::htmlReportIncludesExportResults() {
@@ -157,7 +165,15 @@ void TestEmailReportGenerator::htmlReportIncludesExportResults() {
     auto data = createSampleData();
     QString html = generator.generateHtml(data);
 
-    QVERIFY(html.contains(QStringLiteral("EML")));
+    QVERIFY(html.contains(QStringLiteral("Export Operations")));
+    // Bind each value to ITS label using the same row template the generator uses: a
+    // bare contains("EML") would still pass if the counts were swapped or dropped.
+    const auto row = [](const QString& label, const QString& value) {
+        return QString::fromLatin1(sak::report::kEmailReportMetadataRow).arg(label, value);
+    };
+    QVERIFY(html.contains(row(QStringLiteral("Format"), QStringLiteral("EML"))));
+    QVERIFY(html.contains(row(QStringLiteral("Items Exported"), QStringLiteral("500"))));
+    QVERIFY(html.contains(row(QStringLiteral("Items Failed"), QStringLiteral("2"))));
 }
 
 void TestEmailReportGenerator::htmlReportIncludesFooter() {
@@ -165,7 +181,9 @@ void TestEmailReportGenerator::htmlReportIncludesFooter() {
     auto data = createSampleData();
     QString html = generator.generateHtml(data);
 
-    QVERIFY(html.contains(QStringLiteral("S.A.K. Utility")));
+    QVERIFY(html.contains(QStringLiteral(
+        "<div class=\"footer\">Generated by S.A.K. Utility &mdash; Email &amp; PST/OST "
+        "Inspector</div>")));
 }
 
 void TestEmailReportGenerator::htmlReportEmptyDataProducesValidHtml() {
@@ -205,6 +223,7 @@ void TestEmailReportGenerator::jsonReportContainsMetadata() {
     QJsonObject metadata = root[QStringLiteral("metadata")].toObject();
     QCOMPARE(metadata[QStringLiteral("technician")].toString(), QStringLiteral("John Doe"));
     QCOMPARE(metadata[QStringLiteral("customer")].toString(), QStringLiteral("Acme Corp"));
+    QCOMPARE(metadata[QStringLiteral("ticket_number")].toString(), QStringLiteral("TKT-2024-0042"));
     QCOMPARE(metadata[QStringLiteral("tool")].toString(), QStringLiteral("SAK Utility"));
 }
 
@@ -223,6 +242,10 @@ void TestEmailReportGenerator::jsonReportContainsStatistics() {
     QCOMPARE(stats[QStringLiteral("calendar_items")].toInt(), 75);
     QCOMPARE(stats[QStringLiteral("tasks")].toInt(), 30);
     QCOMPARE(stats[QStringLiteral("notes")].toInt(), 10);
+    QCOMPARE(stats[QStringLiteral("attachments")].toInt(), 1200);
+    QCOMPARE(stats[QStringLiteral("attachment_bytes")].toVariant().toLongLong(), 367'001'600LL);
+    QCOMPARE(stats[QStringLiteral("searches_performed")].toInt(), 5);
+    QCOMPARE(stats[QStringLiteral("total_search_hits")].toInt(), 42);
 }
 
 void TestEmailReportGenerator::jsonReportContainsFileInfo() {
@@ -235,8 +258,14 @@ void TestEmailReportGenerator::jsonReportContainsFileInfo() {
 
     QVERIFY(root.contains(QStringLiteral("file_info")));
     QJsonObject file_info = root[QStringLiteral("file_info")].toObject();
+    QCOMPARE(file_info[QStringLiteral("path")].toString(),
+             QStringLiteral("X:/Profiles/Test/Documents/Outlook.pst"));
+    QCOMPARE(file_info[QStringLiteral("display_name")].toString(),
+             QStringLiteral("Personal Folders"));
+    QCOMPARE(file_info[QStringLiteral("size_bytes")].toVariant().toLongLong(), 524'288'000LL);
     QCOMPARE(file_info[QStringLiteral("is_unicode")].toBool(), true);
     QCOMPARE(file_info[QStringLiteral("is_ost")].toBool(), false);
+    QCOMPARE(file_info[QStringLiteral("encryption_type")].toInt(), 0);
 }
 
 void TestEmailReportGenerator::jsonReportContainsFolderTree() {
@@ -249,7 +278,17 @@ void TestEmailReportGenerator::jsonReportContainsFolderTree() {
 
     QVERIFY(root.contains(QStringLiteral("folder_tree")));
     QJsonArray folders = root[QStringLiteral("folder_tree")].toArray();
-    QVERIFY(folders.size() >= 2);
+    // Every sample folder is emitted, in tree order, with its own item count -- a
+    // ">= 2" check would still pass if a folder were dropped or reordered.
+    QCOMPARE(folders.size(), 3);
+    QCOMPARE(folders.at(0).toObject()[QStringLiteral("name")].toString(), QStringLiteral("Inbox"));
+    QCOMPARE(folders.at(0).toObject()[QStringLiteral("item_count")].toInt(), 3500);
+    QCOMPARE(folders.at(1).toObject()[QStringLiteral("name")].toString(),
+             QStringLiteral("Sent Items"));
+    QCOMPARE(folders.at(1).toObject()[QStringLiteral("item_count")].toInt(), 1200);
+    QCOMPARE(folders.at(2).toObject()[QStringLiteral("name")].toString(),
+             QStringLiteral("Contacts"));
+    QCOMPARE(folders.at(2).toObject()[QStringLiteral("item_count")].toInt(), 150);
 }
 
 void TestEmailReportGenerator::jsonReportEmptyDataProducesValidJson() {
@@ -272,7 +311,9 @@ void TestEmailReportGenerator::csvReportContainsHeader() {
     auto data = createSampleData();
     QString csv = generator.generateCsv(data);
 
-    QVERIFY(csv.contains(QStringLiteral("Email Inspection Report Summary")));
+    // Pin the quoted title cell and its trailing blank line; the bare substring would pass even
+    // if the CSV quoting or row structure regressed.
+    QVERIFY(csv.contains(QStringLiteral("\"Email Inspection Report Summary\"\r\n\r\n")));
     QVERIFY(csv.contains(QStringLiteral("\"Metric\",\"Value\"")));
 }
 
@@ -281,10 +322,12 @@ void TestEmailReportGenerator::csvReportContainsMetrics() {
     auto data = createSampleData();
     QString csv = generator.generateCsv(data);
 
-    QVERIFY(csv.contains(QStringLiteral("Total Emails")));
-    QVERIFY(csv.contains(QStringLiteral("5000")));
-    QVERIFY(csv.contains(QStringLiteral("Total Contacts")));
-    QVERIFY(csv.contains(QStringLiteral("150")));
+    // Assert whole rows: separate contains("Total Emails")/contains("5000") checks
+    // would still pass if the counts were attached to the wrong metric.
+    QVERIFY(csv.contains(QStringLiteral("\"Total Emails\",5000\r\n")));
+    QVERIFY(csv.contains(QStringLiteral("\"Total Contacts\",150\r\n")));
+    QVERIFY(csv.contains(QStringLiteral("\"Total Attachments\",1200\r\n")));
+    QVERIFY(csv.contains(QStringLiteral("\"Search Hits\",42\r\n")));
 }
 
 void TestEmailReportGenerator::csvReportEmptyDataProducesValidCsv() {
@@ -292,8 +335,23 @@ void TestEmailReportGenerator::csvReportEmptyDataProducesValidCsv() {
     EmailReportGenerator::ReportData empty_data;
     QString csv = generator.generateCsv(empty_data);
 
-    QVERIFY(!csv.isEmpty());
-    QVERIFY(csv.contains(QStringLiteral("Metric")));
+    QVERIFY(csv.contains(QStringLiteral("\"Metric\",\"Value\"")));
+    // Empty data still renders every metric row: an honest zero and an empty BUT
+    // quoted file cell, not a missing row or a bare unquoted value.
+    QVERIFY(csv.contains(QStringLiteral("\"File\",\"\"\r\n")));
+    QVERIFY(csv.contains(QStringLiteral("\"Total Emails\",0\r\n")));
+    QVERIFY(csv.contains(QStringLiteral("\"Search Hits\",0\r\n")));
+}
+
+void TestEmailReportGenerator::csvEscapesFilePathQuote() {
+    // A file path with an embedded quote must be escaped (doubled) so it cannot
+    // break the CSV row -- it was interpolated raw into a "%1" slot before (B7-34).
+    EmailReportGenerator generator;
+    EmailReportGenerator::ReportData data;
+    data.file_info.file_path = QStringLiteral("C:/od\"d/mail.pst");
+    const QString csv = generator.generateCsv(data);
+
+    QVERIFY(csv.contains(QStringLiteral("\"C:/od\"\"d/mail.pst\"")));  // quote doubled
 }
 
 // ============================================================================

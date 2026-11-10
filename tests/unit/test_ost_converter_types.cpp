@@ -37,15 +37,11 @@ private Q_SLOTS:
         job.display_name = QStringLiteral("mailbox.ost");
         job.file_size_bytes = 1024 * 1024;
         job.is_ost = true;
-        job.estimated_items = 500;
-        job.estimated_folders = 10;
 
         QCOMPARE(job.source_path, QStringLiteral("C:/test/mailbox.ost"));
         QCOMPARE(job.display_name, QStringLiteral("mailbox.ost"));
         QCOMPARE(job.file_size_bytes, static_cast<qint64>(1024 * 1024));
         QVERIFY(job.is_ost);
-        QCOMPARE(job.estimated_items, 500);
-        QCOMPARE(job.estimated_folders, 10);
     }
 
     // ====================================================================
@@ -54,7 +50,9 @@ private Q_SLOTS:
 
     void testConfigDefaults() {
         sak::OstConversionConfig config;
-        QCOMPARE(config.format, sak::OstOutputFormat::Pst);
+        // There is no output format: the converter produces MBOX and nothing else. Per-message
+        // output belongs to the Email Inspector, so an untouched config already describes a
+        // complete, runnable conversion.
         QVERIFY(config.output_directory.isEmpty());
         QCOMPARE(config.max_threads, 2);
         QVERIFY(config.date_from.isNull());
@@ -63,25 +61,29 @@ private Q_SLOTS:
         QVERIFY(config.folder_exclude.isEmpty());
         QCOMPARE(config.recovery_mode, sak::RecoveryMode::Normal);
         QVERIFY(!config.recover_deleted_items);
-        QCOMPARE(config.split_size, sak::PstSplitSize::NoSplit);
-        QCOMPARE(config.custom_split_mb, static_cast<qint64>(5120));
-        QVERIFY(config.prefix_filename_with_date);
-        QVERIFY(config.preserve_folder_structure);
+        // One .mbox per source folder by default, so the folder tree survives into the
+        // importing client rather than collapsing into a single mailbox.
         QVERIFY(config.one_mbox_per_folder);
         QVERIFY(config.generate_html_report);
         QVERIFY(config.include_source_checksums);
     }
 
     void testConfigThreadBounds() {
-        QVERIFY(sak::ost::kMinThreads >= 1);
-        QVERIFY(sak::ost::kMaxThreads <= 16);
-        QVERIFY(sak::ost::kDefaultThreads >= sak::ost::kMinThreads);
-        QVERIFY(sak::ost::kDefaultThreads <= sak::ost::kMaxThreads);
+        QCOMPARE(sak::ost::kMinThreads, 1);
+        QCOMPARE(sak::ost::kMaxThreads, 8);
+        // Exact default subsumes the old >= kMinThreads / <= kMaxThreads relational bounds.
+        QCOMPARE(sak::ost::kDefaultThreads, 2);
     }
 
     // ====================================================================
     // OstConversionResult Defaults
     // ====================================================================
+
+    // There is deliberately no output-format support table any more. It existed to record
+    // which formats did not work (PST, MSG, DBX, IMAP upload) -- a list of switched-off
+    // features living in the source. Every one was either removed or is the single format the
+    // converter produces, so the table, its "not supported" GUI labelling and the tests that
+    // pinned it are all gone rather than kept as a home for half-finished formats.
 
     void testResultDefaults() {
         sak::OstConversionResult result;
@@ -90,7 +92,6 @@ private Q_SLOTS:
         QCOMPARE(result.items_recovered, 0);
         QCOMPARE(result.folders_processed, 0);
         QCOMPARE(result.bytes_written, static_cast<qint64>(0));
-        QCOMPARE(result.pst_volumes_created, 0);
         QVERIFY(result.errors.isEmpty());
         QVERIFY(result.source_sha256.isEmpty());
     }
@@ -114,47 +115,21 @@ private Q_SLOTS:
     // Constants
     // ====================================================================
 
-    void testSplitSizeConstants() {
-        QCOMPARE(sak::ost::kSplit2GbBytes, static_cast<int64_t>(2LL * 1024 * 1024 * 1024));
-        QCOMPARE(sak::ost::kSplit5GbBytes, static_cast<int64_t>(5LL * 1024 * 1024 * 1024));
-        QCOMPARE(sak::ost::kSplit10GbBytes, static_cast<int64_t>(10LL * 1024 * 1024 * 1024));
-    }
-
     void testQueueColumnEnum() {
         QCOMPARE(sak::ost::ColFile, 0);
         QCOMPARE(sak::ost::ColSize, 1);
-        QCOMPARE(sak::ost::ColItems, 2);
-        QCOMPARE(sak::ost::ColStatus, 3);
-        QCOMPARE(sak::ost::ColProgress, 4);
-        QCOMPARE(sak::ost::ColCount, 5);
+        QCOMPARE(sak::ost::ColStatus, 2);
+        QCOMPARE(sak::ost::ColProgress, 3);
+        QCOMPARE(sak::ost::ColCount, 4);
     }
 
     // ====================================================================
     // Enum Coverage
     // ====================================================================
 
-    void testOutputFormatValues() {
-        // Verify all output formats are distinct
-        QVector<int> values;
-        values << static_cast<int>(sak::OstOutputFormat::Pst)
-               << static_cast<int>(sak::OstOutputFormat::Eml)
-               << static_cast<int>(sak::OstOutputFormat::Msg)
-               << static_cast<int>(sak::OstOutputFormat::Mbox)
-               << static_cast<int>(sak::OstOutputFormat::Dbx)
-               << static_cast<int>(sak::OstOutputFormat::Html)
-               << static_cast<int>(sak::OstOutputFormat::Pdf)
-               << static_cast<int>(sak::OstOutputFormat::ImapUpload);
-
-        // All values should be unique
-        QSet<int> unique(values.begin(), values.end());
-        QCOMPARE(unique.size(), values.size());
-    }
-
     void testRecoveryModeValues() {
-        QVERIFY(static_cast<int>(sak::RecoveryMode::Normal) !=
-                static_cast<int>(sak::RecoveryMode::SkipCorrupt));
-        QVERIFY(static_cast<int>(sak::RecoveryMode::SkipCorrupt) !=
-                static_cast<int>(sak::RecoveryMode::DeepRecovery));
+        QCOMPARE(static_cast<int>(sak::RecoveryMode::Normal), 0);
+        QCOMPARE(static_cast<int>(sak::RecoveryMode::DeepRecovery), 1);
     }
 
     void testJobStatusValues() {

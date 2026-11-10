@@ -1,0 +1,24 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_offline_downloader_tool_runner",
+  "ctest_regex": "^test_ai_offline_downloader_tool_runner$",
+  "mutants": [
+    {
+      "id": "tool-error-refusal-flips-to-success",
+      "file": "include/sak/ai/ai_tool_error.h",
+      "find": "{QStringLiteral(\"success\"), QJsonValue(false)}",
+      "replace": "{QStringLiteral(\"success\"), QJsonValue(true)}",
+      "expect": "killed",
+      "why": "The shared envelope carries authorization, command, package, offline, workflow, and provider refusals. canonicalToolErrorIsStrictTypedAndNonEmpty requires every shared error to remain a typed success:false result so a denial cannot be consumed as success."
+    },
+    {
+      "id": "tool-error-empty-input-stays-empty",
+      "file": "include/sak/ai/ai_tool_error.h",
+      "find": "? QStringLiteral(\"AI tool failed without an error message\")",
+      "replace": "? QString()",
+      "expect": "killed",
+      "why": "canonicalToolErrorIsStrictTypedAndNonEmpty passes whitespace-only input and requires the stable non-empty fallback needed by workflow, dispatcher, health, and model consumers."
+    }
+  ]
+}

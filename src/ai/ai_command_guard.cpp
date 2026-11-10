@@ -4,92 +4,266 @@
 #include "sak/ai/ai_command_guard.h"
 
 #include <QRegularExpression>
+#include <QStringList>
+
+#include <algorithm>
+#include <utility>
 
 namespace sak::ai {
 
 namespace {
 
-QString combinedCommandText(const AiCommandRequest& request, const QString& preview) {
-    return QStringLiteral("%1 %2 %3 %4")
-        .arg(request.command, request.program, request.arguments.join(QLatin1Char(' ')), preview)
-        .toLower();
+// At namespace scope, not inside the function. A raw-string regex in a function body defeats
+// lizard's C++ tokenizer: it stops seeing where that function ends and measures its length and
+// complexity against everything that follows, failing the gate for a file that is fine.
+const QRegularExpression kReadCommandRegex(
+    QStringLiteral(R"((?:^|[\s{}()])(?:get-content|gc|cat|type)(?=$|\s))"),
+    QRegularExpression::CaseInsensitiveOption);
+const QRegularExpression kQuotedTextRegex(
+    QStringLiteral(R"regex('(?:''|[^'])*(?:'|$)|"(?:`.|""|[^"])*(?:"|$))regex"));
+const QRegularExpression kQuotedCallReadRegex(
+    QStringLiteral(R"(^\s*&\s*(['"])(?:get-content|gc|cat|type)\1(?=$|\s))"),
+    QRegularExpression::CaseInsensitiveOption);
+const QRegularExpression kInterpolatedReadRegex(
+    QStringLiteral(
+        R"regex("(?:(?:`.)|[^"`])*(?<!`)\$\([^)]*\b(?:get-content|gc|cat|type)\b[^)]*\)(?:(?:`.)|[^"`])*")regex"),
+    QRegularExpression::CaseInsensitiveOption);
+const QRegularExpression kBinaryExtensionRegex(
+    QStringLiteral(
+        R"(\.(?:exe|dll|bin|db|db3|sqlite|sdb|zip|7z|msi|cab|sys|png|jpe?g|gif|webp|pdf)(?:['"`\s;)]|$))"),
+    QRegularExpression::CaseInsensitiveOption);
+// The HKLM/HKCU hive root or its SOFTWARE key, as a recursion target. Every spelling PowerShell
+// accepts for those is covered: the drive form with or without its backslash (`HKLM:\`, `HKLM:`,
+// `HKLM:Software`), the provider form long or short (`Registry::HKEY_LOCAL_MACHINE`,
+// `Registry::HKLM\Software`), and a trailing `\` or `\*` wildcard. Only `HKLM:\Software` and the
+// long provider form used to match, so `HKLM:\Software\*`, a bare hive root and the short
+// provider form recursed the whole hive unchecked. A runaway-output guardrail, not a boundary.
+const QRegularExpression kRegistryRootRegex(
+    QStringLiteral(R"((?:(?:hklm|hkcu):\\?|registry::(?:hkey_(?:local_machine|)"
+                   R"(current_user)|hklm|hkcu)\\?)(?:software)?(?:\\?\*|\\)?(?:['"`\s,;)]|$))"),
+    QRegularExpression::CaseInsensitiveOption);
+const QRegularExpression kActiveRecurseRegex(QStringLiteral("(?:^|\\s)-rec(?:u(?:r(?:s(?:e)?)?)?)?"
+                                                            "(?:\\s*:\\s*\\$true)?(?:$|[\\s,)])"),
+                                             QRegularExpression::CaseInsensitiveOption);
+const QRegularExpression kPidAssignmentRegex(
+    QStringLiteral(R"((^|[;\s])(?:\[[^\]]+\])?\$pid\s*=|\[ref\]\s*\$pid\b)"),
+    QRegularExpression::CaseInsensitiveOption);
+const QRegularExpression kBypassSwitchRegex(
+    QStringLiteral(R"((?:^|[\s;|&'"`(])[-/]{1,2}(?:ignore-?checksums?)"
+                   R"(|allow-?empty-?checksums?|skip-?checksums?)"
+                   R"(|download-?checksums?(?:-?x64)?|checksums?(?:64)?)"
+                   R"(|checksum-?type)\b)"),
+    QRegularExpression::CaseInsensitiveOption);
+// TEMP and TMP: both name the temp folder and Chocolatey's cache lives under either, so knowing
+// only `temp` let `& "$env:TMP\chocolatey\pkg\1.0\setup.exe"` run a cached installer unasked.
+const QRegularExpression kChocolateyTempEnvironmentRegex(
+    QStringLiteral(R"((?:\$env:te?mp|\$\{env:te?mp\}|%te?mp%)[\\/]chocolatey[\\/])"),
+    QRegularExpression::CaseInsensitiveOption);
+// `choco feature disable --name=checksumFiles` turns checksum verification off for EVERY later
+// install -- a bypass as complete as --ignore-checksums, and one that outlives the command. The
+// switch rule needs a '-' or '/' directly before "checksum", which the feature NAME never has.
+// Order-independent, since an option may precede the subcommand. Re-ENABLING the feature is
+// allowed; enabling allowEmptyChecksums is caught by the substring list below.
+const QRegularExpression kChecksumFeatureDisableRegex(
+    QStringLiteral(R"(\bfeature\b(?=.*\bdisable\b)(?=.*\bchecksumfiles\b))"),
+    QRegularExpression::CaseInsensitiveOption);
+const QRegularExpression kChocolateyInstallCacheRegex(
+    QStringLiteral(R"((?:\$env:chocolateyinstall|\$\{env:chocolateyinstall\}|)"
+                   R"(%chocolateyinstall%)[\\/](?:lib-bad|cache|temp)[\\/])"),
+    QRegularExpression::CaseInsensitiveOption);
+const QRegularExpression kChocolateyTempPathRegex(
+    QStringLiteral(R"([\\/](?:data[\\/])?temp[\\/]chocolatey[\\/])"),
+    QRegularExpression::CaseInsensitiveOption);
+const QRegularExpression kChocolateyRootCacheRegex(
+    QStringLiteral(R"([\\/]chocolatey[\\/](?:lib-bad|cache|temp)[\\/])"),
+    QRegularExpression::CaseInsensitiveOption);
+const QRegularExpression kInstallerExtensionRegex(
+    QStringLiteral(R"(\.(?:exe|msi|msix|msixbundle|appx)(?:['"`\s;)]|$))"),
+    QRegularExpression::CaseInsensitiveOption);
+
+bool isClauseSeparator(QChar ch) {
+    return ch == QLatin1Char(';') || ch == QLatin1Char('|') || ch == QLatin1Char('&') ||
+           ch == QLatin1Char('\n') || ch == QLatin1Char('\r');
 }
 
-bool commandContainsBinaryContentRead(const QString& command) {
-    static const QRegularExpression read_command_regex(
-        QStringLiteral(R"((^|\s|[;&|])(?:get-content|gc|cat|type)\s+)"),
-        QRegularExpression::CaseInsensitiveOption);
-    static const QRegularExpression binary_extension_regex(
-        QStringLiteral(
-            R"(\.(?:exe|dll|bin|db|db3|sqlite|sdb|zip|7z|msi|cab|sys|png|jpe?g|gif|webp|pdf)(?:['"`\s;)]|$))"),
-        QRegularExpression::CaseInsensitiveOption);
-    return read_command_regex.match(command).hasMatch() &&
-           binary_extension_regex.match(command).hasMatch();
+bool beginsCallOperatorClause(const QString& current) {
+    const QString trimmed = current.trimmed();
+    return trimmed.isEmpty() || QStringLiteral("({=,:").contains(trimmed.back());
 }
 
-bool commandContainsBroadRegistryRecursion(const QString& command) {
-    static const QRegularExpression registry_root_regex(
-        QStringLiteral(R"((hklm|hkcu):\\software(?:['"`\s,;)]|$))"),
-        QRegularExpression::CaseInsensitiveOption);
-    if (!command.contains(QStringLiteral("-recurse")) ||
-        !registry_root_regex.match(command).hasMatch()) {
+struct ClauseScanState {
+    QChar quote;
+    bool escaped{false};
+};
+
+void appendCompletedClause(QStringList* clauses, QString* current) {
+    const QString clause = current->trimmed();
+    if (!clause.isEmpty()) {
+        clauses->append(clause);
+    }
+    current->clear();
+}
+
+bool consumeEscapedClauseCharacter(QChar ch, ClauseScanState* state, QString* current) {
+    if (state->escaped) {
+        current->append(ch);
+        state->escaped = false;
+        return true;
+    }
+    if (state->quote != QLatin1Char('\'') && (ch == QLatin1Char('`') || ch == QLatin1Char('^'))) {
+        current->append(ch);
+        state->escaped = true;
+        return true;
+    }
+    return false;
+}
+
+bool consumeClauseQuote(const QString& command,
+                        qsizetype* index,
+                        ClauseScanState* state,
+                        QString* current) {
+    const QChar ch = command.at(*index);
+    if (ch != QLatin1Char('\'') && ch != QLatin1Char('"')) {
         return false;
     }
-    return !command.contains(QStringLiteral("currentversion\\uninstall")) &&
-           !command.contains(QStringLiteral("superantispyware.com"));
-}
-
-bool commandContainsPowerShellPidMutation(const QString& command) {
-    static const QRegularExpression pid_assignment_regex(
-        QStringLiteral(R"((^|[;\s])(?:\[[^\]]+\])?\$pid\s*=|\[ref\]\s*\$pid\b)"),
-        QRegularExpression::CaseInsensitiveOption);
-    return pid_assignment_regex.match(command).hasMatch();
-}
-
-bool commandContainsChecksumBypass(const QString& command) {
-    return command.contains(QStringLiteral("--ignore-checksums")) ||
-           command.contains(QStringLiteral("--ignorechecksum")) ||
-           command.contains(QStringLiteral("ignore-checksums")) ||
-           command.contains(QStringLiteral("ignorechecksum"));
-}
-
-bool commandContainsCachedPackageInstallerRun(const QString& command) {
-    static const QRegularExpression installer_extension_regex(
-        QStringLiteral(R"(\.(?:exe|msi|msix|msixbundle|appx)(?:['"`\s;)]|$))"),
-        QRegularExpression::CaseInsensitiveOption);
-    const bool package_cache_path =
-        command.contains(QStringLiteral("\\data\\temp\\chocolatey\\")) ||
-        command.contains(QStringLiteral("/data/temp/chocolatey/")) ||
-        command.contains(QStringLiteral("\\chocolatey\\lib-bad\\")) ||
-        command.contains(QStringLiteral("/chocolatey/lib-bad/"));
-    if (!package_cache_path || !installer_extension_regex.match(command).hasMatch()) {
-        return false;
+    if (state->quote.isNull()) {
+        state->quote = ch;
+    } else if (state->quote == ch) {
+        if (*index + 1 < command.size() && command.at(*index + 1) == ch) {
+            current->append(ch);
+            ++(*index);
+        } else {
+            state->quote = QChar();
+        }
     }
-    return command.contains(QStringLiteral("start-process")) ||
-           command.contains(QStringLiteral("invoke-item")) ||
-           command.contains(QStringLiteral("cmd /c")) || command.contains(QStringLiteral("& "));
+    current->append(ch);
+    return true;
 }
 
-}  // namespace
+QStringList splitCommandClauses(const QString& normalized_command) {
+    QStringList clauses;
+    QString current;
+    ClauseScanState state;
+    for (qsizetype index = 0; index < normalized_command.size(); ++index) {
+        const QChar ch = normalized_command.at(index);
+        if (consumeEscapedClauseCharacter(ch, &state, &current)) {
+            continue;
+        }
+        if (consumeClauseQuote(normalized_command, &index, &state, &current)) {
+            continue;
+        }
+        if (state.quote.isNull() && isClauseSeparator(ch)) {
+            if (ch == QLatin1Char('&') && beginsCallOperatorClause(current)) {
+                appendCompletedClause(&clauses, &current);
+                current.append(ch);
+                continue;
+            }
+            appendCompletedClause(&clauses, &current);
+            continue;
+        }
+        current.append(ch);
+    }
+    appendCompletedClause(&clauses, &current);
+    return clauses;
+}
 
-QString commandGuardBlockError(const AiCommandRequest& request, const QString& preview) {
-    const QString command = combinedCommandText(request, preview);
-    if (commandContainsBinaryContentRead(command)) {
+QStringList commandSecurityClauses(const AiCommandRequest& request) {
+    const QString normalized_command = request.command.toLower();
+    QStringList clauses = splitCommandClauses(normalized_command);
+    const QString direct_process = QStringLiteral("%1 %2")
+                                       .arg(request.program,
+                                            request.arguments.join(QLatin1Char(' ')))
+                                       .trimmed();
+    if (!direct_process.isEmpty()) {
+        clauses.append(direct_process.toLower());
+    }
+    return clauses;
+}
+
+bool commandContainsBinaryContentRead(const QStringList& clauses) {
+    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {
+        QString command_syntax = clause;
+        command_syntax.replace(kQuotedTextRegex, QStringLiteral(" "));
+        const bool reads_content = kReadCommandRegex.match(command_syntax).hasMatch() ||
+                                   kQuotedCallReadRegex.match(clause).hasMatch() ||
+                                   kInterpolatedReadRegex.match(clause).hasMatch();
+        return reads_content && kBinaryExtensionRegex.match(clause).hasMatch();
+    });
+}
+
+bool commandContainsBroadRegistryRecursion(const QStringList& clauses) {
+    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {
+        return kRegistryRootRegex.match(clause).hasMatch() &&
+               kActiveRecurseRegex.match(clause).hasMatch();
+    });
+}
+
+bool commandContainsPowerShellPidMutation(const QStringList& clauses) {
+    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {
+        return kPidAssignmentRegex.match(clause).hasMatch();
+    });
+}
+
+bool commandContainsChecksumBypass(const QStringList& clauses) {
+    // The hyphen is OPTIONAL between every word, and the trailing 's' is optional too. The
+    // previous version listed fixed spellings and claimed "the singular spellings also catch the
+    // plural switches" -- but that only held for the UNHYPHENATED singular. `--ignore-checksum`,
+    // the hyphenated singular, matched none of them and passed the guard unblocked, while
+    // Chocolatey accepts it perfectly well.
+    //
+    // CHECKSUM SUBSTITUTION is included, because the refusal message has always claimed to stop
+    // it ("Do not pass --ignore-checksums, substitute checksums, ...") while nothing checked for
+    // it. Supplying --checksum/--download-checksum means the download is verified against a value
+    // the CALLER chose, which defeats verification exactly as thoroughly as skipping it.
+    //
+    // A switch prefix is required (- / -- / /), so ordinary prose that merely contains the word
+    // "checksum" in a preview or a comment does not trip the guard.
+    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {
+        return kBypassSwitchRegex.match(clause).hasMatch() ||
+               kChecksumFeatureDisableRegex.match(clause).hasMatch() ||
+               clause.contains(QStringLiteral("chocolateyignorechecksums")) ||
+               clause.contains(QStringLiteral("chocolateyallowemptychecksums")) ||
+               clause.contains(QStringLiteral("ignorechecksum")) ||
+               clause.contains(QStringLiteral("allowemptychecksum")) ||
+               clause.contains(QStringLiteral("skipchecksum"));
+    });
+}
+
+bool clauseContainsChocolateyCachePath(const QString& clause) {
+    return kChocolateyTempEnvironmentRegex.match(clause).hasMatch() ||
+           kChocolateyInstallCacheRegex.match(clause).hasMatch() ||
+           kChocolateyTempPathRegex.match(clause).hasMatch() ||
+           kChocolateyRootCacheRegex.match(clause).hasMatch();
+}
+
+bool commandContainsCachedPackageInstallerRun(const QStringList& clauses) {
+    // Any reference to a package-cache installer needs approval. Requiring one of a fixed
+    // set of launch verbs failed open: request.program can name the installer directly,
+    // and "msiexec /i", &"path" without a space, a tab-separated call operator or an
+    // environment-variable path all launch it without matching any of those verbs.
+    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {
+        return clauseContainsChocolateyCachePath(clause) &&
+               kInstallerExtensionRegex.match(clause).hasMatch();
+    });
+}
+
+QString commandGuardBlockError(const QStringList& clauses) {
+    if (commandContainsBinaryContentRead(clauses)) {
         return QStringLiteral(
             "Blocked binary file dump. Use Get-Item, Get-FileHash, Authenticode signature checks, "
             "or Format-Hex -Count for a small sample instead of Get-Content/cat/type.");
     }
-    if (commandContainsBroadRegistryRecursion(command)) {
+    if (commandContainsBroadRegistryRecursion(clauses)) {
         return QStringLiteral(
             "Blocked broad recursive registry scan. Query exact uninstall/vendor keys instead and "
             "cap output with Select-Object -First.");
     }
-    if (commandContainsPowerShellPidMutation(command)) {
+    if (commandContainsPowerShellPidMutation(clauses)) {
         return QStringLiteral(
             "Blocked PowerShell $PID mutation. $PID is a read-only automatic variable; use a "
             "different variable such as $processId or $windowProcessId.");
     }
-    if (commandContainsChecksumBypass(command)) {
+    if (commandContainsChecksumBypass(clauses)) {
         return QStringLiteral(
             "Blocked package checksum bypass. Do not pass --ignore-checksums, substitute "
             "checksums, or run cached installers after a package checksum mismatch.");
@@ -97,9 +271,8 @@ QString commandGuardBlockError(const AiCommandRequest& request, const QString& p
     return {};
 }
 
-QString commandGuardApprovalReason(const AiCommandRequest& request, const QString& preview) {
-    const QString command = combinedCommandText(request, preview);
-    if (commandContainsCachedPackageInstallerRun(command)) {
+QString commandGuardApprovalReason(const QStringList& clauses) {
+    if (commandContainsCachedPackageInstallerRun(clauses)) {
         return QStringLiteral(
             "Cached package installer execution requested after package-manager handling. "
             "Continue only with explicit user approval and verification evidence.");
@@ -107,13 +280,18 @@ QString commandGuardApprovalReason(const AiCommandRequest& request, const QStrin
     return {};
 }
 
-AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request, const QString& preview) {
-    AiCommandGuardResult result;
-    result.block_error = commandGuardBlockError(request, preview);
-    if (result.block_error.isEmpty()) {
-        result.approval_reason = commandGuardApprovalReason(request, preview);
+}  // namespace
+
+AiCommandGuardResult::AiCommandGuardResult(QString block_error, QString approval_reason)
+    : m_block_error(std::move(block_error)), m_approval_reason(std::move(approval_reason)) {}
+
+AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request) {
+    const QStringList clauses = commandSecurityClauses(request);
+    QString block_error = commandGuardBlockError(clauses);
+    if (!block_error.isEmpty()) {
+        return AiCommandGuardResult(std::move(block_error), {});
     }
-    return result;
+    return AiCommandGuardResult({}, commandGuardApprovalReason(clauses));
 }
 
 }  // namespace sak::ai

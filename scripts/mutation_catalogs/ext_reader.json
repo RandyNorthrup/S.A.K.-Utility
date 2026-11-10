@@ -1,0 +1,72 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_partition_manager_core",
+  "ctest_regex": "^test_partition_manager_core$",
+  "mutants": [
+    {
+      "id": "superblock-magic-gate-inverted",
+      "file": "src/core/partition_ext_file_system_reader.cpp",
+      "find": "if (le16(bytes, kExtMagicOffset) != kExtMagic) {",
+      "replace": "if (le16(bytes, kExtMagicOffset) == kExtMagic) {",
+      "expect": "killed",
+      "why": "the 0xEF53 magic gate must reject a NON-matching superblock; inverting != to == flags the valid fixture (magic present) as 'Ext superblock magic not found', so load() fails. extFileSystemReader_listsDirectoriesAndReadsFiles asserts QVERIFY2(root.ok) on the valid ext2 fixture"
+    },
+    {
+      "id": "extent-header-magic-gate-inverted",
+      "file": "src/core/partition_ext_file_system_reader.cpp",
+      "find": "le16(node, 0) != kExtExtentMagic) {",
+      "replace": "le16(node, 0) == kExtExtentMagic) {",
+      "expect": "killed",
+      "why": "an extent node's eh_magic must equal 0xF30A; inverting != to == makes validateExtentNode append 'Invalid ext extent tree' for the valid ext4 root node, so the extent-mapped read fails. extFileSystemReader_readsExtentMappedFilesAndBlocksUnsafePaths asserts QVERIFY2(hello.ok) and QCOMPARE(hello.data, \"hello from ext\\n\")"
+    },
+    {
+      "id": "unknown-incompat-feature-gate-inverted",
+      "file": "src/core/partition_ext_file_system_reader.cpp",
+      "find": "if ((m_superblock.incompat & ~kExtRecognizedIncompat) != 0) {",
+      "replace": "if ((m_superblock.incompat & ~kExtRecognizedIncompat) == 0) {",
+      "expect": "killed",
+      "why": "an incompat bit outside the recognized set must fail closed; inverting != to == lets the forged 0x00800000 bit through (no 'unknown incompatible' blocker) so the volume lists as if understood. extFileSystemReader_rejectsUnknownIncompatFeature asserts QVERIFY(!listing.ok) and blockers.contains(\"unknown incompatible\")"
+    },
+    {
+      "id": "extent-physical-out-of-range-inverted",
+      "file": "src/core/partition_ext_file_system_reader.cpp",
+      "find": "physical > m_superblock.blocks_count - length) {",
+      "replace": "physical < m_superblock.blocks_count - length) {",
+      "expect": "killed",
+      "why": "a leaf extent whose physical run overruns blocks_count must be refused; flipping > to < accepts physical=4096 on a 64-block volume, so appendLeafExtent no longer emits the 'out-of-range' rejection. extFileSystemReader_rejectsMalformedExtentTree asserts QVERIFY(!physicalRead.ok) and blockers.contains(\"out-of-range\")"
+    },
+    {
+      "id": "readblock-volume-size-bound-inverted",
+      "file": "src/core/partition_ext_file_system_reader.cpp",
+      "find": "if (blockNumber >= m_superblock.blocks_count) {",
+      "replace": "if (blockNumber < m_superblock.blocks_count) {",
+      "expect": "killed",
+      "why": "readBlock must reject a block at/after the declared volume size; inverting >= to < both stops emitting 'past the declared volume size' for the crafted block 4096 and rejects every in-range block on the valid fixture. extFileSystemReader_boundsBlockAndInodeReferences asserts blockersFor(blockPastVolume).contains(\"past the declared volume size\") (and the shared blockersFor QVERIFY(!listing.ok))"
+    },
+    {
+      "id": "inode-size-geometry-guard-disabled",
+      "file": "src/core/partition_ext_file_system_reader.cpp",
+      "find": "if (m_superblock.inode_size < kMinimumInodeSize || !isPowerOfTwo(m_superblock.inode_size)) {",
+      "replace": "if (false) {",
+      "expect": "killed",
+      "why": "a zero/undersized on-disk inode_size must fail closed with an 'inode size' blocker; disabling the guard lets inode_size=0 through so the reader instead reports 'Selected ext path is not a directory' (a zeroed root inode). extFileSystemReader_rejectsMalformedSuperblockGeometry asserts blockers.contains(\"inode size\")"
+    },
+    {
+      "id": "first-data-block-check-inverted",
+      "file": "src/core/partition_ext_file_system_reader.cpp",
+      "find": "if (m_superblock.first_data_block != expectedFirstDataBlock) {",
+      "replace": "if (m_superblock.first_data_block == expectedFirstDataBlock) {",
+      "expect": "killed",
+      "why": "s_first_data_block is fixed by the format (1 at 1KiB blocks, 0 above); inverting != to == accepts the malformed first_data_block=0 so the volume lists as valid and drops the 'first data block' blocker (and flags the valid fixture). extFileSystemReader_boundsBlockAndInodeReferences asserts blockersFor(wrongFirstBlock).contains(\"first data block\") after QVERIFY(!listing.ok)"
+    },
+    {
+      "id": "directory-record-deleted-entry-skip-inverted",
+      "file": "src/core/partition_ext_file_system_reader.cpp",
+      "find": "if (inode == 0 || nameLen == 0) {",
+      "replace": "if (inode != 0 || nameLen == 0) {",
+      "expect": "killed",
+      "why": "appendDirectoryRecord must skip only empty/deleted slots (inode==0); inverting to inode!=0 skips every real entry instead, so the root listing collapses to zero records. extFileSystemReader_listsDirectoriesAndReadsFiles asserts QCOMPARE(root.entries.size(), 3) and names.contains(\"hello.txt\")"
+    }
+  ]
+}

@@ -28,6 +28,9 @@ class BandwidthTester : public QObject {
     Q_OBJECT
 
 public:
+    /// The public server the HTTP speed test measures against.
+    static constexpr auto kHttpSpeedTestHost = "speed.cloudflare.com";
+
     struct IperfConfig {
         QString serverAddress;
         uint16_t port = netdiag::kDefaultIperfPort;
@@ -56,13 +59,46 @@ public:
     [[nodiscard]] bool isServerRunning() const;
 
     /// @brief Run iPerf3 client test (blocking)
-    void runIperfTest(const IperfConfig& config);
+    void runIperfTest(const IperfConfig& requested);
 
     /// @brief Run HTTP-based internet speed test (blocking)
     void runHttpSpeedTest();
 
     /// @brief Check if iPerf3 is available
     [[nodiscard]] bool isIperf3Available() const;
+
+    /// @brief Parse iPerf3 JSON (`-J`) output into a result.
+    ///
+    /// Returns nullopt when the bytes are not valid iPerf3 result JSON (parse error,
+    /// or missing the `end` throughput summary) so a zero-exit run with unusable
+    /// output is reported as an error, not a bogus all-zero "successful" test. Pure
+    /// and static so it can be unit-tested with crafted JSON.
+    [[nodiscard]] static std::optional<BandwidthTestResult> parseIperfJson(const QByteArray& json);
+
+    /// @brief Compose the inbound firewall-rule name for an iPerf3 server instance.
+    ///
+    /// The name embeds a per-instance @p uniqueToken so two concurrent servers (or
+    /// two SAK instances) never share a rule -- otherwise one server stopping would
+    /// delete the still-running other's rule. Pure and deterministic; testable.
+    [[nodiscard]] static QString composeFirewallRuleName(uint16_t port, const QString& uniqueToken);
+
+    /// @brief Resolve the absolute netsh.exe path under a given Windows @p systemRoot.
+    ///
+    /// Returns "<systemRoot>/System32/netsh.exe" (cleaned). Fails closed with an empty
+    /// string when @p systemRoot is empty, so callers never fall back to invoking a
+    /// bare "netsh" that a PATH/CWD-planted binary could hijack. Pure and testable.
+    [[nodiscard]] static QString composeNetshPath(const QString& systemRoot);
+
+    /// @brief The SAK iPerf3 inbound rules in @p rule_names that no running SAK owns.
+    ///
+    /// A rule name carries its owner's process ID (composeFirewallRuleName with a "<pid>-<uuid>"
+    /// token). A crash used to leave the server and its inbound allow rule behind for good; the
+    /// next server start now deletes rules whose owner is gone (or that predate the owner ID).
+    /// Never names a rule of @p own_pid or of a live SAK (@p sak_alive). Pure; testable.
+    [[nodiscard]] static QStringList staleFirewallRules(
+        const QStringList& rule_names,
+        qint64 own_pid,
+        const std::function<bool(qint64)>& sak_alive);
 
     void cancel();
 
@@ -74,20 +110,31 @@ Q_SIGNALS:
     void testProgress(double currentMbps, double elapsedSec, double totalSec);
     void testComplete(sak::BandwidthTestResult result);
     void httpSpeedTestProgress(double downloadMbps, double uploadMbps);
+    /// @brief HTTP speed test finished.
+    /// @param latencyMs Round-trip latency, or a NEGATIVE value when it could not be
+    ///        measured. Receivers must test for that and report it as unknown; it was
+    ///        previously coerced to 0.0, which displayed a failed measurement as a
+    ///        perfect one.
     void httpSpeedTestComplete(double downloadMbps, double uploadMbps, double latencyMs);
     void errorOccurred(QString error);
 
 private:
     QString m_iperf3Path;
-    QProcess* m_serverProcess = nullptr;  ///< Owned; destroyed in destructor
+    QProcess* m_serverProcess = nullptr;       ///< Owned; destroyed in destructor
+    QProcess* m_firewallAddProcess = nullptr;  ///< In-flight add; removes serialize behind it
+    QString m_firewallRuleName;                ///< Unique inbound rule for the running server
     std::atomic<bool> m_cancelled{false};
 
     [[nodiscard]] QString findIperf3Path() const;
-    [[nodiscard]] BandwidthTestResult parseIperfJson(const QByteArray& json);
     [[nodiscard]] std::optional<double> measureTransferMbps(
         int sample_count, const std::function<std::pair<double, double>()>& sampler);
-    void createFirewallRule(uint16_t port);
-    void removeFirewallRule();
+    void connectServerProcessSignals(const QString& ruleName, uint16_t port);
+    void createFirewallRule(const QString& ruleName, uint16_t port);
+    void removeFirewallRule(const QString& ruleName);
+    void executeFirewallDelete(const QString& ruleName);
+    /// Starts an asynchronous sweep that deletes rules a crashed earlier server left behind.
+    void removeStaleFirewallRules();
+    [[nodiscard]] static QString resolveNetshPath();
 };
 
 }  // namespace sak

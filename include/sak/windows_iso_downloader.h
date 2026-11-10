@@ -129,6 +129,8 @@ Q_SIGNALS:
     void phaseChanged(UupIsoBuilder::Phase phase, const QString& description);
     void progressUpdated(int overallPercent, const QString& detail);
     void speedUpdated(double downloadSpeedMBps);
+    /// The builder's measured download, in bytes (UupIsoBuilder::downloadBytesUpdated).
+    void downloadBytesUpdated(qint64 downloaded, qint64 total);
 
     // ---- Completion ----
     void downloadComplete(const QString& isoPath, qint64 fileSize);

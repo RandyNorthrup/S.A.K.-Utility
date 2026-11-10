@@ -5,6 +5,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFuture>
 #include <QGroupBox>
 #include <QImage>
 #include <QLineEdit>
@@ -18,10 +19,15 @@
 #include <QToolButton>
 #include <QWidget>
 
+#include <atomic>
+#include <utility>
+
 class QLabel;
 class QFormLayout;
 class QStackedWidget;
 class QVBoxLayout;
+class QTextStream;
+class QFileDevice;
 
 namespace sak {
 
@@ -49,7 +55,51 @@ public:
     WifiManagerPanel& operator=(WifiManagerPanel&&) = delete;
 
     /// @brief Access the log toggle switch for MainWindow log window connection
-    [[nodiscard]] LogToggleSwitch* logToggle() const { return m_logToggle; }
+
+    /// @brief Generate a Windows netsh .cmd script that provisions one network
+    /// @return Script text, or an empty string if the SSID cannot be embedded
+    ///         safely (contains a double quote or a control character)
+    /// @note Public + static so SSID-injection escaping can be unit tested; the
+    ///       SSID reaches escapeBatchString/ssidIsBatchSafe untrusted (a scanned
+    ///       network name may be attacker-chosen).
+    [[nodiscard]] static QString buildWindowsScript(const QString& ssid,
+                                                    const QString& password,
+                                                    const QString& security,
+                                                    bool hidden);
+
+    /// @brief Fail-closed predicate for a credential-table JSON write
+    /// @return true only if every byte was written AND the file committed
+    /// @note Public + static so the short-write / commit-failure rule can be
+    ///       unit tested; a truncated credential table must never report
+    ///       success (NO FALLBACKS / FAIL CLOSED).
+    [[nodiscard]] static bool jsonWriteSucceeded(qint64 written, qint64 expected, bool committed);
+
+    /// @brief One row of the credential table: a network as the technician entered or imported it.
+    /// @note Public because wifiProfileInstallRefusal takes one, so the refusal rule can be
+    ///       exercised by a test that builds a row directly.
+    struct WifiConfig {
+        QString location;
+        QString ssid;
+        QString password;
+        QString security;
+        bool hidden{false};
+    };
+
+    /// @brief Why a table row cannot be installed as a Windows WLAN profile, or an empty string
+    ///        when it can.
+    /// @note This is the panel's OWN precondition, not security resolution -- what a given
+    ///       security label means is decided once, in sak::addWifiProfileWindows, which both this
+    ///       panel and the assistant's connect_wifi action install through.
+    ///       An empty security label is refused HERE even though the shared seam would accept it
+    ///       as "caller did not specify, use the interoperable default". That default is right for
+    ///       connect_wifi, where security is an optional argument; it is wrong for this table,
+    ///       where every row has a security column, so an empty one means an imported or
+    ///       hand-edited row is malformed and guessing would install a profile the technician
+    ///       never described.
+    /// @note Public + static and PURE so the refusal can be unit tested without installing
+    ///       anything. A test that asserted this by calling the installer would run a live
+    ///       `netsh wlan add profile` the moment the refusal regressed.
+    [[nodiscard]] static QString wifiProfileInstallRefusal(const WifiConfig& cfg);
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -91,17 +141,7 @@ private:
     void setupTableActionButtons(QVBoxLayout* layout);
     void setupActionButtons();
     void connectSignals();
-
-    // -------------------------------------------------------------------------
-    // Data types
-    // -------------------------------------------------------------------------
-    struct WifiConfig {
-        QString location;
-        QString ssid;
-        QString password;
-        QString security;
-        bool hidden{false};
-    };
+    void connectOutputButtons();
 
     struct QrExportFormats {
         bool png{false};
@@ -161,10 +201,16 @@ private:
     /** Render a QR image with an optional location header banner */
     static QImage renderQrWithHeader(const QString& payload,
                                      const QString& location,
-                                     bool showHeader);
+                                     bool show_header);
 
     /** Write a QR image as a full-page A4 PDF; returns true on success */
     static bool exportQrToPdf(const QImage& image, const QString& path, const QString& title);
+    /// Write the checked formats under @p path_stem (no extension); true if ANY landed.
+    /// Each branch checks its own write, so a format that failed never counts as saved.
+    static bool saveQrFormats(const QImage& img,
+                              const QString& path_stem,
+                              const QString& ssid,
+                              const QrExportFormats& formats);
 
     /** Show a QR dialog for a single WiFi network */
     void showSingleNetworkQrDialog(const WifiConfig& cfg);
@@ -202,7 +248,7 @@ private:
 
     void saveCheckedFormats(QDialog* dlg,
                             QrWizardControls ctl,
-                            const QImage& finalImg,
+                            const QImage& final_img,
                             const QrExportContent& content,
                             QStringList& saved);
 
@@ -212,24 +258,18 @@ private:
     /** Execute the batch QR export loop for selected formats */
     void executeBatchQrExport(QDialog* dlg,
                               const QList<WifiConfig>& sources,
-                              const QString& baseDir,
-                              bool showHeader,
+                              const QString& base_dir,
+                              bool show_header,
                               const QrExportFormats& formats);
     /** Export QR images for single network in specified formats */
     bool executeSingleQrNetwork(const WifiConfig& cfg,
-                                const QString& baseDir,
-                                bool showHeader,
+                                const QString& base_dir,
+                                bool show_header,
                                 const QrExportFormats& formats);
 
     // -----------------------------------------------------------------
     // Export helpers
     // -------------------------------------------------------------------------
-    /** Generate content of a Windows netsh .cmd script for a single network */
-    static QString buildWindowsScript(const QString& ssid,
-                                      const QString& password,
-                                      const QString& security,
-                                      bool hidden);
-
     /** Generate a macOS .mobileconfig plist for one or more networks */
     static QString buildMacosProfile(const QList<WifiConfig>& networks);
 
@@ -243,35 +283,57 @@ private:
     QList<WifiConfig> allConfigs() const;
     /** Returns WifiConfig for every checked table row; empty list if none checked */
     QList<WifiConfig> checkedConfigs() const;
+    /** Set the header's tri-state box from the row totals (no rows / none / some / all checked) */
+    void updateHeaderTriState(int total, int checked);
+    /** Enable and label the Save and Add-to-Windows buttons from the row totals */
+    void updateSaveAndInstallButtons(int total, int checked);
+    /**
+     * Read the machine's known WiFi networks through the shared headless scanner.
+     * @return the configs, and whether the scan was COMPLETE -- an empty list with a false flag
+     *         means the profiles could not be read, which is not the same as having none.
+     */
+    static std::pair<QList<WifiConfig>, bool> scanKnownWifiNetworks();
     void updateSearchMatches(const QString& text);
     void highlightSearchMatches();
     /** Set all table row checkboxes to the given state */
-    void setAllCheckStates(bool allChecked);
+    void setAllCheckStates(bool all_checked);
     /** Returns true if any visible column in the given row matches @p text */
     bool rowMatchesSearch(int row, const QString& text) const;
-    /** Scan Windows known WiFi profile names via netsh */
-    static QStringList scanWindowsProfileNames();
-    /** Parse a single Windows WiFi profile and return its config */
-    static WifiConfig parseWindowsWifiProfile(const QString& profileName);
-
     // -------------------------------------------------------------------------
     // Windows WiFi profile helpers
+    //
+    // This panel does not build WLAN profile XML and does not run netsh. It calls
+    // sak::addWifiProfileWindows, the same seam the assistant's connect_wifi action installs
+    // through. It used to carry its own copy of both, and the copies disagreed -- see that
+    // function's header comment for what the panel's own resolver did to its own default
+    // security label.
     // -------------------------------------------------------------------------
-    /** Build WLAN profile XML for netsh import */
-    static QString buildWlanProfileXml(const WifiConfig& cfg);
-
-    /** Write XML to a temp file and install via netsh; returns true on success */
-    static bool installWlanProfile(const QString& xml, int row);
     QList<int> checkedWifiRows() const;
     QList<WifiConfig> configsFromRows(const QList<int>& rows) const;
     void startAddToWindowsProfiles(const QList<WifiConfig>& configs);
-    static QPair<int, int> installWlanProfiles(const QList<WifiConfig>& configs);
+    /// Install each profile through the shared seam, checking @p cancel between profiles so
+    /// teardown can stop the loop after at most one bounded netsh call rather than after all N.
+    static QPair<int, int> installWlanProfiles(const QList<WifiConfig>& configs,
+                                               const std::atomic<bool>* cancel);
+
+    // In-flight "add to Windows profiles" install (netsh wlan add profile). Tracked so the
+    // destructor can COOPERATIVELY cancel (via m_wlanInstallCancel, checked between profiles) and
+    // then bounded-wait it, instead of letting the mutation run detached past teardown or blocking
+    // teardown for one netsh call per selected network.
+    QFuture<QPair<int, int>> m_wlanInstallFuture;
+    std::atomic<bool> m_wlanInstallCancel{false};
 
     // -------------------------------------------------------------------------
     // Persistence
     // -------------------------------------------------------------------------
     void saveTableToJson(const QString& path);
+    /// Atomically (QSaveFile) write the checked-row subset to JSON; fail closed on a short write or
+    /// failed commit so a truncated credential table is never reported as saved.
+    void saveCheckedRowsToJson(const QString& path, const QList<int>& checked_rows);
     void loadTableFromJson(const QString& path);
+    /// Fail-closed finalize for a QTextStream-backed export: flush and verify no stream/device
+    /// error before any success is reported (disk-full / IO failure must fail closed).
+    [[nodiscard]] static bool flushTextStreamOk(QTextStream& stream, const QFileDevice& file);
 
     // =========================================================================
     // UI widgets
@@ -311,7 +373,6 @@ private:
     QList<int> m_search_matches;
     int m_search_index{-1};
     QString m_save_path;
-    LogToggleSwitch* m_logToggle{nullptr};
 };
 
 }  // namespace sak

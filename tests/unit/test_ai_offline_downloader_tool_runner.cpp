@@ -2,27 +2,57 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/ai/ai_offline_downloader_tool_runner.h"
+#include "sak/ai/ai_tool_error.h"
 
+#include <QSemaphore>
 #include <QtTest/QtTest>
+
+#include <atomic>
+#include <thread>
+#include <type_traits>
+
+static_assert(!std::is_default_constructible_v<sak::ai::AiOfflineDownloaderToolRunner>);
 
 class AiOfflineDownloaderToolRunnerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void canonicalToolErrorIsStrictTypedAndNonEmpty();
     void rejectsMissingOperation();
     void failsFastWhenCallbackMissing();
     void routesSearch();
     void blocksRunWhenWorkerBusy();
     void routesSupportedRunOperation();
+    void serializesConcurrentRunOperationsProcessWide();
 };
+
+void AiOfflineDownloaderToolRunnerTests::canonicalToolErrorIsStrictTypedAndNonEmpty() {
+    const QJsonObject exact = sak::ai::toolError(QStringLiteral("  exact failure  "));
+    QCOMPARE(exact.size(), 2);
+    QVERIFY(exact.value(QStringLiteral("success")).isBool());
+    QCOMPARE(exact.value(QStringLiteral("success")).toBool(true), false);
+    QVERIFY(exact.value(QStringLiteral("error_message")).isString());
+    QCOMPARE(exact.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("  exact failure  "));
+
+    const QJsonObject empty = sak::ai::toolError(QStringLiteral(" \t\r\n "));
+    QCOMPARE(empty.size(), 2);
+    QVERIFY(empty.value(QStringLiteral("success")).isBool());
+    QCOMPARE(empty.value(QStringLiteral("success")).toBool(true), false);
+    QVERIFY(empty.value(QStringLiteral("error_message")).isString());
+    QCOMPARE(empty.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("AI tool failed without an error message"));
+}
 
 void AiOfflineDownloaderToolRunnerTests::rejectsMissingOperation() {
     const QJsonObject result = sak::ai::AiOfflineDownloaderToolRunner::run(QJsonObject{}, {});
 
+    QCOMPARE(result.size(), 2);
+    QVERIFY(result.value(QStringLiteral("success")).isBool());
     QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
-    QVERIFY(result.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("requires operation")));
+    QVERIFY(result.value(QStringLiteral("error_message")).isString());
+    QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("Offline downloader requires operation"));
 }
 
 void AiOfflineDownloaderToolRunnerTests::failsFastWhenCallbackMissing() {
@@ -30,9 +60,8 @@ void AiOfflineDownloaderToolRunnerTests::failsFastWhenCallbackMissing() {
         QJsonObject{{QStringLiteral("operation"), QStringLiteral("presets")}}, {});
 
     QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
-    QVERIFY(result.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("callback is not configured")));
+    QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("Offline downloader presets callback is not configured"));
 }
 
 void AiOfflineDownloaderToolRunnerTests::routesSearch() {
@@ -66,9 +95,8 @@ void AiOfflineDownloaderToolRunnerTests::blocksRunWhenWorkerBusy() {
         QJsonObject{{QStringLiteral("operation"), QStringLiteral("direct_download")}}, callbacks);
 
     QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
-    QVERIFY(result.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("already running")));
+    QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("An offline deployment operation is already running"));
 }
 
 void AiOfflineDownloaderToolRunnerTests::routesSupportedRunOperation() {
@@ -89,6 +117,54 @@ void AiOfflineDownloaderToolRunnerTests::routesSupportedRunOperation() {
     QVERIFY(result.value(QStringLiteral("success")).toBool(false));
     QCOMPARE(seen_operation, QStringLiteral("build_bundle"));
     QCOMPARE(result.value(QStringLiteral("operation")).toString(), QStringLiteral("build_bundle"));
+}
+
+void AiOfflineDownloaderToolRunnerTests::serializesConcurrentRunOperationsProcessWide() {
+    QSemaphore first_callback_entered;
+    QSemaphore release_first_callback;
+    std::atomic_int run_callback_count{0};
+
+    sak::ai::AiOfflineDownloaderToolCallbacks first_callbacks;
+    first_callbacks.is_running = [] {
+        return false;
+    };
+    first_callbacks.run_operation = [&](const QJsonObject&, const QString&) {
+        run_callback_count.fetch_add(1, std::memory_order_relaxed);
+        first_callback_entered.release();
+        release_first_callback.acquire();
+        return QJsonObject{{QStringLiteral("success"), true}};
+    };
+
+    sak::ai::AiOfflineDownloaderToolCallbacks contender_callbacks;
+    contender_callbacks.is_running = [] {
+        return false;
+    };
+    contender_callbacks.run_operation = [&](const QJsonObject&, const QString&) {
+        run_callback_count.fetch_add(1, std::memory_order_relaxed);
+        return QJsonObject{{QStringLiteral("success"), true}};
+    };
+
+    const QJsonObject args{{QStringLiteral("operation"), QStringLiteral("direct_download")}};
+    QJsonObject first_result;
+    std::thread first_thread([&]() {
+        first_result = sak::ai::AiOfflineDownloaderToolRunner::run(args, first_callbacks);
+    });
+
+    first_callback_entered.acquire();
+    const QJsonObject contender_result =
+        sak::ai::AiOfflineDownloaderToolRunner::run(args, contender_callbacks);
+    release_first_callback.release();
+    first_thread.join();
+
+    const QJsonObject after_release_result =
+        sak::ai::AiOfflineDownloaderToolRunner::run(args, contender_callbacks);
+
+    QVERIFY(first_result.value(QStringLiteral("success")).toBool(false));
+    QVERIFY(!contender_result.value(QStringLiteral("success")).toBool(true));
+    QCOMPARE(contender_result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("An offline deployment operation is already running"));
+    QVERIFY(after_release_result.value(QStringLiteral("success")).toBool(false));
+    QCOMPARE(run_callback_count.load(std::memory_order_relaxed), 2);
 }
 
 QTEST_GUILESS_MAIN(AiOfflineDownloaderToolRunnerTests)

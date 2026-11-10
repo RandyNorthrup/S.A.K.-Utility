@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2025 Randy Northrup. All rights reserved.
+// Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_quick_action.cpp
@@ -17,9 +17,12 @@ public:
     using QuickAction::QuickAction;
 
     // Expose protected static methods for testing
-    using StubAction::formatFileSize;
-    using StubAction::formatLogBox;
-    using StubAction::sanitizePathForBackup;
+    using QuickAction::formatFileSize;
+    using QuickAction::sanitizePathForBackup;
+
+    // Expose the protected cancellation flag so cancel() can be asserted on
+    // instead of merely called.
+    using QuickAction::isCancelled;
 
     QString name() const override { return QStringLiteral("Stub"); }
     QString description() const override { return QStringLiteral("Test stub"); }
@@ -28,14 +31,6 @@ public:
     bool requiresAdmin() const override { return false; }
 
 public Q_SLOTS:
-    void scan() override {
-        ScanResult r;
-        r.applicable = true;
-        r.summary = "test";
-        r.bytes_affected = 1024;
-        setScanResult(r);
-        setStatus(ActionStatus::Ready);
-    }
     void execute() override {
         ExecutionResult r;
         r.success = true;
@@ -51,34 +46,34 @@ class QuickActionTests : public QObject {
 private Q_SLOTS:
     // --- formatFileSize ---
 
-    void formatFileSizeZero() {
-        QCOMPARE(StubAction::formatFileSize(0), QStringLiteral("0 bytes"));
-    }
+    void formatFileSizeZero() { QCOMPARE(StubAction::formatFileSize(0), QStringLiteral("0 B")); }
+
+    // The unit suffix alone would still pass with a wrong magnitude or a
+    // silently changed precision, so pin the whole rendered string. QString::arg
+    // formats "%1" through the C locale, so the decimal point is not
+    // machine-dependent.
 
     void formatFileSizeBytes() {
-        QString result = StubAction::formatFileSize(512);
-        QVERIFY(result.contains("512"));
-        QVERIFY(result.contains("bytes"));
+        QCOMPARE(StubAction::formatFileSize(512), QStringLiteral("512 B"));
     }
 
     void formatFileSizeKilobytes() {
-        QString result = StubAction::formatFileSize(1536);  // 1.5 KB
-        QVERIFY(result.contains("KB") || result.contains("kB"));
+        QCOMPARE(StubAction::formatFileSize(1536), QStringLiteral("1.5 KB"));
     }
 
     void formatFileSizeMegabytes() {
-        QString result = StubAction::formatFileSize(5 * 1024 * 1024);
-        QVERIFY(result.contains("MB"));
+        QCOMPARE(StubAction::formatFileSize(5 * 1024 * 1024), QStringLiteral("5.0 MB"));
     }
 
     void formatFileSizeGigabytes() {
-        QString result = StubAction::formatFileSize(Q_INT64_C(2'500'000'000));
-        QVERIFY(result.contains("GB"));
+        // 2'500'000'000 / 1024^3 = 2.3283..., rendered with two decimals.
+        QCOMPARE(StubAction::formatFileSize(Q_INT64_C(2'500'000'000)), QStringLiteral("2.33 GB"));
     }
 
     void formatFileSizeTerabytes() {
-        QString result = StubAction::formatFileSize(Q_INT64_C(1'500'000'000'000));
-        QVERIFY(result.contains("TB"));
+        // 1'500'000'000'000 / 1024^4 = 1.3642..., rendered with two decimals.
+        QCOMPARE(StubAction::formatFileSize(Q_INT64_C(1'500'000'000'000)),
+                 QStringLiteral("1.36 TB"));
     }
 
     // --- sanitizePathForBackup ---
@@ -102,31 +97,6 @@ private Q_SLOTS:
         QCOMPARE(StubAction::sanitizePathForBackup(""), QStringLiteral(""));
     }
 
-    // --- formatLogBox ---
-
-    void formatLogBoxBasic() {
-        QStringList lines = {"Line 1", "Line 2"};
-        QString result = StubAction::formatLogBox("TITLE", lines);
-        QVERIFY(result.contains("TITLE"));
-        QVERIFY(result.contains("Line 1"));
-        QVERIFY(result.contains("Line 2"));
-    }
-
-    void formatLogBoxWithDuration() {
-        QStringList lines = {"Result: OK"};
-        QString result = StubAction::formatLogBox("TEST", lines, 1500);
-        QVERIFY(result.contains("TEST"));
-        QVERIFY(result.contains("Result: OK"));
-        // Duration should be present somewhere
-        QVERIFY(result.contains("1.5") || result.contains("1500") || result.contains("1 s"));
-    }
-
-    void formatLogBoxEmptyLines() {
-        QStringList lines;
-        QString result = StubAction::formatLogBox("EMPTY", lines);
-        QVERIFY(result.contains("EMPTY"));
-    }
-
     // --- Base class state management ---
 
     void initialStatusIsIdle() {
@@ -134,27 +104,28 @@ private Q_SLOTS:
         QCOMPARE(action.status(), QuickAction::ActionStatus::Idle);
     }
 
-    void scanUpdatesStatus() {
-        StubAction action;
-        action.scan();
-        QCOMPARE(action.status(), QuickAction::ActionStatus::Ready);
-        QVERIFY(action.lastScanResult().applicable);
-        QCOMPARE(action.lastScanResult().bytes_affected, qint64(1024));
-    }
-
     void executeUpdatesStatus() {
         StubAction action;
         action.execute();
         QCOMPARE(action.status(), QuickAction::ActionStatus::Success);
         QVERIFY(action.lastExecutionResult().success);
+        QCOMPARE(action.lastExecutionResult().message, QStringLiteral("done"));
     }
 
     void cancelSetsFlag() {
         StubAction action;
+        QVERIFY(!action.isCancelled());
+
         action.cancel();
-        // Can't directly test isCancelled() since it's protected,
-        // but we can verify status didn't break
-        QVERIFY(true);
+        // cancel() raises the flag unconditionally, but from Idle it must not
+        // fabricate a Cancelled status for an action that never ran.
+        QVERIFY(action.isCancelled());
+        QCOMPARE(action.status(), QuickAction::ActionStatus::Idle);
+
+        // clearCancellation() is what lets a later run start un-cancelled; a
+        // stale flag would make every future run cancel immediately.
+        action.clearCancellation();
+        QVERIFY(!action.isCancelled());
     }
 
     void applyExecutionResult() {
@@ -167,6 +138,7 @@ private Q_SLOTS:
         QCOMPARE(action.status(), QuickAction::ActionStatus::Success);
         QCOMPARE(action.lastExecutionResult().message, QStringLiteral("completed"));
         QCOMPARE(action.lastExecutionResult().bytes_processed, qint64(4096));
+        QVERIFY(action.lastExecutionResult().success);
     }
 
     void updateStatusEmitsSignal() {
@@ -174,6 +146,8 @@ private Q_SLOTS:
         QSignalSpy spy(&action, &QuickAction::statusChanged);
         action.updateStatus(QuickAction::ActionStatus::Running);
         QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).value<QuickAction::ActionStatus>(),
+                 QuickAction::ActionStatus::Running);
     }
 };
 

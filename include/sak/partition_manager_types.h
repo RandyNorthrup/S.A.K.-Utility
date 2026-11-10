@@ -6,26 +6,39 @@
 
 #pragma once
 
+#include "sak/strong_index.h"
+
 #include <QDateTime>
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
 #include <QVector>
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 
 namespace sak {
 
+/// Strong index newtypes for the two partition-manager index spaces. A disk
+/// number and a partition number are both uint32 and were freely interchangeable
+/// at a call site; these tags make a swap a compile error (R5-G14-19). See
+/// PartitionSafetyValidator::findDisk / findPartition for the enforced boundary.
+struct DiskNumberTag {};
+struct PartitionNumberTag {};
+using DiskNumber = StrongIndex<DiskNumberTag, uint32_t>;
+using PartitionNumber = StrongIndex<PartitionNumberTag, uint32_t>;
+
 inline constexpr int kPartitionDefaultTaskTimeoutSeconds = 120;
 inline constexpr int kPartitionMediumTaskTimeoutSeconds = 600;
 inline constexpr int kPartitionFormatTaskTimeoutSeconds = 900;
 inline constexpr int kPartitionConversionTaskTimeoutSeconds = 1800;
-inline constexpr int kPartitionLongTaskTimeoutSeconds = 3600;
+/// For what scales with a disk, a volume or the data on it. See kElevatedTaskMaxTimeoutSeconds,
+/// which this may not exceed: the person's Cancel ends such a run, not a clock.
+inline constexpr int kPartitionLongTaskTimeoutSeconds = 2'000'000;
 inline constexpr int kPartitionReportOutputPreviewChars = 4000;
 inline constexpr int kPartitionLayoutHashPreviewChars = 10;
 inline constexpr int kPartitionCenterTableStretch = 3;
-inline constexpr int kPartitionByteDisplayPrecision = 2;
 
 // Shared ceiling for S.A.K.-generated APFS containers (format + in-place file
 // mutation). The certified writer formats and commits in place across the
@@ -35,6 +48,19 @@ inline constexpr int kPartitionByteDisplayPrecision = 2;
 // derive from this one value so they cannot drift apart.
 // 24 TiB == 24 * 1024^4 == (24ULL << 40).
 inline constexpr uint64_t kMaximumApfsGeneratedContainerBytes = 24ULL << 40;
+
+// Minimum S.A.K.-generated APFS container size. Single source for the UI size
+// guard, the File Management write gate, and the script-builder format guard.
+inline constexpr uint64_t kMinimumApfsGeneratedContainerBytes = 64ULL * 1024ULL * 1024ULL;
+
+// Maximum payload for a single File Management raw/non-native file write (HFS+/APFS).
+inline constexpr uint64_t kMaximumNonNativeFileWriteBytes = 64ULL * 1024ULL * 1024ULL;
+
+// Single source of truth for the user-facing APFS generated-container capacity
+// range, so Partition Manager, File Management, and registry messages cannot drift.
+[[nodiscard]] inline QString apfsCapacityRangeText() {
+    return QStringLiteral("64 MiB through 24 TiB");
+}
 
 enum class PartitionOperationType {
     Create,
@@ -140,6 +166,11 @@ enum class PartitionManagerState {
     Verifying,
     Failed,
     Cancelled,
+    /// The scan completed but at least one disk's partition enumeration FAILED, so the
+    /// inventory is usable yet NOT authoritative. Reported instead of Ready so a partial
+    /// picture is never presented as a complete one; operations targeting an unreadable
+    /// disk are refused by the safety validator.
+    ReadyPartial,
 };
 
 struct PartitionVolumeInfo {
@@ -152,17 +183,28 @@ struct PartitionVolumeInfo {
     QString health_status;
     uint64_t total_bytes{0};
     uint64_t free_bytes{0};
-    bool bitlocker_enabled{false};
+    bool bitlocker_enabled{false};  ///< BitLocker protection is on
     bool bitlocker_locked{false};
+    /// The volume holds BitLocker encryption, whether or not its protection is on: a volume whose
+    /// protection is suspended is encrypted with protection off, and Resume is what applies to it.
+    bool bitlocker_encrypted{false};
+    bool dirty_bit_known{false};
     bool dirty_bit_set{false};
+    QString dirty_bit_error;
+    bool bitlocker_state_known{false};
+    /// This scan could not read BitLocker or dirty state because it ran without administrator
+    /// rights. Partition Manager reads them again in the helper when a person presses Apply, and
+    /// refuses there, so this leaves nothing unchecked. Only that scan sets it.
+    bool administrator_state_pending{false};
+    QString bitlocker_state_error;
 
     [[nodiscard]] bool hasDriveLetter() const noexcept { return !drive_letter.isEmpty(); }
 };
 
 struct PartitionInfoEx {
-    uint32_t disk_number{0};
-    uint32_t partition_number{0};
-    QString partition_guid;
+    DiskNumber disk_number{};
+    PartitionNumber partition_number{};
+    QString partition_guid{};
     QString type_name;
     QString gpt_type;
     uint64_t offset_bytes{0};
@@ -175,23 +217,33 @@ struct PartitionInfoEx {
     bool is_active{false};
     bool is_read_only{false};
     std::optional<PartitionVolumeInfo> volume;
+    bool volume_lookup_failed{false};
+    QString volume_lookup_error;
 
     [[nodiscard]] bool hasVolume() const noexcept { return volume.has_value(); }
 };
 
 struct UnallocatedRegion {
-    uint32_t disk_number{0};
+    DiskNumber disk_number{};
     uint64_t offset_bytes{0};
     uint64_t size_bytes{0};
 };
 
 struct PartitionDiskInfo {
-    uint32_t disk_number{0};
+    DiskNumber disk_number{};
     QString device_path;
+    /// Stable MSFT_Disk identity reported by Get-Disk UniqueId.
+    QString unique_id;
     QString model;
     QString serial_number;
     QString bus_type;
     QString media_type;
+    /// What the drive itself reports through the bundled smartctl. Asked only when Windows says
+    /// "Unspecified", and only with administrator rights. Zero means it reported none.
+    int rotation_rate_rpm{0};
+    /// This scan could not ask the drive, because it ran without administrator rights. Apply's own
+    /// scan asks, and only that answer decides whether the drive can be defragmented.
+    bool rotation_rate_pending{false};
     QString partition_style;
     QString health_status;
     QString operational_status;
@@ -207,9 +259,23 @@ struct PartitionDiskInfo {
     bool is_removable{false};
     bool is_read_only{false};
     bool is_dynamic{false};
+    /// Unknown when inventory did not provide a Boolean; never infer source availability.
+    std::optional<bool> is_offline;
     bool is_storage_spaces{false};
     QVector<PartitionInfoEx> partitions;
     QVector<UnallocatedRegion> unallocated_regions;
+    /// True when the OS partition enumeration for this disk FAILED. The partition list is then
+    /// not authoritative, so no unallocated region is synthesized for it: a populated disk whose
+    /// query failed must never be presented as entirely free space.
+    bool partition_enumeration_failed{false};
+    /// The reported reason the partition enumeration failed (empty when it succeeded).
+    QString partition_enumeration_error;
+    bool reliability_query_succeeded{false};
+    QString reliability_query_error;
+    bool power_on_hours_known{false};
+    bool read_errors_total_known{false};
+    bool write_errors_total_known{false};
+    bool wear_percent_known{false};
 };
 
 struct PartitionInventory {
@@ -217,19 +283,46 @@ struct PartitionInventory {
     QDateTime captured_at;
     QString layout_hash;
     QStringList warnings;
+    /// The scan stopped before it finished: it stopped making progress, or ran past its ceiling.
+    /// It lists no disk, its warning says why, and the panel says it did not finish, not that the
+    /// PC has no disks.
+    bool scan_did_not_finish{false};
 
     [[nodiscard]] bool isEmpty() const noexcept { return disks.isEmpty(); }
+
+    /// True when ANY disk's partition enumeration failed. The inventory is then not a faithful
+    /// picture of the machine's layout and must not be published as a completed scan.
+    [[nodiscard]] bool hasPartitionEnumerationFailure() const noexcept {
+        return std::ranges::any_of(disks, [](const auto& disk) {
+            return disk.partition_enumeration_failed;
+        });
+    }
 };
 
 struct PartitionTarget {
     PartitionTargetKind kind{PartitionTargetKind::Disk};
-    uint32_t disk_number{0};
-    uint32_t partition_number{0};
-    QString partition_guid;
-    QString volume_guid;
-    QString drive_letter;
+    DiskNumber disk_number{};
+    PartitionNumber partition_number{};
+    QString partition_guid{};
+    QString volume_guid{};
+    QString drive_letter{};
     uint64_t offset_bytes{0};
     uint64_t size_bytes{0};
+    QString disk_unique_id;
+    QString disk_serial_number;
+    uint64_t disk_size_bytes{0};
+};
+
+struct PartitionOperationRequest {
+    PartitionOperationType type{PartitionOperationType::Create};
+    PartitionTarget target;
+    QJsonObject payload;
+};
+
+struct PartitionQueueReviewToken {
+    quint64 revision{0};
+    QString fingerprint;
+    QString layout_hash;
 };
 
 struct PartitionOperation {
@@ -241,8 +334,6 @@ struct PartitionOperation {
     QString summary;
     QStringList warnings;
     QStringList blockers;
-
-    [[nodiscard]] bool isBlocked() const noexcept { return !blockers.isEmpty(); }
 };
 
 struct OperationPreview {
@@ -260,6 +351,16 @@ struct PartitionExecutionStep {
     QString summary;
     bool success{false};
     bool skipped{false};
+    /// The step's script ended while Windows was carrying out work Windows finishes on its own
+    /// (a full format, a defrag): the step may still be running in Windows, and its result says
+    /// so instead of "cancelled".
+    bool may_still_run_in_windows{false};
+    /// A cancel stopped the step's script: it did not fail, and its result says so.
+    bool cancelled{false};
+    /// What the application removed after the step's script was stopped (a shadow copy, its link,
+    /// cipher's folder), and what it could not remove, each with why.
+    QStringList stop_cleanup_removed;
+    QStringList stop_cleanup_not_removed;
     QString stdout_text;
     QString stderr_text;
     QString error_message;
@@ -272,6 +373,7 @@ struct PartitionExecutionResult {
     bool cancelled{false};
     bool timed_out{false};
     QString message;
+    QString report_text;  ///< For the log: every step, and all of its output, as plain text
     QString report_html;
     QString report_json;
     QVector<PartitionExecutionStep> steps;

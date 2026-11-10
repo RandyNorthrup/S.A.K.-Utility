@@ -3,6 +3,7 @@
 
 #include "sak/app_installation_panel.h"
 #include "sak/chocolatey_manager.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
@@ -22,7 +23,31 @@ using sak::ChocolateyManager;
 
 namespace {
 constexpr int kQueueSaveStatusMessageMs = sak::kTimerStatusMessageMs;
+
+QString packagesCount(qint64 count) {
+    return sak::countOf(count, QStringLiteral("package"), QStringLiteral("packages"));
 }
+
+bool isAllowedQueuePackageChar(QChar ch) {
+    return ch.isLetterOrNumber() || ch == QLatin1Char('.') || ch == QLatin1Char('-') ||
+           ch == QLatin1Char('_') || ch == QLatin1Char('+');
+}
+
+// A queue package id is valid only if it is non-empty, not option-like (a leading '-'
+// would be parsed by Chocolatey as a flag such as --force), and composed solely of
+// allowed characters. A malformed id is REJECTED (skipped), never rewritten, so it can
+// never reach the privileged install queue.
+bool queuePackageIdIsValid(const QString& id) {
+    return !id.isEmpty() && !id.startsWith(QLatin1Char('-')) &&
+           std::ranges::all_of(id, isAllowedQueuePackageChar);
+}
+
+// A version is optional; when present it must contain only allowed characters so a
+// malformed token cannot flow into an install command.
+bool queueVersionIsValid(const QString& version) {
+    return version.isEmpty() || std::ranges::all_of(version, isAllowedQueuePackageChar);
+}
+}  // namespace
 
 // Results table columns (shared by online and offline)
 enum ResultColumn {
@@ -115,20 +140,20 @@ QIcon iconForPublisher(const QString& publisher) {
 }
 }  // namespace
 
-QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const {
-    if (packageId.isEmpty()) {
+QIcon AppInstallationPanel::publisherIcon(const QString& package_id) const {
+    if (package_id.isEmpty()) {
         return QApplication::style()->standardIcon(QStyle::SP_FileIcon);
     }
-    QString lowerPkg = packageId.toLower();
+    const QString lower_pkg = package_id.toLower();
 
     // Try exact match first
-    if (s_publisherMap.contains(lowerPkg)) {
-        return iconForPublisher(s_publisherMap[lowerPkg]);
+    if (s_publisherMap.contains(lower_pkg)) {
+        return iconForPublisher(s_publisherMap[lower_pkg]);
     }
 
     // Try prefix match
     for (auto it = s_publisherMap.constBegin(); it != s_publisherMap.constEnd(); ++it) {
-        if (lowerPkg.startsWith(it.key())) {
+        if (lower_pkg.startsWith(it.key())) {
             return iconForPublisher(it.value());
         }
     }
@@ -137,8 +162,8 @@ QIcon AppInstallationPanel::publisherIcon(const QString& packageId) const {
     return QApplication::style()->standardIcon(QStyle::SP_FileIcon);
 }
 
-QString AppInstallationPanel::lookupPublisher(const QString& packageId) {
-    QString lower = packageId.toLower();
+QString AppInstallationPanel::lookupPublisher(const QString& package_id) {
+    const QString lower = package_id.toLower();
     if (s_publisherMap.contains(lower)) {
         return s_publisherMap[lower];
     }
@@ -161,13 +186,13 @@ void AppInstallationPanel::updateResultsFromSearch(const QString& output) {
 
     int row = 0;
     for (const auto& pkg : packages) {
-        auto* pkgItem = new QStandardItem(pkg.package_id);
-        pkgItem->setIcon(publisherIcon(pkg.package_id));
-        m_onlineResultsModel->setItem(row, RColPackage, pkgItem);
+        auto* pkg_item = new QStandardItem(pkg.package_id);
+        pkg_item->setIcon(publisherIcon(pkg.package_id));
+        m_onlineResultsModel->setItem(row, RColPackage, pkg_item);
 
         m_onlineResultsModel->setItem(row, RColVersion, new QStandardItem(pkg.version));
 
-        QString pub = lookupPublisher(pkg.package_id);
+        const QString pub = lookupPublisher(pkg.package_id);
         m_onlineResultsModel->setItem(row, RColPublisher, new QStandardItem(pub));
 
         row++;
@@ -175,9 +200,12 @@ void AppInstallationPanel::updateResultsFromSearch(const QString& output) {
 
     m_onlineResultsTable->scrollToTop();
 
-    int count = static_cast<int>(packages.size());
-    Q_EMIT logOutput(QString("Search returned %1 result(s)").arg(count));
-    Q_EMIT statusMessage(tr("Found %1 package(s)").arg(count), sak::kTimerStatusMessageMs);
+    const int count = static_cast<int>(packages.size());
+    Q_EMIT logOutput(
+        QString("Search returned %1")
+            .arg(sak::countOf(count, QStringLiteral("result"), QStringLiteral("results"))));
+    Q_EMIT statusMessage(tr("Found %1").arg(sak::countOf(count, tr("package"), tr("packages"))),
+                         sak::kTimerStatusMessageMs);
 }
 
 // ============================================================================
@@ -199,10 +227,14 @@ void AppInstallationPanel::updateQueueDisplay() {
         m_queueList->addItem(item);
     }
 
-    bool hasItems = !m_installQueue.isEmpty();
-    m_clearQueueButton->setEnabled(hasItems && !m_install_in_progress);
-    m_installButton->setEnabled(hasItems && !m_install_in_progress);
-    m_saveQueueButton->setEnabled(hasItems);
+    const bool has_items = !m_installQueue.isEmpty();
+    // Gate on the single in-flight authority, not the online flag alone: an offline
+    // deployment operation drives the same Chocolatey install root, so Install must stay
+    // disabled while it runs.
+    const bool idle = !packageOperationInFlight();
+    m_clearQueueButton->setEnabled(has_items && idle);
+    m_installButton->setEnabled(has_items && idle);
+    m_saveQueueButton->setEnabled(has_items);
     m_removeFromQueueButton->setEnabled(false);  // Reset until selection
 }
 
@@ -232,9 +264,9 @@ void AppInstallationPanel::saveQueueToFile() {
         return;
     }
 
-    QString filePath = QFileDialog::getSaveFileName(
+    const QString file_path = QFileDialog::getSaveFileName(
         this, tr("Save App List"), QString(), tr("JSON Files (*.json)"));
-    if (filePath.isEmpty()) {
+    if (file_path.isEmpty()) {
         return;
     }
 
@@ -247,35 +279,42 @@ void AppInstallationPanel::saveQueueToFile() {
         arr.append(obj);
     }
 
-    QJsonDocument doc(arr);
-    QFile file(filePath);
+    const QJsonDocument doc(arr);
+    QFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        sak::logWarning(("Save Failed: Could not write to file: " + filePath).toStdString());
+        sak::logWarning(("Save Failed: Could not write to file: " + file_path).toStdString());
         sak::showWarningLogged(this,
                                tr("Save Failed"),
-                               tr("Could not write to file:\n%1").arg(filePath));
+                               tr("Could not write to file:\n%1").arg(file_path));
         return;
     }
     const QByteArray json_bytes = doc.toJson(QJsonDocument::Indented);
-    if (file.write(json_bytes) != json_bytes.size()) {
-        sak::logWarning("Incomplete write to file: {}", filePath.toStdString());
+    // Fail closed: a short write or a failed flush leaves a truncated/corrupt file on
+    // disk. Surface it as a save failure instead of reporting a clean "Saved".
+    if (file.write(json_bytes) != json_bytes.size() || !file.flush()) {
+        sak::logWarning("Incomplete write to file: {}", file_path.toStdString());
+        file.close();
+        sak::showWarningLogged(this,
+                               tr("Save Failed"),
+                               tr("Could not write the full app list to file:\n%1").arg(file_path));
+        return;
     }
     file.close();
 
-    Q_EMIT logOutput(QString("Saved %1 package(s) to %2").arg(m_installQueue.size()).arg(filePath));
-    Q_EMIT statusMessage(QString("App list saved (%1 packages)").arg(m_installQueue.size()),
-                         kQueueSaveStatusMessageMs);
+    const QString saved = packagesCount(m_installQueue.size());
+    Q_EMIT logOutput(QString("Saved %1 to %2").arg(saved, file_path));
+    Q_EMIT statusMessage(QString("App list saved (%1)").arg(saved), kQueueSaveStatusMessageMs);
 }
 
 void AppInstallationPanel::loadQueueFromFile() {
-    QString filePath = QFileDialog::getOpenFileName(
+    const QString file_path = QFileDialog::getOpenFileName(
         this, tr("Load App List"), QString(), tr("JSON Files (*.json)"));
-    if (filePath.isEmpty()) {
+    if (file_path.isEmpty()) {
         return;
     }
 
     QJsonArray arr;
-    if (!parseQueueFile(filePath, arr)) {
+    if (!parseQueueFile(file_path, arr)) {
         return;
     }
 
@@ -285,33 +324,48 @@ void AppInstallationPanel::loadQueueFromFile() {
 
     updateQueueDisplay();
 
-    QString msg = QString("Loaded %1 package(s)").arg(added);
+    QString msg = QString("Loaded %1").arg(packagesCount(added));
     if (skipped > 0) {
-        msg += QString(", %1 duplicate(s) skipped").arg(skipped);
+        msg += QString(", %1 skipped (duplicate or invalid)").arg(skipped);
     }
-    Q_EMIT logOutput(msg + QString(" from %1").arg(filePath));
+    Q_EMIT logOutput(msg + QString(" from %1").arg(file_path));
     Q_EMIT statusMessage(msg, sak::kTimerStatusMessageMs);
 }
 
-bool AppInstallationPanel::parseQueueFile(const QString& filePath, QJsonArray& out_array) {
-    QFile file(filePath);
+bool AppInstallationPanel::parseQueueFile(const QString& file_path, QJsonArray& out_array) {
+    QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        sak::logWarning(("Load Failed: Could not read file: " + filePath).toStdString());
+        sak::logWarning(("Load Failed: Could not read file: " + file_path).toStdString());
         sak::showWarningLogged(this,
                                tr("Load Failed"),
-                               tr("Could not read file:\n%1").arg(filePath));
+                               tr("Could not read file:\n%1").arg(file_path));
         return false;
     }
 
-    QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
-    file.close();
-
-    if (parseError.error != QJsonParseError::NoError) {
-        sak::logWarning(("Load Failed: Invalid JSON: " + parseError.errorString()).toStdString());
+    // Bound the read: the queue file is user-selected and otherwise fed whole into
+    // readAll()/JSON parse. Reject an oversized or unreadable-size file so a hostile or
+    // corrupt path cannot exhaust memory. A real app list is a few KB.
+    constexpr qint64 kMaxQueueFileBytes = 8LL * 1024 * 1024;
+    const qint64 file_size = file.size();
+    if (file_size < 0 || file_size > kMaxQueueFileBytes) {
+        sak::logWarning(
+            ("Load Failed: App list file too large or unreadable: " + file_path).toStdString());
         sak::showWarningLogged(this,
                                tr("Load Failed"),
-                               tr("Invalid JSON:\n%1").arg(parseError.errorString()));
+                               tr("App list file is too large or unreadable:\n%1").arg(file_path));
+        file.close();
+        return false;
+    }
+
+    QJsonParseError parse_error;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parse_error);
+    file.close();
+
+    if (parse_error.error != QJsonParseError::NoError) {
+        sak::logWarning(("Load Failed: Invalid JSON: " + parse_error.errorString()).toStdString());
+        sak::showWarningLogged(this,
+                               tr("Load Failed"),
+                               tr("Invalid JSON:\n%1").arg(parse_error.errorString()));
         return false;
     }
 
@@ -327,27 +381,40 @@ bool AppInstallationPanel::parseQueueFile(const QString& filePath, QJsonArray& o
 
 void AppInstallationPanel::importQueueEntries(const QJsonArray& arr, int& added, int& skipped) {
     for (const auto& val : arr) {
+        // A malformed entry must be surfaced, not silently vanish: count it as
+        // skipped so a partial import can never be reported as a clean load.
         if (!val.isObject()) {
+            skipped++;
             continue;
         }
         QJsonObject obj = val.toObject();
-        QString pkgId = obj["package_id"].toString().trimmed();
-        if (pkgId.isEmpty()) {
+        QString pkg_id = obj["package_id"].toString().trimmed();
+        // Fail closed on a malformed/option-like id or version rather than letting it
+        // reach the privileged install queue; count it as skipped so a partial import
+        // is never reported as a clean load.
+        if (!queuePackageIdIsValid(pkg_id)) {
+            skipped++;
+            continue;
+        }
+        const QString version = obj["version"].toString();
+        if (!queueVersionIsValid(version)) {
+            skipped++;
             continue;
         }
 
-        bool duplicate =
-            std::any_of(m_installQueue.begin(),
-                        m_installQueue.end(),
-                        [&pkgId](const auto& existing) { return existing.package_id == pkgId; });
+        const bool duplicate = std::ranges::any_of(m_installQueue,
+
+                                                   [&pkg_id](const auto& existing) {
+                                                       return existing.package_id == pkg_id;
+                                                   });
         if (duplicate) {
             skipped++;
             continue;
         }
 
         QueueEntry entry;
-        entry.package_id = pkgId;
-        entry.version = obj["version"].toString();
+        entry.package_id = pkg_id;
+        entry.version = version;
         entry.publisher = obj["publisher"].toString();
         m_installQueue.append(entry);
         added++;

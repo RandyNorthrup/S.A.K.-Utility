@@ -1,0 +1,40 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_app_installation_busy",
+  "ctest_regex": "^test_app_installation_busy$",
+  "mutants": [
+    {
+      "id": "online-claim-source-omitted",
+      "file": "src/core/app_installation_busy.cpp",
+      "find": "activity.online_claimed",
+      "replace": "activity.offline_claimed",
+      "expect": "killed",
+      "why": "everySourceMakesThePanelBusy and claimCoversDispatchWindowBeforeWorkerReportsRunning require an online claim alone to close the pre-worker dispatch window."
+    },
+    {
+      "id": "online-worker-source-omitted",
+      "file": "src/core/app_installation_busy.cpp",
+      "find": "activity.online_worker_running",
+      "replace": "activity.offline_worker_running",
+      "expect": "killed",
+      "why": "everySourceMakesThePanelBusy requires a running online worker alone to keep both package-operation entry points busy."
+    },
+    {
+      "id": "offline-claim-source-omitted",
+      "file": "src/core/app_installation_busy.cpp",
+      "find": "activity.offline_claimed",
+      "replace": "activity.online_claimed",
+      "expect": "killed",
+      "why": "everySourceMakesThePanelBusy and claimCoversDispatchWindowBeforeWorkerReportsRunning require an offline claim alone to close the pre-worker dispatch window."
+    },
+    {
+      "id": "offline-worker-source-omitted",
+      "file": "src/core/app_installation_busy.cpp",
+      "find": "activity.offline_worker_running",
+      "replace": "activity.online_worker_running",
+      "expect": "killed",
+      "why": "everySourceMakesThePanelBusy requires a running offline worker alone to keep both package-operation entry points busy."
+    }
+  ]
+}

@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/ai/ai_lease_manager.h"
+#include "sak/ai/ai_tool_call_context.h"
 #include "sak/ai/ai_tool_health_ledger.h"
 #include "sak/ai/ai_tool_policy.h"
 
@@ -21,11 +22,12 @@ namespace sak::ai {
 /// The panel registers a handler per tool name. The dispatcher evaluates the
 /// active AiToolPolicy first; if the call is blocked, it returns a structured
 /// `policy_denied` payload without invoking the handler. Allowed calls reach
-/// the handler with the parsed JSON arguments and the policy decision so the
-/// handler can attach lease/restore-point context to its result.
+/// the handler with the call's own context (stamped with the lease this
+/// dispatch took), the parsed JSON arguments and the policy decision.
 class AiToolDispatcher {
 public:
-    using Handler = std::function<QJsonObject(const QJsonObject& arguments,
+    using Handler = std::function<QJsonObject(const AiToolCallContext& context,
+                                              const QJsonObject& arguments,
                                               const AiToolPolicyDecision& decision)>;
     using AvailabilityChecker = std::function<QJsonObject(const QJsonObject& arguments,
                                                           const AiToolPolicyDecision& decision)>;
@@ -38,6 +40,12 @@ public:
         bool lease_denied{false};
         bool availability_denied{false};
         bool health_suppressed{false};
+        // Set when this dispatch's own mutating lease was no longer held when the handler
+        // finished. Leases never expire, so that means ownership was violated mid-op -- proof the
+        // exclusive-mutation guarantee was broken (another agent could have acquired a fresh lease
+        // and mutated at the same time), so the result is forced to a failure rather than
+        // reported as a clean success.
+        bool lease_release_failed{false};
         QString lease_id;
         QString health_key;
         qint64 latency_ms{0};
@@ -47,18 +55,19 @@ public:
 
     void registerHandler(const QString& tool_name, Handler handler);
     void registerAvailabilityChecker(const QString& tool_name, AvailabilityChecker checker);
-    void clearHandlers();
+    void clearRegistrations();
     [[nodiscard]] bool hasHandler(const QString& tool_name) const;
     [[nodiscard]] int handlerCount() const;
 
     void setLeaseManager(AiLeaseManager* manager);
-    [[nodiscard]] AiLeaseManager* leaseManager() const { return m_lease_manager; }
     void setHealthLedger(AiToolHealthLedger* ledger);
-    [[nodiscard]] AiToolHealthLedger* healthLedger() const { return m_health_ledger; }
 
+    /// @param context what the call runs with, captured by the caller at dispatch; the handler
+    ///        receives a copy carrying the lease this dispatch acquired
     [[nodiscard]] DispatchOutcome dispatch(AiToolPolicy policy,
                                            const AiToolCallRequest& request,
                                            const QJsonObject& arguments,
+                                           const AiToolCallContext& context,
                                            const QString& agent_id = {}) const;
 
     [[nodiscard]] static QJsonObject policyDeniedResult(const AiToolCallRequest& request,
@@ -70,6 +79,9 @@ public:
                                                               const QJsonObject& availability);
     [[nodiscard]] static QJsonObject healthSuppressedResult(const AiToolCallRequest& request,
                                                             const AiToolAvailability& availability);
+    /// @brief The error a dispatch reports when its own lease was gone at release: ownership was
+    /// violated. Names the lease by its public label, never the bearer id.
+    [[nodiscard]] static QString leaseReleaseFailureMessage(const QString& lease_id);
 
 private:
     [[nodiscard]] bool applyHealthGate(DispatchOutcome* outcome,
@@ -85,6 +97,14 @@ private:
                                                const AiToolCallRequest& request,
                                                const QString& agent_id,
                                                QString* lease_id) const;
+    void releaseLeaseForDispatch(DispatchOutcome* outcome,
+                                 const AiToolCallRequest& request,
+                                 const QString& lease_id) const;
+    static void invokeHandler(const Handler& handler,
+                              const AiToolCallContext& context,
+                              const AiToolCallRequest& request,
+                              const QJsonObject& arguments,
+                              DispatchOutcome* outcome);
     void recordHealthForResult(const DispatchOutcome& outcome) const;
 
     QHash<QString, Handler> m_handlers;

@@ -19,15 +19,6 @@ constexpr int kMaxThreads = 8;
 constexpr int kDefaultThreads = 2;
 
 // ============================================================================
-// PST Split Sizes (bytes)
-// ============================================================================
-
-constexpr int64_t kSplit2GbBytes = 2LL * 1024 * 1024 * 1024;
-constexpr int64_t kSplit5GbBytes = 5LL * 1024 * 1024 * 1024;
-constexpr int64_t kSplit10GbBytes = 10LL * 1024 * 1024 * 1024;
-constexpr int64_t kDefaultCustomSplitMb = 5120;
-
-// ============================================================================
 // EML Writer Limits
 // ============================================================================
 
@@ -57,7 +48,6 @@ constexpr int kTimeoutThreadTerminateMs = 2000;
 enum QueueColumn {
     ColFile = 0,
     ColSize,
-    ColItems,
     ColStatus,
     ColProgress,
     ColCount
@@ -65,7 +55,6 @@ enum QueueColumn {
 
 constexpr int kQueueFileColumnWidth = 300;
 constexpr int kQueueSizeColumnWidth = 80;
-constexpr int kQueueItemsColumnWidth = 60;
 constexpr int kQueueStatusColumnWidth = 100;
 
 }  // namespace sak::ost

@@ -12,10 +12,17 @@
 #include <QStringList>
 #include <QTabWidget>
 
+#include <functional>
 #include <memory>
+#include <vector>
+
+class QVBoxLayout;
 
 class QFrame;
 class QHBoxLayout;
+class QKeySequence;
+class QPushButton;
+class QShortcut;
 
 // Forward declarations for feature panels (in global namespace)
 // -- none needed; all panels now in sak::
@@ -23,6 +30,7 @@ class QHBoxLayout;
 namespace sak {
 
 // Forward declarations for feature panels
+class ElidingLabel;
 class UserMigrationPanel;
 class OrganizerPanel;
 class PartitionManagerPanel;
@@ -38,6 +46,8 @@ class NetworkDiagnosticPanel;
 class EmailInspectorPanel;
 class OstConverterWidget;
 class VulnerabilityPanel;
+class RunningWorkExitGuard;
+class QuickActionController;
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
 class AiAssistantPanel;
 #endif
@@ -87,11 +97,10 @@ public Q_SLOTS:
      */
     void updateProgress(int current, int maximum);
 
-    /**
-     * @brief Show/hide progress bar
-     * @param visible True to show, false to hide
-     */
-    void setProgressVisible(bool visible);
+    /// @brief Restore the window if minimized and bring it to the foreground. A second launch
+    ///        on the same data folder asks for this (SingleInstanceGuard); a window that was
+    ///        never shown (a headless smoke run) is left alone.
+    void bringToFront();
 
 private Q_SLOTS:
     void onTabChanged(int index);
@@ -108,15 +117,16 @@ private:
     void createStatusBar();
 
     /**
+     * @brief Create the elevation indicator and Run-as-Admin status widgets
+     */
+    void createElevationStatusWidgets();
+
+
+    /**
      * @brief Create feature panels
      */
     void createPanels();
 
-    /// @brief Create all tool/feature panel tabs
-    void createToolPanels();
-
-    /// @brief Create simple standalone panel tabs
-    void createSimplePanels();
     void createBackupRestorePanel();
     void createFileManagementPanel();
     void createPartitionManagerPanel();
@@ -126,11 +136,19 @@ private:
 
     /// @brief Create the Application Management composite panel tab
     void createAppManagementPanel();
-    void createAppManagementChildPanels();
+    void createAppManagementChildPanels(QWidget* app_install_shell,
+                                        QWidget* advanced_shell,
+                                        QWidget* vulnerability_shell);
 
     /// @brief Create the Network Management composite panel tab
     void createNetworkManagementPanel();
-    void connectNetworkAdapterLogToggle();
+    /// A wrapper's one Log switch, under its sub-tabs (addLogFooter), wired to the log window.
+    void addWrapperLogFooter(QWidget* wrapper, QVBoxLayout* layout);
+    /// A status message belongs to the sub-tab that sent it, as it does to a tab.
+    void clearStatusWhenSubTabChanges(QTabWidget* sub_tabs);
+    /// Clears the status bar's message and says Ready.
+    void clearTabStatus();
+    void connectLogToggle(LogToggleSwitch* toggle);
 
     /// @brief Create the About information panel tab
     void createAboutPanel();
@@ -148,17 +166,49 @@ private:
     QFrame* createCommunityCard(QWidget* parent);
 
     /// @brief Load splash screen icon into the About panel header
-    void loadAboutPanelIcon(QLabel* iconLabel);
+    void loadAboutPanelIcon(QLabel* icon_label);
 
-    /// @brief Connect panel status and progress signals to the main window
-    void connectPanelSignals();
+    /// @brief Register all tool tabs as lazy placeholders (built on first activation).
+    void registerLazyToolTabs();
+
+    /// @brief Add a lightweight placeholder tab for a not-yet-built tool panel.
+    void addLazyPlaceholder(const char* title, const char* tooltip, const char* icon_path);
+
+    /// @brief Build (if needed) the tool panel occupying a lazy tab slot.
+    void materializeTab(int slot);
+
+    /// @brief Construct every tool tab for a complete non-interactive gate.
+    void materializeAllToolTabs();
+
+    /// @brief Finish an in-place lazy tab without moving its populated widget tree.
+    void finishInPlaceLazyTab(int slot,
+                              QWidget* placeholder,
+                              int tab_count_before,
+                              qint64 elapsed_ms);
+
+    /// @brief Connect the tab-change/log-window routing that must exist once.
+    void setupLogRouting();
+
+    /// @brief Connect one panel's log output and toggle to the shared log window.
+    ///        Must run after the panel's tab occupies its final slot.
+    template <typename PanelT>
+    void connectPanelLog(PanelT* panel);
+
+    // Per-tab signal + log wiring, invoked when each lazy tab is materialized.
+    void wireBackupPanel();
+    void wireFileManagementPanels();
+    void wirePartitionPanel();
     void connectPartitionManagerNavigation();
-
-    /// @brief Connect remaining panel status/progress signals
-    void connectRemainingPanelSignals();
-    void connectDiagnosticAndSearchSignals();
-    void connectManagementAndVulnerabilitySignals();
-    void connectNetworkAndEmailSignals();
+    void wireImageFlasherPanel();
+    void wireDiagnosticPanel();
+    void wireEmailPanels();
+    void wireAppManagementPanels();
+    void wireNetworkPanels();
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    /// @brief Construct the AI Assistant panel and add it as the last tab.
+    void createAiAssistantPanelTab(int slot);
+    void wireAiPanel();
+#endif
 
     /// @brief True when the Vulnerability Scanner sub-tab is selected.
     [[nodiscard]] bool isVulnerabilityPanelActive() const;
@@ -174,14 +224,18 @@ private:
     void updateAiStatusBarVisibility();
 #endif
 
-    /// @brief Connect panel log signals to the shared log window
-    void connectPanelLogs();
+    /// @brief Create an application-wide window shortcut and remember it for yielding.
+    QShortcut* addWindowShortcut(const QKeySequence& sequence);
 
-    /// @brief Add a synchronized dark-mode toggle immediately after a panel log toggle.
-    void attachThemeToggleToLogToggle(LogToggleSwitch* logToggle);
+    /// @brief Disable each window shortcut whose sequence the focused panel binds itself, and
+    ///        re-enable the rest, so a panel's own shortcut wins while focus is inside it.
+    void yieldShortcutsToFocusedPanel(const QWidget* focus);
 
-    /// @brief Apply light or dark theme and synchronize all theme toggle widgets.
-    void setDarkThemeEnabled(bool enabled);
+    /// @brief The status bar's Theme button: System, Light or Dark (sak::ui::ThemePreference).
+    void createThemeSelector();
+
+    /// @brief Show the saved preference on the Theme button and check it in its menu.
+    void refreshThemeButton();
 
     /// @brief Find the main tab index containing this panel widget
     [[nodiscard]] int findPanelTabIndex(QWidget* panel) const;
@@ -190,6 +244,9 @@ private:
      * @brief Create keyboard shortcuts for accessibility
      */
     void createKeyboardShortcuts();
+
+    /// @brief Ctrl+1..9, Ctrl+0, Ctrl+Shift+1..5 and Ctrl+(Shift+)Tab for the main tabs.
+    void createTabNavigationShortcuts();
 
     /**
      * @brief Load window state from settings
@@ -202,24 +259,60 @@ private:
     void saveWindowState();
 
     /// @brief Append a log line and show it if the tab is active
-    void appendLogIfActive(int tabIdx, const QString& formatted);
+    void appendLogIfActive(int tab_idx, const QString& formatted);
 
     /// @brief Hide the progress bar if it has reached maximum
     void hideProgressBarIfComplete();
 
+    /// @brief Whether the progress bar is showing work that has not finished
+    [[nodiscard]] bool progressShowsRunningWork() const;
+
     /// @brief Apply chevron icons to the tab bar scroll buttons
     void applyTabBarChevrons();
+    /// @brief Draws every tab's icon again in the current theme's drawing of it.
+    void refreshTabIcons();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
     void moveEvent(QMoveEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
-    bool eventFilter(QObject* obj, QEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private:
+    /// @brief A tool tab that constructs its panel(s) lazily on first activation.
+    struct LazyTab {
+        std::function<void()> build;  ///< Constructs panel(s) in place or as a last tab.
+        std::function<void()> wire;   ///< MainWindow-level wiring; runs after the tab is in place.
+        bool in_place{false};         ///< Populate the existing placeholder without moving it.
+        bool built{false};
+    };
+
     // Central widget - tab container
     QTabWidget* m_tab_widget{nullptr};
     QTabWidget* m_application_tabs{nullptr};
+
+    // Set at the very start of ~MainWindow. The unique_ptr tool panels are freed
+    // in the member-destruction phase, but the tab widgets are raw QObject
+    // children freed later in the base destructor; as they tear down they emit
+    // currentChanged, whose status-bar handlers would otherwise dereference the
+    // already-freed panels (via findPanelTabIndex). The handlers check this flag
+    // and do nothing once teardown has begun.
+    bool m_shutting_down{false};
+
+    // Lazy tool-tab registry; index is aligned with the tab slot it occupies.
+    std::vector<LazyTab> m_lazyTabs;
+    bool m_lazyDefaultBuilt{false};
+    int m_slotImageFlasher{-1};
+    int m_slotDiagnostic{-1};
+    int m_slotAppManagement{-1};
+
+    // The application's one quick-action controller (createAppQuickActionController), shared by
+    // the Backup and Restore, Diagnostics and Network panels and the assistant. The panels hold
+    // references, so it is declared first and destroyed after them; the assistant shares
+    // ownership because its panel can outlive this window while its workers drain. The
+    // controller owns the elevated helper those actions use and shuts it down when destroyed.
+    std::shared_ptr<QuickActionController> m_quick_actions;
 
     // Feature panels
     std::unique_ptr<UserMigrationPanel> m_user_migration_panel;
@@ -243,15 +336,25 @@ private:
     QLabel* m_status_label{nullptr};
     QLabel* m_vulnerability_summary_label{nullptr};
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-    QLabel* m_ai_status_label{nullptr};
+    ElidingLabel* m_ai_status_label{nullptr};
 #endif
     QWidget* m_elevation_label{nullptr};
+    QPushButton* m_theme_button{nullptr};
     QProgressBar* m_progress_bar{nullptr};
+    // The bar's current message is about work the progress bar shows running, so it has no
+    // timeout and goes when that work ends.
+    bool m_status_message_is_work{false};
+
+    // Asks before closing or relaunching while long work runs (child of this window).
+    RunningWorkExitGuard* m_exit_guard{nullptr};
+
+    // Application-wide shortcuts (tab navigation, log toggle) and the focus tracking that
+    // makes each one step aside while the focused panel binds the same sequence.
+    QList<QShortcut*> m_window_shortcuts;
+    QMetaObject::Connection m_focus_connection;
 
     // Shared log window
     DetachableLogWindow* m_logWindow{nullptr};
-    QList<LogToggleSwitch*> m_theme_toggles;
-    bool m_dark_theme_enabled{false};
 
     // Per-panel log storage for tab-aware log switching
     QMap<int, QStringList> m_panelLogs;

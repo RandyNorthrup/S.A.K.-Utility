@@ -8,14 +8,48 @@
 
 #include <QApplication>
 #include <QString>
+#include <Qt>
 
 namespace sak::ui {
+
+/// @brief The colour a selected row takes in every item view of the current theme: the accent
+///        at 22% over white in light, the dark hover surface in dark.
+[[nodiscard]] QString itemSelectionColor();
 
 /// @brief Supported app color themes.
 enum class AppThemeMode {
     Light,
     Dark
 };
+
+/// @brief The one saved theme setting (ConfigManager "ui/theme"). System follows the Windows app
+///        theme while the app runs.
+enum class ThemePreference {
+    System,
+    Light,
+    Dark
+};
+
+/// @brief "system" / "light" / "dark" to a preference; anything else is System. Pure.
+[[nodiscard]] ThemePreference themePreferenceFromSetting(const QString& setting);
+
+/// @brief A preference as ConfigManager stores it. Pure.
+[[nodiscard]] QString themePreferenceSetting(ThemePreference preference);
+
+/// @brief The theme to show for @p preference while Windows' app theme is @p windows_scheme.
+///        Windows reports Light or Dark; an unknown scheme (no platform theme) is Light. Pure.
+[[nodiscard]] AppThemeMode themeModeFor(ThemePreference preference, Qt::ColorScheme windows_scheme);
+
+/// @brief The saved preference.
+[[nodiscard]] ThemePreference savedThemePreference();
+
+/// @brief At startup: apply the saved preference and, while it is System, keep following the
+///        Windows app theme (QStyleHints::colorSchemeChanged). Needs the data folder decided.
+void initializeAppTheme(QApplication& app);
+
+/// @brief Save @p preference and apply it now. Light and Dark are also requested from Qt, so the
+///        window frame (title bar) matches; System hands the frame back to Windows.
+void setThemePreference(QApplication& app, ThemePreference preference);
 
 /// @brief Generate a complete Qt stylesheet mimicking Windows 11 Fluent Design
 /// @return CSS stylesheet string covering all standard Qt widgets
@@ -33,9 +67,5 @@ void applyWindows11Theme(QApplication& app, AppThemeMode mode = AppThemeMode::Li
 
 /// @brief Read the currently applied application theme mode.
 [[nodiscard]] AppThemeMode currentThemeMode(const QApplication& app);
-
-/// @brief Install non-semantic visual polish helpers (shadows only).
-/// @param app Reference to the QApplication instance
-void installThemePolishHelper(QApplication& app);
 
 }  // namespace sak::ui

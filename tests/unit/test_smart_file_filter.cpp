@@ -16,6 +16,10 @@ class SmartFileFilterTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void exclusionGroups_defaultsMatchTheDefaultRules();
+    void exclusionGroups_eachTakesOnlyItsOwnRules();
+    void exclusionGroups_cacheOffKeepsCachePaths();
+    void exclusionGroups_cacheFlagSurvivesJsonAndAnOldManifestStillMatches();
     void initTestCase();
 
     // Constructor
@@ -35,6 +39,7 @@ private Q_SLOTS:
     // Pattern exclusion
     void excludePattern_matchesRegex();
     void excludePattern_noMatch();
+    void excludePattern_invalidRecorded();
 
     // Folder exclusion
     void excludeFolder_detected();
@@ -89,8 +94,52 @@ void SmartFileFilterTests::initTestCase() {
 void SmartFileFilterTests::defaultConstruction() {
     sak::SmartFileFilter filter;
     const auto& rules = filter.getRules();
-    // Default rules should be initialized
-    QVERIFY(!rules.dangerous_files.isEmpty());
+    // Default rules = the fixed 7-entry mandatory-dangerous list, in order. A truncation or
+    // a dropped hive file (a security regression) must fail, not just pass !isEmpty().
+    QCOMPARE(rules.dangerous_files,
+             (QStringList{"NTUSER.DAT",
+                          "NTUSER.DAT.LOG1",
+                          "NTUSER.DAT.LOG2",
+                          "ntuser.ini",
+                          "UsrClass.dat",
+                          "UsrClass.dat.LOG1",
+                          "UsrClass.dat.LOG2"}));
+    // The other two default catalogs ARE the rest of the exclusion policy and were pinned by
+    // nothing at all: a dropped ".*\\.lock$" copies live lock files, a dropped "$RECYCLE.BIN"
+    // or "Cache" copies junk/volatile state. Ordered compare, not membership.
+    QCOMPARE(rules.exclude_patterns,
+             (QStringList{".*\\.tmp$",
+                          ".*\\.temp$",
+                          ".*\\.cache$",
+                          ".*\\.lock$",
+                          ".*\\.lck$",
+                          ".*~$",
+                          ".*\\.crdownload$",
+                          ".*\\.part$",
+                          "desktop\\.ini$",
+                          "thumbs\\.db$",
+                          "\\.DS_Store$"}));
+    QCOMPARE(rules.exclude_folders,
+             (QStringList{"Temp",
+                          "temp",
+                          "$RECYCLE.BIN",
+                          "Cache",
+                          "GPUCache",
+                          "Code Cache",
+                          "Service Worker",
+                          "Session Storage",
+                          "WebCache",
+                          "node_modules",
+                          ".git",
+                          ".svn",
+                          "__pycache__",
+                          "Packages"}));
+    // Size filtering is OFF by default; a default that flipped it on would silently drop every
+    // large file from every backup.
+    QVERIFY(!rules.enable_file_size_limit);
+    QVERIFY(!rules.enable_folder_size_limit);
+    // Every default pattern compiles -- none is silently discarded as invalid.
+    QVERIFY(!filter.hasInvalidPatterns());
 }
 
 void SmartFileFilterTests::constructionWithRules() {
@@ -100,6 +149,18 @@ void SmartFileFilterTests::constructionWithRules() {
 
     sak::SmartFileFilter filter(rules);
     QVERIFY(filter.isDangerousFile("custom_dangerous.dat"));
+    // The mandatory hive set is re-unioned on top of the caller's list, so a caller list that
+    // omits it can never SHRINK the dangerous set...
+    QVERIFY(filter.isDangerousFile("NTUSER.DAT"));
+    QVERIFY(filter.isDangerousFile("UsrClass.dat.LOG2"));
+    // ...and nothing outside (caller list + mandatory list) becomes dangerous.
+    QVERIFY(!filter.isDangerousFile("other_dangerous.dat"));
+    // exclude_patterns was supplied by the fixture and asserted on by nothing. "*.tmp" is a
+    // GLOB, and PCRE rejects a leading quantifier, so the ctor must RECORD it as invalid
+    // instead of compiling it or dropping it silently (callers fail closed on this list).
+    QVERIFY(filter.hasInvalidPatterns());
+    QCOMPARE(filter.invalidPatterns().size(), 1);
+    QVERIFY(filter.invalidPatterns().first().startsWith(QStringLiteral("*.tmp: ")));
 }
 
 // ============================================================================
@@ -145,6 +206,14 @@ void SmartFileFilterTests::sizeLimit_enabled_withinLimit() {
 
     sak::SmartFileFilter filter(rules);
     QVERIFY(!filter.exceedsSizeLimit(500));
+    // The comparison is strict (`size > max`), so a file EXACTLY at the limit is kept and one
+    // byte over is dropped. 200-vs-100 and 500-vs-1000 never touch the boundary, so a `>=`
+    // mutant -- which would drop every file sitting exactly on the configured limit -- stayed
+    // green in both size tests.
+    QVERIFY(!filter.exceedsSizeLimit(999));
+    QVERIFY(!filter.exceedsSizeLimit(1000));
+    QVERIFY(filter.exceedsSizeLimit(1001));
+    QVERIFY(!filter.exceedsSizeLimit(0));
 }
 
 void SmartFileFilterTests::sizeLimit_disabled_noFiltering() {
@@ -164,10 +233,13 @@ void SmartFileFilterTests::sizeLimit_disabled_noFiltering() {
 
 void SmartFileFilterTests::excludePattern_matchesRegex() {
     sak::SmartFilter rules;
+    // No initializeDefaults() call here: SmartFilter's own constructor already seeded the
+    // defaults, and calling it AFTER assigning REPLACES exclude_patterns -- the caller's list was
+    // being discarded, so this test only ever exercised the built-in default patterns.
     rules.exclude_patterns = {".*\\.tmp$", ".*\\.log$"};
-    rules.initializeDefaults();
 
     sak::SmartFileFilter filter(rules);
+    QVERIFY(!filter.hasInvalidPatterns());
 
     QFileInfo tmpFile(m_tempDir.filePath("temp.tmp"));
     // Create the file so QFileInfo can report on it
@@ -191,31 +263,78 @@ void SmartFileFilterTests::excludePattern_noMatch() {
     QVERIFY(!filter.shouldExcludeFile(docFile, m_profilePath));
 }
 
+void SmartFileFilterTests::excludePattern_invalidRecorded() {
+    sak::SmartFilter rules;
+    // One invalid regex (unterminated class) alongside a valid one.
+    rules.exclude_patterns = {"[unterminated", ".*\\.tmp$"};
+    rules.dangerous_files.clear();
+    rules.exclude_folders.clear();
+
+    sak::SmartFileFilter filter(rules);
+
+    // The invalid pattern is surfaced rather than silently dropped.
+    QCOMPARE(filter.invalidPatterns().size(), 1);
+    QVERIFY(filter.hasInvalidPatterns());
+    // The recorded entry is exactly "<pattern>: <error>" -- offending pattern first, then a
+    // NON-empty diagnostic. contains() alone stayed green for an entry that was only the
+    // pattern with the error dropped, or for the two halves swapped. The PCRE message text
+    // itself is Qt-version dependent, so only the invariant shape is pinned.
+    const QString detail = filter.invalidPatterns().first();
+    QVERIFY2(detail.startsWith(QStringLiteral("[unterminated: ")), qPrintable(detail));
+    QVERIFY2(detail.size() > QStringLiteral("[unterminated: ").size(), qPrintable(detail));
+    QVERIFY(filter.invalidPatterns().first().contains(QStringLiteral("[unterminated")));
+
+    // The valid pattern still filters.
+    QFile f(m_tempDir.filePath("temp.tmp"));
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("x");
+    f.close();
+    const QFileInfo tmpInfo(m_tempDir.filePath("temp.tmp"));
+    QVERIFY(filter.shouldExcludeFile(tmpInfo, m_profilePath));
+    // ...and it is the surviving PATTERN that excluded it, not one of shouldExcludeFile's four
+    // sibling arms: one bad rule must not disable the good ones, and must not be papered over by
+    // the dangerous-file / size / folder / cache guards.
+    QCOMPARE(filter.getExclusionReason(tmpInfo), QString("Matches exclusion pattern: temp.tmp"));
+    // A file the surviving pattern does not match is still kept.
+    QVERIFY(!filter.shouldExcludeFile(QFileInfo(m_tempDir.filePath("normal.txt")), m_profilePath));
+}
+
 // ============================================================================
 // Folder Exclusion Tests
 // ============================================================================
 
 void SmartFileFilterTests::excludeFolder_detected() {
     sak::SmartFilter rules;
+    // No initializeDefaults() call: the SmartFilter constructor already seeded the defaults, and
+    // calling it AFTER assigning REPLACES exclude_folders with the built-in list (which happens
+    // to contain both names below), so the caller's list was never the thing under test.
     rules.exclude_folders = {"node_modules", ".git"};
-    rules.initializeDefaults();
 
     sak::SmartFileFilter filter(rules);
 
     QDir(m_tempDir.path()).mkpath("node_modules");
     QFileInfo folder(m_tempDir.filePath("node_modules"));
     QVERIFY(filter.shouldExcludeFolder(folder, m_profilePath));
+    // Every entry of the caller's list is honored, not just the first.
+    QDir(m_tempDir.path()).mkpath(".git");
+    QVERIFY(filter.shouldExcludeFolder(QFileInfo(m_tempDir.filePath(".git")), m_profilePath));
 }
 
 void SmartFileFilterTests::excludeFolder_nestedPath() {
     sak::SmartFilter rules;
-    rules.exclude_folders = {"Cache"};
-    rules.initializeDefaults();
+    // Use a name with no "cache" substring: shouldExcludeFolder's third arm (isInCacheDirectory)
+    // fires on ANY path containing "/cache/", so a nested "Cache" folder proves nothing about the
+    // relative-path walk. No initializeDefaults() either -- it REPLACES exclude_folders with the
+    // built-in list, so the caller's list was never under test.
+    rules.exclude_folders = {"node_modules"};
 
     sak::SmartFileFilter filter(rules);
 
-    QDir(m_tempDir.path()).mkpath("sub/Cache");
-    QFileInfo folder(m_tempDir.filePath("sub/Cache"));
+    // The excluded component is an ANCESTOR, not the leaf: shouldExcludeFolder tests the leaf
+    // name against the set FIRST and returns before it ever reaches the relative-path walk, so a
+    // leaf-named fixture leaves that walk unexercised.
+    QDir(m_tempDir.path()).mkpath("node_modules/pkg/dist");
+    QFileInfo folder(m_tempDir.filePath("node_modules/pkg/dist"));
     QVERIFY(filter.shouldExcludeFolder(folder, m_profilePath));
 }
 
@@ -243,6 +362,28 @@ void SmartFileFilterTests::cacheDirectory_detected() {
         "AppData/Local/Google/Chrome/User "
         "Data/Default/Cache/cached_data.bin");
     QVERIFY(filter.isInCacheDirectory(cachePath));
+    // The detector is a 14-entry catalog, not one "/cache/" probe: a build that dropped any
+    // family (or either separator flavour) would still pass the single Chrome-Cache probe
+    // above while backing up GPU/shader/service-worker state.
+    QVERIFY(filter.isInCacheDirectory("C:/p/GPUCache/x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:/p/Code Cache/x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:/p/ShaderCache/x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:/p/WebCache/x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:/p/Service Worker/x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:/p/Session Storage/x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:\\p\\Cache\\x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:\\p\\GPUCache\\x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:\\p\\Code Cache\\x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:\\p\\ShaderCache\\x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:\\p\\WebCache\\x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:\\p\\Service Worker\\x.bin"));
+    QVERIFY(filter.isInCacheDirectory("C:\\p\\Session Storage\\x.bin"));
+    // Matching is case-insensitive (the path is lowercased first)...
+    QVERIFY(filter.isInCacheDirectory("C:/p/CACHE/x.bin"));
+    // ...and separator-bounded: a name that merely embeds "cache", or a trailing directory
+    // with no closing separator, is NOT a cache path.
+    QVERIFY(!filter.isInCacheDirectory("C:/p/precached/x.bin"));
+    QVERIFY(!filter.isInCacheDirectory("C:/p/Cache"));
 }
 
 void SmartFileFilterTests::nonCacheDirectory_notDetected() {
@@ -268,6 +409,24 @@ void SmartFileFilterTests::shouldExcludeFile_tooLarge() {
 
     sak::SmartFileFilter filter(rules);
     QFileInfo fileInfo(m_tempDir.filePath("normal.txt"));  // "normal content" = 14 bytes
+    QCOMPARE(fileInfo.size(), qint64(14));
+    QVERIFY(filter.shouldExcludeFile(fileInfo, m_profilePath));
+    // ...and the SIZE guard is what excluded it: the same file under the same rules with the
+    // limit switched off must be KEPT, so this cannot be riding on a sibling arm (dangerous
+    // list / pattern / folder / cache).
+    sak::SmartFilter unlimited = rules;
+    unlimited.enable_file_size_limit = false;
+    QVERIFY(!sak::SmartFileFilter(unlimited).shouldExcludeFile(fileInfo, m_profilePath));
+
+    // The guard is strict: a limit EQUAL to the file size keeps the file, one byte under
+    // drops it.
+    sak::SmartFilter atLimit = rules;
+    atLimit.max_single_file_size_bytes = 14;
+    QVERIFY(!sak::SmartFileFilter(atLimit).shouldExcludeFile(fileInfo, m_profilePath));
+
+    sak::SmartFilter justUnder = rules;
+    justUnder.max_single_file_size_bytes = 13;
+    QVERIFY(sak::SmartFileFilter(justUnder).shouldExcludeFile(fileInfo, m_profilePath));
     QVERIFY(filter.shouldExcludeFile(fileInfo, m_profilePath));
 }
 
@@ -286,6 +445,13 @@ void SmartFileFilterTests::shouldExcludeFile_patternMatch() {
 
     QFileInfo fileInfo(m_tempDir.filePath("test.dat"));
     QVERIFY(filter.shouldExcludeFile(fileInfo, m_profilePath));
+    // Prove the PATTERN arm is what caught it. dangerous_files.clear() does NOT empty the
+    // dangerous set (the mandatory hive list is re-unioned by the ctor), so "the pattern
+    // caught it" needs saying out loud rather than inferring it from a bare bool.
+    QVERIFY(!filter.isDangerousFile("test.dat"));
+    QCOMPARE(filter.getExclusionReason(fileInfo), QString("Matches exclusion pattern: test.dat"));
+    // A sibling file the pattern does not match is kept.
+    QVERIFY(!filter.shouldExcludeFile(QFileInfo(m_tempDir.filePath("normal.txt")), m_profilePath));
 }
 
 void SmartFileFilterTests::shouldExcludeFile_inCacheDir() {
@@ -300,6 +466,19 @@ void SmartFileFilterTests::shouldExcludeFile_inCacheDir() {
 
     QFileInfo fileInfo(cachePath);
     QVERIFY(filter.shouldExcludeFile(fileInfo, m_profilePath));
+    // The default rules' exclude_folders list already contains "Cache", and shouldExcludeFile
+    // consults that list (arm 4) BEFORE the cache-directory heuristic (arm 5) -- so the
+    // assertion above holds even if isInCacheDirectory() were dead. Re-run with an empty
+    // dangerous/pattern/folder rule set and the limit off, so the cache arm is the ONLY guard
+    // that can fire.
+    sak::SmartFilter cacheOnly;
+    cacheOnly.dangerous_files.clear();
+    cacheOnly.exclude_patterns.clear();
+    cacheOnly.exclude_folders.clear();
+    cacheOnly.enable_file_size_limit = false;
+    sak::SmartFileFilter cacheFilter(cacheOnly);
+    QVERIFY(cacheFilter.shouldExcludeFile(fileInfo, m_profilePath));
+    QCOMPARE(cacheFilter.getExclusionReason(fileInfo), QString("Located in cache directory"));
 }
 
 void SmartFileFilterTests::shouldExcludeFile_normal() {
@@ -322,7 +501,7 @@ void SmartFileFilterTests::exclusionReason_dangerous() {
     sak::SmartFileFilter filter;
     QFileInfo fileInfo(m_tempDir.filePath("NTUSER.DAT"));
     QString reason = filter.getExclusionReason(fileInfo);
-    QVERIFY(!reason.isEmpty());
+    QCOMPARE(reason, QString("Dangerous system file: NTUSER.DAT (would corrupt profile)"));
 }
 
 void SmartFileFilterTests::exclusionReason_normal() {
@@ -335,9 +514,9 @@ void SmartFileFilterTests::exclusionReason_normal() {
     sak::SmartFileFilter filter(rules);
     QFileInfo fileInfo(m_tempDir.filePath("normal.txt"));
     QString reason = filter.getExclusionReason(fileInfo);
-    // getExclusionReason always returns a non-empty string (fallback reason)
-    // It's designed to explain exclusions, not to determine if a file is excluded
-    QVERIFY(!reason.isEmpty());
+    // Nothing matches (no dangerous/size/pattern/cache branch), so it falls through to the
+    // fixed fallback reason -- pin it so a mistakenly-taken branch is caught.
+    QCOMPARE(reason, QString("Excluded by filter rules"));
 }
 
 // ============================================================================
@@ -347,15 +526,125 @@ void SmartFileFilterTests::exclusionReason_normal() {
 void SmartFileFilterTests::setRules_updatesFiltering() {
     sak::SmartFileFilter filter;
 
-    // Initially should detect NTUSER.DAT as dangerous
+    // A caller-supplied dangerous file is rule-controlled: present under default rules...
+    sak::SmartFilter withCustom;
+    withCustom.dangerous_files.append("my_custom_secret.dat");
+    filter.setRules(withCustom);
+    QVERIFY(filter.isDangerousFile("my_custom_secret.dat"));
+
+    // ...and gone once the rules no longer list it. This proves setRules updates filtering.
+    sak::SmartFilter cleared;
+    cleared.dangerous_files.clear();
+    filter.setRules(cleared);
+    QVERIFY(!filter.isDangerousFile("my_custom_secret.dat"));
+
+    // But the registry-hive protections are mandatory and survive ANY supplied rules,
+    // including an empty set: a live NTUSER.DAT copied during a profile restore corrupts the
+    // profile, so no caller may filter it back in as copyable. This is a fail-closed
+    // invariant, not a rule the caller controls.
     QVERIFY(filter.isDangerousFile("NTUSER.DAT"));
+    QVERIFY(filter.isDangerousFile("UsrClass.dat"));
 
-    // Update rules with empty dangerous files
-    sak::SmartFilter newRules;
-    newRules.dangerous_files.clear();
-    filter.setRules(newRules);
+    // setRules must rebuild the compiled-pattern set and the folder set too, not just the
+    // dangerous list -- only the dangerous list was ever checked here, so a setRules that
+    // refreshed m_dangerousFilesSet and left m_compiledPatterns / m_excludeFoldersSet stale
+    // stayed green.
+    sak::SmartFilter badPattern;
+    badPattern.exclude_patterns = {"[unterminated"};
+    filter.setRules(badPattern);
+    QVERIFY(filter.hasInvalidPatterns());
+    QCOMPARE(filter.invalidPatterns().size(), 1);
 
-    QVERIFY(!filter.isDangerousFile("NTUSER.DAT"));
+    sak::SmartFilter goodRules;
+    goodRules.exclude_patterns = {".*\\.tmp$"};
+    goodRules.exclude_folders = {"node_modules"};
+    filter.setRules(goodRules);
+    // The stale diagnostic is cleared on recompile, not accumulated.
+    QVERIFY(!filter.hasInvalidPatterns());
+    QVERIFY(filter.invalidPatterns().isEmpty());
+
+    QDir(m_tempDir.path()).mkpath("node_modules");
+    const QFileInfo nodeModules(m_tempDir.filePath("node_modules"));
+    QVERIFY(filter.shouldExcludeFolder(nodeModules, m_profilePath));
+
+    // ...and the folder set is CLEARED, not just unioned, when the new rules drop an entry.
+    sak::SmartFilter noFolders;
+    noFolders.exclude_folders.clear();
+    filter.setRules(noFolders);
+    QVERIFY(!filter.shouldExcludeFolder(nodeModules, m_profilePath));
+}
+
+void SmartFileFilterTests::exclusionGroups_defaultsMatchTheDefaultRules() {
+    const sak::SmartFilter defaults;
+    QVERIFY(defaults.excludesCache());
+    QVERIFY(defaults.excludesTemporaryFiles());
+    QVERIFY(defaults.excludesLockFiles());
+
+    sak::SmartFilter rules;
+    rules.setExclusionGroups(true, true, true);
+    QCOMPARE(rules.exclude_patterns, defaults.exclude_patterns);
+    QCOMPARE(rules.exclude_folders, defaults.exclude_folders);
+    QCOMPARE(rules.toJson(), defaults.toJson());
+}
+
+void SmartFileFilterTests::exclusionGroups_eachTakesOnlyItsOwnRules() {
+    sak::SmartFilter rules;
+    rules.setExclusionGroups(false, true, true);
+    QVERIFY(!rules.excludesCache());
+    QVERIFY(rules.excludesTemporaryFiles());
+    QVERIFY(rules.excludesLockFiles());
+    QVERIFY(!rules.exclude_folders.contains(QStringLiteral("Cache")));
+    QVERIFY(rules.exclude_folders.contains(QStringLiteral("node_modules")));
+
+    rules.setExclusionGroups(true, false, true);
+    QVERIFY(rules.excludesCache());
+    QVERIFY(!rules.excludesTemporaryFiles());
+    QVERIFY(rules.excludesLockFiles());
+    QVERIFY(!rules.exclude_folders.contains(QStringLiteral("Temp")));
+    QVERIFY(rules.exclude_folders.contains(QStringLiteral("Cache")));
+
+    rules.setExclusionGroups(true, true, false);
+    QVERIFY(rules.excludesTemporaryFiles());
+    QVERIFY(!rules.excludesLockFiles());
+    QVERIFY(rules.exclude_patterns.contains(QStringLiteral("desktop\\.ini$")));
+
+    // A box ticked again brings its rules back.
+    rules.setExclusionGroups(true, true, true);
+    QVERIFY(rules.excludesLockFiles());
+}
+
+// A cache folder is caught by the name lists and by a path check. Unticking the box has to turn
+// off both, or the box does nothing for a path that contains "\cache\".
+void SmartFileFilterTests::exclusionGroups_cacheOffKeepsCachePaths() {
+    // A folder inside the cache: the path check only matches a cache folder with something below
+    // it.
+    const QString dir = m_tempDir.filePath("groups/App/Cache/Sub");
+    QVERIFY(QDir().mkpath(dir));
+    QFile file(dir + "/entry.bin");
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("x");
+    file.close();
+    const QFileInfo info(file.fileName());
+
+    sak::SmartFilter rules;
+    QVERIFY(sak::SmartFileFilter(rules).shouldExcludeFile(info, m_profilePath));
+    QVERIFY(sak::SmartFileFilter(rules).shouldExcludeFolder(QFileInfo(dir), m_profilePath));
+
+    rules.setExclusionGroups(false, true, true);
+    QVERIFY(!sak::SmartFileFilter(rules).shouldExcludeFile(info, m_profilePath));
+    QVERIFY(!sak::SmartFileFilter(rules).shouldExcludeFolder(QFileInfo(dir), m_profilePath));
+}
+
+// The key appears only when the box is off. A key always written would change the checksum of
+// every manifest saved before it existed, and the restore would refuse those as damaged.
+void SmartFileFilterTests::exclusionGroups_cacheFlagSurvivesJsonAndAnOldManifestStillMatches() {
+    const sak::SmartFilter defaults;
+    QVERIFY(!defaults.toJson().contains(QStringLiteral("exclude_cache_paths")));
+    QVERIFY(sak::SmartFilter::fromJson(defaults.toJson()).exclude_cache_paths);
+
+    sak::SmartFilter off;
+    off.setExclusionGroups(false, true, true);
+    QVERIFY(!sak::SmartFilter::fromJson(off.toJson()).exclude_cache_paths);
 }
 
 QTEST_GUILESS_MAIN(SmartFileFilterTests)

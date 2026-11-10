@@ -32,11 +32,16 @@ public:
     /// Total bytes written across all files
     [[nodiscard]] qint64 totalBytesWritten() const { return m_bytes_written; }
 
-private:
-    [[nodiscard]] QByteArray buildEmlContent(
-        const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const;
+    /// The RFC 5322 bytes of one message. Also how a PST's attached emails become .eml attachments.
+    [[nodiscard]] static std::expected<QByteArray, error_code> buildEmlContent(
+        const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments);
 
+private:
     [[nodiscard]] QString sanitizeFilename(const QString& subject, const QDateTime& date) const;
+
+    /// Return a not-yet-existing ".eml" path under target_dir for the base filename,
+    /// suffixing "_(n)" until free so a distinct message is never overwritten.
+    [[nodiscard]] QString resolveCollisionPath(const QString& target_dir, const QString& filename);
 
     QString m_output_dir;
     bool m_prefix_with_date;

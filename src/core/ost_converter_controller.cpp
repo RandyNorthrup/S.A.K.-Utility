@@ -7,12 +7,16 @@
 #include "sak/ost_converter_controller.h"
 
 #include "sak/conversion_report_generator.h"
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 #include "sak/ost_conversion_worker.h"
 #include "sak/ost_converter_constants.h"
+#include "sak/thread_custody.h"
 
 #include <QFileInfo>
 #include <QThread>
+
+#include <memory>
 
 namespace sak {
 
@@ -26,14 +30,31 @@ OstConverterController::~OstConverterController() {
     cancelAll();
 }
 
+QString OstConverterController::refusalForFile(const QString& path) {
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix == QStringLiteral("pst") || suffix == QStringLiteral("ost") ||
+        suffix == QStringLiteral("nst")) {
+        return {};
+    }
+    return tr("%1 was not added: only PST, OST and NST files can be converted.")
+        .arg(QFileInfo(path).fileName());
+}
+
 // ============================================================================
 // Queue Management
 // ============================================================================
 
 void OstConverterController::addFile(const QString& path) {
-    QFileInfo fi(path);
+    const QFileInfo fi(path);
     if (!fi.exists() || !fi.isFile()) {
         logWarning("OST Converter: file does not exist: {}", path.toStdString());
+        return;
+    }
+
+    const QString refusal = refusalForFile(path);
+    if (!refusal.isEmpty()) {
+        logWarning("OST Converter: {}", refusal.toStdString());
+        Q_EMIT errorOccurred(-1, refusal);
         return;
     }
 
@@ -51,10 +72,10 @@ void OstConverterController::addFile(const QString& path) {
     job.display_name = fi.fileName();
     job.file_size_bytes = fi.size();
 
-    QString suffix = fi.suffix().toLower();
+    const QString suffix = fi.suffix().toLower();
     job.is_ost = (suffix == QStringLiteral("ost"));
 
-    int index = m_queue.size();
+    const int index = static_cast<int>(m_queue.size());
     m_queue.append(job);
 
     logInfo("OST Converter: added file to queue: {}", fi.fileName().toStdString());
@@ -96,24 +117,44 @@ void OstConverterController::startConversion(const OstConversionConfig& config) 
     m_config = config;
     m_cancelled.store(false);
     m_running = true;
-    m_current_file_index = -1;
     m_next_queued_index = 0;
     m_active_workers.clear();
     m_report_path.clear();
 
+    // Re-queue every job. The per-job statuses survive a finished run, so without this a
+    // second startConversion() found nothing still Queued: startNextFile() walked the whole
+    // queue, saw no active workers, and called finalizeBatch() immediately - emitting
+    // conversionStarted(N) and then "0/N files succeeded" for a queue that had converted
+    // perfectly the first time. Progress counters are reset with it so the new run does not
+    // inherit the previous one's totals.
+    for (auto& job : m_queue) {
+        job.status = OstConversionJob::Status::Queued;
+        job.items_processed = 0;
+        job.items_recovered = 0;
+        job.items_failed = 0;
+    }
+
     // Initialize batch result
     m_batch_result = OstConversionBatchResult();
-    m_batch_result.files_total = m_queue.size();
+    m_batch_result.files_total = static_cast<int>(m_queue.size());
     m_batch_result.batch_started = QDateTime::currentDateTime();
 
-    logInfo("OST Converter: starting batch conversion — {} files, {} threads",
+    logInfo("OST Converter: starting batch conversion - {} files, {} threads",
             std::to_string(m_queue.size()),
             std::to_string(config.max_threads));
 
-    Q_EMIT conversionStarted(m_queue.size());
+    Q_EMIT conversionStarted(static_cast<int>(m_queue.size()));
 
-    // Launch up to max_threads concurrent workers
-    int threads_to_launch = qMin(config.max_threads, m_queue.size());
+    // Launch up to max_threads concurrent workers. Clamp to at least one: a
+    // zero/negative max_threads would launch no worker, so finalizeBatch() would
+    // never run and the batch would wedge (m_running stuck true, no completion
+    // signal). m_queue is non-empty per the guard above, so this launches >= 1.
+    // Bound it from ABOVE too: an untrusted/oversized max_threads must not spawn
+    // one QThread per queued file and exhaust handles, memory, and scheduler
+    // resources -- cap the peak worker count regardless of the requested value.
+    constexpr int kMaxConcurrentWorkers = 64;
+    const int threads_to_launch = static_cast<int>(
+        qMin(qBound(1, config.max_threads, kMaxConcurrentWorkers), m_queue.size()));
     for (int i = 0; i < threads_to_launch; ++i) {
         startNextFile();
     }
@@ -124,34 +165,29 @@ void OstConverterController::cancelAll() {
 
     // Cancel all active workers
     for (auto& aw : m_active_workers) {
-        if (aw.worker) {
+        if (aw.worker != nullptr) {
             aw.worker->cancel();
         }
     }
 
-    // Shut down all worker threads
+    // Shut down all worker threads (join before delete; defer on refuse-to-stop).
     for (auto& aw : m_active_workers) {
-        if (aw.thread) {
-            aw.thread->quit();
-            if (!aw.thread->wait(ost::kTimeoutThreadShutdownMs)) {
-                logWarning("OST Converter: worker thread did not stop gracefully");
-                aw.thread->terminate();
-                aw.thread->wait(ost::kTimeoutThreadTerminateMs);
-            }
-            delete aw.thread;
-            aw.thread = nullptr;
-            aw.worker = nullptr;
-        }
+        disposeWorker(aw);
     }
     m_active_workers.clear();
 
     if (m_running) {
         m_running = false;
-        // Mark remaining queued files as cancelled
+        // Mark remaining queued files as cancelled, and COUNT them. They used to be flipped
+        // to Cancelled and then never accounted for anywhere, so files_succeeded +
+        // files_failed came out short of files_total and the completion line reported
+        // "X/N files succeeded" with the difference unexplained - indistinguishable from
+        // files that had failed silently.
         for (auto& job : m_queue) {
             if (job.status == OstConversionJob::Status::Queued ||
                 job.status == OstConversionJob::Status::Converting) {
                 job.status = OstConversionJob::Status::Cancelled;
+                ++m_batch_result.files_cancelled;
             }
         }
         finalizeBatch();
@@ -198,7 +234,7 @@ void OstConverterController::startNextFile() {
         return;
     }
 
-    int file_index = m_next_queued_index;
+    const int file_index = m_next_queued_index;
     ++m_next_queued_index;
 
     auto& job = m_queue[file_index];
@@ -206,10 +242,13 @@ void OstConverterController::startNextFile() {
 
     Q_EMIT fileConversionStarted(file_index);
 
-    // Create worker thread
+    // Create worker thread. The thread is intentionally UNPARENTED: if a worker ever refuses to
+    // stop, disposeWorker() defers its deletion to the thread's own finished signal. Were the
+    // thread parented to this controller, ~QObject would force-delete it while still running
+    // (abort), defeating that deferral. Ownership is instead handled explicitly in disposeWorker.
     ActiveWorker aw;
     aw.file_index = file_index;
-    aw.thread = new QThread(this);
+    aw.thread = new QThread();
     aw.worker = new OstConversionWorker();
     aw.worker->moveToThread(aw.thread);
 
@@ -230,8 +269,8 @@ void OstConverterController::startNextFile() {
             Qt::QueuedConnection);
 
     // Start conversion when thread starts
-    QString source = job.source_path;
-    OstConversionConfig config = m_config;
+    const QString source = job.source_path;
+    const OstConversionConfig config = m_config;
     connect(aw.thread, &QThread::started, aw.worker, [worker = aw.worker, source, config]() {
         worker->convert(source, config);
     });
@@ -248,6 +287,8 @@ void OstConverterController::finalizeBatch() {
     for (const auto& file_result : m_batch_result.file_results) {
         m_batch_result.total_items_converted += file_result.items_converted;
         m_batch_result.total_items_recovered += file_result.items_recovered;
+        m_batch_result.total_items_failed += file_result.items_failed;
+        m_batch_result.total_items_skipped += file_result.itemsSkipped();
         m_batch_result.total_bytes_written += file_result.bytes_written;
     }
 
@@ -257,8 +298,10 @@ void OstConverterController::finalizeBatch() {
                                                                       m_config.output_directory);
     }
 
-    logInfo("OST Converter: batch complete — {}/{} files succeeded",
+    logInfo("OST Converter: batch complete - {} succeeded, {} failed, {} cancelled of {}",
             std::to_string(m_batch_result.files_succeeded),
+            std::to_string(m_batch_result.files_failed),
+            std::to_string(m_batch_result.files_cancelled),
             std::to_string(m_batch_result.files_total));
 
     Q_EMIT allConversionsComplete(m_batch_result);
@@ -271,6 +314,26 @@ void OstConverterController::finalizeBatch() {
 // ============================================================================
 // Worker Slots
 // ============================================================================
+
+OstConversionJob::Status OstConverterController::classifyOutcome(
+    const OstConversionResult& result) {
+    // A user-cancelled run is never Complete: convert() returned early, so the counts are
+    // partial even when no item failed and no error was recorded. Surface it as Cancelled so
+    // the batch accounting and the completion line distinguish it from a clean conversion.
+    if (result.cancelled) {
+        return OstConversionJob::Status::Cancelled;
+    }
+    // Any failed item or recorded error (e.g. a source-open failure, or a message
+    // whose attachment could not be read) means the conversion was not clean.
+    // A negative counter cannot occur on a real run and signals a corrupt result, so it
+    // fails closed too -- a negative items_failed would otherwise slip past the old > 0
+    // test. Everything else -- including a validly empty mailbox -- is Complete.
+    if (result.items_failed != 0 || !result.errors.isEmpty() || result.items_converted < 0 ||
+        result.items_recovered < 0 || result.bytes_written < 0) {
+        return OstConversionJob::Status::Failed;
+    }
+    return OstConversionJob::Status::Complete;
+}
 
 void OstConverterController::onWorkerFinished(OstConversionResult result) {
     auto* sender_worker = qobject_cast<OstConversionWorker*>(sender());
@@ -292,13 +355,22 @@ void OstConverterController::onWorkerFinished(OstConversionResult result) {
 
     auto& job = m_queue[file_index];
 
-    if (result.items_failed > 0 && result.items_converted == 0) {
-        job.status = OstConversionJob::Status::Failed;
-        job.error_message = result.errors.isEmpty() ? tr("All items failed")
-                                                    : result.errors.first();
+    // Fail closed: a run with any failed item OR a recorded error is not a clean
+    // conversion, even when some items were written -- a partial export must not be
+    // reported as Complete. classifyOutcome centralizes that rule.
+    job.status = classifyOutcome(result);
+    if (job.status == OstConversionJob::Status::Failed) {
+        job.error_message =
+            result.errors.isEmpty()
+                ? tr("%1 failed").arg(countOf(result.items_failed, tr("item"), tr("items")))
+                : result.errors.first();
         ++m_batch_result.files_failed;
+    } else if (job.status == OstConversionJob::Status::Cancelled) {
+        // Count a cancelled result into files_cancelled, never files_succeeded, so the
+        // succeeded + failed + cancelled == total accounting stays exact. (cancelAll() only
+        // tallies jobs still Queued/Converting, so a job counted here is never double-counted.)
+        ++m_batch_result.files_cancelled;
     } else {
-        job.status = OstConversionJob::Status::Complete;
         ++m_batch_result.files_succeeded;
     }
 
@@ -311,19 +383,57 @@ void OstConverterController::onWorkerFinished(OstConversionResult result) {
 
     Q_EMIT fileConversionComplete(file_index, result);
 
-    // Clean up worker thread
-    if (worker_index >= 0) {
-        auto& aw = m_active_workers[worker_index];
-        if (aw.thread) {
-            aw.thread->quit();
-            aw.thread->wait(ost::kTimeoutThreadShutdownMs);
-            aw.thread->deleteLater();
-        }
-        m_active_workers.removeAt(worker_index);
-    }
+    destroyActiveWorker(worker_index);
 
     // Start next file if available
     startNextFile();
+}
+
+void OstConverterController::destroyActiveWorker(int worker_index) {
+    if (worker_index < 0 || worker_index >= m_active_workers.size()) {
+        return;
+    }
+    // The worker was created without a parent and never deleted, leaking on every
+    // completed conversion; delete it once its thread has stopped, then the thread.
+    auto& aw = m_active_workers[worker_index];
+    disposeWorker(aw);
+    m_active_workers.removeAt(worker_index);
+}
+
+void OstConverterController::disposeWorker(ActiveWorker& aw) {
+    if (aw.thread == nullptr) {
+        return;
+    }
+    aw.thread->quit();
+    // The worker checks the cancel flag at every folder/item loop, so a cancelled conversion
+    // returns promptly and this graceful wait succeeds. We deliberately do NOT call terminate():
+    // forcibly killing a thread mid-PST-write can corrupt the output file and leave internal locks
+    // held. If the thread still has not stopped after the full budget (e.g. blocked in a stuck
+    // syscall), it goes to the shared thread custody rather than being deleted -- or force-killed
+    // -- while live: reported, and destroyed with its worker once it runs to completion.
+    const int stop_budget_ms = ost::kTimeoutThreadShutdownMs + ost::kTimeoutThreadTerminateMs;
+    if (aw.thread->wait(stop_budget_ms)) {
+        delete aw.worker;
+        delete aw.thread;
+    } else {
+        // A retained conversion's late signals carry no batch identity; they must not reach the
+        // batch that runs next.
+        disconnect(aw.worker, nullptr, this, nullptr);
+        struct RetainedConversion {
+            std::unique_ptr<QThread> thread;
+            std::unique_ptr<OstConversionWorker> worker;  // Destroyed first, after the thread.
+        };
+        auto retained = std::make_shared<RetainedConversion>();
+        retained->thread.reset(aw.thread);
+        retained->worker.reset(aw.worker);
+        ThreadCustody::retain(aw.thread,
+                              retained,
+                              QStringLiteral("OST conversion still running %1 ms after its "
+                                             "cancel request")
+                                  .arg(stop_budget_ms));
+    }
+    aw.worker = nullptr;
+    aw.thread = nullptr;
 }
 
 void OstConverterController::onWorkerProgress(int items_done, int items_total, QString folder) {
@@ -358,7 +468,7 @@ void OstConverterController::onWorkerError(QString message) {
         }
     }
 
-    logError("OST Converter: worker error — {}", message.toStdString());
+    logError("OST Converter: worker error - {}", message.toStdString());
     Q_EMIT errorOccurred(file_index, message);
 }
 

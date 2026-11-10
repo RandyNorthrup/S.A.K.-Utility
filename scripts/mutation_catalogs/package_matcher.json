@@ -1,0 +1,48 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_package_matcher",
+  "ctest_regex": "^test_package_matcher$",
+  "mutants": [
+    {
+      "id": "exact-direct-confidence-degraded",
+      "file": "src/core/package_matcher.cpp",
+      "find": ".confidence = 1.0,",
+      "replace": ".confidence = 0.5,",
+      "expect": "killed",
+      "why": "a direct table hit reports perfect confidence; findMatch_exactMapping pins 1.0."
+    },
+    {
+      "id": "case-insensitive-compare-inverted",
+      "file": "src/core/package_matcher.cpp",
+      "find": "if (it.key().compare(app_name, Qt::CaseInsensitive) == 0) {",
+      "replace": "if (it.key().compare(app_name, Qt::CaseInsensitive) != 0) {",
+      "expect": "killed",
+      "why": "the second pass matches a name in another case, and only that name; findMatch_caseInsensitive and findMatch_noResult pin both sides."
+    },
+    {
+      "id": "blank-mapping-guard-weakened",
+      "file": "src/core/package_matcher.cpp",
+      "find": "if (normalized.isEmpty() || choco_package.isEmpty()) {",
+      "replace": "if (normalized.isEmpty() && choco_package.isEmpty()) {",
+      "expect": "killed",
+      "why": "a mapping with a name and no package must not be stored: it would surface as an empty suggestion."
+    },
+    {
+      "id": "store-apps-get-matched",
+      "file": "src/core/package_matcher.cpp",
+      "find": "if (app.source == AppScanner::AppInfo::Source::AppX) {",
+      "replace": "if (app.source != AppScanner::AppInfo::Source::AppX) {",
+      "expect": "killed",
+      "why": "Chocolatey does not install Store apps, and desktop apps must still match; applyMatches_leavesStoreAppsUnmatched and applyMatches_recordsTheTableMatchOnADesktopApp."
+    },
+    {
+      "id": "chocolatey-own-package-kept",
+      "file": "src/core/package_matcher.cpp",
+      "find": "if (app.choco_package.compare(kChocolateyOwnPackage, Qt::CaseInsensitive) == 0) {",
+      "replace": "if (app.choco_package.compare(kChocolateyOwnPackage, Qt::CaseInsensitive) != 0) {",
+      "expect": "killed",
+      "why": "Chocolatey itself is not offered for reinstall, and every other package keeps its id; applyMatches_dropsChocolateysOwnPackage and applyMatches_keepsTheIdChocolateyReported."
+    }
+  ]
+}

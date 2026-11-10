@@ -27,10 +27,11 @@ protected:
     bool initStream() override;
     void cleanupStream() override;
     void setInputFromBuffer(size_t bytes) override;
-    void setOutput(char* data, size_t maxSize) override;
+    void setOutput(char* data, size_t max_size) override;
     [[nodiscard]] size_t outputRemaining() const override;
     [[nodiscard]] bool inputEmpty() const override;
     StepResult decompressStep() override;
+    bool resetStreamForNextMember() override;
 
 private:
     bz_stream m_bzstream{};

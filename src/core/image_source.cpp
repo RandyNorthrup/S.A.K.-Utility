@@ -15,6 +15,58 @@
 #include <QFileInfo>
 
 #include <algorithm>
+#include <vector>
+
+namespace {
+// Reads during a measure or a seek go to a scratch buffer and are thrown away.
+constexpr qint64 kDiscardBufferBytes = 1024 * 1024;
+
+// A POSIX tar header carries "ustar" at this offset of its first 512-byte block.
+constexpr qint64 kTarMagicOffset = 257;
+constexpr QByteArrayView kTarMagic("ustar");
+
+bool looksLikeTarArchive(const char* data, qint64 length) {
+    return length >= kTarMagicOffset + kTarMagic.size() &&
+           QByteArrayView(data + kTarMagicOffset, kTarMagic.size()) == kTarMagic;
+}
+
+// A fresh stream for measuring, independent of any open source, or null with the reason in @p
+// error.
+std::unique_ptr<sak::StreamingDecompressor> openForMeasuring(const QString& filePath,
+                                                             QString* error) {
+    auto decompressor = sak::DecompressorFactory::create(filePath);
+    if (!decompressor) {
+        *error = QString("Unsupported or undetected compression format: %1").arg(filePath);
+        return nullptr;
+    }
+    if (!decompressor->open(filePath)) {
+        *error = decompressor->lastError();
+        return nullptr;
+    }
+    return decompressor;
+}
+
+// Tells the caller how far through the compressed file a measurement is, once per whole percent.
+class MeasureProgress {
+public:
+    MeasureProgress(const std::function<void(qint64, qint64)>& report, qint64 compressedTotal)
+        : m_report(report), m_compressedTotal(compressedTotal) {}
+
+    void update(qint64 compressedRead) {
+        const qint64 percent =
+            m_compressedTotal > 0 ? (compressedRead * sak::kPercentMax) / m_compressedTotal : 0;
+        if (m_report && percent != m_lastPercent) {
+            m_lastPercent = percent;
+            m_report(compressedRead, m_compressedTotal);
+        }
+    }
+
+private:
+    const std::function<void(qint64, qint64)>& m_report;
+    qint64 m_compressedTotal;
+    qint64 m_lastPercent = -1;
+};
+}  // namespace
 
 // ============================================================================
 // ImageSource Base Class
@@ -41,7 +93,7 @@ FileImageSource::~FileImageSource() {
 }
 
 bool FileImageSource::open() {
-    Q_ASSERT(m_device);
+    // m_device is null until created below on the first open(); the null-guard is the real logic.
     if (m_device && m_device->isOpen()) {
         return true;
     }
@@ -54,6 +106,14 @@ bool FileImageSource::open() {
     }
 
     m_device = std::move(file);
+    // Bind the reported size to the handle we actually opened, not to the pre-open stat taken in
+    // the constructor: a reparse-point or file swap between construction and open() would leave
+    // size() reporting file A while every read comes from file B. The open handle is the
+    // authority the capacity gate must trust.
+    const qint64 openedSize = m_device->size();
+    if (openedSize >= 0) {
+        m_metadata.size = openedSize;
+    }
     sak::logInfo(QString("Opened image: %1 (%2 bytes)")
                      .arg(m_metadata.name)
                      .arg(m_metadata.size)
@@ -74,13 +134,18 @@ bool FileImageSource::isOpen() const {
 }
 
 qint64 FileImageSource::read(char* data, qint64 maxSize) {
-    Q_ASSERT(m_device);
-    Q_ASSERT(data);
+    // read() is public on the ImageSource interface, so the buffer arrives from outside this
+    // class: reject a null one with the documented -1 error instead of handing it to
+    // QIODevice::read. m_device is covered by the isOpen() check below.
+    if (data == nullptr) {
+        sak::logError("FileImageSource::read called with a null buffer");
+        return -1;
+    }
     if (!isOpen()) {
         return -1;
     }
 
-    qint64 bytesRead = m_device->read(data, maxSize);
+    const qint64 bytesRead = m_device->read(data, maxSize);
     if (bytesRead < 0) {
         sak::logError(QString("Read error: %1")
                           .arg(static_cast<QFile*>(m_device.get())->errorString())
@@ -121,16 +186,20 @@ sak::ImageMetadata FileImageSource::metadata() const {
 }
 
 QString FileImageSource::calculateChecksum() {
-    Q_ASSERT(m_device);
     if (!isOpen()) {
         if (!open()) {
             return QString();
         }
     }
 
-    // Save current position
-    qint64 oldPos = position();
-    m_device->seek(0);
+    const qint64 oldPos = position();
+    // A seek that failed leaves the cursor wherever it was, so the hash would cover a SUFFIX of
+    // the image and be returned as the checksum of the whole thing -- a wrong digest is worse
+    // than no digest, because the caller compares it and believes the answer.
+    if (!m_device->seek(0)) {
+        sak::logError("Could not rewind the image to checksum it");
+        return QString();
+    }
 
     // Calculate SHA-512
     QCryptographicHash hash(QCryptographicHash::Sha512);
@@ -138,23 +207,43 @@ QString FileImageSource::calculateChecksum() {
     const qint64 bufferSize = 64 * 1024 * 1024;  // 64MB
     QByteArray buffer(bufferSize, 0);
     qint64 totalRead = 0;
+    // size() is metadata; the device is the thing being read. A stale or zero size would divide
+    // by zero below, and progress is a report about the read, so it is derived from what the
+    // device says it holds and simply omitted when that is not known.
+    const qint64 totalBytes = m_device->size();
 
     while (!atEnd()) {
-        qint64 bytesRead = read(buffer.data(), bufferSize);
+        const qint64 bytesRead = read(buffer.data(), bufferSize);
         if (bytesRead < 0) {
             sak::logError("Error reading file for checksum");
+            // Restore before returning: this function is a read-only observation, and leaving
+            // the cursor parked mid-image silently changes what every later read of this source
+            // returns. The failure is reported by the empty checksum, not by moving the file.
+            static_cast<void>(m_device->seek(oldPos));
             return QString();
         }
 
         hash.addData(QByteArrayView(buffer.data(), static_cast<qsizetype>(bytesRead)));
         totalRead += bytesRead;
 
-        int percentage = static_cast<int>((totalRead * sak::kPercentMax) / size());
-        Q_EMIT checksumProgress(percentage);
+        if (totalBytes > 0) {
+            const int percentage = static_cast<int>((totalRead * sak::kPercentMax) / totalBytes);
+            Q_EMIT checksumProgress(percentage);
+        }
+    }
+
+    // The image must not change length under us mid-hash: if the bytes we read do not match what
+    // the handle reported before the loop, a concurrent truncation or growth raced the read and
+    // the digest would certify a prefix (or a short read) as the whole image. A wrong digest the
+    // caller compares and trusts is worse than none, so fail closed.
+    if (totalBytes >= 0 && totalRead != totalBytes) {
+        sak::logError("Image length changed during checksum; refusing to certify a partial read");
+        static_cast<void>(m_device->seek(oldPos));
+        return QString();
     }
 
     // Restore position
-    m_device->seek(oldPos);
+    static_cast<void>(m_device->seek(oldPos));
 
     QString checksum = hash.result().toHex();
     m_metadata.checksum = checksum;
@@ -164,7 +253,8 @@ QString FileImageSource::calculateChecksum() {
 }
 
 sak::ImageFormat FileImageSource::detectFormat(const QString& filePath) {
-    Q_ASSERT(!filePath.isEmpty());
+    // A total function over any path: an empty or unrecognised extension is
+    // ImageFormat::Unknown, which callers must handle anyway. No assert.
     QString ext = QFileInfo(filePath).suffix().toLower();
 
     struct FormatEntry {
@@ -172,20 +262,19 @@ sak::ImageFormat FileImageSource::detectFormat(const QString& filePath) {
         sak::ImageFormat format;
     };
     static constexpr FormatEntry kFormats[] = {
-        {"iso", sak::ImageFormat::ISO},
-        {"img", sak::ImageFormat::IMG},
-        {"wic", sak::ImageFormat::WIC},
-        {"zip", sak::ImageFormat::ZIP},
-        {"gz", sak::ImageFormat::GZIP},
-        {"bz2", sak::ImageFormat::BZIP2},
-        {"xz", sak::ImageFormat::XZ},
-        {"dmg", sak::ImageFormat::DMG},
-        {"dsk", sak::ImageFormat::DSK},
+        {.ext = "iso", .format = sak::ImageFormat::ISO},
+        {.ext = "img", .format = sak::ImageFormat::IMG},
+        {.ext = "wic", .format = sak::ImageFormat::WIC},
+        {.ext = "zip", .format = sak::ImageFormat::ZIP},
+        {.ext = "gz", .format = sak::ImageFormat::GZIP},
+        {.ext = "bz2", .format = sak::ImageFormat::BZIP2},
+        {.ext = "xz", .format = sak::ImageFormat::XZ},
+        {.ext = "dmg", .format = sak::ImageFormat::DMG},
+        {.ext = "dsk", .format = sak::ImageFormat::DSK},
     };
-    const auto it =
-        std::find_if(std::begin(kFormats), std::end(kFormats), [&ext](const auto& entry) {
-            return ext == QLatin1String(entry.ext);
-        });
+    const auto* const it = std::ranges::find_if(kFormats, [&ext](const auto& entry) {
+        return ext == QLatin1String(entry.ext);
+    });
     if (it != std::end(kFormats)) {
         return it->format;
     }
@@ -196,15 +285,14 @@ sak::ImageFormat FileImageSource::detectFormat(const QString& filePath) {
         sak::ImageFormat format;
     };
     static constexpr CompoundEntry kCompound[] = {
-        {".gz", sak::ImageFormat::GZIP},
-        {".bz2", sak::ImageFormat::BZIP2},
-        {".xz", sak::ImageFormat::XZ},
+        {.suffix = ".gz", .format = sak::ImageFormat::GZIP},
+        {.suffix = ".bz2", .format = sak::ImageFormat::BZIP2},
+        {.suffix = ".xz", .format = sak::ImageFormat::XZ},
     };
     QString fullExt = QFileInfo(filePath).completeSuffix().toLower();
-    const auto cit =
-        std::find_if(std::begin(kCompound), std::end(kCompound), [&fullExt](const auto& entry) {
-            return fullExt.endsWith(QLatin1String(entry.suffix));
-        });
+    const auto* const cit = std::ranges::find_if(kCompound, [&fullExt](const auto& entry) {
+        return fullExt.endsWith(QLatin1String(entry.suffix));
+    });
     if (cit != std::end(kCompound)) {
         return cit->format;
     }
@@ -225,7 +313,7 @@ CompressedImageSource::CompressedImageSource(const QString& filePath, QObject* p
     m_metadata.isCompressed = true;
 
     // Determine compression type
-    QString ext = QFileInfo(filePath).suffix().toLower();
+    const QString ext = QFileInfo(filePath).suffix().toLower();
     if (ext == "gz") {
         m_metadata.compressionType = "gzip";
     } else if (ext == "bz2") {
@@ -245,7 +333,7 @@ CompressedImageSource::~CompressedImageSource() {
 }
 
 bool CompressedImageSource::open() {
-    Q_ASSERT(m_decompressor);
+    // m_decompressor is null until created below on the first open(); the null-guard is the logic.
     if (m_decompressor) {
         sak::logWarning("CompressedImageSource already open");
         return true;
@@ -254,7 +342,8 @@ bool CompressedImageSource::open() {
     // Create decompressor using factory
     m_decompressor = sak::DecompressorFactory::create(m_filePath);
     if (!m_decompressor) {
-        QString error = QString("Unsupported or undetected compression format: %1").arg(m_filePath);
+        const QString error =
+            QString("Unsupported or undetected compression format: %1").arg(m_filePath);
         sak::logError(error.toStdString());
         Q_EMIT readError(error);
         return false;
@@ -262,23 +351,31 @@ bool CompressedImageSource::open() {
 
     // Open the decompressor
     if (!m_decompressor->open(m_filePath)) {
-        QString error = QString("Failed to open compressed file: %1").arg(m_filePath);
+        const QString error = QString("Failed to open compressed file: %1 (%2)")
+                                  .arg(m_filePath, m_decompressor->lastError());
         sak::logError(error.toStdString());
         Q_EMIT readError(error);
         m_decompressor.reset();
         return false;
     }
 
+    // Record the true uncompressed size when the decompressor can report it. It
+    // feeds the flash capacity gate; a compressed stream must NEVER be gated on
+    // its on-disk (compressed) size. When it stays unknown, size() returns -1 so
+    // the gate fails closed instead of approving an oversized decompressed image.
+    const qint64 uncompressed = m_decompressor->uncompressedSize();
+    if (uncompressed >= 0) {
+        m_metadata.uncompressedSize = uncompressed;
+    }
+
     // Connect progress signals
     connect(m_decompressor.get(),
             &sak::StreamingDecompressor::progressUpdated,
             this,
-            [this](qint64 compressedBytes, qint64 decompressedBytes) {
-                Q_UNUSED(decompressedBytes);
-
+            [this](qint64 compressedBytes, qint64) {
                 // Calculate percentage based on compressed file size
                 if (m_metadata.size > 0) {
-                    int percentage =
+                    const int percentage =
                         static_cast<int>((compressedBytes * sak::kPercentMax) / m_metadata.size);
                     Q_EMIT decompressionProgress(percentage);
                 }
@@ -305,15 +402,31 @@ bool CompressedImageSource::isOpen() const {
 }
 
 qint64 CompressedImageSource::read(char* data, qint64 maxSize) {
-    Q_ASSERT(m_decompressor);
-    Q_ASSERT(data);
+    // Public interface entry point: reject a null buffer with the documented -1 error.
+    // m_decompressor is covered by the isOpen() check below.
+    if (data == nullptr) {
+        sak::logError("CompressedImageSource::read called with a null buffer");
+        return -1;
+    }
+    // A negative length is not a short read to tolerate: it is a malformed request that would
+    // reach the backend as an unbounded/garbage width. Reject it with the documented -1.
+    if (maxSize < 0) {
+        sak::logError("CompressedImageSource::read called with a negative length");
+        return -1;
+    }
     if (!isOpen()) {
         sak::logError("Cannot read from closed CompressedImageSource");
         return -1;
     }
 
-    qint64 bytesRead = m_decompressor->read(data, maxSize);
-    if (bytesRead > 0) {
+    const qint64 bytesRead = m_decompressor->read(data, maxSize);
+    if (bytesRead < 0) {
+        // Surface the decompressor's real failure instead of a bare -1: malformed compressed
+        // input must reach the caller as the actual error, not a silent short read.
+        const QString err = m_decompressor->lastError();
+        sak::logError(QString("Decompressor read error: %1").arg(err).toStdString());
+        Q_EMIT readError(err.isEmpty() ? QStringLiteral("Decompressor read error") : err);
+    } else if (bytesRead > 0) {
         m_totalDecompressed += bytesRead;
     }
 
@@ -321,7 +434,13 @@ qint64 CompressedImageSource::read(char* data, qint64 maxSize) {
 }
 
 qint64 CompressedImageSource::size() const {
-    return m_metadata.uncompressedSize;
+    // Report the true UNCOMPRESSED size, never the compressed on-disk size: the
+    // flash capacity gate compares this against the target device, and gating a
+    // stream that decompresses to 50 GB on its 100 MB compressed size would let
+    // it clobber the whole device before failing at end-of-media. When the size
+    // is unknown (the decompressor could not determine it), return -1 so the gate
+    // fails closed rather than approving an unbounded write.
+    return m_metadata.uncompressedSize > 0 ? m_metadata.uncompressedSize : -1;
 }
 
 qint64 CompressedImageSource::position() const {
@@ -329,11 +448,26 @@ qint64 CompressedImageSource::position() const {
 }
 
 bool CompressedImageSource::seek(qint64 pos) {
-    // Seeking in compressed streams is not supported
-    // Would require decompressing from beginning to reach position
-    Q_UNUSED(pos);
-    sak::logWarning("Seek not supported for compressed streams");
-    return false;
+    // A compressed stream can only be read forward, so a seek decodes up to the position and
+    // throws the bytes away, and going backward starts over. Sample verification asks for its
+    // blocks in ascending order, so one pass over the stream serves all of them.
+    if (pos < 0 || !isOpen()) {
+        return false;
+    }
+    if (pos < m_totalDecompressed) {
+        close();
+        if (!open()) {
+            return false;
+        }
+    }
+    std::vector<char> discard(static_cast<size_t>(kDiscardBufferBytes));
+    while (m_totalDecompressed < pos) {
+        const qint64 wanted = std::min(kDiscardBufferBytes, pos - m_totalDecompressed);
+        if (read(discard.data(), wanted) <= 0) {
+            return false;  // Past the end of the image, or the stream failed.
+        }
+    }
+    return true;
 }
 
 bool CompressedImageSource::atEnd() const {
@@ -353,12 +487,6 @@ QString CompressedImageSource::calculateChecksum() {
         return QString();
     }
 
-    // Save current position
-    qint64 savedPos = m_totalDecompressed;
-    // Note: Position restoration not possible for compressed streams
-    // Must reopen to reset decompression state
-    Q_UNUSED(savedPos);
-
     // Close and reopen to reset decompression stream
     close();
     if (!open()) {
@@ -372,9 +500,11 @@ QString CompressedImageSource::calculateChecksum() {
     std::vector<char> buffer(bufferSize);
 
     while (!atEnd()) {
-        qint64 bytesRead = read(buffer.data(), bufferSize);
+        const qint64 bytesRead = read(buffer.data(), bufferSize);
         if (bytesRead < 0) {
-            sak::logError("Error reading data during checksum calculation");
+            sak::logError(QString("Error reading data during checksum calculation: %1")
+                              .arg(m_decompressor ? m_decompressor->lastError() : QString())
+                              .toStdString());
             return QString();
         }
         if (bytesRead > 0) {
@@ -382,9 +512,13 @@ QString CompressedImageSource::calculateChecksum() {
         }
     }
 
-    // Close and reopen to reset
+    // Close and reopen to reset the stream to the beginning so the caller can re-read from the
+    // start. The digest above is already complete and valid; a reopen failure here does not
+    // change it, but must not pass silently -- a later read would otherwise fail with no clue.
     close();
-    open();
+    if (!open()) {
+        sak::logError("Failed to reopen CompressedImageSource after checksum calculation");
+    }
 
     // Cannot restore position for compressed streams, user must re-read from start
     sak::logWarning("Checksum calculation reset decompression stream to beginning");
@@ -393,6 +527,57 @@ QString CompressedImageSource::calculateChecksum() {
 }
 
 bool CompressedImageSource::isCompressed(const QString& filePath) {
-    QString ext = QFileInfo(filePath).suffix().toLower();
-    return (ext == "gz" || ext == "bz2" || ext == "xz" || ext == "zip");
+    // Single source of truth: a file is "compressed" for flashing purposes ONLY
+    // when DecompressorFactory can actually stream-decompress it (gz/gzip, bz2/
+    // bzip2, xz/lzma; NOT zip -- a multi-member archive it cannot produce a raw
+    // image from). The old hand-rolled {gz,bz2,xz,zip} set both missed .gzip/
+    // .bzip2/.lzma (written raw) and wrongly accepted .zip.
+    if (filePath.isEmpty()) {
+        return false;
+    }
+    return sak::DecompressorFactory::isCompressed(filePath);
+}
+
+sak::CompressedImageMeasurement CompressedImageSource::measure(
+    const QString& filePath,
+    const std::function<bool()>& shouldStop,
+    const std::function<void(qint64, qint64)>& progress) {
+    sak::CompressedImageMeasurement outcome;
+    const auto decompressor = openForMeasuring(filePath, &outcome.error);
+    if (!decompressor) {
+        return outcome;
+    }
+
+    MeasureProgress reporter(progress, QFileInfo(filePath).size());
+    std::vector<char> discard(static_cast<size_t>(kDiscardBufferBytes));
+    qint64 total = 0;
+    while (!decompressor->atEnd()) {
+        if (shouldStop && shouldStop()) {
+            outcome.cancelled = true;
+            return outcome;
+        }
+        const qint64 got = decompressor->read(discard.data(), kDiscardBufferBytes);
+        if (got < 0) {
+            outcome.error = decompressor->lastError();
+            return outcome;
+        }
+        if (total == 0 && looksLikeTarArchive(discard.data(), got)) {
+            outcome.error = QStringLiteral(
+                "It is a compressed tar archive, not a disk image. Extract it and flash the "
+                "image inside.");
+            return outcome;
+        }
+        total += got;
+        reporter.update(decompressor->compressedBytesRead());
+    }
+    if (total == 0) {
+        outcome.error = QStringLiteral("It decompresses to nothing, so there is nothing to flash.");
+        return outcome;
+    }
+    outcome.uncompressedBytes = total;
+    return outcome;
+}
+
+void CompressedImageSource::setUncompressedSize(qint64 bytes) {
+    m_metadata.uncompressedSize = bytes > 0 ? bytes : 0;
 }

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="#808080" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+  <!-- S.A.K.-Utility original, Fluent-style outline glyph. AGPL-3.0-or-later. -->
+  <!-- Mid-gray stroke: referenced directly from QSS (no palette tinting), so it must read on both themes. -->
+  <path d="m4.5 4.5 7 7"/>
+  <path d="m11.5 4.5-7 7"/>
+</svg>

@@ -24,6 +24,7 @@ class QPushButton;
 class QSpinBox;
 class QTableWidget;
 class QVBoxLayout;
+class OstConverterWidgetTests;
 
 namespace sak {
 
@@ -32,6 +33,7 @@ class OstConverterController;
 /// @brief Main UI for the OST/PST Converter tab
 class OstConverterWidget : public QWidget {
     Q_OBJECT
+    friend class ::OstConverterWidgetTests;
 
 public:
     explicit OstConverterWidget(QWidget* parent = nullptr);
@@ -72,7 +74,6 @@ private Q_SLOTS:
     void onErrorOccurred(int file_index, QString message);
 
     // Format change
-    void onFormatChanged(int index);
 
     // Report
     void onViewReportClicked();
@@ -87,12 +88,10 @@ private:
     QWidget* createOutputSettingsSection();
     void addOutputFormatRow(QVBoxLayout* layout, QWidget* group);
     void addOutputOptionsRow(QVBoxLayout* layout, QWidget* group);
-    void addPstSplitRow(QVBoxLayout* layout, QWidget* group);
     QWidget* createFilterSection();
     void addFilterDateRow(QVBoxLayout* layout);
     void addFilterTextRows(QVBoxLayout* layout);
     QWidget* createRecoverySection();
-    QWidget* createImapSection();
     QWidget* createButtonBar();
 
     // Helpers
@@ -100,6 +99,9 @@ private:
     [[nodiscard]] OstConversionConfig buildConfig() const;
     void updateQueueRow(int row, const OstConversionJob& job);
     [[nodiscard]] static QString formatBytes(qint64 bytes);
+    /// What a finished row's Progress column says: converted, failed, and left out.
+    [[nodiscard]] static QString progressSummary(const OstConversionResult& result);
+
     [[nodiscard]] static QString statusLabel(OstConversionJob::Status status);
     void loadSettings();
     void saveSettings();
@@ -114,13 +116,9 @@ private:
     QPushButton* m_clear_button{nullptr};
 
     // -- Output Settings Section ------------------------------------------
-    QComboBox* m_format_combo{nullptr};
     QLineEdit* m_output_dir_edit{nullptr};
     QPushButton* m_browse_button{nullptr};
-    QCheckBox* m_split_check{nullptr};
-    QComboBox* m_split_size_combo{nullptr};
-    QCheckBox* m_preserve_folders_check{nullptr};
-    QCheckBox* m_prefix_date_check{nullptr};
+    QCheckBox* m_mbox_per_folder_check{nullptr};
     QSpinBox* m_threads_spin{nullptr};
 
     // -- Filter Section ---------------------------------------------------
@@ -136,16 +134,6 @@ private:
     QGroupBox* m_recovery_group{nullptr};
     QCheckBox* m_recover_deleted_check{nullptr};
     QCheckBox* m_deep_recovery_check{nullptr};
-    QCheckBox* m_skip_corrupt_check{nullptr};
-
-    // -- IMAP Upload Section ----------------------------------------------
-    QGroupBox* m_imap_group{nullptr};
-    QLineEdit* m_imap_host_edit{nullptr};
-    QSpinBox* m_imap_port_spin{nullptr};
-    QCheckBox* m_imap_ssl_check{nullptr};
-    QComboBox* m_imap_auth_combo{nullptr};
-    QLineEdit* m_imap_user_edit{nullptr};
-    QLineEdit* m_imap_password_edit{nullptr};
 
     // -- Progress Tracking ------------------------------------------------
     int m_total_files{0};

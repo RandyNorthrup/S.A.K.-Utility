@@ -8,6 +8,7 @@
         <file>icons/microsoft_logo.svg</file>
         <file>icons/uup_logo.svg</file>
         <file>icons/tux_logo.svg</file>
+        <file>icons/tux_logo-dark.svg</file>
         <file>icons/backup.svg</file>
         <file>icons/restore.svg</file>
         <file>icons/features.svg</file>
@@ -15,27 +16,39 @@
         <file>icons/help.svg</file>
         <file>icons/discord.svg</file>
         <file>icons/panel_app_install.svg</file>
+        <file>icons/panel_app_install-dark.svg</file>
         <file>icons/panel_backup_restore.svg</file>
+        <file>icons/panel_backup_restore-dark.svg</file>
         <file>icons/panel_diagnostic.svg</file>
+        <file>icons/panel_diagnostic-dark.svg</file>
         <file>icons/panel_help.svg</file>
+        <file>icons/panel_help-dark.svg</file>
         <file>icons/panel_image_flasher.svg</file>
+        <file>icons/panel_image_flasher-dark.svg</file>
         <file>icons/panel_network.svg</file>
+        <file>icons/panel_network-dark.svg</file>
         <file>icons/panel_organizer.svg</file>
-        <file>icons/panel_partition_manager.svg</file>
-        <file>icons/panel_quick_actions.svg</file>
+        <file>icons/panel_organizer-dark.svg</file>
         <file>icons/panel_search.svg</file>
+        <file>icons/panel_search-dark.svg</file>
         <file>icons/panel_uninstall.svg</file>
+        <file>icons/panel_uninstall-dark.svg</file>
         <file>icons/panel_wifi.svg</file>
+        <file>icons/panel_wifi-dark.svg</file>
         <file>icons/panel_about.svg</file>
+        <file>icons/panel_about-dark.svg</file>
         <file>icons/panel_email.svg</file>
+        <file>icons/panel_email-dark.svg</file>
         <file>icons/panel_ai.svg</file>
+        <file>icons/panel_ai-dark.svg</file>
         <file>icons/icons8-benchmark.svg</file>
+        <file>icons/icons8-benchmark-dark.svg</file>
         <file>icons/icons8-duplicate.svg</file>
+        <file>icons/icons8-duplicate-dark.svg</file>
         <file>icons/icons8-settings_help.svg</file>
         <file>icons/icons8-source.svg</file>
-        <file>icons/icons8-destination.svg</file>
-        <file>icons/icons8-orchestrator.svg</file>
         <file>icons/icons8-network-card.svg</file>
+        <file>icons/icons8-network-card-dark.svg</file>
         <file>icons/icons8-address-book.svg</file>
         <file>icons/icons8-attachment.svg</file>
         <file>icons/icons8-calendar.svg</file>
@@ -53,12 +66,17 @@
         <file>icons/icons8-new-chat.svg</file>
         <file>icons/icons8-rename.svg</file>
         <file>icons/icons8-trash.svg</file>
+        <file>icons/button-close.svg</file>
+        <file>icons/button-send.svg</file>
+        <file>icons/button-rename.svg</file>
+        <file>icons/button-attach.svg</file>
         <file>icons/icons8-spam.svg</file>
         <file>icons/icons8-star.svg</file>
         <file>icons/icons8-folder.svg</file>
         <file>icons/icons8-clock.svg</file>
         <file>icons/icons8-keyhole-shield.svg</file>
         <file>icons/icons8-warning-shield.svg</file>
+        <file>icons/icons8-warning-shield-dark.svg</file>
         <file>icons/icons8-lock.svg</file>
         <file>icons/icons8-selector-chevron-down.svg</file>
         <file>icons/icons8-selector-chevron-down-dark.svg</file>
@@ -75,13 +93,15 @@
         <file>icons/icons8-selector-calendar.svg</file>
         <file>icons/icons8-selector-calendar-dark.svg</file>
         <file>icons/icons8-selector-check.svg</file>
+        <file>icons/checkbox-tick-on-tone.svg</file>
+        <file>icons/checkbox-dash-on-tone.svg</file>
         <file>icons/icons8-pm-apply.svg</file>
         <file>icons/icons8-pm-undo.svg</file>
         <file>icons/icons8-pm-discard.svg</file>
         <file>icons/icons8-pm-copy.svg</file>
         <file>icons/icons8-pm-properties.svg</file>
         <file>icons/icons8-pm-disk.svg</file>
-        <file>icons/icons8-pm-data-transfer.svg</file>
+        <file>icons/icons8-pm-disk-dark.svg</file>
         <file>icons/icons8-pm-data-recovery.svg</file>
         <file>icons/icons8-pm-align.svg</file>
         <file>icons/icons8-pm-delete.svg</file>
@@ -94,7 +114,6 @@
         <file>icons/icons8-pm-resize.svg</file>
         <file>icons/icons8-pm-split.svg</file>
         <file>icons/icons8-pm-dry-run.svg</file>
-        <file>icons/icons8-pm-ssd.svg</file>
         <file>icons/icons8-pm-os-drive.svg</file>
         <file>icons/files/refresh.svg</file>
         <file>icons/files/new-folder.svg</file>
@@ -123,5 +142,26 @@
         <file>icons/files/properties-security.svg</file>
         <file>icons/files/more.svg</file>
         <file>icons/files/manifest.json</file>
+        <file>icons/fluent/nav-back.svg</file>
+        <file>icons/fluent/nav-forward.svg</file>
+        <file>icons/fluent/nav-up.svg</file>
+        <file>icons/fluent/search.svg</file>
+        <file>icons/fluent/plus.svg</file>
+        <file>icons/fluent/chevron-right.svg</file>
+        <file>icons/fluent/home.svg</file>
+        <file>icons/fluent/drive.svg</file>
+        <file>icons/fluent/folder.svg</file>
+        <file>icons/fluent/file.svg</file>
+        <file>icons/fluent/image-file.svg</file>
+        <file>icons/fluent/recent.svg</file>
+        <file>icons/fluent/tag.svg</file>
+        <file>icons/fluent/shield.svg</file>
+        <file>icons/fluent/scan-disks.svg</file>
+        <file>icons/fluent/close.svg</file>
+        <file>icons/fluent/select-mode.svg</file>
+        <file>icons/fluent/sort.svg</file>
+        <file>icons/fluent/copy.svg</file>
+        <file>icons/fluent/paste.svg</file>
+        <file>icons/fluent/cut.svg</file>
     </qresource>
 </RCC>

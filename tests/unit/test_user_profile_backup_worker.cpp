@@ -1,42 +1,463 @@
 // Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/backup_file_codec.h"
 #include "sak/user_profile_backup_worker.h"
+#include "sak/user_profile_progress.h"
 
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QProcess>
+#include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
+
+#include <atomic>
+#include <limits>
+#include <utility>
+
+#include <windows.h>
 
 using namespace sak;
 
 /**
  * @brief Unit tests for UserProfileBackupWorker.
  *
- * Tests construction, initial state, and cancel behavior.
- * Actual backup operations require real file system access
- * and are not tested here.
+ * Tests construction, state, cancellation, validation, and real backup operations against
+ * isolated temporary source/destination trees, including encrypted and compressed containers.
  */
 class TestUserProfileBackupWorker : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ────────────────────────────────────────
-    void testConstruction();
+    // -- Construction ----------------------------------------
     void testNotRunningInitially();
 
-    // ── Cancel ──────────────────────────────────────────────
+    // -- Cancel ----------------------------------------------
     void testCancelWhenNotRunning();
+
+    // -- B7-01: lifetime uses QThread state, not a late member flag --
+    void testStartThenImmediateDestroyIsSafe();
+
+    // -- B7-08: username / relative-path traversal validation --
+    void isSafePathSegment_acceptsNamesRejectsTraversal();
+    void isSafeRelativePath_acceptsRelativeRejectsEscapes();
+    void extendedLengthPath_handlesLongAndUncPaths();
+
+    // -- B7-20: incomplete backups must not report a clean success --
+    void backupMissingSelectedFolderReportsFailure();
+    void backupExistingFolderReportsSuccess();
+    void windowsCompatibilityLinkIsSkippedNotCounted();
+    void anyOtherLinkStillCountsAsAnError();
+
+    // -- R5-G19-1: the transforms must actually be applied, not just accepted --
+    void encryptedBackupStoresCiphertextAndRestoresIt();
+    void compressedBackupStoresContainerAndRestoresIt();
+    void encryptionWithoutPasswordRefusesToStart();
+
+    // -- Aggregate byte progress --------------------------------
+    void progressState_usesBytesAndHandlesUnknownTotals();
+    void overallProgress_reportsExactMonotonicBytes();
+    void cancelledBackupNeverReportsCompletionProgress();
+
+private:
+    struct BackupOutcome {
+        std::atomic<bool> done{false};
+        bool success{false};
+        QString message;
+    };
+    // What a helper-driven backup reported. `completed` is kept separate from `success`
+    // so a run that never emits backupComplete fails its test instead of defaulting into
+    // whichever outcome that test expected.
+    struct BackupRun {
+        bool completed{false};
+        bool success{false};
+        QString message;
+    };
+    // Run a one-user backup on @p worker to completion. The worker is caller-owned so a
+    // test can put it in a specific state (e.g. a stale cancel) before the run.
+    static BackupRun runBackup(UserProfileBackupWorker& worker,
+                               const QString& profilePath,
+                               const sak::FolderSelection& folder,
+                               const QString& destPath);
+    /// Same, with explicit transform options.
+    static BackupRun runBackupWith(UserProfileBackupWorker& worker,
+                                   const QString& profilePath,
+                                   const sak::FolderSelection& folder,
+                                   const QString& destPath,
+                                   const UserProfileBackupWorker::BackupOptions& options);
+    /// A Documents folder holding hello.txt and a junction @p link_name to the profile's Music
+    /// folder, hidden and system when @p windows_attributes, as Windows makes My Music.
+    static bool makeDocumentsWithLink(const QString& profile,
+                                      const QString& link_name,
+                                      bool windows_attributes);
+    static sak::FolderSelection documentsFolder();
 };
+
+namespace {
+bool makeJunction(const QString& link, const QString& target) {
+    // mklink /J needs no administrator rights. No console window: the test may run on a desktop.
+    QProcess mklink;
+    mklink.setCreateProcessArgumentsModifier(
+        [](QProcess::CreateProcessArguments* args) { args->flags |= CREATE_NO_WINDOW; });
+    mklink.start(QStringLiteral("cmd.exe"),
+                 {QStringLiteral("/d"),
+                  QStringLiteral("/c"),
+                  QStringLiteral("mklink"),
+                  QStringLiteral("/J"),
+                  QDir::toNativeSeparators(link),
+                  QDir::toNativeSeparators(target)});
+    return mklink.waitForFinished() && mklink.exitStatus() == QProcess::NormalExit &&
+           mklink.exitCode() == 0;
+}
+}  // namespace
+
+bool TestUserProfileBackupWorker::makeDocumentsWithLink(const QString& profile,
+                                                        const QString& link_name,
+                                                        bool windows_attributes) {
+    const QDir root(profile);
+    if (!root.mkpath(QStringLiteral("Documents")) || !root.mkpath(QStringLiteral("Music"))) {
+        return false;
+    }
+    QFile hello(root.filePath(QStringLiteral("Documents/hello.txt")));
+    if (!hello.open(QIODevice::WriteOnly) || hello.write("hello") < 0) {
+        return false;
+    }
+    hello.close();
+    const QString link = root.filePath(QStringLiteral("Documents/") + link_name);
+    if (!makeJunction(link, root.filePath(QStringLiteral("Music")))) {
+        return false;
+    }
+    return !windows_attributes ||
+           SetFileAttributesW(QDir::toNativeSeparators(link).toStdWString().c_str(),
+                              FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM) != FALSE;
+}
+
+sak::FolderSelection TestUserProfileBackupWorker::documentsFolder() {
+    sak::FolderSelection folder;
+    folder.type = sak::FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+    return folder;
+}
+
+TestUserProfileBackupWorker::BackupRun TestUserProfileBackupWorker::runBackup(
+    UserProfileBackupWorker& worker,
+    const QString& profilePath,
+    const sak::FolderSelection& folder,
+    const QString& destPath) {
+    UserProfileBackupWorker::BackupOptions options;
+    options.permission_mode = PermissionMode::PreserveOriginal;  // no ACL ops in the test
+    return runBackupWith(worker, profilePath, folder, destPath, options);
+}
+
+TestUserProfileBackupWorker::BackupRun TestUserProfileBackupWorker::runBackupWith(
+    UserProfileBackupWorker& worker,
+    const QString& profilePath,
+    const sak::FolderSelection& folder,
+    const QString& destPath,
+    const UserProfileBackupWorker::BackupOptions& options) {
+    UserProfile user;
+    user.username = QStringLiteral("tester");
+    user.profile_path = profilePath;
+    user.is_selected = true;
+    user.folder_selections = {folder};
+
+    // Pre-create the destination so the disk-space check (which runs before the
+    // backup creates the tree) sees a valid storage volume.
+    QDir().mkpath(destPath);
+
+    BackupOutcome outcome;
+    QObject::connect(
+        &worker,
+        &UserProfileBackupWorker::backupComplete,
+        &worker,
+        [&outcome](bool ok, const QString& msg, const BackupManifest&) {
+            outcome.success = ok;
+            outcome.message = msg;
+            outcome.done.store(true);
+        },
+        Qt::DirectConnection);
+
+    worker.startBackup(BackupManifest{}, {user}, destPath, SmartFilter{}, options);
+
+    // QTRY macros cannot return a value from a static helper; poll then join.
+    for (int i = 0; i < 500 && !outcome.done.load(); ++i) {
+        QTest::qWait(10);
+    }
+    // Bound the join so a wedged worker cannot hang the suite forever (the poll above already
+    // waited up to 5s for completion). A bare, unbounded worker.wait() would block indefinitely
+    // on a stuck run. On timeout, cancel and join; the returned outcome.done is then false, which
+    // the caller asserts on -- a stuck worker fails the test rather than hanging it.
+    if (!worker.wait(2000)) {
+        worker.cancel();
+        worker.wait();
+    }
+    return {outcome.done.load(), outcome.success, outcome.message};
+}
+
+void TestUserProfileBackupWorker::backupMissingSelectedFolderReportsFailure() {
+    QTemporaryDir srcDir;  // profile root WITHOUT a "Documents" subfolder
+    QVERIFY(srcDir.isValid());
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+
+    sak::FolderSelection folder;
+    folder.type = sak::FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");  // missing on disk
+    folder.selected = true;
+
+    // A selected folder that does not exist means the backup omitted requested data;
+    // it must NOT report a clean success (B7-20).
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackup(worker, srcDir.path(), folder, destParent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY(!run.success);
+    // The first line is what the wizard shows as the outcome, and Errors: 1 is the signal a bare
+    // !run.success misses.
+    QCOMPARE(run.message,
+             QStringLiteral("Backup finished, but not everything was copied.\nFiles copied: 0\n"
+                            "Items skipped (filters and Windows links): 0\nSkipped (elevation "
+                            "required): 0\nErrors: 1\nTotal size: 0 B"));
+}
+
+// Windows makes Documents\My Music, My Pictures and My Videos in every profile: hidden, system
+// junctions to the profile's own folders. Counted as errors, every backup on every PC said "not
+// everything was copied" (the capture VM's: 12 errors, one for each of three links in four
+// profiles). Not followed, and not an error.
+void TestUserProfileBackupWorker::windowsCompatibilityLinkIsSkippedNotCounted() {
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    QVERIFY(makeDocumentsWithLink(srcDir.path(), QStringLiteral("My Music"), true));
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+
+    UserProfileBackupWorker worker;
+    QSignalSpy log(&worker, &UserProfileBackupWorker::logMessage);
+    const BackupRun run = runBackup(
+        worker, srcDir.path(), documentsFolder(), destParent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY2(run.success, qPrintable(run.message));
+    // Review 3: "Files skipped" also counted skipped folders and Windows' compatibility links.
+    QVERIFY(run.message.contains(
+        QStringLiteral("Files copied: 1\nItems skipped (filters and Windows links): 1\n")));
+    QVERIFY(run.message.contains(QStringLiteral("Errors: 0")));
+    bool said = false;
+    for (const auto& entry : log) {
+        said = said || entry.at(0).toString().contains(
+                           QStringLiteral("a link Windows makes in every profile"));
+    }
+    QVERIFY(said);
+    // Not followed: nothing of Music is in the backup.
+    QVERIFY(
+        !QFileInfo::exists(destParent.filePath(QStringLiteral("dest/tester/Documents/My Music"))));
+}
+
+// The same junction without Windows' attributes, or Windows' attributes on another name, is not
+// one of those links: it is refused and counted, as every link was (B7-20).
+void TestUserProfileBackupWorker::anyOtherLinkStillCountsAsAnError() {
+    for (const auto& [name, windows_attributes] : {std::pair{QStringLiteral("My Music"), false},
+                                                   std::pair{QStringLiteral("Linked"), true}}) {
+        QTemporaryDir srcDir;
+        QVERIFY(srcDir.isValid());
+        QVERIFY(makeDocumentsWithLink(srcDir.path(), name, windows_attributes));
+        QTemporaryDir destParent;
+        QVERIFY(destParent.isValid());
+        UserProfileBackupWorker worker;
+        const BackupRun run = runBackup(
+            worker, srcDir.path(), documentsFolder(), destParent.filePath(QStringLiteral("dest")));
+        QVERIFY2(run.completed, qPrintable(name));
+        QVERIFY2(!run.success, qPrintable(name));
+        QVERIFY2(run.message.contains(QStringLiteral("Errors: 1")), qPrintable(run.message));
+    }
+}
+
+void TestUserProfileBackupWorker::backupExistingFolderReportsSuccess() {
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    QVERIFY(QDir(srcDir.path()).mkpath(QStringLiteral("Documents")));
+    {
+        QFile f(srcDir.filePath(QStringLiteral("Documents/hello.txt")));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("hello");
+        f.close();
+    }
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+
+    sak::FolderSelection folder;
+    folder.type = sak::FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+
+    // A real, readable folder backs up cleanly -> success (no false failure).
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackup(worker, srcDir.path(), folder, destParent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY(run.success);
+
+    // The copy really landed. Success alone does not prove it: a filtered-out file is
+    // "skipped, not an error", so a filter regression that dropped every file would
+    // still report success. Layout is <dest>/<username>/<relative_path>/<file>.
+    const QString copied = destParent.filePath(QStringLiteral("dest/tester/Documents/hello.txt"));
+    QVERIFY2(QFile::exists(copied), qPrintable("Missing: " + copied));
+    QFile copiedFile(copied);
+    QVERIFY(copiedFile.open(QIODevice::ReadOnly));
+    QCOMPARE(copiedFile.readAll(), QByteArray("hello"));
+}
+
+// ============================================================================
+// R5-G19-1: the transforms are applied, not merely accepted
+// ============================================================================
+
+namespace {
+
+/// Build a one-file profile whose content is a marker that must not survive in
+/// cleartext once encryption is on. Returns the marker.
+QByteArray seedProfile(const QString& profileRoot) {
+    const QByteArray marker = "PROFILE-SECRET-abcdefghijklmnopqrstuvwxyz-0123456789";
+    QByteArray content;
+    for (int i = 0; i < 200; ++i) {
+        content.append(marker);
+    }
+    if (!QDir(profileRoot).mkpath(QStringLiteral("Documents"))) {
+        return {};
+    }
+    QFile file(QDir(profileRoot).filePath(QStringLiteral("Documents/secret.txt")));
+    if (!file.open(QIODevice::WriteOnly) || file.write(content) != content.size()) {
+        return {};
+    }
+    file.close();
+    return content;
+}
+
+sak::FolderSelection documentsSelection() {
+    sak::FolderSelection folder;
+    folder.type = sak::FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+    return folder;
+}
+
+QByteArray readAllBytes(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return file.readAll();
+}
+
+}  // namespace
+
+void TestUserProfileBackupWorker::encryptedBackupStoresCiphertextAndRestoresIt() {
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    const QByteArray original = seedProfile(srcDir.path());
+    QVERIFY(!original.isEmpty());
+
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+    const QString destPath = destParent.filePath(QStringLiteral("dest"));
+
+    UserProfileBackupWorker::BackupOptions options;
+    options.permission_mode = PermissionMode::PreserveOriginal;
+    options.encrypt = true;
+    options.password = QStringLiteral("profile_backup_pw");
+
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackupWith(worker, srcDir.path(), documentsSelection(), destPath, options);
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY(run.success);
+
+    const QString stored = destPath + QStringLiteral("/tester/Documents/secret.txt");
+    QVERIFY2(QFile::exists(stored), qPrintable("Missing: " + stored));
+
+    // The defect this replaces was a run that reported AES-256 and wrote plaintext, so
+    // assert on the STORED BYTES, not on the log line.
+    const QByteArray storedBytes = readAllBytes(stored);
+    QVERIFY(!storedBytes.isEmpty());
+    QVERIFY2(!storedBytes.contains("PROFILE-SECRET"),
+             "the stored file still contains the plaintext marker");
+    QCOMPARE(sak::backupContainerKind(stored), sak::BackupContainerKind::Encrypted);
+
+    // ...and it is genuinely recoverable, which is what makes it a backup.
+    const QString restored = destParent.filePath(QStringLiteral("restored.txt"));
+    auto decoded = sak::readBackupFile(stored, restored, options.password);
+    QVERIFY2(decoded.has_value(), "the encrypted backup could not be decoded");
+    QCOMPARE(readAllBytes(restored), original);
+}
+
+void TestUserProfileBackupWorker::compressedBackupStoresContainerAndRestoresIt() {
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    const QByteArray original = seedProfile(srcDir.path());
+    QVERIFY(!original.isEmpty());
+
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+    const QString destPath = destParent.filePath(QStringLiteral("dest"));
+
+    UserProfileBackupWorker::BackupOptions options;
+    options.permission_mode = PermissionMode::PreserveOriginal;
+    options.compress = true;
+
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackupWith(worker, srcDir.path(), documentsSelection(), destPath, options);
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY(run.success);
+
+    const QString stored = destPath + QStringLiteral("/tester/Documents/secret.txt");
+    QVERIFY(QFile::exists(stored));
+    QCOMPARE(sak::backupContainerKind(stored), sak::BackupContainerKind::Plain);
+
+    // A highly repetitive payload must actually get smaller: the removed version defaulted
+    // to "Balanced" and wrote a verbatim copy on every run.
+    QVERIFY2(QFileInfo(stored).size() < original.size() / 2,
+             "the compressed backup is not meaningfully smaller than the source");
+
+    const QString restored = destParent.filePath(QStringLiteral("restored.txt"));
+    auto decoded = sak::readBackupFile(stored, restored, QString());
+    QVERIFY(decoded.has_value());
+    QCOMPARE(readAllBytes(restored), original);
+}
+
+void TestUserProfileBackupWorker::encryptionWithoutPasswordRefusesToStart() {
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    QVERIFY(!seedProfile(srcDir.path()).isEmpty());
+
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+    const QString destPath = destParent.filePath(QStringLiteral("dest"));
+
+    UserProfileBackupWorker::BackupOptions options;
+    options.permission_mode = PermissionMode::PreserveOriginal;
+    options.encrypt = true;  // no password
+
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackupWith(worker, srcDir.path(), documentsSelection(), destPath, options);
+    QVERIFY2(run.completed, "the refusal must still report a terminal outcome");
+    QVERIFY2(!run.success, "encryption without a password must not report success");
+    QCOMPARE(run.message, QStringLiteral("Encryption requires a password"));
+
+    // Fail closed: nothing may have been written, least of all a plaintext copy.
+    QVERIFY2(!QFile::exists(destPath + QStringLiteral("/tester/Documents/secret.txt")),
+             "a refused encrypted backup still wrote a file");
+}
 
 // ============================================================================
 // Construction
 // ============================================================================
 
-void TestUserProfileBackupWorker::testConstruction() {
-    UserProfileBackupWorker worker;
-    // Should not crash; worker created with internal
-    // SmartFileFilter and PermissionManager
-    QVERIFY(!worker.isRunning());
-}
-
+// A duplicate testConstruction() -- same two lines, same single assertion -- used to sit
+// here. Construction (and the internal SmartFileFilter / PermissionManager it wires up)
+// is exercised by every test in this file, so only the named claim is kept.
 void TestUserProfileBackupWorker::testNotRunningInitially() {
     UserProfileBackupWorker worker;
     QVERIFY(!worker.isRunning());
@@ -48,9 +469,283 @@ void TestUserProfileBackupWorker::testNotRunningInitially() {
 
 void TestUserProfileBackupWorker::testCancelWhenNotRunning() {
     UserProfileBackupWorker worker;
-    // Cancel when not running should not crash
-    worker.cancel();
-    QVERIFY(!worker.isRunning());
+    {
+        QSignalSpy logSpy(&worker, &UserProfileBackupWorker::logMessage);
+        QVERIFY(logSpy.isValid());
+        // Cancel with no thread to cancel: must not crash, must not start anything, and
+        // must still announce itself (cancel() emits on the calling thread, so the spy
+        // has the message by the time it returns).
+        worker.cancel();
+        QVERIFY(!worker.isRunning());
+        QCOMPARE(logSpy.count(), 1);
+        QCOMPARE(logSpy.first().at(0).toString(), QStringLiteral("Canceling backup..."));
+    }
+
+    // ...and the cancel flag it set must not poison the NEXT run: startBackup clears it,
+    // so a real backup on this same worker still completes successfully. Without that
+    // reset every backup after an idle cancel would report "Backup cancelled".
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    QVERIFY(QDir(srcDir.path()).mkpath(QStringLiteral("Documents")));
+    {
+        QFile f(srcDir.filePath(QStringLiteral("Documents/hello.txt")));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("hello");
+        f.close();
+    }
+    QTemporaryDir destParent;
+    QVERIFY(destParent.isValid());
+
+    sak::FolderSelection folder;
+    folder.type = sak::FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+
+    const BackupRun run =
+        runBackup(worker, srcDir.path(), folder, destParent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY2(run.success, "a cancel with nothing to cancel poisoned the next backup");
+}
+
+// ============================================================================
+// B7-01: isRunning() now reflects QThread state (true the instant start()
+// returns), so destroying a worker right after startBackup() -- with NO prior
+// wait() -- cancels and joins the live thread instead of tearing it down
+// mid-run. The old late-set member flag left a window where the destructor saw
+// "not running" and aborted with "QThread: Destroyed while thread is running".
+// ============================================================================
+
+void TestUserProfileBackupWorker::testStartThenImmediateDestroyIsSafe() {
+    for (int i = 0; i < 5; ++i) {
+        UserProfileBackupWorker worker;
+        const UserProfileBackupWorker::BackupOptions options;
+        // An empty user list is a backup of nothing and run() returns almost at once,
+        // which is what keeps this start-then-destroy loop fast. It previously relied on
+        // options.encrypt = true to make run() self-terminate; that abort path is gone
+        // with the encryption controls it existed to reject.
+        worker.startBackup(
+            BackupManifest{}, {}, QDir::tempPath() + "/sak_up_b7_01_dest", SmartFilter{}, options);
+        // worker destructs here at end of scope, WITHOUT a prior wait(): must not abort.
+    }
+    // Reaching this line IS the assertion. A regressed lifetime does not return a wrong
+    // value, it kills the process inside the loop above: QThread's destructor calls
+    // qFatal("QThread: Destroyed while thread is still running"), which aborts before any
+    // QCOMPARE could run. There is no observable to compare.
+    QVERIFY(true);
+}
+
+// ============================================================================
+// B7-08: an untrusted username becomes a backup subdirectory and an untrusted
+// folder.relative_path is joined onto both roots -- traversal must be rejected.
+// ============================================================================
+
+void TestUserProfileBackupWorker::isSafePathSegment_acceptsNamesRejectsTraversal() {
+    QVERIFY(UserProfileBackupWorker::isSafePathSegment(QStringLiteral("Alice")));
+    QVERIFY(UserProfileBackupWorker::isSafePathSegment(QStringLiteral("john.doe")));
+
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QString()));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral(".")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("..")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("a/b")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("a\\b")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("..\\..\\Windows")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("C:")));
+    QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("a*b")));
+}
+
+void TestUserProfileBackupWorker::extendedLengthPath_handlesLongAndUncPaths() {
+    // R5-G23-4 hostile environment: the >MAX_PATH and UNC dimensions. This process carries no
+    // long-path manifest, so a path past 260 characters does not resolve through the plain Win32
+    // API -- and the reparse-point probe that consumes this FAILS CLOSED, reporting an
+    // unresolvable query AS a link. Without the extended-length form every deep profile path
+    // would therefore be refused as a reparse point and silently dropped from the backup. That
+    // makes this conversion load-bearing rather than an optimization, which is why it is pinned
+    // here instead of left to a 260-character directory tree nobody can create in a fixture.
+
+    // An ordinary drive path gains the prefix.
+    QCOMPARE(UserProfileBackupWorker::extendedLengthPath(QStringLiteral("C:\\Users\\Username")),
+             QStringLiteral("\\\\?\\C:\\Users\\Username"));
+
+    // A genuinely over-MAX_PATH path is converted the same way -- length is not a special case,
+    // which is the point: nothing in the conversion depends on being "long enough".
+    const QString deep = QStringLiteral("D:\\Users\\Username\\") +
+                         QStringLiteral("nested\\").repeated(60) + QStringLiteral("file.dat");
+    QVERIFY(deep.size() > 260);  // the fixture really is past MAX_PATH
+    const QString deepExtended = UserProfileBackupWorker::extendedLengthPath(deep);
+    QCOMPARE(deepExtended, QStringLiteral("\\\\?\\") + deep);
+    QVERIFY(deepExtended.startsWith(QStringLiteral("\\\\?\\D:\\Users\\Username\\nested\\")));
+
+    // A UNC path takes the UNC form: the two leading backslashes are REPLACED by the prefix, not
+    // kept alongside it. "\\\\?\\\\\\server\\share" (prefix plus the original slashes) resolves to
+    // nothing, so this is the case a naive concatenation gets wrong.
+    QCOMPARE(UserProfileBackupWorker::extendedLengthPath(
+                 QStringLiteral("\\\\server\\share\\Profiles\\Alice")),
+             QStringLiteral("\\\\?\\UNC\\server\\share\\Profiles\\Alice"));
+    // The server and share survive intact -- a conversion that dropped a component would point
+    // the probe at a different share.
+    QVERIFY(UserProfileBackupWorker::extendedLengthPath(QStringLiteral("\\\\srv\\s\\x"))
+                .endsWith(QStringLiteral("UNC\\srv\\s\\x")));
+
+    // An already-extended path is returned UNCHANGED, in both forms. Prefixing twice
+    // ("\\\\?\\\\\\?\\C:\\x") names nothing at all, so the probe would fail closed and refuse a
+    // path that was already correct.
+    QCOMPARE(UserProfileBackupWorker::extendedLengthPath(
+                 QStringLiteral("\\\\?\\C:\\Users\\Username")),
+             QStringLiteral("\\\\?\\C:\\Users\\Username"));
+    QCOMPARE(UserProfileBackupWorker::extendedLengthPath(
+                 QStringLiteral("\\\\?\\UNC\\server\\share\\x")),
+             QStringLiteral("\\\\?\\UNC\\server\\share\\x"));
+
+    // Non-C: system drives are not special-cased anywhere in the conversion (the non-C: dimension
+    // of the same matrix): every drive letter is prefixed identically.
+    for (const QChar drive : {QChar(u'C'), QChar(u'D'), QChar(u'Z')}) {
+        const QString path = QString(drive) + QStringLiteral(":\\Windows\\System32");
+        QCOMPARE(UserProfileBackupWorker::extendedLengthPath(path),
+                 QStringLiteral("\\\\?\\") + path);
+    }
+}
+
+void TestUserProfileBackupWorker::isSafeRelativePath_acceptsRelativeRejectsEscapes() {
+    QVERIFY(UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("AppData/Roaming")));
+    QVERIFY(UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("Documents")));
+    QVERIFY(UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("sub/dir/file.txt")));
+
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QString()));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("../x")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("a/../b")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("a\\..\\b")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("a/./b")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("/etc/passwd")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("C:/Windows")));
+    QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("\\\\server\\share")));
+}
+
+void TestUserProfileBackupWorker::progressState_usesBytesAndHandlesUnknownTotals() {
+    const UserProfileProgressState known = userProfileProgressState(1, 4, 60, 100);
+    QCOMPARE(known.minimum, 0);
+    QCOMPARE(known.maximum, kPercentMax);
+    QCOMPARE(known.value, 60);
+    QCOMPARE(known.format, QStringLiteral("60% - 60 B / 100 B"));
+    QVERIFY(known.accessible_description.contains(QStringLiteral("1 of 4 users complete")));
+
+    const UserProfileProgressState unknown = userProfileProgressState(1, 4, 4096, 0);
+    QCOMPARE(unknown.maximum, kPercentMax);
+    QCOMPARE(unknown.value, 25);
+    QCOMPARE(unknown.format, QStringLiteral("25% - 1 / 4 users - 4.0 KB processed"));
+
+    const UserProfileProgressState indeterminate = userProfileProgressState(0, 0, 0, 0);
+    QCOMPARE(indeterminate.minimum, 0);
+    QCOMPARE(indeterminate.maximum, 0);
+    QCOMPARE(indeterminate.value, 0);
+    QCOMPARE(indeterminate.format, QStringLiteral("0 B processed - total size unknown"));
+
+    const UserProfileProgressState bounded = userProfileProgressState(9, 4, 200, 100);
+    QCOMPARE(bounded.completed_users, 4);
+    QCOMPARE(bounded.value, kPercentMax);
+    constexpr qint64 kMaxBytes = std::numeric_limits<qint64>::max();
+    QCOMPARE(boundedProgressPercent(kMaxBytes - 1, kMaxBytes), kPercentMax - 1);
+    QCOMPARE(boundedProgressPercent(kMaxBytes, kMaxBytes), kPercentMax);
+    QCOMPARE(userProfileProgressState(0, 1, 50, 100).value, 50);
+    QVERIFY(userProfileProgressState(0, 1, 75, 100).value >=
+            userProfileProgressState(0, 1, 50, 100).value);
+}
+
+void TestUserProfileBackupWorker::overallProgress_reportsExactMonotonicBytes() {
+    constexpr int kFileCount = 101;
+    constexpr int kFileBytes = 7;
+    QTemporaryDir src_dir;
+    QTemporaryDir dest_parent;
+    QVERIFY(src_dir.isValid());
+    QVERIFY(dest_parent.isValid());
+    QVERIFY(QDir(src_dir.path()).mkpath(QStringLiteral("Documents")));
+    for (int index = 0; index < kFileCount; ++index) {
+        QFile file(src_dir.filePath(QStringLiteral("Documents/progress-%1.bin").arg(index)));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(QByteArray(kFileBytes, 'P')), kFileBytes);
+    }
+
+    FolderSelection folder;
+    folder.type = FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+    folder.size_bytes = kFileCount * kFileBytes;
+    folder.file_count = kFileCount;
+
+    UserProfileBackupWorker worker;
+    QSignalSpy progress_spy(&worker, &UserProfileBackupWorker::overallProgress);
+    QVERIFY(progress_spy.isValid());
+    const BackupRun run =
+        runBackup(worker, src_dir.path(), folder, dest_parent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed && run.success, qPrintable(run.message));
+
+    QVERIFY(progress_spy.count() >= 3);
+    QCOMPARE(progress_spy.first().at(0).toInt(), 0);
+    QCOMPARE(progress_spy.first().at(1).toInt(), 1);
+    QCOMPARE(progress_spy.first().at(2).toLongLong(), 0);
+    QCOMPARE(progress_spy.first().at(3).toLongLong(), qint64(kFileCount * kFileBytes));
+
+    qint64 previous_bytes = -1;
+    int previous_percent = -1;
+    bool saw_throttled_update = false;
+    for (const auto& event : progress_spy) {
+        const qint64 bytes = event.at(2).toLongLong();
+        QVERIFY(bytes >= previous_bytes);
+        const auto state = userProfileProgressState(
+            event.at(0).toInt(), event.at(1).toInt(), bytes, event.at(3).toLongLong());
+        QVERIFY(state.value >= previous_percent);
+        previous_bytes = bytes;
+        previous_percent = state.value;
+        if (event.at(0).toInt() == 0 && bytes == qint64(100 * kFileBytes)) {
+            saw_throttled_update = true;
+        }
+    }
+    QVERIFY(saw_throttled_update);
+    const auto final = progress_spy.last();
+    QCOMPARE(final.at(0).toInt(), 1);
+    QCOMPARE(final.at(1).toInt(), 1);
+    QCOMPARE(final.at(2).toLongLong(), qint64(kFileCount * kFileBytes));
+    QCOMPARE(final.at(3).toLongLong(), qint64(kFileCount * kFileBytes));
+}
+
+void TestUserProfileBackupWorker::cancelledBackupNeverReportsCompletionProgress() {
+    QTemporaryDir src_dir;
+    QTemporaryDir dest_parent;
+    QVERIFY(src_dir.isValid());
+    QVERIFY(dest_parent.isValid());
+    QVERIFY(QDir(src_dir.path()).mkpath(QStringLiteral("Documents")));
+    QFile file(src_dir.filePath(QStringLiteral("Documents/cancel.bin")));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(QByteArray(4096, 'C')), 4096);
+    file.close();
+
+    FolderSelection folder;
+    folder.type = FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+    folder.size_bytes = 4096;
+    folder.file_count = 1;
+
+    UserProfileBackupWorker worker;
+    QObject::connect(
+        &worker,
+        &UserProfileBackupWorker::statusUpdate,
+        &worker,
+        [&worker](const QString&, const QString&) { worker.cancel(); },
+        Qt::DirectConnection);
+    QSignalSpy progress_spy(&worker, &UserProfileBackupWorker::overallProgress);
+    QVERIFY(progress_spy.isValid());
+    const BackupRun run =
+        runBackup(worker, src_dir.path(), folder, dest_parent.filePath(QStringLiteral("dest")));
+    QVERIFY(run.completed);
+    QVERIFY(!run.success);
+    QVERIFY(!progress_spy.isEmpty());
+    for (const auto& event : progress_spy) {
+        const auto state = userProfileProgressState(event.at(0).toInt(),
+                                                    event.at(1).toInt(),
+                                                    event.at(2).toLongLong(),
+                                                    event.at(3).toLongLong());
+        QVERIFY(state.value < kPercentMax);
+    }
 }
 
 QTEST_MAIN(TestUserProfileBackupWorker)

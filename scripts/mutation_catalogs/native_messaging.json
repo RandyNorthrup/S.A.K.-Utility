@@ -1,0 +1,96 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_native_messaging",
+  "ctest_regex": "^test_native_messaging$",
+  "mutants": [
+    {
+      "id": "encode-prefix-width-truncated",
+      "file": "src/win32mcp/native_messaging.cpp",
+      "find": "frame.append(reinterpret_cast<const char*>(&length), kLengthPrefixBytes);",
+      "replace": "frame.append(reinterpret_cast<const char*>(&length), 3);",
+      "expect": "killed",
+      "why": "the LE length prefix must be all 4 bytes wide; emitting only 3 shifts the body one byte earlier. encode_prefixesLittleEndianLength asserts QCOMPARE(frame.at(4), '{') (fifth byte is the body's opening brace) and QCOMPARE(length, frame.size()-4) -- both fail when the header is 3 bytes."
+    },
+    {
+      "id": "encode-length-bigendian",
+      "file": "src/win32mcp/native_messaging.cpp",
+      "find": "const quint32 length = qToLittleEndian<quint32>(static_cast<quint32>(body.size()));",
+      "replace": "const quint32 length = qToBigEndian<quint32>(static_cast<quint32>(body.size()));",
+      "expect": "killed",
+      "why": "the length prefix is written little-endian; writing big-endian reverses the 4 length bytes. encode_prefixesLittleEndianLength reads the header back with qFromLittleEndian and asserts QCOMPARE(length, frame.size()-4) -- a byte-swapped header decodes to a huge value, not the body size, so it fails (also breaks roundTrip: the decoder then sees an oversized length)."
+    },
+    {
+      "id": "decode-length-bigendian",
+      "file": "src/win32mcp/native_messaging.cpp",
+      "find": "qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(buffer.constData()));",
+      "replace": "qFromBigEndian<quint32>(reinterpret_cast<const uchar*>(buffer.constData()));",
+      "expect": "killed",
+      "why": "the 4-byte length prefix is decoded little-endian; decoding big-endian reads the LE-encoded low byte as the high byte, so any real frame decodes to a multi-hundred-MB length that trips the oversize cap. roundTrip_encodeThenParseRecoversObject asserts QCOMPARE(parsed.status, Status::Ok) -- the mutant returns Error/NeedMore instead. Directly covers the LE byte-order requirement."
+    },
+    {
+      "id": "short-buffer-guard-boundary",
+      "file": "src/win32mcp/native_messaging.cpp",
+      "find": "if (buffer.size() < kLengthPrefixBytes) {",
+      "replace": "if (buffer.size() <= kLengthPrefixBytes) {",
+      "expect": "killed",
+      "why": "with exactly 4 bytes present the header is complete and readable; '<=' wrongly treats a full-header-but-empty-body buffer as NeedMore, so a length prefix can never be evaluated at the boundary. parse_zeroLengthIsError feeds a 4-byte buffer and asserts QCOMPARE(status, Status::Error) -- the mutant returns NeedMore instead."
+    },
+    {
+      "id": "zero-length-guard-inverted",
+      "file": "src/win32mcp/native_messaging.cpp",
+      "find": "if (length == 0) {",
+      "replace": "if (length != 0) {",
+      "expect": "killed",
+      "why": "inverting the zero-length fail-closed guard makes every NON-zero length report the 'length is zero' error while a real zero length falls through to an empty-body JSON parse. parse_zeroLengthIsError asserts the error text contains \"zero\"; with the mutant a zero frame instead errors with \"object\" (empty body) -- QVERIFY(error.contains(\"zero\")) fails (also breaks roundTrip, whose non-zero length now errors)."
+    },
+    {
+      "id": "oversize-guard-inverted",
+      "file": "src/win32mcp/native_messaging.cpp",
+      "find": "if (length > static_cast<quint32>(kMaxNativeMessageBytes)) {",
+      "replace": "if (length < static_cast<quint32>(kMaxNativeMessageBytes)) {",
+      "expect": "killed",
+      "why": "inverting the oversize fail-closed guard lets an attacker-supplied over-cap length through (it is no longer > the cap) while rejecting all legitimate small frames. parse_oversizedLengthIsError sends cap+1 and asserts QCOMPARE(status, Status::Error) -- the mutant lets it pass to a NeedMore instead (and roundTrip's normal-size frame is now falsely rejected as oversized)."
+    },
+    {
+      "id": "oversize-guard-boundary-offbyone",
+      "file": "src/win32mcp/native_messaging.cpp",
+      "find": "if (length > static_cast<quint32>(kMaxNativeMessageBytes)) {",
+      "replace": "if (length >= static_cast<quint32>(kMaxNativeMessageBytes)) {",
+      "expect": "killed",
+      "why": "'>=' rejects a frame whose length is EXACTLY kMaxNativeMessageBytes (a legal max-size frame), differing from '>' only at length==cap. parse_exactlyCapSizedLengthIsAccepted builds a valid JSON-object body of exactly kMaxNativeMessageBytes and asserts QCOMPARE(status, Status::Ok) + consumed==frame.size() -- the mutant rejects it as oversized. (parse_oversizedLengthIsError still pins the cap+1 rejection above.)"
+    },
+    {
+      "id": "total-size-offbyone",
+      "file": "src/win32mcp/native_messaging.cpp",
+      "find": "const int total = kLengthPrefixBytes + static_cast<int>(length);",
+      "replace": "const int total = kLengthPrefixBytes + static_cast<int>(length) - 1;",
+      "expect": "killed",
+      "why": "'total' is both the completeness threshold and the consumed byte count; dropping 1 makes the decoder report one byte too few consumed, desyncing the stream on the next frame. roundTrip_encodeThenParseRecoversObject asserts QCOMPARE(parsed.consumed, encodeFrame(original).size()) -- the mutant yields size-1 (also caught by parse_multipleFramesConsumedIndividually, whose second frame then starts one byte early)."
+    },
+    {
+      "id": "payload-bounds-guard-boundary",
+      "file": "src/win32mcp/native_messaging.cpp",
+      "find": "if (buffer.size() < total) {",
+      "replace": "if (buffer.size() <= total) {",
+      "expect": "killed",
+      "why": "the payload-availability bounds check must accept a buffer holding exactly one whole frame (size == total); '<=' wrongly reports a complete frame as NeedMore. roundTrip_encodeThenParseRecoversObject (buffer is exactly one frame) asserts QCOMPARE(status, Status::Ok) and parse_multipleFramesConsumedIndividually asserts the trailing exact-fit frame parses Ok -- both fail."
+    },
+    {
+      "id": "payload-slice-length-offbyone",
+      "file": "src/win32mcp/native_messaging.cpp",
+      "find": "buffer.mid(kLengthPrefixBytes, static_cast<int>(length)), &parse_error);",
+      "replace": "buffer.mid(kLengthPrefixBytes, static_cast<int>(length) - 1), &parse_error);",
+      "expect": "killed",
+      "why": "the body slice must be exactly 'length' bytes; taking length-1 truncates the JSON (drops its closing brace) so it no longer parses as an object. roundTrip_encodeThenParseRecoversObject asserts QCOMPARE(parsed.status, Status::Ok) and QCOMPARE(parsed.message, original) -- the truncated body yields an Error instead."
+    },
+    {
+      "id": "consumed-drops-prefix",
+      "file": "src/win32mcp/native_messaging.cpp",
+      "find": "frame.consumed = total;",
+      "replace": "frame.consumed = static_cast<int>(length);",
+      "expect": "killed",
+      "why": "consumed must include the 4-byte length prefix (total = prefix + body); reporting only the body length under-consumes by 4 and desyncs the stream. roundTrip_encodeThenParseRecoversObject asserts QCOMPARE(parsed.consumed, encodeFrame(original).size()) which includes the prefix, and parse_multipleFramesConsumedIndividually removes 'first.consumed' then asserts the second frame parses to b -- both fail (leftover prefix bytes corrupt the next parse)."
+    }
+  ]
+}

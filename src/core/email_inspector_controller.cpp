@@ -10,6 +10,8 @@
 #include "sak/email_profile_manager.h"
 #include "sak/email_report_generator.h"
 #include "sak/email_search_worker.h"
+#include "sak/format_utils.h"
+#include "sak/io_write_utils.h"
 #include "sak/logger.h"
 #include "sak/mbox_parser.h"
 #include "sak/pst_parser.h"
@@ -29,13 +31,67 @@ bool writeReportFile(const QString& path, const QByteArray& content, const char*
         return false;
     }
 
-    const qint64 bytes = file.write(content);
+    // Reject a short write, not just an error return: a partial report file read as
+    // a completed one is worse than none (B7-18).
+    const bool ok = sak::writeFully(file, content);
     file.close();
-    if (bytes < 0) {
+    if (!ok) {
         sak::logWarning("Report: {} write error: {}", label, path.toStdString());
         return false;
     }
     return true;
+}
+
+/// Accumulate per-item-type totals from the folder tree into the report statistics.
+/// Folders are classified by their container class (mail folders -- IPF.Note or an
+/// unset class -- count as emails); walked recursively so subfolders are included.
+void accumulateFolderStats(const sak::PstFolderTree& tree, EmailReportGenerator::ReportData& data) {
+    for (const auto& folder : tree) {
+        const QString& cls = folder.container_class;
+        if (cls.startsWith(QStringLiteral("IPF.Contact"), Qt::CaseInsensitive)) {
+            data.total_contacts += folder.content_count;
+        } else if (cls.startsWith(QStringLiteral("IPF.Appointment"), Qt::CaseInsensitive)) {
+            data.total_calendar_items += folder.content_count;
+        } else if (cls.startsWith(QStringLiteral("IPF.Task"), Qt::CaseInsensitive)) {
+            data.total_tasks += folder.content_count;
+        } else if (cls.startsWith(QStringLiteral("IPF.StickyNote"), Qt::CaseInsensitive)) {
+            data.total_notes += folder.content_count;
+        } else if (!cls.startsWith(QStringLiteral("IPF.Journal"), Qt::CaseInsensitive)) {
+            // A journal entry is no email, and the report has no line of its own for them.
+            data.total_emails += folder.content_count;
+        }
+        accumulateFolderStats(folder.children, data);
+    }
+}
+
+/// Clean up a partial HTML/JSON report pair and build its failure message.
+/// If one output was written before the other failed, remove the written file so no
+/// misleading half-pair is left behind, then return the "could not write ..." message
+/// naming the outputs that failed (B7-B). Removals happen in html-then-json order to
+/// match the original inline side-effect order.
+QString cleanupPartialReport(const QString& html_path,
+                             bool html_ok,
+                             const QString& json_path,
+                             bool json_ok) {
+    if (html_ok) {
+        QFile::remove(html_path);
+    }
+    if (json_ok) {
+        QFile::remove(json_path);
+    }
+    QStringList failed;
+    if (!html_ok) {
+        failed.append(QStringLiteral("HTML"));
+    }
+    if (!json_ok) {
+        failed.append(QStringLiteral("JSON"));
+    }
+    return QStringLiteral("Report generation failed: could not write %1")
+        .arg(failed.join(QStringLiteral(", ")));
+}
+
+QString itemsCount(qint64 count) {
+    return sak::countOf(count, QStringLiteral("item"), QStringLiteral("items"));
 }
 }  // namespace
 
@@ -77,13 +133,27 @@ void EmailInspectorController::setState(State new_state) {
     }
 }
 
+bool EmailInspectorController::isBusyWithBackgroundOp() const {
+    switch (m_state) {
+    case State::Idle:
+    case State::LoadingFolderItems:
+    case State::LoadingItemDetail:
+    case State::LoadingProperties:
+        // Idle, or a parser-serialized navigation load already in flight: safe to
+        // dispatch the next navigation call.
+        return false;
+    default:
+        // Opening / Searching / Exporting / profile ops / report: a background task
+        // or file open is reading the parser; navigating now would race its QFile.
+        return true;
+    }
+}
+
 // ============================================================================
 // File Operations
 // ============================================================================
 
 void EmailInspectorController::openFile(const QString& file_path) {
-    Q_ASSERT(!file_path.isEmpty());
-
     if (m_state != State::Idle) {
         Q_EMIT errorOccurred(QStringLiteral("Cannot open file: another operation in progress"));
         return;
@@ -92,21 +162,27 @@ void EmailInspectorController::openFile(const QString& file_path) {
     closeFile();
     setState(State::Opening);
 
-    QFileInfo fi(file_path);
-    QString suffix = fi.suffix().toLower();
+    const QFileInfo fi(file_path);
+    const QString suffix = fi.suffix().toLower();
 
-    if (suffix == QStringLiteral("pst") || suffix == QStringLiteral("ost")) {
-        const bool is_ost = (suffix == QStringLiteral("ost"));
+    if (suffix == QStringLiteral("pst") || suffix == QStringLiteral("ost") ||
+        suffix == QStringLiteral("nst")) {
+        // An NST, Outlook's cache of Microsoft 365 group mail, has the same layout as an OST.
+        const bool is_ost = (suffix != QStringLiteral("pst"));
         m_file_type = is_ost ? FileType::Ost : FileType::Pst;
         sak::logInfo("Opening {} file: {}", is_ost ? "OST" : "PST", file_path.toStdString());
         Q_EMIT logOutput(QStringLiteral("Opening %1...").arg(fi.fileName()));
         m_pst_parser->open(file_path);
-    } else if (suffix == QStringLiteral("mbox")) {
+    } else if (suffix == QStringLiteral("mbox") ||
+               (suffix.isEmpty() && MboxParser::looksLikeMailbox(file_path))) {
+        // Thunderbird's mailboxes have no extension, so those are recognised by their contents.
         m_file_type = FileType::Mbox;
         sak::logInfo("Opening MBOX file: {}", file_path.toStdString());
         Q_EMIT logOutput(QStringLiteral("Opening %1...").arg(fi.fileName()));
         m_mbox_parser->open(file_path);
     } else {
+        // Also the rejection for an empty path: it has no suffix, so it can never
+        // match a supported format.
         m_file_type = FileType::None;
         setState(State::Idle);
         Q_EMIT errorOccurred(QStringLiteral("Unsupported file format: %1").arg(suffix));
@@ -114,6 +190,12 @@ void EmailInspectorController::openFile(const QString& file_path) {
 }
 
 void EmailInspectorController::closeFile() {
+    // Cancel and await any in-flight background task BEFORE tearing down the parser
+    // it may still be reading through: close() otherwise races a QtConcurrent pool
+    // thread still inside the parser (use-after-close). This mirrors the destructor
+    // and the state guards that keep only one operation live at a time. (B7-15)
+    cancelOperation();
+
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         m_pst_parser->close();
     } else if (m_file_type == FileType::Mbox) {
@@ -146,27 +228,69 @@ sak::PstFileInfo EmailInspectorController::fileInfo() const {
 // ============================================================================
 
 void EmailInspectorController::loadFolderItems(uint64_t folder_node_id, int offset, int limit) {
+    if (isBusyWithBackgroundOp()) {
+        const QString error = QStringLiteral("Cannot navigate: operation in progress");
+        Q_EMIT folderItemsFailed(folder_node_id, offset, error);
+        Q_EMIT errorOccurred(error);
+        return;
+    }
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
+        m_folder_request_pending = true;
+        m_pending_folder_id = folder_node_id;
+        m_pending_folder_offset = offset;
         setState(State::LoadingFolderItems);
         m_pst_parser->loadFolderItems(folder_node_id, offset, limit);
     } else if (m_file_type == FileType::Mbox) {
+        m_folder_request_pending = true;
+        m_pending_folder_id = folder_node_id;
+        m_pending_folder_offset = offset;
         setState(State::LoadingFolderItems);
         m_mbox_parser->loadMessages(offset, limit);
+    } else {
+        const QString error = QStringLiteral("Cannot navigate: no file is open");
+        Q_EMIT folderItemsFailed(folder_node_id, offset, error);
+        Q_EMIT errorOccurred(error);
     }
 }
 
 void EmailInspectorController::loadItemDetail(uint64_t item_node_id) {
+    if (isBusyWithBackgroundOp()) {
+        const QString error = QStringLiteral("Cannot navigate: operation in progress");
+        Q_EMIT itemDetailFailed(item_node_id, error);
+        Q_EMIT errorOccurred(error);
+        return;
+    }
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
+        m_detail_request_pending = true;
+        m_pending_detail_id = item_node_id;
         setState(State::LoadingItemDetail);
         m_pst_parser->loadItemDetail(item_node_id);
     } else if (m_file_type == FileType::Mbox) {
-        Q_ASSERT(item_node_id <= static_cast<uint64_t>(INT_MAX));
+        // MBOX item ids are message indices. Narrowing an id above INT_MAX would
+        // wrap to a different, in-range index and silently load the wrong
+        // message, so reject it here instead of casting.
+        if (item_node_id > static_cast<uint64_t>(INT_MAX)) {
+            const QString error = QStringLiteral("Invalid MBOX message id: %1").arg(item_node_id);
+            Q_EMIT itemDetailFailed(item_node_id, error);
+            Q_EMIT errorOccurred(error);
+            return;
+        }
+        m_detail_request_pending = true;
+        m_pending_detail_id = item_node_id;
         setState(State::LoadingItemDetail);
         m_mbox_parser->loadMessageDetail(static_cast<int>(item_node_id));
+    } else {
+        const QString error = QStringLiteral("Cannot navigate: no file is open");
+        Q_EMIT itemDetailFailed(item_node_id, error);
+        Q_EMIT errorOccurred(error);
     }
 }
 
 void EmailInspectorController::loadItemProperties(uint64_t item_node_id) {
+    if (isBusyWithBackgroundOp()) {
+        Q_EMIT errorOccurred(QStringLiteral("Cannot navigate: operation in progress"));
+        return;
+    }
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         setState(State::LoadingProperties);
         m_pst_parser->loadItemProperties(item_node_id);
@@ -178,12 +302,22 @@ void EmailInspectorController::loadItemProperties(uint64_t item_node_id) {
 
 void EmailInspectorController::loadAttachmentContent(uint64_t message_node_id,
                                                      int attachment_index) {
+    if (isBusyWithBackgroundOp()) {
+        // Refused, but the caller still asked for THIS attachment, so the rejection must
+        // carry its identity: a batch save has to be able to resolve every request it
+        // issued (via ready or failed) or it would hang with the save controls latched.
+        const QString message = QStringLiteral("Cannot load attachment: operation in progress");
+        Q_EMIT attachmentContentFailed(message_node_id, attachment_index, message);
+        Q_EMIT errorOccurred(message);
+        return;
+    }
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
         m_pst_parser->loadAttachmentContent(message_node_id, attachment_index);
     } else if (m_file_type == FileType::Mbox) {
-        int msg_idx = static_cast<int>(message_node_id);
-        (void)QtConcurrent::run([this, msg_idx, attachment_index]() {
-            auto result = m_mbox_parser->readAttachmentData(msg_idx, attachment_index);
+        const int msg_idx = static_cast<int>(message_node_id);
+        runTracked([this, msg_idx, attachment_index]() {
+            auto result = m_mbox_parser->readAttachmentData(
+                sak::MboxMessageIndex{msg_idx}, sak::MboxAttachmentIndex{attachment_index});
             if (result) {
                 auto detail = m_mbox_parser->readMessageDetail(msg_idx);
                 QString filename;
@@ -193,9 +327,17 @@ void EmailInspectorController::loadAttachmentContent(uint64_t message_node_id,
                 Q_EMIT attachmentContentReady(
                     static_cast<uint64_t>(msg_idx), attachment_index, *result, filename);
             } else {
-                Q_EMIT errorOccurred(QStringLiteral("Failed to extract attachment"));
+                const QString message = QStringLiteral("Failed to extract attachment");
+                Q_EMIT attachmentContentFailed(static_cast<uint64_t>(msg_idx),
+                                               attachment_index,
+                                               message);
+                Q_EMIT errorOccurred(message);
             }
         });
+    } else {
+        const QString message = QStringLiteral("Cannot load attachment: no file is open");
+        Q_EMIT attachmentContentFailed(message_node_id, attachment_index, message);
+        Q_EMIT errorOccurred(message);
     }
 }
 
@@ -208,6 +350,12 @@ void EmailInspectorController::startSearch(const sak::EmailSearchCriteria& crite
         Q_EMIT errorOccurred(QStringLiteral("Cannot search: operation in progress"));
         return;
     }
+    // With no file open, neither branch below launches a task, so the state would
+    // latch at Searching forever. Refuse without changing state (B7-23).
+    if (!isFileOpen()) {
+        Q_EMIT errorOccurred(QStringLiteral("Cannot search: no file is open"));
+        return;
+    }
 
     setState(State::Searching);
     m_search_count++;
@@ -215,10 +363,9 @@ void EmailInspectorController::startSearch(const sak::EmailSearchCriteria& crite
     Q_EMIT logOutput(QStringLiteral("Searching for \"%1\"...").arg(criteria.query_text));
 
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
-        (void)QtConcurrent::run(
-            [this, criteria]() { m_search_worker->search(m_pst_parser.get(), criteria); });
+        runTracked([this, criteria]() { m_search_worker->search(m_pst_parser.get(), criteria); });
     } else if (m_file_type == FileType::Mbox) {
-        (void)QtConcurrent::run(
+        runTracked(
             [this, criteria]() { m_search_worker->searchMbox(m_mbox_parser.get(), criteria); });
     }
 }
@@ -232,15 +379,20 @@ void EmailInspectorController::exportItems(const sak::EmailExportConfig& config)
         Q_EMIT errorOccurred(QStringLiteral("Cannot export: operation in progress"));
         return;
     }
+    // No open file -> no export task is launched; refuse rather than latch the state
+    // at Exporting forever (B7-23).
+    if (!isFileOpen()) {
+        Q_EMIT errorOccurred(QStringLiteral("Cannot export: no file is open"));
+        return;
+    }
 
     setState(State::Exporting);
     Q_EMIT logOutput(QStringLiteral("Starting export to %1...").arg(config.output_path));
 
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
-        (void)QtConcurrent::run(
-            [this, config]() { m_export_worker->exportItems(m_pst_parser.get(), config); });
+        runTracked([this, config]() { m_export_worker->exportItems(m_pst_parser.get(), config); });
     } else if (m_file_type == FileType::Mbox) {
-        (void)QtConcurrent::run(
+        runTracked(
             [this, config]() { m_export_worker->exportMboxItems(m_mbox_parser.get(), config); });
     }
 }
@@ -250,28 +402,45 @@ void EmailInspectorController::exportItems(const sak::EmailExportConfig& config)
 // ============================================================================
 
 void EmailInspectorController::discoverProfiles() {
+    // Single-flight (B7-16): discovery/backup/restore share the profile manager's
+    // m_profiles / m_backup_dest_names / m_cancelled, so refuse to launch a second
+    // background operation while any is running instead of racing those members.
+    if (m_state != State::Idle) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot discover profiles: another operation in progress"));
+        return;
+    }
     setState(State::DiscoveringProfiles);
     Q_EMIT logOutput(QStringLiteral("Discovering email client profiles..."));
 
-    (void)QtConcurrent::run([this]() { m_profile_manager->discoverProfiles(); });
+    runTracked([this]() { m_profile_manager->discoverProfiles(); });
 }
 
 void EmailInspectorController::backupProfiles(const QVector<int>& profile_indices,
                                               const QString& backup_path) {
+    if (m_state != State::Idle) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot back up profiles: another operation in progress"));
+        return;
+    }
     setState(State::BackingUp);
     Q_EMIT logOutput(QStringLiteral("Backing up profiles to %1...").arg(backup_path));
 
-    (void)QtConcurrent::run([this, profile_indices, backup_path]() {
+    runTracked([this, profile_indices, backup_path]() {
         m_profile_manager->backupProfiles(profile_indices, backup_path);
     });
 }
 
 void EmailInspectorController::restoreProfiles(const QString& manifest_path) {
+    if (m_state != State::Idle) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot restore profiles: another operation in progress"));
+        return;
+    }
     setState(State::Restoring);
     Q_EMIT logOutput(QStringLiteral("Restoring profiles from %1...").arg(manifest_path));
 
-    (void)QtConcurrent::run(
-        [this, manifest_path]() { m_profile_manager->restoreProfiles(manifest_path); });
+    runTracked([this, manifest_path]() { m_profile_manager->restoreProfiles(manifest_path); });
 }
 
 // ============================================================================
@@ -282,9 +451,14 @@ void EmailInspectorController::generateReport(const QString& output_path,
                                               const QString& technician,
                                               const QString& ticket,
                                               const QString& customer) {
+    if (m_state != State::Idle) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot generate report: another operation in progress"));
+        return;
+    }
     setState(State::GeneratingReport);
 
-    QDir output_dir(output_path);
+    const QDir output_dir(output_path);
     if (!output_dir.mkpath(QStringLiteral("."))) {
         const auto message = QStringLiteral("Cannot create report directory: %1").arg(output_path);
         sak::logError("Report: {}", message.toStdString());
@@ -304,24 +478,28 @@ void EmailInspectorController::generateReport(const QString& output_path,
     data.discovered_profiles = m_cached_profiles;
     data.searches_performed = m_search_count;
     data.total_search_hits = m_total_search_hits;
+    // Populate the per-item-type totals from the cached folder tree so the report's
+    // statistics section is not left at zero (B7-B).
+    accumulateFolderStats(m_cached_folder_tree, data);
 
-    bool any_written = false;
-
+    // Both outputs must succeed: a report where only one of HTML/JSON was written is a
+    // partial, misleading deliverable, so surface which output failed and fail closed
+    // rather than reporting the report generated (B7-B).
     const QString html_path = output_path + QStringLiteral("/email_report.html");
-    any_written |=
+    const bool html_ok =
         writeReportFile(html_path, m_report_generator->generateHtml(data).toUtf8(), "HTML");
 
     const QString json_path = output_path + QStringLiteral("/email_report.json");
-    any_written |= writeReportFile(json_path, m_report_generator->generateJson(data), "JSON");
+    const bool json_ok = writeReportFile(json_path, m_report_generator->generateJson(data), "JSON");
 
-    if (any_written) {
+    if (html_ok && json_ok) {
         sak::logInfo("Report generated at: {}", output_path.toStdString());
         Q_EMIT logOutput(QStringLiteral("Report saved to %1").arg(output_path));
         Q_EMIT reportGenerated(output_path);
     } else {
-        const auto message = QStringLiteral(
-            "Report generation failed: "
-            "could not write any files");
+        // A partial HTML/JSON pair is a misleading deliverable: remove whichever file was
+        // written and fail closed, naming the output(s) that failed (B7-B).
+        const auto message = cleanupPartialReport(html_path, html_ok, json_path, json_ok);
         sak::logError("Report: {}", message.toStdString());
         Q_EMIT errorOccurred(message);
     }
@@ -332,12 +510,36 @@ void EmailInspectorController::generateReport(const QString& output_path,
 // Cancel
 // ============================================================================
 
+void EmailInspectorController::runTracked(std::function<void()> task) {
+    // Retain the future so cancelOperation() can wait for it: a bare, discarded
+    // QtConcurrent::run would let the pool thread outlive the controller and
+    // dereference freed parser/worker members.
+    m_tasks.addFuture(QtConcurrent::run(std::move(task)));
+}
+
 void EmailInspectorController::cancelOperation() {
+    // Stopping while a mailbox is still being counted abandons the open: it has no message list
+    // to show, and leaving it half-open would leave the panel believing nothing is loaded.
+    const bool abandon_mbox_open = (m_state == State::Opening && m_file_type == FileType::Mbox);
     m_pst_parser->cancel();
     m_mbox_parser->cancel();
     m_search_worker->cancel();
     m_export_worker->cancel();
     m_profile_manager->cancel();
+    // Block until every in-flight task observes the cancel flags and returns, so
+    // no background thread is still inside the parsers/workers when they (and this
+    // controller) are destroyed.
+    // SAK-ALLOW-BLOCKING: every parser and worker was cancelled on the lines above and
+    // polls that flag, so the tasks return on their own; abandoning the wait would leave
+    // them running inside objects about to be freed.
+    m_tasks.waitForFinished();
+    m_tasks.clearFutures();
+    if (abandon_mbox_open) {
+        m_mbox_parser->close();
+        m_file_type = FileType::None;
+    }
+    m_folder_request_pending = false;
+    m_detail_request_pending = false;
     setState(State::Idle);
 }
 
@@ -364,15 +566,19 @@ void EmailInspectorController::connectPstSignals() {
             &PstParser::folderItemsLoaded,
             this,
             [this](uint64_t fid, QVector<sak::PstItemSummary> items, int total) {
+                m_folder_request_pending = false;
                 Q_EMIT folderItemsLoaded(fid, items, total);
                 setState(State::Idle);
             });
 
-    connect(
-        m_pst_parser.get(), &PstParser::itemDetailLoaded, this, [this](sak::PstItemDetail detail) {
-            Q_EMIT itemDetailLoaded(detail);
-            setState(State::Idle);
-        });
+    connect(m_pst_parser.get(),
+            &PstParser::itemDetailLoaded,
+            this,
+            [this](const sak::PstItemDetail& detail) {
+                m_detail_request_pending = false;
+                Q_EMIT itemDetailLoaded(detail);
+                setState(State::Idle);
+            });
 
     connect(m_pst_parser.get(),
             &PstParser::itemPropertiesLoaded,
@@ -390,35 +596,56 @@ void EmailInspectorController::connectPstSignals() {
             });
 
     connect(m_pst_parser.get(),
+            &PstParser::attachmentContentFailed,
+            this,
+            [this](uint64_t mid, int idx, QString err) {
+                Q_EMIT attachmentContentFailed(mid, idx, err);
+            });
+
+    connect(m_pst_parser.get(),
             &PstParser::progressUpdated,
             this,
             &EmailInspectorController::progressUpdated);
 
-    connect(m_pst_parser.get(), &PstParser::errorOccurred, this, [this](QString err) {
-        Q_EMIT errorOccurred(err);
-        setState(State::Idle);
-    });
+    connect(m_pst_parser.get(),
+            &PstParser::errorOccurred,
+            this,
+            &EmailInspectorController::handleParserError);
 }
 
 void EmailInspectorController::connectMboxSignals() {
-    connect(
-        m_mbox_parser.get(), &MboxParser::fileOpened, this, [this](const QString& path, int count) {
-            Q_UNUSED(path);
-            sak::PstFileInfo info;
-            info.file_path = m_mbox_parser->filePath();
-            info.display_name = QFileInfo(info.file_path).fileName();
-            info.total_items = count;
-            info.is_unicode = true;
-            m_cached_file_info = info;
-            Q_EMIT mboxOpened(count);
-            Q_EMIT fileOpened(info);
-            setState(State::Idle);
-        });
+    // Opening checks the file is a mailbox; counting its messages means reading all of it, which
+    // on a large mailbox is not something to do on the GUI thread. The state stays Opening until
+    // the count is in, and the file is announced only then, with the real number.
+    connect(m_mbox_parser.get(), &MboxParser::fileOpened, this, [this](const QString& path) {
+        m_cached_file_info = {};
+        m_cached_file_info.file_path = path;
+        runTracked([this]() { m_mbox_parser->indexMessages(); });
+    });
+
+    connect(m_mbox_parser.get(), &MboxParser::indexingComplete, this, [this](int count) {
+        if (m_state != State::Opening) {
+            return;
+        }
+        const QFileInfo file(m_cached_file_info.file_path);
+        sak::PstFileInfo info;
+        info.file_path = m_cached_file_info.file_path;
+        info.display_name = file.fileName();
+        info.file_size_bytes = file.size();
+        info.total_items = count;
+        info.is_unicode = true;
+        info.last_modified = file.lastModified();
+        m_cached_file_info = info;
+        Q_EMIT mboxOpened(count);
+        Q_EMIT fileOpened(info);
+        setState(State::Idle);
+    });
 
     connect(m_mbox_parser.get(),
             &MboxParser::messagesLoaded,
             this,
             [this](QVector<sak::MboxMessage> msgs, int total) {
+                m_folder_request_pending = false;
                 Q_EMIT mboxMessagesLoaded(msgs, total);
                 setState(State::Idle);
             });
@@ -427,6 +654,7 @@ void EmailInspectorController::connectMboxSignals() {
             &MboxParser::messageDetailLoaded,
             this,
             [this](sak::MboxMessageDetail detail) {
+                m_detail_request_pending = false;
                 Q_EMIT mboxMessageDetailLoaded(detail);
                 setState(State::Idle);
             });
@@ -436,10 +664,27 @@ void EmailInspectorController::connectMboxSignals() {
             this,
             &EmailInspectorController::progressUpdated);
 
-    connect(m_mbox_parser.get(), &MboxParser::errorOccurred, this, [this](QString err) {
-        Q_EMIT errorOccurred(err);
-        setState(State::Idle);
-    });
+    connect(m_mbox_parser.get(),
+            &MboxParser::errorOccurred,
+            this,
+            &EmailInspectorController::handleParserError);
+}
+
+void EmailInspectorController::handleParserError(const QString& error) {
+    if (m_state == State::Opening && m_file_type == FileType::Mbox) {
+        // The mailbox could not be read through: nothing can be listed from it.
+        m_mbox_parser->close();
+        m_file_type = FileType::None;
+    }
+    if (m_state == State::LoadingFolderItems && m_folder_request_pending) {
+        Q_EMIT folderItemsFailed(m_pending_folder_id, m_pending_folder_offset, error);
+    } else if (m_state == State::LoadingItemDetail && m_detail_request_pending) {
+        Q_EMIT itemDetailFailed(m_pending_detail_id, error);
+    }
+    m_folder_request_pending = false;
+    m_detail_request_pending = false;
+    Q_EMIT errorOccurred(error);
+    setState(State::Idle);
 }
 
 void EmailInspectorController::connectSearchSignals() {
@@ -455,9 +700,28 @@ void EmailInspectorController::connectSearchSignals() {
         setState(State::Idle);
     });
 
-    connect(m_search_worker.get(), &EmailSearchWorker::errorOccurred, this, [this](QString err) {
-        Q_EMIT errorOccurred(err);
+    // searchCancelled is the OTHER terminal event (the worker emits exactly one of the two per
+    // run). It must also return the controller to Idle -- otherwise a cancelled search would
+    // latch the busy state forever and block every later operation. The partial hits are real
+    // matches found before the stop, so they still count toward m_total_search_hits.
+    connect(m_search_worker.get(), &EmailSearchWorker::searchCancelled, this, [this](int partial) {
+        m_total_search_hits += partial;
+        Q_EMIT searchCancelled(partial);
+        Q_EMIT logOutput(QStringLiteral("Search cancelled: %1")
+                             .arg(sak::countOf(partial,
+                                               QStringLiteral("partial hit"),
+                                               QStringLiteral("partial hits"))));
         setState(State::Idle);
+    });
+
+    connect(m_search_worker.get(), &EmailSearchWorker::errorOccurred, this, [this](QString err) {
+        // A search errorOccurred is NON-terminal: EmailSearchWorker reports a per-folder read
+        // failure and keeps scanning the remaining folders, then always emits searchComplete on
+        // exit. Clearing the busy state here would drop m_state to Idle mid-scan and let a second
+        // operation (export/search) enter the unsynchronized parser while the pool thread is still
+        // reading it. Forward the error only; the terminal searchComplete handler is the single
+        // place that returns to Idle.
+        Q_EMIT errorOccurred(err);
     });
 }
 
@@ -478,9 +742,30 @@ void EmailInspectorController::connectExportSignals() {
             [this](sak::EmailExportResult result) {
                 m_cached_exports.append(result);
                 Q_EMIT exportComplete(result);
-                Q_EMIT logOutput(QStringLiteral("Export complete: %1 items (%2)")
-                                     .arg(result.items_exported)
-                                     .arg(result.export_format));
+                // EmailExportWorker delivers outright failures, cancellations and partial exports
+                // through this SAME exportComplete channel (its errorOccurred is declared but never
+                // emitted), recording the reason in result.errors / result.items_failed. Logging
+                // every one as "Export complete" reports failures as successes, so branch on the
+                // real outcome and surface an error when nothing (or not everything) was exported.
+                if (result.items_exported == 0 &&
+                    (!result.errors.isEmpty() || result.items_failed > 0)) {
+                    Q_EMIT errorOccurred(
+                        result.errors.isEmpty()
+                            ? QStringLiteral("Export failed: %1 could not be exported")
+                                  .arg(itemsCount(result.items_failed))
+                            : QStringLiteral("Export failed: %1")
+                                  .arg(result.errors.join(QStringLiteral("; "))));
+                } else if (result.items_failed > 0 || !result.errors.isEmpty()) {
+                    Q_EMIT errorOccurred(
+                        QStringLiteral("Export incomplete: %1 exported, %2 failed -- %3")
+                            .arg(itemsCount(result.items_exported))
+                            .arg(result.items_failed)
+                            .arg(result.errors.join(QStringLiteral("; "))));
+                } else {
+                    Q_EMIT logOutput(QStringLiteral("Export complete: %1 (%2)")
+                                         .arg(itemsCount(result.items_exported))
+                                         .arg(result.export_format));
+                }
                 setState(State::Idle);
             });
 

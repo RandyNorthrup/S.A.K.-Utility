@@ -16,11 +16,35 @@
 #include <QVector>
 
 #include <cstdint>
+#include <functional>
+#include <stop_token>
 
 namespace sak {
 
 /// Default upper bound on entries returned by a single directory listing.
 inline constexpr int kDefaultFileManagementListEntries = 1000;
+
+/// Cancel blocker appended by the transfer surfaces when an observer aborts a
+/// copy; callers that canceled on purpose can filter it out of their report.
+inline const QString kFileManagementTransferCancelledBlocker = QStringLiteral("Transfer canceled.");
+
+/// Streaming-transfer observer for the copy/import/export surfaces: byte
+/// deltas as windows land, plus a cancel poll checked between windows and
+/// between directory entries. Both callbacks optional; default is a no-op.
+/// Local streams and raw reads report per 1 MiB window; APFS/HFS+ writes
+/// report one whole-file delta because the certified writers stream
+/// internally and stay untouched.
+struct FileManagementTransferObserver {
+    std::function<void(qint64 delta_bytes)> on_bytes;
+    std::function<bool()> cancelled;
+
+    [[nodiscard]] bool isCancelled() const { return cancelled && cancelled(); }
+    void addBytes(const qint64 delta) const {
+        if (on_bytes && delta > 0) {
+            on_bytes(delta);
+        }
+    }
+};
 
 enum class FileManagementTargetKind {
     LocalPath,
@@ -41,7 +65,11 @@ struct FileManagementTarget {
     bool read_only{false};
     bool can_browse{true};
     bool can_read_files{true};
-    bool can_write_files{true};
+    // Fail closed: the sole mutation authority defaults OFF. applyCapabilities is the
+    // only grantor (it sets this true only for a local volume or a writer-certified raw
+    // FS, and forces it false on a real write-protect), so a target that never passed
+    // through it -- a blank/partially-populated one -- can never authorize a write.
+    bool can_write_files{false};
     bool can_organize{true};
     bool can_duplicate_scan{true};
     bool can_advanced_search{true};
@@ -60,6 +88,16 @@ struct FileManagementEntry {
     bool directory{false};
     bool regular_file{false};
     bool symlink{false};
+    // Hidden by the host file system: the Windows FILE_ATTRIBUTE_HIDDEN bit (a
+    // hidden file need not be a dotfile), so the explorer's hidden-items toggle
+    // can gate it in addition to the leading-dot convention.
+    bool hidden{false};
+    // File-system-specific storage detail, surfaced in the Properties pane where the
+    // reader provides it. resource_fork_bytes: HFS+ resource fork size (0 = none).
+    // compressed/sparse: APFS transparent compression / sparse (holes) flags.
+    uint64_t resource_fork_bytes{0};
+    bool compressed{false};
+    bool sparse{false};
 };
 
 struct FileManagementListResult {
@@ -77,22 +115,128 @@ struct FileManagementReadResult {
     QStringList blockers;
     QStringList warnings;
     QByteArray data;
+    /// @brief The reader itself stopped short of the end of the file.
+    ///
+    /// Callers must NOT infer truncation from the byte count alone. The "ask for one extra
+    /// byte" probe used elsewhere in this file cannot see a cut the READER made: the APFS
+    /// reader clamps every request to its own 512 MiB ceiling, which happens to equal the
+    /// callers' cap, so a 700 MB file comes back as exactly max_bytes and `size() > max_bytes`
+    /// is false. A hash then covers a prefix while reporting itself uncapped, and an export
+    /// reports complete -- after which the move path deletes the intact source.
+    bool truncated{false};
 };
 
 struct FileManagementMutationResult {
     bool ok{false};
-    QString file_system;
-    QString path;
+    QString file_system{};
+    QString path{};
     uint64_t bytes_written{0};
-    QString before_sha256;
-    QString after_sha256;
+    QString before_sha256{};
+    QString after_sha256{};
+    QStringList blockers{};
+    QStringList warnings{};
+};
+
+/// @brief A rendered, display-ready preview of a file's leading bytes.
+/// Text content is shown verbatim; binary content is shown as a hex+ASCII dump.
+struct FileManagementPreview {
+    QString text;             ///< Display string: decoded text, or a hex+ASCII dump for binary.
+    bool is_binary{false};    ///< True when the bytes were rendered as a hex dump.
+    bool truncated{false};    ///< True when more bytes exist past the previewed window.
+    uint64_t shown_bytes{0};  ///< Number of source bytes represented in @ref text.
+};
+
+/// @brief Result of an on-demand SHA-256 hash of a file.
+struct FileManagementHashResult {
+    bool ok{false};
+    QString file_system;
+    QString sha256;            ///< Lowercase hex SHA-256 digest.
+    bool capped{false};        ///< True when only the first @ref hashed_bytes were hashed.
+    uint64_t hashed_bytes{0};  ///< Number of source bytes fed into the digest.
+    bool cancelled{false};     ///< True when the hash was stopped by the caller's stop_token.
+    QStringList blockers;
+};
+
+/// Result of copying a source file out to a local host destination.
+struct FileManagementExportResult {
+    bool ok{false};
+    QString destination;        ///< Host path written.
+    QString sha256;             ///< Lowercase hex SHA-256 of the bytes written.
+    uint64_t bytes_written{0};  ///< Number of bytes copied to the destination.
+    bool capped{false};         ///< True when a raw source was truncated at the read cap.
+    QStringList blockers;
+};
+
+/// Result of recursively exporting a directory tree to a local host destination.
+struct FileManagementDirectoryExportResult {
+    bool ok{false};        ///< True when the walk finished without a hard blocker.
+    bool complete{false};  ///< True only when ok AND nothing was skipped or truncated,
+                           ///< so a caller cannot mistake a partial export for a whole one.
+    QString destination;   ///< Host directory the tree was written under.
+    int files_exported{0};
+    int directories_created{0};
+    int symlinks_skipped{0};
+    int capped_files{0};     ///< Raw files truncated at the per-file read window.
+    int entries_skipped{0};  ///< Entries dropped by the depth or per-directory bound.
+    uint64_t bytes_written{0};
     QStringList blockers;
     QStringList warnings;
+};
+
+/// True when a single-file export landed WHOLE: it succeeded and the source was not
+/// truncated at the raw read window. Stated here, once, because "ok" alone does not
+/// mean whole -- a capped read returns ok with only a prefix on disk, and a caller
+/// that hands that on (a drag-out URL, a move that then deletes the source) delivers
+/// a short file as if it were the real one.
+/// A caller that DELIBERATELY asked for a capped read (Copy Out) sanctions the cap
+/// itself and does not consult this.
+[[nodiscard]] inline bool rawFileExportIsWhole(const FileManagementExportResult& result) {
+    return result.ok && !result.capped;
+}
+
+/// True when a directory export landed WHOLE. @ref FileManagementDirectoryExportResult::complete
+/// already folds in ok plus "nothing skipped or truncated"; this names the question so
+/// both raw-export callers ask it the same way.
+[[nodiscard]] inline bool rawDirectoryExportIsWhole(
+    const FileManagementDirectoryExportResult& result) {
+    return result.complete;
+}
+
+/// Result of recursively importing a local host directory tree into a target.
+struct FileManagementDirectoryImportResult {
+    bool ok{false};              ///< True when the walk finished without a hard blocker.
+    bool complete{false};        ///< True only when ok AND nothing was skipped, so a caller
+                                 ///< cannot mistake a partial import for a whole one.
+    QString destination;         ///< Target path the tree was written under.
+    int files_imported{0};
+    int directories_created{0};  ///< Child directories created (the root is not counted).
+    int symlinks_skipped{0};
+    int entries_skipped{0};      ///< Entries dropped by the depth or per-directory bound.
+    uint64_t bytes_written{0};
+    QStringList blockers;
+    QStringList warnings;
+};
+
+/// How a raw-target "Replace" must treat an occupant that matches the destination
+/// name only by CASE, when no exact (case-correct) name match exists. Collisions
+/// are detected case-insensitively upstream, so a differing-case occupant can reach
+/// the replace path; whether it is "the same file" depends on the volume's
+/// case-sensitivity (B8-05).
+enum class RawReplaceCaseAction {
+    DeleteDifferingCase,  ///< Known case-insensitive (HFS+): it IS the same file; replace it.
+    TreatAsVacant,        ///< No case match, or known case-sensitive (HFSX): the exact name
+                          ///< is vacant, so create it without touching the differing-case file.
+    RefuseAmbiguous,      ///< Case-sensitivity unknown (APFS): cannot tell if it is the same
+                          ///< file; refuse rather than risk deleting the wrong one.
+    RefuseMultipleCase,   ///< Two+ case-only matches: a case-sensitive volume; refuse.
 };
 
 class FileManagementFileSystemBridge {
 public:
     [[nodiscard]] static QVector<FileManagementTarget> mountedTargets();
+    /// "Local Disk (C:)" or "DATA (D:)": a mounted volume's name, or Local Disk when it has none,
+    /// and its root without the trailing separator.
+    [[nodiscard]] static QString mountedVolumeLabel(const QString& name, const QString& root);
     [[nodiscard]] static QVector<FileManagementTarget> targetsFromInventory(
         const PartitionInventory& inventory);
     [[nodiscard]] static FileManagementTarget manualTarget(const QString& root_path,
@@ -103,7 +247,40 @@ public:
     [[nodiscard]] static bool isNativeFileSystem(const QString& file_system);
     [[nodiscard]] static bool isReadableNonNativeFileSystem(const QString& file_system);
     [[nodiscard]] static QString normalizedFileSystem(const QString& file_system);
+    /// True when a local recursive delete of `path` would be catastrophic and must
+    /// be refused: an empty/whitespace path (QDir treats it as the CWD) or a
+    /// filesystem root ("C:/", "/") -- either would wipe far more than intended
+    /// (B8-01).
+    [[nodiscard]] static bool isUnsafeLocalDeletePath(const QString& path);
+    /// Confine a raw foreign-filesystem entry name to a bare host filename that
+    /// cannot escape the destination directory (drops path components, rejects
+    /// "."/".."/empty). Returns empty when the name is unsafe (B8-02).
+    [[nodiscard]] static QString confinedHostName(const QString& raw_name);
+    /// Data-loss-safe decision for a raw-target "Replace" whose destination name has
+    /// no exact (case-correct) occupant: given the normalized file system and the
+    /// number of case-insensitive matches, decide whether a lone differing-case
+    /// occupant is the same file to replace (HFS+), a distinct file to leave alone
+    /// (HFSX), or an ambiguous case the bridge must refuse (APFS, whose per-volume
+    /// case-sensitivity is not surfaced here). Pure; the core of B8-05.
+    [[nodiscard]] static RawReplaceCaseAction rawReplaceCaseAction(const QString& normalized_fs,
+                                                                   int case_insensitive_matches);
+    /// True only when `target` is genuinely writable. `can_write_files` is the sole
+    /// authoritative signal: applyCapabilities sets it only for a local volume or a
+    /// writer-certified raw FS and forces it FALSE on a real write-protect /
+    /// read-only mount (B8-03). The `read_only` FIELD is NOT consulted here -- it is
+    /// forced true for every non-local target as a browsing-semantics badge, so
+    /// gating on it wrongly disabled every advertised raw HFS/APFS write (B8-04);
+    /// gating on `can_write_files` restores the certified raw-writer path while a
+    /// genuine write-protect still fails closed (Codex-3). The certified writer's
+    /// enable + destructive/hardware certification-evidence attestations and the
+    /// per-op mutation confirmation are all derived from this predicate.
+    [[nodiscard]] static bool targetPermitsMutation(const FileManagementTarget& target);
     [[nodiscard]] static QString capabilitySummary(const FileManagementTarget& target);
+    /// File-system-specific label for an entry's on-disk identifier (APFS Object
+    /// ID, HFS Catalog ID, ext Inode, else generic Identifier).
+    [[nodiscard]] static QString identifierLabel(const QString& file_system);
+    /// File-system-specific plain-language notes on why writes/reads are (un)available.
+    [[nodiscard]] static QStringList safetyNotes(const FileManagementTarget& target);
 
     [[nodiscard]] static FileManagementListResult listDirectory(
         const FileManagementTarget& target,
@@ -112,6 +289,37 @@ public:
     [[nodiscard]] static FileManagementReadResult readFile(const FileManagementTarget& target,
                                                            const QString& path,
                                                            uint64_t max_bytes);
+    /// Compute the SHA-256 of @p path. Local targets are hashed in full via a chunked reader;
+    /// raw/non-native targets are hashed from up to @p max_bytes read through the file-system
+    /// reader (the result is marked @ref FileManagementHashResult::capped when that limit is hit).
+    /// @brief Whether a completed read covered less than the whole file.
+    ///
+    /// Two independent ways a read can fall short, and only one of them is visible in the
+    /// byte count:
+    ///   - the CALLER's cap bit, seen as bytes_read > max_bytes (the "ask for one extra
+    ///     byte" probe);
+    ///   - the READER's own ceiling, which returns a prefix and reports it in
+    ///     reader_truncated. The APFS reader clamps to 512 MiB, which is exactly the
+    ///     callers' cap, so a cut 700 MB file comes back as bytes_read == max_bytes and the
+    ///     first test is false for it.
+    ///
+    /// Taking only the byte count reported a prefix as a whole file: a hash claimed to cover
+    /// the file, and an export claimed complete -- after which the move path deleted the
+    /// intact source. Exposed as a pure seam so that decision is unit-testable without a
+    /// half-gigabyte fixture.
+    [[nodiscard]] static bool readWasCapped(bool reader_truncated,
+                                            uint64_t bytes_read,
+                                            uint64_t max_bytes);
+
+    [[nodiscard]] static FileManagementHashResult hashFile(const FileManagementTarget& target,
+                                                           const QString& path,
+                                                           uint64_t max_bytes,
+                                                           std::stop_token stop_token = {});
+    /// Render @p data (already capped to a preview window by the caller) into a display-ready
+    /// preview: decoded UTF-8/Latin-1 text when the bytes look textual, otherwise a hex+ASCII
+    /// dump. @p truncated marks that the source file has more bytes past this window.
+    [[nodiscard]] static FileManagementPreview renderPreview(const QByteArray& data,
+                                                             bool truncated);
     [[nodiscard]] static FileManagementMutationResult createDirectory(
         const FileManagementTarget& target, const QString& path);
     [[nodiscard]] static FileManagementMutationResult deleteDirectory(
@@ -119,8 +327,62 @@ public:
     [[nodiscard]] static FileManagementMutationResult writeFile(const FileManagementTarget& target,
                                                                 const QString& path,
                                                                 const QByteArray& data);
+    /// Stream a host file into @p path on @p target without holding the payload in RAM.
+    /// APFS and the local filesystem stream block-by-block (peak RAM one window); other
+    /// backends read the file whole until they gain a streaming writer. Prefer this over
+    /// writeFile for copies whose size is not known-small.
+    [[nodiscard]] static FileManagementMutationResult writeFileFromHostPath(
+        const FileManagementTarget& target,
+        const QString& path,
+        const QString& host_file_path,
+        const FileManagementTransferObserver& observer = {});
+    /// Copy @p source_path from @p target out to a local host file @p destination_path.
+    /// Local sources are copied in full (streamed, no cap) and hashed; raw/non-native
+    /// sources are read through the file-system reader up to @p max_bytes and marked
+    /// @ref FileManagementExportResult::capped when that limit is hit.
+    [[nodiscard]] static FileManagementExportResult copyFileToHost(
+        const FileManagementTarget& target,
+        const QString& source_path,
+        const QString& destination_path,
+        uint64_t max_bytes,
+        const FileManagementTransferObserver& observer = {});
+    /// Recursively export the directory tree at @p source_path into the local host
+    /// directory @p destination_dir (created if missing). Regular files copy through
+    /// @ref copyFileToHost (raw sources bounded per file by @p max_file_bytes and
+    /// counted in @ref FileManagementDirectoryExportResult::capped_files); symlinks are
+    /// skipped with a warning. Depth and per-directory entry counts are bounded.
+    [[nodiscard]] static FileManagementDirectoryExportResult exportDirectoryToHost(
+        const FileManagementTarget& target,
+        const QString& source_path,
+        const QString& destination_dir,
+        uint64_t max_file_bytes,
+        const FileManagementTransferObserver& observer = {});
+    /// Recursively import the local host directory tree at @p host_source_dir into
+    /// @p destination_path on @p target. The destination directory itself is created
+    /// through @ref createDirectory (callers resolve a name collision first); regular
+    /// files stream through @ref writeFileFromHostPath; symlinks are skipped with a
+    /// warning. Depth and per-directory entry counts are bounded like the export walk.
+    [[nodiscard]] static FileManagementDirectoryImportResult importDirectoryFromHost(
+        const FileManagementTarget& target,
+        const QString& host_source_dir,
+        const QString& destination_path,
+        const FileManagementTransferObserver& observer = {});
+    /// Delete the whole directory tree at @p path. Local and HFS+ targets remove the
+    /// tree in one native recursive operation; other raw targets (APFS) keep their
+    /// fail-closed guard against deleting a non-empty directory, so the tree is
+    /// emptied depth-first through the same certified per-entry commits first.
+    [[nodiscard]] static FileManagementMutationResult deleteDirectoryTree(
+        const FileManagementTarget& target, const QString& path);
     [[nodiscard]] static FileManagementMutationResult deleteFile(const FileManagementTarget& target,
                                                                  const QString& path);
+    /// Remove whatever currently occupies @p path so a Replace paste can land.
+    /// The occupant's kind is resolved at execution time from the file system
+    /// itself: local targets via QFileInfo, raw targets from a fresh listing
+    /// bounded by @p max_entries (matched case-insensitively). An already-vacant
+    /// path succeeds; a failed or truncated listing fails closed with nothing
+    /// deleted.
+    [[nodiscard]] static FileManagementMutationResult removeExistingEntry(
+        const FileManagementTarget& target, const QString& path, int max_entries);
     [[nodiscard]] static FileManagementMutationResult renameEntry(
         const FileManagementTarget& target,
         const QString& source_path,

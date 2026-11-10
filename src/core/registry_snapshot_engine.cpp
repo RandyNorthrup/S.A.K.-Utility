@@ -2,19 +2,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file registry_snapshot_engine.cpp
-/// @brief Registry key snapshot capture and diff for leftover detection
+/// @brief Registry key snapshot capture for leftover detection
 
 #include "sak/registry_snapshot_engine.h"
-
-#ifdef Q_OS_WIN
-#include <vector>
-#endif
 
 namespace sak {
 
 namespace {
 constexpr DWORD kRegistrySubkeyNameBufferChars = 256;
-}
+// Breadth budgets. HKCU is writable by the very account being uninstalled from, so a
+// planted key can otherwise fan this walk out without bound (memory and CPU) even though
+// the depth is capped. Hitting either budget truncates the walk AND clears the
+// reliability flag, so an elevated caller can never consume the result as complete.
+constexpr DWORD kMaxChildKeysPerKey = 8192;
+constexpr int kMaxSnapshotKeys = 250'000;
+}  // namespace
 
 // Monitored registry paths for snapshot
 const QStringList RegistrySnapshotEngine::kMonitoredPaths = {
@@ -24,12 +26,120 @@ const QStringList RegistrySnapshotEngine::kMonitoredPaths = {
     "HKCU\\Software",
 };
 
-QSet<QString> RegistrySnapshotEngine::captureSnapshot() {
-    QSet<QString> snapshot;
+namespace {
 
-#ifdef Q_OS_WIN
+// Open a monitored key for read. A hard failure (e.g. ERROR_ACCESS_DENIED) means an
+// entire subtree is invisible to this snapshot -- fail closed by clearing @p reliable
+// so the partial result is never consumed as authoritative. A key that simply no
+// longer exists (deleted between enumeration and open) is NOT a reliability failure.
+HKEY openKeyForRead(HKEY hive, const QString& subkey, bool& reliable) {
+    HKEY key = nullptr;
+    // REG_OPTION_OPEN_LINK opens a registry symbolic link itself instead of silently
+    // following it. Without it an attacker-writable REG_LINK could redirect this walk
+    // outside the monitored subtree while every emitted path kept a trusted-looking
+    // name -- and those names are what an elevated leftover cleanup later deletes.
+    const LONG rc = RegOpenKeyExW(
+        hive, reinterpret_cast<LPCWSTR>(subkey.utf16()), REG_OPTION_OPEN_LINK, KEY_READ, &key);
+    if (rc != ERROR_SUCCESS) {
+        if (rc != ERROR_FILE_NOT_FOUND && rc != ERROR_PATH_NOT_FOUND) {
+            reliable = false;
+        }
+        return nullptr;
+    }
+    DWORD link_value_type = 0;
+    if (RegQueryValueExW(key, L"SymbolicLinkValue", nullptr, &link_value_type, nullptr, nullptr) ==
+            ERROR_SUCCESS &&
+        link_value_type == REG_LINK) {
+        // A link: refuse to traverse it and mark the snapshot partial rather than
+        // recording the link target's keys under the link's own path.
+        RegCloseKey(key);
+        reliable = false;
+        return nullptr;
+    }
+    return key;
+}
+
+// Query the subkey count. A failure means we cannot know how many children exist, so
+// any of them could be silently missed -- fail closed.
+bool querySubkeyCount(HKEY key, DWORD& count, bool& reliable) {
+    const LONG rc = RegQueryInfoKeyW(key,
+                                     nullptr,
+                                     nullptr,
+                                     nullptr,
+                                     &count,
+                                     nullptr,
+                                     nullptr,
+                                     nullptr,
+                                     nullptr,
+                                     nullptr,
+                                     nullptr,
+                                     nullptr);
+    if (rc != ERROR_SUCCESS) {
+        reliable = false;
+        return false;
+    }
+    return true;
+}
+
+// Read every immediate child name. An enumeration error other than "no more items"
+// clears @p reliable (a child was skipped), so the snapshot is flagged partial.
+QStringList readChildNames(HKEY key, bool& reliable) {
+    DWORD count = 0;
+    if (!querySubkeyCount(key, count, reliable)) {
+        return {};
+    }
+    if (count > kMaxChildKeysPerKey) {
+        // Too wide to walk. Truncate and flag instead of growing the result without
+        // bound on an attacker-chosen child count.
+        reliable = false;
+        count = kMaxChildKeysPerKey;
+    }
+    QStringList names;
+    wchar_t name_buf[kRegistrySubkeyNameBufferChars];
+    for (DWORD i = 0; i < count; ++i) {
+        DWORD len = kRegistrySubkeyNameBufferChars;
+        const LONG rc = RegEnumKeyExW(key, i, name_buf, &len, nullptr, nullptr, nullptr, nullptr);
+        if (rc != ERROR_SUCCESS) {
+            // ERROR_NO_MORE_ITEMS before the counted end means the child set shrank
+            // under us, so this snapshot is not the complete picture either.
+            reliable = false;
+            if (rc == ERROR_NO_MORE_ITEMS) {
+                break;
+            }
+            continue;
+        }
+        names.append(QString::fromWCharArray(name_buf, len));
+    }
+    // A child added after the count was sampled would be silently missed. Probe one past
+    // the counted end so a key that grew mid-walk is reported unreliable, not ignored.
+    DWORD probe_len = kRegistrySubkeyNameBufferChars;
+    if (RegEnumKeyExW(key, count, name_buf, &probe_len, nullptr, nullptr, nullptr, nullptr) ==
+        ERROR_SUCCESS) {
+        reliable = false;
+    }
+    return names;
+}
+
+// HKLM\SOFTWARE\Classes is enormous and irrelevant to leftover detection; skip it.
+// Exact name match only: a prefix match also excluded unrelated siblings an attacker (or
+// a vendor) can name, such as "ClassesBackup", hiding real leftovers from the diff.
+bool shouldSkipChild(const QString& childName, const QString& hiveName, const QString& subkey) {
+    return childName.compare(QStringLiteral("Classes"), Qt::CaseInsensitive) == 0 &&
+           hiveName == "HKLM" && subkey == "SOFTWARE";
+}
+
+QString joinKeyPath(const QString& hiveName, const QString& subkey) {
+    return subkey.isEmpty() ? hiveName : hiveName + "\\" + subkey;
+}
+
+}  // namespace
+
+QSet<QString> RegistrySnapshotEngine::captureSnapshot(bool* reliable) {
+    QSet<QString> snapshot;
+    bool ok = true;
+
+    const SnapshotSink sink{.keys = snapshot, .reliable = ok};
     for (const auto& path : kMonitoredPaths) {
-        // Parse hive and subkey
         HKEY hive = nullptr;
         QString subkey;
 
@@ -39,130 +149,51 @@ QSet<QString> RegistrySnapshotEngine::captureSnapshot() {
         } else if (path.startsWith("HKCU\\")) {
             hive = HKEY_CURRENT_USER;
             subkey = path.mid(5);  // Skip "HKCU\\"
-        } else if (path.startsWith("HKCR")) {
-            hive = HKEY_CLASSES_ROOT;
-            subkey = path.mid(5);  // Skip "HKCR\\"
-            if (path == "HKCR") {
-                subkey = "";
-            }
         }
 
-        if (hive) {
-            QString hive_name = path.left(path.indexOf('\\'));
-            if (path == "HKCR") {
-                hive_name = "HKCR";
-            }
-            enumerateKeys(hive, subkey, hive_name, snapshot, kDefaultMaxDepth);
+        if (hive != nullptr) {
+            const QString hive_name = path.left(path.indexOf('\\'));
+            enumerateKeys(hive, subkey, hive_name, sink, kDefaultMaxDepth);
         }
     }
-#endif
 
+    if (reliable != nullptr) {
+        *reliable = ok;
+    }
     return snapshot;
 }
-
-bool RegistrySnapshotEngine::matchesAnyPattern(const QString& key, const QStringList& patterns) {
-    const QString key_lower = key.toLower();
-    for (const auto& pattern : patterns) {
-        if (key_lower.contains(pattern.toLower())) {
-            return true;
-        }
-    }
-    return false;
-}
-
-QVector<LeftoverItem> RegistrySnapshotEngine::diffSnapshots(
-    const QSet<QString>& before,
-    const QSet<QString>& after,
-    const QStringList& programNamePatterns) {
-    QVector<LeftoverItem> leftovers;
-
-    for (const auto& key : after) {
-        if (!matchesAnyPattern(key, programNamePatterns)) {
-            continue;
-        }
-
-        bool survived = before.contains(key);
-        const QString description =
-            survived ? QStringLiteral("Registry key survived uninstallation")
-                     : QStringLiteral("Registry key added during uninstallation");
-
-        LeftoverItem item;
-        item.type = LeftoverItem::Type::RegistryKey;
-        item.path = key;
-        item.description = description;
-        item.risk = LeftoverItem::RiskLevel::Review;
-        item.selected = false;
-        leftovers.append(item);
-    }
-
-    return leftovers;
-}
-
-#ifdef Q_OS_WIN
 
 void RegistrySnapshotEngine::enumerateKeys(HKEY hive,
                                            const QString& subkey,
                                            const QString& hiveName,
-                                           QSet<QString>& output,
+                                           const SnapshotSink& sink,
                                            int maxDepth) {
     if (maxDepth <= 0) {
         return;
     }
-
-    HKEY key = nullptr;
-    LONG rc = RegOpenKeyExW(hive, reinterpret_cast<LPCWSTR>(subkey.utf16()), 0, KEY_READ, &key);
-    if (rc != ERROR_SUCCESS) {
+    if (sink.keys.size() >= kMaxSnapshotKeys) {
+        // Total-size budget reached: stop and flag rather than letting attacker-controlled
+        // breadth grow the key set without bound. SnapshotSink::reliable is a bool& bound to
+        // captureSnapshot's local ok, which it copies out through its reliable* out-parameter.
+        sink.reliable = false;
         return;
     }
-
-    // Add this key to snapshot
-    QString full_path;
-    if (subkey.isEmpty()) {
-        full_path = hiveName;
-    } else {
-        full_path = hiveName + "\\" + subkey;
+    HKEY key = openKeyForRead(hive, subkey, sink.reliable);
+    if (key == nullptr) {
+        return;
     }
-    output.insert(full_path);
+    sink.keys.insert(joinKeyPath(hiveName, subkey));
 
-    // Enumerate subkeys
-    DWORD subkey_count = 0;
-    RegQueryInfoKeyW(key,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     &subkey_count,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr);
+    const QStringList children = readChildNames(key, sink.reliable);
+    RegCloseKey(key);
 
-    wchar_t subkey_name[kRegistrySubkeyNameBufferChars];
-    for (DWORD i = 0; i < subkey_count; ++i) {
-        DWORD name_len = kRegistrySubkeyNameBufferChars;
-        rc = RegEnumKeyExW(key, i, subkey_name, &name_len, nullptr, nullptr, nullptr, nullptr);
-        if (rc != ERROR_SUCCESS) {
+    for (const QString& child : children) {
+        if (shouldSkipChild(child, hiveName, subkey)) {
             continue;
         }
-
-        QString child_name = QString::fromWCharArray(subkey_name, name_len);
-
-        // Skip known-large hives that would slow down snapshot
-        if (child_name.startsWith("Classes", Qt::CaseInsensitive) && hiveName == "HKLM" &&
-            subkey == "SOFTWARE") {
-            continue;  // HKLM\SOFTWARE\Classes is huge
-        }
-
-        QString child_path = subkey.isEmpty() ? child_name : subkey + "\\" + child_name;
-
-        enumerateKeys(hive, child_path, hiveName, output, maxDepth - 1);
+        const QString child_path = subkey.isEmpty() ? child : subkey + "\\" + child;
+        enumerateKeys(hive, child_path, hiveName, sink, maxDepth - 1);
     }
-
-    RegCloseKey(key);
 }
-
-#endif  // Q_OS_WIN
 
 }  // namespace sak

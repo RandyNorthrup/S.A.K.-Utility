@@ -33,14 +33,19 @@ struct PartitionFileSystemToolSpec {
 
 struct PartitionFileSystemToolManifestResult {
     bool ok{false};
-    QVector<PartitionFileSystemToolSpec> tools;
-    QStringList errors;
+    QVector<PartitionFileSystemToolSpec> tools{};
+    QStringList errors{};
 };
 
 class PartitionFileSystemToolManifest {
 public:
     [[nodiscard]] static QString defaultRuntimeRelativePath();
     [[nodiscard]] static QString defaultRuntimeManifestPath(const QString& app_dir);
+    // Resolve the elevated-tool manifest (root of trust) from the trusted application
+    // directory only; never from a current-working-directory path an attacker could plant.
+    // Returns an empty string when there is no trusted anchor, which makes the tool runner
+    // fail closed. There is no environment-variable or source-tree override.
+    [[nodiscard]] static QString resolveRuntimeManifestPath();
     [[nodiscard]] static PartitionFileSystemToolManifestResult validateManifestFile(
         const QString& manifest_path, const QString& tools_root);
     [[nodiscard]] static PartitionFileSystemToolManifestResult validateManifestJson(

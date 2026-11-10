@@ -1,41 +1,231 @@
 # Partition Manager Certification
 
-This document separates code-complete automated proof from destructive VM and hardware certification. Unit tests and release-readiness gates prove script generation, safety blockers, queue state, UI chrome, and non-destructive behavior. Destructive storage behavior needs disposable media evidence before release claims can say it is hardware-certified.
+This document says what Partition Manager's destructive operations have been proved to do, and on what. Unit tests prove script generation, safety blockers, queue state and panel behaviour. This is about the disks: whether an operation did what it says when it ran.
 
-`docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json` is the machine-readable source for certification scenario IDs, required evidence keys, and safety contracts. The harness stamps those contracts into each result, the external-evidence JSON scaffold, Markdown checklist, and per-gate lab package carry them for lab runs, the verifier rejects missing contracts or missing/blank passed-scenario evidence payload values, and the claim-level script counts only evidence that satisfies the matrix with non-empty values.
-`scripts/new_partition_manager_certification_gap_report.ps1` and
-`scripts/check_partition_manager_certification_gap_report.ps1` turn that status
-into JSON/Markdown gap output listing every incomplete VHD or external gate,
-evidence key, required value, safety contract, and status-aware next command. A
-`VhdDataDiskCertified` gap report points at external-evidence collection and the
-per-gate report importer plus strict hardware handoff instead of asking
-operators to rerun the VHD matrix.
-The per-gate lab package also writes `report.template.json` files so operators
-can produce consistent local `report.json` evidence artifacts with the gate ID,
-matrix contract, required evidence payload, artifact list, and verification
-summary.
-`scripts/update_partition_manager_external_manifest_from_reports.ps1` imports
-completed per-gate `report.json` files back into the external manifest only
-after each report matches the matrix ID, safety contract, required evidence
-keys, required values, and non-empty verification summary.
-`scripts/new_partition_manager_certification_bundle.ps1` and
-`scripts/check_partition_manager_certification_bundle.ps1` bind the current
-status, harness report, VHD preflight, gap report, external manifest, and lab
-checklist together with SHA-256 hashes for release handoff.
-`scripts/check_partition_manager_release_claims.ps1` then checks README,
-changelog, audit, plan, certification, and readiness wording against the
-generated claim level so release notes cannot accidentally claim more
-certification than the evidence supports.
-`scripts/run_partition_manager_hardware_certification_strict.ps1` is the final
-non-mutating hardware-certification handoff. It verifies an existing strict VHD
-evidence root, the external JSON manifest, the paired checklist, and the
-per-gate lab package, writes status/gap/bundle artifacts, and exits nonzero
-unless the generated claim level is `HardwareCertified`.
+## How a row works
+
+`certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json` lists every row. `scripts/generate_partition_manager_matrix.py` writes it, and it is never edited by hand. A row names what it runs, what it may honestly run on, what it does not prove, and what a separate tool must read back.
+
+A row has three parts, and they do not share code:
+
+1. **A fixture**, made with Windows' own tools in `scripts/partition_manager_certification_row_bodies.ps1`, because a fixture is not what is under test.
+2. **The operation**, run the way a person's Apply runs it. A step client (`tests/certification/partition_manager_scenario_step.cpp`) scans the disks, finds its disk by identity and typed confirmation, builds the request with the same functions the panel calls (`src/core/partition_operation_requests.cpp`), queues it through `PartitionManagerController`, and applies it through the real `sak_elevated_helper.exe`. It runs under a standard-user token, as the app does, and Windows' own account of both tokens goes in the evidence. Data Recovery is the exception: the panel calls that engine in its own process, so that row runs elevated with no helper, and says so.
+3. **The readback**, by `scripts/partition_manager_readback.ps1`, which reads the partition table straight off the device, asks Windows about volumes and files, hashes raw ranges, and scans for markers a wipe must have destroyed. A boot row starts the disk alone in a VM of its own.
+
+What this does not drive is the panel's dialogs. The dialogs' choices reach the same functions, and `tests/unit/test_partition_manager_panel.cpp` tests what they queue, but no row presses them.
+
+`scripts/partition_manager_row_evidence.ps1` decides whether a row's evidence is accepted, and both the claim level and the strict verifier use it. It checks each promise the matrix names against the readback, parses each stored partition table again from its raw bytes, and requires each step to have run through the controller and the helper. A field being present proves nothing.
+
+Nothing is signed. A hand-edited report has to agree with its raw bytes and with every step's report, and the whole set is committed, so a stale run or an honest mistake fails. Someone forging all of it on purpose would not be stopped.
+
+## What the claim level says
+
+The level says what ran on what, and there is no level for hardware in general.
+
+| Level | Means |
+|---|---|
+| `FailedEvidence` | A row in the selected run failed. |
+| `CodeCompleteOnly` | Not every disposable-VHD row is accepted. |
+| `VhdDataDiskCertified` | Every disposable-VHD row, on virtual disks in a VM, and not every row a VM can run. |
+| `VirtualMachinesValidated` | Every row a VM can run, with at least one that needs a real device run on a virtual one, or not run because only a real device can. |
+| `NamedDevicesValidated` | Every row, with each that needs a real device run on one. It says those devices, and no others. |
+
+The defrag row needs a real drive that spins, on a physical PC. It passes when Windows reports the drive's media type as `HDD`, or when Windows reports `Unspecified` and the drive itself reports a nonzero rotation rate through the bundled smartctl. A rate never overrules any other answer from Windows, so a drive Windows calls `SSD` fails whatever rate it reports, and a drive that reports no rate fails. The row records the two facts separately, Windows' media type exactly as Windows gives it and smartctl's rotation rate, and the verifier decides from both. The rig's Seagate Expansion Desk 8 TB is on USB, behind a bridge that hides its type: on this device Windows did not report a hard disk, it said `Unspecified`, and the drive reported 5425 rpm. A VirtualBox disk is not accepted at all, whatever it reports. A claim about a real device comes from a row that ran on that device, on a physical PC with the drive plugged straight in. VirtualBox on the rig's Mac cannot do this: over xHCI macOS refuses authorization and Windows gets Code 10, and on a USB 2 controller VirtualBox refuses a SuperSpeed device. A raw-disk link would show Windows a `VBOX HARDDISK` on SATA, which can only count as a virtual machine. The words the site may use are generated from the status and appear in the block below.
+
+## The freeze rule
+
+Docs and the site may change after a freeze. Code may not.
+
+`scripts/partition_manager_code_digest.py` hashes every tracked file except docs, Markdown, evidence, workflows and the configuration of tools that build nothing, with CRLF read as LF so the same commit gives the same digest on a workstation and on a clean CI clone. Evidence holds that digest, and a change to any file it covers invalidates all of it. T3 checks the digest, because it rebuilds and so cannot check a binary's hash. `scripts/run_partition_manager_certification_rig.ps1` records the tested binaries' hashes when it stages them.
+
+## Which evidence counts
+
+`scripts/select_partition_manager_evidence.ps1` selects one run by writing `artifacts/partition-manager-certification/evidence/current/index.json`. Status and verification read only that index. Older runs stay in git as history and can never be picked up as current. Evidence from before 2026-11-04 tested Windows and VirtualBox commands rather than this app, and does not count.
+
+## Running it
+
+The rig is a host with the disposable VirtualBox guest, and for the device rows a disposable physical PC reached over SSH. `AGENTS.local.md` says which machines those are. Nothing runs on the machine you work at but compiling and these scripts' ssh calls: every row changes disks, and every disk it changes is in the guest or on that PC.
+
+| Script | What it is for |
+|---|---|
+| `scripts/run_partition_manager_final_certification.ps1` | The whole run, on one frozen commit |
+| `scripts/run_partition_manager_certification_groups.ps1` | One group of rows, for a trial |
+| `scripts/run_partition_manager_certification_rig.ps1` | One action on the rig: stage, deploy, VM on and off, a throwaway disk |
+| `scripts/run_partition_manager_app_certification.ps1` | Runs in the guest or on a PC named as disposable, and refuses to run anywhere else |
+| `scripts/partition_manager_certification_row_bodies.ps1` | What each row does |
+
+A trial writes to a folder of your choosing and is never selected. Run a row with:
+
+```powershell
+pwsh -NoProfile -File scripts/run_partition_manager_certification_rig.ps1 -Action Stage -ReleaseDir build\Release -StageDir <folder>
+pwsh -NoProfile -File scripts/run_partition_manager_certification_rig.ps1 -Action Deploy -StageDir <folder>
+pwsh -NoProfile -File scripts/run_partition_manager_certification_groups.ps1 -Group vhd -Rows vhd.quick-partition -EvidenceDir <folder> -StageDir <folder>
+```
+
+### On a physical PC
+
+The device groups (`ssd-device`, `hdd-device`, `data-device`) run on a physical PC when given `-PcFile`. The other groups stop: they need throwaway disks the VM rig can attach, and a VM of their own to start a disk in. Boot rows also stop on a physical PC, because nothing here can prove a boot there or put the machine back. Proving a boot on real firmware needs a chain written for that PC's disks, and someone to power-cycle it when a row leaves it unbootable.
+
+What the PC needs: a fresh Windows with nothing to keep, UAC on, OpenSSH by key, a local administrator who signs in automatically, and the drives plugged in. The rows run from a scheduled task in that signed-in session, the client under its standard-user token, and Windows' own policy answers the consent prompt, so nobody is at the keyboard and every report says so. No row shows that a person pressing Yes behaves the same.
+
+1. Read the machine's id on the PC: `Get-CimInstance Win32_ComputerSystemProduct | Select-Object UUID` and `Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model`.
+2. Write the PC file outside the repository. `confirmation` is what a person types to say this machine, and only this one, may be changed. A board with no id of its own cannot be named. `port`, `jump` and `deny_names` are optional, and `deny_names` are checked for in the evidence along with the rig's own:
+
+   ```json
+   { "host": "Technician@10.0.0.5", "key": "C:\\keys\\pc-a", "machine_uuid": "...", "confirmation": "DISPOSABLE <manufacturer> <model> <uuid>", "deny_names": ["..."] }
+   ```
+
+3. Prepare it. This checks it is the machine named, that UAC is on and someone is signed in, writes the approval the rows look for, registers the elevated task, and lists the disks:
+
+   ```powershell
+   pwsh -NoProfile -File scripts/run_partition_manager_certification_rig.ps1 -Action PcPrepare -PcFile <pc.json>
+   ```
+
+4. Write the pin file from that list, by model and exact size. It refuses the disk that runs that Windows, and two disks that match, and prints no serial number:
+
+   ```powershell
+   pwsh -NoProfile -File scripts/run_partition_manager_certification_rig.ps1 -Action WritePins -PcFile <pc.json> -PinFile <pins.json> -PinSpec "ssd=<model>|<bytes>;hdd=<model>|<bytes>"
+   ```
+
+### The final run
+
+1. Freeze: commit, and leave the tree clean. `python scripts/partition_manager_code_digest.py --root .` must say `code_dirty: false`. Docs and the site may still change after this. Code may not.
+2. Build Release from that commit, on any machine.
+3. Restore the VM to its clean snapshot, start it, and sign in.
+4. For the device rows, prepare the physical PC and write the pin file, as above, immediately before the run. The pin file holds serial numbers, so it stays outside the repository. Check it by eye against the drives in front of you. Every row reads the disk again, against this, immediately before each step:
+
+   ```json
+   {
+     "ssd": { "model": "...", "size_bytes": "0", "serial_number": "...", "bus_type": "USB", "unique_id": "...", "confirmation": "CERTIFY ... ... ..." },
+     "hdd": { "model": "...", "size_bytes": "0", "serial_number": "...", "bus_type": "USB", "unique_id": "...", "confirmation": "CERTIFY ... ... ..." }
+   }
+   ```
+
+5. Run it. The device rows and the data rows named for the hard drive run on the PC, and everything else on the VM rig. Leave out `-PinFile` and `-PcFile` to run the device rows on virtual disks, which caps the claim at `VirtualMachinesValidated`:
+
+   ```powershell
+   pwsh -NoProfile -File scripts/run_partition_manager_final_certification.ps1 -ReleaseDir build\Release -PinFile <pins.json> -PcFile <pc.json>
+   ```
+
+   With `-PcFile`, the VM rig's groups and the PC's device groups run as two chains at the same time (`scripts/run_partition_manager_certification_chains.ps1`), each in its own pwsh with its own log, `chain-vm-rig.log` and `chain-physical-pc.log`, in the run's evidence folder; `-PlanOnly` shows both. Without it every group is one chain on the VM rig. A chain stops at its first group that fails, with that group's evidence kept, and a group stops at its first row that fails: the rows after it do not run. The other chain runs on to its end, both results are reported, and the run fails if either failed; the evidence is checked, selected and the block regenerated only once both chains have ended and both passed. A step the rig runs in a guest fails when its log says the job stopped, ran past its time or exited nonzero. A failed row is a finding: fix the code, and a code fix starts again from step 1.
+
+   Each group's guest job has its own limit (`Get-PmGroupJobMinutes` in `scripts/partition_manager_row_evidence.ps1`): `ssd-device` two whole-disk passes of its pinned drive at 15 MiB/s, 20% under the slowest the rehearsal saw (19.1 MB/s), plus 40 minutes, rounded up to the hour, which is 600 minutes for the 256 GB drive; `hdd-device` and `data-device` 60 minutes each (4.1 and 4.5 measured); every other group 240. `-RowMinutes` overrides it for a trial. One whole-disk wipe step is limited to its drive at the same rate plus 30 minutes, and never less than the 6 hours it had.
+6. Read the block below, which step 5 regenerated, with its claim level and the words the site may use.
+7. Commit `artifacts/partition-manager-certification/evidence/current` and this document, and push. Tag the commit, which runs T3. T3 passes the digest of its clean checkout to `scripts/verify_partition_manager_certification.ps1`, checks the block, and fails on evidence from other code.
+
+### What a run takes
+
+Measured on the rig in the trial of 2026-11-04, one group at a time. The device groups have not run on a physical PC, so theirs are estimates.
+
+| Part | Time |
+|---|---|
+| Configure, build the step client and helper, stage, deploy | 5 minutes |
+| `vhd`: twelve rows, the wipe on a throwaway VDI | 29 minutes |
+| `data`: eight rows on VHDs, the dynamic disk on a VDI | 17 minutes |
+| `boot-uefi`: migrate, prove it starts, break, repair, prove it starts again | 22 minutes |
+| `boot-bios`: build a BIOS install | 83 minutes |
+| `boot-bios`: repair chain, then system MBR-to-GPT | 20 minutes |
+| `ssd-virtual` and `usb-virtual` | 5 minutes each |
+| The device groups on a PC: two whole-disk passes on the 256 GB SSD, a defrag of 16 GB on the hard drive, and four small data rows | about an hour, not measured |
+
+The whole run is about three and a half hours on the VM rig, with the PC's chain beside it (232 minutes for `ssd-device`, 4.1 for `hdd-device` and 4.5 for `data-device` in the rehearsal of 2026-11-09), so about four hours with setup. A failed group stops its chain, and a code fix starts the run again from the freeze.
+
+The rig signs in to a VM through its keyboard, and takes the sign-in as done only when Windows names who is signed in. It tries four times, waiting up to 90 seconds after each, and a VM that never signs in stops the run as "did not sign in": Windows can report that nobody is signed in before its sign-in screen is drawn, and keys typed then are lost.
+
+A proof VM is shut down from inside its Windows, as a person would. Pulling the power leaves Windows recording a failed shutdown, and on BIOS the next start then stops at "Your PC couldn't turn off properly" until someone presses Enter.
 
 ## Current Certification State
 
-Current default non-mutating readiness status as of 2026-06-02 UTC / 2026-06-02
-PDT is `CodeCompleteOnly`. The latest default release-readiness proof passed on
+<!-- BEGIN GENERATED certification-state: do not edit by hand. Regenerate with scripts/check_partition_manager_release_claims.ps1 -Update -->
+
+Current claim level: `NamedDevicesValidated`.
+Accepted VHD evidence: 12/12.
+Accepted external evidence: 18/18.
+Incomplete VHD scenarios: none.
+Incomplete external gates: none.
+
+Every row passed on the selected evidence, and each row that needs a real device ran on
+the one named below. That says those devices, and no others.
+
+What the site may say for this evidence:
+
+> On the v0.9.3 code, Partition Manager operations, including boot repair, MBR-to-GPT conversion and OS migration, ran through the app on disposable virtual machines and virtual disks. Some operations were also tested on one SAMSUNG MZVL2512HCJQ-00BH1 512 GB NVMe SSD and one Seagate Expansion Desk 8 TB USB disk. Internal SATA drives were not tested, and results on other devices may differ. SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize. Writes to Apple file systems were validated with Apple's own tools. Back up before changing a disk.
+
+Disposable-VHD scenarios (`certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json`):
+
+| Scenario | Name | Accepted on this evidence | Ran on |
+|---|---|---|---|
+| `vhd.create-format-resize-delete` | Create, format, resize, and delete data partition | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.fat32-to-ntfs` | FAT32 to NTFS in-place conversion | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.quick-partition` | Quick Partition equal-size data-disk layout | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.quick-partition-custom` | Quick Partition custom size and label layout | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.quick-partition-mbr` | Quick Partition MBR four-data-partition layout | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.adjacent-extend` | Adjacent free-space Extend Partition Wizard path | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.recovered-partition-restore` | Recovered partition write-back candidate restore | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.empty-style-conversion` | Empty data disk GPT/MBR conversion | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.clear-disk-wipe` | Clear-level non-system disk wipe | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `vhd.image-clone` | Offline VHD image clone and sentinel verification | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.image-restore` | Offline VHD image restore and overwrite verification | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `vhd.partition-clone-region` | Partition clone to raw target region | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+
+External VM/hardware/lab gates (same matrix):
+
+| Gate | Name | Accepted on this evidence | Ran on |
+|---|---|---|---|
+| `external.system-mbr2gpt` | System MBR-to-GPT conversion in disposable boot VM | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `external.os-migration-reboot` | OS migration target boot and firmware-order proof | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `external.boot-repair-uefi` | UEFI boot repair with intentionally broken BCD | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `external.boot-repair-bios` | BIOS/MBR boot repair with intentionally broken BCD | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `external.usb-removable` | USB removable disk destructive operation proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.file-level-data-recovery` | File-level Data Recovery scan and restore proof | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `external.ssd-retrim` | SSD/NVMe ReTrim proof | yes | physical: SAMSUNG MZVL2512HCJQ-00BH1, NVMe |
+| `external.hdd-defrag-execution` | Direct in-app HDD defrag execution proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.ssd-secure-erase` | SSD/NVMe secure erase command execution proof | yes | physical: SAMSUNG MZVL2512HCJQ-00BH1, NVMe |
+| `external.bitlocker` | BitLocker locked/unlocked data-volume blocker proof | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `external.bitlocker-mutation` | In-app BitLocker unlock/suspend/resume mutation proof | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `external.allocate-free-space` | Allocate Free Space adjacent donor-volume backup/delete/extend/recreate/restore proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.partition-move` | Offline partition start-move proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.cluster-size-change` | Existing-volume cluster-size change proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.primary-logical-conversion` | Primary/logical conversion on disposable MBR disk | yes | virtual_disk: Msft Virtual Disk, File Backed Virtual |
+| `external.volume-serial-number` | Volume serial-number metadata mutation proof | yes | physical: Seagate Expansion Desk, USB |
+| `external.dynamic-to-basic` | Dynamic disk to basic conversion proof | yes | virtual_machine: VBOX HARDDISK, SATA |
+| `external.hardware-wipe` | Non-system hardware wipe on disposable physical disk | yes | physical: SAMSUNG MZVL2512HCJQ-00BH1, NVMe |
+
+Apple filesystem driver capabilities (`certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`):
+
+| Capability | Filesystem | Name | Status |
+|---|---|---|---|
+| `H-a` | HFS+ | Special-file node-pool growth | certified 2026-06-14 |
+| `H-b` | HFS+ | Depth-general and width-general catalog and attributes B-trees | certified 2026-06-17 |
+| `H-c` | HFS+ | B-tree underflow merge and rebalance | certified 2026-06-21 |
+| `H-d` | HFS+ | General allocator and multi-leaf extents-overflow trees | certified 2026-06-25 |
+| `H-e` | HFS+ | Hardlinks, symlinks, private metadata, and complex delete | certified 2026-06-27 |
+| `H-f` | HFS+ | Broad attribute growth and attribute overflow records | certified 2026-06-27 |
+| `H-g` | HFS+ | Big-endian journal replay | certified 2026-06-27 |
+| `H-h` | HFS+ | HFS wrapper and embedded HFS+ offset writes | certified 2026-06-27 |
+| `A-a` | APFS | Multi-CIB and multi-chunk space manager | certified 2026-08-31 |
+| `A-b` | APFS | Crash-safe in-place COW mutation of Apple containers | certified 2026-08-31 |
+| `A-c` | APFS | Snapshot create, delete, and revert | certified 2026-06-26 |
+| `A-d` | APFS | Multi-volume containers | certified 2026-06-26 |
+| `A-e` | APFS | Compression read and write | certified 2026-06-27 |
+| `A-f` | APFS | Credential-gated FileVault encryption | certified 2026-06-27 |
+| `A-g` | APFS | Container grow and shrink | certified 2026-08-31 |
+| `A-h` | APFS | Clones, sparse files, hardlinks, xattr and ACL, sealed-volume policy | certified 2026-06-28 |
+| `A-i` | APFS | Fusion and multi-device Tier2 containers | design decision: out of scope, fails closed |
+
+<!-- END GENERATED certification-state -->
+
+## History
+
+What follows came before this document said what ran on what. Evidence from before 2026-11-04 tested Windows and VirtualBox commands, not this app, and does not count toward the level above. It stays in git as history.
+
+The June checkpoints below are historical evidence, not a current certification claim. Their
+retained artifacts remain available; they have not been relabeled as passing the stronger contract.
+
+### Historical June 2026 checkpoints
+
+The default non-mutating readiness status as of 2026-06-02 UTC / 2026-06-02
+PDT was `CodeCompleteOnly`. That default release-readiness proof passed on
 2026-06-02 09:40 PDT with the non-mutating harness report at
 `artifacts\partition-manager-certification\readiness\run-20260602-094050\partition-manager-certification-report.json`.
 That readiness run also verified
@@ -45,8 +235,8 @@ That readiness run also verified
 and
 `artifacts\partition-manager-certification\readiness\certification-artifact-bundle.json`.
 
-Strict disposable-VHD status is `VhdDataDiskCertified` when release readiness
-uses the strict evidence root. The latest elevated strict VHD proof passed on
+At that checkpoint, strict status was reported as `VhdDataDiskCertified`, not a current claim,
+when release readiness used the strict evidence root. The elevated strict VHD proof passed on
 2026-06-02 19:49 PDT / 2026-06-03 UTC with 12/12 VHD gates passed, no failures,
 and no skipped VHD scenarios at
 `artifacts\partition-manager-certification\vhd-strict\run-20260602-194934\partition-manager-certification-report.json`.
@@ -54,17 +244,17 @@ The previous strict proof passed on 2026-06-01 20:34 PDT at
 `artifacts\partition-manager-certification\vhd-strict\run-20260601-203234\partition-manager-certification-report.json`.
 Strict readiness against that evidence passed on 2026-06-01 22:13 PDT with
 `-PartitionCertificationRoot artifacts\partition-manager-certification\vhd-strict -RequirePartitionVhdEvidence`.
-Default readiness still records a non-admin VHD preflight blocker when run from
-this shell, while the elevated strict preflight recorded administrator=true and
-ready=true. The VM-lab external manifest now has 18/18 external gates passed.
+That default readiness recorded a non-admin VHD preflight blocker, while the elevated
+strict preflight recorded administrator=true and ready=true. The retained VM-lab external
+manifest records 18/18 external gates passed.
 The imported manifest is
 `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.json`.
 The paired imported checklist is
 `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.checklist.md`,
 and the importer refreshed the VM-lab run-sheet manifest references to match
 that imported manifest before strict handoff.
-The imported claim level now reaches `HardwareCertified`: strict VHD proof has
-12/12 VHD mutation scenarios passed, and the imported external manifest at
+The historical imported claim level was reported as `HardwareCertified`: that strict VHD proof
+recorded 12/12 VHD mutation scenarios passed, and the imported external manifest at
 `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.json`
 has 18/18 external VM/hardware/lab gates passed with non-empty
 matrix-required evidence values and local artifact paths. The paired checklist
@@ -177,7 +367,7 @@ through 128 MiB; larger generated raw targets remain blocked because Apple
 kernel validation rejected the previous 51 GB generated spaceman geometry even
 though Windows-side detection accepted it.
 That ceiling is now lifted for the validated multi-chunk range: the writer emits multi-spaceman-chunk single-CIB containers, and the new geometry passed Apple-native validation in a qemu/KVM macOS Sequoia recovery VM (apfs.kext 2332.101.1) on 2026-06-14 UTC. Each S.A.K.-written container was attached as a bare raw SATA disk; macOS auto-synthesized and auto-mounted every container read-write (the volume superblock records `last modified by apfs_kext (2332.101.1)`), and `fsck_apfs` reported `The container ... appears to be OK` for all of: 64 MiB single-chunk (`SAK1`), 256 MiB multi-chunk (`SAK2CHUNK`), and 1 GiB eight-chunk (`SAK8`). A kernel read-write round-trip (mount, `mkdir` + `touch`, `sync`, unmount) advanced the checkpoint transaction id (4 to 8 on the single-chunk container, 4 to 7 on the 256 MiB multi-chunk) and `fsck_apfs` still reported the container OK afterward, proving the kernel can mutate the S.A.K.-written container and keep it consistent. Evidence: `artifacts\partition-manager-certification\vm-lab\apple-tool-evidence\report.json` plus the paired `*.fsck_apfs-PASS.png` and `*kernel-rw-roundtrip-PASS.png` screendumps. This is Apple-native VM validation on virtual SATA media; the physical-USB destructive Apple-native lane, plus crash-injection and rollback-boundary evidence, are still required before the certification matrix flips to a full APFS raw-write `yes`. The writer now emits a cryptographically-random v4 UUID per container and volume at format and reads the on-disk UUID back during mutation (no deterministic UUID code remains): two same-size, same-name containers produced distinct UUIDs, a mutation round-trip preserved the on-disk UUID byte-for-byte, and the random-UUID shipping output was re-certified in the same VM (`SAK1`/`SAK2CHUNK`/`SAK8` all `fsck_apfs` OK with `*.random-uuid.fsck_apfs-PASS.png` evidence).
-A crash/rollback test was also run on 2026-06-14 UTC: with the 1 GiB `SAK8` container mounted read-write, a `mkfile 900m` write was started and qemu was hard-killed (`pkill -9`) mid-write to simulate power loss. On reboot macOS auto-mounted `SAK8` again (APFS checkpoint recovery), and `fsck_apfs` reported `The container /dev/rdisk0 appears to be OK` (checkpoint transaction id 5) - the uncommitted mid-write data rolled back to the last valid checkpoint with no corruption, proving the S.A.K.-written container participates correctly in APFS copy-on-write checkpoint atomicity (evidence `apfs.sak8-crash-rollback.fsck_apfs-PASS.png`). The physical-USB destructive Apple-native lane was then completed on 2026-06-14 UTC against the disposable JMicron Tech USB disk (Windows Disk 3, user-authorized destruction). A 128 MiB S.A.K. APFS container (volume `SAKUSB`, random UUID) was written to the disk's Apple_APFS GPT partition, the whole physical disk was attached to WSL2 with `wsl --mount --bare \\.\PHYSICALDRIVE3` and passed to the macOS recovery VM as a raw SATA disk; macOS recognized it as `Apple_APFS Container disk3` on physical `/dev/disk2s2`, auto-mounted `SAKUSB` read-write (`last modified by apfs_kext (2332.101.1)`), and `fsck_apfs` reported `The container /dev/rdisk2s2 appears to be OK` (evidence `apfs.sakusb-physical-jmicron.fsck_apfs-PASS.png`). With Apple `fsck_apfs`, kernel read-write mount, physical-USB-destructive, crash, and rollback all now demonstrated on Apple's own tools (recorded in `apple-tool-evidence\report.json` under `evidence_chain_complete`), the full evidence required by the locked scope for the APFS multi-chunk space-manager capability (driver matrix A-a / milestone A1) was collected and human-reviewed on 2026-06-14, and that cell is flipped to certified in `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` (single-CIB multi-chunk, 64 MiB-1 GiB validated; the multi-CIB/CAB tier, the full-driver A8 gate, and the in-place-COW / snapshot / multi-volume / encryption rows A-b..A-h remain open).
+A crash/rollback test was also run on 2026-06-14 UTC: with the 1 GiB `SAK8` container mounted read-write, a `mkfile 900m` write was started and qemu was hard-killed (`pkill -9`) mid-write to simulate power loss. On reboot macOS auto-mounted `SAK8` again (APFS checkpoint recovery), and `fsck_apfs` reported `The container /dev/rdisk0 appears to be OK` (checkpoint transaction id 5) - the uncommitted mid-write data rolled back to the last valid checkpoint with no corruption, proving the S.A.K.-written container participates correctly in APFS copy-on-write checkpoint atomicity (evidence `apfs.sak8-crash-rollback.fsck_apfs-PASS.png`). The physical-USB destructive Apple-native lane was then completed on 2026-06-14 UTC against the disposable JMicron Tech USB disk (Windows Disk 3, user-authorized destruction). A 128 MiB S.A.K. APFS container (volume `SAKUSB`, random UUID) was written to the disk's Apple_APFS GPT partition, the whole physical disk was attached to WSL2 with `wsl --mount --bare \\.\PHYSICALDRIVE3` and passed to the macOS recovery VM as a raw SATA disk; macOS recognized it as `Apple_APFS Container disk3` on physical `/dev/disk2s2`, auto-mounted `SAKUSB` read-write (`last modified by apfs_kext (2332.101.1)`), and `fsck_apfs` reported `The container /dev/rdisk2s2 appears to be OK` (evidence `apfs.sakusb-physical-jmicron.fsck_apfs-PASS.png`). With Apple `fsck_apfs`, kernel read-write mount, physical-USB-destructive, crash, and rollback all now demonstrated on Apple's own tools (recorded in `apple-tool-evidence\report.json` under `evidence_chain_complete`), the full evidence required by the locked scope for the APFS multi-chunk space-manager capability (driver matrix A-a / milestone A1) was collected and human-reviewed on 2026-06-14, and that cell is flipped to certified in `docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` (single-CIB multi-chunk, 64 MiB-1 GiB validated; the multi-CIB/CAB tier, the full-driver A8 gate, and the in-place-COW / snapshot / multi-volume / encryption rows A-b..A-h remain open).
 The A2 generated-APFS CAB tier was Apple-certified on 2026-06-18 UTC, completing the
 multi-CIB/CAB FORMAT lane left open above. Containers larger than ~7.8 TiB need more than
 507 chunk-info blocks, so the spaceman can no longer list the cib addresses inline; the
@@ -235,6 +425,19 @@ commit. Evidence
 and `...\apfs-cab-inplace-commit-kernel-read-files.png`. The in-place commit cap
 (`kApfsInPlaceCommitMaxBytes`) was raised to 32 TiB so the validator accepts CAB sources; the
 only remaining fail-closed tier is the >~10 TiB case where the boundary chunk leaves cib 0.
+
+WS3c closed the genuine Apple scattered-internal-pool mutation gap on 2026-08-31. A freshly
+Apple-created 256 MiB source and a genuine 18,043,854,848-byte, 135-chunk/2-CIB source each
+completed chained insert, patch, replace, and delete commits. Every stage passed host `apfsck
+-cw`, Apple `fsck_apfs -n` before mount, exact macOS-kernel read-back, and Apple fsck after the
+kernel continued the checkpoint. The same 135-chunk source then shrank to 17,179,869,184 bytes
+(128 chunks) without losing the replacement or neighboring file. The foreign path adopts the
+source's authenticated CIB, chunk-bitmap, CAB, and free-queue geometry, excludes every live
+metadata block, and keeps S.A.K.-formatted media on its byte-identical generated rotation path.
+Machine-readable evidence and genuine-byte compact fixtures are in
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.apfs-foreign-multicib-cow\report.json`
+and `tests\fixtures\apfs\`.
+
 The writer now also formats existing image targets in place only after explicit
 destructive wipe confirmation, clears stale edge signatures, writes generated
 APFS metadata through a seekable-device block writer, and proves post-format
@@ -251,7 +454,7 @@ JSON output, and refresh evidence. Generated-image root-file
 create/replace/byte-range patch/delete and generated-image empty root-directory
 create/delete plus generated-image volume-label change remain helper-exposed
 with payload/read-back, directory-empty, old/new-label, or negative-read-back
-hashes. (Arbitrary Apple APFS mutation was blocked at this I1-era stage; now superseded - the in-place COW engine and A1-A8 driver operations are Apple-certified, with arbitrary non-generated media fail-closed only at the production Apply layer. See the full driver-level capstone below.)
+hashes. (Arbitrary Apple APFS mutation was blocked at this I1-era stage; now superseded - the in-place COW engine and A1-A8 driver operations are Apple-certified, and they write Apple-created containers. See the full driver-level capstone below.)
 The helper no longer blanket-enables protected, compressed, snapshot, or
 multi-volume APFS mutation options; generated APFS v2 single-volume layouts pass
 through the generated-layout proof path, while active snapshot/revert metadata,
@@ -310,7 +513,7 @@ checks, optional serial/friendly-name pinning, raw-target opt-in, and hardware
 evidence flags before formatting an expendable APFS partition. The lane historically
 capped the target at 64-128 MiB to keep the generated layout inside the
 then-certified one-spaceman-chunk envelope; the A1 multi-CIB/CAB space manager
-has since lifted that to a 32 TiB cap. The 2026-06-12 PDT / 2026-06-13 UTC
+has since lifted that to a 24 TiB cap. The 2026-06-12 PDT / 2026-06-13 UTC
 JMicron run (`run-20260612-192652`, 51,170,148,352-byte target) is retained as
 Windows-side evidence only: the macOS recovery kernel later rejected that large
 generated APFS target with spaceman checkpoint/container corruption. Current
@@ -344,12 +547,31 @@ Partition 2, 134,217,728 bytes, with File Explorer create/write/read,
 duplicate-finder, advanced-search, delete-file, negative-read, and
 delete-directory proof at
 `artifacts\file-management-live-certification\disk2-apfs-script-after-fix\file-management-live-certification.json`.
-HFS+ passed on Best Buy serial `DD564198838A8`, Disk 3 Partition 3, with File
+HFS+ passed on the Best Buy NVMe enclosure, Disk 3 Partition 3, with File
 Explorer create/write/read, duplicate-finder, advanced-search, rename,
 delete-file, negative-read, and delete-directory proof at
 `artifacts\file-management-live-certification\disk3-hfs-script-after-fix\file-management-live-certification.json`.
-APFS still needs macOS Recovery validation of the small generated slice before
-it can be called Apple-native certified.
+
+2026-07-12 File Explorer command-route certification (foreign media + HFS+,
+Apple-validated). The bridge now derives an APFS container size from its block-0
+superblock and write-enables any known-size in-range APFS raw/image target,
+S.A.K.-generated and real Apple-created (foreign) alike. Foreign-APFS: the full
+destructive command route (create-directory, write-file, byte-exact
+read-after-write, duplicate-finder, advanced-search, delete-file,
+read-after-delete, delete-directory) passed on a 7.45 TB real Apple-created
+newfs_apfs container (Seagate Disk 2 Partition 2) via
+`file_management_live_certifier --destructive --allow-foreign-apfs-destructive`,
+then Apple-derived `apfsck -cw` on the 7.45 TB partition returned EXIT 0 clean;
+evidence
+`artifacts\file-management-live-certification\disk2-foreign-apfs-destructive\`.
+HFS+: the destructive command route (add rename and read-after-rename) passed on
+a 256 MiB Apple-HFS partition (Disk 1) formatted by the bundled `newfs_hfs`, with
+bundled `fsck_hfs` and the probe certifier `--hfs-check` clean before and after;
+evidence
+`artifacts\file-management-live-certification\disk1-hfs-file-management-cert\`.
+ext4 read-only browse and byte-exact sample read, plus XFS/Btrfs metadata-only
+read-only blockers, passed on WSL-built images at
+`artifacts\file-management-live-certification\ro-ext-xfs-btrfs-20260712\`.
 
 Linux compatibility validation for the ext bundle passed on 2026-06-07 UTC
 through Arch WSL for ext2, ext3, and ext4. The harness created each image with
@@ -424,6 +646,13 @@ and cleanup back to RAW. This
 raw-media lane is supplemental and is not counted in the imported 18/18
 external matrix unless the matrix is expanded with a Linux swap gate.
 
+The current automation-VM creator stages a generated guest password only after an empty,
+no-share file receives and passes an exact current-owner ACL check. It refuses existing insecure,
+oversized, empty, redirected, or race-planted password files. System32 `icacls.exe` and
+VBoxManage exits are captured and enforced; ACL or write failure removes only a file created by
+that invocation and reports cleanup failure. Registered PS7 and PS5.1 tests own this host-side
+credential-staging contract; this hardening does not change the dated VM certification result.
+
 Filesystem probe helper offset proof was added on 2026-06-05 PDT. The helper
 `partition_filesystem_probe_certifier.exe` accepts `--input-offset-bytes`, reads
 regular files and Windows raw device paths from that offset, and reports the
@@ -445,12 +674,12 @@ space-manager free-byte reporting through
 `{48465300-0000-11aa-aa11-00306543ecac}` and passed HFS+ detection, root
 metadata, and free-byte reporting through
 `\\?\GLOBALROOT\Device\Harddisk2\Partition3`. The APFS file proof read
-`/Fonts/00TT.TTF` at 25056 bytes with SHA-256
-`d075a134b3092fd36c6e45acc88d2efd163e60857cb2f0a2621569f446fa06d2`. Evidence:
+`/.fseventsd/0000000000d34037` at 34163 bytes with SHA-256
+`d5b58364da8b5f9e7996bcc9494db9f93a76484fc137e5aa6153809b8935c0d4`. Evidence:
 `artifacts\partition-manager-certification\vm-lab\external-evidence\external.apple-filesystem-physical\report.json`.
-APFS bounded recursive export proof also passed from `/Fonts` on the same
-raw-partition alias with 63 files, 1 directory, 64 scanned entries, and
-21161830 exported bytes. The latest APFS probe reported `total_bytes=127992487936`
+APFS bounded recursive export proof also passed from `/.fseventsd` on the same
+raw-partition alias with 6 files, 0 directories, 6 scanned entries, and
+67906 exported bytes. (Corrected 2026-08-30: these figures said the APFS proof read `/Fonts/00TT.TTF` at 25056 bytes with sha `d075a134...` and exported `/Fonts` with 63 files / 1 directory / 64 scanned entries / 21161830 bytes. That file and hash are the HFS+ proof's -- `hfs-read-00tt.json` in the same evidence directory records them against HFS+ -- so an HFS+ read was attributed to APFS. `/Fonts/00TT.TTF` does exist on the APFS partition (`apfs-list-file-candidate-directory.json` lists it at 25056 bytes; the operator copied files to both Apple partitions), but no APFS READ of it with a recorded hash exists, and the `/Fonts` export figures appear in no artifact at all. The APFS proof picks its subject by bounded candidate search, so the final run selected `/.fseventsd` instead. Quote the artifact, not the filename: this proof rewrites its own subject every run.) The latest APFS probe reported `total_bytes=127992487936`
 and `free_bytes=127866097664`; the latest HFS+ probe reported
 `total_bytes=127724052480` and `free_bytes=125197647872`, listed 9 root
 entries, and read
@@ -565,8 +794,9 @@ As of 2026-06-28, both Apple filesystem write tracks are full driver-level
 Apple-certified, each milestone proven by Apple `fsck_apfs` / `fsck_hfs` and
 macOS-kernel mount in the qemu/KVM macOS Sequoia VMs, and the two track gates by
 physical-USB destructive + crash-interruption + rollback on disposable media.
-The single capability-matrix owner is
-`docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`; the per-milestone narrative above is a
+The capability-status owner is
+`certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`; the section 3 table in
+`docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` mirrors it, and the per-milestone narrative above is a
 chronological record, and its A1/A2-era "remains blocked" / "remains
 uncertified" / "rows A-b..A-h remain open" conclusions were accurate when
 written and are closed by the milestones below. This Apple-filesystem driver
@@ -574,7 +804,8 @@ certification is a distinct scope from the Partition Manager destructive-operati
 claim level tracked elsewhere in this document.
 
 **APFS:** A1 multi-CIB / multi-chunk space manager (single-CIB + CAB tier to a
-32 TiB cap; `external.apfs-cab-tier-cloud`); A2 in-place crash-safe COW
+24 TiB cap, plus genuine Apple scattered-IP 135-chunk/2-CIB mutation and shrink;
+`external.apfs-cab-tier-cloud`, `external.apfs-foreign-multicib-cow`); A2 in-place crash-safe COW
 checkpoint mutation of files + directories incl. cross-directory move and
 object-id-preserving byte-range patch, wired through both the File Management
 bridge and the Partition Manager queue (`external.apfs-fulltree-cow-mutations`,
@@ -585,8 +816,9 @@ bridge and the Partition Manager queue (`external.apfs-fulltree-cow-mutations`,
 on a real Mac); A4 multi-volume containers (`external.apfs-multi-volume`); A5
 inline zlib `com.apple.decmpfs` compression (`external.apfs-compression`); A6
 credential-gated FileVault encryption (`external.apfs-encryption`); A7 clones /
-sparse files / hard-links / xattr-ACL / in-chunk container resize
-(`external.apfs-a7-kernel-cert`, `external.apfs-a7-raw-physical`); A8 the
+sparse files / hard-links / xattr-ACL / cross-chunk container grow and shrink
+(`external.apfs-a7-kernel-cert`, `external.apfs-a7-raw-physical`,
+`external.apfs-foreign-multicib-cow`); A8 the
 physical-USB full-driver gate - a S.A.K. multi-volume + snapshot container on a
 disposable 7.3 TiB USB: the macOS kernel mounted both volumes, read the file,
 and enumerated the snapshot; Apple `fsck_apfs` was clean; then a kernel write +
@@ -610,296 +842,7 @@ I1 wired every capability through the production Apply route (16/16) with the
 FileVault secret materialized to an owner-scoped temp credential file at
 execution and shred-deleted, never on a command line. Fail-closed by design (not
 defects): APFS Fusion/Tier2 multi-device is out of scope (no rig); encrypted
-volumes require the user credential; sealed/signed system-volume writes need a
-typed seal-invalidation confirmation; APFS container shrink and chunk-adding
-grow are documented follow-ons; arbitrary non-generated Apple-media mutation
-stays fail-closed at the Apply layer (the COW engine is certified, the
-production exposure is generated-layout-only).
-
-## Certification Harness
-
-Use `scripts/run_partition_manager_destructive_certification.ps1` from an elevated PowerShell session. The script creates temporary VHDX files under `artifacts/partition-manager-certification`, attaches them, mutates only those VHD-backed disks, verifies results, and writes a JSON report. Non-admin runs are accepted for plan-only reporting, but VHD mutation scenarios are skipped with an Administrator-shell blocker.
-
-Before requesting UAC or starting the destructive VHD run, use the read-only
-preflight:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_partition_manager_vhd_preflight.ps1 `
-  -OutputPath artifacts/partition-manager-certification/vhd-preflight.json `
-  -RequireAdministrator `
-  -RequireReady
-```
-
-The preflight does not create, attach, detach, format, wipe, or mutate disks. It
-checks administrator state, required Storage cmdlets and Windows tools,
-temporary T-Z drive-letter availability, workspace estimate, VHD size, and
-matrix scenario counts. Release readiness also writes `vhd-preflight.json` and
-verifies its shape without failing normal non-admin shells.
-
-Plan-only run, no disk mutation:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_partition_manager_destructive_certification.ps1
-```
-
-Disposable VHD data-disk matrix:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_partition_manager_destructive_certification.ps1 `
-  -RunVhdDataDiskMatrix
-```
-
-Disposable VHD matrix with automatic UAC relaunch and a strict evidence gate:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_partition_manager_destructive_certification.ps1 `
-  -RunVhdDataDiskMatrix `
-  -RelaunchElevated `
-  -RequireVhdDataDiskEvidence
-```
-
-The strict gate exits nonzero if any VHD scenario is skipped, so release evidence cannot silently pass from a non-admin shell.
-
-For the full strict VHD handoff sequence, use the orchestrator. It runs the
-preflight with `-RequireReady`, runs the destructive disposable-VHD matrix,
-verifies strict VHD evidence, writes claim status, writes gap and bundle
-artifacts, and exits nonzero unless every disposable-VHD scenario passes:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_partition_manager_vhd_certification_strict.ps1 `
-  -RelaunchElevated
-```
-
-After the strict VHD report and every external VM/hardware/lab gate are complete,
-use the strict hardware handoff. It does not mutate disks; it verifies the
-archived VHD report plus the external evidence package and fails unless the
-claim level is `HardwareCertified`:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_partition_manager_hardware_certification_strict.ps1 `
-  -CertificationRoot artifacts\partition-manager-certification\vhd-strict `
-  -ExternalEvidenceManifest artifacts\partition-manager-certification\external-evidence.json `
-  -ExternalEvidenceChecklist artifacts\partition-manager-certification\external-evidence.checklist.md `
-  -ExternalEvidenceRoot artifacts\partition-manager-certification\external
-```
-
-## Evidence Verification
-
-Use `scripts/verify_partition_manager_certification.ps1` to validate a generated report before making release claims:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_partition_manager_certification.ps1 `
-  -ReportPath artifacts/partition-manager-certification/run-YYYYMMDD-HHMMSS/partition-manager-certification-report.json
-```
-
-Require every disposable-VHD scenario to pass:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_partition_manager_certification.ps1 `
-  -ReportPath artifacts/partition-manager-certification/run-YYYYMMDD-HHMMSS/partition-manager-certification-report.json `
-  -RequireVhdDataDiskEvidence
-```
-
-Require external VM/hardware proof with a manifest:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/new_partition_manager_external_evidence_manifest.ps1 `
-  -OutputPath artifacts/partition-manager-certification/external-evidence.json `
-  -ChecklistPath artifacts/partition-manager-certification/external-evidence.checklist.md `
-  -EvidenceRoot artifacts/partition-manager-certification/external `
-  -CreateEvidenceDirectories
-
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/update_partition_manager_external_manifest_from_reports.ps1 `
-  -ManifestPath artifacts/partition-manager-certification/external-evidence.json `
-  -EvidenceRoot artifacts/partition-manager-certification/external `
-  -OutputPath artifacts/partition-manager-certification/external-evidence.imported.json `
-  -ChecklistPath artifacts/partition-manager-certification/external-evidence.checklist.md `
-  -OutputChecklistPath artifacts/partition-manager-certification/external-evidence.imported.checklist.md `
-  -RequireAllReports
-
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_partition_manager_certification.ps1 `
-  -ReportPath artifacts/partition-manager-certification/run-YYYYMMDD-HHMMSS/partition-manager-certification-report.json `
-  -RequireVhdDataDiskEvidence `
-  -RequireExternalGateEvidence `
-  -ExternalEvidenceManifest artifacts/partition-manager-certification/external-evidence.imported.json
-```
-
-External evidence manifest shape:
-
-```json
-{
-  "tool": "partition-manager-external-certification",
-  "results": [
-    {
-      "id": "external.system-mbr2gpt",
-      "status": "Passed",
-      "required_evidence_keys": [
-        "vm_id",
-        "before_partition_style",
-        "mbr2gpt_validate_exit_code",
-        "mbr2gpt_convert_exit_code",
-        "after_partition_style",
-        "boot_result"
-      ],
-      "safety_contract": [
-        "disposable_boot_vm_only",
-        "pre_conversion_snapshot",
-        "validate_before_convert",
-        "post_conversion_boot_verified"
-      ],
-      "evidence": {
-        "vm_id": "hyperv-mbr2gpt-001",
-        "before_partition_style": "MBR",
-        "mbr2gpt_validate_exit_code": 0,
-        "mbr2gpt_convert_exit_code": 0,
-        "after_partition_style": "GPT",
-        "boot_result": "booted Windows after conversion"
-      },
-      "evidence_path": "artifacts/partition-manager-certification/external/system-mbr2gpt/report.json"
-    }
-  ]
-}
-```
-
-The optional checklist is generated from the same certification matrix as the JSON manifest. Use it as the lab run sheet, but treat the JSON manifest plus linked evidence artifacts as the authoritative machine-verified evidence.
-`scripts/check_partition_manager_external_checklist.ps1` verifies that the generated checklist includes every external gate, safety contract, required evidence key, required value hint, and artifact path from the matrix.
-`scripts/check_partition_manager_external_lab_package.ps1` verifies the optional per-gate evidence package directories, run sheets, and `report.template.json` files. Those directories are lab handoff scaffolding only; they do not count as passed evidence until completed `report.json` files are imported into the manifest or the manifest is otherwise filled with non-empty matrix-required values plus real `evidence_path` files or valid HTTPS `evidence_url` links.
-When `scripts/update_partition_manager_external_manifest_from_reports.ps1`
-imports per-gate reports, pass `-ChecklistPath` and `-OutputChecklistPath` so
-the strict handoff receives a checklist whose manifest line matches the
-imported manifest. The importer also refreshes run-sheet README and
-`report.template.json` manifest references under the evidence root.
-
-Each external result must match a documented external gate, have `status` set to `Passed`, include every matrix-required key in `evidence`, fill each required value with non-null/non-empty evidence, and include either `evidence_path` or `evidence_url`.
-When `evidence_path` is used for a passed gate, the verifier requires that local artifact to exist. When `evidence_url` is used, it must be an absolute HTTP or HTTPS URL. Pending scaffold entries are accepted only when strict external evidence is not requested.
-
-The verifier rejects unexpected or duplicate scenario IDs, missing schema version, malformed timestamps, mismatched summary counts, failed harness scenarios, missing external artifacts for passed gates, and malformed evidence URLs.
-For passed VHD and external scenarios, it also rejects missing or blank required evidence values such as disk identity, size/layout verification, sentinel checks, file-system conversion proof, boot proof, BitLocker state, or hardware wipe proof. Matrix-defined required values are enforced too, so the UEFI boot-repair gate must record UEFI mode and the BIOS/MBR boot-repair gate must record BIOS or Legacy BIOS mode. Numeric zero and boolean false remain valid recorded values when the scenario contract expects them. For external manifests, it requires the matrix-backed safety contract, a complete non-empty `evidence` payload, plus either an existing `evidence_path` or a valid HTTP/HTTPS `evidence_url` when strict external evidence is requested.
-
-Generate deterministic release-claim wording from the same evidence:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/get_partition_manager_certification_status.ps1 `
-  -ReportPath artifacts/partition-manager-certification/run-YYYYMMDD-HHMMSS/partition-manager-certification-report.json `
-  -ExternalEvidenceManifest artifacts/partition-manager-certification/external-evidence.json
-```
-
-Claim levels are:
-
-- `CodeCompleteOnly` - automated code, UI, queue, script, and report checks pass, but VHD or VM/hardware/lab evidence is incomplete.
-- `VhdDataDiskCertified` - every disposable-VHD data-disk scenario passed.
-- `HardwareCertified` - every disposable-VHD scenario and every external VM/hardware/lab gate passed with evidence.
-- `FailedEvidence` - a certification report contains a failed scenario.
-
-Run the non-destructive tool regression self-test:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test_partition_manager_certification_tools.ps1
-```
-
-The self-test creates synthetic reports and manifests under `artifacts/`, verifies every claim level, checks the generated external lab checklist and lab package, imports completed per-gate `report.json` files into a manifest, exercises the strict hardware orchestrator with complete synthetic evidence, and confirms malformed, missing, blank, or wrong-value evidence plus stale checklist/lab-package gate/evidence/value rows are rejected.
-
-Run release readiness against an existing strict VHD evidence root:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_release_readiness.ps1 `
-  -PartitionCertificationRoot artifacts\partition-manager-certification\vhd-strict `
-  -RequirePartitionVhdEvidence
-```
-
-The default release-readiness path stays non-mutating and uses plan-only
-certification evidence. It writes `external-evidence.template.json`,
-`external-evidence.checklist.md`, an `external-evidence/` per-gate lab package,
-and `vhd-preflight.json` under the selected certification root so the lab
-checklist, lab package, manifest, and VHD readiness blockers stay
-matrix-synchronized. It also writes `certification-gap-report.json`,
-`certification-gap-report.md`, and `certification-artifact-bundle.json`, then
-verifies that those files exactly match the current certification status,
-matrix, artifact hashes, and linked report paths. The
-strict form above does not create a new VHD run; it requires an existing report
-under the selected certification root. Add `-PartitionExternalEvidenceManifest`,
-`-PartitionExternalEvidenceChecklist`, and `-RequirePartitionExternalEvidence`
-only after the external VM/hardware matrix is complete. Strict external evidence
-requires the paired checklist so hardware-certified wording cannot bypass the
-human lab sheet verifier.
-
-Keep generated VHDs for manual inspection:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_partition_manager_destructive_certification.ps1 `
-  -RunVhdDataDiskMatrix `
-  -KeepVhd
-```
-
-## VHD Matrix Coverage
-
-The VHD matrix covers Windows-supported destructive data-disk flows without touching existing disks:
-
-- `vhd.create-format-resize-delete` - Create, format, resize, and delete data partition.
-- `vhd.fat32-to-ntfs` - FAT32 to NTFS in-place conversion.
-- `vhd.quick-partition` - Quick Partition equal-size data-disk layout.
-- `vhd.quick-partition-custom` - Quick Partition custom size and label layout.
-- `vhd.quick-partition-mbr` - Quick Partition MBR four-data-partition layout, including any Windows-created extended/logical container for the MBR fourth data partition.
-- `vhd.adjacent-extend` - Adjacent free-space Extend Partition Wizard path.
-- `vhd.recovered-partition-restore` - Recovered partition write-back candidate restore from offset, size, and GPT type ID.
-- `vhd.empty-style-conversion` - Empty data disk GPT/MBR conversion.
-- `vhd.clear-disk-wipe` - Clear-level non-system disk wipe.
-- `vhd.image-clone` - Offline VHD image clone and sentinel verification.
-- `vhd.image-restore` - Offline VHD image restore and overwrite verification.
-- `vhd.partition-clone-region` - Partition clone to raw target region with signature and outside-marker verification.
-
-Each scenario produces `Passed`, `Failed`, or `Skipped` evidence in `partition-manager-certification-report.json`.
-
-## External Gates
-
-These scenarios need disposable VM or hardware lab proof. The imported VM-lab
-manifest currently has 18/18 external gates passed: `external.bitlocker`,
-`external.bitlocker-mutation`, `external.file-level-data-recovery`,
-`external.allocate-free-space`, `external.cluster-size-change`,
-`external.hdd-defrag-execution`, `external.usb-removable`,
-`external.ssd-retrim`, `external.ssd-secure-erase`,
-`external.partition-move`, `external.primary-logical-conversion`,
-`external.volume-serial-number`, `external.dynamic-to-basic`, and
-`external.hardware-wipe`, `external.os-migration-reboot`,
-`external.boot-repair-uefi`, `external.boot-repair-bios`, and
-`external.system-mbr2gpt`.
-
-- `external.system-mbr2gpt` - System MBR-to-GPT conversion in disposable boot VM. Passed. This also satisfies
-  System MBR-to-GPT conversion in a disposable boot VM. Disposable BIOS/MBR VM
-  `SAK-PM-BIOS-MBR-Fixture-20260603-091138` validated and converted disk 0
-  with `mbr2gpt` exit code 0, changed layout from MBR to GPT, created an EFI
-  System partition, and the converted disk booted under fresh EFI VM
-  `SAK-PM-MBR2GPT-EFI-Boot-20260603-1140` to Guest Additions run level 3.
-- `external.os-migration-reboot` - OS migration target boot and firmware-order proof. Passed. A target-only cloned OS VM booted
-  from the cloned disk with UEFI firmware and reached Guest Additions run level
-  3.
-- `external.boot-repair-uefi` - UEFI boot repair with intentionally broken BCD. Passed. A disposable UEFI boot disk was
-  snapshotted, BCD/fallback loader were removed, broken boot was captured, and
-  offline `bcdboot` repair restored a run-level-3 boot.
-- `external.boot-repair-bios` - BIOS/MBR boot repair with intentionally broken BCD. Passed. A disposable BIOS/MBR boot disk was
-  snapshotted, `\Boot\BCD` was removed, Windows Recovery `0xc000000f` was
-  captured, and offline `bcdboot` plus `bootsect` restored a run-level-3 boot.
-- `external.usb-removable` - USB removable disk destructive operation proof.
-- `external.ssd-retrim` - SSD/NVMe ReTrim and vendor purge warning proof.
-- `external.hdd-defrag-execution` - Direct in-app HDD defrag execution proof on disposable HDD volume.
-- `external.ssd-secure-erase` - SSD/NVMe secure erase command execution proof on disposable SSD/NVMe device.
-- `external.partition-move` - Offline partition start-move proof.
-- `external.cluster-size-change` - Existing-volume cluster-size change proof.
-- `external.primary-logical-conversion` - Primary/logical conversion on disposable MBR disk. Primary/logical conversion on a disposable MBR disk also requires extended-container identity, logical-volume identity, before/after order and offsets, mount validation, file-hash validation, and bootability proof where applicable.
-- `external.volume-serial-number` - Volume serial-number metadata mutation proof.
-- `external.dynamic-to-basic` - Dynamic disk to basic conversion proof in a disposable VM.
-- `external.hardware-wipe` - Non-system hardware wipe on disposable physical disk.
-
-The harness records these as `ExternalGate` IDs, and the VM-lab imported manifest now has passed `report.json` evidence for every listed gate.
-
-## Release Rule
-
-Release readiness can pass in default non-mutating mode for code-complete behavior, or in strict mode with imported evidence for `HardwareCertified`. Release notes and UI copy must keep that distinction clear:
-
-- Automated gates prove non-destructive logic and generated scripts.
-- VHD matrix proves disposable data-disk destructive flows.
-- VM/hardware/lab matrix proves system MBR-to-GPT, OS migration reboot proof, UEFI/BIOS boot repair, removable USB, SSD/NVMe, HDD defrag execution, SSD secure erase, non-adjacent partition move, primary-logical/serial/dynamic conversion, and physical wipe flows. BitLocker, BitLocker mutation, file-level recovery, adjacent-donor Allocate Free Space, existing-volume cluster-size change, and HDD defrag execution are also imported; the full 18/18 external evidence set now upgrades the strict handoff to `HardwareCertified`.
-- The verifier script enforces those boundaries when strict release evidence is required.
-- Release readiness runs the certification-matrix integrity guard, syntax-checks the strict VHD and strict hardware orchestrators, then runs the harness in plan-only mode, creates an external-evidence JSON scaffold plus human lab checklist plus per-gate lab package from the same matrix, writes and verifies the read-only VHD preflight report, verifies the checklist and lab package, verifies both report shape and manifest shape, writes a certification-status summary, writes and verifies JSON/Markdown certification-gap reports, writes and verifies a hashed certification-artifact bundle, and runs the non-destructive certification-tool self-test, so certification schema drift fails without touching disks.
-- Certification scenario IDs, evidence keys, and safety contracts must stay in `docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json`; update the matrix and self-test together when adding or changing a certification gate.
-- Release readiness runs the release-claim guard after generating certification status, so documentation wording remains tied to the current `CodeCompleteOnly`, `VhdDataDiskCertified`, `HardwareCertified`, or `FailedEvidence` state.
+volumes require the user credential; sealed/signed system volumes and case-sensitive
+volumes are refused; APFS container shrink and chunk-adding grow are documented
+follow-ons. (Corrected 2026-11-01: this said sealed volumes had a typed override and that
+Apply was limited to generated layouts. Neither is in the code.)

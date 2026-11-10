@@ -1,0 +1,90 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T16:34:31.824Z",
+    "disk_before": {
+        "bus_type": "File Backed Virtual",
+        "disk_number": 1,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Msft Virtual Disk",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": "1073741824"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "f3a77f4d-3586-4c41-9e8e-07bf2e4010dd",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: BitLocker Unlock T:\r\nBitLocker Drive Encryption: Configuration Tool version 10.0.26100\r\nCopyright (C) 2013 Microsoft Corporation. All rights reserved.\r\n\r\nVolume T: [Label Unknown]\r\n[Data Volume]\r\n\r\n    Size:                 Unknown GB\r\n    BitLocker Version:    2.0\r\n    Conversion Status:    Unknown\r\n    Percentage Encrypted: Unknown%\r\n    Encryption Method:    AES 128\r\n    Protection Status:    Unknown\r\n    Lock Status:          Locked\r\n    Identification Field: Unknown\r\n    Automatic Unlock:     Disabled\r\n    Key Protectors:\r\n        Password\r\n        Numerical Password\r\n\r\n\r\n\r\nMountPoint       : T:\r\nVolumeStatus     : FullyEncrypted\r\nProtectionStatus : On\r\nLockStatus       : Unlocked\r\nEncryptionMethod : Aes128\r\n\r\n\r\n\r\n\r\n",
+                "success": true,
+                "summary": "BitLocker Unlock - Disk 1 Partition 2"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "BitLockerUnlock",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "f3a77f4d-3586-4c41-9e8e-07bf2e4010dd",
+            "payload": {
+                "drive_letter": "T",
+                "recovery_password": "<withheld>"
+            },
+            "script_sha256": "f7cd088442c9c4554055995cf0ec8454c0a4b4ddbadeba4a9949a7cefb785de5",
+            "summary": "BitLocker Unlock - Disk 1 Partition 2",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "60022480A7B6F63CB83354B8D955FAD0",
+                "drive_letter": "T",
+                "kind": "Partition",
+                "offset_bytes": "16777216",
+                "partition_number": 2,
+                "size_bytes": "536870912"
+            },
+            "type": "BitLocker Unlock",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "2ed035e5e86d37a8a7fcf683e3654182ca99fc48f3102a15859f7bcfda22f3aa",
+        "layout_hash": "d4eec07e9b521338fc257cf13238d98766cbb1d2647116ec7561f6d5aa8ee1d0",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "6dabd3e9-9548-4b37-b588-cd518f92232c",
+    "scenario_id": "external.bitlocker-mutation",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T16:34:08.253Z",
+    "status": "Passed",
+    "step": "unlock",
+    "tool": "partition-manager-scenario-step"
+}

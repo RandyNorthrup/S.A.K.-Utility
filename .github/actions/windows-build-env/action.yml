@@ -1,0 +1,208 @@
+name: Windows build environment
+description: >
+  The toolchain every S.A.K. Utility workflow builds or gates with: Python with the pinned gate
+  tools (requirements-gates.txt), ripgrep, and optionally Qt, MSBuild and vcpkg (vcpkg.json's libraries install at configure).
+  One definition, so ci.yml, release.yml and nightly.yml cannot drift apart.
+
+inputs:
+  build-tools:
+    description: "'true' to also install Qt and MSBuild and prepare vcpkg"
+    default: 'true'
+  qt-version:
+    description: Qt version (msvc2022_64)
+    default: '6.12.0'
+  python-version:
+    description: Python version for the gate tools and the Python CTests
+    default: '3.14'
+  vcpkg-triplet:
+    description: >
+      vcpkg triplet. x64-windows builds against the DYNAMIC CRT, which Qt's msvc2022_64 binaries
+      and this project use; CMakeLists refuses a triplet whose CRT disagrees.
+    default: 'x64-windows'
+  ripgrep-version:
+    description: ripgrep release
+    default: '15.2.0'
+  ripgrep-sha256:
+    description: SHA-256 of the x86_64-pc-windows-msvc zip of that release
+    default: '71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5'
+  cmake-version:
+    description: CMake release every build configures with (the image's own is older)
+    default: '4.4.5'
+  cmake-sha256:
+    description: SHA-256 of cmake-<version>-windows-x86_64.zip
+    default: '326c826486d46a23cf9d5a1c9ee3a567d427bdd02c4a34071937a2a675cff004'
+  cppcheck:
+    description: "'true' to install cppcheck (the T2 Qt-slot classifier test and the T4 gates run it)"
+    default: 'false'
+  cppcheck-version:
+    description: cppcheck release, the version developers run
+    default: '2.22.0'
+  cppcheck-sha256:
+    description: SHA-256 of cppcheck-<version>-x64-Setup.msi
+    default: '3929162bab7e71d1b9b18708ec054fb0188bfc8ea1660979ed95837f5a9f547b'
+
+runs:
+  using: composite
+  steps:
+  - name: Set up Python
+    uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+    with:
+      python-version: ${{ inputs.python-version }}
+      cache: pip
+      cache-dependency-path: requirements-gates.txt
+
+  # The image ships its own LLVM (a different clang-format) on PATH. The pinned wheel must be
+  # the one the gates resolve, or "formatted" means something different here than locally.
+  - name: Install pinned gate tools
+    shell: pwsh
+    run: |
+      python -m pip install --disable-pip-version-check -r requirements-gates.txt
+      if ($LASTEXITCODE -ne 0) { throw "pip install exited $LASTEXITCODE" }
+      $pin = (Select-String -LiteralPath requirements-gates.txt -Pattern '^clang-format==(.+)$').Matches[0].Groups[1].Value
+      $resolved = (Get-Command clang-format.exe -ErrorAction Stop).Source
+      $version = (& $resolved --version) -join ' '
+      Write-Host "clang-format: $resolved -> $version"
+      if ($version -notmatch "version $([regex]::Escape($pin))(\s|$)") {
+        throw "clang-format on PATH is not the pinned $pin"
+      }
+      lizard --version
+      python -m pre_commit --version
+
+  # Each pinned download is cached under its pinned SHA-256, and pinned_download.ps1 uses a cached
+  # copy only when it hashes to the pin, retries an outage (HTTP 5xx or no answer) with backoff, and
+  # refuses a wrong file. On 2026-11-08 GitHub's release downloads answered 504 for a while and
+  # every T2 shard failed here before building.
+  - name: Cache ripgrep download
+    uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+    with:
+      path: ${{ runner.temp }}/pinned-downloads/ripgrep
+      key: pinned-ripgrep-${{ inputs.ripgrep-sha256 }}
+
+  - name: Install ripgrep
+    shell: pwsh
+    env:
+      RG_VERSION: ${{ inputs.ripgrep-version }}
+      RG_SHA256: ${{ inputs.ripgrep-sha256 }}
+    run: |
+      $url = "https://github.com/BurntSushi/ripgrep/releases/download/$env:RG_VERSION/ripgrep-$env:RG_VERSION-x86_64-pc-windows-msvc.zip"
+      $zip = & (Join-Path $env:GITHUB_ACTION_PATH 'pinned_download.ps1') -Url $url -Sha256 $env:RG_SHA256 `
+        -Directory (Join-Path $env:RUNNER_TEMP 'pinned-downloads/ripgrep') -Name 'ripgrep.zip'
+      Expand-Archive -LiteralPath $zip -DestinationPath $env:RUNNER_TEMP -Force
+      $dir = Join-Path $env:RUNNER_TEMP "ripgrep-$env:RG_VERSION-x86_64-pc-windows-msvc"
+      $dir | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      & (Join-Path $dir rg.exe) --version
+
+  - name: Cache CMake download
+    if: ${{ inputs.build-tools == 'true' }}
+    uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+    with:
+      path: ${{ runner.temp }}/pinned-downloads/cmake
+      key: pinned-cmake-${{ inputs.cmake-sha256 }}
+
+  # First on PATH, so cmake and ctest in every later step are this release, not the image's.
+  - name: Install CMake
+    if: ${{ inputs.build-tools == 'true' }}
+    shell: pwsh
+    env:
+      CMAKE_PIN_VERSION: ${{ inputs.cmake-version }}
+      CMAKE_PIN_SHA256: ${{ inputs.cmake-sha256 }}
+    run: |
+      $url = "https://github.com/Kitware/CMake/releases/download/v$env:CMAKE_PIN_VERSION/cmake-$env:CMAKE_PIN_VERSION-windows-x86_64.zip"
+      $zip = & (Join-Path $env:GITHUB_ACTION_PATH 'pinned_download.ps1') -Url $url -Sha256 $env:CMAKE_PIN_SHA256 `
+        -Directory (Join-Path $env:RUNNER_TEMP 'pinned-downloads/cmake') -Name 'cmake.zip'
+      Expand-Archive -LiteralPath $zip -DestinationPath $env:RUNNER_TEMP -Force
+      $bin = Join-Path $env:RUNNER_TEMP "cmake-$env:CMAKE_PIN_VERSION-windows-x86_64\bin"
+      $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      $version = (& (Join-Path $bin cmake.exe) --version | Select-Object -First 1)
+      Write-Host $version
+      if ($version -ne "cmake version $env:CMAKE_PIN_VERSION") { throw "CMake is not $env:CMAKE_PIN_VERSION" }
+
+  - name: Cache cppcheck download
+    if: ${{ inputs.cppcheck == 'true' }}
+    uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+    with:
+      path: ${{ runner.temp }}/pinned-downloads/cppcheck
+      key: pinned-cppcheck-${{ inputs.cppcheck-sha256 }}
+
+  - name: Install cppcheck
+    if: ${{ inputs.cppcheck == 'true' }}
+    shell: pwsh
+    env:
+      CPPCHECK_VERSION: ${{ inputs.cppcheck-version }}
+      CPPCHECK_SHA256: ${{ inputs.cppcheck-sha256 }}
+    run: |
+      $url = "https://github.com/danmar/cppcheck/releases/download/$env:CPPCHECK_VERSION/cppcheck-$env:CPPCHECK_VERSION-x64-Setup.msi"
+      $msi = & (Join-Path $env:GITHUB_ACTION_PATH 'pinned_download.ps1') -Url $url -Sha256 $env:CPPCHECK_SHA256 `
+        -Directory (Join-Path $env:RUNNER_TEMP 'pinned-downloads/cppcheck') -Name 'cppcheck.msi'
+      $p = Start-Process msiexec.exe -ArgumentList @('/i', $msi, '/qn', '/norestart') -Wait -PassThru
+      if ($p.ExitCode -ne 0) { throw "cppcheck install exited $($p.ExitCode)" }
+      "$env:ProgramFiles\Cppcheck" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      $version = (& "$env:ProgramFiles\Cppcheck\cppcheck.exe" --version) -join ' '
+      Write-Host $version
+      if ($version -notmatch "Cppcheck $([regex]::Escape($env:CPPCHECK_VERSION))(\s|$)") { throw "cppcheck is not $env:CPPCHECK_VERSION" }
+
+  - name: Install Qt
+    if: ${{ inputs.build-tools == 'true' }}
+    uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06  # v4.5.0
+    with:
+      # Left on, the action runs its own setup-python ('>=3.14.0', so 3.15 today), which
+      # replaces pythonLocation and puts an interpreter without the pinned tools first on PATH.
+      setup-python: 'false'
+      # aqtinstall 3.3.0, the latest release, predates the per-architecture repository layout Qt
+      # uses from 6.11 and cannot install 6.12. This maintainer-merged master commit can; move
+      # back to a released aqtversion when one ships.
+      aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
+      version: ${{ inputs.qt-version }}
+      host: 'windows'
+      target: 'desktop'
+      arch: 'win64_msvc2022_64'
+      cache: true
+
+  - name: Set up MSBuild
+    if: ${{ inputs.build-tools == 'true' }}
+    uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57  # v3.0.0
+    with:
+      vs-version: '[17.0,18.0)'
+
+  # The libraries are declared in vcpkg.json at the versions of its builtin-baseline, and CMake's
+  # configure installs them into the build tree (manifest mode). The image's vcpkg only supplies
+  # the tool and the port history, so it must contain the baseline commit. The binary cache is
+  # keyed on the runner image (its compiler), the triplet and vcpkg.json; there is no partial
+  # restore key, so a new baseline is built rather than served stale.
+  - name: Resolve vcpkg baseline and cache key
+    id: vcpkg
+    if: ${{ inputs.build-tools == 'true' }}
+    shell: pwsh
+    env:
+      SAK_VCPKG_TRIPLET: ${{ inputs.vcpkg-triplet }}
+    run: |
+      $root = $env:VCPKG_INSTALLATION_ROOT
+      if (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root 'vcpkg.exe'))) {
+        throw "vcpkg not found at VCPKG_INSTALLATION_ROOT='$root'"
+      }
+      $root = $root.Replace('\', '/')
+      $manifest = Join-Path $env:GITHUB_WORKSPACE 'vcpkg.json'
+      $baseline = (Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).'builtin-baseline'
+      if ($baseline -notmatch '^[0-9a-f]{40}$') { throw "vcpkg.json builtin-baseline is not a commit: '$baseline'" }
+      git -C $root cat-file -e "$baseline^{commit}" 2>$null
+      if ($LASTEXITCODE -ne 0) {
+        git -C $root fetch --quiet origin
+        git -C $root cat-file -e "$baseline^{commit}"
+        if ($LASTEXITCODE -ne 0) { throw "vcpkg at $root does not contain baseline $baseline" }
+      }
+      $manifestHash = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.Substring(0, 16)
+      $dir = Join-Path $env:RUNNER_TEMP "vcpkg-bincache"
+      New-Item -ItemType Directory -Force -Path $dir | Out-Null
+      "VCPKG_ROOT=$root" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      "VCPKG_TRIPLET=$env:SAK_VCPKG_TRIPLET" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      "VCPKG_BINARY_SOURCES=clear;files,$dir,readwrite" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      "key=vcpkg-$env:ImageOS-$env:ImageVersion-$env:SAK_VCPKG_TRIPLET-$manifestHash" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+      "dir=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+      Write-Host "vcpkg $root; baseline $baseline; vcpkg.json $manifestHash"
+
+  - name: Cache vcpkg binaries
+    if: ${{ inputs.build-tools == 'true' }}
+    uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+    with:
+      path: ${{ steps.vcpkg.outputs.dir }}
+      key: ${{ steps.vcpkg.outputs.key }}

@@ -1,0 +1,129 @@
+{
+  "tool": "partition-manager-evidence-index",
+  "schema_version": 1,
+  "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+  "code_commit": "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+  "completed_utc": "11/10/2026 18:38:44",
+  "rows": [
+    {
+      "id": "vhd.create-format-resize-delete",
+      "report_sha256": "ad46868bf7cb737917345dee17f7a9cd21fed7dc5189ad836c61d524c03c6411"
+    },
+    {
+      "id": "vhd.fat32-to-ntfs",
+      "report_sha256": "cf7597fa20fef949881a9c76e04ec1d4fc7639f236cbf9a6925b7d17f3c01fda"
+    },
+    {
+      "id": "vhd.quick-partition",
+      "report_sha256": "2db16fa9d7dfed1925bc0df89ca4f96897595b51cb8cdf3929b250f2471acdbb"
+    },
+    {
+      "id": "vhd.quick-partition-custom",
+      "report_sha256": "79b1c6a45c2a96114ab6c73f8ad217e7bbd7b01ba80cb6cea9b8b8d818bc450e"
+    },
+    {
+      "id": "vhd.quick-partition-mbr",
+      "report_sha256": "08445ba39cbbc0722dbe44b6afacd7dfc1494130f4985a1cba4cebc6f9ba435e"
+    },
+    {
+      "id": "vhd.adjacent-extend",
+      "report_sha256": "65e3664b5dfceccdc38299088a8a5c0366a0ef72306619b750ba820a7138ac89"
+    },
+    {
+      "id": "vhd.recovered-partition-restore",
+      "report_sha256": "ba8fcf21ca921b936b36939a5ce7402c5fd58efdce8d83f663d33a6dc4e04e53"
+    },
+    {
+      "id": "vhd.empty-style-conversion",
+      "report_sha256": "46cb6fef02e4851c146388e4a486ed2b34aff5ee846bbe5a7dd844aa2da1ceea"
+    },
+    {
+      "id": "vhd.clear-disk-wipe",
+      "report_sha256": "eebeea70b087c385083c653c4dec7da01b1b69b03e3f055f15a4796dcaffbd23"
+    },
+    {
+      "id": "vhd.image-clone",
+      "report_sha256": "4de39e495f32b64a3ba7e8dddfc3b0b1091b5d5dfc0211d50122a7c8d01a95bd"
+    },
+    {
+      "id": "vhd.image-restore",
+      "report_sha256": "bc67aeeed61feecb0c80f7ae5b18f36c395d1fbadf96978cb482c973f1277dfc"
+    },
+    {
+      "id": "vhd.partition-clone-region",
+      "report_sha256": "cfc411237acd4d94e307953ad0a507b44a47ed121b1e29618182b14d3cb58abf"
+    },
+    {
+      "id": "external.system-mbr2gpt",
+      "report_sha256": "5da7607a342bb6e7fb70d7b2a33fc6ae8dd8cb80d9b412b66a68b0527739e14d"
+    },
+    {
+      "id": "external.os-migration-reboot",
+      "report_sha256": "c9fc5b1a68877ecd78a8ecd8a7e2742a24332c91fcf3989193cef1e25828f072"
+    },
+    {
+      "id": "external.boot-repair-uefi",
+      "report_sha256": "d0f9b6a0dc588a3715492397e312a14f22184e53b0c7d4157836c4113b9d22f4"
+    },
+    {
+      "id": "external.boot-repair-bios",
+      "report_sha256": "ba5e8ec760e5ac13553d65462fd06553c92655f2ee244aaed695acb93f00de77"
+    },
+    {
+      "id": "external.usb-removable",
+      "report_sha256": "817c6bb6cf2f88e7f410abd8d11da355199831a6d72e623a6ed40c618286765c"
+    },
+    {
+      "id": "external.file-level-data-recovery",
+      "report_sha256": "cf5f216a5409aa17d05d92c8e9a7edf24021b43d7db2b0b759a97c5296f14a3f"
+    },
+    {
+      "id": "external.ssd-retrim",
+      "report_sha256": "a0d158c291f50a3770153caab5c845ad2746093397a03ddc8fda0d43df28a5c4"
+    },
+    {
+      "id": "external.hdd-defrag-execution",
+      "report_sha256": "e2480f9c112f1c09da78ca8e3bea4b53d1195dd12ba502bea37a76243a426116"
+    },
+    {
+      "id": "external.ssd-secure-erase",
+      "report_sha256": "a519ae4272c923e26da54c9f48b28ee197202dba9e681e227b71f31d5118c330"
+    },
+    {
+      "id": "external.bitlocker",
+      "report_sha256": "72a5e20f67fe7fda13ce913850cc2379573e6858cdccdcc0bcf49caba10103d7"
+    },
+    {
+      "id": "external.bitlocker-mutation",
+      "report_sha256": "40d680ef708777e0c18afc08c88e032cf3116a3a2f441025db4efce85159b522"
+    },
+    {
+      "id": "external.allocate-free-space",
+      "report_sha256": "367dd2e2d6b3a555e5543ab5d2d3e9ff8ad5933af2f6d5308819a95c6be859cb"
+    },
+    {
+      "id": "external.partition-move",
+      "report_sha256": "be37bb24847b20ed5c202fcf427b196f150ea12c88ea19d0ea171718543ba72e"
+    },
+    {
+      "id": "external.cluster-size-change",
+      "report_sha256": "4cae817ffdb0a7e4dbbee5e44777865fbfee1934626739b799a710b6602d964e"
+    },
+    {
+      "id": "external.primary-logical-conversion",
+      "report_sha256": "df6eb29c0c72f4f291bfae19fca295b7b5b63c6b393540c9ee799f4be6f7f224"
+    },
+    {
+      "id": "external.volume-serial-number",
+      "report_sha256": "9ae3865636e5c7e86110c558bbf1adb7a931c09811f5853a0da21a8a9a505693"
+    },
+    {
+      "id": "external.dynamic-to-basic",
+      "report_sha256": "48d3a6b977055b973e714a31d6b455fc685113ef63d663ca3f44436b416b1830"
+    },
+    {
+      "id": "external.hardware-wipe",
+      "report_sha256": "71dc0c0a815be9f3fd7d075c127a5537733dea35770edc0d4e68b2e6630c36d1"
+    }
+  ]
+}

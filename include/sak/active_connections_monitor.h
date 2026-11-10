@@ -8,10 +8,11 @@
 
 #include "sak/network_diagnostic_types.h"
 
+#include <QHash>
 #include <QObject>
 #include <QTimer>
 
-#include <atomic>
+#include <cstdint>
 #include <type_traits>
 
 namespace sak {
@@ -44,7 +45,8 @@ public:
     ActiveConnectionsMonitor& operator=(ActiveConnectionsMonitor&&) = delete;
 
     /// @brief Start periodic monitoring
-    void startMonitoring(const MonitorConfig& config = {});
+    void startMonitoring();
+    void startMonitoring(const MonitorConfig& config);
 
     /// @brief Stop monitoring
     void stopMonitoring();
@@ -54,6 +56,17 @@ public:
 
     /// @brief Get the latest connection snapshot
     [[nodiscard]] QVector<ConnectionInfo> getCurrentConnections() const;
+
+    /// @brief True if the most recent refresh hit a kernel table-read error (a requested
+    /// TCP/UDP table returned other than NO_ERROR). Distinguishes a genuine "no connections"
+    /// (NO_ERROR, zero entries) from a failed read (e.g. ERROR_NOT_SUPPORTED) so a caller can
+    /// report the failure honestly instead of a misleading empty success. Additive; the GUI
+    /// path ignores it and is unaffected.
+    [[nodiscard]] bool lastRefreshHadError() const noexcept { return m_lastRefreshError; }
+
+    /// Build a PID -> process-name map from ONE Toolhelp snapshot, so a refresh pays a single
+    /// snapshot instead of one per connection (was O(connections * processes)).
+    [[nodiscard]] static QHash<uint32_t, QString> snapshotProcessNames();
 
 Q_SIGNALS:
     void connectionsUpdated(QVector<sak::ConnectionInfo> connections);
@@ -65,11 +78,18 @@ private:
     QTimer* m_refreshTimer = nullptr;  ///< Owned; QObject parent = this
     QVector<ConnectionInfo> m_lastConnections;
     MonitorConfig m_config;
-    std::atomic<bool> m_monitoring{false};
+    bool m_lastRefreshError = false;
+    bool m_hasBaseline = false;  ///< True once a first successful refresh established a baseline
 
-    [[nodiscard]] QVector<ConnectionInfo> enumerateTcpConnections();
-    [[nodiscard]] QVector<ConnectionInfo> enumerateUdpListeners();
-    [[nodiscard]] static QString getProcessName(uint32_t pid);
+    // readError receives the exact kernel table-read status (0 == NO_ERROR; otherwise the
+    // GetExtendedTcpTable/GetExtendedUdpTable result DWORD) so refreshNow can surface the real
+    // error instead of silently publishing a stale/empty snapshot. Caller pre-initializes to 0.
+    [[nodiscard]] QVector<ConnectionInfo> enumerateTcpConnections(
+        const QHash<uint32_t, QString>& processNames, quint32& readError);
+    [[nodiscard]] QVector<ConnectionInfo> enumerateUdpListeners(
+        const QHash<uint32_t, QString>& processNames, quint32& readError);
+    [[nodiscard]] static QString lookupProcessName(uint32_t pid,
+                                                   const QHash<uint32_t, QString>& processNames);
     [[nodiscard]] static QString getProcessPath(uint32_t pid);
     [[nodiscard]] static QString resolveHostname(const QString& ip);
 

@@ -8,8 +8,6 @@
 #include <expected>
 #include <string>
 
-#ifdef _WIN32
-
 namespace sak {
 
 /**
@@ -30,30 +28,38 @@ public:
     [[nodiscard]] static bool isElevated() noexcept;
 
     /**
-     * @brief Check if current process can elevate
-     * @return True if UAC elevation is available
+     * @brief Start this executable again with administrator privileges (the caller then quits)
+     * @return Success or error code; a declined UAC prompt is elevation_denied
      */
-    [[nodiscard]] static bool canElevate() noexcept;
+    static auto restartElevated() -> std::expected<void, sak::error_code>;
 
-    /**
-     * @brief Restart current process with administrator privileges
-     * @param wait_for_exit If true, wait for elevated process to exit
-     * @return Success or error code
-     *
-     * @note This will terminate the current process if successful
-     */
-    static auto restartElevated(bool wait_for_exit = false) -> std::expected<void, sak::error_code>;
+    /// @brief The one UAC request: ShellExecuteExW "runas" of @p executable with @p arguments
+    ///        (already quoted), shown with @p show_command (SW_*). Returns the process handle,
+    ///        which the caller owns and closes. Used by restartElevated and by ElevationBroker to
+    ///        start sak_elevated_helper.exe.
+    static auto launchElevated(const std::wstring& executable,
+                               const std::wstring& arguments,
+                               int show_command) -> std::expected<void*, sak::error_code>;
 
-    /**
-     * @brief Execute command with administrator privileges
-     * @param executable Path to executable
-     * @param arguments Command line arguments
-     * @param wait_for_exit If true, wait for process to complete
-     * @return Success or error code
-     */
-    static auto executeElevated(const std::wstring& executable,
-                                const std::wstring& arguments = L"",
-                                bool wait_for_exit = true) -> std::expected<void, sak::error_code>;
+    /// @brief The result for a failed elevated launch's Win32 error: ERROR_CANCELLED (the user
+    ///        declined the UAC prompt) is elevation_denied, anything else elevation_failed. Pure.
+    [[nodiscard]] static sak::error_code elevationLaunchError(unsigned long win32_error) noexcept;
+
+    /// The argument an elevated relaunch of the application carries. The new instance waits for
+    /// the one that launched it to exit (sak::SingleInstanceGuard) instead of bringing that
+    /// closing window forward and quitting as a second launch would.
+    static constexpr const char* kElevatedRelaunchArgument = "--elevated-relaunch";
+
+    /// @brief The arguments an elevated relaunch is started with: this process's own arguments
+    ///        (@p current_args, already serialized) followed by kElevatedRelaunchArgument. Pure.
+    [[nodiscard]] static std::wstring relaunchArguments(const std::wstring& current_args);
+
+    /// @brief Whether a failed restartElevated() deserves an error dialog. Declining the UAC
+    ///        prompt (ERROR_CANCELLED -> elevation_denied) is the user's answer, not a
+    ///        failure: it used to raise "Elevation Failed".
+    [[nodiscard]] static bool restartFailureNeedsNotice(sak::error_code error) noexcept {
+        return error != sak::error_code::elevation_denied;
+    }
 
     /**
      * @brief Get elevation error message
@@ -71,11 +77,21 @@ private:
 
     /**
      * @brief Get command line arguments (wide-char for Unicode support)
-     * @return Arguments string
+     * @return Serialized arguments (empty when there are legitimately none), or an error when
+     *         the command line could not be parsed -- so a genuine parse failure fails closed
+     *         instead of relaunching elevated with the arguments silently dropped.
      */
-    [[nodiscard]] static std::wstring get_command_line_args();
+    [[nodiscard]] static auto get_command_line_args()
+        -> std::expected<std::wstring, sak::error_code>;
+
+    /**
+     * @brief Serialize argv[1..argc-1] into one command-line string using the
+     *        CommandLineToArgvW quoting rules (exposed for testing).
+     * @param argc Argument count as returned by CommandLineToArgvW
+     * @param argv Argument vector as returned by CommandLineToArgvW
+     * @return Round-trip-safe command line (argv[0] excluded)
+     */
+    [[nodiscard]] static std::wstring serializeArgsForRelaunch(int argc, wchar_t* const* argv);
 };
 
 }  // namespace sak
-
-#endif  // _WIN32

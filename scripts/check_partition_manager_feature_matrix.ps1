@@ -58,6 +58,11 @@ function Assert-Feature {
         [hashtable]$Feature
     )
 
+    # A missing or misspelled 'evidence' key would make the foreach iterate zero times and the
+    # feature pass with no checks at all. Fail closed instead of silently verifying nothing.
+    if (($null -eq $Feature.evidence) -or (@($Feature.evidence).Count -eq 0)) {
+        throw "Partition Manager feature '$($Feature.id)' has no evidence groups"
+    }
     foreach ($group in $Feature.evidence) {
         Assert-Contains `
             -RelativePath $group.path `
@@ -85,11 +90,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("scriptBuilder_createRespectsWizardPayload", "scriptBuilder_formatsByPartitionIdentity", "scriptBuilder_setsPartitionLabelByMountedDriveLetter")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Basic partition operations", "Create, delete, format, label, assign/remove drive letter")
             }
         )
     },
@@ -104,17 +104,12 @@ $features = @(
             @{
                 kind = "UI action"
                 path = "src\gui\partition_manager_panel.cpp"
-                patterns = @("Resize/Move Partition", "Extend Partition Wizard", "Move partition start", "Offline move will back up")
+                patterns = @("Resize/Move Partition", "Extend Partition", "Move partition start", "Offline move will back up")
             },
             @{
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("safetyValidator_allowsResizeIntoAdjacentFreeSpace", "scriptBuilder_buildsOfflineMoveAndMetadataScripts", "safetyValidator_allowsConfirmedOfflineRebuildOperations")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Resize operations", "MovePartition")
             }
         )
     },
@@ -135,11 +130,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("scriptBuilder_buildsMbr2GptScript", "safetyValidator_blocksUnsafeSystemStyleConversion")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("MBR/GPT conversion", "Safe system-disk MBR-to-GPT")
             }
         )
     },
@@ -160,11 +150,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("scriptBuilder_buildsMergeScript", "safetyValidator_blocksResizeBelowUsedBytes")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Partition merge and split", "Merge And Split")
             }
         )
     },
@@ -179,17 +164,12 @@ $features = @(
             @{
                 kind = "script builder"
                 path = "src\core\partition_script_builder.cpp"
-                patterns = @("convert.exe %1: /FS:NTFS /NoSecurity")
+                patterns = @("convert.exe %1: /FS:NTFS /NoSecurity /X")
             },
             @{
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("safetyValidator_blocksUnsupportedFileSystemConversion")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("File system conversion", "FAT/FAT32 to NTFS")
             }
         )
     },
@@ -212,14 +192,9 @@ $features = @(
                 patterns = @("scriptBuilder_buildsCloneVerificationScript", "scriptBuilder_buildsOffsetPartitionCloneScript", "safetyValidator_requiresCloneOverwriteConfirmation", "safetyValidator_requiresPartitionRegionCloneConfirmation", "safetyValidator_blocksUnsafePayloadTargetDisk")
             },
             @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Disk cloning and imaging", "Disk-to-disk clone, partition clone, image backup, image restore, and verification")
-            },
-            @{
                 kind = "certification matrix"
-                path = "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
-                patterns = @("vhd.image-clone", "vhd.image-restore", "target_overwritten", "vhd.partition-clone-region", "outside_marker_preserved")
+                path = "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+                patterns = @("vhd.image-clone", "vhd.image-restore", "every_other_sector_matches", "vhd.partition-clone-region", "the_marker_after_the_region_is_kept")
             }
         )
     },
@@ -234,17 +209,22 @@ $features = @(
             @{
                 kind = "script builder"
                 path = "src\core\partition_script_builder.cpp"
-                patterns = @("SAK OS migration boot validation", "bcdboot.exe %2 /s %1: /f UEFI", "reagentc.exe /info")
+                patterns = @('bcdboot.exe %1 /s \"${sakBootLetter}:\" /f UEFI', "reagentc.exe /info")
+            },
+            @{
+                kind = "script builder"
+                path = "src\core\partition_scripts\os_migration.ps1"
+                patterns = @("function Set-SakTargetBoot")
+            },
+            @{
+                kind = "script builder"
+                path = "src\core\partition_scripts\target_boot_files.ps1"
+                patterns = @("function Invoke-SakTargetBootFiles")
             },
             @{
                 kind = "test"
-                path = "tests\unit\test_partition_manager_core.cpp"
-                patterns = @("scriptBuilder_buildsOsMigrationBootValidationScript")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("OS migration tools", "Boot repair utilities")
+                path = "tests\unit\test_partition_os_migration.cpp"
+                patterns = @("scriptRefusesEverythingBeforeTheFirstWrite")
             }
         )
     },
@@ -265,11 +245,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("SmartSummary", "TemperatureCelsius", "WearPercent", "scriptBuilder_buildsAdvancedParityScripts")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("S.M.A.R.T. monitoring", "SSD optimization")
             }
         )
     },
@@ -290,11 +265,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("scriptBuilder_buildsClearLevelDiskWipeScript", "Optimize-Volume -DriveLetter", "safetyValidator_blocksUnsafeParityOperations")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Secure data wiping", "SSD Secure Erase queues Windows ReTrim")
             }
         )
     },
@@ -304,7 +274,7 @@ $features = @(
             @{
                 kind = "UI action"
                 path = "src\gui\partition_manager_panel.cpp"
-                patterns = @("Quick Partition", "Data Recovery", "raw volume/device path", "FileRecoveryEngine::scanOfflineImage", "Allocate Free Space", "Allocate Free Space To", "Back up adjacent donor", "MovePartition", "Space Analyzer", "Largest Files", "File Types", "Copy Path", "Disk Benchmark", "Manage BitLocker", "BitLocker status table", "Copy BitLocker commands", "Disk Defrag", "Disk optimization status table", "Copy Optimize commands", "SSD Secure Erase", "SSD Secure Erase readiness table", "Queue SSD Secure Erase", "Make Bootable Media")
+                patterns = @("Quick Partition", "Data Recovery", "raw volume/device path", "FileRecoveryEngine::scanOfflineImage", "Allocate Free Space", "Allocate Free Space To", "Back up adjacent donor", "MovePartition", "Space Analyzer", "Largest Files", "File Types", "Copy Path", "Disk Benchmark", "Manage BitLocker", "BitLocker status table", "Copy BitLocker commands", "Disk Defrag", "Disk optimization status table", "Copy Optimize commands", "Erase SSD (TRIM + Overwrite)", "Erase SSD readiness table", "Queue SSD erase", "Make Bootable Media")
             },
             @{
                 kind = "data recovery engine"
@@ -314,7 +284,7 @@ $features = @(
             @{
                 kind = "panel test"
                 path = "tests\unit\test_partition_manager_panel.cpp"
-                patterns = @("Quick Partition", "Data Recovery", "image and raw path recovery", "allocateFreeSpaceQueuesAdjacentDonorOperation", "unallocatedAllocateFreeSpaceQueuesAdjacentEngines", "formerCommercialCompatibilityActionsQueueDirectEngines", "Allocate free space amount", "Space Analyzer", "Largest Files", "File Types", "Copy Path", "Disk Benchmark", "Manage BitLocker", "manageBitLockerShowsStatusDialog", "Disk Defrag", "diskDefragShowsOptimizeDialog", "SSD Secure Erase", "ssdSecureEraseShowsQueueDialog", "Make Bootable Media")
+                patterns = @("Quick Partition", "Data Recovery", "image and raw path recovery", "allocateFreeSpaceQueuesAdjacentDonorOperation", "unallocatedAllocateFreeSpaceQueuesAdjacentEngines", "formerCommercialCompatibilityActionsQueueDirectEngines", "Allocate free space amount", "Space Analyzer", "Largest Files", "File Types", "Copy Path", "Disk Benchmark", "Manage BitLocker", "manageBitLockerShowsStatusDialog", "Disk Defrag", "diskDefragShowsOptimizeDialog", "Erase SSD (TRIM + Overwrite)", "ssdSecureEraseShowsQueueDialog", "Make Bootable Media")
             },
             @{
                 kind = "core test"
@@ -322,14 +292,9 @@ $features = @(
                 patterns = @("fileRecoveryEngine_scansAndRestoresOfflineImage", "scanOfflineImage", "restoreCandidates", "source_not_mutated", "scriptBuilder_buildsAllocateFreeSpaceScript", "safetyValidator_blocksUnsafeAllocateFreeSpacePayloads")
             },
             @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Commercial utility parity", "AOMEI/MiniTool expose Quick Partition", "Data Recovery", "Allocate Free Space queues adjacent donor", "Allocate Free Space To queues adjacent unallocated space", "image and raw volume/device file carving", "raw volume/device paths", "Largest Files", "File Types", "Copy Path", "BitLocker status", "defrag/ReTrim command guidance", "SSD Secure Erase shows disk identity")
-            },
-            @{
                 kind = "certification matrix"
-                path = "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
-                patterns = @("external.file-level-data-recovery", "deleted_fixture_name", "restore_to_separate_destination", "external.allocate-free-space", "external.ssd-retrim", "purge_warning_visible")
+                path = "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+                patterns = @("external.file-level-data-recovery", "every_fixture_was_recovered", "external.allocate-free-space", "external.ssd-retrim", "the_app_warned_this_is_not_a_purge")
             }
         )
     },
@@ -350,11 +315,6 @@ $features = @(
                 kind = "disk map chrome"
                 path = "src\gui\partition_manager_panel.cpp"
                 patterns = @("DiskMapRowFrame", "partitionActionTextLink", "kDiskMapOuterMargin = 1", "kDiskMapRowSpacing = 2", "kDiskMapSegmentSpacing = 2", "GPT/Primary", "RAID5", 'setProperty("outerColorRole"', 'setProperty("innerColorRole"', 'setProperty("selected"')
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Pending operations", "right-click menu")
             }
         )
     },
@@ -364,86 +324,65 @@ $features = @(
             @{
                 kind = "readiness script"
                 path = "scripts\check_release_readiness.ps1"
-                patterns = @("run_partition_manager_destructive_certification.ps1", "run_partition_manager_vhd_certification_strict.ps1", "run_partition_manager_hardware_certification_strict.ps1", "verify_partition_manager_certification.ps1", "check_partition_manager_certification_matrix_integrity.ps1", "check_partition_manager_commercial_gate_matrix.ps1", "check_partition_manager_external_checklist.ps1", "check_partition_manager_external_lab_package.ps1", "new_partition_manager_certification_gap_report.ps1", "check_partition_manager_certification_gap_report.ps1", "certification-gap-report.md", "new_partition_manager_certification_bundle.ps1", "check_partition_manager_certification_bundle.ps1", "certification-artifact-bundle.json", "test_partition_manager_vhd_preflight.ps1", "check_partition_manager_vhd_preflight_report.ps1", "vhd-preflight.json", "CreateEvidenceDirectories", "external-evidence", "PartitionExternalEvidenceChecklist", "external-evidence.checklist.md", "check_partition_manager_release_claims.ps1", "test_partition_manager_certification_tools.ps1")
+                patterns = @("verify_partition_manager_certification.ps1", "check_partition_manager_release_claims.ps1", "test_partition_manager_row_evidence.ps1", "test_partition_manager_certification_status.ps1")
             },
             @{
                 kind = "certification verifier"
                 path = "scripts\verify_partition_manager_certification.ps1"
-                patterns = @("RequireVhdDataDiskEvidence", "RequireExternalGateEvidence", "PARTITION_MANAGER_CERTIFICATION_MATRIX.json", "Assert-PassedVhdEvidencePayload", "Assert-PassedExternalEvidencePayload", "Assert-EvidenceValuePresent")
+                patterns = @("RequireVhdDataDiskEvidence", "RequireExternalGateEvidence", "get_partition_manager_certification_status.ps1", "merge-base --is-ancestor")
             },
             @{
                 kind = "certification status"
                 path = "scripts\get_partition_manager_certification_status.ps1"
-                patterns = @("Test-VhdEvidenceComplete", "Test-ExternalEvidenceComplete", "Test-EvidenceValuePresent", "claim_level")
+                patterns = @("claim_level", "VirtualMachinesValidated", "NamedDevicesValidated", "Test-PmRowEvidence", "Test-PmEvidenceIndex", "site_wording")
             },
             @{
-                kind = "external evidence scaffold"
-                path = "scripts\new_partition_manager_external_evidence_manifest.ps1"
-                patterns = @("Write-GateReportTemplate", "report.template.json", "partition-manager-external-evidence-report", "suggested_evidence_path", "required_evidence_values")
+                kind = "evidence guards"
+                path = "scripts\partition_manager_row_evidence.ps1"
+                patterns = @("Test-PmRowEvidence", "Test-PmSnapshotsAgree", "Test-PmStep", "Test-PmMedia", "Test-PmEvidenceIndex")
             },
             @{
-                kind = "external lab package verifier"
-                path = "scripts\check_partition_manager_external_lab_package.ps1"
-                patterns = @("report.template.json", "partition-manager-external-evidence-report", "Report template evidence keys mismatch", "Report template required evidence values mismatch")
+                kind = "independent readback"
+                path = "scripts\partition_manager_readback.ps1"
+                patterns = @("ConvertFrom-RbPartitionTable", "Get-RbRangeSha256", "Get-RbRangeDifferences", "Find-RbMarkerAnywhere", "Assert-RbDisposableMachine")
             },
             @{
-                kind = "external report importer"
-                path = "scripts\update_partition_manager_external_manifest_from_reports.ps1"
-                patterns = @("partition-manager-external-evidence-report", "RequireAllReports", "required_evidence_keys", "safety_contract", "required_evidence_values", "evidence_path")
+                kind = "code digest"
+                path = "scripts\partition_manager_code_digest.py"
+                patterns = @("EXCLUDED_PREFIXES", "EXCLUDED_SUFFIXES")
             },
             @{
-                kind = "certification gap report"
-                path = "scripts\new_partition_manager_certification_gap_report.ps1"
-                patterns = @("certification-gap-report", "required_evidence_keys", "safety_contract", "next_commands", "run_partition_manager_vhd_certification_strict.ps1", "run_partition_manager_hardware_certification_strict.ps1")
+                kind = "step client"
+                path = "tests\certification\partition_manager_scenario_step.cpp"
+                patterns = @("runScenarioStep", "requestBuilders", "PartitionManagerController", "elevated-helper")
             },
             @{
-                kind = "certification gap verifier"
-                path = "scripts\check_partition_manager_certification_gap_report.ps1"
-                patterns = @("Gap count mismatch", "required_evidence_keys", "safety_contract", "required evidence values", "Gap Markdown missing")
+                kind = "row orchestrator"
+                path = "scripts\run_partition_manager_app_certification.ps1"
+                patterns = @("Invoke-CertStep", "Assert-RbDisposableMachine", "New-PmRowReport")
             },
             @{
-                kind = "VHD preflight"
-                path = "scripts\test_partition_manager_vhd_preflight.ps1"
-                patterns = @("partition-manager-vhd-preflight", "RequireAdministrator", "required_commands", "free_drive_letters", "ready_for_vhd_certification", "run_partition_manager_destructive_certification.ps1")
-            },
-            @{
-                kind = "VHD preflight verifier"
-                path = "scripts\check_partition_manager_vhd_preflight_report.ps1"
-                patterns = @("partition-manager-vhd-preflight", "VHD scenario count mismatch", "External gate count mismatch", "Non-admin required preflight missing administrator blocker")
-            },
-            @{
-                kind = "strict VHD orchestrator"
-                path = "scripts\run_partition_manager_vhd_certification_strict.ps1"
-                patterns = @("Invoke-ElevatedRelaunch", "Verb RunAs", "RequireReady", "RunVhdDataDiskMatrix", "RequireVhdDataDiskEvidence", "VhdDataDiskCertified", "certification-artifact-bundle.json")
-            },
-            @{
-                kind = "strict hardware orchestrator"
-                path = "scripts\run_partition_manager_hardware_certification_strict.ps1"
-                patterns = @("RequireVhdDataDiskEvidence", "RequireExternalGateEvidence", "HardwareCertified", "check_partition_manager_external_checklist.ps1", "check_partition_manager_external_lab_package.ps1", "hardware-certification-status.json", "hardware-certification-artifact-bundle.json")
-            },
-            @{
-                kind = "certification artifact bundle"
-                path = "scripts\new_partition_manager_certification_bundle.ps1"
-                patterns = @("partition-manager-certification-artifact-bundle", "certification_status", "certification_report", "external_evidence_manifest", "external_evidence_checklist", "Get-FileHash")
-            },
-            @{
-                kind = "certification artifact bundle verifier"
-                path = "scripts\check_partition_manager_certification_bundle.ps1"
-                patterns = @("partition-manager-certification-artifact-bundle", "Certification bundle hash mismatch", "Certification bundle claim level mismatch", "Certification bundle VHD preflight ready mismatch")
+                kind = "final run"
+                path = "scripts\run_partition_manager_final_certification.ps1"
+                patterns = @("code_dirty", "select_partition_manager_evidence.ps1", "check_partition_manager_release_claims.ps1")
             },
             @{
                 kind = "certification matrix"
-                path = "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
-                patterns = @("required_evidence_keys", "safety_contract", "vhd.create-format-resize-delete", "external.file-level-data-recovery", "external.allocate-free-space", "external.partition-move", "external.cluster-size-change", "external.primary-logical-conversion", "external.volume-serial-number", "external.dynamic-to-basic", "external.hdd-defrag-execution", "external.ssd-secure-erase", "external.bitlocker-mutation", "external.hardware-wipe")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_CERTIFICATION.md"
-                patterns = @("Disposable VHD data-disk matrix", "External Gates")
+                path = "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+                patterns = @("ran_on", "not_proved", "vhd.create-format-resize-delete", "external.file-level-data-recovery", "external.allocate-free-space", "external.partition-move", "external.cluster-size-change", "external.primary-logical-conversion", "external.volume-serial-number", "external.dynamic-to-basic", "external.hdd-defrag-execution", "external.ssd-secure-erase", "external.bitlocker-mutation")
             }
         )
     }
 )
+
+# Pin the number of parity features this gate covers. Dropping (or duplicating) a feature block
+# above changes $features.Count; without this check a removed feature would still yield a passing
+# run over the reduced set. Update this count deliberately when features are added or removed.
+$expectedFeatureCount = 12
+if ($features.Count -ne $expectedFeatureCount) {
+    throw ("Partition Manager feature matrix expected $expectedFeatureCount feature groups but " +
+        "found $($features.Count); a feature was added or removed without updating this gate.")
+}
 
 Push-Location $ProjectRoot
 try {

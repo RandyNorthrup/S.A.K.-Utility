@@ -1,0 +1,86 @@
+# Reviewed test skips.
+#
+# One line per test function that called QSKIP, in the form
+#   <test_binary>::<TestClass::testFunction> = why this skip is acceptable
+#
+# scripts/check_test_skips.ps1 fails when a skip appears that is not listed
+# here AND when a line here did not skip on the last run. Regenerate with
+# -UpdateBaseline, then replace every NEEDS-REASON with a real reason;
+# the check rejects the marker, so the file cannot become a rubber stamp.
+#
+# A skip is only acceptable when the thing it needs genuinely cannot exist on
+# a build machine. "Hard to set up" is not a reason - it is a fixture to write.
+#
+# The W66 full-suite audit found 5244 passed test functions and 25 reviewed
+# skips, or 0.47 percent of executed functions. The static source inventory
+# has 22 QSKIP sites across 7 files; none is in a dead application-platform arm.
+# That number is the point of this file. ctest reports a binary as Passed when
+# every one of its functions skipped, so without this the suite can report
+# 222/222 while a subsystem quietly stops being exercised.
+#
+# The four groups below are ordered by how defensible they are. Group D is the
+# one that should shrink.
+
+# ---------------------------------------------------------------------------
+# A. DESTRUCTIVE HARDWARE CERTIFICATION - opt-in, and must stay opt-in.
+#
+# These write to a real physical disk. Running them unprompted on a build
+# machine would destroy it. The env var IS the safety interlock, so these skips
+# are correct behaviour and must never be "fixed" by defaulting them on.
+# ---------------------------------------------------------------------------
+test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::liveApplyCertToDisposableDisk = Destructive: writes a partition layout to the physical disk named by SAK_LIVE_APPLY_DISK. The interlock is the feature, not a gap.
+test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::liveFlashCertToDisposableDisk = Destructive: raw-writes an image to the physical disk named by SAK_LIVE_FLASH_DISK. Certified separately on a disposable USB; see the flash live-cert record.
+test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::liveGuardProbeAgainstRealDisks = Enumerates the host's real disks to prove the destructive-op guards refuse them. Needs SAK_LIVE_DISK_PROBE because it is only meaningful against real hardware.
+
+# ---------------------------------------------------------------------------
+# B. HOST PRIVILEGE OR PLATFORM BEHAVIOUR the test cannot manufacture.
+#
+# test_elevated_helper_connection skips only under ctest's standard-user token. The elevated CI step
+# "Real helper over a real pipe" runs it, and fails if it skipped there.
+#
+# The precondition is a property of the machine, not of the code. Each of these
+# asserts something that is only observable in a state the test is not allowed
+# to create for itself.
+# ---------------------------------------------------------------------------
+test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::symlinkFileEntriesSkippedAcrossWalkOps = Creating an NTFS file symlink needs SeCreateSymbolicLinkPrivilege or Developer Mode; neither is guaranteed on a build agent.
+test_elevated_helper_connection::ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe = Starting the helper from a standard-user token needs a consent prompt, and a runner has nobody to answer it. An elevated CI step runs this test and fails if it skipped.
+
+# ---------------------------------------------------------------------------
+# C. LIVE THIRD-PARTY NETWORK - costs money or depends on someone else's uptime.
+#
+# Making these unconditional would let an unrelated outage fail the gate, and
+# the OpenAI ones bill per run.
+# ---------------------------------------------------------------------------
+test_offline_package_builder::TestOfflinePackageBuilder::testBuildOfficePcBundle = Live Chocolatey package/CDN integration; SAK_RUN_LIVE_PACKAGE_TESTS=1 opts in, then every failure hard-fails.
+test_openai_responses_client::OpenAIResponsesClientTests::realModelSmokeTest_optIn = Bills a real OpenAI request. SAK_AI_REAL_MODEL_TEST=1 opts in; after opt-in, missing credentials or API failures fail.
+test_openai_responses_client::OpenAIResponsesClientTests::realModelToolLoopSmokeTest_optIn = Bills several real OpenAI requests. SAK_AI_REAL_MODEL_TEST=1 opts in; after opt-in, missing credentials or API failures fail.
+test_linux_iso_downloader::LinuxISODownloaderTests::testGitHubVersionCheck_Network = Live GitHub API check; SAK_RUN_LIVE_LINUX_ISO_TESTS=1 opts in, then timeout/API failure hard-fails.
+test_linux_iso_downloader::LinuxISODownloaderTests::testEveryCatalogDownloadAnswers_Network = Live check of every fixed catalog download with aria2c's user agent; SAK_RUN_LIVE_LINUX_ISO_TESTS=1 opts in (the tooling-extended test_linux_iso_catalog_live entry sets it), then any status but 200/206 or a timeout hard-fails.
+test_windows_iso_downloader::WindowsISODownloaderTests::testFetchBuilds = Live UUP dump API test; init() skips unless SAK_RUN_LIVE_UUP_TESTS is set, then any timeout/API/empty result fails (G18-5).
+test_windows_iso_downloader::WindowsISODownloaderTests::testGetFilesReturnsResults = Live UUP dump API test; init() skips unless SAK_RUN_LIVE_UUP_TESTS is set, then any timeout/API/empty result fails (G18-5).
+test_windows_iso_downloader::WindowsISODownloaderTests::testFileUrlsAreValid = Live UUP dump API test; init() skips unless SAK_RUN_LIVE_UUP_TESTS is set, then any timeout/API/empty result fails (G18-5).
+
+# ---------------------------------------------------------------------------
+# D. EXTERNAL MEDIA, CERTIFICATION INPUTS, TIME BUDGET, AND REAL SAMPLES.
+#
+# These are not one generic missing-fixture class. They require large or
+# redistributability-limited real samples, raw external media, cert/probe
+# inputs, substantial sparse containers, or an explicit slow-test budget.
+#
+#   * the APFS cert-emit tests each stage a sparse container of roughly 16 GiB,
+#     which is a disk-space decision rather than a missing file;
+#   * the remaining entries need raw external media, Apple-generated structures,
+#     or substantial sparse containers that compact fixtures cannot represent.
+# ---------------------------------------------------------------------------
+test_file_management_file_system::FileManagementFileSystemTests::rawApfsTransferMatrixEndToEnd = Needs a raw APFS image via SAK_APFS_RAW_IMAGE; covered by the C3e certification flow instead.
+test_file_management_file_system::FileManagementFileSystemTests::rawHfsTransferMatrixEndToEnd = Needs a raw HFS image via SAK_HFS_RAW_IMAGE; covered by the C8 certification flow instead.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_certDivergeCloneDeletePatch = Cert-emit only: produces evidence for the macOS kernel cert, needs SAK_CERT_OUT and SAK_PROBE.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_certOmapBoundaryDivergeEmit = Cert-emit only: needs SAK_CERT_OUT (optionally SAK_CERT_N).
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_certSnapshotCreateAfterDiverge = Cert-emit only: needs SAK_CERT_OUT.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_certSnapshotDivergeSequence = Cert-emit only: needs SAK_CERT_OUT.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_deletedCibKSpilledFileFreesChunk = Stages a ~16 GiB sparse container via SAK_MCFREE_CERT_DIR; disk-space gated, not fixture gated.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_multiCibSpillsAcrossCib0Chunks = Stages a ~16 GiB sparse container via SAK_S4_CERT_DIR.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_spillsIntoCib1OwnedChunk = Stages a ~16 GiB sparse container via SAK_S4B_CERT_DIR.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree = Slow full-tree omap read/free walk; SAK_OMAP_DRIFT=1 opts in so the default suite stays under its time budget.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_probeForeignMultiBlockIp = Needs a container produced by a real mkapfs with a multi-block internal-pool bitmap; SAK_IPBM_ORACLE.
+test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_probeForeignSparsePreserve = Probe-emit only: needs a real-Apple sparse oracle via SAK_SPARSE_ORACLE plus SAK_CERT_OUT.

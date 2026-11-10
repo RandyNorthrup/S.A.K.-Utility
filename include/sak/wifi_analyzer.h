@@ -16,6 +16,19 @@
 
 namespace sak {
 
+/// @brief Per-BSSID security determination derived from the 802.11 beacon.
+///
+/// The Native WiFi "available network" list is aggregated per SSID, so its
+/// auth/cipher fields describe an SSID as a whole -- not any single access
+/// point. Deriving security from each BSS entry's own capability bit and
+/// information elements keeps an evil-twin AP (e.g. an Open AP broadcasting a
+/// secured network's SSID) from inheriting a sibling BSSID's "secure" label.
+struct WiFiBssSecurity {
+    QString authentication;  ///< "Open","WEP","WPA","WPA2","WPA3"
+    QString encryption;      ///< "None","WEP","TKIP","AES-CCMP"
+    bool isSecure = false;
+};
+
 /// @brief WiFi network analysis via wlanapi.dll
 ///
 /// Discovers WiFi networks, measures signal strength, analyzes
@@ -64,6 +77,16 @@ public:
     /// @brief Look up vendor by BSSID MAC prefix
     [[nodiscard]] static QString lookupVendor(const QString& bssid);
 
+    /// @brief Derive per-BSSID security from the 802.11 capability "Privacy" bit
+    ///        and raw information-element bytes (RSN IE / WPA vendor IE). Pure and
+    ///        self-contained so it can be unit-tested with crafted IE buffers.
+    /// @param privacyBit  true if the beacon capability Privacy bit is set
+    /// @param ie          pointer to the IE byte blob (may be null)
+    /// @param ieLen       length of the IE blob in bytes
+    [[nodiscard]] static WiFiBssSecurity deriveBssSecurity(bool privacyBit,
+                                                           const unsigned char* ie,
+                                                           int ieLen);
+
 Q_SIGNALS:
     void scanComplete(QVector<sak::WiFiNetworkInfo> networks);
     void channelUtilizationUpdated(QVector<sak::WiFiChannelUtilization> channels);
@@ -77,7 +100,11 @@ private:
 
     bool initializeWlan();
     void cleanupWlan();
-    [[nodiscard]] QVector<WiFiNetworkInfo> performWlanScan(bool triggerScan = true);
+    /// Run one scan pass. @p scanError is set true when the scan FAILED at the driver (no WLAN
+    /// interface, or every interface's list read errored -- e.g. the radio is off) as opposed to
+    /// a genuine empty result (reads succeeded with zero networks). Lets scan() report a failed
+    /// scan honestly via errorOccurred rather than a misleading "0 networks" success.
+    [[nodiscard]] QVector<WiFiNetworkInfo> performWlanScan(bool triggerScan, bool& scanError);
 
     /// @brief Format MAC address bytes to colon-separated string
     [[nodiscard]] static QString formatMacAddress(const unsigned char* addr, int length);

@@ -3,36 +3,21 @@
 
 #pragma once
 
-#include "sak/app_scanner.h"
-#include "sak/package_matcher.h"
-
 #include <QDateTime>
 #include <QString>
 
-#include <optional>
 #include <vector>
 
 namespace sak {
 
 /**
- * @brief MigrationReport - Export/import application migration plans
+ * @brief MigrationReport - the list of applications an install run works through.
  *
- * This class manages the creation, export, and import of migration reports
- * that combine scanned apps with their matched Chocolatey packages. Reports
- * can be exported to JSON or CSV for documentation, planning, or execution
- * on target machines.
- *
- * Use cases:
- * - Document current system state
- * - Plan migration to new machine
- * - Share migration list with team
- * - Import migration list on target machine
+ * The install panel fills it from its queue, and the install worker records each entry's outcome
+ * in it.
  */
 class MigrationReport {
 public:
-    MigrationReport();
-    ~MigrationReport() = default;
-
     /**
      * @brief Migration entry - combines app info with match result
      */
@@ -64,88 +49,37 @@ public:
         QDateTime executed_at;
     };
 
-    /**
-     * @brief Report metadata
-     */
-    struct ReportMetadata {
-        QString source_machine;
-        QString source_os;
-        QString source_os_version;
-        QString created_by;
-        QDateTime created_at;
-        int total_apps{0};
-        int matched_apps{0};
-        int selected_apps{0};
-        double match_rate{0.0};
-        QString report_version;  // Format version for compatibility
-    };
-
-    // Report generation
-    void generateReport(const std::vector<AppScanner::AppInfo>& apps,
-                        const std::vector<PackageMatcher::MatchResult>& matches);
-
     void addEntry(const MigrationEntry& entry);
-    void updateEntry(int index, const MigrationEntry& entry);
-    void removeEntry(int index);
-
-    // Selection management
-    void selectEntry(int index, bool selected = true);
-    void selectAll();
-    void deselectAll();
-    void selectByMatchType(const QString& match_type);
-    void selectByConfidence(double min_confidence);
-
-    // Export formats
-    bool exportToJson(const QString& file_path) const;
-    bool exportToCsv(const QString& file_path) const;
-    bool exportToHtml(const QString& file_path) const;  // Human-readable report
-
-    // Import
-    bool importFromJson(const QString& file_path);
 
     // Accessors
     const std::vector<MigrationEntry>& getEntries() const { return m_entries; }
     std::vector<MigrationEntry>& getEntries() { return m_entries; }
-    const MigrationEntry& getEntry(int index) const { return m_entries[index]; }
-    MigrationEntry& getEntry(int index) { return m_entries[index]; }
 
-    int getEntryCount() const { return static_cast<int>(m_entries.size()); }
-    int getSelectedCount() const;
-    int getMatchedCount() const;
-    int getUnmatchedCount() const;
-
-    const ReportMetadata& getMetadata() const { return m_metadata; }
-    ReportMetadata& getMetadata() { return m_metadata; }
-
-    // Statistics
-    double getMatchRate() const;
-    QMap<QString, int> getMatchTypeDistribution() const;
-    std::vector<MigrationEntry> getSelectedEntries() const;
-    std::vector<MigrationEntry> getUnmatchedEntries() const;
-
-    // Clear
-    void clear();
+    /// @brief Bounds-checked entry access. std::vector::operator[] is UB on a bad index; an
+    /// out-of-range (or negative) index instead returns a reference to a shared default entry so a
+    /// stale index from the GUI can never read or write past the vector.
+    const MigrationEntry& getEntry(int index) const {
+        static const MigrationEntry kEmptyEntry{};
+        if (index < 0 || index >= static_cast<int>(m_entries.size())) {
+            return kEmptyEntry;
+        }
+        return m_entries[static_cast<size_t>(index)];
+    }
+    MigrationEntry& getEntry(int index) {
+        // Callers (e.g. app_installation_worker) mutate the returned reference, so a valid index
+        // must yield the live entry. An out-of-range index instead returns a thread_local scratch:
+        // it keeps the bounds-safety guard (a stray OOB write is discarded, not UB) while removing
+        // the cross-thread data race a single shared static would create (P10-55).
+        static thread_local MigrationEntry s_scratch_entry;
+        if (index < 0 || index >= static_cast<int>(m_entries.size())) {
+            s_scratch_entry = MigrationEntry{};  // reset so a prior stray write never leaks back
+            return s_scratch_entry;
+        }
+        return m_entries[static_cast<size_t>(index)];
+    }
 
 private:
-    // Helper methods
-    QString getSystemInfo() const;
-    QString getOSVersion() const;
-    QString getComputerName() const;
-    QString getCurrentUser() const;
-
-    QString escapeJsonString(const QString& str) const;
-    static QString escapeCsvField(const QString& field);
-    QString formatHtmlReport() const;
-    static MigrationEntry parseEntryFromJson(const QJsonObject& obj);
-    static void populateMatchFields(MigrationEntry& entry,
-                                    const QMap<QString, PackageMatcher::MatchResult>& match_map,
-                                    const QString& app_name);
-    static QString buildHtmlStyles();
-    void buildHtmlEntryRows(QTextStream& out) const;
-
-    // Data members
     std::vector<MigrationEntry> m_entries;
-    ReportMetadata m_metadata;
 };
 
 }  // namespace sak

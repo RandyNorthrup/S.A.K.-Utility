@@ -1,0 +1,41 @@
+{
+    "volume_before":  {
+                          "drive_letter":  "T",
+                          "file_system":  "NTFS",
+                          "label":  "SAKCLUSTER",
+                          "size_bytes":  402649088,
+                          "free_bytes":  379867136,
+                          "cluster_bytes":  4096,
+                          "health":  "Healthy",
+                          "serial_number":  "12DB1A0D"
+                      },
+    "volume_after":  {
+                         "drive_letter":  "T",
+                         "file_system":  "NTFS",
+                         "label":  "SAKCLUSTER",
+                         "size_bytes":  402636800,
+                         "free_bytes":  379699200,
+                         "cluster_bytes":  16384,
+                         "health":  "Healthy",
+                         "serial_number":  "ECE4F30B"
+                     },
+    "files_before":  {
+                         "root":  "T:\\fixture",
+                         "file_count":  9,
+                         "digest":  "38a77a74689b2635ecf9d21ac595da43d29d91241d9a06bf1c7ae490b6fbeee7"
+                     },
+    "files_after":  {
+                        "root":  "T:\\fixture",
+                        "file_count":  9,
+                        "digest":  "38a77a74689b2635ecf9d21ac595da43d29d91241d9a06bf1c7ae490b6fbeee7"
+                    },
+    "stream_before":  "alternate stream\r\n",
+    "stream_after":  "alternate stream\r\n",
+    "acl_before":  "O:BAG:S-1-5-21-810709555-853209710-2625780539-513D:AI(A;;FR;;;BG)(A;ID;FA;;;BA)(A;ID;FA;;;SY)(A;ID;0x1301bf;;;AU)(A;ID;0x1200a9;;;BU)",
+    "acl_after":  "O:BAG:S-1-5-21-810709555-853209710-2625780539-513D:AI(A;;FR;;;BG)(A;ID;FA;;;BA)(A;ID;FA;;;SY)(A;ID;0x1301bf;;;AU)(A;ID;0x1200a9;;;BU)",
+    "health":  {
+                   "repair_scan":  "NoErrorsFound",
+                   "chkdsk_exit_code":  0,
+                   "dirty":  false
+               }
+}

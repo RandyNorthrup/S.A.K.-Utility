@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/backup_file_codec.h"
 #include "sak/permission_manager.h"
 #include "sak/smart_file_filter.h"
 #include "sak/user_profile_types.h"
@@ -14,13 +15,22 @@
 
 namespace sak {
 
-inline constexpr int kDefaultUserProfileCompressionLevel = 6;
-
 /**
  * @brief Background worker for backing up user profiles
  *
  * Copies selected user profile files/folders to backup destination
  * with smart filtering, permission handling, and progress reporting.
+ *
+ * Compression and encryption are applied PER FILE as it is copied, through
+ * backup_file_codec, so memory stays constant on a multi-gigabyte profile and
+ * the directory tree survives for selective restore. Both are off by default: a
+ * default run still produces verbatim copies.
+ *
+ * Neither option is ever partially honoured. Encryption without a password
+ * fails the run instead of writing plaintext, and the log reports only what was
+ * actually applied - the wizard used to collect a password, log
+ * "Encryption: Enabled (AES-256)", and then abort with "Encrypted backup is not
+ * supported" (R5-G19-1).
  */
 class UserProfileBackupWorker : public QThread {
     Q_OBJECT
@@ -32,9 +42,21 @@ public:
     /// @brief Options controlling backup behavior
     struct BackupOptions {
         PermissionMode permission_mode{PermissionMode::StripAll};
-        int compression_level{kDefaultUserProfileCompressionLevel};
+
+        /// Compress each file's content with zlib as it is copied. Off by default: the
+        /// old wizard defaulted this ON and then wrote uncompressed copies, so every
+        /// default run misreported what it had done.
+        bool compress{false};
+        int compression_level{kBackupDefaultCompressionLevel};  // 1-9
+
+        /// Encrypt each file's content with AES-256. Requires a non-empty password;
+        /// the worker refuses the run rather than writing plaintext (see startBackup).
         bool encrypt{false};
         QString password;
+
+        /// Check each stored file against its original right after writing it. A file that does
+        /// not match is reported and the run does not read as clean.
+        bool verify{false};
     };
 
     /**
@@ -56,23 +78,62 @@ public:
      */
     void cancel();
 
-    /**
-     * @brief Check if backup is currently running
-     */
-    bool isRunning() const { return m_running; }
+    // isRunning() is intentionally NOT overridden -- QThread::isRunning() is the source of truth.
+    // It is true from the moment start() returns (Qt sets the running state inside start(), before
+    // run() begins), closing the window where a late-set member flag let the destructor tear down
+    // a live thread or a second startBackup() slip past the guard.
 
     /// @brief Check if current process can read the given path
     [[nodiscard]] static bool canReadPath(const QString& path);
 
+    /// @brief True when @p stored_path holds what @p source_path holds. A stored container is
+    /// decoded with @p password, and compared with @p plain_sha256, the digest of what was read
+    /// from the original as it was written. A verbatim copy is compared with the original. Exposed
+    /// for unit testing, because a run cannot damage a file between writing and checking it.
+    [[nodiscard]] static bool storedFileMatches(const QString& source_path,
+                                                const QString& stored_path,
+                                                const QByteArray& plain_sha256,
+                                                const QString& password);
+
+    /// @brief True when another program has @p path open in a way that refuses even a shared read,
+    /// as a running browser does with some of its databases.
+    [[nodiscard]] static bool isLockedByAnotherProgram(const QString& path);
+
+    /// @brief True if @p segment is a single safe path component: non-empty, not "."/".." and free
+    /// of separators, drive colons, and wildcards. Validates an untrusted username before it
+    /// becomes a backup subdirectory (a name like "..\\..\\Windows" must never escape the root).
+    [[nodiscard]] static bool isSafePathSegment(const QString& segment);
+
+    /// @brief True if @p rel is a safe RELATIVE path: non-empty, not absolute (no drive letter, no
+    /// leading slash/UNC), and containing no "." or ".." component. Validates an untrusted
+    /// folder.relative_path before it is joined onto the source profile and destination roots.
+    [[nodiscard]] static bool isSafeRelativePath(const QString& rel);
+
+    /// @brief Convert an absolute native path to its "\\?\" extended-length form.
+    ///
+    /// A path longer than MAX_PATH (260) does not resolve through the plain Win32 API in this
+    /// process -- it carries no long-path manifest -- and a deep profile tree reaches that length
+    /// easily. Because the reparse-point probe that uses this FAILS CLOSED, an unresolvable query
+    /// reads as "this is a link" and would refuse to back up every such path, so the conversion is
+    /// what keeps long paths usable rather than a mere optimization.
+    ///
+    /// A UNC path takes the "\\?\UNC\" form (\\server\share -> \\?\UNC\server\share); a path that
+    /// is already extended-length is returned unchanged. Pure and side-effect free so the
+    /// >MAX_PATH and UNC hostile-environment dimensions are testable without a 260-character
+    /// directory tree or a live file server (R5-G23-4).
+    [[nodiscard]] static QString extendedLengthPath(const QString& absoluteNativePath);
+
 Q_SIGNALS:
     /**
      * @brief Overall backup progress
-     * @param currentUser Index of current user being backed up
-     * @param totalUsers Total number of users
-     * @param bytesCopied Total bytes copied so far
+     * @param completedUsers Number of selected users whose
+     * backup attempt finished
+     * @param totalUsers Number of selected users
+     * @param
+     * bytesCopied Total bytes copied so far
      * @param totalBytes Estimated total bytes to copy
      */
-    void overallProgress(int currentUser, int totalUsers, qint64 bytesCopied, qint64 totalBytes);
+    void overallProgress(int completedUsers, int totalUsers, qint64 bytesCopied, qint64 totalBytes);
 
     /**
      * @brief Current file/folder progress
@@ -115,31 +176,63 @@ protected:
 
 private:
     // Core backup operations
+    /// @brief Add a folder to each selected user for every selected source they have, so the rest
+    /// of the run handles it like any other folder and the manifest records what was really stored.
+    void addAppDataFolders();
+    void addAppDataFolder(UserProfile& user, const AppDataSourceInfo& source);
     /// @brief Run all user backup iterations
     void backupAllUsers();
     /// @brief Compose and emit the final backup summary
     void emitBackupSummary();
     bool backupUser(const UserProfile& user, const QString& userBackupPath);
+    /// @brief Choose the filter @p folder is copied under, and whether files already stored by a
+    /// folder that contains it are left alone.
+    void prepareForFolder(const UserProfile& user, const FolderSelection& folder);
     bool backupFolder(const FolderSelection& folder,
                       const QString& sourcePath,
                       const QString& destPath);
     bool copyFileWithFiltering(const QString& sourcePath, const QString& destPath, qint64 fileSize);
+    /// @brief True when filters, size or permissions leave this file out. Counts and reports why.
+    bool fileIsSkipped(const QFileInfo& sourceInfo, qint64 fileSize);
+
+    /// @brief Write one file to the backup: a verbatim copy, or a codec container when
+    /// compression or encryption is on. The single point where the transform is applied.
+    /// @param plainSha256 Set for a container to the digest of what it was given.
+    bool storeFile(const QString& sourcePath, const QString& destPath, QByteArray& plainSha256);
+    /// @brief The optional check after storeFile. A failure is reported and counted.
+    bool verifyStoredFile(const QString& sourcePath,
+                          const QString& destPath,
+                          const QByteArray& plainSha256);
+    /// @brief Report each selected folder over the size the person asked to be warned about.
+    void warnAboutLargeFolders();
+
     bool applyPermissions(const QString& filePath);
 
     // Helper functions
+    /// @brief Load the smart-filter rules for this run and surface any exclusion patterns that
+    /// failed to compile. A dropped pattern is fail-open -- files the user meant to exclude WILL
+    /// be backed up -- so it is reported rather than silently ignored (B8-23).
+    void applySmartFilterRules(const SmartFilter& smartFilter);
     bool createBackupStructure();
     bool saveManifest();
     qint64 calculateTotalSize();
     /// @brief Sum folder sizes for a single selected user
     qint64 accumulateUserFolderSizes(const UserProfile& user);
     void updateProgress(qint64 bytesAdded);
-    /// @brief Count selected users for progress tracking
-    void countSelectedUsers(int& currentUser, int& totalUsers) const;
 
-    // Directory operations
+    // Directory operations. @p depth is the recursion level; it is capped so a crafted deep
+    // source tree cannot exhaust the worker thread's stack (see kMaxCopyDepth).
     bool copyDirectory(const QString& sourceDir,
                        const QString& destDir,
-                       const FolderSelection& folderConfig);
+                       const FolderSelection& folderConfig,
+                       int depth = 0);
+    void copyDirectoryEntry(const QString& sourceItem,
+                            const QString& destDir,
+                            const FolderSelection& folderConfig,
+                            int depth);
+    /// True, logged and counted as skipped, when @p sourceItem is a junction Windows makes in
+    /// every profile (Documents\My Music and the like).
+    bool skipWindowsCompatibilityLink(const QString& sourceItem);
     bool createDirectory(const QString& path);
 
     // Validation
@@ -152,25 +245,46 @@ private:
     QString m_destinationPath;
     SmartFilter m_smartFilter;
     PermissionMode m_permissionMode{PermissionMode::StripAll};
-    int m_compressionLevel{kDefaultUserProfileCompressionLevel};
-    bool m_encrypt{false};
-    QString m_password;
+    /// Empty of both transforms means a verbatim copy, which is the default path.
+    BackupCodecOptions m_codec;
+    bool m_verify{false};
+    int m_filesVerified{0};
 
     // Progress tracking
     std::atomic<bool> m_cancelled{false};
-    std::atomic<bool> m_running{false};
     QMutex m_mutex;
 
     qint64 m_totalBytesToCopy{0};
     qint64 m_bytesCopied{0};
+    int m_totalUsersToBackup{0};
+    int m_completedUsers{0};
     int m_totalFilesToCopy{0};
     int m_filesCopied{0};
     int m_filesSkipped{0};
     int m_filesErrored{0};
     int m_filesElevationSkipped{0};
+    // Progress-throttle watermarks. Members, not function-static locals, so two
+    // worker instances (or a reused one) never share/race the throttle state (B7-34).
+    int m_lastProgressFileCount{0};
+    qint64 m_lastProgressByteCount{0};
+    // profile_path of the user currently being backed up, so smart-filter exclusion
+    // rules key on the RIGHT user's profile instead of always m_users[0] (B7-34).
+    QString m_currentUserProfile;
+    // Canonical (junction/symlink-resolved) source-profile and destination-backup roots for the
+    // user in progress. Every enumerated entry's realized parent is re-checked against these so an
+    // ancestor directory that is (or becomes) a junction cannot redirect a read out of the profile
+    // or a write out of the backup (R5-P7-36). Pinned in backupUser once both directories exist.
+    QString m_currentSourceRoot;
+    QString m_currentDestRoot;
 
     // Instances for operations
     SmartFileFilter* m_fileFilter{nullptr};
+    /// The same rules for a source from the Application Data page; see forApplicationData().
+    SmartFileFilter* m_appDataFilter{nullptr};
+    /// Whichever of the two the folder in progress is copied under.
+    const SmartFileFilter* m_activeFilter{nullptr};
+    /// True while copying a source inside a folder this run already copied. Its files are there.
+    bool m_leaveStoredFiles{false};
     PermissionManager* m_permissionManager{nullptr};
 };
 

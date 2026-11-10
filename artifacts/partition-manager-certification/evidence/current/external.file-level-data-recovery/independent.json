@@ -1,0 +1,12 @@
+{
+    "deleted_files_present":  0,
+    "volume_bytes":  "268435456",
+    "recovered":  {
+                      "scan_bytes_read":  "268435456",
+                      "scan_warnings":  "",
+                      "restored_files":  4,
+                      "missing_hashes":  0
+                  },
+    "source_hash_before":  "dc79e05b193ebad2739518e7a839ab1ae827aae7910f71c0d83ddb96793c4758",
+    "source_hash_after":  "dc79e05b193ebad2739518e7a839ab1ae827aae7910f71c0d83ddb96793c4758"
+}

@@ -1,0 +1,196 @@
+// Copyright (c) 2026 Randy Northrup. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+#include "sak/win32mcp/browser_bridge_security.h"
+
+#include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QRandomGenerator>
+#include <QStandardPaths>
+#include <QVector>
+
+#include <cmath>
+
+#include <sddl.h>
+
+namespace sak::win32mcp {
+
+namespace {
+
+constexpr int kNonceHexWidth = 16;  // 64-bit nonce as zero-padded hex
+constexpr int kHexBase = 16;
+
+// Upper bound for a valid app_pid: the largest value that survives a double->qint64 cast
+// exactly. Anything above this exact-integer double range fails the record closed.
+constexpr double kMaxAppPidExactDouble = 9.0e15;
+
+// A well-formed rendezvous record (pipe_name, token, protocol, app_pid) is well under 1 KiB.
+// Cap the read so a corrupt/oversized file cannot force an unbounded allocation before parse.
+constexpr qint64 kMaxRendezvousRecordBytes = 64 * 1024;
+
+void setError(QString* error, const QString& message) {
+    if (error != nullptr) {
+        *error = message;
+    }
+}
+
+QString lastError(const QString& api) {
+    return QStringLiteral("%1 failed (GetLastError=%2)").arg(api).arg(GetLastError());
+}
+
+// Random 64-bit value as zero-padded hex, drawn from the OS CSPRNG.
+QString randomHex64() {
+    const quint64 value = QRandomGenerator::system()->generate64();
+    return QStringLiteral("%1").arg(value, kNonceHexWidth, kHexBase, QLatin1Char('0'));
+}
+
+}  // namespace
+
+QString currentUserSidString(QString* error) {
+    HANDLE token = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token) == FALSE) {
+        setError(error, lastError(QStringLiteral("OpenProcessToken")));
+        return {};
+    }
+    DWORD needed = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &needed);
+    QVector<char> buffer(static_cast<int>(needed) > 0 ? static_cast<int>(needed) : 1);
+    QString result;
+    if (GetTokenInformation(token, TokenUser, buffer.data(), needed, &needed) != FALSE) {
+        const auto* user = reinterpret_cast<const TOKEN_USER*>(buffer.constData());
+        LPWSTR sid_string = nullptr;
+        if (ConvertSidToStringSidW(user->User.Sid, &sid_string) != FALSE) {
+            result = QString::fromWCharArray(sid_string);
+            LocalFree(sid_string);
+        } else {
+            setError(error, lastError(QStringLiteral("ConvertSidToStringSid")));
+        }
+    } else {
+        setError(error, lastError(QStringLiteral("GetTokenInformation")));
+    }
+    CloseHandle(token);
+    return result;
+}
+
+QString browserBridgePipeName(QString* error) {
+    const QString sid = currentUserSidString(error);
+    if (sid.isEmpty()) {
+        return {};
+    }
+    DWORD session = 0;
+    if (ProcessIdToSessionId(GetCurrentProcessId(), &session) == FALSE) {
+        setError(error, lastError(QStringLiteral("ProcessIdToSessionId")));
+        return {};
+    }
+    return QStringLiteral("\\\\.\\pipe\\SAK_BrowserBridge_%1_%2_%3")
+        .arg(sid)
+        .arg(session)
+        .arg(randomHex64());
+}
+
+QString generateBridgeToken() {
+    return randomHex64() + randomHex64();  // 128-bit
+}
+
+QString browserBridgeRendezvousPath() {
+    QString base = qEnvironmentVariable("LOCALAPPDATA");
+    if (base.isEmpty()) {
+        base = QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation);
+    }
+    return QDir(base).filePath(QStringLiteral("SAK/browser_bridge.json"));
+}
+
+bool writeRendezvousRecord(const QString& path, const RendezvousRecord& record, QString* error) {
+    const QFileInfo info(path);
+    if (!QDir().mkpath(info.absolutePath())) {
+        setError(error, QStringLiteral("Cannot create directory %1").arg(info.absolutePath()));
+        return false;
+    }
+    const QJsonObject object{{QStringLiteral("pipe_name"), record.pipe_name},
+                             {QStringLiteral("token"), record.token},
+                             {QStringLiteral("protocol"), record.protocol},
+                             {QStringLiteral("app_pid"), record.app_pid}};
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        setError(error,
+                 QStringLiteral("Cannot open %1 for writing: %2").arg(path, file.errorString()));
+        return false;
+    }
+    const QByteArray bytes = QJsonDocument(object).toJson(QJsonDocument::Compact);
+    if (file.write(bytes) != bytes.size() || !file.flush()) {
+        setError(error, QStringLiteral("Cannot write %1: %2").arg(path, file.errorString()));
+        return false;
+    }
+    return true;
+}
+
+bool readRendezvousRecord(const QString& path, RendezvousRecord* out, QString* error) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        setError(error, QStringLiteral("Cannot open %1: %2").arg(path, file.errorString()));
+        return false;
+    }
+    // Bound the read: an over-cap file is a corrupt/hostile record, not our own writer's output.
+    const QByteArray raw = file.read(kMaxRendezvousRecordBytes + 1);
+    if (raw.size() > kMaxRendezvousRecordBytes) {
+        setError(error, QStringLiteral("Rendezvous record is too large."));
+        return false;
+    }
+    QJsonParseError parse_error;
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &parse_error);
+    if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
+        setError(error,
+                 QStringLiteral("Malformed rendezvous record: %1").arg(parse_error.errorString()));
+        return false;
+    }
+    const QJsonObject object = doc.object();
+    out->pipe_name = object.value(QStringLiteral("pipe_name")).toString();
+    out->token = object.value(QStringLiteral("token")).toString();
+    out->protocol = object.value(QStringLiteral("protocol")).toInt();
+    // app_pid must be a positive integer within the exact-integer double range: casting a
+    // NaN/negative/2^63-overflow double straight to qint64 is UB (the same hazard the codebase
+    // fixed in clampMs). A non-integral value (e.g. 1234.5) is a forged/wrapped record, not a
+    // real Windows PID; reject it rather than silently truncating. A malformed value fails the
+    // record closed rather than yielding garbage.
+    const QJsonValue pid_value = object.value(QStringLiteral("app_pid"));
+    const double pid_raw = pid_value.toDouble(-1.0);
+    if (!pid_value.isDouble() || pid_raw < 1.0 || pid_raw > kMaxAppPidExactDouble ||
+        std::floor(pid_raw) != pid_raw) {
+        setError(error, QStringLiteral("Rendezvous record has an invalid app_pid."));
+        return false;
+    }
+    out->app_pid = static_cast<qint64>(pid_raw);
+    return true;
+}
+
+bool buildBridgePipeSecurity(SECURITY_ATTRIBUTES* attributes,
+                             PSECURITY_DESCRIPTOR* descriptor,
+                             QString* error) {
+    const QString sid = currentUserSidString(error);
+    if (sid.isEmpty()) {
+        return false;
+    }
+    // DACL: PROTECTED (no inherited ACEs), GENERIC_ALL to this user SID + SYSTEM only.
+    // SACL: Medium mandatory-integrity label, NO_READ_UP | NO_WRITE_UP -- a below-Medium
+    // process (e.g. a sandboxed browser renderer, the real injection-to-local vector)
+    // cannot open the pipe for read OR write, so it can neither drive it nor occupy the
+    // single instance. NR is essential: with NW alone a low-IL subject could still open
+    // for read and wedge the sole pipe instance (denial of service).
+    const QString sddl = QStringLiteral("D:P(A;;GA;;;%1)(A;;GA;;;SY)S:(ML;;NRNW;;;ME)").arg(sid);
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            reinterpret_cast<LPCWSTR>(sddl.utf16()), SDDL_REVISION_1, &sd, nullptr) == FALSE) {
+        setError(error,
+                 lastError(QStringLiteral("ConvertStringSecurityDescriptorToSecurityDescriptor")));
+        return false;
+    }
+    attributes->nLength = sizeof(*attributes);
+    attributes->bInheritHandle = FALSE;
+    attributes->lpSecurityDescriptor = sd;
+    *descriptor = sd;
+    return true;
+}
+
+}  // namespace sak::win32mcp

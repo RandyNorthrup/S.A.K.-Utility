@@ -133,6 +133,7 @@ enum class error_code {
     pst_item_read_error = 1009,
     pst_attachment_error = 1010,
     pst_decompression_failed = 1018,
+    pst_integrity_check_failed = 1019,
     mbox_invalid_format = 1011,
     mbox_message_parse_error = 1012,
     email_search_failed = 1013,
@@ -143,7 +144,7 @@ enum class error_code {
 };
 
 struct ErrorCodeMessage {
-    error_code code;
+    error_code code{};
     std::string_view text;
 };
 
@@ -221,7 +222,7 @@ inline constexpr ErrorCodeMessage kErrorCodeMessages[] = {
     {error_code::crypto_error, "Cryptographic error"},
     {error_code::decrypt_failed, "Decryption failed"},
     {error_code::invalid_format, "Invalid format"},
-    {error_code::unknown_error, "Unknown error"},
+    {error_code::unknown_error, "Unclassified error (no specific error code was set)"},
     {error_code::not_implemented, "Not implemented"},
     {error_code::internal_error, "Internal error"},
     {error_code::assertion_failed, "Assertion failed"},
@@ -239,6 +240,8 @@ inline constexpr ErrorCodeMessage kErrorCodeMessages[] = {
     {error_code::pst_item_read_error, "Item read error"},
     {error_code::pst_attachment_error, "Attachment read error"},
     {error_code::pst_decompression_failed, "Block decompression failed"},
+    {error_code::pst_integrity_check_failed,
+     "PST/OST integrity check failed (CRC or signature mismatch)"},
     {error_code::mbox_invalid_format, "MBOX invalid format"},
     {error_code::mbox_message_parse_error, "MBOX message parse error"},
     {error_code::email_search_failed, "Email search failed"},
@@ -261,7 +264,7 @@ inline constexpr ErrorCodeMessage kErrorCodeMessages[] = {
     return "Undefined error";
 }
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 inline constexpr int kFileSystemErrorRangeMax = 100;
 inline constexpr int kIoErrorRangeMax = 200;

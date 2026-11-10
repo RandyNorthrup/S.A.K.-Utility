@@ -13,11 +13,13 @@
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRandomGenerator>
 #include <QString>
 
+#include <climits>
 #include <cstdint>
 
 namespace sak {
@@ -28,16 +30,17 @@ namespace sak {
 
 /// @brief IPC message types sent over the named pipe
 enum class PipeMessageType : uint8_t {
-    // Client → Server
+    // Client -> Server
     TaskRequest = 0x01,    ///< Execute a task: { task, payload }
     CancelRequest = 0x02,  ///< Cancel current task: { task }
     Shutdown = 0x03,       ///< Gracefully shut down helper
 
-    // Server → Client
+    // Server -> Client
     ProgressUpdate = 0x10,  ///< Progress: { percent, status }
     TaskResult = 0x11,      ///< Final result: { success, data }
     TaskError = 0x12,       ///< Error: { code, message }
     Ready = 0x13,           ///< Helper is ready to accept tasks
+    Heartbeat = 0x14,       ///< A task is still running (no payload); see kTaskHeartbeatIntervalMs
 };
 
 // ======================================================================
@@ -47,7 +50,7 @@ enum class PipeMessageType : uint8_t {
 /// @brief Header size: 4 bytes length + 1 byte type
 inline constexpr int kPipeHeaderSize = 5;
 
-/// @brief Maximum message payload (4 MB — generous for JSON, prevents abuse)
+/// @brief Maximum message payload (4 MB -- generous for JSON, prevents abuse)
 inline constexpr uint32_t kPipeMaxPayload = 4 * 1024 * 1024;
 
 /// @brief Named pipe base path
@@ -61,6 +64,54 @@ inline constexpr int kPipeConnectTimeoutMs = 10'000;
 
 /// @brief Pipe read/write timeout
 inline constexpr int kPipeIoTimeoutMs = 30'000;
+
+/// @brief How often the helper tells the client a task is still running.
+///
+/// The client reads each frame with kPipeIoTimeoutMs, and a task step can run silently for far
+/// longer (SFC, a Defender scan, a long PowerShell command): without a frame in that window the
+/// client took the helper for lost and abandoned a task that was working. While a task runs the
+/// helper sends a Heartbeat every interval, so silence past kPipeIoTimeoutMs still means a
+/// helper that stopped answering.
+inline constexpr int kTaskHeartbeatIntervalMs = 10'000;
+static_assert(kTaskHeartbeatIntervalMs * 2 < kPipeIoTimeoutMs,
+              "a running task must send at least two heartbeats inside the client's read timeout");
+
+/// @brief Whether two paths name the same executable: the check each end of the pipe makes on the
+///        other's image.
+///
+/// One side of each comparison comes from Qt, with forward slashes, and the other from
+/// QueryFullProcessImageNameW, with backslashes. Comparing them as they stood matched nothing, so
+/// the app and its helper refused each other on every run. Fail-closed: an empty path matches
+/// nothing.
+[[nodiscard]] inline bool sameImagePath(const QString& first, const QString& second) {
+    return !first.isEmpty() && QString::compare(QDir::toNativeSeparators(first),
+                                                QDir::toNativeSeparators(second),
+                                                Qt::CaseInsensitive) == 0;
+}
+
+/// @brief The shortest and longest an elevated PowerShell task may run, in seconds.
+///
+/// A task that reads or writes every byte of a disk takes as long as the disk takes: one pass over
+/// 8 TB on USB is days, and a clock cannot tell that from a hang. Stopping one midway is what does
+/// the damage (a wipe part done, a copy that left its target offline), so the longest is out of
+/// reach of a real disk and the person's Cancel is what ends it. 2,000,000 s is 23 days, the
+/// largest round number whose milliseconds still fit the int the process runner takes.
+inline constexpr int kElevatedTaskMinTimeoutSeconds = 5;
+inline constexpr int kElevatedTaskMaxTimeoutSeconds = 2'000'000;
+inline constexpr int kElevatedTaskMsPerSecond = 1000;
+static_assert(kElevatedTaskMaxTimeoutSeconds <= INT_MAX / kElevatedTaskMsPerSecond,
+              "the longest task must still fit an int in milliseconds");
+
+/// @brief How long the helper lets a task run for a requested number of seconds, in milliseconds.
+[[nodiscard]] constexpr int elevatedTaskTimeoutMs(int requested_seconds) {
+    const int clamped = requested_seconds < kElevatedTaskMinTimeoutSeconds
+                            ? kElevatedTaskMinTimeoutSeconds
+                        : requested_seconds > kElevatedTaskMaxTimeoutSeconds
+                            ? kElevatedTaskMaxTimeoutSeconds
+                            : requested_seconds;
+    return clamped * kElevatedTaskMsPerSecond;
+}
+
 inline constexpr uint32_t kPipeFrameByteMask = 0xFF;
 inline constexpr int kPipeFrameByteShift1 = 8;
 inline constexpr int kPipeFrameByteShift2 = 16;
@@ -78,6 +129,12 @@ inline constexpr int kPipeNonceHexWidth = 16;
 
 /// @brief Frame a message for transmission: [length][type][payload]
 [[nodiscard]] inline QByteArray frameMessage(PipeMessageType type, const QByteArray& payload = {}) {
+    // Fail closed above the 4 MiB ceiling: a larger payload would narrow through uint32_t
+    // (truncating the framed length and desynchronizing the stream) and overflow the int
+    // reserve() below. The read side rejects the same ceiling before it allocates.
+    if (static_cast<quint64>(payload.size()) > kPipeMaxPayload) {
+        return {};
+    }
     uint32_t payload_len = static_cast<uint32_t>(payload.size());
     QByteArray frame;
     frame.reserve(kPipeHeaderSize + static_cast<int>(payload_len));
@@ -154,6 +211,23 @@ inline constexpr int kPipeNonceHexWidth = 16;
     return frameMessage(PipeMessageType::Ready);
 }
 
+/// @brief Build a heartbeat message (no payload)
+[[nodiscard]] inline QByteArray buildHeartbeat() {
+    return frameMessage(PipeMessageType::Heartbeat);
+}
+
+/// @brief True when a running task's last Heartbeat (or its start) was @p ms_since_last_heartbeat
+/// ago, so the helper must send a Heartbeat now.
+[[nodiscard]] constexpr bool taskHeartbeatDue(qint64 ms_since_last_heartbeat) {
+    return ms_since_last_heartbeat >= kTaskHeartbeatIntervalMs;
+}
+
+/// @brief True for a server frame that says a task is still running (progress or heartbeat):
+/// the client keeps waiting for the task's result instead of returning.
+[[nodiscard]] constexpr bool pipeMessageKeepsTaskAlive(PipeMessageType type) {
+    return type == PipeMessageType::ProgressUpdate || type == PipeMessageType::Heartbeat;
+}
+
 // ======================================================================
 // Parsed Message
 // ======================================================================
@@ -165,14 +239,78 @@ struct PipeMessage {
     bool valid{false};
 };
 
+/// @brief True only when @p key holds a non-empty string. The two task-bearing message types
+/// both reject a blank id, so that one question lives in one place.
+[[nodiscard]] inline bool jsonHasNonEmptyString(const QJsonObject& json, QLatin1String key) {
+    const QJsonValue value = json.value(key);
+    return value.isString() && !value.toString().isEmpty();
+}
+
+/// @brief A TaskRequest must name a non-empty task and carry an object payload; a missing field
+/// would become a blank/default destructive target downstream.
+[[nodiscard]] inline bool taskRequestBodyIsValid(const QJsonObject& json) {
+    return jsonHasNonEmptyString(json, QLatin1String("task")) &&
+           json.value(QLatin1String("payload")).isObject();
+}
+
+/// @brief A CancelRequest must name the non-empty task to cancel.
+[[nodiscard]] inline bool cancelRequestBodyIsValid(const QJsonObject& json) {
+    return jsonHasNonEmptyString(json, QLatin1String("task"));
+}
+
+/// @brief A ProgressUpdate must carry a numeric percent and a string status.
+[[nodiscard]] inline bool progressUpdateBodyIsValid(const QJsonObject& json) {
+    return json.value(QLatin1String("percent")).isDouble() &&
+           json.value(QLatin1String("status")).isString();
+}
+
+/// @brief A TaskResult must carry a boolean success flag and an object data body.
+[[nodiscard]] inline bool taskResultBodyIsValid(const QJsonObject& json) {
+    return json.value(QLatin1String("success")).isBool() &&
+           json.value(QLatin1String("data")).isObject();
+}
+
+/// @brief A TaskError must carry a numeric code and a string message.
+[[nodiscard]] inline bool taskErrorBodyIsValid(const QJsonObject& json) {
+    return json.value(QLatin1String("code")).isDouble() &&
+           json.value(QLatin1String("message")).isString();
+}
+
+/// @brief Enforce the minimal per-type field schema. A structurally-valid but semantically
+/// empty object (e.g. `{}` sent as a TaskRequest, or any JSON body accompanying a payloadless
+/// Shutdown/Ready) must be rejected here rather than handed downstream, where the missing fields
+/// would silently become blank/default destructive targets. Fail closed: an unknown or
+/// out-of-range message type matches no case and is refused.
+[[nodiscard]] inline bool pipeMessageJsonIsValid(PipeMessageType type, const QJsonObject& json) {
+    switch (type) {
+    case PipeMessageType::TaskRequest:
+        return taskRequestBodyIsValid(json);
+    case PipeMessageType::CancelRequest:
+        return cancelRequestBodyIsValid(json);
+    case PipeMessageType::ProgressUpdate:
+        return progressUpdateBodyIsValid(json);
+    case PipeMessageType::TaskResult:
+        return taskResultBodyIsValid(json);
+    case PipeMessageType::TaskError:
+        return taskErrorBodyIsValid(json);
+    case PipeMessageType::Shutdown:
+    case PipeMessageType::Ready:
+    case PipeMessageType::Heartbeat:
+        // These carry no payload at all; an accompanying JSON body is malformed.
+        return false;
+    }
+    return false;  // unknown/out-of-range message type
+}
+
 /// @brief Parse a raw payload into a PipeMessage
 [[nodiscard]] inline PipeMessage parsePayload(PipeMessageType type, const QByteArray& payload) {
     PipeMessage msg;
     msg.type = type;
 
     if (payload.isEmpty()) {
-        // Messages like Shutdown and Ready have no payload
-        msg.valid = (type == PipeMessageType::Shutdown || type == PipeMessageType::Ready);
+        // Messages like Shutdown, Ready and Heartbeat have no payload
+        msg.valid = (type == PipeMessageType::Shutdown || type == PipeMessageType::Ready ||
+                     type == PipeMessageType::Heartbeat);
         return msg;
     }
 
@@ -183,7 +321,8 @@ struct PipeMessage {
     }
 
     msg.json = doc.object();
-    msg.valid = true;
+    // Do not trust an arbitrary object: require the fields this message type declares.
+    msg.valid = pipeMessageJsonIsValid(type, msg.json);
     return msg;
 }
 
@@ -193,8 +332,10 @@ struct PipeMessage {
     quint32 pid = static_cast<quint32>(QCoreApplication::applicationPid());
     quint64 nonce = 0;
 
-    // Use crypto-quality randomness from QRandomGenerator
-    auto* gen = QRandomGenerator::global();
+    // Crypto-quality randomness: system() is the OS CSPRNG (BCryptGenRandom on Windows), not
+    // the seeded global() PRNG whose predicted state could expose future pipe names to a
+    // squatter. 64 bits of true random plus the pipe's restrictive ACL is ample against squatting.
+    auto* gen = QRandomGenerator::system();
     nonce = gen->generate64();
 
     return QString("%1%2_%3")

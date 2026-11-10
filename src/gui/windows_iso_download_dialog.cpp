@@ -4,10 +4,13 @@
 #include "sak/windows_iso_download_dialog.h"
 
 #include "sak/elevation_gate.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
+#include "sak/linux_iso_downloader.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
 #include "sak/windows_iso_downloader.h"
 
 #include <QDateTime>
@@ -16,7 +19,10 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QListWidget>
 #include <QMessageBox>
+#include <QScreen>
+#include <QScrollArea>
 #include <QStandardPaths>
 #include <QVBoxLayout>
 
@@ -32,12 +38,37 @@ constexpr int kDownloadWeight = 60;
 constexpr int kConvertWeight = 35;
 constexpr double kDownloadSpeedVisibleThresholdMBps = 0.01;
 constexpr int kTransferSpeedDisplayPrecision = 1;
-constexpr int kIsoSizeDisplayPrecision = 2;
 
 bool matchesAny(const QString& text, std::initializer_list<QLatin1String> keywords) {
-    return std::any_of(keywords.begin(), keywords.end(), [&text](const auto& kw) {
-        return text.contains(kw);
-    });
+    return std::ranges::any_of(keywords, [&text](const auto& kw) { return text.contains(kw); });
+}
+
+/// The object name the form's labels share, so the two groups can give them one width.
+constexpr const char* kFormLabelName = "isoFormLabel";
+
+QLabel* formLabel(const QString& text, QWidget* parent) {
+    auto* label = new QLabel(text, parent);
+    label->setObjectName(QString::fromLatin1(kFormLabelName));
+    return label;
+}
+
+constexpr int kBuildListRows = 4;
+
+/// The height @p list needs to show @p rows whole rows, as the theme draws a row (its item
+/// padding included), and its frame.
+int listHeightForRows(QListWidget* list, int rows) {
+    list->ensurePolished();
+    list->addItem(QStringLiteral("Windows 11, version 25H2 (26200.1)"));
+    const int row = list->sizeHintForRow(0);
+    delete list->takeItem(0);
+    return (rows * row) + list->frameWidth() + list->frameWidth();
+}
+
+/// The line under the build list while no build is chosen. Blank, it was an empty band under the
+/// list's rows (round S, N3); taken out until a build is chosen, it would move the groups below it
+/// down a line at the first click, as the list's growth did (review 4, Y9).
+QString noBuildChosenText() {
+    return WindowsISODownloadDialog::tr("No build selected.");
 }
 
 }  // namespace
@@ -55,6 +86,7 @@ WindowsISODownloadDialog::WindowsISODownloadDialog(WindowsISODownloader* downloa
 
     setupUi();
     connectSignals();
+    fitToScreen();
 
     m_statusLabel->setText("Select architecture and channel, then click Fetch Builds.");
 }
@@ -67,158 +99,218 @@ WindowsISODownloadDialog::~WindowsISODownloadDialog() = default;
 
 void WindowsISODownloadDialog::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
-    auto* mainLayout = new QVBoxLayout(this);
-    setupUi_formSections(mainLayout);
-    setupUi_progressAndButtons(mainLayout);
+    auto* main_layout = new QVBoxLayout(this);
+    // The groups scroll and the buttons stay below them. With four whole rows of builds the
+    // dialog asked for 933 px, more than a 1600x900 or 1366x768 screen has, and its buttons ran
+    // off the foot of the screen (review 5, RG9).
+    m_formArea = new QScrollArea(this);
+    m_formArea->setWidgetResizable(true);
+    m_formArea->setFrameShape(QFrame::NoFrame);
+    m_formArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* form = new QWidget(m_formArea);
+    auto* form_layout = new QVBoxLayout(form);
+    form_layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
+    setupUi_formSections(form_layout);
+    setupUi_progress(form_layout);
+    m_formArea->setWidget(form);
+    main_layout->addWidget(m_formArea, 1);
+    setupUi_buttons(main_layout);
+}
+
+void WindowsISODownloadDialog::fitToScreen() {
+    // As tall as the groups and the buttons need, unless the screen is shorter: then as tall as
+    // the screen's free area, less a title bar, and the groups scroll. Sized before it is shown,
+    // so QDialog places it inside the screen at this size.
+    const QScreen* shown_on = parentWidget() != nullptr ? parentWidget()->screen() : screen();
+    if (shown_on == nullptr) {
+        return;
+    }
+    fitToHeight(shown_on->availableGeometry().height() - sak::kDialogWindowFrameAllowance);
+}
+
+void WindowsISODownloadDialog::fitToHeight(int room) {
+    // In the theme's padding: hints read before the style sheet polishes the groups are short.
+    ensurePolished();
+    const int wanted = sizeHint().height() - m_formArea->sizeHint().height() +
+                       m_formArea->widget()->sizeHint().height();
+    resize(width(), std::min(wanted, room));
 }
 
 // ----------------------------------------------------------------------------
 // setupUi helpers
 // ----------------------------------------------------------------------------
 
-void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* mainLayout) {
-    setupUi_buildConfig(mainLayout);
-    setupUi_buildSelection(mainLayout);
-    setupUi_languageEdition(mainLayout);
-    setupUi_saveLocation(mainLayout);
+void WindowsISODownloadDialog::setupUi_formSections(QVBoxLayout* main_layout) {
+    setupUi_buildConfig(main_layout);
+    setupUi_buildSelection(main_layout);
+    setupUi_languageEdition(main_layout);
+    setupUi_saveLocation(main_layout);
+    // Two groups, one label column: Build Configuration's fields started near 250 px and Language
+    // and Edition's near 361 (review 2, S17).
+    const auto labels = findChildren<QLabel*>(QString::fromLatin1(kFormLabelName));
+    int width = 0;
+    for (const QLabel* label : labels) {
+        width = std::max(width, label->sizeHint().width());
+    }
+    for (QLabel* label : labels) {
+        label->setMinimumWidth(width);
+    }
 }
 
-void WindowsISODownloadDialog::setupUi_buildConfig(QVBoxLayout* mainLayout) {
-    auto* configGroup = new QGroupBox("Build Configuration", this);
-    auto* configLayout = new QGridLayout(configGroup);
+void WindowsISODownloadDialog::setupUi_buildConfig(QVBoxLayout* main_layout) {
+    auto* config_group = new QGroupBox("Build Configuration", this);
+    auto* config_layout = new QGridLayout(config_group);
 
-    configLayout->addWidget(new QLabel("Architecture:", configGroup), 0, 0);
-    m_archCombo = new QComboBox(configGroup);
+    config_layout->addWidget(formLabel("Architecture:", config_group), 0, 0);
+    m_archCombo = new QComboBox(config_group);
+    m_archCombo->setAccessibleName(tr("Architecture"));
     m_archCombo->addItem("64-bit (x64)", "amd64");
     m_archCombo->addItem("ARM64", "arm64");
-    configLayout->addWidget(m_archCombo, 0, 1);
+    config_layout->addWidget(m_archCombo, 0, 1);
 
-    configLayout->addWidget(new QLabel("Channel:", configGroup), 1, 0);
-    m_channelCombo = new QComboBox(configGroup);
+    config_layout->addWidget(formLabel("Channel:", config_group), 1, 0);
+    m_channelCombo = new QComboBox(config_group);
+    m_channelCombo->setAccessibleName(tr("Release channel"));
     for (auto ch : UupDumpApi::allChannels()) {
         m_channelCombo->addItem(UupDumpApi::channelToDisplayName(ch), static_cast<int>(ch));
     }
-    configLayout->addWidget(m_channelCombo, 1, 1);
+    config_layout->addWidget(m_channelCombo, 1, 1);
+    config_layout->setColumnStretch(1, 1);
 
-    m_fetchBuildsButton = new QPushButton("Fetch Builds", configGroup);
-    m_fetchBuildsButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    configLayout->addWidget(m_fetchBuildsButton,
-                            0,
-                            kFetchBuildsGridColumn,
-                            kFetchBuildsRowSpan,
-                            kFetchBuildsColumnSpan);
+    m_fetchBuildsButton = new QPushButton("Fetch Builds", config_group);
+    // Download & Build ISO is the dialog's work; Fetch Builds and Browse are its tools (review 6).
+    m_fetchBuildsButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    config_layout->addWidget(m_fetchBuildsButton,
+                             0,
+                             kFetchBuildsGridColumn,
+                             kFetchBuildsRowSpan,
+                             kFetchBuildsColumnSpan);
 
-    mainLayout->addWidget(configGroup);
+    main_layout->addWidget(config_group);
 }
 
-void WindowsISODownloadDialog::setupUi_buildSelection(QVBoxLayout* mainLayout) {
-    auto* buildGroup = new QGroupBox("Available Builds", this);
-    auto* buildLayout = new QVBoxLayout(buildGroup);
+void WindowsISODownloadDialog::setupUi_buildSelection(QVBoxLayout* main_layout) {
+    auto* build_group = new QGroupBox("Available Builds", this);
+    auto* build_layout = new QVBoxLayout(build_group);
 
-    m_buildListWidget = new QListWidget(buildGroup);
-    m_buildListWidget->setMaximumHeight(sak::kListAreaMaxH);
+    m_buildListWidget = new QListWidget(build_group);
+    m_buildListWidget->setAccessibleName(tr("Builds"));
+    // Four whole rows in every state. Squeezed by the dialog it showed one and a half before a
+    // build was picked, the second cut through its glyphs, and grew when one was, moving the
+    // Progress group down (review 4, Y9).
+    m_buildListWidget->setFixedHeight(listHeightForRows(m_buildListWidget, kBuildListRows));
     m_buildListWidget->setEnabled(false);
-    buildLayout->addWidget(m_buildListWidget);
+    new sak::ui::ViewEmptyState(m_buildListWidget,
+                                tr("Press Fetch Builds to list the builds for the architecture "
+                                   "and channel above."));
+    build_layout->addWidget(m_buildListWidget);
 
-    m_buildInfoLabel = new QLabel("", buildGroup);
+    m_buildInfoLabel = new QLabel(noBuildChosenText(), build_group);
     m_buildInfoLabel->setWordWrap(true);
     m_buildInfoLabel->setStyleSheet(
         sak::ui::textColorAndFontSizeStyle(sak::ui::kColorTextMuted, sak::ui::kFontSizeNote));
-    buildLayout->addWidget(m_buildInfoLabel);
+    build_layout->addWidget(m_buildInfoLabel);
 
-    mainLayout->addWidget(buildGroup);
+    main_layout->addWidget(build_group);
 }
 
-void WindowsISODownloadDialog::setupUi_languageEdition(QVBoxLayout* mainLayout) {
-    auto* selectionGroup = new QGroupBox("Language && Edition", this);
-    auto* selectionLayout = new QGridLayout(selectionGroup);
+void WindowsISODownloadDialog::setupUi_languageEdition(QVBoxLayout* main_layout) {
+    auto* selection_group = new QGroupBox("Language && Edition", this);
+    auto* selection_layout = new QGridLayout(selection_group);
 
-    selectionLayout->addWidget(new QLabel("Language:", selectionGroup), 0, 0);
-    m_languageCombo = new QComboBox(selectionGroup);
+    selection_layout->addWidget(formLabel("Language:", selection_group), 0, 0);
+    m_languageCombo = new QComboBox(selection_group);
+    m_languageCombo->setAccessibleName(tr("Language"));
     m_languageCombo->setEnabled(false);
-    selectionLayout->addWidget(m_languageCombo, 0, 1);
+    selection_layout->addWidget(m_languageCombo, 0, 1);
 
-    selectionLayout->addWidget(new QLabel("Edition:", selectionGroup), 1, 0);
-    m_editionCombo = new QComboBox(selectionGroup);
+    selection_layout->addWidget(formLabel("Edition:", selection_group), 1, 0);
+    m_editionCombo = new QComboBox(selection_group);
+    m_editionCombo->setAccessibleName(tr("Edition"));
     m_editionCombo->setEnabled(false);
-    selectionLayout->addWidget(m_editionCombo, 1, 1);
+    selection_layout->addWidget(m_editionCombo, 1, 1);
+    selection_layout->setColumnStretch(1, 1);
 
-    mainLayout->addWidget(selectionGroup);
+    main_layout->addWidget(selection_group);
 }
 
-void WindowsISODownloadDialog::setupUi_saveLocation(QVBoxLayout* mainLayout) {
-    auto* saveGroup = new QGroupBox("Save Location", this);
-    auto* saveLayout = new QHBoxLayout(saveGroup);
+void WindowsISODownloadDialog::setupUi_saveLocation(QVBoxLayout* main_layout) {
+    auto* save_group = new QGroupBox("Save Location", this);
+    auto* save_layout = new QHBoxLayout(save_group);
 
-    m_saveLocationEdit = new QLineEdit(getDefaultSavePath(), saveGroup);
-    saveLayout->addWidget(m_saveLocationEdit);
+    // Backslashes, as Windows writes a path (UI review S21).
+    m_saveLocationEdit = new QLineEdit(QDir::toNativeSeparators(getDefaultSavePath()), save_group);
+    m_saveLocationEdit->setAccessibleName(tr("Save location"));
+    save_layout->addWidget(m_saveLocationEdit);
 
-    m_browseSaveButton = new QPushButton("Browse...", saveGroup);
-    m_browseSaveButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    saveLayout->addWidget(m_browseSaveButton);
+    m_browseSaveButton = new QPushButton("Browse...", save_group);
+    m_browseSaveButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
+    save_layout->addWidget(m_browseSaveButton);
 
-    mainLayout->addWidget(saveGroup);
+    main_layout->addWidget(save_group);
 }
 
-void WindowsISODownloadDialog::setupUi_progressAndButtons(QVBoxLayout* mainLayout) {
-    // ---- Progress ----
-    auto* progressGroup = new QGroupBox("Progress", this);
-    auto* progressLayout = new QVBoxLayout(progressGroup);
+void WindowsISODownloadDialog::setupUi_progress(QVBoxLayout* main_layout) {
+    auto* progress_group = new QGroupBox("Progress", this);
+    auto* progress_layout = new QVBoxLayout(progress_group);
 
-    m_statusLabel = new QLabel("Ready", progressGroup);
-    progressLayout->addWidget(m_statusLabel);
+    m_statusLabel = new QLabel("Ready", progress_group);
+    progress_layout->addWidget(m_statusLabel);
 
-    m_phaseLabel = new QLabel("", progressGroup);
+    m_phaseLabel = new QLabel("", progress_group);
     m_phaseLabel->setStyleSheet(sak::ui::kFontWeightBoldStyle);
-    progressLayout->addWidget(m_phaseLabel);
+    progress_layout->addWidget(m_phaseLabel);
 
-    auto* downloadProgressLabel = new QLabel("Download Phase", progressGroup);
-    progressLayout->addWidget(downloadProgressLabel);
+    auto* download_progress_label = new QLabel("Download Phase", progress_group);
+    progress_layout->addWidget(download_progress_label);
 
-    m_downloadProgressBar = new QProgressBar(progressGroup);
+    m_downloadProgressBar = new QProgressBar(progress_group);
     m_downloadProgressBar->setMinimum(0);
     m_downloadProgressBar->setMaximum(sak::kPercentMax);
     m_downloadProgressBar->setValue(0);
-    progressLayout->addWidget(m_downloadProgressBar);
+    m_downloadProgressBar->setAccessibleName(QStringLiteral("Download progress"));
+    progress_layout->addWidget(m_downloadProgressBar);
 
-    auto* convertProgressLabel = new QLabel("Convert & Build Phase", progressGroup);
-    convertProgressLabel->setTextFormat(Qt::PlainText);
-    progressLayout->addWidget(convertProgressLabel);
+    auto* convert_progress_label = new QLabel("Convert & Build Phase", progress_group);
+    convert_progress_label->setTextFormat(Qt::PlainText);
+    progress_layout->addWidget(convert_progress_label);
 
-    m_convertProgressBar = new QProgressBar(progressGroup);
+    m_convertProgressBar = new QProgressBar(progress_group);
     m_convertProgressBar->setMinimum(0);
     m_convertProgressBar->setMaximum(sak::kPercentMax);
     m_convertProgressBar->setValue(0);
-    progressLayout->addWidget(m_convertProgressBar);
+    progress_layout->addWidget(m_convertProgressBar);
 
-    auto* detailRow = new QHBoxLayout();
-    m_detailLabel = new QLabel("", progressGroup);
-    detailRow->addWidget(m_detailLabel, 1);
-    m_speedLabel = new QLabel("", progressGroup);
-    detailRow->addWidget(m_speedLabel);
-    progressLayout->addLayout(detailRow);
+    auto* detail_row = new QHBoxLayout();
+    m_detailLabel = new QLabel("", progress_group);
+    detail_row->addWidget(m_detailLabel, 1);
+    m_speedLabel = new QLabel("", progress_group);
+    detail_row->addWidget(m_speedLabel);
+    progress_layout->addLayout(detail_row);
 
-    mainLayout->addWidget(progressGroup);
+    main_layout->addWidget(progress_group);
+}
 
-    // ---- Action Buttons ----
-    auto* buttonLayout = new QHBoxLayout();
-    buttonLayout->addStretch();
+void WindowsISODownloadDialog::setupUi_buttons(QVBoxLayout* main_layout) {
+    auto* button_layout = new QHBoxLayout();
+    button_layout->addStretch();
 
     m_startButton = new QPushButton("Download && Build ISO", this);
     m_startButton->setEnabled(false);
     m_startButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    buttonLayout->addWidget(m_startButton);
+    button_layout->addWidget(m_startButton);
 
     m_cancelButton = new QPushButton("Cancel", this);
     m_cancelButton->setEnabled(false);
     m_cancelButton->setStyleSheet(sak::ui::kDangerButtonStyle);
-    buttonLayout->addWidget(m_cancelButton);
+    button_layout->addWidget(m_cancelButton);
 
     m_closeButton = new QPushButton("Close", this);
     m_closeButton->setStyleSheet(sak::ui::kSecondaryButtonStyle);
-    buttonLayout->addWidget(m_closeButton);
+    button_layout->addWidget(m_closeButton);
 
-    mainLayout->addLayout(buttonLayout);
+    main_layout->addLayout(button_layout);
 }
 
 // ============================================================================
@@ -244,13 +336,23 @@ void WindowsISODownloadDialog::connectSignals() {
     connect(m_browseSaveButton,
             &QPushButton::clicked,
             this,
-            &WindowsISODownloadDialog::onBrowseSaveLocation);
-    connect(m_startButton, &QPushButton::clicked, this, &WindowsISODownloadDialog::onStartDownload);
-    connect(
-        m_cancelButton, &QPushButton::clicked, this, &WindowsISODownloadDialog::onCancelDownload);
+            &WindowsISODownloadDialog::onBrowseSaveLocation,
+            Qt::QueuedConnection);
+    connect(m_startButton,
+            &QPushButton::clicked,
+            this,
+            &WindowsISODownloadDialog::onStartDownload,
+            Qt::QueuedConnection);
+    connect(m_cancelButton,
+            &QPushButton::clicked,
+            this,
+            &WindowsISODownloadDialog::onCancelDownload,
+            Qt::QueuedConnection);
     connect(m_closeButton, &QPushButton::clicked, this, &QDialog::reject);
+    connectDownloaderSignals();
+}
 
-    // Downloader signals
+void WindowsISODownloadDialog::connectDownloaderSignals() {
     connect(m_downloader,
             &WindowsISODownloader::buildsFetched,
             this,
@@ -271,6 +373,10 @@ void WindowsISODownloadDialog::connectSignals() {
             &WindowsISODownloader::progressUpdated,
             this,
             &WindowsISODownloadDialog::onProgressUpdated);
+    connect(m_downloader,
+            &WindowsISODownloader::downloadBytesUpdated,
+            this,
+            &WindowsISODownloadDialog::onDownloadBytesUpdated);
     connect(m_downloader,
             &WindowsISODownloader::speedUpdated,
             this,
@@ -298,9 +404,9 @@ void WindowsISODownloadDialog::onFetchBuildsClicked() {
     Q_ASSERT(m_languageCombo);
     Q_ASSERT(m_archCombo);
     Q_ASSERT(m_channelCombo);
-    QString arch = m_archCombo->currentData().toString();
-    int channelIdx = m_channelCombo->currentData().toInt();
-    auto channel = static_cast<UupDumpApi::ReleaseChannel>(channelIdx);
+    const QString arch = m_archCombo->currentData().toString();
+    const int channel_idx = m_channelCombo->currentData().toInt();
+    auto channel = static_cast<UupDumpApi::ReleaseChannel>(channel_idx);
 
     m_buildListWidget->clear();
     m_buildListWidget->setEnabled(false);
@@ -310,6 +416,8 @@ void WindowsISODownloadDialog::onFetchBuildsClicked() {
     m_editionCombo->setEnabled(false);
     m_builds.clear();
     m_selectedUpdateId.clear();
+    // The last build's line goes with the list: it named a build no longer offered.
+    m_buildInfoLabel->setText(noBuildChosenText());
     updateStartButton();
 
     m_statusLabel->setText("Fetching available builds...");
@@ -351,7 +459,7 @@ void WindowsISODownloadDialog::onBuildSelected() {
     Q_ASSERT(m_editionCombo);
     Q_ASSERT(m_buildListWidget);
     Q_ASSERT(m_buildInfoLabel);
-    int row = m_buildListWidget->currentRow();
+    const int row = m_buildListWidget->currentRow();
     if (row < 0 || row >= m_builds.size()) {
         return;
     }
@@ -360,7 +468,7 @@ void WindowsISODownloadDialog::onBuildSelected() {
     m_selectedUpdateId = build.uuid;
 
     // Show build info
-    QDateTime created = QDateTime::fromSecsSinceEpoch(build.created);
+    const QDateTime created = QDateTime::fromSecsSinceEpoch(build.created);
     m_buildInfoLabel->setText(QString("Build: %1 | Arch: %2 | Added: %3")
                                   .arg(build.build, build.arch, created.toString("yyyy-MM-dd")));
 
@@ -374,13 +482,13 @@ void WindowsISODownloadDialog::onBuildSelected() {
     m_downloader->fetchLanguages(m_selectedUpdateId);
 }
 
-void WindowsISODownloadDialog::onLanguagesFetched(const QStringList& langCodes,
-                                                  const QMap<QString, QString>& langNames) {
-    m_langNames = langNames;
+void WindowsISODownloadDialog::onLanguagesFetched(const QStringList& lang_codes,
+                                                  const QMap<QString, QString>& lang_names) {
+    m_langNames = lang_names;
     m_languageCombo->clear();
 
-    for (const auto& code : langCodes) {
-        QString display = langNames.value(code, code);
+    for (const auto& code : lang_codes) {
+        const QString display = lang_names.value(code, code);
         m_languageCombo->addItem(QString("%1 (%2)").arg(display, code), code);
     }
 
@@ -405,8 +513,8 @@ void WindowsISODownloadDialog::onLanguageSelected(int index) {
         return;
     }
 
-    QString langCode = m_languageCombo->currentData().toString();
-    if (langCode.isEmpty() || m_selectedUpdateId.isEmpty()) {
+    const QString lang_code = m_languageCombo->currentData().toString();
+    if (lang_code.isEmpty() || m_selectedUpdateId.isEmpty()) {
         return;
     }
 
@@ -414,26 +522,32 @@ void WindowsISODownloadDialog::onLanguageSelected(int index) {
     m_editionCombo->setEnabled(false);
     updateStartButton();
 
-    m_downloader->fetchEditions(m_selectedUpdateId, langCode);
+    m_downloader->fetchEditions(m_selectedUpdateId, lang_code);
+}
+
+int WindowsISODownloadDialog::defaultEditionIndex(const QStringList& edition_codes) {
+    for (const QString& preferred : {QStringLiteral("PROFESSIONAL"), QStringLiteral("CORE")}) {
+        const qsizetype at = edition_codes.indexOf(preferred);
+        if (at >= 0) {
+            return static_cast<int>(at);
+        }
+    }
+    return -1;
 }
 
 void WindowsISODownloadDialog::onEditionsFetched(const QStringList& editions,
-                                                 const QMap<QString, QString>& editionNames) {
-    m_editionNames = editionNames;
+                                                 const QMap<QString, QString>& edition_names) {
+    m_editionNames = edition_names;
     m_editionCombo->clear();
 
     for (const auto& code : editions) {
-        QString display = editionNames.value(code, code);
+        const QString display = edition_names.value(code, code);
         m_editionCombo->addItem(display, code);
     }
 
-    // Default to Professional if available
-    for (int i = 0; i < m_editionCombo->count(); ++i) {
-        if (m_editionCombo->itemData(i).toString() == "PROFESSIONAL") {
-            m_editionCombo->setCurrentIndex(i);
-            break;
-        }
-    }
+    // Pro, else Home; with neither, nothing is chosen for the person. Review 3's build offered
+    // "Microsoft Store Inbox Apps" first, which is not an edition, and the list started on it.
+    m_editionCombo->setCurrentIndex(defaultEditionIndex(editions));
 
     m_editionCombo->setEnabled(true);
     m_statusLabel->setText("Ready to download. Choose edition and save location.");
@@ -465,25 +579,25 @@ void WindowsISODownloadDialog::onStartDownload() {
         return;
     }
 
-    QString langCode = m_languageCombo->currentData().toString();
-    QString edition = m_editionCombo->currentData().toString();
-    QString savePath = m_saveLocationEdit->text().trimmed();
+    const QString lang_code = m_languageCombo->currentData().toString();
+    const QString edition = m_editionCombo->currentData().toString();
+    QString save_path = m_saveLocationEdit->text().trimmed();
 
-    if (langCode.isEmpty() || edition.isEmpty()) {
+    if (lang_code.isEmpty() || edition.isEmpty()) {
         sak::logWarning("Incomplete Selection: Please select a language and edition.");
         sak::showWarningLogged(this,
                                "Incomplete Selection",
                                "Please select a language and edition.");
         return;
     }
-    if (savePath.isEmpty()) {
+    if (save_path.isEmpty()) {
         sak::logWarning("No Save Path: Please specify where to save the ISO.");
         sak::showWarningLogged(this, "No Save Path", "Please specify where to save the ISO.");
         return;
     }
-    if (!savePath.endsWith(".iso", Qt::CaseInsensitive)) {
-        savePath += ".iso";
-        m_saveLocationEdit->setText(savePath);
+    if (!save_path.endsWith(".iso", Qt::CaseInsensitive)) {
+        save_path += ".iso";
+        m_saveLocationEdit->setText(save_path);
     }
 
     m_isDownloading = true;
@@ -492,9 +606,10 @@ void WindowsISODownloadDialog::onStartDownload() {
     m_startButton->setEnabled(false);
     m_cancelButton->setEnabled(true);
     m_downloadProgressBar->setValue(0);
+    m_downloadProgressBar->setFormat(QStringLiteral("%p%"));
     m_convertProgressBar->setValue(0);
 
-    m_downloader->startDownload(m_selectedUpdateId, langCode, edition, savePath);
+    m_downloader->startDownload(m_selectedUpdateId, lang_code, edition, save_path);
 }
 
 // ============================================================================
@@ -514,7 +629,7 @@ void WindowsISODownloadDialog::onPhaseChanged(UupIsoBuilder::Phase phase,
         break;
     case UupIsoBuilder::Phase::DownloadingFiles:
         m_phaseLabel->setStyleSheet(sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold,
-                                                                     sak::ui::kColorAccentEmerald));
+                                                                     sak::ui::kStatusColorSuccess));
         m_phaseLabel->setText(QStringLiteral("\u2B07 ") + description);  // v
         break;
     case UupIsoBuilder::Phase::ConvertingToISO:
@@ -537,60 +652,69 @@ void WindowsISODownloadDialog::onPhaseChanged(UupIsoBuilder::Phase phase,
     }
 }
 
-void WindowsISODownloadDialog::onProgressUpdated(int overallPercent, const QString& detail) {
+// The bar's text from the bytes: the overall percent moves in whole steps, so the bar read "0%"
+// with 0.09 of 8.70 GB down (review 3, X19). Tenths below 1%, as the Linux ISO download shows.
+void WindowsISODownloadDialog::onDownloadBytesUpdated(qint64 downloaded, qint64 total) {
+    Q_ASSERT(m_downloadProgressBar);
+    m_downloadProgressBar->setFormat(LinuxISODownloader::percentText(downloaded, total));
+}
+
+void WindowsISODownloadDialog::onProgressUpdated(int overall_percent, const QString& detail) {
     Q_ASSERT(m_downloadProgressBar);
     Q_ASSERT(m_convertProgressBar);
-    int downloadPercent = 0;
-    int convertPercent = 0;
+    int download_percent = 0;
+    int convert_percent = 0;
 
-    if (overallPercent > kPrepareWeight) {
-        downloadPercent = static_cast<int>(((overallPercent - kPrepareWeight) * sak::kPercentMaxF) /
-                                           kDownloadWeight);
+    if (overall_percent > kPrepareWeight) {
+        download_percent = static_cast<int>(
+            ((overall_percent - kPrepareWeight) * sak::kPercentMaxF) / kDownloadWeight);
     }
-    downloadPercent = std::clamp(downloadPercent, 0, sak::kPercentMax);
+    download_percent = std::clamp(download_percent, 0, sak::kPercentMax);
 
-    if (overallPercent > (kPrepareWeight + kDownloadWeight)) {
-        convertPercent = static_cast<int>(
-            ((overallPercent - (kPrepareWeight + kDownloadWeight)) * sak::kPercentMaxF) /
+    if (overall_percent > (kPrepareWeight + kDownloadWeight)) {
+        convert_percent = static_cast<int>(
+            ((overall_percent - (kPrepareWeight + kDownloadWeight)) * sak::kPercentMaxF) /
             kConvertWeight);
     }
-    convertPercent = std::clamp(convertPercent, 0, sak::kPercentMax);
+    convert_percent = std::clamp(convert_percent, 0, sak::kPercentMax);
 
     if (m_currentPhase == UupIsoBuilder::Phase::PreparingDownload) {
-        downloadPercent = 0;
-        convertPercent = 0;
+        download_percent = 0;
+        convert_percent = 0;
     } else if (m_currentPhase == UupIsoBuilder::Phase::DownloadingFiles) {
-        convertPercent = 0;
+        convert_percent = 0;
     } else if (m_currentPhase == UupIsoBuilder::Phase::ConvertingToISO) {
-        downloadPercent = sak::kPercentMax;
+        download_percent = sak::kPercentMax;
     } else if (m_currentPhase == UupIsoBuilder::Phase::Completed) {
-        downloadPercent = sak::kPercentMax;
-        convertPercent = sak::kPercentMax;
+        download_percent = sak::kPercentMax;
+        convert_percent = sak::kPercentMax;
     }
 
-    m_downloadProgressBar->setValue(downloadPercent);
-    m_convertProgressBar->setValue(convertPercent);
+    if (m_currentPhase != UupIsoBuilder::Phase::DownloadingFiles) {
+        m_downloadProgressBar->setFormat(QStringLiteral("%p%"));
+    }
+    m_downloadProgressBar->setValue(download_percent);
+    m_convertProgressBar->setValue(convert_percent);
     m_detailLabel->setText(detail);
 }
 
-void WindowsISODownloadDialog::onSpeedUpdated(double downloadSpeedMBps) {
-    if (downloadSpeedMBps > kDownloadSpeedVisibleThresholdMBps) {
+void WindowsISODownloadDialog::onSpeedUpdated(double download_speed_m_bps) {
+    if (download_speed_m_bps > kDownloadSpeedVisibleThresholdMBps) {
         m_speedLabel->setText(
-            QString("%1 MB/s").arg(downloadSpeedMBps, 0, 'f', kTransferSpeedDisplayPrecision));
+            QString("%1 MB/s").arg(download_speed_m_bps, 0, 'f', kTransferSpeedDisplayPrecision));
     }
 }
 
-void WindowsISODownloadDialog::onDownloadComplete(const QString& isoPath, qint64 fileSize) {
+void WindowsISODownloadDialog::onDownloadComplete(const QString& iso_path, qint64 file_size) {
     Q_ASSERT(m_downloadProgressBar);
     Q_ASSERT(m_convertProgressBar);
-    m_downloadedFilePath = isoPath;
+    m_downloadedFilePath = iso_path;
     m_isDownloading = false;
 
     m_downloadProgressBar->setValue(sak::kPercentMax);
     m_convertProgressBar->setValue(sak::kPercentMax);
-    double sizeGB = fileSize / sak::kBytesPerGBf;
     m_statusLabel->setText(
-        QString("ISO created successfully! (%1 GB)").arg(sizeGB, 0, 'f', kIsoSizeDisplayPrecision));
+        QString("ISO created successfully! (%1)").arg(sak::formatBytes(file_size)));
     m_phaseLabel->setText("Complete!");
     m_phaseLabel->setStyleSheet(
         sak::ui::fontWeightAndColorStyle(sak::ui::kFontWeightBold, sak::ui::kStatusColorSuccess));
@@ -601,11 +725,10 @@ void WindowsISODownloadDialog::onDownloadComplete(const QString& isoPath, qint64
     sak::showInformationLogged(this,
                                "ISO Build Complete",
                                QString("Windows ISO has been created successfully!\n\n"
-                                       "Saved to: %1\nSize: %2 GB\n\nClick OK to use this image.")
-                                   .arg(isoPath)
-                                   .arg(sizeGB, 0, 'f', kIsoSizeDisplayPrecision));
+                                       "Saved to: %1\nSize: %2\n\nClick OK to use this image.")
+                                   .arg(iso_path, sak::formatBytes(file_size)));
 
-    Q_EMIT downloadCompleted(isoPath);
+    Q_EMIT downloadCompleted(iso_path);
     accept();
 }
 
@@ -627,10 +750,6 @@ void WindowsISODownloadDialog::onDownloadError(const QString& error) {
                     QLatin1String("aria2"),
                     QLatin1String("internet")})) {
         guidance = "Please check your internet connection and try again.";
-    } else if (matchesAny(lower, {QLatin1String("appx"), QLatin1String("msixbundle")})) {
-        guidance =
-            "This is a known issue with AppX provisioning. "
-            "See the suggestions above for possible workarounds.";
     } else if (matchesAny(lower, {QLatin1String("administrator"), QLatin1String("elevated")})) {
         guidance = "Please restart S.A.K. Utility as Administrator and try again.";
     } else if (matchesAny(lower, {QLatin1String("disk space"), QLatin1String("not enough")})) {
@@ -646,7 +765,6 @@ void WindowsISODownloadDialog::onDownloadError(const QString& error) {
 
 void WindowsISODownloadDialog::onStatusMessage(const QString& message) {
     Q_ASSERT(m_statusLabel);
-    Q_ASSERT(!message.isEmpty());
     m_statusLabel->setText(message);
 }
 
@@ -690,21 +808,22 @@ void WindowsISODownloadDialog::onBrowseSaveLocation() {
         current = getDefaultSavePath();
     }
 
-    QString filePath = QFileDialog::getSaveFileName(
+    QString file_path = QFileDialog::getSaveFileName(
         this, "Save Windows ISO", current, "ISO Files (*.iso);;All Files (*.*)");
 
-    if (!filePath.isEmpty()) {
-        if (!filePath.endsWith(".iso", Qt::CaseInsensitive)) {
-            filePath += ".iso";
+    if (!file_path.isEmpty()) {
+        if (!file_path.endsWith(".iso", Qt::CaseInsensitive)) {
+            file_path += ".iso";
         }
-        m_saveLocationEdit->setText(filePath);
+        m_saveLocationEdit->setText(QDir::toNativeSeparators(file_path));
     }
 }
 
 void WindowsISODownloadDialog::updateStartButton() {
-    bool ready = !m_isDownloading && !m_selectedUpdateId.isEmpty() &&
-                 m_languageCombo->currentIndex() >= 0 && m_editionCombo->currentIndex() >= 0 &&
-                 !m_saveLocationEdit->text().trimmed().isEmpty();
+    const bool ready = !m_isDownloading && !m_selectedUpdateId.isEmpty() &&
+                       m_languageCombo->currentIndex() >= 0 &&
+                       m_editionCombo->currentIndex() >= 0 &&
+                       !m_saveLocationEdit->text().trimmed().isEmpty();
     m_startButton->setEnabled(ready);
 }
 
@@ -720,6 +839,6 @@ void WindowsISODownloadDialog::setInputsEnabled(bool enabled) {
 }
 
 QString WindowsISODownloadDialog::getDefaultSavePath() {
-    QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    const QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
     return QDir(downloads).filePath("Windows.iso");
 }

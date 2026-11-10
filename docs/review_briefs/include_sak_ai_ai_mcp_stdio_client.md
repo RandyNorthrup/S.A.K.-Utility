@@ -1,0 +1,4 @@
+- **HIGH** -- Whole-child-tree teardown is promised unconditionally, but cleanup can fall back after Job Object assignment failure and miss orphaned or racing descendants. `include/sak/ai/ai_mcp_stdio_client.h:23-25`
+- **MEDIUM** -- Protocol-failure contract is incomplete: malformed initialize results lacking required MCP `protocolVersion` are accepted and followed by `tools/call`. `include/sak/ai/ai_mcp_stdio_client.h:23-24,32-34`
+- **MEDIUM** -- `timeout_ms` is documented as call deadline, but worker-start failure can extend blocking by 30 seconds beyond it. `include/sak/ai/ai_mcp_stdio_client.h:18,25`
+- **LOW** -- Mandatory failure-sink contract breaks when server returns JSON-RPC error with empty `message`; call returns failure sentinel while `error_message` remains empty. `include/sak/ai/ai_mcp_stdio_client.h:32-34`

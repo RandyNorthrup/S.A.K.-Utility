@@ -15,13 +15,15 @@
 #include <atomic>
 #include <filesystem>
 #include <functional>
+#include <stop_token>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 /**
  * @brief Worker thread for duplicate file detection
  *
- * Scans directories for duplicate files using MD5 hash comparison.
+ * Scans directories for duplicate files using SHA-256 hash comparison.
  * Groups duplicates and reports space savings potential.
  *
  * Thread-Safety: All signals are emitted from worker thread and should
@@ -35,7 +37,7 @@ public:
      * @brief Information about a duplicate file group
      */
     struct DuplicateGroup {
-        QString hash;                 ///< MD5 hash of files
+        QString hash;                 ///< SHA-256 hash of files
         QVector<QString> file_paths;  ///< Paths to duplicate files
         qint64 file_size{0};          ///< Size of each file
         qint64 wasted_space{0};       ///< Total space wasted by duplicates
@@ -53,6 +55,14 @@ public:
         bool parallel_hashing{true};                   ///< Use parallel hash calculation
         int hash_thread_count{0};                      ///< Thread count (0 = auto-detect)
         bool use_file_system_target{false};            ///< Scan via FileManagementFileSystemBridge
+        /// Skip symbolic-link FILE entries via a non-following symlink_status check made BEFORE
+        /// is_regular_file()/file_size()/hashing (all of which resolve the target). Defaults to
+        /// false (GUI behavior). A headless/injectable caller sets this true so a planted symlink
+        /// to a UNC share is never opened for hashing (its first following stat would leak the
+        /// credential hash via SMB/NTLM); it also stops a symlink being mis-reported as a duplicate
+        /// of its own target. (Junctions target only directories, so they are already excluded here
+        /// by the is_regular_file() gate -- only symlink files can reach a hash.)
+        bool skip_symlinks{false};
     };
 
     /**
@@ -61,6 +71,69 @@ public:
      * @param parent Parent QObject
      */
     explicit DuplicateFinderWorker(const Config& config, QObject* parent = nullptr);
+
+    /**
+     * @brief Join the worker thread BEFORE the derived members are destroyed.
+     *
+     * ~WorkerBase joins the thread, but it runs AFTER this class's members (m_hash_stop, m_hasher,
+     * m_config) are already destroyed -- and a still-running execute()/cancel-monitor reads them,
+     * so relying on the base dtor is a use-after-free. Joining here (members still alive) closes
+     * it, mirroring PartitionApplyWorker / NetworkProbeWorker.
+     */
+    ~DuplicateFinderWorker() override;
+
+    /**
+     * @brief Duplicate groups found by the last run.
+     *
+     * Populated on the worker thread just before resultsReady is emitted, so it is safe to read
+     * from a slot connected to WorkerBase::finished (that emit happens-after execute() returns).
+     * The GUI uses the resultsReady summary; this accessor lets a headless caller retrieve the
+     * structured groups (paths + sizes) without parsing the summary text. Empty if no duplicates
+     * were found or before a run completes.
+     */
+    [[nodiscard]] const std::vector<DuplicateGroup>& duplicateGroups() const {
+        return m_duplicate_groups;
+    }
+
+    /**
+     * @brief Number of scanned files that could NOT be hashed on the last run.
+     *
+     * Files that fail to hash (unreadable, locked, vanished mid-scan) are dropped
+     * from the comparison set, so a non-zero count means the duplicate results are
+     * INCOMPLETE. A caller must surface this rather than report a clean success.
+     * Populated on the worker thread before finished is emitted (race-free from a
+     * finished-slot, like duplicateGroups()).
+     */
+    [[nodiscard]] int filesUnhashed() const { return m_files_unhashed; }
+
+    /// @name Bounds for the recursive walk of a raw/image file-system target
+    ///
+    /// The directory hierarchy inside an image is UNTRUSTED data (APFS/HFS/ext bytes that
+    /// may be corrupt or crafted): it can be cyclic or arbitrarily deep, and the bridge's
+    /// listDirectory is single-level, so the reader's own B-tree guards do not bound this
+    /// hierarchy recursion. These caps mirror the export walker's and keep a hostile image
+    /// from driving unbounded recursion (stack exhaustion) or unbounded memory.
+    /// @{
+    static constexpr int kVirtualWalkMaxDepth = 32;
+    static constexpr int kVirtualWalkMaxDirectories = 100'000;
+    static constexpr qsizetype kVirtualWalkMaxFiles = 500'000;
+    /// @}
+
+    /// @brief True while the image walk is still inside its depth / directory / file
+    ///        budget. Evaluated on ENTRY to each directory, so the file count may overshoot
+    ///        by at most one directory listing -- it is a bound, not an exact quota.
+    ///        A breach REFUSES the scan (a silently truncated file set would misreport
+    ///        duplicates), it does not trim the results.
+    [[nodiscard]] static bool virtualWalkWithinBounds(int depth,
+                                                      int directories_visited,
+                                                      qsizetype files_collected);
+
+    /// @brief Usable roots for an image scan: each configured entry trimmed, blanks dropped.
+    ///
+    /// An EMPTY result means the scan must be refused. It must never fall back to the image
+    /// root, which would silently turn a mis-specified scan into a full walk of an untrusted
+    /// image.
+    [[nodiscard]] static QVector<QString> resolveVirtualRoots(const QVector<QString>& configured);
 
 Q_SIGNALS:
     /**
@@ -110,14 +183,6 @@ private:
         -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>,
                          sak::error_code>;
 
-    /// @brief Create the per-file hashing task callable for parallel execution
-    std::function<void(int)> createHashTask(
-        const std::vector<std::filesystem::path>& files,
-        std::vector<std::pair<std::filesystem::path, std::string>>& results,
-        std::atomic<int>& processed_count,
-        std::atomic<bool>& error_occurred,
-        QMutex& results_mutex);
-
     /// @brief Filter out empty/failed results from parallel hashing
     static std::vector<std::pair<std::filesystem::path, std::string>> filterValidResults(
         const std::vector<std::pair<std::filesystem::path, std::string>>& results);
@@ -142,9 +207,22 @@ private:
         -> std::expected<std::vector<std::pair<std::filesystem::path, std::string>>,
                          sak::error_code>;
 
+    /// @brief Start a monitor thread that forwards the worker's cooperative stop (stopRequested())
+    /// into m_hash_stop, so file hashing can be cancelled MID-file. Without it, checkStop() is only
+    /// evaluated between files, so a large in-flight file could outlast the teardown join and force
+    /// QThread::terminate(). The returned jthread stops+joins the monitor when it leaves scope.
+    [[nodiscard]] std::jthread startHashCancelMonitor();
+
     struct VirtualFile {
         QString path;
         qint64 size{0};
+    };
+
+    /// @brief Accumulated state of one image walk, carried across the whole recursion so the
+    ///        directory and file budgets are TOTALS rather than per-directory counts.
+    struct VirtualWalkState {
+        QVector<VirtualFile> files;
+        int directories_visited{0};
     };
 
     /// @brief Execute duplicate detection against a raw/image file-system target
@@ -153,9 +231,17 @@ private:
     /// @brief Collect files from the configured raw/image target
     auto scanFileSystemTarget() -> std::expected<QVector<VirtualFile>, sak::error_code>;
 
-    /// @brief Recursively collect virtual file entries from a target directory
-    auto collectVirtualFiles(const QString& directory_path, QVector<VirtualFile>& files, int depth)
+    /// @brief Recursively collect virtual file entries from a target directory. Refuses
+    ///        (scan_failed) as soon as the untrusted-image walk bounds are breached.
+    auto collectVirtualFiles(const QString& directory_path, VirtualWalkState& state, int depth)
         -> std::expected<void, sak::error_code>;
+
+    /// @brief Apply one listing entry: record an eligible file and/or recurse into a
+    ///        subdirectory. Split out so collectVirtualFiles stays inside the complexity
+    ///        budget once the walk bounds are enforced.
+    auto collectVirtualEntry(const sak::FileManagementEntry& entry,
+                             VirtualWalkState& state,
+                             int depth) -> std::expected<void, sak::error_code>;
 
     /// @brief Hash virtual files using the shared bridge reader
     auto hashVirtualFiles(const QVector<VirtualFile>& files)
@@ -187,4 +273,9 @@ private:
 
     Config m_config;
     sak::file_hasher m_hasher;
+    std::vector<DuplicateGroup>
+        m_duplicate_groups;   ///< Result of the last run (see duplicateGroups)
+    int m_files_unhashed{0};  ///< Scanned files that could not be hashed (see filesUnhashed)
+    std::stop_source
+        m_hash_stop;          ///< Cancels in-flight file hashing (fed by startHashCancelMonitor)
 };

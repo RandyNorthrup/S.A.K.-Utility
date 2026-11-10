@@ -80,18 +80,18 @@ constexpr int kTimeoutRestorePointMs = 90'000;     ///< System restore point cre
 constexpr int kTimeoutDismCheckMs = 120'000;       ///< DISM CheckHealth / update install
 constexpr int kTimeoutBrowserCacheMs = 180'000;    ///< Browser cache cleanup
 constexpr int kTimeoutArchiveMs = 300'000;         ///< Archive compression (5 min)
-constexpr int kTimeoutDismScanMs = 600'000;        ///< DISM ScanHealth (10 min)
+constexpr int kTimeoutDismScanMs = 1'800'000;      ///< DISM ScanHealth (30 min: a slow disk)
 constexpr int kTimeoutMalwareScanMs = 900'000;     ///< Malware scan (15 min)
 constexpr int kTimeoutSystemRepairMs = 1'800'000;  ///< SFC / DISM RestoreHealth (30 min)
 constexpr int kTimeoutDefragMs = 3'600'000;        ///< Disk defragmentation (60 min)
 constexpr int kTimeoutNetworkReadMs = 15'000;      ///< Network read timeout
-constexpr int kTimeoutChocoListMs = 15'000;        ///< Chocolatey list packages
+constexpr int kTimeoutSystemInfoMs = 60'000;       ///< System report OS/hardware collector
+constexpr int kTimeoutAclScriptMs = 15'000;        ///< PowerShell Set-Acl permission script
 constexpr int kTimeoutThermalQueryMs = 10'000;     ///< Combined thermal sensor query
 constexpr int kTimeoutSmartQueryMs = 5000;         ///< SMART disk query
 constexpr int kTimeoutWifiProfileMs = 1000;        ///< Individual netsh profile query
 constexpr int kTimeoutChocoDefaultSec = 300;       ///< Default Chocolatey timeout (seconds)
 constexpr int kTimeoutThreadShutdownMs = 15'000;   ///< Worker thread graceful shutdown
-constexpr int kTimeoutThreadTerminateMs = 5000;    ///< Worker thread force-terminate wait
 constexpr int kTimeoutWorkerResetMs = 3000;        ///< Worker thread reset (resetWorker)
 
 // ============================================================================
@@ -124,6 +124,9 @@ constexpr int kIsoDialogWidthWin = 720;   ///< Windows ISO dialog
 constexpr int kIsoDialogHeightWin = 620;  ///< Windows ISO dialog
 constexpr int kIsoDialogWidthLin = 780;   ///< Linux ISO dialog
 constexpr int kIsoDialogHeightLin = 680;  ///< Linux ISO dialog
+/// A title bar and borders at 100% scaling: what a dialog sized to its screen before it is shown
+/// leaves for the frame Windows adds.
+constexpr int kDialogWindowFrameAllowance = 40;
 
 // Common widget dimensions
 constexpr int kIconSize = 64;             ///< Application icon
@@ -176,22 +179,8 @@ constexpr int kFileExplorerSidebarMinW = 210;
 constexpr int kFileExplorerSidebarMaxW = 360;
 constexpr int kFileExplorerDetailsPaneMinW = 260;
 constexpr int kFileExplorerDetailsPaneMaxW = 430;
-constexpr int kFileExplorerItemSizeMin = 32;
-constexpr int kFileExplorerItemSizeDefault = 48;
-constexpr int kFileExplorerItemSizeMax = 160;
-constexpr int kFileExplorerListIconSize = 24;
 constexpr int kFileExplorerListCellW = 260;
-constexpr int kFileExplorerListCellH = 28;
-constexpr int kFileExplorerGridMinCellW = 112;
-constexpr int kFileExplorerGridMinCellH = 88;
-constexpr int kFileExplorerGridCellExtraW = 72;
-constexpr int kFileExplorerGridCellExtraH = 54;
-constexpr int kFileExplorerCardsMinIconSize = 32;
 constexpr int kFileExplorerCardsCellW = 360;
-constexpr int kFileExplorerCardsMinCellH = 64;
-constexpr int kFileExplorerCardsCellExtraH = 30;
 constexpr int kFileExplorerColumnsMinCellW = 220;
-constexpr int kFileExplorerColumnsCellScale = 4;
-constexpr int kFileExplorerColumnsCellH = 30;
 
 }  // namespace sak

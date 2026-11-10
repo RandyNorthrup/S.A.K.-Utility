@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file registry_snapshot_engine.h
-/// @brief Registry key snapshot capture and diff for leftover detection
+/// @brief Registry key snapshot capture for leftover detection
 
 #pragma once
 
@@ -14,16 +14,15 @@
 
 #include <type_traits>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 namespace sak {
 
-/// @brief Captures a snapshot of registry keys under monitored paths and diffs them
+/// @brief Captures a snapshot of registry keys under monitored paths
 ///
 /// Used before and after uninstallation to identify registry keys that survived
-/// the native uninstaller -- potential leftovers that should be cleaned.
+/// the native uninstaller -- potential leftovers that should be cleaned. The
+/// before/after diff is performed by the caller (LeftoverScanner::scanRegistryDiff).
 class RegistrySnapshotEngine {
 public:
     RegistrySnapshotEngine() = default;
@@ -35,31 +34,45 @@ public:
     RegistrySnapshotEngine& operator=(RegistrySnapshotEngine&&) = default;
 
     /// @brief Capture a snapshot of registry keys under monitored paths
+    ///
+    /// The walk is deliberately bounded, and the bounds are part of the contract:
+    /// kDefaultMaxDepth levels below each monitored root, a per-key child budget, a total
+    /// key budget, and HKLM\\SOFTWARE\\Classes excluded outright. Keys below the depth cap
+    /// are out of scope for leftover detection rather than a failure; hitting a breadth or
+    /// total budget IS a failure, because real keys were then dropped. Registry symbolic
+    /// links (REG_LINK) are refused, never followed.
+    ///
+    /// @param reliable Optional out-param. Set FALSE when any monitored subtree could
+    ///        not be fully enumerated (open/query/enum failure, a refused REG_LINK, or a
+    ///        breadth budget) so a PARTIAL snapshot is never consumed as an authoritative,
+    ///        complete one. TRUE means every key within the bounds above was captured.
+    ///        Null preserves the caller not caring -- any caller that acts on the diff
+    ///        must pass it and honor it.
     /// @return Set of full key paths (e.g., "HKLM\\SOFTWARE\\CompanyName\\Product")
-    [[nodiscard]] static QSet<QString> captureSnapshot();
-
-    /// @brief Diff two snapshots to find potential leftover keys
-    /// @param before Snapshot before uninstall
-    /// @param after Snapshot after uninstall
-    /// @param programNamePatterns Patterns to match against key names
-    /// @return Leftover items for keys that match program patterns
-    [[nodiscard]] static QVector<LeftoverItem> diffSnapshots(
-        const QSet<QString>& before,
-        const QSet<QString>& after,
-        const QStringList& programNamePatterns);
+    [[nodiscard]] static QSet<QString> captureSnapshot(bool* reliable = nullptr);
 
 private:
-    [[nodiscard]] static bool matchesAnyPattern(const QString& key, const QStringList& patterns);
-#ifdef Q_OS_WIN
     static constexpr int kDefaultMaxDepth = 3;
+
+    /// @brief Accumulator threaded through the recursive walk: the captured key set
+    ///        plus the reliability flag that any enumeration failure clears.
+    ///
+    /// Both members are REFERENCES, so the const on the parameter below is only about the
+    /// binding: writing through `reliable` or inserting into `keys` stays legal on a const
+    /// SnapshotSink, because a reference member does not inherit the enclosing object's
+    /// constness. The const is what tells cppcheck the struct is not a private copy, which
+    /// is what it needs to stop reporting the store to `reliable` as an unread write.
+    struct SnapshotSink {
+        QSet<QString>& keys;
+        bool& reliable;
+    };
 
     /// @brief Enumerate all subkeys under a registry path
     static void enumerateKeys(HKEY hive,
                               const QString& subkey,
                               const QString& hiveName,
-                              QSet<QString>& output,
+                              const SnapshotSink& sink,
                               int maxDepth = kDefaultMaxDepth);
-#endif
 
     /// @brief Monitored registry paths for snapshots
     static const QStringList kMonitoredPaths;

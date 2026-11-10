@@ -57,9 +57,6 @@ public:
     /** @brief Access the internal tab widget to add external tabs */
     QTabWidget* tabWidget() const { return m_tabs; }
 
-    /** @brief Access the dynamic header widgets for runtime updates */
-    const PanelHeaderWidgets& headerWidgets() const { return m_headerWidgets; }
-
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
@@ -80,10 +77,10 @@ private Q_SLOTS:
 
     void onWorkerStarted();
     void onWorkerFinished();
-    void onWorkerFailed(int errorCode, const QString& errorMessage);
+    void onWorkerFailed(int error_code, const QString& error_message);
     void onWorkerCancelled();
-    void onFileProgress(int current, int total, const QString& filePath);
-    void onPreviewResults(const QString& summary, int operationCount);
+    void onFileProgress(int current, int total, const QString& file_path);
+    void onPreviewResults(const QString& summary, int operation_count);
 
     // Duplicate detection slots
     void onDedupAddDirectoryClicked();
@@ -95,10 +92,10 @@ private Q_SLOTS:
     void onDedupTargetChanged(int index);
     void onDedupWorkerStarted();
     void onDedupWorkerFinished();
-    void onDedupWorkerFailed(int errorCode, const QString& errorMessage);
+    void onDedupWorkerFailed(int error_code, const QString& error_message);
     void onDedupWorkerCancelled();
     void onDedupScanProgress(int current, int total, const QString& path);
-    void onDedupResultsReady(const QString& summary, int duplicateCount, qint64 wastedSpace);
+    void onDedupResultsReady(const QString& summary, int duplicate_count, qint64 wasted_space);
 
 private:
     void setupUi();
@@ -111,19 +108,23 @@ private:
     [[nodiscard]] FileManagementTarget currentDedupTarget() const;
     void updateHeaderForTab(int index);
     QWidget* createOrganizerTab();
-    void connectOrganizerTabSignals(QPushButton* settingsBtn);
+    void connectOrganizerTabSignals(QPushButton* settings_btn);
     QGroupBox* createTargetDirectoryGroup();
     QGroupBox* createCategoryMappingGroup();
-    void createOrganizerControls(QVBoxLayout* layout, QPushButton*& settingsBtn);
+    void createOrganizerControls(QVBoxLayout* layout, QPushButton*& settings_btn);
     QWidget* createDuplicateFinderTab();
-    void connectDuplicateFinderTabSignals(QPushButton* settingsBtn);
+    void connectDuplicateFinderTabSignals(QPushButton* settings_btn);
     QGroupBox* createScanDirectoriesGroup();
-    void createDedupControls(QVBoxLayout* layout, QPushButton*& settingsBtn);
+    void createDedupControls(QVBoxLayout* layout, QPushButton*& settings_btn);
     void setupDefaultCategories();
     QMap<QString, QStringList> getCategoryMapping() const;
     bool validateCategoryMapping() const;
     bool validateOrganizerTarget();
-    bool confirmOrganizerExecution(const QDir& targetDir);
+    bool confirmOrganizerExecution(const QDir& target_dir);
+    /// @brief Check the target, ask before a real run, and start the worker.
+    void runOrganizer(bool preview);
+    /// @brief The moved count and every file left behind, once a real run has finished.
+    [[nodiscard]] QString organizerFailureReport(const QString& error_message) const;
     OrganizerWorker::Config buildOrganizerConfig() const;
     void connectOrganizerWorkerSignals();
     void connectDedupWorkerSignals();
@@ -157,8 +158,9 @@ private:
     QPushButton* m_reset_categories_button{nullptr};
 
     QComboBox* m_collision_strategy{nullptr};
-    QCheckBox* m_preview_mode_checkbox{nullptr};
     QCheckBox* m_create_subdirs_checkbox{nullptr};
+    /// Whether the run in progress came from Preview, so nothing moves.
+    bool m_preview_run{false};
 
     QPushButton* m_preview_button{nullptr};
     QPushButton* m_execute_button{nullptr};
@@ -168,7 +170,7 @@ private:
     // Shared
     LogToggleSwitch* m_logToggle{nullptr};
 
-    std::unique_ptr<OrganizerWorker> m_worker;
+    WorkerPtr<OrganizerWorker> m_worker;
     bool m_operation_running{false};
 
     // Duplicate detection widgets
@@ -187,7 +189,7 @@ private:
     QCheckBox* m_dedup_parallel_hashing{nullptr};
     QSpinBox* m_dedup_thread_count{nullptr};
 
-    std::unique_ptr<DuplicateFinderWorker> m_dedup_worker;
+    WorkerPtr<DuplicateFinderWorker> m_dedup_worker;
     bool m_dedup_running{false};
     QVector<FileManagementTarget> m_file_system_targets;
 };

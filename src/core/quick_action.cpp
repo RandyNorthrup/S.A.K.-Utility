@@ -4,30 +4,20 @@
 #include "sak/quick_action.h"
 
 #include "sak/format_utils.h"
-#include "sak/layout_constants.h"
 
 #include <QDateTime>
 #include <QtGlobal>
 
 namespace sak {
 
-namespace {
-constexpr int kLogBoxContentWidth = 65;
-constexpr int kDurationPrecision = 2;
-constexpr int kCompletedInPrefixWidth = 15;
-}  // namespace
-
 QuickAction::QuickAction(QObject* parent) : QObject(parent) {}
 
 void QuickAction::setStatus(ActionStatus status) {
-    if (m_status != status) {
-        m_status = status;
+    // Single atomic exchange: the compare-and-store is one op, closing the check-then-set
+    // window that could double-emit when the GUI-thread cancel and worker-thread setStatus race.
+    if (m_status.exchange(status) != status) {
         Q_EMIT statusChanged(status);
     }
-}
-
-void QuickAction::setScanResult(const ScanResult& result) {
-    m_scan_result = result;
 }
 
 void QuickAction::setExecutionResult(const ExecutionResult& result) {
@@ -37,7 +27,9 @@ void QuickAction::setExecutionResult(const ExecutionResult& result) {
 void QuickAction::cancel() {
     m_cancelled = true;
 
-    if (m_status == ActionStatus::Scanning || m_status == ActionStatus::Running) {
+    // One atomic load so the guard sees a single consistent snapshot of the status word.
+    const ActionStatus current = m_status.load();
+    if (current == ActionStatus::Running) {
         setStatus(ActionStatus::Cancelled);
     }
 }
@@ -84,43 +76,6 @@ void QuickAction::finishWithResult(const ExecutionResult& result, ActionStatus s
 
 QString QuickAction::formatFileSize(qint64 bytes) {
     return sak::formatBytes(bytes);
-}
-
-QString QuickAction::formatLogBox(const QString& title,
-                                  const QStringList& content_lines,
-                                  qint64 duration_ms) {
-    const QString top =
-        QStringLiteral("+================================================================+\n");
-    const QString sep =
-        QStringLiteral("+================================================================+\n");
-    const QString bottom =
-        QStringLiteral("+================================================================+\n");
-
-    QString box = top;
-    box += QString("| %1|\n").arg(title.leftJustified(kLogBoxContentWidth));
-    box += sep;
-
-    for (const QString& line : content_lines) {
-        if (line == "---") {
-            box += sep;
-        } else {
-            box += QString("| %1|\n").arg(line.leftJustified(kLogBoxContentWidth));
-        }
-    }
-
-    if (duration_ms >= 0) {
-        const double duration_seconds = duration_ms / kMillisecondsPerSecondF;
-        const QString duration_text = QString::number(duration_seconds, 'f', kDurationPrecision);
-        const int padding_width = kLogBoxContentWidth - kCompletedInPrefixWidth -
-                                  duration_text.length();
-        box += sep;
-        box += QString("| Completed in: %1 seconds%2|\n")
-                   .arg(duration_seconds, 0, 'f', kDurationPrecision)
-                   .arg(QString(qMax(0, padding_width), ' '));
-    }
-
-    box += bottom;
-    return box;
 }
 
 QString QuickAction::sanitizePathForBackup(const QString& path) {

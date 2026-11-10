@@ -10,17 +10,36 @@
 
 #pragma once
 
+#include "sak/nuget_dependency_resolver.h"
 #include "sak/package_internalization_engine.h"
 
 #include <QFuture>
 #include <QMutex>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QVector>
 
 #include <atomic>
+#include <optional>
 
 namespace sak {
+
+/// @brief What kind of deployment payload to build / install from.
+///
+/// Two payloads, both deployed on the target by the app's OWN bundled portable
+/// choco (never a system choco, never installed onto the target):
+///   - Bundle: self-contained -- the installers are downloaded + internalized on
+///     the staging machine and packed in, so the target installs from local
+///     .nupkg files (bundle once, deploy many, minimal bandwidth at deploy).
+///   - List:   metadata-only -- just the package ids/versions; nothing is
+///     downloaded at build time and the target fetches each installer from the
+///     Chocolatey feed at install time (smallest payload).
+/// (Provisional internal names; the user-facing labels are workshopped separately.)
+enum class PayloadMode {
+    Bundle,
+    List
+};
 
 /// @brief Manifest entry for a single package in a deployment bundle
 struct DeploymentManifestEntry {
@@ -30,7 +49,9 @@ struct DeploymentManifestEntry {
     QString checksum;
     qint64 size_bytes{0};
     QStringList dependencies;
-    bool internalized{false};
+    bool internalized{false};   ///< external installer binaries were embedded
+    bool offline_ready{false};  ///< installs with NO internet (internalized or self-contained)
+    QString offline_note;       ///< human-readable reason for offline_ready
 };
 
 /// @brief Full deployment manifest describing a bundled offline package set
@@ -42,6 +63,26 @@ struct DeploymentManifest {
     QString output_dir;
     QVector<DeploymentManifestEntry> packages;
     qint64 total_size_bytes{0};
+    /// @brief Bundle (installers packed in) or List (metadata-only, target fetches).
+    ///        Drives the install source strategy. Defaults to Bundle so a manifest
+    ///        written before this field existed installs from its local packages.
+    PayloadMode payload_mode{PayloadMode::Bundle};
+};
+
+/// @brief Per-package install strategy, derived from the manifest's payload mode.
+struct BundleInstallContext {
+    QString source;              ///< local packages dir (Bundle) or feed URL (List)
+    bool ignore_dependencies{};  ///< Bundle: true -- we install every closure member ourselves
+    bool verify_local{};         ///< Bundle: verify the local .nupkg before handing it to choco
+};
+
+/// @brief One installer to fetch in the direct-download path: its URL plus the
+/// checksum (and algorithm) the package declared for it, so a downloaded binary
+/// can be integrity-verified before it is counted as a successful download.
+struct InstallerDownload {
+    QString url;
+    QString checksum;
+    QString checksum_type;
 };
 
 /// @brief A package to be internalized as part of a batch operation
@@ -52,6 +93,7 @@ struct BatchInternalizationJob {
     QString error_message;
     QString output_path;
     QString checksum;
+    QStringList dependencies;  ///< direct dependency ids (from the resolved closure)
 };
 
 /// @brief Statistics for a batch internalization run
@@ -61,6 +103,9 @@ struct BatchStats {
     int failed{0};
     int cancelled{0};
     int pending{0};
+    int offline_capable{0};   ///< packages that install with NO internet
+    int requires_network{0};  ///< packages that still need internet at install time
+    int skipped{0};           ///< packages skipped (e.g. requires-network under an offline install)
     qint64 total_bytes{0};
 };
 
@@ -99,12 +144,32 @@ public:
     /// @param description Optional user description for the manifest
     void buildDeploymentBundle(const QVector<QPair<QString, QString>>& packages,
                                const QString& output_dir,
-                               const QString& description = QString());
+                               const QString& description = QString(),
+                               PayloadMode mode = PayloadMode::Bundle);
 
-    /// @brief Install packages from a local deployment bundle
+    /// @brief Install packages from a deployment payload, using the app's OWN
+    ///        bundled portable choco. The source strategy follows the manifest's
+    ///        PayloadMode: a Bundle installs from @p choco_source_dir (local
+    ///        .nupkg files, dependency install handled by us); a List installs
+    ///        from the Chocolatey feed (choco resolves + downloads).
     /// @param manifest_path Path to the deployment manifest.json
-    /// @param choco_source_dir Path to the local package source directory
-    void installFromBundle(const QString& manifest_path, const QString& choco_source_dir);
+    /// @param choco_source_dir Path to the local package source directory (Bundle)
+    /// @param packed_only Air-gap switch (Bundle only): when true, install ONLY
+    ///        fully-packed packages and skip will-fetch ones with a clear reason.
+    ///        The default (false) installs everything -- packed content first,
+    ///        fetching any will-fetch remainder at install time.
+    void installFromBundle(const QString& manifest_path,
+                           const QString& choco_source_dir,
+                           bool packed_only = false);
+
+    /// @brief Where a manifest's packages install from, or why it cannot be installed.
+    ///
+    /// A Full Bundle needs the packages folder beside its manifest; a Thin Bundle holds no packages
+    /// (the target downloads each one), so it needs nothing and its source is empty. The answer
+    /// comes from the manifest's own payload mode, the same value the install itself follows.
+    /// @return the local package source, or nothing with @p refusal saying why.
+    [[nodiscard]] std::optional<QString> bundleLocalSource(const QString& manifest_path,
+                                                           QString* refusal) const;
 
     /// @brief Download .nupkg files directly (no internalization)
     /// @param packages List of (package_id, version) pairs
@@ -120,6 +185,60 @@ public:
 
     /// @brief Get current batch statistics
     [[nodiscard]] BatchStats getStats() const;
+
+    /// @brief How a build's reusable <output>/_work directory should be treated.
+    enum class WorkDirDisposition {
+        CreateFresh,    ///< Absent, or an empty unstamped dir we may adopt.
+        ReuseOwned,     ///< Bears our ownership marker: a leftover we may reuse+delete.
+        RefuseForeign,  ///< Non-empty and unstamped: never create/reuse or delete it.
+    };
+
+    /// @brief Decide how to treat a build work directory from its state, so a
+    ///        pre-existing FOREIGN <output>/_work is never recursively deleted.
+    ///        Pure; unit-testable.
+    [[nodiscard]] static WorkDirDisposition classifyWorkDir(bool exists,
+                                                            bool has_ownership_marker,
+                                                            bool is_empty);
+
+    /// @brief Whether a work directory is safe to recursively delete: a missing dir is a safe
+    ///        no-op, and an existing dir is deletable ONLY when it is not a reparse point AND
+    ///        carries our ownership marker (so a planted junction or a foreign dir is never
+    ///        recursively wiped). Pure; unit-testable.
+    [[nodiscard]] static bool workDirSafeToDelete(bool exists,
+                                                  bool is_reparse_point,
+                                                  bool has_ownership_marker);
+
+    /// @brief Reduce a URL-derived name to a single safe path segment, returning
+    ///        @p fallback when it would escape the output dir (empty, ".", "..",
+    ///        or containing a path separator after basename reduction). Pure;
+    ///        unit-testable.
+    [[nodiscard]] static QString safeInstallerFilename(const QString& raw_name,
+                                                       const QString& fallback);
+
+    /// @brief Confine a manifest-declared filename to a bare basename (defense in
+    ///        depth against a hostile manifest). Empty/"."/".."/separator -> empty.
+    ///        Pure; unit-testable.
+    [[nodiscard]] static QString sanitizeManifestFilename(const QString& raw_name);
+
+    /// @brief Verify the bundled .nupkg named by @p entry exists in @p source_dir
+    ///        and matches the manifest size and SHA-256 checksum before it is
+    ///        handed to choco. Returns false + @p error_out on any mismatch; a
+    ///        declared checksum that does not match fails closed. Unit-testable.
+    [[nodiscard]] static bool verifyBundledPackage(const DeploymentManifestEntry& entry,
+                                                   const QString& source_dir,
+                                                   QString& error_out);
+
+    /// @brief Dependency ids declared WITHIN @p jobs that are absent from the job
+    ///        set (and are not the excluded Chocolatey framework). A non-empty
+    ///        result means the resolved closure is NOT self-contained. For a normal
+    ///        Bundle this is a WARNING, not a fatal error: the package is fetched
+    ///        from the feed at install time (will-fetch); only an air-gap
+    ///        (packed_only) install cannot fetch it, and that is enforced per-entry
+    ///        at install time. A requested package re-appended to be "attempted
+    ///        directly" carries no dependency edges, so it never trips this check.
+    ///        Pure; unit-testable.
+    [[nodiscard]] static QStringList unmetClosureDependencies(
+        const QVector<BatchInternalizationJob>& jobs);
 
 Q_SIGNALS:
     /// @brief Batch operation started
@@ -153,8 +272,52 @@ private:
     /// @brief Read a deployment manifest from disk
     [[nodiscard]] DeploymentManifest readManifest(const QString& path) const;
 
-    /// @brief Execute the build bundle operation on a background thread
+    /// @brief Ensure the build work dir is ours to create/reuse and later delete.
+    ///        Refuses (returns false + @p error_out) a pre-existing foreign dir so
+    ///        a recursive cleanup can never wipe unrelated user data (B10-13).
+    [[nodiscard]] bool prepareOwnedWorkDir(const QString& work_dir, QString& error_out);
+
+    /// @brief Recursively delete a work directory ONLY when workDirSafeToDelete permits it (not a
+    ///        reparse point, bears our ownership marker); a missing dir is a successful no-op.
+    ///        Returns false (no delete performed) otherwise.
+    bool removeOwnedWorkDir(const QString& work_dir);
+
+    /// @brief Execute a Bundle (self-contained) build on a background thread:
+    ///        resolve the closure, internalize + pack every installer.
     void executeBuildBundle(const QString& output_dir, const QString& description);
+
+    /// @brief Execute a List (metadata-only) build on a background thread: write a
+    ///        manifest of the requested packages with NO download/internalization.
+    ///        Fast and network-free; the target fetches each installer at install.
+    void executeBuildListManifest(const QString& output_dir, const QString& description);
+
+    /// @brief Expand the requested package list (m_jobs) into the FULL transitive
+    ///        dependency closure so the bundle actually contains everything an
+    ///        offline install needs. Honors each dependency's declared NuGet
+    ///        version range (picks the highest satisfying version) instead of
+    ///        grabbing latest. Runs synchronously on the build thread. Any
+    ///        unresolved dependency / fetch failure is appended to @p warnings so
+    ///        an incomplete bundle is surfaced, not silently reported as success.
+    ///        On total resolution failure, falls back to the requested list.
+    [[nodiscard]] QVector<BatchInternalizationJob> resolveDependencyClosure(QStringList& warnings);
+
+    /// @brief Turn the resolver's output into build jobs: drop the 'chocolatey'
+    ///        framework package, keep every resolved dependency, and re-append any
+    ///        explicitly-requested package the feed could not resolve (attempted
+    ///        directly). Surfaces the framework exclusion + unresolved requests via
+    ///        @p warnings. Pure (no instance state).
+    [[nodiscard]] static QVector<BatchInternalizationJob> assembleClosureJobs(
+        const QVector<ResolvedPackage>& resolved,
+        const QVector<BatchInternalizationJob>& requested,
+        QStringList& warnings);
+
+    /// @brief Fetch a package's available versions (with declared dependencies)
+    ///        from the NuGet feed (FindPackagesById). @p ok is set false on a
+    ///        transport failure (so resolution records a fetch error); an empty
+    ///        result with @p ok true means the feed legitimately returned no
+    ///        matching package.
+    [[nodiscard]] QVector<FeedPackageVersion> fetchFeedVersions(const QString& package_id,
+                                                                bool& ok);
 
     /// @brief Execute direct download on a background thread
     void executeDirectDownload(const QVector<QPair<QString, QString>>& packages,
@@ -176,20 +339,121 @@ private:
     /// @brief Finalize the bundle: write manifest, clean up, emit completion
     void finalizeBundle(const DeploymentManifest& manifest, const BuildBundleContext& ctx);
 
-    /// @brief Execute bundle installation on a background thread
-    void executeInstallFromBundle(DeploymentManifest manifest, QString choco_source_dir);
+    /// @brief Abandon a cancelled build fail-closed: discard the work dir and emit
+    ///        an error (never a completed-bundle signal). Without a manifest the
+    ///        partial packages are un-installable, so nothing is presented as done.
+    void finalizeCancelledBuild(const QString& work_dir);
 
-    /// @brief Install one package from an offline bundle
+    /// @brief Assemble the final build stats from the manifest + context and the
+    ///        per-job statuses (offline coverage, cancelled/pending counts).
+    [[nodiscard]] BatchStats computeBuildStats(const DeploymentManifest& manifest,
+                                               const BuildBundleContext& ctx) const;
+
+    /// @brief Execute bundle installation on a background thread
+    void executeInstallFromBundle(DeploymentManifest manifest,
+                                  QString choco_source_dir,
+                                  bool packed_only);
+
+public:
+    /// @brief What to do with a bundle entry at install time.
+    enum class InstallDisposition {
+        Install,        ///< install it (the default: install everything)
+        SkipNotPacked,  ///< air-gap (packed_only) + not fully packed -> skip, don't fail
+    };
+
+    /// @brief Decide whether a manifest entry should be installed or skipped.
+    ///        The default installs everything; under the air-gap switch
+    ///        (@p packed_only) a not-fully-packed (will-fetch) entry is skipped so
+    ///        it does not fail against a deliberately disconnected target. Pure.
+    [[nodiscard]] static InstallDisposition installDispositionFor(
+        const DeploymentManifestEntry& entry, bool packed_only);
+
+    /// @brief Order @p packages so every package's bundled dependencies install
+    ///        BEFORE it (a stable topological sort over the manifest's own
+    ///        dependency edges). Required because a Bundle install passes
+    ///        --ignore-dependencies (we install each closure member ourselves), so
+    ///        choco does not order them. A dependency cycle falls back to the
+    ///        original order. When @p cyclic_ids is non-null it is filled with the
+    ///        ids of any package caught in a cycle (appended in original order
+    ///        rather than dependency-ordered) so the caller can warn. Pure;
+    ///        unit-testable.
+    [[nodiscard]] static QVector<DeploymentManifestEntry> topologicalInstallOrder(
+        const QVector<DeploymentManifestEntry>& packages, QStringList* cyclic_ids = nullptr);
+
+    /// @brief True if a choco/MSI install exit code means success: 0 (ok), or
+    ///        1641 / 3010 (reboot initiated / required). Pure; unit-testable.
+    [[nodiscard]] static bool isSuccessInstallExitCode(int exit_code);
+
+    /// @brief Build the per-package install strategy for a payload mode. Bundle
+    ///        installs from the local @p local_source_dir with --ignore-dependencies
+    ///        and local verification; List installs from the Chocolatey feed and
+    ///        lets choco resolve + download. Pure; unit-testable.
+    [[nodiscard]] static BundleInstallContext installContextForMode(
+        PayloadMode mode, const QString& local_source_dir);
+
+    /// @brief Collect ALL installers (32- and 64-bit, every resource) from a parsed
+    ///        install script, each carrying the checksum the package declared for it
+    ///        so a downloaded binary can be integrity-verified. Direct download must
+    ///        not silently drop the secondary installers a multi-resource package
+    ///        declares. De-duplicated by URL. Pure; unit-testable.
+    [[nodiscard]] static QVector<InstallerDownload> collectInstallerDownloads(
+        const ParsedInstallScript& parsed);
+
+    /// @brief Return @p desired if unused, else a de-duplicated variant ("x_1.exe"),
+    ///        inserting the chosen name into @p used. Two installer URLs that share
+    ///        a basename must not write to the same file. Pure; unit-testable.
+    [[nodiscard]] static QString uniqueFilename(const QString& desired, QSet<QString>& used);
+
+    /// @brief True if @p id is the Chocolatey FRAMEWORK package ('chocolatey',
+    ///        case-insensitive) -- which must NEVER be bundled or force-installed
+    ///        onto a target (it bootstraps Chocolatey there). Helper/extension
+    ///        packages (chocolatey.extension, ...) are NOT the framework. Pure.
+    [[nodiscard]] static bool isChocolateyFrameworkId(const QString& id);
+
+    /// @brief Reject a manifest-supplied token that is empty, option-like (a
+    ///        leading '-'), or carries whitespace/control chars, before it becomes
+    ///        a choco argv element -- defense in depth against a tampered manifest
+    ///        injecting a Chocolatey flag. Pure; unit-testable.
+    [[nodiscard]] static bool isSafeInstallToken(const QString& token);
+
+private:
+    /// @brief Install one package from a deployment payload, per @p install_ctx
+    ///        (local source + verify for Bundle, feed source for List).
     [[nodiscard]] bool installBundlePackage(const DeploymentManifestEntry& entry,
                                             int completed,
                                             int total,
-                                            const QString& choco_source_dir);
+                                            const BundleInstallContext& install_ctx);
 
-    /// @brief Download installer binaries for a single package
+    /// @brief Install one manifest entry or skip it (Chocolatey framework, or an
+    ///        air-gap install of a not-fully-packed package), updating @p stats.
+    ///        Returns true when a mid-install cancel means the loop should stop.
+    [[nodiscard]] bool installOneManifestEntry(const DeploymentManifestEntry& entry,
+                                               bool packed_only,
+                                               const BundleInstallContext& install_ctx,
+                                               BatchStats& stats);
+
+    /// @brief Resolve an absolute path to the app's OWN bundled portable choco.exe
+    ///        ONLY -- never a system choco and never a bare "choco" resolved via
+    ///        PATH/cwd (a planted binary would then run with install-time rights).
+    ///        Confirms the resolved file is a real regular file (not a symlink/
+    ///        junction) whose canonical path stays under the bundled-tools root.
+    ///        Empty when the bundled copy is absent: the caller fails closed rather
+    ///        than borrow host tooling.
+    [[nodiscard]] static QString resolveChocoExecutable();
+
+    /// @brief Emit a terminal packageProgress signal to the UI thread.
+    void emitPackageOutcome(const DeploymentManifestEntry& entry,
+                            bool success,
+                            const QString& message);
+
+    /// @brief Download installer binaries for a single package. @p used_names is
+    ///        shared across ALL packages in the run so two packages that emit the
+    ///        same basename never overwrite each other on disk.
     /// @return Number of files successfully downloaded (0 on failure)
     [[nodiscard]] int downloadOnePackageInstallers(const QString& pkg_id,
                                                    const QString& resolved_version,
-                                                   const QString& output_dir);
+                                                   const QString& output_dir,
+                                                   QSet<QString>& used_names);
 
     /// @brief Download and extract a .nupkg into a temp directory
     /// @return Path to the extracted directory, empty on failure
@@ -203,28 +467,55 @@ private:
                                                                        const QString& extract_dir,
                                                                        const QString& temp_dir);
 
-    /// @brief Copy embedded installer files from the nupkg tools/ directory
+    /// @brief Copy embedded installer files from the nupkg tools/ directory,
+    ///        disambiguating each dest name against @p used_names so a second
+    ///        package's identically-named installer never overwrites the first.
     /// @return Number of files successfully copied
     [[nodiscard]] int copyEmbeddedInstallers(const QString& pkg_id,
                                              const QString& pkg_extract_dir,
-                                             const QString& output_dir);
+                                             const QString& output_dir,
+                                             QSet<QString>& used_names);
 
-    /// @brief Collect primary installer URLs from parsed install script
-    [[nodiscard]] static QStringList collectPrimaryUrls(const ParsedInstallScript& parsed);
-
-    /// @brief Download a list of URLs to a directory
+    /// @brief Download a list of installers to a directory, verifying each against
+    ///        its declared checksum before counting it and disambiguating colliding
+    ///        basenames via @p used_names.
     /// @return Number of files successfully downloaded
-    [[nodiscard]] int downloadUrlsToDir(const QString& pkg_id,
-                                        const QStringList& urls,
-                                        const QString& output_dir);
+    [[nodiscard]] int downloadInstallersToDir(const QString& pkg_id,
+                                              const QVector<InstallerDownload>& downloads,
+                                              const QString& output_dir,
+                                              QSet<QString>& used_names);
 
-    /// @brief Download a single file from a URL to disk
-    [[nodiscard]] bool downloadFileFromUrl(const QString& url, const QString& output_path);
+    /// @brief Download a single INSTALLER from a URL to disk. The bytes must match
+    ///        @p expected_checksum (under @p checksum_type, or inferred from length)
+    ///        or the download fails closed and nothing is committed. An empty
+    ///        checksum is itself a refusal (PackageInternalizationEngine::
+    ///        installerVerified fails closed on an unverifiable installer), so both
+    ///        arguments are REQUIRED -- there is no unchecksummed installer path.
+    ///        A feed .nupkg is fetched through downloadVerifiedNupkg instead, which
+    ///        supplies the feed's own published PackageHash.
+    [[nodiscard]] bool downloadFileFromUrl(const QString& url,
+                                           const QString& output_path,
+                                           const QString& expected_checksum,
+                                           const QString& checksum_type);
+
+    /// @brief Download the feed .nupkg for @p pkg_id @p version to @p output_path,
+    ///        verified against the feed's published PackageHash BEFORE anything is
+    ///        written. Fails closed when the feed publishes no hash for that version
+    ///        or the bytes do not match -- the .nupkg is never taken on trust just
+    ///        because the install script inside it carries no checksum of its own.
+    [[nodiscard]] bool downloadVerifiedNupkg(const QString& pkg_id,
+                                             const QString& version,
+                                             const QString& output_path);
 
     /// @brief Emit a log message to the UI from a background thread
     void emitLog(const QString& message);
 
-    PackageInternalizationEngine m_engine;
+    /// @brief The internalization engine running the CURRENT package, or nullptr
+    ///        between jobs. Guarded by m_mutex so cancel() (UI thread) can abort
+    ///        the in-flight download the build thread is performing. (The build
+    ///        creates a fresh local engine per job; without this, cancel() had no
+    ///        way to reach it and an in-progress download ran to completion.)
+    PackageInternalizationEngine* m_active_engine{nullptr};
     QVector<BatchInternalizationJob> m_jobs;
     mutable QMutex m_mutex;
     QFuture<void> m_operation_future;

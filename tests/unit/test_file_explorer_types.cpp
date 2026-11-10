@@ -5,6 +5,9 @@
 /// @brief Unit tests for File Explorer state and command registry.
 
 #include "sak/file_explorer_command_registry.h"
+#include "sak/file_explorer_layout_metrics.h"
+#include "sak/file_explorer_status_center.h"
+#include "sak/file_explorer_storage_history.h"
 
 #include <QtTest/QtTest>
 
@@ -154,6 +157,40 @@ private Q_SLOTS:
         QCOMPARE(pane.location.path, QStringLiteral("/Users"));
     }
 
+    void dualPaneStatesTrackIndependentHistories() {
+        // Each explorer pane owns a full FileExplorerPaneState; navigating one
+        // must never disturb the other (the basis for dual-pane isolation).
+        sak::FileExplorerPaneState left;
+        sak::FileExplorerPaneState right;
+
+        sak::FileExplorerLocation la;
+        la.target_id.value = QStringLiteral("raw:left");
+        la.path = QStringLiteral("/");
+        sak::FileExplorerLocation la2 = la;
+        la2.path = QStringLiteral("/one");
+
+        sak::FileExplorerLocation rb;
+        rb.target_id.value = QStringLiteral("raw:right");
+        rb.path = QStringLiteral("/");
+        sak::FileExplorerLocation rb2 = rb;
+        rb2.path = QStringLiteral("/two");
+
+        left.navigateTo(la, false);
+        left.navigateTo(la2, false);
+        right.navigateTo(rb, false);
+        right.navigateTo(rb2, false);
+
+        QCOMPARE(left.location.path, QStringLiteral("/one"));
+        QCOMPARE(right.location.path, QStringLiteral("/two"));
+
+        // Going back in the left pane leaves the right pane untouched.
+        QVERIFY(left.goBack());
+        QCOMPARE(left.location.path, QStringLiteral("/"));
+        QCOMPARE(right.location.path, QStringLiteral("/two"));
+        QCOMPARE(left.location.target_id.value, QStringLiteral("raw:left"));
+        QCOMPARE(right.location.target_id.value, QStringLiteral("raw:right"));
+    }
+
     void selectionSummariesExposeItemShape() {
         sak::FileExplorerSelection selection;
         selection.entries.append(selectedFile());
@@ -193,8 +230,10 @@ private Q_SLOTS:
         QVERIFY(read_only.can_copy_path);
         QVERIFY(!read_only.can_rename);
         QVERIFY(!read_only.can_delete);
-        QVERIFY(read_only.blockers.join(QStringLiteral("; "))
-                    .contains(QStringLiteral("write blocker")));
+        // Exactly the target's own write blocker, and nothing else: joining then searching for a
+        // fragment could not see a SECOND blocker appearing (which would mean an unrelated guard
+        // also fired), nor the read-only reason being replaced by a generic one.
+        QCOMPARE(read_only.blockers, QStringList{QStringLiteral("raw fixture write blocker")});
     }
 
     void registryEnablesWritableLocalCommands() {
@@ -227,10 +266,13 @@ private Q_SLOTS:
         const auto preview =
             sak::FileExplorerCommandRegistry::state(sak::FileExplorerCommandId::Preview, context);
 
+        // The blocker must be the TARGET's own reason, propagated verbatim -- not a generic
+        // registry refusal that happens to contain "read-only". That propagation is what tells
+        // the operator which layer refused and why.
         QVERIFY(!write_file.enabled);
-        QVERIFY(write_file.blocker.contains(QStringLiteral("read-only")));
+        QCOMPARE(write_file.blocker, QStringLiteral("ext raw target is read-only"));
         QVERIFY(!delete_item.enabled);
-        QVERIFY(delete_item.blocker.contains(QStringLiteral("read-only")));
+        QCOMPARE(delete_item.blocker, QStringLiteral("ext raw target is read-only"));
         QVERIFY2(preview.enabled, qPrintable(preview.blocker));
     }
 
@@ -280,11 +322,183 @@ private Q_SLOTS:
             const auto write = sak::FileExplorerCommandRegistry::state(
                 sak::FileExplorerCommandId::WriteFile, context);
             QVERIFY(!write.enabled);
-            QVERIFY2(!write.blocker.isEmpty(), qPrintable(target.file_system));
+            // Pin the SPECIFIC per-target write reason: writeBlocker echoes target.blockers, so a
+            // regression that returned the generic "Selected target does not allow file writes."
+            // for every blocked target would still be non-empty and slip past `!isEmpty()`.
+            QCOMPARE(write.blocker, target.blockers.join(QStringLiteral("; ")));
         }
     }
 
-    void registryKeepsFutureTabsAndDualPaneFeatureGated() {
+    // Codex-3 finding 7: Undo/Redo REPLAY file-system writes, so they must route
+    // through the write-capability gate (enabled on a writable target, refused on a
+    // read-only one); CreateFolderWithSelection MOVES the selection and is classified
+    // destructive like FlattenFolder.
+    void registryGatesUndoRedoAndFlagsCreateFolderDestructive() {
+        using Reg = sak::FileExplorerCommandRegistry;
+        using Id = sak::FileExplorerCommandId;
+        const auto writable = contextFor(writableLocalTarget(), false);
+        const auto read_only =
+            contextFor(readOnlyRawTarget(QStringLiteral("raw target is read-only")), false);
+
+        QVERIFY(Reg::command(Id::Undo).write_operation);
+        QVERIFY(Reg::command(Id::Redo).write_operation);
+        const auto undo_ok = Reg::state(Id::Undo, writable);
+        const auto redo_ok = Reg::state(Id::Redo, writable);
+        QVERIFY2(undo_ok.enabled, qPrintable(undo_ok.blocker));
+        QVERIFY2(redo_ok.enabled, qPrintable(redo_ok.blocker));
+        // The target's own write blocker reaches both commands verbatim. !enabled alone was
+        // satisfied by any refusal, including the "Select an item first." guard that fires on
+        // this same empty-selection context for other commands.
+        QCOMPARE(Reg::state(Id::Undo, read_only).blocker,
+                 QStringLiteral("raw target is read-only"));
+        QCOMPARE(Reg::state(Id::Redo, read_only).blocker,
+                 QStringLiteral("raw target is read-only"));
+
+        QVERIFY(Reg::command(Id::CreateFolderWithSelection).destructive);
+    }
+
+    void registryHashNeedsSingleReadableSelection() {
+        using sak::FileExplorerCommandId;
+        // No selection: hashing has nothing to act on.
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::Hash,
+                                                         contextFor(writableLocalTarget(), false))
+                     .blocker,
+                 QStringLiteral("Select an item first."));
+        // A single readable file, even on a read-only raw target, can be hashed.
+        QVERIFY(sak::FileExplorerCommandRegistry::state(
+                    FileExplorerCommandId::Hash,
+                    contextFor(readOnlyRawTarget(QStringLiteral("read-only raw fixture")), true))
+                    .enabled);
+        // A target with no read capability blocks hashing with a reason.
+        const auto blocked = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::Hash,
+            contextFor(rawTarget(QStringLiteral("xfs"), false, false, false), true));
+        QVERIFY(!blocked.enabled);
+        // The READ-capability refusal specifically: a non-empty blocker was equally produced by
+        // the selection guard above, so the two cases were indistinguishable.
+        QCOMPARE(blocked.blocker, QStringLiteral("Selected target cannot read files."));
+    }
+
+    void registryCopyOutNeedsSingleReadableSelection() {
+        using sak::FileExplorerCommandId;
+        // No selection: nothing to copy out.
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyOut,
+                                                         contextFor(writableLocalTarget(), false))
+                     .blocker,
+                 QStringLiteral("Select an item first."));
+        // A single readable file, even on a read-only raw target, can be copied out.
+        QVERIFY(sak::FileExplorerCommandRegistry::state(
+                    FileExplorerCommandId::CopyOut,
+                    contextFor(readOnlyRawTarget(QStringLiteral("read-only raw fixture")), true))
+                    .enabled);
+        // A target with no read capability blocks copy-out with a reason.
+        const auto blocked = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::CopyOut,
+            contextFor(rawTarget(QStringLiteral("xfs"), false, false, false), true));
+        QVERIFY(!blocked.enabled);
+        // The READ-capability refusal specifically: a non-empty blocker was equally produced by
+        // the selection guard above, so the two cases were indistinguishable.
+        QCOMPARE(blocked.blocker, QStringLiteral("Selected target cannot read files."));
+    }
+
+    void registryCopyItemsNeedsReadableSelection() {
+        using sak::FileExplorerCommandId;
+        // No selection: nothing to copy.
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyItems,
+                                                         contextFor(writableLocalTarget(), false))
+                     .blocker,
+                 QStringLiteral("Select an item first."));
+        // Multi-select is allowed: two readable files can go to the clipboard together.
+        auto multi = contextFor(readOnlyRawTarget(QStringLiteral("read-only raw fixture")), true);
+        auto second = selectedFile();
+        second.name = QStringLiteral("other.txt");
+        second.path = QStringLiteral("/other.txt");
+        multi.pane.selection.entries.append(second);
+        QVERIFY(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyItems, multi)
+                    .enabled);
+        // A target with no read capability blocks copy with a reason.
+        const auto blocked = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::CopyItems,
+            contextFor(rawTarget(QStringLiteral("btrfs"), false, false, false), true));
+        QVERIFY(!blocked.enabled);
+        // The READ-capability refusal specifically: a non-empty blocker was equally produced by
+        // the selection guard above, so the two cases were indistinguishable.
+        QCOMPARE(blocked.blocker, QStringLiteral("Selected target cannot read files."));
+    }
+
+    void registryPasteNeedsClipboardFilesAndWritableTarget() {
+        using sak::FileExplorerCommandId;
+        // Writable target but empty clipboard: paste stays disabled with the clipboard reason.
+        auto context = contextFor(writableLocalTarget(), false);
+        const auto no_clipboard =
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::Paste, context);
+        QVERIFY(!no_clipboard.enabled);
+        QCOMPARE(no_clipboard.blocker, QStringLiteral("Copy files to the clipboard first."));
+        // Clipboard files + writable target: paste enables.
+        context.clipboard_has_files = true;
+        QVERIFY(
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::Paste, context).enabled);
+        // Read-only raw target reports its real write blocker even with clipboard files.
+        auto read_only = contextFor(readOnlyRawTarget(QStringLiteral("ext4 is read-only")), false);
+        read_only.clipboard_has_files = true;
+        const auto blocked = sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::Paste,
+                                                                     read_only);
+        QVERIFY(!blocked.enabled);
+        QCOMPARE(blocked.blocker, QStringLiteral("ext4 is read-only"));
+    }
+
+    void registryCrossPaneCommandsNeedSplitAndWritableDestination() {
+        using sak::FileExplorerCommandId;
+        // No active split: both cross-pane commands explain the dual-pane requirement.
+        auto context = contextFor(writableLocalTarget(), true);
+        context.can_use_dual_pane = true;
+        const auto no_split = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::CopyToOtherPane, context);
+        QVERIFY(!no_split.enabled);
+        QCOMPARE(no_split.blocker, QStringLiteral("Enable dual pane first."));
+        // Compare must give the SAME reason: it is the dual-pane requirement that blocks it here,
+        // not a missing selection or an unwritable other pane.
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ComparePanes,
+                                                         context)
+                     .blocker,
+                 QStringLiteral("Enable dual pane first."));
+
+        // Split active + writable other pane: copy and compare both enable.
+        context.dual_pane_active = true;
+        context.other_pane_target = writableLocalTarget();
+        QVERIFY(
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CopyToOtherPane, context)
+                .enabled);
+        QVERIFY(
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ComparePanes, context)
+                .enabled);
+
+        // Read-only other pane blocks the copy with the destination's real write blocker,
+        // while compare stays available.
+        context.other_pane_target = readOnlyRawTarget(QStringLiteral("ext4 is read-only"));
+        const auto blocked = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::CopyToOtherPane, context);
+        QVERIFY(!blocked.enabled);
+        QCOMPARE(blocked.blocker, QStringLiteral("ext4 is read-only"));
+        QVERIFY(
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ComparePanes, context)
+                .enabled);
+
+        // Raw source + raw destination is allowed: the transfer stages through a
+        // scratch host folder between the certified reader and writer.
+        auto raw_source = contextFor(rawTarget(QStringLiteral("apfs"), true, true, true), true);
+        raw_source.can_use_dual_pane = true;
+        raw_source.dual_pane_active = true;
+        raw_source.other_pane_target = rawTarget(QStringLiteral("hfsplus"), true, true, true);
+        const auto raw_raw = sak::FileExplorerCommandRegistry::state(
+            FileExplorerCommandId::CopyToOtherPane, raw_source);
+        QVERIFY(raw_raw.enabled);
+    }
+
+    void registryGatesTabAndDualPaneCommandsByBuildAvailability() {
+        // Tabs and dual pane are shipped features, but the registry still exposes
+        // a build-availability gate: when a host reports it cannot host tabs or a
+        // second pane, the commands must disable with a clear reason.
         auto context = contextFor(writableLocalTarget(), true);
 
         const auto new_tab = sak::FileExplorerCommandRegistry::state(
@@ -292,10 +506,13 @@ private Q_SLOTS:
         const auto dual_pane = sak::FileExplorerCommandRegistry::state(
             sak::FileExplorerCommandId::ToggleDualPane, context);
 
+        // Each names ITS OWN missing capability. Both messages end in "unavailable in this
+        // build", so the shared fragment could not tell them apart -- the tab command reporting
+        // the dual-pane reason (or either reporting a generic one) read the same.
         QVERIFY(!new_tab.enabled);
-        QVERIFY(new_tab.blocker.contains(QStringLiteral("unavailable")));
+        QCOMPARE(new_tab.blocker, QStringLiteral("Explorer tabs are unavailable in this build."));
         QVERIFY(!dual_pane.enabled);
-        QVERIFY(dual_pane.blocker.contains(QStringLiteral("unavailable")));
+        QCOMPARE(dual_pane.blocker, QStringLiteral("Dual pane is unavailable in this build."));
 
         context.can_create_tabs = true;
         context.can_use_dual_pane = true;
@@ -358,6 +575,531 @@ private Q_SLOTS:
         QCOMPARE(open.blocker, QStringLiteral("Select one item."));
         QVERIFY(delete_item.enabled);
         QVERIFY(copy_path.enabled);
+
+        // Files DeleteItemPermanentlyAction: Shift+Delete, gated like Delete
+        // (multi-select allowed, selection + write capability required).
+        const auto permanent = sak::FileExplorerCommandRegistry::state(
+            sak::FileExplorerCommandId::DeletePermanently, context);
+        QVERIFY(permanent.enabled);
+        QCOMPARE(permanent.command.shortcut, QStringLiteral("Shift+Del"));
+        QVERIFY(permanent.command.destructive);
+        auto empty_selection = contextFor(writableLocalTarget(), false);
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(
+                     sak::FileExplorerCommandId::DeletePermanently, empty_selection)
+                     .blocker,
+                 QStringLiteral("Select an item first."));
+    }
+
+    void registryAssignsEveryCommandToAnOrderedGroup() {
+        using Registry = sak::FileExplorerCommandRegistry;
+        const auto order = Registry::groupOrder();
+        // groupOrder IS the palette's section order, so the sequence is the contract -- a size
+        // check could not see two sections swapped or one replaced by a duplicate.
+        QCOMPARE(order,
+                 QVector<sak::FileExplorerCommandGroup>({sak::FileExplorerCommandGroup::Navigation,
+                                                         sak::FileExplorerCommandGroup::File,
+                                                         sak::FileExplorerCommandGroup::View,
+                                                         sak::FileExplorerCommandGroup::Pane,
+                                                         sak::FileExplorerCommandGroup::Target,
+                                                         sak::FileExplorerCommandGroup::Safety}));
+
+        // Every registered command resolves to a group that appears in groupOrder,
+        // so the palette can never drop a command by leaving its section unrendered.
+        for (const auto& command : Registry::commands()) {
+            const auto group = Registry::group(command.id);
+            QCOMPARE(command.group, group);
+            QVERIFY2(order.contains(group), qPrintable(Registry::commandIdName(command.id)));
+        }
+
+        // Each section's rendered heading, pinned. !isEmpty() inside the loop above also passed
+        // on the "Other" fallback groupName() returns for an unmapped group -- which is exactly
+        // the symptom a newly added group would produce.
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::Navigation),
+                 QStringLiteral("Navigation"));
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::File), QStringLiteral("File"));
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::View), QStringLiteral("View"));
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::Pane), QStringLiteral("Pane"));
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::Target),
+                 QStringLiteral("Target"));
+        QCOMPARE(Registry::groupName(sak::FileExplorerCommandGroup::Safety),
+                 QStringLiteral("Safety"));
+
+        // Representative anchors for the section split.
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::Back),
+                 sak::FileExplorerCommandGroup::Navigation);
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::Delete),
+                 sak::FileExplorerCommandGroup::File);
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::ViewGrid),
+                 sak::FileExplorerCommandGroup::View);
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::ToggleDualPane),
+                 sak::FileExplorerCommandGroup::Pane);
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::Properties),
+                 sak::FileExplorerCommandGroup::Target);
+        QCOMPARE(Registry::group(sak::FileExplorerCommandId::Hash),
+                 sak::FileExplorerCommandGroup::Safety);
+    }
+
+    void layoutMetricsMatchFilesSizeKindTables() {
+        using sak::FileExplorerViewMode;
+
+        // Files *ViewSizeKind enums: Details/List/Columns 1..5, Cards 1..4,
+        // Grid 1..12; Adaptive shares the Grid size kind.
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::Details), 5);
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::List), 5);
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::Columns), 5);
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::Cards), 4);
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::Grid), 12);
+        QCOMPARE(sak::fileExplorerSizeKindMax(FileExplorerViewMode::Adaptive), 12);
+
+        // LayoutSizeKindHelper.GetDetailsViewRowHeight / GetListViewRowHeight.
+        QCOMPARE(sak::fileExplorerRowHeight(FileExplorerViewMode::Details, 1), 28);
+        QCOMPARE(sak::fileExplorerRowHeight(FileExplorerViewMode::Details, 5), 48);
+        QCOMPARE(sak::fileExplorerRowHeight(FileExplorerViewMode::List, 1), 24);
+        QCOMPARE(sak::fileExplorerRowHeight(FileExplorerViewMode::Columns, 5), 44);
+
+        // GetGridViewItemWidth: 80 + 20 per kind up to 300.
+        QCOMPARE(sak::fileExplorerGridItemWidth(1), 80);
+        QCOMPARE(sak::fileExplorerGridItemWidth(8), 220);
+        QCOMPARE(sak::fileExplorerGridItemWidth(12), 300);
+
+        // GetIconSize: compact layouts 16/16/20/24/32, Cards 64/64/80/96,
+        // Grid 96 then 128 through kind 8 then 256. The ExtraLarge compact kind is
+        // upstream Constants.ShellIconSizes.Large (32), not ShellIconSizes.ExtraLarge
+        // (48) -- a 48 there filled the 48px ExtraLarge Details row edge to edge.
+        // Pin the whole compact table: the two probes it had left the middle kinds
+        // and the top of the ramp unchecked.
+        for (const auto layout : {FileExplorerViewMode::Details,
+                                  FileExplorerViewMode::List,
+                                  FileExplorerViewMode::Columns}) {
+            const QVector<int> expected{16, 16, 20, 24, 32};
+            for (int kind = 1; kind <= expected.size(); ++kind) {
+                QCOMPARE(sak::fileExplorerIconSize(layout, kind), expected.at(kind - 1));
+            }
+            // The icon never fills its own row: Files leaves vertical padding at
+            // every size kind, which is what keeps the dense layouts readable.
+            for (int kind = 1; kind <= expected.size(); ++kind) {
+                QVERIFY2(sak::fileExplorerIconSize(layout, kind) <
+                             sak::fileExplorerRowHeight(layout, kind),
+                         qPrintable(QStringLiteral("kind %1: icon %2, row %3")
+                                        .arg(kind)
+                                        .arg(sak::fileExplorerIconSize(layout, kind))
+                                        .arg(sak::fileExplorerRowHeight(layout, kind))));
+            }
+        }
+        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Cards, 4), 96);
+        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Grid, 1), 96);
+        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Grid, 8), 128);
+        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Grid, 9), 256);
+
+        // Defaults: Details/List/Cards/Columns Small, Grid Large.
+        const sak::FileExplorerLayoutSizes defaults;
+        QCOMPARE(defaults.details, 2);
+        QCOMPARE(defaults.list, 2);
+        QCOMPARE(defaults.cards, 1);
+        QCOMPARE(defaults.grid, 8);
+        QCOMPARE(defaults.columns, 2);
+
+        // Out-of-range kinds clamp instead of reading past the tables.
+        sak::FileExplorerLayoutSizes wild;
+        wild.grid = 99;
+        wild.cards = 0;
+        sak::clampFileExplorerLayoutSizes(wild);
+        QCOMPARE(wild.grid, 12);
+        QCOMPARE(wild.cards, 1);
+    }
+
+    void layoutCyclerRingMatchesFilesOrder() {
+        using sak::FileExplorerViewMode;
+
+        // Files LayoutCycler: Details -> List -> Cards -> Grid -> Columns,
+        // wrapping in both directions; Adaptive resolves as Grid.
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Details, true),
+                 FileExplorerViewMode::List);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::List, true),
+                 FileExplorerViewMode::Cards);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Cards, true),
+                 FileExplorerViewMode::Grid);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Grid, true),
+                 FileExplorerViewMode::Columns);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Columns, true),
+                 FileExplorerViewMode::Details);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Details, false),
+                 FileExplorerViewMode::Columns);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Adaptive, true),
+                 FileExplorerViewMode::Columns);
+        QCOMPARE(sak::fileExplorerAdjacentLayout(FileExplorerViewMode::Adaptive, false),
+                 FileExplorerViewMode::Cards);
+    }
+
+    void storageHistoryWrapperWalksAndTruncatesRedoBranch() {
+        using Operation = sak::FileExplorerHistoryOperation;
+        sak::FileExplorerStorageHistoryWrapper wrapper;
+        QVERIFY(!wrapper.canUndo());
+        QVERIFY(!wrapper.canRedo());
+        QVERIFY(wrapper.undoTarget() == nullptr);
+        QVERIFY(wrapper.redoTarget() == nullptr);
+
+        const auto entry = [](const Operation operation, const QString& destination) {
+            sak::FileExplorerStorageHistory history;
+            history.operation = operation;
+            history.items = {
+                sak::FileExplorerHistoryItem{QStringLiteral("/src"), destination, false}};
+            return history;
+        };
+        wrapper.add(entry(Operation::Rename, QStringLiteral("/renamed")));
+        wrapper.add(entry(Operation::Copy, QStringLiteral("/copied")));
+        QCOMPARE(wrapper.count(), 2);
+        QVERIFY(wrapper.canUndo());
+        QVERIFY(!wrapper.canRedo());
+        QCOMPARE(wrapper.undoTarget()->operation, Operation::Copy);
+
+        // Undo walks backward; the undone entry becomes the redo target.
+        wrapper.markUndone();
+        QCOMPARE(wrapper.undoTarget()->operation, Operation::Rename);
+        QCOMPARE(wrapper.redoTarget()->operation, Operation::Copy);
+        wrapper.markUndone();
+        QVERIFY(!wrapper.canUndo());
+        QCOMPARE(wrapper.redoTarget()->operation, Operation::Rename);
+        wrapper.markRedone();
+        QCOMPARE(wrapper.undoTarget()->operation, Operation::Rename);
+
+        // Files AddHistory: a new operation after undos drops the stale redo
+        // branch (the Copy entry disappears).
+        wrapper.add(entry(Operation::Move, QStringLiteral("/moved")));
+        QCOMPARE(wrapper.count(), 2);
+        QVERIFY(!wrapper.canRedo());
+        QCOMPARE(wrapper.undoTarget()->operation, Operation::Move);
+        QCOMPARE(wrapper.undoTarget()->items.first().destination_path, QStringLiteral("/moved"));
+
+        wrapper.clear();
+        QCOMPARE(wrapper.count(), 0);
+        QVERIFY(!wrapper.canUndo());
+        QVERIFY(!wrapper.canRedo());
+    }
+
+    void statusCenterCardStringsMatchFilesTemplates() {
+        using Op = sak::FileExplorerOperationType;
+        using Result = sak::FileExplorerReturnResult;
+        const auto header = [](const Op operation, const Result result) {
+            sak::FileExplorerStatusCardRequest request;
+            request.operation = operation;
+            request.result = result;
+            request.source = {QStringLiteral("C:/staging/report.txt")};
+            request.destination = {QStringLiteral("C:/exports/Bundle")};
+            request.items_count = 2;
+            sak::FileExplorerStatusCenterItem item(request);
+            return item.header();
+        };
+        // Files resw StatusCenter_* templates (terminal cards skip the
+        // discovery substitution because they are not in progress).
+        QCOMPARE(header(Op::Copy, Result::Success), QStringLiteral("Copied 2 items to \"Bundle\""));
+        QCOMPARE(header(Op::Copy, Result::Failed),
+                 QStringLiteral("Error copying 2 items to \"Bundle\""));
+        QCOMPARE(header(Op::Copy, Result::Cancelled),
+                 QStringLiteral("Canceled copying 2 items to \"Bundle\""));
+        QCOMPARE(header(Op::Move, Result::Success), QStringLiteral("Moved 2 items to \"Bundle\""));
+        // Delete/Recycle share the Delete headers and name the source folder.
+        QCOMPARE(header(Op::Delete, Result::Success),
+                 QStringLiteral("Deleted 2 items from \"staging\""));
+        QCOMPARE(header(Op::Recycle, Result::Cancelled),
+                 QStringLiteral("Canceled deleting 2 items from \"staging\""));
+        QCOMPARE(header(Op::Compressed, Result::Success),
+                 QStringLiteral("Compressed 2 items to \"Bundle\""));
+        QCOMPARE(header(Op::Extract, Result::Success),
+                 QStringLiteral("Extracted \"report.txt\" to \"Bundle\""));
+        QCOMPARE(header(Op::Prepare, Result::InProgress),
+                 QStringLiteral("Preparing the operation..."));
+
+        // The in-progress card starts on the discovery header and the failed
+        // card carries the Files failed subheader.
+        sak::FileExplorerStatusCardRequest in_progress;
+        in_progress.operation = Op::Copy;
+        in_progress.result = Result::InProgress;
+        in_progress.source = {QStringLiteral("C:/staging/report.txt")};
+        in_progress.destination = {QStringLiteral("C:/exports/Bundle")};
+        in_progress.items_count = 2;
+        in_progress.can_provide_progress = true;
+        sak::FileExplorerStatusCenterItem discovering(in_progress);
+        QCOMPARE(discovering.header(), QStringLiteral("Discovered 2 items"));
+        QCOMPARE(discovering.message(), QStringLiteral("Discovering items..."));
+        QVERIFY(discovering.isInProgress());
+
+        sak::FileExplorerStatusCardRequest failed = in_progress;
+        failed.result = Result::Failed;
+        sak::FileExplorerStatusCenterItem failed_item(failed);
+        QCOMPARE(failed_item.subHeader(),
+                 QStringLiteral("Failed to copy 2 items from \"C:/staging/report.txt\" to "
+                                "\"C:/exports/Bundle\""));
+        QCOMPARE(failed_item.kind(), sak::FileExplorerStatusItemKind::Error);
+    }
+
+    void statusCenterCardProgressReportsMatchFiles() {
+        sak::FileExplorerStatusCardRequest request;
+        request.operation = sak::FileExplorerOperationType::Copy;
+        request.result = sak::FileExplorerReturnResult::InProgress;
+        request.source = {QStringLiteral("C:/staging")};
+        request.destination = {QStringLiteral("C:/exports/Bundle")};
+        request.items_count = 3;
+        request.can_provide_progress = true;
+        request.cancelable = true;
+        sak::FileExplorerStatusCenterItem item(request);
+        QVERIFY(item.isSpeedAndProgressAvailable());
+        QVERIFY(!item.isIndeterminate());
+        QVERIFY(item.isCancelable());
+
+        // First report with the enumeration done: the discovery phase ends
+        // ("Processing items...") and the header gains the percentage.
+        sak::FileExplorerStatusProgress progress;
+        progress.enumeration_completed = true;
+        progress.total_size = 1000;
+        progress.processed_size = 250;
+        progress.items_count = 3;
+        progress.processed_items_count = 1;
+        progress.file_name = QStringLiteral("a.txt");
+        progress.size_speed = 500.0;
+        item.reportProgress(progress);
+        QCOMPARE(item.message(), QStringLiteral("Processing items..."));
+        QCOMPARE(item.progressPercentage(), 25);
+        QCOMPARE(item.speedText(), QStringLiteral("500 B/s"));
+        QCOMPARE(item.currentItemName(), QStringLiteral("a.txt"));
+        QCOMPARE(item.header(), QStringLiteral("Copying 3 items to \"Bundle\" (25%)"));
+
+        // Later reports show the Files size footer and extend the graph.
+        progress.processed_size = 750;
+        progress.size_speed = 750.0;
+        item.reportProgress(progress);
+        QCOMPARE(item.message(), QStringLiteral("750 B of 1000 B processed"));
+        QCOMPARE(item.progressPercentage(), 75);
+        QCOMPARE(item.header(), QStringLiteral("Copying 3 items to \"Bundle\" (75%)"));
+        // Both coordinates of both points. Checking only the last x proved the graph advanced
+        // along the percentage axis but said nothing about the y (throughput) values it plots,
+        // nor that the first sample survived the second report.
+        QCOMPARE(item.graphPoints().size(), 2);
+        QCOMPARE(item.graphPoints().first(), QPointF(25.0, 500.0));
+        QCOMPARE(item.graphPoints().last(), QPointF(75.0, 750.0));
+
+        // Delete-family cards report the items footer instead of sizes.
+        sak::FileExplorerStatusCardRequest delete_request = request;
+        delete_request.operation = sak::FileExplorerOperationType::Delete;
+        sak::FileExplorerStatusCenterItem delete_item(delete_request);
+        sak::FileExplorerStatusProgress delete_progress;
+        delete_progress.enumeration_completed = true;
+        delete_progress.items_count = 3;
+        delete_progress.processed_items_count = 2;
+        delete_item.reportProgress(delete_progress);
+        delete_progress.processed_items_count = 3;
+        delete_item.reportProgress(delete_progress);
+        QCOMPARE(delete_item.message(), QStringLiteral("3/3 items processed"));
+    }
+
+    void statusCenterCardTransitionsOnTerminalProgress() {
+        // B8-22: a terminal status arriving through reportProgress must leave the
+        // in-progress state. Before the fix only m_return_result changed, so the
+        // card spun forever, still counted as in-progress, and was never reaped.
+        sak::FileExplorerStatusCardRequest request;
+        request.operation = sak::FileExplorerOperationType::Copy;
+        request.result = sak::FileExplorerReturnResult::InProgress;
+        request.items_count = 2;
+        request.can_provide_progress = true;
+        request.cancelable = true;
+        sak::FileExplorerStatusCenterItem item(request);
+        QVERIFY(item.isInProgress());
+        QCOMPARE(item.kind(), sak::FileExplorerStatusItemKind::InProgress);
+
+        sak::FileExplorerStatusProgress progress;
+        progress.status = sak::FileExplorerReturnResult::Success;
+        progress.enumeration_completed = true;
+        progress.items_count = 2;
+        progress.processed_items_count = 2;
+        item.reportProgress(progress);
+        QVERIFY(!item.isInProgress());
+        QVERIFY(!item.isCancelable());
+        QCOMPARE(item.kind(), sak::FileExplorerStatusItemKind::Successful);
+        QCOMPARE(item.iconKind(), sak::FileExplorerStatusIconKind::Successful);
+
+        // A failure status maps to the error kind and also leaves in-progress.
+        sak::FileExplorerStatusCenterItem failing(request);
+        sak::FileExplorerStatusProgress fail_progress;
+        fail_progress.status = sak::FileExplorerReturnResult::Failed;
+        failing.reportProgress(fail_progress);
+        QVERIFY(!failing.isInProgress());
+        QCOMPARE(failing.kind(), sak::FileExplorerStatusItemKind::Error);
+    }
+
+    void registryReadGatesCompressAndExtract() {
+        using sak::FileExplorerCommandId;
+        // B8-22: compress reads its sources and extract reads the archive, so a
+        // target that can WRITE but not READ must disable them. The only delta
+        // between the two targets is can_read_files, so a change in the enabled
+        // state isolates the read gate.
+        const auto unreadable = rawTarget(QStringLiteral("apfs"), true, false, true);
+        const auto readable = rawTarget(QStringLiteral("apfs"), true, true, true);
+        const auto blocked = contextFor(unreadable, true);
+        const auto ready = contextFor(readable, true);
+        // The refusal must be the READ gate. Both targets are writable and both contexts carry a
+        // selection, so any other blocker text here would mean the isolation this test claims
+        // (can_read_files as the only delta) does not hold.
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CompressIntoZip,
+                                                         blocked)
+                     .blocker,
+                 QStringLiteral("Selected target cannot read files."));
+        QVERIFY(
+            sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::CompressIntoZip, ready)
+                .enabled);
+        QCOMPARE(sak::FileExplorerCommandRegistry::state(FileExplorerCommandId::ExtractHere,
+                                                         blocked)
+                     .blocker,
+                 QStringLiteral("Selected target cannot read files."));
+    }
+
+    void statusProgressReporterThrottlesAndComputesDeltaSpeed() {
+        qint64 now_ms = 0;
+        int delivered = 0;
+        sak::FileExplorerStatusProgress last;
+        sak::FileExplorerStatusProgressReporter reporter(
+            [&delivered, &last](const sak::FileExplorerStatusProgress& snapshot) {
+                ++delivered;
+                last = snapshot;
+            },
+            [&now_ms]() { return now_ms; });
+
+        reporter.setTotalSize(1000);
+        reporter.setItemsCount(4);
+        reporter.setProcessedSize(100);
+        reporter.addProcessedItems(1);
+        reporter.report();
+        QCOMPARE(delivered, 1);
+        // Files seeds the previous sample one second back: 100 bytes / 1s.
+        QCOMPARE(last.size_speed, 100.0);
+        QCOMPARE(last.items_speed, 1.0);
+
+        // Inside the 100ms sampler window: suppressed.
+        now_ms = 50;
+        reporter.setProcessedSize(200);
+        reporter.report();
+        QCOMPARE(delivered, 1);
+
+        // Past the window: delivered with the delta-over-elapsed speed.
+        now_ms = 150;
+        reporter.setProcessedSize(400);
+        reporter.report();
+        QCOMPARE(delivered, 2);
+        QCOMPARE(last.processed_size, 400);
+        QCOMPARE(last.size_speed, 2000.0);
+
+        // Critical status change bypasses the throttle.
+        now_ms = 160;
+        reporter.setStatus(sak::FileExplorerReturnResult::Failed);
+        reporter.report();
+        QCOMPARE(delivered, 3);
+        QCOMPARE(last.status, sak::FileExplorerReturnResult::Failed);
+
+        // Files auto-success: fully processed after enumeration flips the
+        // status without an explicit setStatus.
+        int auto_delivered = 0;
+        sak::FileExplorerStatusProgress auto_last;
+        sak::FileExplorerStatusProgressReporter auto_reporter(
+            [&auto_delivered, &auto_last](const sak::FileExplorerStatusProgress& snapshot) {
+                ++auto_delivered;
+                auto_last = snapshot;
+            },
+            [&now_ms]() { return now_ms; });
+        auto_reporter.setTotalSize(100);
+        auto_reporter.setItemsCount(2);
+        auto_reporter.setProcessedSize(100);
+        auto_reporter.addProcessedItems(2);
+        auto_reporter.setEnumerationCompleted();
+        auto_reporter.report();
+        QCOMPARE(auto_delivered, 1);
+        QCOMPARE(auto_last.status, sak::FileExplorerReturnResult::Success);
+    }
+
+    void statusCenterAggregatesAndBadgeMatrixMatchFiles() {
+        sak::FileExplorerStatusCenterModel model;
+        QCOMPARE(model.infoBadgeState(), 0);
+        QCOMPARE(model.infoBadgeValue(), -1);
+        QVERIFY(!model.showProgressRing());
+
+        sak::FileExplorerStatusCardRequest request;
+        request.operation = sak::FileExplorerOperationType::Copy;
+        request.result = sak::FileExplorerReturnResult::InProgress;
+        request.destination = {QStringLiteral("C:/exports/Bundle")};
+        request.items_count = 1;
+        request.can_provide_progress = true;
+        auto* first = model.addItem(request);
+        auto* second = model.addItem(request);
+        // Newest first (Files inserts at index 0).
+        QCOMPARE(model.items().first(), second);
+        QCOMPARE(model.infoBadgeState(), 1);
+        QCOMPARE(model.infoBadgeValue(), 2);
+        QVERIFY(model.showProgressRing());
+
+        sak::FileExplorerStatusProgress progress;
+        progress.enumeration_completed = true;
+        progress.total_size = 100;
+        progress.processed_size = 40;
+        first->reportProgress(progress);
+        QCOMPARE(model.averageProgress(), 20);
+
+        // A failure beside running work: state 2; only failures left: state 3.
+        sak::FileExplorerStatusCardRequest failed = request;
+        failed.result = sak::FileExplorerReturnResult::Failed;
+        auto* failed_item = model.addItem(failed);
+        QCOMPARE(model.infoBadgeState(), 2);
+        model.removeItem(first);
+        model.removeItem(second);
+        QCOMPARE(model.infoBadgeState(), 3);
+        QCOMPARE(model.infoBadgeValue(), -1);
+        // Opening the flyout keeps the ring for the unreviewed error.
+        model.flyoutOpened();
+        QVERIFY(model.showProgressRing());
+
+        // Clear completed removes only terminal cards; an empty model resets
+        // the ring on the next flyout open.
+        auto* running = model.addItem(request);
+        model.removeAllCompletedItems();
+        QCOMPARE(model.items().size(), 1);
+        QCOMPARE(model.items().first(), running);
+        QVERIFY(!model.items().contains(failed_item));
+        model.removeItem(running);
+        model.flyoutOpened();
+        QVERIFY(!model.showProgressRing());
+        QCOMPARE(model.infoBadgeState(), 0);
+    }
+
+    void statusCenterCancelFlagsCardCanceling() {
+        sak::FileExplorerStatusCardRequest request;
+        request.operation = sak::FileExplorerOperationType::Move;
+        request.result = sak::FileExplorerReturnResult::InProgress;
+        request.destination = {QStringLiteral("C:/exports/Bundle")};
+        request.items_count = 1;
+        request.can_provide_progress = true;
+        request.cancelable = true;
+        sak::FileExplorerStatusCenterItem item(request);
+        QSignalSpy cancel_spy(&item, &sak::FileExplorerStatusCenterItem::cancelRequested);
+
+        item.requestCancel();
+        QCOMPARE(cancel_spy.count(), 1);
+        QVERIFY(item.isCancelRequested());
+        QVERIFY(!item.isCancelable());
+        QVERIFY(item.isIndeterminate());
+        QVERIFY(!item.isSpeedAndProgressAvailable());
+        // The whole header, including the tail the operator reads to know what was already
+        // discovered before the cancel landed. startsWith() left that half unasserted.
+        QCOMPARE(item.header(), QStringLiteral("Canceling - Discovered 1 item"));
+
+        // Files ReportProgress bails after cancellation.
+        const QString frozen_header = item.header();
+        sak::FileExplorerStatusProgress progress;
+        progress.total_size = 100;
+        progress.processed_size = 50;
+        item.reportProgress(progress);
+        QCOMPARE(item.header(), frozen_header);
+        QCOMPARE(item.progressPercentage(), 0);
+
+        // A second cancel is a no-op.
+        item.requestCancel();
+        QCOMPARE(cancel_spy.count(), 1);
     }
 };
 

@@ -50,14 +50,24 @@ private Q_SLOTS:
         QString report_path = sak::ConversionReportGenerator::generateHtmlReport(batch,
                                                                                  temp_dir.path());
 
-        QVERIFY(!report_path.isEmpty());
+        QCOMPARE(report_path, temp_dir.path() + QStringLiteral("/conversion_report.html"));
         QFile file(report_path);
         QVERIFY(file.exists());
         QVERIFY(file.open(QIODevice::ReadOnly));
 
         QByteArray content = file.readAll();
-        QVERIFY(content.contains("<!DOCTYPE html>") || content.contains("<html"));
-        QVERIFY(content.contains("archive1.ost"));
+        // Pin the exact deterministic document open (kEnterpriseReportDocumentOpen). The `||`
+        // passed for any doc carrying either token; this catches a broken/reordered head or wrong
+        // title.
+        QVERIFY(
+            content.startsWith("<!DOCTYPE html><html><head><meta charset='utf-8'><title>S.A.K. "
+                               "Utility - Conversion Report</title><style>"));
+        // Pin the whole file-results row (source/status-class/counts/size/duration/hash-preview);
+        // contains("archive1.ost") would pass on a column swap or wrong status class. The empty
+        // hash renders as an em-dash (U+2014, UTF-8 E2 80 94), written here as ASCII escapes.
+        QVERIFY(content.contains(QByteArray(
+            "<tr><td>archive1.ost</td><td class='warn'>100</td><td class='error'>2</td><td>0</td>"
+            "<td>30.0 MB</td><td>0 ms</td><td class='hash-preview'>\xE2\x80\x94</td></tr>")));
         QVERIFY(content.contains("archive2.pst"));
     }
 
@@ -76,7 +86,7 @@ private Q_SLOTS:
         QString report_path = sak::ConversionReportGenerator::generateHtmlReport(batch,
                                                                                  temp_dir.path());
 
-        QVERIFY(!report_path.isEmpty());
+        QCOMPARE(report_path, temp_dir.path() + QStringLiteral("/conversion_report.html"));
         QFile file(report_path);
         QVERIFY(file.exists());
     }
@@ -107,13 +117,18 @@ private Q_SLOTS:
         QString csv_path =
             sak::ConversionReportGenerator::generateCsvManifest(items, all_props, temp_dir.path());
 
-        QVERIFY(!csv_path.isEmpty());
+        QCOMPARE(csv_path, temp_dir.path() + QStringLiteral("/properties_manifest.csv"));
         QFile file(csv_path);
         QVERIFY(file.exists());
         QVERIFY(file.open(QIODevice::ReadOnly));
 
         QByteArray content = file.readAll();
-        QVERIFY(content.contains("Test Subject"));
+        // Pin the exact header (with the single pivot column) and the full data row; a bare
+        // contains("Test Subject") would pass even if columns were reordered or shifted.
+        QVERIFY(
+            content.contains("NodeId,Subject,SenderName,SenderEmail,Date,MessageId,PidTagSubject"));
+        QVERIFY(
+            content.contains("0,Test Subject,,test@example.com,2025-06-15T10:00:00,,Test Subject"));
     }
 
     // ====================================================================
@@ -148,8 +163,107 @@ private Q_SLOTS:
         QFile file(report_path);
         QVERIFY(file.open(QIODevice::ReadOnly));
         QByteArray content = file.readAll();
-        QVERIFY(content.contains("bad.ost"));
-        QVERIFY(content.contains("Corrupted") || content.contains("fail"));
+        // Pin the whole error-log row (name<->error pairing plus the 'error' class), unique to the
+        // error log; contains("bad.ost") also matches the file-results table row for the same name.
+        QVERIFY(content.contains(
+            "<tr><td>bad.ost</td><td class='error'>Corrupted file header</td></tr>"));
+        QVERIFY(content.contains("Corrupted file header"));
+    }
+
+    // A technician explains a smaller mailbox from this table: one row per file and class. The
+    // class name comes from the store, so it is escaped like every other value from there.
+    void reportListsLeftOutItemsByClass() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        sak::OstConversionBatchResult batch;
+        batch.files_total = 2;
+        sak::OstConversionResult r1;
+        r1.source_path = QStringLiteral("one.ost");
+        r1.left_out_by_class.insert(QStringLiteral("IPM.Configuration.X"), 268);
+        r1.left_out_by_class.insert(QStringLiteral("IPM.<b>Odd"), 2);
+        batch.file_results.append(r1);
+        sak::OstConversionResult r2;
+        r2.source_path = QStringLiteral("two.ost");
+        batch.file_results.append(r2);
+
+        QFile file(sak::ConversionReportGenerator::generateHtmlReport(batch, temp_dir.path()));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray content = file.readAll();
+        QVERIFY(content.contains("Left Out, by Message Class"));
+        QVERIFY(
+            content.contains("<tr><td>one.ost</td><td>IPM.Configuration.X</td><td>268</td></tr>"));
+        QVERIFY(content.contains("<tr><td>one.ost</td><td>IPM.&lt;b&gt;Odd</td><td>2</td></tr>"));
+        QVERIFY(!content.contains("IPM.<b>Odd"));
+
+        // Nothing left out, no section.
+        sak::OstConversionBatchResult clean;
+        clean.file_results.append(r2);
+        QTemporaryDir clean_dir;
+        QVERIFY(clean_dir.isValid());
+        QFile clean_file(
+            sak::ConversionReportGenerator::generateHtmlReport(clean, clean_dir.path()));
+        QVERIFY(clean_file.open(QIODevice::ReadOnly));
+        QVERIFY(!clean_file.readAll().contains("Left Out, by Message Class"));
+    }
+
+    // ====================================================================
+    // B7-17: CSV cells are attacker-controlled -- neutralize spreadsheet
+    // formula injection and quote per RFC 4180.
+    // ====================================================================
+
+    void csvSafeCell_neutralizesFormulaInjection() {
+        using sak::ConversionReportGenerator;
+        // Leading =/+/-/@ (and tab/CR) get a single-quote prefix so a spreadsheet treats them as
+        // text; a comma also forces quoting around the now-prefixed value.
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("=cmd|'/c calc'!A1")),
+                 QStringLiteral("'=cmd|'/c calc'!A1"));
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("+1+2")),
+                 QStringLiteral("'+1+2"));
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("-2+3")),
+                 QStringLiteral("'-2+3"));
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("@SUM(A1)")),
+                 QStringLiteral("'@SUM(A1)"));
+    }
+
+    void csvSafeCell_quotesButDoesNotPrefixSafeText() {
+        using sak::ConversionReportGenerator;
+        // Ordinary text passes through unchanged.
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("Hello World")),
+                 QStringLiteral("Hello World"));
+        // A comma forces RFC 4180 quoting; an internal quote is doubled.
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("a,b")),
+                 QStringLiteral("\"a,b\""));
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QStringLiteral("say \"hi\"")),
+                 QStringLiteral("\"say \"\"hi\"\"\""));
+        // Empty stays empty (no prefix).
+        QCOMPARE(ConversionReportGenerator::csvSafeCell(QString()), QString());
+    }
+
+    void csvManifest_neutralizesFormulaInSubject() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+
+        sak::PstItemDetail item;
+        item.node_id = 1;
+        item.subject = QStringLiteral("=HYPERLINK(\"http://evil\")");
+        item.sender_email = QStringLiteral("a@b.com");
+        QVector<sak::PstItemDetail> items = {item};
+        QVector<QVector<sak::MapiProperty>> props = {{}};
+
+        const QString path =
+            sak::ConversionReportGenerator::generateCsvManifest(items, props, temp_dir.path());
+        QCOMPARE(path, temp_dir.path() + QStringLiteral("/properties_manifest.csv"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray csv = file.readAll();
+        // The dangerous subject must appear single-quote-prefixed and quoted, never as a raw
+        // leading '=' cell.
+        // Pin the fully escaped cell: the leading '=' gets a single-quote prefix and the internal
+        // quotes are doubled and the cell wrapped (RFC 4180). The old prefix-only check missed a
+        // quote-doubling regression in this manifest-writer path.
+        QVERIFY(csv.contains("\"'=HYPERLINK(\"\"http://evil\"\")\""));
+        QVERIFY(!csv.contains(",=HYPERLINK"));
     }
 };
 

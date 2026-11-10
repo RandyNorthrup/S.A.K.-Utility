@@ -64,6 +64,25 @@ public:
     /// @return Extracted info (check isValid())
     static IsoInfo analyze(const QString& file_path);
 
+    /// @brief Analyze an already-open, readable image stream (the byte-in seam).
+    /// @param device An open, readable QIODevice positioned anywhere (it is seeked
+    ///        internally). Its size() bounds the media, and only its bytes are read.
+    /// @return Extracted info (check isValid())
+    /// @note analyze() is this method wrapped around a QFile::open(). Splitting it out lets
+    ///       the ISO 9660 volume-descriptor / El Torito / UDF parsing be exercised with an
+    ///       in-memory QBuffer of attacker bytes, without a file on disk. Behaviour for a
+    ///       file is identical.
+    static IsoInfo analyzeDevice(QIODevice& device);
+
+    /// @brief Whether the analyzed image describes itself as Windows installation media
+    /// @param info Result of analyze()
+    /// @return true when its metadata says Windows
+    /// @note Decides from the image's own metadata (os_family / editions from the
+    ///       volume label + application ID), never from the filename -- a Linux
+    ///       "server" ISO must not be treated as Windows media. A description, not proof: which
+    ///       writer the Image Flasher uses comes from WindowsUSBCreator::checkInstallImage.
+    [[nodiscard]] static bool isWindowsInstallMedia(const IsoInfo& info);
+
 private:
     /// @brief Read ISO 9660 primary volume descriptor at LBA 16
     static void readPrimaryVolumeDescriptor(QIODevice& device, IsoInfo& info);
@@ -82,9 +101,6 @@ private:
 
     /// @brief Identify Linux distributions from volume label patterns
     static void identifyLinux(IsoInfo& info);
-
-    /// @brief Detect desktop environment from ISO label
-    static QString detectDesktopEnvironment(const QString& label_upper);
 
     /// @brief Parse a date-time string from ISO 9660 format (17 bytes)
     static QString parseIsoDateTime(const char* raw);

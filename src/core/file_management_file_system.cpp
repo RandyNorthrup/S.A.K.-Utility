@@ -6,31 +6,52 @@
 
 #include "sak/file_management_file_system.h"
 
+#include "sak/error_codes.h"
+#include "sak/file_hash.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_apfs_writer.h"
 #include "sak/partition_ext_file_system_reader.h"
-#include "sak/partition_file_system_registry.h"
 #include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
+#include "sak/windows_reserved_names.h"
 
+#include <QCryptographicHash>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
+#include <QSet>
 #include <QStorageInfo>
+#include <QtEndian>
 
 #include <algorithm>
+#include <filesystem>
+#include <limits>
 #include <optional>
+#include <vector>
+
+#include <windows.h>
+// Undefine Windows macros that conflict with Qt
+#undef emit
+#undef signals
+#undef slots
 
 namespace sak {
 
 namespace {
 
 constexpr int kDriveRootPrefixLength = 3;
-constexpr uint64_t kFileManagementMaxWriteBytes = 64ULL * 1024ULL * 1024ULL;
-constexpr uint64_t kMinimumGeneratedApfsBytes = 64ULL * 1024ULL * 1024ULL;
-// APFS File Management mutation is limited to a root file (1 path part) or one
-// level of directory child (2 parts: directory + file).
-constexpr int kApfsMaxPathDepth = 2;
+// Sourced from the shared constants (partition_manager_types.h) so the File
+// Management write gate cannot drift from the rest of the codebase.
+constexpr uint64_t kFileManagementMaxWriteBytes = kMaximumNonNativeFileWriteBytes;
+constexpr uint64_t kMinimumGeneratedApfsBytes = kMinimumApfsGeneratedContainerBytes;
+constexpr int kCopyWindowBytes = 1 << 20;  // 1 MiB per-file copy window
+// ASCII code-point boundaries shared by the filename-safety and preview heuristics.
+constexpr int kAsciiTab = 0x09;             // horizontal tab
+constexpr int kAsciiCarriageReturn = 0x0D;  // carriage return
+constexpr int kFirstPrintableChar = 0x20;   // space; bytes below are C0 controls
+constexpr int kAsciiDel = 0x7F;             // DEL; upper bound of printable ASCII
 
 QString normalizedPath(QString path) {
     path = path.trimmed();
@@ -70,18 +91,63 @@ QString partitionAlias(uint32_t diskNumber, uint32_t partitionNumber) {
 }
 
 bool isRawDevicePath(const QString& path) {
-    return path.startsWith(QStringLiteral("\\\\.\\")) ||
-           path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"));
+    // Windows device paths are case-insensitive, so a lowercase "\\?\globalroot\..." names
+    // the same raw device; matching case-sensitively would misclassify it as an image file
+    // and skip the raw-partition safety gate.
+    return path.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive) ||
+           path.startsWith(QStringLiteral("\\\\?\\GLOBALROOT\\"), Qt::CaseInsensitive);
 }
 
-bool isApfsPathSupported(const QString& path, bool directory) {
+// Derive an APFS container's byte size from its block-0 superblock (nx_block_size *
+// nx_block_count) when the caller could not supply one: a raw partition device reports
+// no file size, and without a size the certified write engine cannot be range-gated.
+// Returns 0 when the device does not present a valid NXSB superblock.
+uint64_t probeApfsContainerBytes(const QString& root_path) {
+    QString error;
+    const auto device = openFileOrRawDeviceReadOnly(root_path, &error);
+    if (!device) {
+        return 0;
+    }
+    const QByteArray block0 = device->read(4096);
+    constexpr int kMagicOffset = 0x20;                       // obj_phys_t header is 32 bytes
+    constexpr int kBlockSizeOffset = 0x24;                   // nx_block_size (u32)
+    constexpr int kBlockCountOffset = 0x28;                  // nx_block_count (u64)
+    constexpr int kBlockCountFieldBytes = 8;                 // nx_block_count is a u64
+    constexpr quint32 kApfsContainerMagic = 0x42'53'58'4EU;  // 'NXSB'
+    if (block0.size() < kBlockCountOffset + kBlockCountFieldBytes) {
+        return 0;
+    }
+    const auto u32 = [&block0](const int offset) {
+        return qFromLittleEndian<quint32>(block0.constData() + offset);
+    };
+    if (u32(kMagicOffset) != kApfsContainerMagic) {
+        return 0;
+    }
+    const quint64 block_size = u32(kBlockSizeOffset);
+    const quint64 block_count = qFromLittleEndian<quint64>(block0.constData() + kBlockCountOffset);
+    const bool sane_block_size = block_size >= 4096 && block_size <= 65'536 &&
+                                 (block_size & (block_size - 1)) == 0;
+    if (!sane_block_size || block_count == 0) {
+        return 0;
+    }
+    // Reject a block count that would overflow the 64-bit byte size. A corrupt
+    // superblock with an absurd nx_block_count otherwise wraps to a small,
+    // in-range value and marks a garbage container as writable.
+    if (block_count > std::numeric_limits<quint64>::max() / block_size) {
+        return 0;
+    }
+    return block_size * block_count;
+}
+
+bool isApfsPathSupported(const QString& path, bool /*directory*/) {
     QString clean = path.trimmed();
     clean.replace(QLatin1Char('\\'), QLatin1Char('/'));
     if (!clean.startsWith(QLatin1Char('/'))) {
         clean.prepend(QLatin1Char('/'));
     }
-    const auto parts = clean.split(QLatin1Char('/'), Qt::SkipEmptyParts);
-    return directory ? parts.size() == 1 : parts.size() == 1 || parts.size() == kApfsMaxPathDepth;
+    // Files and directories both nest to any depth: the certified COW engine resolves the parent
+    // path and fails closed if a parent is missing, so only an empty (root) path is rejected.
+    return !clean.split(QLatin1Char('/'), Qt::SkipEmptyParts).isEmpty();
 }
 
 QStringList apfsParts(const QString& path) {
@@ -91,6 +157,18 @@ QStringList apfsParts(const QString& path) {
         clean.prepend(QLatin1Char('/'));
     }
     return clean.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+}
+
+// Split an APFS path into (parent directory path, leaf name): "/a/b/c" -> ("/a/b", "c");
+// "/c" -> ("", "c"). The parent path (empty = container root) feeds the COW engine's
+// arbitrary-depth resolver, so File Management file ops are no longer capped at one level.
+std::pair<QString, QString> apfsParentAndName(const QString& path) {
+    const QStringList parts = apfsParts(path);
+    if (parts.size() <= 1) {
+        return {QString(), parts.value(0)};
+    }
+    return {QStringLiteral("/") + parts.mid(0, parts.size() - 1).join(QLatin1Char('/')),
+            parts.last()};
 }
 
 QString displayPath(const QString& path) {
@@ -105,21 +183,27 @@ QString displayPath(const QString& path) {
     return clean;
 }
 
-sak::PartitionApfsWriteOptions apfsRawWriteOptions() {
+sak::PartitionApfsWriteOptions apfsRawWriteOptions(const FileManagementTarget& target) {
+    // The writer's one enable switch is derived from the target actually being writable, so a
+    // read-only / non-writable target makes the engine fail closed with its own blocker rather
+    // than mutating the medium (B8-04). Raw opt-in and confirmation are set per request.
     sak::PartitionApfsWriteOptions options;
-    options.enable_experimental_writer = true;
+    options.writable = FileManagementFileSystemBridge::targetPermitsMutation(target);
     options.image_only = false;
-    options.destructive_certification_evidence = true;
-    options.raw_media_hardware_certification_evidence = true;
-    options.max_payload_bytes = kFileManagementMaxWriteBytes;
+    // No artificial payload cap: the APFS write is bounded only by the container's free
+    // space (the multi-chunk allocator fails closed when it will not fit). 0 = unbounded.
+    options.max_payload_bytes = 0;
     options.evidence_id = QStringLiteral("file-management.apfs.raw");
     return options;
 }
 
 sak::PartitionHfsFileWriteOptions hfsWriteOptions(const FileManagementTarget& target) {
+    // enable_writer + target_write_confirmed track the target's real writability so a
+    // read-only / non-writable target fails closed in the writer engine (B8-04).
+    const bool writable = FileManagementFileSystemBridge::targetPermitsMutation(target);
     sak::PartitionHfsFileWriteOptions options;
-    options.enable_writer = true;
-    options.target_write_confirmed = true;
+    options.enable_writer = writable;
+    options.target_write_confirmed = writable;
     options.image_only = !isRawDevicePath(target.root_path);
     options.allow_journaled_volume = true;
     options.allow_wrapped_volume = true;
@@ -138,13 +222,66 @@ FileManagementMutationResult mutationBlocked(const QString& fileSystem,
     return result;
 }
 
+// A raw (non-local) mutation path must already be in canonical, "/"-rooted form. displayPath()
+// COERCES a path -- it trims surrounding whitespace, rewrites "\\" to "/", and collapses "//" --
+// and every one of those bytes is a LEGAL character inside an APFS/HFS+ filename, so a coerced
+// path silently resolves to a DIFFERENT entry than the one the caller named (deleting, renaming,
+// or overwriting a sibling). Refuse a path that does not round-trip rather than retarget it. Only
+// a missing leading "/" is tolerated (it is unambiguous and displayPath adds it too). Local
+// targets operate on the ORIGINAL path, never displayPath's output, so this applies only to raw.
+std::optional<FileManagementMutationResult> rawMutationPathBlock(const FileManagementTarget& target,
+                                                                 const QString& path) {
+    if (target.local_file_system) {
+        return std::nullopt;
+    }
+    QString rooted = path;
+    if (!rooted.startsWith(QLatin1Char('/'))) {
+        rooted.prepend(QLatin1Char('/'));
+    }
+    if (rooted == displayPath(path)) {
+        return std::nullopt;
+    }
+    return mutationBlocked(
+        FileManagementFileSystemBridge::normalizedFileSystem(target.file_system),
+        path,
+        QStringLiteral("Refusing a raw path that is not canonical: a trailing space, a backslash, "
+                       "or a double slash in the name would resolve to a different entry. Pass the "
+                       "exact \"/\"-rooted path the listing reported."));
+}
+
+// Fail-closed capability gate every bridge mutation entrypoint re-checks itself.
+// The bridge is directly callable (headless / MCP), so it must not trust an
+// upstream UI/registry gate: a target that does not permit mutation is refused
+// here before any filesystem or certified-writer call. Returns a populated blocked
+// result to return, or nullopt when the mutation may proceed (Codex-3, defense in
+// depth over the engine's own evidence gate).
+std::optional<FileManagementMutationResult> mutationCapabilityBlock(
+    const FileManagementTarget& target, const QString& path) {
+    if (FileManagementFileSystemBridge::targetPermitsMutation(target)) {
+        return std::nullopt;
+    }
+    const QString fs = FileManagementFileSystemBridge::normalizedFileSystem(target.file_system);
+    return mutationBlocked(fs,
+                           path,
+                           target.read_only
+                               ? QStringLiteral("Target is read-only; the write was refused.")
+                               : QStringLiteral("Target does not permit writes; the write was "
+                                                "refused."));
+}
+
 bool computeWritableNonNative(const QString& fs, const FileManagementTarget& target) {
-    const bool apfsGeneratedWriteSizeSupported =
-        fs == QStringLiteral("apfs") && target.kind == FileManagementTargetKind::Partition &&
-        target.size_bytes >= kMinimumGeneratedApfsBytes &&
-        target.size_bytes <= kMaximumApfsGeneratedContainerBytes;
-    return fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx") ||
-           apfsGeneratedWriteSizeSupported;
+    // APFS writes route through the certified in-place COW engine, which supports both
+    // S.A.K.-generated and real Apple-created (foreign) containers on raw partitions and
+    // image files. The only bridge-level gate is a KNOWN container size inside the
+    // engine's certified range; what the engine does not write (Fusion and multi-device
+    // containers, sealed volumes, case-sensitive volumes, locked encrypted volumes) fails
+    // closed inside the engine itself with an exact blocker.
+    const bool apfsWriteCapableKind = target.kind == FileManagementTargetKind::Partition ||
+                                      target.kind == FileManagementTargetKind::ImageFile;
+    const bool apfsWriteSupported = fs == QStringLiteral("apfs") && apfsWriteCapableKind &&
+                                    target.size_bytes >= kMinimumGeneratedApfsBytes &&
+                                    target.size_bytes <= kMaximumApfsGeneratedContainerBytes;
+    return fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx") || apfsWriteSupported;
 }
 
 void appendTargetBlockers(FileManagementTarget& target, const QString& fs) {
@@ -156,13 +293,21 @@ void appendTargetBlockers(FileManagementTarget& target, const QString& fs) {
     if (!target.can_organize) {
         target.blockers.append(
             QStringLiteral("Generic organizer moves are blocked for raw/non-native targets; use "
-                           "certified Partition Manager file actions for supported writes"));
+                           "Partition Manager file actions for supported writes"));
     }
     if (!target.can_write_files) {
+        const bool apfs_kind_supported = fs == QStringLiteral("apfs") &&
+                                         (target.kind == FileManagementTargetKind::Partition ||
+                                          target.kind == FileManagementTargetKind::ImageFile);
         target.blockers.append(
-            fs == QStringLiteral("apfs") && target.kind == FileManagementTargetKind::Partition
-                ? QStringLiteral("APFS File Explorer writes are limited to S.A.K.-generated "
-                                 "containers from 64 MiB through 24 TiB")
+            apfs_kind_supported
+                ? (target.size_bytes == 0
+                       ? QStringLiteral(
+                             "APFS writes need a known container size to range-gate the "
+                             "write engine; rescan disks or re-add the target with its size")
+                       : QStringLiteral("APFS writes are validated for containers of %1; this "
+                                        "container is outside that range")
+                             .arg(apfsCapacityRangeText()))
                 : QStringLiteral("File Management opens this target read-only"));
     } else if (!target.local_file_system) {
         target.blockers.append(
@@ -177,15 +322,38 @@ FileManagementTarget applyCapabilities(FileManagementTarget target) {
     const bool readableNonNative =
         FileManagementFileSystemBridge::isReadableNonNativeFileSystem(fs);
 
-    target.file_system = displayFileSystem(fs);
+    // Inventory may report a volume as read-only (write-protected, read-only
+    // mount). Preserve that so a writable-looking badge is not shown for a
+    // volume the OS will reject writes on.
+    const bool inbound_read_only = target.read_only;
+
+    // Pass the ORIGINAL spelling, not the normalized one: displayFileSystem
+    // normalizes internally to pick its special cases, and falls back to the string
+    // it was handed. Feeding it the lowercased form made every file system without
+    // an explicit case render lowercase -- "xfs", "btrfs", "ntfs" -- in the Safety
+    // pane, the sidebar subtitle, and the "No directory browser is registered for %1"
+    // blocker, while the same target's own label (built from the original) said
+    // "XFS". One target, two spellings.
+    target.file_system = displayFileSystem(target.file_system);
     target.local_file_system = target.kind == FileManagementTargetKind::LocalPath || native;
-    target.read_only = !target.local_file_system;
+    target.read_only = inbound_read_only || !target.local_file_system;
     target.can_browse = target.local_file_system || readableNonNative;
     target.can_read_files = target.local_file_system || readableNonNative;
     target.can_write_files = target.local_file_system || computeWritableNonNative(fs, target);
     target.can_organize = target.local_file_system;
     target.can_duplicate_scan = target.local_file_system || readableNonNative;
     target.can_advanced_search = target.local_file_system || readableNonNative;
+    // A volume the inventory reports read-only (hardware write-protect, read-only
+    // mount) cannot accept writes -- whether it is a LOCAL volume or a raw
+    // non-native target the certified engine would otherwise write. Gate on the
+    // INBOUND flag: target.read_only is forced true for every non-local target as a
+    // browsing-semantics badge, so it cannot distinguish a real write-protect;
+    // inbound_read_only can. Previously this was gated on local_file_system, so a
+    // write-protected raw HFS/APFS target was still reported writable (B8-03).
+    if (inbound_read_only) {
+        target.can_write_files = false;
+        target.can_organize = false;
+    }
     appendTargetBlockers(target, fs);
     return target;
 }
@@ -201,6 +369,7 @@ FileManagementEntry fromLocalInfo(const QFileInfo& info, const QString& basePath
     entry.directory = info.isDir();
     entry.regular_file = info.isFile();
     entry.symlink = info.isSymLink();
+    entry.hidden = info.isHidden();
     entry.link_target = info.symLinkTarget();
     if (entry.name.isEmpty()) {
         entry.name = basePath;
@@ -208,26 +377,121 @@ FileManagementEntry fromLocalInfo(const QFileInfo& info, const QString& basePath
     return entry;
 }
 
+// Display order for a local listing: directories first, then a case-insensitive
+// name compare. The GUI proxy re-sorts, so this only decides which entries survive
+// the cap and the order seen by direct (non-GUI) callers.
+bool localEntryLess(const QFileInfo& a, const QFileInfo& b) {
+    if (a.isDir() != b.isDir()) {
+        return a.isDir();
+    }
+    return QString::compare(a.fileName(), b.fileName(), Qt::CaseInsensitive) < 0;
+}
+
+// Import order for one host directory level: a plain case-sensitive name compare, which is
+// what QDir::Name gave the import walk before it was bounded. It decides which entries survive
+// the per-directory cap, so it must not drift.
+bool hostImportEntryLess(const QFileInfo& a, const QFileInfo& b) {
+    return QString::compare(a.fileName(), b.fileName()) < 0;
+}
+
+using LocalEntryComparator = bool (*)(const QFileInfo&, const QFileInfo&);
+
+// Hidden and System entries are enumerated -- otherwise the source listing drops them before
+// the view's show-hidden filter can ever act, leaving that toggle dead and hiding files a
+// folder copy would still transfer.
+constexpr QDir::Filters kLocalListingFilters = QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot |
+                                               QDir::Hidden | QDir::System;
+
+// Outcome of one bounded directory walk. A non-empty `error` means the walk FAILED: `entries`
+// and `dropped` carry nothing and must never be presented as a (possibly empty) listing.
+struct BoundedDirectoryWalk {
+    std::vector<QFileInfo> entries;  ///< display-order-sorted, at most `cap` of them
+    int dropped = 0;                 ///< entries seen beyond the cap (exact count)
+    QString error;                   ///< non-empty => the directory could not be read
+
+    [[nodiscard]] bool failed() const { return !error.isEmpty(); }
+};
+
+// Keep `info` only while it is among the `cap` display-order-smallest entries seen so far,
+// using a bounded max-heap so memory stays O(cap). cap <= 0 keeps every entry.
+void keepBoundedEntry(std::vector<QFileInfo>& kept,
+                      QFileInfo info,
+                      int cap,
+                      LocalEntryComparator less,
+                      int& dropped) {
+    if (cap <= 0 || static_cast<int>(kept.size()) < cap) {
+        kept.push_back(std::move(info));
+        if (cap > 0) {
+            std::ranges::push_heap(kept, less);
+        }
+        return;
+    }
+    ++dropped;
+    if (less(info, kept.front())) {
+        std::ranges::pop_heap(kept, less);
+        kept.back() = std::move(info);
+        std::ranges::push_heap(kept, less);
+    }
+}
+
+// Stream a directory, keeping only the display-order-smallest `cap` entries in
+// O(cap) memory via a bounded max-heap, so an enormous or hostile directory can
+// never force its whole QFileInfoList (one stat per entry) into RAM before the
+// cap is applied (B8-20). cap <= 0 keeps every entry.
+//
+// The walk is gated on an explicit directory OPEN first: QDirIterator (like
+// QDir::entryInfoList) surfaces no error at all, so an existing-but-unreadable
+// directory simply yields zero entries -- indistinguishable from a genuinely empty
+// one, and reported to the user as "this folder is empty" (fail open). The
+// error_code overload of std::filesystem::directory_iterator DOES report that
+// failure, so the open runs through it and a failed open is returned as an error
+// instead of an empty result.
+BoundedDirectoryWalk collectBoundedEntries(const QString& path,
+                                           QDir::Filters filters,
+                                           int cap,
+                                           LocalEntryComparator less) {
+    BoundedDirectoryWalk walk;
+    std::error_code ec;
+    const std::filesystem::directory_iterator probe(std::filesystem::path(path.toStdWString()), ec);
+    if (ec) {
+        walk.error = QStringLiteral("Could not read directory %1: %2")
+                         .arg(path, QString::fromStdString(ec.message()));
+        return walk;
+    }
+    QDirIterator iter(path, filters, QDirIterator::NoIteratorFlags);
+    while (iter.hasNext()) {
+        iter.next();
+        keepBoundedEntry(walk.entries, iter.fileInfo(), cap, less, walk.dropped);
+    }
+    std::ranges::sort(walk.entries, less);
+    return walk;
+}
+
 FileManagementListResult listLocalDirectory(const QString& path, int maxEntries) {
     FileManagementListResult result;
     result.ok = false;
     result.file_system = QStringLiteral("Local");
-    const QDir dir(path);
-    if (!dir.exists()) {
+    if (!QDir(path).exists()) {
         result.blockers.append(QStringLiteral("Directory does not exist: %1").arg(path));
         return result;
     }
 
-    const auto entries = dir.entryInfoList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot,
-                                           QDir::DirsFirst | QDir::IgnoreCase | QDir::Name);
-    const qsizetype limit = maxEntries > 0 ? std::min<qsizetype>(maxEntries, entries.size())
-                                           : entries.size();
-    result.entries.reserve(limit);
-    for (qsizetype i = 0; i < limit; ++i) {
-        result.entries.append(fromLocalInfo(entries.at(i), path));
+    const BoundedDirectoryWalk walk =
+        collectBoundedEntries(path, kLocalListingFilters, maxEntries, localEntryLess);
+    if (walk.failed()) {
+        // The directory EXISTS but could not be read (permissions, sharing, IO). Reporting
+        // ok=true with zero entries here would tell the caller the folder is empty and let a
+        // folder copy "succeed" having transferred nothing -- fail closed instead.
+        result.blockers.append(walk.error);
+        return result;
     }
-    if (limit < entries.size()) {
-        result.warnings.append(QStringLiteral("Listing truncated to %1 entries").arg(limit));
+    result.entries.reserve(static_cast<qsizetype>(walk.entries.size()));
+    for (const QFileInfo& info : walk.entries) {
+        result.entries.append(fromLocalInfo(info, path));
+    }
+    if (walk.dropped > 0) {
+        result.warnings.append(
+            QStringLiteral("Listing truncated to %1 entries").arg(result.entries.size()));
     }
     result.ok = true;
     return result;
@@ -241,17 +505,17 @@ FileManagementListResult fromExtResult(const PartitionExtFileReadResult& input) 
     result.warnings = input.warnings;
     result.entries.reserve(input.entries.size());
     for (const auto& item : input.entries) {
-        result.entries.append({item.name,
-                               item.path,
-                               item.type,
-                               item.size_bytes,
-                               {},
-                               {},
-                               QString::number(item.inode),
-                               item.symlink_target,
-                               item.directory,
-                               item.regular_file,
-                               item.symlink});
+        result.entries.append({.name = item.name,
+                               .path = item.path,
+                               .type = item.type,
+                               .size_bytes = item.size_bytes,
+                               .modified_time = {},
+                               .created_time = {},
+                               .identifier = QString::number(item.inode),
+                               .link_target = item.symlink_target,
+                               .directory = item.directory,
+                               .regular_file = item.regular_file,
+                               .symlink = item.symlink});
     }
     return result;
 }
@@ -264,17 +528,18 @@ FileManagementListResult fromHfsResult(const PartitionHfsFileReadResult& input) 
     result.warnings = input.warnings;
     result.entries.reserve(input.entries.size());
     for (const auto& item : input.entries) {
-        result.entries.append({item.name,
-                               item.path,
-                               item.type,
-                               item.size_bytes,
-                               {},
-                               {},
-                               QString::number(item.catalog_id),
-                               {},
-                               item.directory,
-                               item.regular_file,
-                               false});
+        FileManagementEntry entry;
+        entry.name = item.name;
+        entry.path = item.path;
+        entry.type = item.type;
+        entry.size_bytes = item.size_bytes;
+        entry.identifier = QString::number(item.catalog_id);
+        entry.directory = item.directory;
+        entry.regular_file = item.regular_file;
+        entry.symlink = item.symbolic_link;
+        entry.link_target = item.symbolic_link ? item.name : QString();
+        entry.resource_fork_bytes = item.resource_fork_size_bytes;
+        result.entries.append(entry);
     }
     return result;
 }
@@ -288,17 +553,18 @@ FileManagementListResult fromApfsResult(const PartitionApfsFileReadResult& input
     result.warnings = input.warnings;
     result.entries.reserve(input.entries.size());
     for (const auto& item : input.entries) {
-        result.entries.append({item.name,
-                               item.path,
-                               item.type,
-                               item.size_bytes,
-                               {},
-                               {},
-                               QString::number(item.object_id),
-                               {},
-                               item.directory,
-                               item.regular_file,
-                               item.symlink});
+        FileManagementEntry entry;
+        entry.name = item.name;
+        entry.path = item.path;
+        entry.type = item.type;
+        entry.size_bytes = item.size_bytes;
+        entry.identifier = QString::number(item.object_id);
+        entry.directory = item.directory;
+        entry.regular_file = item.regular_file;
+        entry.symlink = item.symlink;
+        entry.compressed = item.compressed;
+        entry.sparse = item.sparse;
+        result.entries.append(entry);
     }
     return result;
 }
@@ -306,6 +572,17 @@ FileManagementListResult fromApfsResult(const PartitionApfsFileReadResult& input
 QString pathOrRoot(const QString& path) {
     const QString trimmed = path.trimmed();
     return trimmed.isEmpty() ? QStringLiteral("/") : trimmed;
+}
+
+// One past the read cap for the "read one extra to detect an over-cap / TOCTOU-grown
+// file" probe, saturating so a UINT64_MAX cap does not wrap to 0 -- which would either
+// read nothing (local) or disable the cap entirely (raw readers treat 0 as unlimited).
+// A 0 cap ("no limit") stays 0 (B8-18).
+uint64_t readCapProbe(uint64_t max_bytes) {
+    if (max_bytes == 0 || max_bytes == std::numeric_limits<uint64_t>::max()) {
+        return max_bytes;
+    }
+    return max_bytes + 1;
 }
 
 FileManagementReadResult readLocalFile(const QString& path, uint64_t maxBytes) {
@@ -316,26 +593,78 @@ FileManagementReadResult readLocalFile(const QString& path, uint64_t maxBytes) {
         result.blockers.append(QStringLiteral("Could not open file: %1").arg(path));
         return result;
     }
-    if (maxBytes > 0 && static_cast<uint64_t>(file.size()) > maxBytes) {
+
+    QByteArray data;
+    if (maxBytes > 0) {
+        if (static_cast<uint64_t>(file.size()) > maxBytes) {
+            result.blockers.append(
+                QStringLiteral("File exceeds read limit: %1 bytes").arg(file.size()));
+            return result;
+        }
+        // Read one past the cap so a file that grew between size() and read
+        // (TOCTOU) is rejected rather than returned over-limit. readCapProbe
+        // saturates so a UINT64_MAX cap does not wrap to read(0). A probe past the
+        // QFile::read/QByteArray argument range means a cap no real file can exceed
+        // (file.size() <= maxBytes was already checked), so read the whole file --
+        // the over-limit check below then never trips, which is correct (B8-18).
+        const uint64_t probe = readCapProbe(maxBytes);
+        const auto qint64Max = static_cast<uint64_t>(std::numeric_limits<qint64>::max());
+        data = probe > qint64Max ? file.readAll() : file.read(static_cast<qint64>(probe));
+        if (static_cast<uint64_t>(data.size()) > maxBytes) {
+            result.blockers.append(
+                QStringLiteral("File exceeds read limit: %1 bytes").arg(maxBytes));
+            return result;
+        }
+    } else {
+        data = file.readAll();
+    }
+
+    // readAll()/read() return whatever was read before an I/O fault without
+    // signalling failure; check error() so truncated data is not surfaced as a
+    // complete, successful read.
+    if (file.error() != QFileDevice::NoError) {
         result.blockers.append(
-            QStringLiteral("File exceeds read limit: %1 bytes").arg(file.size()));
+            QStringLiteral("Read error on %1: %2").arg(path, file.errorString()));
         return result;
     }
-    result.data = file.readAll();
+
+    result.data = data;
     result.ok = true;
     return result;
 }
 
+// ext and HFS+ both FAIL CLOSED above their read cap rather than returning a prefix, so a
+// successful read from either is complete by construction and truncated stays false.
 FileManagementReadResult fromExtReadResult(const PartitionExtFileReadResult& input) {
-    return {input.ok, input.file_system, input.blockers, input.warnings, input.data};
+    return {.ok = input.ok,
+            .file_system = input.file_system,
+            .blockers = input.blockers,
+            .warnings = input.warnings,
+            .data = input.data,
+            .truncated = false};
 }
 
 FileManagementReadResult fromHfsReadResult(const PartitionHfsFileReadResult& input) {
-    return {input.ok, input.file_system, input.blockers, input.warnings, input.data};
+    return {.ok = input.ok,
+            .file_system = input.file_system,
+            .blockers = input.blockers,
+            .warnings = input.warnings,
+            .data = input.data,
+            .truncated = false};
 }
 
+// APFS is the exception: it returns a PREFIX with truncated set instead of failing. That flag
+// is the only honest signal that the data is partial, because the reader clamps to its own
+// 512 MiB ceiling and the callers' cap is the same number -- so the byte count alone cannot
+// tell a complete 512 MiB file from a cut 700 MB one. Dropping it here is what let a hash
+// report itself uncapped over a prefix, and let a move delete the intact source.
 FileManagementReadResult fromApfsReadResult(const PartitionApfsFileReadResult& input) {
-    return {input.ok, input.file_system, input.blockers, input.warnings, input.data};
+    return {.ok = input.ok,
+            .file_system = input.file_system,
+            .blockers = input.blockers,
+            .warnings = input.warnings,
+            .data = input.data,
+            .truncated = input.truncated};
 }
 
 FileManagementMutationResult fromHfsWriteResult(const PartitionHfsFileWriteResult& input) {
@@ -377,37 +706,165 @@ FileManagementMutationResult writeApfsFile(const FileManagementTarget& target,
                                QStringLiteral("APFS File Management file write is limited "
                                               "to root files or one root-directory child"));
     }
-    const auto parts = apfsParts(cleanPath);
-    if (parts.size() == 1) {
-        // Root files use the certified crash-safe in-place COW engine
-        // (create-or-replace).
-        return fromApfsCommitResult(
-            PartitionApfsWriter::commitRawFileWrite(
-                {.target_path = target.root_path,
-                 .target_container_bytes = target.size_bytes,
-                 .file_name = parts.value(0),
-                 .file_data = data,
-                 .target_mutation_confirmed = true,
-                 .allow_raw_device_target = isRawDevicePath(target.root_path),
-                 .options = apfsRawWriteOptions()}),
-            cleanPath,
-            static_cast<uint64_t>(data.size()));
+    // The certified crash-safe in-place COW engine create-or-replaces the file under its parent
+    // path at any depth (empty parent = container root).
+    const auto [parent, name] = apfsParentAndName(cleanPath);
+    return fromApfsCommitResult(
+        PartitionApfsWriter::commitRawFileWrite(
+            {.target_path = target.root_path,
+             .target_container_bytes = target.size_bytes,
+             .file_name = name,
+             .file_data = data,
+             .parent_directory_path = parent,
+             .target_mutation_confirmed = true,
+             .allow_raw_device_target =
+                 PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
+             .options = apfsRawWriteOptions(target)}),
+        cleanPath,
+        static_cast<uint64_t>(data.size()));
+}
+
+// Streaming APFS write: the payload is pulled from @p hostPath block-by-block by the
+// certified multi-chunk COW engine (never held whole in RAM), so an arbitrarily large
+// file is bounded only by the container's free space.
+FileManagementMutationResult writeApfsFileStreamed(const FileManagementTarget& target,
+                                                   const QString& cleanPath,
+                                                   const QString& hostPath,
+                                                   uint64_t size) {
+    const QString fs = QStringLiteral("apfs");
+    if (!isApfsPathSupported(cleanPath, false)) {
+        return mutationBlocked(fs,
+                               cleanPath,
+                               QStringLiteral("APFS File Management file write is limited "
+                                              "to root files or one root-directory child"));
     }
-    // Directory children use the same COW engine (create-or-replace under a parent).
-    return fromApfsCommitResult(PartitionApfsWriter::commitRawDirectoryChildWrite(
-                                    {.target_path = target.root_path,
-                                     .target_container_bytes = target.size_bytes,
-                                     .directory_name = parts.value(0),
-                                     .file_name = parts.value(1),
-                                     .file_data = data,
-                                     .target_mutation_confirmed = true,
-                                     .allow_raw_device_target = isRawDevicePath(target.root_path),
-                                     .options = apfsRawWriteOptions()}),
-                                cleanPath,
-                                static_cast<uint64_t>(data.size()));
+    // One streaming create-or-replace under the file's parent path at any depth (empty = root).
+    const auto [parent, name] = apfsParentAndName(cleanPath);
+    return fromApfsCommitResult(
+        PartitionApfsWriter::commitRawFileWrite(
+            {.target_path = target.root_path,
+             .target_container_bytes = target.size_bytes,
+             .file_name = name,
+             .file_data_path = hostPath,
+             .file_data_stream_size = size,
+             .parent_directory_path = parent,
+             .target_mutation_confirmed = true,
+             .allow_raw_device_target =
+                 PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
+             .options = apfsRawWriteOptions(target)}),
+        cleanPath,
+        size);
+}
+
+// Streaming HFS+ write: the payload is pulled from @p hostPath one allocation block at a
+// time by the certified fork writer (never held whole in RAM), so an arbitrarily large
+// file is bounded only by the volume's free space. Byte-identical on disk to the buffered
+// in-memory write of the same payload.
+FileManagementMutationResult writeHfsFileStreamed(const FileManagementTarget& target,
+                                                  const QString& cleanPath,
+                                                  const QString& hostPath,
+                                                  uint64_t size) {
+    sak::PartitionHfsFileWriteOptions options = hfsWriteOptions(target);
+    // Lift the buffered-write cap for streaming: bound the write by the file's own size
+    // (still fails closed on a full volume via the allocator).
+    options.max_write_bytes = std::max<uint64_t>(size, options.max_write_bytes);
+    return fromHfsWriteResult(PartitionHfsFileSystemWriter::createFileFromHostPathStreamedFromImage(
+        target.root_path, cleanPath, hostPath, size, options));
+}
+
+// APFS/HFS+ streamed write with observer reporting: the certified engines
+// stream internally (and stay untouched), so the observer sees one whole-file
+// delta on success.
+FileManagementMutationResult writeObservedRawStream(
+    const FileManagementTarget& target,
+    const QString& cleanPath,
+    const QString& hostPath,
+    const uint64_t size,
+    const FileManagementTransferObserver& observer) {
+    const QString fs = FileManagementFileSystemBridge::normalizedFileSystem(target.file_system);
+    const FileManagementMutationResult result =
+        fs == QStringLiteral("apfs") ? writeApfsFileStreamed(target, cleanPath, hostPath, size)
+                                     : writeHfsFileStreamed(target, cleanPath, hostPath, size);
+    if (result.ok) {
+        observer.addBytes(static_cast<qint64>(size));
+    }
+    return result;
+}
+
+// Streaming local-filesystem copy: host file -> destination through a fixed 1 MiB
+// window, so a multi-GB copy never holds the whole payload in RAM. The observer
+// sees every window land and can cancel between windows.
+FileManagementMutationResult copyLocalFileStreamed(const QString& destPath,
+                                                   const QString& hostPath,
+                                                   const FileManagementTransferObserver& observer) {
+    FileManagementMutationResult result;
+    result.path = destPath;
+    QFile src(hostPath);
+    // QSaveFile streams into a temporary and renames on commit(), so a canceled
+    // copy, a mid-stream read error, or a short/failed flush leaves any existing
+    // destination file untouched instead of truncating it to a partial file.
+    QSaveFile dst(destPath);
+    if (!src.open(QIODevice::ReadOnly)) {
+        result.blockers.append(
+            QStringLiteral("Unable to read source file: %1").arg(src.errorString()));
+        return result;
+    }
+    if (!dst.open(QIODevice::WriteOnly)) {
+        result.blockers.append(QStringLiteral("Unable to write file: %1").arg(dst.errorString()));
+        return result;
+    }
+    QByteArray window(kCopyWindowBytes, Qt::Uninitialized);
+    uint64_t written = 0;
+    for (;;) {
+        if (observer.isCancelled()) {
+            // Files removes the partial destination of a canceled copy; cancelWriting
+            // discards the temporary and keeps the original destination intact.
+            dst.cancelWriting();
+            result.blockers.append(kFileManagementTransferCancelledBlocker);
+            return result;
+        }
+        const qint64 n = src.read(window.data(), window.size());
+        if (n < 0) {
+            dst.cancelWriting();
+            result.blockers.append(
+                QStringLiteral("Read error while streaming: %1").arg(src.errorString()));
+            return result;
+        }
+        if (n == 0) {
+            break;
+        }
+        if (dst.write(window.constData(), n) != n) {
+            dst.cancelWriting();
+            result.blockers.append(
+                QStringLiteral("Short write while streaming file: %1").arg(destPath));
+            return result;
+        }
+        written += static_cast<uint64_t>(n);
+        observer.addBytes(n);
+    }
+    if (!dst.commit()) {
+        result.blockers.append(
+            QStringLiteral("Unable to finalize file: %1").arg(dst.errorString()));
+        return result;
+    }
+    result.bytes_written = written;
+    result.ok = true;
+    return result;
 }
 
 }  // namespace
+
+QString FileManagementFileSystemBridge::mountedVolumeLabel(const QString& name,
+                                                           const QString& root) {
+    // Windows' own form, "Local Disk (C:)": the old label read "C:/ (C:/)" for a volume with no
+    // name, with the root in forward slashes twice.
+    QString drive = QDir::toNativeSeparators(root);
+    if (drive.endsWith(QLatin1Char('\\'))) {
+        drive.chop(1);
+    }
+    const QString shown = name.trimmed().isEmpty() ? QStringLiteral("Local Disk") : name.trimmed();
+    return QStringLiteral("%1 (%2)").arg(shown, drive);
+}
 
 QVector<FileManagementTarget> FileManagementFileSystemBridge::mountedTargets() {
     QVector<FileManagementTarget> targets;
@@ -425,13 +882,9 @@ QVector<FileManagementTarget> FileManagementFileSystemBridge::mountedTargets() {
             continue;
         }
         FileManagementTarget target = localTarget(volume.rootPath());
-        QString label = volume.displayName();
-        if (label.isEmpty()) {
-            label = volume.rootPath();
-        }
         target.id = QStringLiteral("volume:%1").arg(volume.rootPath());
-        target.label =
-            QStringLiteral("%1 (%2)").arg(label, volume.rootPath().left(kDriveRootPrefixLength));
+        target.label = FileManagementFileSystemBridge::mountedVolumeLabel(
+            volume.name(), volume.rootPath().left(kDriveRootPrefixLength));
         target.file_system = QString::fromUtf8(volume.fileSystemType());
         target.source = QStringLiteral("Mounted volume");
         targets.append(applyCapabilities(target));
@@ -452,14 +905,15 @@ QVector<FileManagementTarget> FileManagementFileSystemBridge::targetsFromInvento
                     : QString();
             FileManagementTarget target;
             target.id = QStringLiteral("disk:%1:partition:%2")
-                            .arg(disk.disk_number)
-                            .arg(partition.partition_number);
+                            .arg(disk.disk_number.value())
+                            .arg(partition.partition_number.value());
             target.label = QStringLiteral("Disk %1 Partition %2 - %3")
-                               .arg(disk.disk_number)
-                               .arg(partition.partition_number)
+                               .arg(disk.disk_number.value())
+                               .arg(partition.partition_number.value())
                                .arg(displayFileSystem(fs));
             target.root_path = mountedPath.isEmpty()
-                                   ? partitionAlias(disk.disk_number, partition.partition_number)
+                                   ? partitionAlias(disk.disk_number.value(),
+                                                    partition.partition_number.value())
                                    : mountedPath;
             target.file_system = fs;
             target.source = partition.volume ? partition.volume->file_system_source
@@ -495,6 +949,12 @@ FileManagementTarget FileManagementFileSystemBridge::manualTarget(const QString&
     } else if (!isRawDevicePath(target.root_path)) {
         target.size_bytes =
             static_cast<uint64_t>(std::max<qint64>(0, QFileInfo(target.root_path).size()));
+    } else if (FileManagementFileSystemBridge::normalizedFileSystem(file_system) ==
+               QStringLiteral("apfs")) {
+        // A raw partition device has no file size; derive the APFS container size from
+        // its own superblock so the certified write engine can be range-gated instead
+        // of falling back to read-only for want of a size.
+        target.size_bytes = probeApfsContainerBytes(target.root_path);
     }
     target.kind = isRawDevicePath(target.root_path) ? FileManagementTargetKind::Partition
                                                     : FileManagementTargetKind::ImageFile;
@@ -529,6 +989,110 @@ bool FileManagementFileSystemBridge::isReadableNonNativeFileSystem(const QString
            fs == QStringLiteral("hfsx") || fs == QStringLiteral("apfs");
 }
 
+namespace {
+
+// True when a bare filename carries a byte that is unsafe on a Windows host: the
+// NTFS alternate-data-stream separator ':', any reserved path/wildcard character,
+// or a raw control byte. A ':' would divert the export into a hidden ADS.
+bool hasUnsafeHostNameChar(const QString& base) {
+    static const QString kReserved = QStringLiteral(":<>\"|?*/\\");
+    for (const QChar ch : base) {
+        if (ch.unicode() < kFirstPrintableChar || kReserved.contains(ch)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// True when @p base resolves to a Windows reserved device name (CON, PRN, AUX,
+// NUL, COM1-9, LPT1-9) even with an extension -- "NUL.txt" still opens the device.
+// The catalogue is shared (sak/windows_reserved_names.h) rather than restated here: this was
+// one of five private copies of the same rule, which is how a fix to one could leave the
+// others wrong.
+bool isWindowsReservedDeviceName(const QString& base) {
+    return sak::isWindowsReservedName(base);
+}
+
+}  // namespace
+
+QString FileManagementFileSystemBridge::confinedHostName(const QString& raw_name) {
+    // A foreign name that is not ALREADY a bare filename is REJECTED, not collapsed onto its last
+    // segment: QFileInfo::fileName reduces "../../evil" or "a\b" (backslash is a LEGAL byte in an
+    // APFS/HFS+ name) to "evil"/"b", which then lands on -- and overwrites -- a real sibling of
+    // that name. "."/".."/empty are rejected too (B8-02).
+    const QString base = QFileInfo(raw_name).fileName();
+    if (base.isEmpty() || base != raw_name || base == QStringLiteral(".") ||
+        base == QStringLiteral("..")) {
+        return QString();
+    }
+    // Foreign (untrusted image) entry names must additionally be hardened against
+    // Windows filename hazards before they name a host file (Codex-3): an NTFS
+    // alternate-data-stream separator or other reserved character, a reserved
+    // device name (CON/NUL/COM1...), and a trailing dot or space that Windows
+    // silently strips -- collapsing "name " onto sibling "name" and overwriting it.
+    // Reject fail-closed rather than coerce the name. The raw name is also scanned
+    // for ':' because QFileInfo may split "foo:bar" on a ':' it reads as a drive,
+    // hiding the ADS separator from the reduced base.
+    if (hasUnsafeHostNameChar(base) || raw_name.contains(QLatin1Char(':')) ||
+        isWindowsReservedDeviceName(base)) {
+        return QString();
+    }
+    if (base.endsWith(QLatin1Char('.')) || base.endsWith(QLatin1Char(' '))) {
+        return QString();
+    }
+    return base;
+}
+
+bool FileManagementFileSystemBridge::isUnsafeLocalDeletePath(const QString& path) {
+    const QString trimmed = path.trimmed();
+    if (trimmed.isEmpty()) {
+        return true;  // QDir("") resolves to the current working directory
+    }
+    const QDir dir(trimmed);
+    // A filesystem root ("C:/", "/", "\\server\share") must never be recursively
+    // deleted. Check both the given path and its resolved absolute form.
+    if (dir.isRoot()) {
+        return true;
+    }
+    const QString absolute = QDir::cleanPath(dir.absolutePath());
+    return absolute.isEmpty() || QDir(absolute).isRoot();
+}
+
+RawReplaceCaseAction FileManagementFileSystemBridge::rawReplaceCaseAction(
+    const QString& normalized_fs, int case_insensitive_matches) {
+    if (case_insensitive_matches > 1) {
+        return RawReplaceCaseAction::RefuseMultipleCase;
+    }
+    if (case_insensitive_matches <= 0) {
+        return RawReplaceCaseAction::TreatAsVacant;
+    }
+    // Exactly one occupant that differs from the target only by case.
+    if (normalized_fs == QStringLiteral("hfsplus")) {
+        return RawReplaceCaseAction::DeleteDifferingCase;  // HFS+ is case-insensitive: same file.
+    }
+    if (normalized_fs == QStringLiteral("hfsx")) {
+        return RawReplaceCaseAction::TreatAsVacant;  // HFSX is case-sensitive: a distinct file.
+    }
+    // APFS per-volume case-sensitivity is not surfaced to the bridge, so we cannot
+    // tell whether this is the same file. Refuse rather than delete the wrong one.
+    return RawReplaceCaseAction::RefuseAmbiguous;
+}
+
+bool FileManagementFileSystemBridge::targetPermitsMutation(const FileManagementTarget& target) {
+    // can_write_files is the single genuine-writability signal after
+    // applyCapabilities: it is set only for a local volume or a writer-certified raw
+    // FS, and is forced FALSE when the inventory reports a real write-protect /
+    // read-only mount (inbound_read_only, B8-03). The target.read_only FIELD is a
+    // DIFFERENT thing -- it is forced true for every non-local target purely as a
+    // browsing-semantics badge, so the previous `!read_only` clause disabled EVERY
+    // advertised raw HFS/APFS write (B8-04 accidentally broke the certified
+    // raw-writer path: enable_writer never turned on for a non-local target).
+    // Gate on can_write_files alone: a genuine write-protect still fails closed
+    // (can_write_files == false) while an advertised, in-range raw write reaches the
+    // certified engine (Codex-3).
+    return target.can_write_files;
+}
+
 QString FileManagementFileSystemBridge::normalizedFileSystem(const QString& file_system) {
     QString fs = file_system.trimmed().toLower();
     fs.replace(QLatin1Char('_'), QLatin1Char('-'));
@@ -557,6 +1121,57 @@ QString FileManagementFileSystemBridge::capabilitySummary(const FileManagementTa
         parts.append(QStringLiteral("organizer blocked"));
     }
     return parts.join(QStringLiteral(" - "));
+}
+
+QString FileManagementFileSystemBridge::identifierLabel(const QString& file_system) {
+    const QString fs = file_system.toLower();
+    if (fs.contains(QStringLiteral("apfs"))) {
+        return QStringLiteral("Object ID");
+    }
+    if (fs.contains(QStringLiteral("hfs"))) {
+        return QStringLiteral("Catalog ID");
+    }
+    if (fs.contains(QStringLiteral("ext"))) {
+        return QStringLiteral("Inode");
+    }
+    return QStringLiteral("Identifier");
+}
+
+QStringList FileManagementFileSystemBridge::safetyNotes(const FileManagementTarget& target) {
+    const QString fs = target.file_system.toLower();
+    QStringList notes;
+    if (fs.contains(QStringLiteral("apfs"))) {
+        notes.append(
+            target.can_write_files
+                ? QStringLiteral(
+                      "APFS writes commit through an in-place copy-on-write engine validated with "
+                      "Apple's own tools; S.A.K.-generated and real Apple-created containers are "
+                      "both supported. Fusion and multi-device containers, sealed system volumes, "
+                      "case-sensitive volumes, and locked encrypted volumes are refused with an "
+                      "exact reason.")
+                : QStringLiteral(
+                      "APFS writes need a known container size within the write engine's "
+                      "range (%1); this target is read-only because its size is unknown or "
+                      "out of range. Fusion/Tier2 sets and unprovided-credential encrypted "
+                      "volumes also stay read-only.")
+                      .arg(apfsCapacityRangeText()));
+    } else if (fs.contains(QStringLiteral("hfs"))) {
+        notes.append(target.can_write_files
+                         ? QStringLiteral("HFS+/HFSX writes commit through a catalog/extents/"
+                                          "attributes B-tree writer validated with Apple's own "
+                                          "tools.")
+                         : QStringLiteral("This HFS+/HFSX target is read-only; writes require "
+                                          "a write-capable raw/image slice."));
+    } else if (fs.contains(QStringLiteral("xfs")) || fs.contains(QStringLiteral("btrfs"))) {
+        notes.append(
+            QStringLiteral("XFS/Btrfs targets are metadata-only in this build; no "
+                           "browse/read/write reader ships yet."));
+    } else if (fs.contains(QStringLiteral("ext"))) {
+        notes.append(
+            QStringLiteral("ext2/ext3/ext4 targets are read-only browse/read/copy-out; "
+                           "no write path ships."));
+    }
+    return notes;
 }
 
 FileManagementListResult FileManagementFileSystemBridge::listDirectory(
@@ -614,8 +1229,601 @@ FileManagementReadResult FileManagementFileSystemBridge::readFile(
     return result;
 }
 
+bool FileManagementFileSystemBridge::readWasCapped(bool reader_truncated,
+                                                   uint64_t bytes_read,
+                                                   uint64_t max_bytes) {
+    if (reader_truncated) {
+        return true;
+    }
+    return max_bytes != 0 && bytes_read > max_bytes;
+}
+
+FileManagementHashResult FileManagementFileSystemBridge::hashFile(
+    const FileManagementTarget& target,
+    const QString& path,
+    uint64_t max_bytes,
+    std::stop_token stop_token) {
+    FileManagementHashResult result;
+    result.file_system = displayFileSystem(normalizedFileSystem(target.file_system));
+
+    if (target.local_file_system) {
+        // Local files hash in full through the chunked reader (memory-safe for large files).
+        // The chunked hasher polls stop_token, so a caller-requested cancel aborts the digest
+        // of even a very large file rather than running to completion off-screen.
+        const QString local = path.trimmed().isEmpty() ? target.root_path : path;
+        const auto digest =
+            file_hasher(hash_algorithm::sha256)
+                .calculateHash(std::filesystem::path(local.toStdWString()), nullptr, stop_token);
+        if (!digest) {
+            if (stop_token.stop_requested()) {
+                result.cancelled = true;
+                result.blockers.append(QStringLiteral("Hashing of %1 was cancelled.").arg(local));
+                return result;
+            }
+            result.blockers.append(QStringLiteral("Could not hash %1.").arg(local));
+            return result;
+        }
+        // QFileInfo::size() returns -1 on a stat failure; casting that to uint64_t
+        // would report UINT64_MAX hashed bytes. Fail closed on an unresolved size
+        // rather than surface a bogus count.
+        const qint64 size = QFileInfo(local).size();
+        if (size < 0) {
+            result.blockers.append(
+                QStringLiteral("Could not determine the size of %1.").arg(local));
+            return result;
+        }
+        result.ok = true;
+        result.sha256 = QString::fromStdString(*digest);
+        result.hashed_bytes = static_cast<uint64_t>(size);
+        return result;
+    }
+
+    // Raw/non-native targets are read through their reader up to the cap, then hashed. The
+    // read is a single bounded (<= max_bytes) call and cannot be interrupted mid-read, so honor
+    // a cancel requested before it starts; the digest itself is trivial on the capped buffer.
+    if (stop_token.stop_requested()) {
+        result.cancelled = true;
+        result.blockers.append(
+            QStringLiteral("Hashing of %1 was cancelled before the read started.").arg(path));
+        return result;
+    }
+    // Request one extra byte so a file of exactly max_bytes is provably complete and is
+    // not falsely reported as capped.
+    const FileManagementReadResult read = readFile(target, path, readCapProbe(max_bytes));
+    if (!read.ok) {
+        result.blockers = read.blockers;
+        return result;
+    }
+    QByteArray data = read.data;
+    result.capped = readWasCapped(read.truncated, static_cast<uint64_t>(data.size()), max_bytes);
+    if (max_bytes != 0 && static_cast<uint64_t>(data.size()) > max_bytes) {
+        data.truncate(static_cast<qsizetype>(max_bytes));
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(data);
+    result.ok = true;
+    result.sha256 = QString::fromLatin1(hash.result().toHex());
+    result.hashed_bytes = static_cast<uint64_t>(data.size());
+    return result;
+}
+
+namespace {
+
+// Stream a local source file into an already-open destination, hashing as it goes.
+// Returns false and appends a blocker on any read/write error or a cancel.
+bool streamLocalSourceOut(const QString& local,
+                          QFileDevice& dest,
+                          QCryptographicHash& hash,
+                          FileManagementExportResult& result,
+                          const FileManagementTransferObserver& observer) {
+    QFile src(local);
+    if (!src.open(QIODevice::ReadOnly)) {
+        result.blockers.append(QStringLiteral("Could not open source %1.").arg(local));
+        return false;
+    }
+    constexpr qint64 kWindowBytes = 1 << 20;
+    while (!src.atEnd()) {
+        if (observer.isCancelled()) {
+            result.blockers.append(kFileManagementTransferCancelledBlocker);
+            return false;
+        }
+        const QByteArray chunk = src.read(kWindowBytes);
+        if (chunk.isEmpty()) {
+            if (src.error() != QFileDevice::NoError) {
+                result.blockers.append(
+                    QStringLiteral("Read error on %1: %2").arg(local, src.errorString()));
+                return false;
+            }
+            break;
+        }
+        if (dest.write(chunk) != chunk.size()) {
+            result.blockers.append(QStringLiteral("Write error: %1").arg(dest.errorString()));
+            return false;
+        }
+        hash.addData(chunk);
+        result.bytes_written += static_cast<uint64_t>(chunk.size());
+        observer.addBytes(chunk.size());
+    }
+    return true;
+}
+
+// Read a raw/non-native source through its reader (capped) into an open destination.
+// The caller reads one byte past the cap, so a source exactly at the cap is complete;
+// only a genuinely longer source is truncated back to the cap and flagged.
+bool writeRawSourceOut(const FileManagementReadResult& read,
+                       QFileDevice& dest,
+                       QCryptographicHash& hash,
+                       uint64_t max_bytes,
+                       FileManagementExportResult& result) {
+    if (!read.ok) {
+        result.blockers = read.blockers;
+        return false;
+    }
+    QByteArray data = read.data;
+    // An export that reports complete over a prefix is worse than a hash that does, because
+    // the move path deletes the source on the strength of it.
+    result.capped = FileManagementFileSystemBridge::readWasCapped(
+        read.truncated, static_cast<uint64_t>(data.size()), max_bytes);
+    if (max_bytes != 0 && static_cast<uint64_t>(data.size()) > max_bytes) {
+        data.truncate(static_cast<qsizetype>(max_bytes));
+    }
+    if (dest.write(data) != data.size()) {
+        result.blockers.append(QStringLiteral("Write error: %1").arg(dest.errorString()));
+        return false;
+    }
+    hash.addData(data);
+    result.bytes_written = static_cast<uint64_t>(data.size());
+    return true;
+}
+
+}  // namespace
+
+FileManagementExportResult FileManagementFileSystemBridge::copyFileToHost(
+    const FileManagementTarget& target,
+    const QString& source_path,
+    const QString& destination_path,
+    uint64_t max_bytes,
+    const FileManagementTransferObserver& observer) {
+    FileManagementExportResult result;
+    result.destination = destination_path;
+    if (observer.isCancelled()) {
+        result.blockers.append(kFileManagementTransferCancelledBlocker);
+        return result;
+    }
+
+    // QSaveFile writes to a temporary and renames on commit, so a failed copy never
+    // truncates or destroys a pre-existing destination file, and commit() surfaces
+    // flush errors (disk full) instead of silently reporting a short file as ok.
+    QSaveFile dest(destination_path);
+    if (!dest.open(QIODevice::WriteOnly)) {
+        result.blockers.append(
+            QStringLiteral("Could not open destination %1 for writing.").arg(destination_path));
+        return result;
+    }
+
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    const QString local = source_path.trimmed().isEmpty() ? target.root_path : source_path;
+    const bool ok = target.local_file_system
+                        ? streamLocalSourceOut(local, dest, hash, result, observer)
+                        : writeRawSourceOut(readFile(target, source_path, readCapProbe(max_bytes)),
+                                            dest,
+                                            hash,
+                                            max_bytes,
+                                            result);
+    if (ok && !target.local_file_system) {
+        // Raw sources land as one buffered read; report the whole delta.
+        observer.addBytes(static_cast<qint64>(result.bytes_written));
+    }
+
+    if (!ok) {
+        dest.cancelWriting();
+        return result;
+    }
+    if (!dest.commit()) {
+        result.blockers.append(QStringLiteral("Could not finalize destination %1: %2")
+                                   .arg(destination_path, dest.errorString()));
+        return result;
+    }
+    result.ok = true;
+    result.sha256 = QString::fromLatin1(hash.result().toHex());
+    return result;
+}
+
+namespace {
+
+// Bounds shared by the recursive directory walks (export, import, and tree delete):
+// deep-enough for real trees, still finite so a cyclic or hostile directory graph
+// cannot run away.
+constexpr int kDirectoryExportMaxDepth = 32;
+constexpr int kDirectoryExportMaxEntriesPerDirectory = 10'000;
+
+struct DirectoryExportContext {
+    const FileManagementTarget& target;
+    uint64_t max_file_bytes{};
+    FileManagementDirectoryExportResult& result;
+    const FileManagementTransferObserver& observer;
+};
+
+void exportEntryToHost(const DirectoryExportContext& ctx,
+                       const FileManagementEntry& entry,
+                       const QDir& host_dir,
+                       int depth,
+                       QSet<QString>& emitted_host_names);
+
+void exportDirectoryLevel(const DirectoryExportContext& ctx,
+                          const QString& source_path,
+                          const QDir& host_dir,
+                          const int depth) {
+    if (depth > kDirectoryExportMaxDepth) {
+        ++ctx.result.entries_skipped;
+        ctx.result.warnings.append(
+            QStringLiteral("Skipped %1: exceeds the export depth bound.").arg(source_path));
+        return;
+    }
+    // Request one past the cap so an over-full directory is detected precisely
+    // (a plain cap-sized listing cannot tell "exactly full" from "truncated").
+    const FileManagementListResult listing = FileManagementFileSystemBridge::listDirectory(
+        ctx.target, source_path, kDirectoryExportMaxEntriesPerDirectory + 1);
+    if (!listing.ok) {
+        ctx.result.blockers.append(listing.blockers.isEmpty()
+                                       ? QStringLiteral("Could not list %1.").arg(source_path)
+                                       : listing.blockers.join(QStringLiteral("; ")));
+        return;
+    }
+    ctx.result.warnings.append(listing.warnings);
+    qsizetype process = listing.entries.size();
+    if (process > kDirectoryExportMaxEntriesPerDirectory) {
+        ctx.result.entries_skipped +=
+            static_cast<int>(process - kDirectoryExportMaxEntriesPerDirectory);
+        ctx.result.warnings.append(
+            QStringLiteral("%1 holds more than %2 entries; the remainder was skipped.")
+                .arg(source_path)
+                .arg(kDirectoryExportMaxEntriesPerDirectory));
+        process = kDirectoryExportMaxEntriesPerDirectory;
+    }
+    // Host names already emitted at THIS level (case-folded, because the host volume is typically
+    // case-insensitive): two source entries mapping to one host name must fail closed, not silently
+    // overwrite. Scoped per level so identical names under different parents are fine.
+    QSet<QString> emitted_host_names;
+    for (qsizetype index = 0; index < process; ++index) {
+        if (ctx.observer.isCancelled()) {
+            ctx.result.blockers.append(kFileManagementTransferCancelledBlocker);
+            return;
+        }
+        exportEntryToHost(ctx, listing.entries.at(index), host_dir, depth, emitted_host_names);
+    }
+}
+
+void exportEntryToHost(const DirectoryExportContext& ctx,
+                       const FileManagementEntry& entry,
+                       const QDir& host_dir,
+                       const int depth,
+                       QSet<QString>& emitted_host_names) {
+    if (entry.symlink) {
+        ++ctx.result.symlinks_skipped;
+        ctx.result.warnings.append(
+            QStringLiteral("Skipped symlink %1 (links are not exported).").arg(entry.path));
+        return;
+    }
+    // The entry name comes verbatim from a parsed (untrusted) foreign image; confine
+    // it to a bare host filename so it cannot escape the export directory (B8-02).
+    const QString host_name = FileManagementFileSystemBridge::confinedHostName(entry.name);
+    if (host_name.isEmpty()) {
+        // Count the drop so exportDirectoryToHost's `complete` goes false; a warning alone left it
+        // true, and a move would then delete a source whose unsafe-named entry never landed (F4).
+        ++ctx.result.entries_skipped;
+        ctx.result.warnings.append(
+            QStringLiteral("Skipped entry with unsafe name %1.").arg(entry.path));
+        return;
+    }
+    // Two distinct source entries mapping to one host name -- case-only variants (README/readme)
+    // on a case-insensitive host, or a coerced name colliding with a real sibling -- would
+    // silently overwrite each other and still report the copy whole, so a move would delete both
+    // sources. Fail closed on the collision instead of overwriting.
+    const QString host_key = host_name.toLower();
+    if (emitted_host_names.contains(host_key)) {
+        ctx.result.blockers.append(
+            QStringLiteral("Two entries under %1 map to the same host name \"%2\"; the export was "
+                           "stopped rather than overwrite one with the other.")
+                .arg(host_dir.absolutePath(), host_name));
+        return;
+    }
+    emitted_host_names.insert(host_key);
+    if (entry.directory) {
+        if (!host_dir.mkpath(host_name)) {
+            ctx.result.blockers.append(QStringLiteral("Could not create host directory %1.")
+                                           .arg(host_dir.filePath(host_name)));
+            return;
+        }
+        ++ctx.result.directories_created;
+        exportDirectoryLevel(ctx, entry.path, QDir(host_dir.filePath(host_name)), depth + 1);
+        return;
+    }
+    if (!entry.regular_file) {
+        // Count the drop so the export is not reported complete over a skipped entry (F4).
+        ++ctx.result.entries_skipped;
+        ctx.result.warnings.append(QStringLiteral("Skipped special entry %1.").arg(entry.path));
+        return;
+    }
+    const FileManagementExportResult exported = FileManagementFileSystemBridge::copyFileToHost(
+        ctx.target, entry.path, host_dir.filePath(host_name), ctx.max_file_bytes, ctx.observer);
+    if (!exported.ok) {
+        ctx.result.blockers.append(exported.blockers.isEmpty()
+                                       ? QStringLiteral("Could not export %1.").arg(entry.path)
+                                       : exported.blockers.join(QStringLiteral("; ")));
+        return;
+    }
+    ++ctx.result.files_exported;
+    ctx.result.bytes_written += exported.bytes_written;
+    if (exported.capped) {
+        ++ctx.result.capped_files;
+        ctx.result.warnings.append(
+            QStringLiteral("%1 was truncated at the per-file read window.").arg(entry.path));
+    }
+}
+
+}  // namespace
+
+FileManagementDirectoryExportResult FileManagementFileSystemBridge::exportDirectoryToHost(
+    const FileManagementTarget& target,
+    const QString& source_path,
+    const QString& destination_dir,
+    const uint64_t max_file_bytes,
+    const FileManagementTransferObserver& observer) {
+    FileManagementDirectoryExportResult result;
+    result.destination = destination_dir;
+    if (!QDir().mkpath(destination_dir)) {
+        result.blockers.append(
+            QStringLiteral("Could not create destination directory %1.").arg(destination_dir));
+        return result;
+    }
+    const DirectoryExportContext ctx{
+        .target = target, .max_file_bytes = max_file_bytes, .result = result, .observer = observer};
+    exportDirectoryLevel(ctx, source_path, QDir(destination_dir), 0);
+    // ok == "the walk hit no hard blocker"; it is NOT a wholeness claim BY DESIGN.
+    // A caller that must distinguish a whole transfer from a partial one reads
+    // `complete` (below) and `capped_files` -- ok alone must never be read as "the
+    // entire tree copied" (Codex-3 finding 5, surfaced not coerced).
+    result.ok = result.blockers.isEmpty();
+    result.complete = result.ok && result.symlinks_skipped == 0 && result.entries_skipped == 0 &&
+                      result.capped_files == 0;
+    return result;
+}
+
+namespace {
+
+// Join a child name onto a target-side base path in the target's own path style:
+// host-native for local targets, "/"-separated for raw file-system paths.
+QString targetChildPath(const FileManagementTarget& target,
+                        const QString& base,
+                        const QString& name) {
+    if (target.local_file_system) {
+        return QDir(base).filePath(name);
+    }
+    QString clean = base;
+    clean.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    if (!clean.startsWith(QLatin1Char('/'))) {
+        clean.prepend(QLatin1Char('/'));
+    }
+    if (!clean.endsWith(QLatin1Char('/'))) {
+        clean.append(QLatin1Char('/'));
+    }
+    return clean + name;
+}
+
+struct DirectoryImportContext {
+    const FileManagementTarget& target;
+    FileManagementDirectoryImportResult& result;
+    const FileManagementTransferObserver& observer;
+};
+
+// The import walk copies every kind of host entry it can (special entries are reported and
+// skipped by importEntryFromHost), so it enumerates AllEntries, plus Hidden/System -- a folder
+// copy that silently dropped hidden files would be a partial copy reported as a whole one.
+constexpr QDir::Filters kHostImportFilters = QDir::AllEntries | QDir::NoDotAndDotDot |
+                                             QDir::Hidden | QDir::System;
+
+void importEntryFromHost(const DirectoryImportContext& ctx,
+                         const QFileInfo& info,
+                         const QString& destination_dir,
+                         int depth);
+
+void importDirectoryLevel(const DirectoryImportContext& ctx,
+                          const QString& host_dir,
+                          const QString& destination_dir,
+                          const int depth) {
+    if (depth > kDirectoryExportMaxDepth) {
+        ++ctx.result.entries_skipped;
+        ctx.result.warnings.append(
+            QStringLiteral("Skipped %1: exceeds the import depth bound.").arg(host_dir));
+        return;
+    }
+    // Stream the level through the same bounded top-N collector the listing path uses. The
+    // former QDir::entryInfoList materialized the WHOLE directory (one stat per entry) before
+    // the cap was applied, so a hostile source directory could exhaust memory ahead of the
+    // bound that was meant to stop it (B8-20). The collector also reports an unreadable
+    // directory as an error, so a source level that could not be read is a hard blocker rather
+    // than an empty level that silently imports nothing.
+    const BoundedDirectoryWalk walk = collectBoundedEntries(
+        host_dir, kHostImportFilters, kDirectoryExportMaxEntriesPerDirectory, hostImportEntryLess);
+    if (walk.failed()) {
+        ctx.result.blockers.append(walk.error);
+        return;
+    }
+    if (walk.dropped > 0) {
+        ctx.result.entries_skipped += walk.dropped;
+        ctx.result.warnings.append(
+            QStringLiteral("%1 holds more than %2 entries; the remainder was skipped.")
+                .arg(host_dir)
+                .arg(kDirectoryExportMaxEntriesPerDirectory));
+    }
+    for (const QFileInfo& info : walk.entries) {
+        if (ctx.observer.isCancelled()) {
+            ctx.result.blockers.append(kFileManagementTransferCancelledBlocker);
+            return;
+        }
+        importEntryFromHost(ctx, info, destination_dir, depth);
+    }
+}
+
+void importEntryFromHost(const DirectoryImportContext& ctx,
+                         const QFileInfo& info,
+                         const QString& destination_dir,
+                         const int depth) {
+    if (info.isSymLink()) {
+        ++ctx.result.symlinks_skipped;
+        ctx.result.warnings.append(QStringLiteral("Skipped symlink %1 (links are not imported.)")
+                                       .arg(info.absoluteFilePath()));
+        return;
+    }
+    const QString destination = targetChildPath(ctx.target, destination_dir, info.fileName());
+    if (info.isDir()) {
+        const FileManagementMutationResult created =
+            FileManagementFileSystemBridge::createDirectory(ctx.target, destination);
+        if (!created.ok) {
+            ctx.result.blockers.append(
+                created.blockers.isEmpty()
+                    ? QStringLiteral("Could not create directory %1.").arg(destination)
+                    : created.blockers.join(QStringLiteral("; ")));
+            return;
+        }
+        ++ctx.result.directories_created;
+        importDirectoryLevel(ctx, info.absoluteFilePath(), destination, depth + 1);
+        return;
+    }
+    if (!info.isFile()) {
+        // Count the drop so the import is not reported complete over a skipped entry (F4).
+        ++ctx.result.entries_skipped;
+        ctx.result.warnings.append(
+            QStringLiteral("Skipped special entry %1.").arg(info.absoluteFilePath()));
+        return;
+    }
+    const FileManagementMutationResult written =
+        FileManagementFileSystemBridge::writeFileFromHostPath(
+            ctx.target, destination, info.absoluteFilePath(), ctx.observer);
+    if (!written.ok) {
+        ctx.result.blockers.append(
+            written.blockers.isEmpty()
+                ? QStringLiteral("Could not import %1.").arg(info.absoluteFilePath())
+                : written.blockers.join(QStringLiteral("; ")));
+        return;
+    }
+    ++ctx.result.files_imported;
+    ctx.result.bytes_written += written.bytes_written;
+}
+
+}  // namespace
+
+FileManagementDirectoryImportResult FileManagementFileSystemBridge::importDirectoryFromHost(
+    const FileManagementTarget& target,
+    const QString& host_source_dir,
+    const QString& destination_path,
+    const FileManagementTransferObserver& observer) {
+    FileManagementDirectoryImportResult result;
+    result.destination = destination_path;
+    const QFileInfo source(host_source_dir);
+    if (!source.isDir() || source.isSymLink()) {
+        result.blockers.append(
+            QStringLiteral("Source is not a readable directory: %1").arg(host_source_dir));
+        return result;
+    }
+    const FileManagementMutationResult created = createDirectory(target, destination_path);
+    if (!created.ok) {
+        result.blockers.append(
+            created.blockers.isEmpty()
+                ? QStringLiteral("Could not create destination directory %1.").arg(destination_path)
+                : created.blockers.join(QStringLiteral("; ")));
+        return result;
+    }
+    const DirectoryImportContext ctx{.target = target, .result = result, .observer = observer};
+    importDirectoryLevel(ctx, source.absoluteFilePath(), destination_path, 0);
+    result.ok = result.blockers.isEmpty();
+    result.complete = result.ok && result.symlinks_skipped == 0 && result.entries_skipped == 0;
+    return result;
+}
+
+namespace {
+
+constexpr int kPreviewHexDumpBytes = 4096;
+constexpr int kPreviewHexBytesPerRow = 16;
+// More than 1-in-20 (5%) C0 control bytes flags the buffer as binary.
+constexpr int kBinaryControlRatioReciprocal = 20;
+constexpr int kHexDigitsPerByte = 2;     // each byte prints as two hex digits
+constexpr int kHexBase = 16;             // base for the arg() hex formatting
+constexpr int kHexOffsetFieldWidth = 8;  // row offset prints as eight hex digits
+
+// Heuristic: a NUL byte, or more than 5% C0 control bytes (excluding tab/newline/return),
+// marks the bytes as binary and routes them to the hex dump instead of a text decode.
+bool looksBinary(const QByteArray& data) {
+    int controls = 0;
+    for (const char ch : data) {
+        const auto u = static_cast<unsigned char>(ch);
+        if (u == 0) {
+            return true;
+        }
+        if (u < kAsciiTab || (u > kAsciiCarriageReturn && u < kFirstPrintableChar) ||
+            u == kAsciiDel) {
+            ++controls;
+        }
+    }
+    return !data.isEmpty() && controls * kBinaryControlRatioReciprocal > data.size();
+}
+
+// One "OFFSET  HH HH ... |ascii|" row for up to kPreviewHexBytesPerRow bytes at @p offset.
+QString hexDumpRow(const QByteArray& data, int offset) {
+    QString hex;
+    QString ascii;
+    for (int col = 0; col < kPreviewHexBytesPerRow; ++col) {
+        if (offset + col < data.size()) {
+            const auto u = static_cast<unsigned char>(data.at(offset + col));
+            hex += QStringLiteral("%1 ").arg(u, kHexDigitsPerByte, kHexBase, QLatin1Char('0'));
+            ascii += (u >= kFirstPrintableChar && u < kAsciiDel) ? QChar(u) : QLatin1Char('.');
+        } else {
+            hex += QStringLiteral("   ");
+        }
+    }
+    return QStringLiteral("%1  %2 |%3|")
+        .arg(offset, kHexOffsetFieldWidth, kHexBase, QLatin1Char('0'))
+        .arg(hex, ascii);
+}
+
+QString hexDump(const QByteArray& window) {
+    QStringList rows;
+    for (int offset = 0; offset < window.size(); offset += kPreviewHexBytesPerRow) {
+        rows << hexDumpRow(window, offset);
+    }
+    return rows.join(QLatin1Char('\n'));
+}
+
+}  // namespace
+
+FileManagementPreview FileManagementFileSystemBridge::renderPreview(const QByteArray& data,
+                                                                    bool truncated) {
+    FileManagementPreview preview;
+    preview.shown_bytes = static_cast<uint64_t>(data.size());
+    preview.truncated = truncated;
+    if (!looksBinary(data)) {
+        preview.text = QString::fromUtf8(data);
+        return preview;
+    }
+    preview.is_binary = true;
+    const QByteArray window = data.left(kPreviewHexDumpBytes);
+    if (window.size() < data.size()) {
+        preview.truncated = true;
+        preview.shown_bytes = static_cast<uint64_t>(window.size());
+    }
+    preview.text = hexDump(window);
+    return preview;
+}
+
 FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
     const FileManagementTarget& target, const QString& path) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (target.local_file_system) {
@@ -636,19 +1844,26 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
         if (!isApfsPathSupported(cleanPath, true)) {
             return mutationBlocked(fs,
                                    cleanPath,
-                                   QStringLiteral("APFS File Management directory create is "
-                                                  "limited to root directories"));
+                                   QStringLiteral(
+                                       "APFS File Management directory create needs a name"));
         }
         const auto parts = apfsParts(cleanPath);
-        // Root directories use the certified crash-safe in-place COW engine.
+        // The new directory's own name is the last path component; everything before it is the
+        // parent path the certified crash-safe COW engine nests it under (empty = container root).
+        const QString parentPath = parts.size() > 1
+                                       ? QLatin1Char('/') +
+                                             parts.mid(0, parts.size() - 1).join(QLatin1Char('/'))
+                                       : QString();
         return fromApfsCommitResult(
             PartitionApfsWriter::commitRawDirectoryCreate(
                 {.target_path = target.root_path,
                  .target_container_bytes = target.size_bytes,
-                 .directory_name = parts.value(0),
+                 .directory_name = parts.last(),
+                 .parent_directory_path = parentPath,
                  .target_mutation_confirmed = true,
-                 .allow_raw_device_target = isRawDevicePath(target.root_path),
-                 .options = apfsRawWriteOptions()}),
+                 .allow_raw_device_target =
+                     PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
+                 .options = apfsRawWriteOptions(target)}),
             cleanPath,
             0);
     }
@@ -658,20 +1873,93 @@ FileManagementMutationResult FileManagementFileSystemBridge::createDirectory(
         QStringLiteral("Directory create is not supported for %1").arg(displayFileSystem(fs)));
 }
 
+namespace {
+
+// True when @p path is a reparse point (symlink, junction, or mount point). A
+// Windows JUNCTION is missed by QFileInfo::isSymLink() and std::filesystem's
+// symlink checks, so the reparse attribute is read directly (mirrors
+// archive_service isReparsePoint / file_scanner isReparsePointEntry). Such an
+// entry must never be traversed by a recursive delete: descending would delete
+// the LINK's target, which lives outside the user-selected tree (R5-P9-2).
+bool isReparsePointPath(const QString& path) {
+    const DWORD attrs = GetFileAttributesW(path.toStdWString().c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
+// Remove a reparse-point entry by unlinking the LINK itself, never its target.
+// RemoveDirectoryW (QDir::rmdir) drops a directory junction/mount point without
+// touching the tree it points at; a file symlink is removed with QFile::remove.
+bool removeReparsePointEntry(const QString& path) {
+    if (QDir().rmdir(path)) {
+        return true;
+    }
+    return QFile::remove(path);
+}
+
+// Depth-first delete that removes reparse-point children as links (without
+// traversing them) and recurses only into real directories, then removes the
+// now-empty directory. Mirrors QDir::removeRecursively but with the reparse
+// check that catches Windows junctions QFileInfo::isSymLink() misses (R5-P9-2).
+bool removeTreeNoReparse(const QString& dir_path) {
+    QDir dir(dir_path);
+    bool ok = true;
+    const QFileInfoList entries =
+        dir.entryInfoList(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot);
+    for (const QFileInfo& entry : entries) {
+        const QString child = entry.absoluteFilePath();
+        if (isReparsePointPath(child)) {
+            ok = removeReparsePointEntry(child) && ok;
+        } else if (entry.isDir()) {
+            ok = removeTreeNoReparse(child) && ok;
+        } else {
+            ok = QFile::remove(child) && ok;
+        }
+    }
+    return dir.rmdir(dir_path) && ok;
+}
+
+// Local recursive directory delete, with its own catastrophic-target refusal.
+FileManagementMutationResult deleteLocalDirectory(const FileManagementTarget& target,
+                                                  const QString& path) {
+    FileManagementMutationResult result;
+    result.file_system = target.file_system;
+    result.path = path;
+    // Refuse a catastrophic delete before touching the filesystem: an empty path
+    // makes QDir the current working directory and a root would wipe the whole
+    // volume (B8-01).
+    if (FileManagementFileSystemBridge::isUnsafeLocalDeletePath(path)) {
+        result.ok = false;
+        result.blockers.append(
+            QStringLiteral("Refusing to recursively delete an empty path or filesystem root: "
+                           "%1")
+                .arg(path));
+        return result;
+    }
+    // A reparse-point target is removed as a LINK, never traversed; otherwise walk
+    // the tree with the same rule applied to every child so a junction planted
+    // inside the selected tree cannot redirect the delete outside it (R5-P9-2).
+    result.ok = isReparsePointPath(path) ? removeReparsePointEntry(path)
+                                         : removeTreeNoReparse(path);
+    if (!result.ok) {
+        result.blockers.append(QStringLiteral("Unable to delete directory: %1").arg(path));
+    }
+    return result;
+}
+
+}  // namespace
+
 FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
     const FileManagementTarget& target, const QString& path) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (target.local_file_system) {
-        FileManagementMutationResult result;
-        result.file_system = target.file_system;
-        result.path = path;
-        QDir dir(path);
-        result.ok = dir.removeRecursively();
-        if (!result.ok) {
-            result.blockers.append(QStringLiteral("Unable to delete directory: %1").arg(path));
-        }
-        return result;
+        return deleteLocalDirectory(target, path);
     }
     if (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) {
         return fromHfsWriteResult(
@@ -686,16 +1974,24 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
                                                   "limited to root directories"));
         }
         const auto parts = apfsParts(cleanPath);
-        // Root directories use the certified crash-safe in-place COW engine
-        // (fails closed on a non-empty directory; empty children first).
+        // The directory's own name is the last path component; everything before it is the parent
+        // path the COW engine resolves the target directory under (empty = container root). The
+        // engine matches the directory by name within that resolved parent, so a nested target
+        // deletes the leaf -- not the root ancestor -- and fails closed on a non-empty directory.
+        const QString parentPath = parts.size() > 1
+                                       ? QLatin1Char('/') +
+                                             parts.mid(0, parts.size() - 1).join(QLatin1Char('/'))
+                                       : QString();
         return fromApfsCommitResult(
             PartitionApfsWriter::commitRawDirectoryDelete(
                 {.target_path = target.root_path,
                  .target_container_bytes = target.size_bytes,
-                 .directory_name = parts.value(0),
+                 .directory_name = parts.last(),
+                 .parent_directory_path = parentPath,
                  .target_mutation_confirmed = true,
-                 .allow_raw_device_target = isRawDevicePath(target.root_path),
-                 .options = apfsRawWriteOptions()}),
+                 .allow_raw_device_target =
+                     PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
+                 .options = apfsRawWriteOptions(target)}),
             cleanPath,
             0);
     }
@@ -705,30 +2001,119 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectory(
         QStringLiteral("Directory delete is not supported for %1").arg(displayFileSystem(fs)));
 }
 
+namespace {
+
+// Depth-first tree delete for backends whose directory delete fails closed on a
+// non-empty directory (the APFS guard stays): every child file and subdirectory is
+// removed through the same certified per-entry commits, then the emptied directory
+// itself is deleted.
+FileManagementMutationResult deleteDirectoryTreeDepthFirst(const FileManagementTarget& target,
+                                                           const QString& path,
+                                                           const int depth) {
+    if (depth > kDirectoryExportMaxDepth) {
+        FileManagementMutationResult result;
+        result.file_system = target.file_system;
+        result.path = path;
+        result.blockers.append(
+            QStringLiteral("Skipped %1: exceeds the delete depth bound.").arg(path));
+        return result;
+    }
+    // List one past the per-directory cap so a directory too large to enumerate
+    // in a single pass is detected. Deleting a truncated listing would remove the
+    // first N entries and then fail closed on the still-non-empty parent, leaving
+    // the tree partially and irreversibly destroyed.
+    const FileManagementListResult listing = FileManagementFileSystemBridge::listDirectory(
+        target, path, kDirectoryExportMaxEntriesPerDirectory + 1);
+    if (!listing.ok) {
+        FileManagementMutationResult result;
+        result.file_system = target.file_system;
+        result.path = path;
+        result.blockers.append(listing.blockers.isEmpty()
+                                   ? QStringLiteral("Could not list %1.").arg(path)
+                                   : listing.blockers.join(QStringLiteral("; ")));
+        return result;
+    }
+    if (listing.entries.size() > kDirectoryExportMaxEntriesPerDirectory ||
+        !listing.warnings.isEmpty()) {
+        // Fail closed BEFORE removing anything so we never partially destroy a
+        // directory we cannot finish enumerating.
+        FileManagementMutationResult result;
+        result.file_system = target.file_system;
+        result.path = path;
+        result.blockers.append(
+            QStringLiteral("Directory %1 has more than %2 entries; aborting before any deletion "
+                           "to avoid partial, irreversible destruction.")
+                .arg(path)
+                .arg(kDirectoryExportMaxEntriesPerDirectory));
+        return result;
+    }
+    for (const FileManagementEntry& entry : listing.entries) {
+        const FileManagementMutationResult removed =
+            entry.directory ? deleteDirectoryTreeDepthFirst(target, entry.path, depth + 1)
+                            : FileManagementFileSystemBridge::deleteFile(target, entry.path);
+        if (!removed.ok) {
+            return removed;
+        }
+    }
+    return FileManagementFileSystemBridge::deleteDirectory(target, path);
+}
+
+}  // namespace
+
+FileManagementMutationResult FileManagementFileSystemBridge::deleteDirectoryTree(
+    const FileManagementTarget& target, const QString& path) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
+    const QString fs = normalizedFileSystem(target.file_system);
+    // Local (reparse-aware recursive walk) and HFS+ (deleteFolderTree) already
+    // remove a whole tree in one operation; everything else empties depth-first.
+    if (target.local_file_system || fs == QStringLiteral("hfsplus") ||
+        fs == QStringLiteral("hfsx")) {
+        return deleteDirectory(target, path);
+    }
+    return deleteDirectoryTreeDepthFirst(target, path, 0);
+}
+
 FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
     const FileManagementTarget& target, const QString& path, const QByteArray& data) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
-    if (data.size() > static_cast<qsizetype>(kFileManagementMaxWriteBytes)) {
-        return mutationBlocked(fs,
-                               cleanPath,
-                               QStringLiteral("File write exceeds 64 MiB File Management cap"));
-    }
+    // No artificial File Management cap: each backend enforces its own real bound (APFS
+    // is container-bound; HFS caps inside its writer; a local write is host-FS-bound).
     if (target.local_file_system) {
         FileManagementMutationResult result;
         result.file_system = target.file_system;
         result.path = path;
-        QFile file(path);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        // QSaveFile writes to a temporary and atomically renames on commit(), so
+        // a short write (e.g. the destination volume runs out of space) leaves
+        // the original file intact instead of truncating it to zero and losing
+        // the previous contents.
+        QSaveFile file(path);
+        if (!file.open(QIODevice::WriteOnly)) {
             result.blockers.append(
                 QStringLiteral("Unable to write file: %1").arg(file.errorString()));
             return result;
         }
-        result.bytes_written = static_cast<uint64_t>(file.write(data));
-        result.ok = result.bytes_written == static_cast<uint64_t>(data.size());
-        if (!result.ok) {
+        const qint64 written = file.write(data);
+        if (written != static_cast<qint64>(data.size())) {
             result.blockers.append(QStringLiteral("Short write while writing file: %1").arg(path));
+            file.cancelWriting();
+            return result;
         }
+        if (!file.commit()) {
+            result.blockers.append(
+                QStringLiteral("Failed to commit file %1: %2").arg(path, file.errorString()));
+            return result;
+        }
+        result.bytes_written = static_cast<uint64_t>(written);
+        result.ok = true;
         return result;
     }
     if (fs == QStringLiteral("hfsplus") || fs == QStringLiteral("hfsx")) {
@@ -744,8 +2129,80 @@ FileManagementMutationResult FileManagementFileSystemBridge::writeFile(
         QStringLiteral("File write is not supported for %1").arg(displayFileSystem(fs)));
 }
 
+namespace {
+
+// True for the raw backends that have a certified streaming fork writer (peak RAM
+// one window). Others must buffer the whole host file, so they take the size-bound
+// fallback path instead.
+bool isRawStreamingWriteFs(const QString& fs) {
+    return fs == QStringLiteral("apfs") || fs == QStringLiteral("hfsplus") ||
+           fs == QStringLiteral("hfsx");
+}
+
+}  // namespace
+
+FileManagementMutationResult FileManagementFileSystemBridge::writeFileFromHostPath(
+    const FileManagementTarget& target,
+    const QString& path,
+    const QString& host_file_path,
+    const FileManagementTransferObserver& observer) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
+        return *blocked;
+    }
+    const QString fs = normalizedFileSystem(target.file_system);
+    const QString cleanPath = displayPath(path);
+    const QFileInfo srcInfo(host_file_path);
+    if (!srcInfo.isFile()) {
+        return mutationBlocked(
+            fs, cleanPath, QStringLiteral("Source is not a readable file: %1").arg(host_file_path));
+    }
+    const uint64_t size = static_cast<uint64_t>(srcInfo.size());
+    // APFS and the local filesystem stream from the host file (peak RAM one window), so
+    // an arbitrarily large copy is bounded only by the destination's free space.
+    if (target.local_file_system) {
+        FileManagementMutationResult result = copyLocalFileStreamed(path, host_file_path, observer);
+        result.file_system = target.file_system;
+        return result;
+    }
+    if (observer.isCancelled()) {
+        return mutationBlocked(fs, cleanPath, kFileManagementTransferCancelledBlocker);
+    }
+    if (isRawStreamingWriteFs(fs)) {
+        return writeObservedRawStream(target, cleanPath, host_file_path, size, observer);
+    }
+    // Any remaining backend has no streaming fork writer yet, so it reads the whole file;
+    // guard RAM by size before the read. The limit is that backend's honest current bound
+    // and is lifted once it gains a streaming writer.
+    if (size > kFileManagementMaxWriteBytes) {
+        return mutationBlocked(fs,
+                               cleanPath,
+                               QStringLiteral("Streaming write is not yet available for %1; the "
+                                              "file exceeds the buffered write limit")
+                                   .arg(displayFileSystem(fs)));
+    }
+    QFile src(host_file_path);
+    if (!src.open(QIODevice::ReadOnly)) {
+        return mutationBlocked(
+            fs, cleanPath, QStringLiteral("Unable to read source file: %1").arg(src.errorString()));
+    }
+    const FileManagementMutationResult result = writeFile(target, path, src.readAll());
+    if (result.ok) {
+        observer.addBytes(static_cast<qint64>(size));
+    }
+    return result;
+}
+
 FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
     const FileManagementTarget& target, const QString& path) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanPath = displayPath(path);
     if (target.local_file_system) {
@@ -765,35 +2222,22 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
     }
     if (fs == QStringLiteral("apfs")) {
         if (!isApfsPathSupported(cleanPath, false)) {
-            return mutationBlocked(fs,
-                                   cleanPath,
-                                   QStringLiteral("APFS File Management file delete is limited "
-                                                  "to root files or one root-directory child"));
+            return mutationBlocked(
+                fs, cleanPath, QStringLiteral("APFS File Management file delete requires a name"));
         }
-        const auto parts = apfsParts(cleanPath);
-        if (parts.size() == 1) {
-            // Root files use the certified crash-safe in-place COW engine.
-            return fromApfsCommitResult(
-                PartitionApfsWriter::commitRawFileDelete(
-                    {.target_path = target.root_path,
-                     .target_container_bytes = target.size_bytes,
-                     .file_name = parts.value(0),
-                     .target_mutation_confirmed = true,
-                     .allow_raw_device_target = isRawDevicePath(target.root_path),
-                     .options = apfsRawWriteOptions()}),
-                cleanPath,
-                0);
-        }
-        // Directory children use the same COW engine (delete under a parent).
+        // The certified crash-safe in-place COW engine deletes the file under its parent path at
+        // any depth (empty parent = container root).
+        const auto [parent, name] = apfsParentAndName(cleanPath);
         return fromApfsCommitResult(
-            PartitionApfsWriter::commitRawDirectoryChildDelete(
+            PartitionApfsWriter::commitRawFileDelete(
                 {.target_path = target.root_path,
                  .target_container_bytes = target.size_bytes,
-                 .directory_name = parts.value(0),
-                 .file_name = parts.value(1),
+                 .file_name = name,
+                 .parent_directory_path = parent,
                  .target_mutation_confirmed = true,
-                 .allow_raw_device_target = isRawDevicePath(target.root_path),
-                 .options = apfsRawWriteOptions()}),
+                 .allow_raw_device_target =
+                     PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
+                 .options = apfsRawWriteOptions(target)}),
             cleanPath,
             0);
     }
@@ -805,34 +2249,165 @@ FileManagementMutationResult FileManagementFileSystemBridge::deleteFile(
 
 namespace {
 
+// Probe one past the caller's bound so a truncated listing is detectable, without
+// overflowing int when max_entries is INT_MAX -- a wrapped negative cap would turn
+// the bounded replacement check into an unbounded / empty enumeration (Codex-3).
+int listingProbeCap(const int max_entries) {
+    return max_entries < std::numeric_limits<int>::max() ? max_entries + 1 : max_entries;
+}
+
+FileManagementMutationResult deleteRawEntry(const FileManagementTarget& target,
+                                            const FileManagementEntry& entry) {
+    return entry.directory ? FileManagementFileSystemBridge::deleteDirectoryTree(target, entry.path)
+                           : FileManagementFileSystemBridge::deleteFile(target, entry.path);
+}
+
+// Return the sole entry whose name matches @p name case-insensitively, or
+// nullptr when there are zero or (ambiguously) more than one. @p count receives
+// the number of matches.
+const FileManagementEntry* uniqueCaseInsensitiveMatch(const QVector<FileManagementEntry>& entries,
+                                                      const QString& name,
+                                                      int& count) {
+    const FileManagementEntry* match = nullptr;
+    count = 0;
+    for (const FileManagementEntry& entry : entries) {
+        if (QString::compare(entry.name, name, Qt::CaseInsensitive) == 0) {
+            match = &entry;
+            ++count;
+        }
+    }
+    return match;
+}
+
+// Raw-target occupant removal for removeExistingEntry: the occupant is found in
+// a fresh listing one past the bound so truncation is detectable. An exact
+// (case-correct) name match is deleted directly since it is unambiguous on both
+// case-sensitive and case-insensitive volumes. When no exact match exists, a
+// differing-case occupant is handled per rawReplaceCaseAction: replaced only on a
+// known case-insensitive volume (HFS+), left alone on a known case-sensitive one
+// (HFSX, where the exact name is simply vacant), and refused when the volume's
+// case-sensitivity is unknown (APFS) or two case-only matches prove the volume is
+// case-sensitive -- deleting the wrong file would be silent data loss (B8-05).
+FileManagementMutationResult removeExistingRawEntry(const FileManagementTarget& target,
+                                                    const QString& path,
+                                                    const int max_entries,
+                                                    FileManagementMutationResult result) {
+    const auto [parent, name] = apfsParentAndName(displayPath(path));
+    const FileManagementListResult listing =
+        FileManagementFileSystemBridge::listDirectory(target, parent, listingProbeCap(max_entries));
+    if (listing.ok) {
+        for (const FileManagementEntry& entry : listing.entries) {
+            if (entry.name == name) {
+                return deleteRawEntry(target, entry);  // exact (case-correct) match
+            }
+        }
+        int ci_count = 0;
+        const FileManagementEntry* ci_match =
+            uniqueCaseInsensitiveMatch(listing.entries, name, ci_count);
+        switch (FileManagementFileSystemBridge::rawReplaceCaseAction(
+            FileManagementFileSystemBridge::normalizedFileSystem(target.file_system), ci_count)) {
+        case RawReplaceCaseAction::DeleteDifferingCase:
+            return deleteRawEntry(target, *ci_match);
+        case RawReplaceCaseAction::RefuseMultipleCase:
+            result.blockers.append(
+                QStringLiteral("Multiple entries match %1 only by case; refusing to delete on a "
+                               "case-sensitive volume to avoid removing the wrong file.")
+                    .arg(name));
+            return result;
+        case RawReplaceCaseAction::RefuseAmbiguous:
+            result.blockers.append(
+                QStringLiteral("An entry (%1) matches %2 only by case and this volume's "
+                               "case-sensitivity is unknown; refusing to replace to avoid "
+                               "removing the wrong file.")
+                    .arg((ci_match != nullptr) ? ci_match->name : QString(), name));
+            return result;
+        case RawReplaceCaseAction::TreatAsVacant:
+            break;  // exact name is vacant -> fall through to the nothing-occupies path
+        }
+        if (listing.entries.size() <= max_entries) {
+            result.ok = true;
+            return result;
+        }
+    }
+    result.blockers.append(
+        QStringLiteral("Could not verify what occupies %1; nothing was replaced.").arg(path));
+    result.blockers.append(listing.blockers);
+    return result;
+}
+
+}  // namespace
+
+FileManagementMutationResult FileManagementFileSystemBridge::removeExistingEntry(
+    const FileManagementTarget& target, const QString& path, const int max_entries) {
+    if (auto blocked = mutationCapabilityBlock(target, path)) {
+        return *blocked;
+    }
+    if (auto blocked = rawMutationPathBlock(target, path)) {
+        return *blocked;
+    }
+    FileManagementMutationResult result;
+    result.file_system = target.file_system;
+    result.path = path;
+    if (!target.local_file_system) {
+        return removeExistingRawEntry(target, path, max_entries, std::move(result));
+    }
+    const QFileInfo info(path);
+    if (!info.exists() && !info.isSymLink()) {
+        // "Does not exist" from QFileInfo can also mean the stat FAILED (e.g. a
+        // permission-denied ancestor). Confirm GENUINE absence before declaring the path
+        // vacant, or the caller would overwrite an existing-but-inaccessible file. The
+        // returned file_type is authoritative (MSVC also sets ec to not-found for an absent
+        // path, so ec alone would misfire): only file_type::not_found is provably vacant;
+        // any other outcome (unknown/none from a permission error, or an occupant QFileInfo
+        // missed) cannot be proven vacant -> fail closed (Codex-3).
+        std::error_code ec;
+        const auto status =
+            std::filesystem::symlink_status(std::filesystem::path(path.toStdWString()), ec);
+        if (status.type() != std::filesystem::file_type::not_found) {
+            result.blockers.append(
+                QStringLiteral("Could not determine what occupies %1; nothing was replaced.")
+                    .arg(path));
+            return result;
+        }
+        result.ok = true;
+        return result;
+    }
+    // A symlink to a directory is removed as the link itself, never as the
+    // tree behind it.
+    return info.isDir() && !info.isSymLink() ? deleteDirectoryTree(target, path)
+                                             : deleteFile(target, path);
+}
+
+namespace {
+
 // Route an APFS rename/move onto the certified COW engine via the general file-move
 // commit (a same-parent move is a plain rename; a cross-parent move reparents the file).
 // An empty directory component means the container root. Limited to root + one level.
 FileManagementMutationResult renameApfsEntry(const FileManagementTarget& target,
                                              const QString& cleanSource,
                                              const QString& cleanDestination) {
-    const auto sourceParts = apfsParts(cleanSource);
-    const auto destParts = apfsParts(cleanDestination);
-    if (sourceParts.isEmpty() || sourceParts.size() > kApfsMaxPathDepth || destParts.isEmpty() ||
-        destParts.size() > kApfsMaxPathDepth) {
+    const auto [sourceParent, sourceName] = apfsParentAndName(cleanSource);
+    const auto [destParent, destName] = apfsParentAndName(cleanDestination);
+    if (sourceName.isEmpty() || destName.isEmpty()) {
         return mutationBlocked(QStringLiteral("apfs"),
                                cleanSource,
-                               QStringLiteral("APFS File Management rename/move is limited to root "
-                                              "files and one level of directory children"));
+                               QStringLiteral("APFS File Management rename/move requires a source "
+                                              "and destination file name"));
     }
+    // commitRawFileMove resolves both parents by full path, so a same-parent move is a plain
+    // rename and a cross-parent move reparents the file, each at arbitrary directory depth.
     return fromApfsCommitResult(
         PartitionApfsWriter::commitRawFileMove(
             {.target_path = target.root_path,
              .target_container_bytes = target.size_bytes,
-             .source_directory_name = sourceParts.size() == kApfsMaxPathDepth ? sourceParts.value(0)
-                                                                              : QString(),
-             .file_name = sourceParts.last(),
-             .destination_directory_name =
-                 destParts.size() == kApfsMaxPathDepth ? destParts.value(0) : QString(),
-             .new_file_name = destParts.last(),
+             .source_directory_name = sourceParent,
+             .file_name = sourceName,
+             .destination_directory_name = destParent,
+             .new_file_name = destName,
              .target_mutation_confirmed = true,
-             .allow_raw_device_target = isRawDevicePath(target.root_path),
-             .options = apfsRawWriteOptions()}),
+             .allow_raw_device_target =
+                 PartitionApfsWriter::acceptsRawDeviceTargetPath(target.root_path),
+             .options = apfsRawWriteOptions(target)}),
         cleanDestination,
         0);
 }
@@ -843,6 +2418,15 @@ FileManagementMutationResult FileManagementFileSystemBridge::renameEntry(
     const FileManagementTarget& target,
     const QString& source_path,
     const QString& destination_path) {
+    if (auto blocked = mutationCapabilityBlock(target, source_path)) {
+        return *blocked;
+    }
+    if (auto blocked = rawMutationPathBlock(target, source_path)) {
+        return *blocked;
+    }
+    if (auto blocked = rawMutationPathBlock(target, destination_path)) {
+        return *blocked;
+    }
     const QString fs = normalizedFileSystem(target.file_system);
     const QString cleanSource = displayPath(source_path);
     const QString cleanDestination = displayPath(destination_path);

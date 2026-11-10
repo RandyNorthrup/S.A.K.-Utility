@@ -6,7 +6,8 @@ Use this when starting hands-on testing of the AI Assistant panel.
 
 - App: `build\Release\sak_utility.exe`
 - Helper: `build\Release\sak_elevated_helper.exe`
-- Registered tests: 133 CTest tests after adding chat-title coverage.
+- Registered tests: `ctest --test-dir <build> -C Release -N` is the only count. A count copied
+  to here or to `tests/README.md` has no gate to catch it going stale.
 - Latest targeted AI pass: `test_ai_chat_title`, `test_ai_prompt_assembler`,
   `test_ai_orchestrator`, `test_ai_workflow_evals`, and
   `test_openai_responses_client` passed on 2026-06-04 UTC.
@@ -53,13 +54,6 @@ Before testing:
 13. Confirm the chat header shows `Agents: active/completed`.
 14. Confirm the composer shows exact `Ctx: x/y` context usage immediately to
    the left of Send after the OpenAI key/model are loaded.
-15. Select several workflows and confirm the right-rail Session role text changes
-   before pressing Add; after Add, confirm the role stays with that workflow.
-16. Start a fresh chat without a workflow using a focused prompt such as
-   `fix Windows Update errors`, and confirm the session role is inferred from
-   the first prompt.
-17. In the same chat, send `act as a report writer for the final handoff` and
-   confirm later turns use the directed role until another explicit role change.
 
 Expected:
 
@@ -68,8 +62,8 @@ Expected:
   addresses.
 - Chips fit and remove cleanly.
 - Artifacts are stored under a folder named after the chat session.
-- `memory.md`, `activity.jsonl`, `trace.jsonl`, and `run_state.json` update.
-- `turn_replay.jsonl` updates with compact run/tool replay records.
+- `memory.md`, `activity.jsonl`, and `run_state.json` update. `activity.jsonl` is the
+  one AI audit stream (no `trace.jsonl` or `turn_replay.jsonl` is written).
 
 ## Pass 2: Local Diagnostic Toolings
 
@@ -145,10 +139,9 @@ Expected:
 - Context7 reports no auth required and is used for public docs lookup.
 - `docs_query` can search Microsoft Learn and resolve Context7 library ids
   through public Streamable HTTP MCP without any bundled API key.
-- `win32_mcp` shows available only when
-  `tools\mcp\win32-mcp-server\win32-mcp-server.exe` is bundled.
-- `tools\mcp\win32-mcp-server\THIRD_PARTY_LICENSES.txt` is present in bundled
-  builds and should be reviewed when updating Win32 MCP dependencies.
+- `win32_mcp` is the app's built-in desktop/browser automation server (the app
+  binary run headless via `SAK_WIN32_MCP_MODE`); it shows available whenever
+  `sak_utility.exe` is present.
 - Planned providers such as browser/GitHub report planned or disabled instead
   of pretending they are ready.
 - `operation=win32_mcp_call` can call bundled Win32 MCP tools when local tools
@@ -195,17 +188,13 @@ can you run a SUPERAntiSpyware quick scan?
 
 Expected:
 
-- The assistant checks the `superantispyware` app manifest before launching
-  executables.
-- It reports that quick/full/update actions are not yet validated for
-  non-interactive execution.
-- It does not reinstall SUPERAntiSpyware, brute-force helper EXEs, or exhaust
-  tool iterations.
+- The assistant has no SUPERAntiSpyware automation (the desktop-recipe path was retired
+  2026-10-31) and says so; it does not reinstall SUPERAntiSpyware, brute-force helper EXEs,
+  or exhaust tool iterations.
 - If the model asks `sak_package_manager` to install/upgrade/uninstall during
   this scan request, tool policy blocks the call and reports the scan/install
   intent mismatch.
-- It offers a manual GUI path or another scanner with a supported manifest,
-  such as Microsoft Defender.
+- It offers the manual GUI path, or a Microsoft Defender scan through `sak_app_action`.
 
 ## Pass 3C: Session Search and Replay Trace
 
@@ -227,10 +216,9 @@ Expected:
 
 After any AI run, inspect session files:
 
-- `turn_replay.jsonl` contains compact records with `run_id`, `event_type`,
-  `status`, prompt hash, model when known, tool name when known, and metadata.
-- `trace.jsonl` remains the full trace; `turn_replay.jsonl` is the replayable
-  summary used for QA reproduction.
+- `activity.jsonl` contains one record per run/tool event with `run_id`, `kind`,
+  `state`, `summary`, tool name when known, and redacted metadata (prompt hash and
+  model when known); use it for QA reproduction.
 
 Prompt:
 
@@ -240,30 +228,27 @@ run a Microsoft Defender quick scan
 
 Expected:
 
-- The assistant checks the `windows_defender` app manifest.
-- Because `quick_scan` is manifest-supported, it uses
-  `sak_provider_gateway` with `operation=app_run_action`.
-- The action runs `Start-MpScan -ScanType QuickScan` through the app action
-  execution path.
-- Assisted mode asks before execution. Unattended mode proceeds under the
-  existing access policy.
-- Result records command id, exit code, stdout/stderr, requested action, and
-  evidence hints.
+- The assistant lists `sak_app_action` and runs `action.microsoft_defender_quick_scan`
+  (operation=run).
+- Assisted mode asks before execution; Unattended proceeds under the access policy. When the
+  app is not elevated, Windows shows one UAC prompt for the elevated helper.
+- The scan runs `MpCmdRun.exe -Scan -ScanType 1` from the platform folder Defender registers
+  (`InstallLocation`). The result says clean (exit 0), threats needing attention (exit 2, with
+  a pointer to Protection history), or failure with the exit code.
+- Stop during the scan cancels it (and the service-side scan) and reports it cancelled.
 
 Prompt:
 
 ```text
-run Windows System File Checker verify-only
+run Windows System File Checker
 ```
 
 Expected:
 
-- The assistant checks the `windows_sfc` app manifest.
-- Because `verify_only` is manifest-supported, it uses
-  `sak_provider_gateway` with `operation=app_run_action`.
-- The action runs `sfc.exe /verifyonly`; it does not run repair mode.
-- `scan_repair` is reported unsupported until an explicit repair workflow with
-  restore-point handling is selected.
+- The assistant runs `action.verify_system_files` through `sak_app_action` (SFC
+  `/scannow` and DISM health checks, repair only when DISM reports corruption), after the
+  Assisted confirmation.
+- The whole run is bounded at 60 minutes; a run that hits the bound says so in its result.
 
 ## Pass 4: Workflow Input Gates
 
@@ -380,7 +365,7 @@ Expected:
 - Ambiguous mutation asks for clarification or enters a human gate.
 - Scanner/install flow checks existing install/app capability first and does
   not install without explicit user approval.
-- `trace.jsonl` and `activity.jsonl` record the denial, gate, or clarification.
+- `activity.jsonl` records the denial, gate, or clarification.
 
 ## Defect Notes
 
@@ -412,8 +397,8 @@ Manual QA can proceed when:
 
 - App launches from `build\Release\sak_utility.exe`.
 - Release package creation refuses missing MCP/provider/app-control files:
-  `win32-mcp-server.exe`, its `THIRD_PARTY_LICENSES.txt`, `providers.json`,
-  `windows_defender.json`, `superantispyware.json`, and `windows_sfc.json`.
+  `providers.json`, `windows_defender.json`, `superantispyware.json`, and
+  `windows_sfc.json`.
 - Clean extracted release folder has no `*.local.json`, no `tools\mcp\_build`,
   and no Chocolatey runtime state under `tools\chocolatey\lib-bad`, `cache`, or
   `temp`.

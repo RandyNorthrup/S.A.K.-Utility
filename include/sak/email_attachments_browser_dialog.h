@@ -25,6 +25,12 @@ class QPushButton;
 class QTableWidget;
 class QTimer;
 class QVBoxLayout;
+class EmailAttachmentsBrowserDialogTests;
+class EmailToolsViewsTests;
+
+namespace sak::ui {
+class ViewEmptyState;
+}
 
 namespace sak {
 
@@ -45,6 +51,8 @@ struct AttachmentEntry {
 ///        them in a searchable, filterable table with export capability.
 class EmailAttachmentsBrowserDialog : public QDialog {
     Q_OBJECT
+    friend class ::EmailAttachmentsBrowserDialogTests;
+    friend class ::EmailToolsViewsTests;
 
 public:
     explicit EmailAttachmentsBrowserDialog(::EmailInspectorController* controller,
@@ -66,11 +74,16 @@ private Q_SLOTS:
     void onSelectionChanged();
     void onTableContextMenu(const QPoint& pos);
     void onFolderItemsLoaded(uint64_t folder_id, QVector<sak::PstItemSummary> items, int total);
+    void onFolderItemsFailed(uint64_t folder_id, int offset, const QString& error);
     void onItemDetailLoaded(sak::PstItemDetail detail);
+    void onItemDetailFailed(uint64_t item_id, const QString& error);
+    void onMboxMessagesLoaded(QVector<sak::MboxMessage> messages, int total);
+    void onMboxMessageDetailLoaded(sak::MboxMessageDetail detail);
     void onAttachmentContentReady(uint64_t message_id,
                                   int index,
-                                  QByteArray content,
-                                  QString filename);
+                                  const QByteArray& content,
+                                  const QString& filename);
+    void onAttachmentContentFailed(uint64_t message_id, int index, const QString& error);
     void onErrorOccurred(const QString& message);
 
 private:
@@ -87,6 +100,16 @@ private:
     void collectFolderIds(const PstFolderTree& tree);
     void collectFolderIdsRecursive(const PstFolder& folder);
     void saveOneAttachment(const AttachmentEntry& entry);
+    /// Begin a batch for @p refs into @p dir and issue the content requests.
+    /// Surfaces its own refusal and issues nothing when the batch cannot start.
+    /// Fills refs with one entry per visible row. Returns false, leaving the batch to be
+    /// abandoned, if any row cannot be resolved to a real attachment.
+    [[nodiscard]] bool collectVisibleAttachmentRefs(QVector<AttachmentRef>* refs);
+    void startBatch(const QString& dir, const QVector<AttachmentRef>& refs);
+    /// Both save buttons stay locked while a batch is running, so a second batch
+    /// cannot interleave its arrivals with the first one's.
+    void updateSaveControls();
+    void surfaceError(const QString& context, const QString& message);
     [[nodiscard]] static QString formatBytes(qint64 bytes);
     [[nodiscard]] static QString typeCategory(const QString& mime_type, const QString& filename);
 
@@ -110,6 +133,9 @@ private:
     QTimer* m_search_timer{nullptr};
     QComboBox* m_type_filter{nullptr};
     QTableWidget* m_table{nullptr};
+    /// Empty/loading overlay for the attachment table. Shows a scanning message while the
+    /// mailbox is being walked, and an actionable empty message once the scan completes.
+    ui::ViewEmptyState* m_table_empty_state{nullptr};
     QPushButton* m_save_selected_button{nullptr};
     QPushButton* m_save_all_button{nullptr};
     QPushButton* m_close_button{nullptr};
@@ -119,14 +145,14 @@ private:
     // Search state
     QString m_search_text;
 
-    // Save state — shared batch saver
+    // Save state -- shared batch saver
     sak::AttachmentBatchSave m_batch_save;
 
-    // Navigation state — set when user chooses "View Containing Email"
+    // Navigation state -- set when user chooses "View Containing Email"
     uint64_t m_navigate_folder_id{0};
     uint64_t m_navigate_message_id{0};
 
-    // Maps message node_id → folder_id for navigation
+    // Maps message node_id -> folder_id for navigation
     QHash<uint64_t, uint64_t> m_message_folder_map;
 };
 

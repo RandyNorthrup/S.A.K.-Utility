@@ -20,6 +20,10 @@ enum class AiToolCallKind {
     OfflineDownloader,
     ProviderGateway,
     SessionSearch,
+    Skill,
+    DelegateSubagent,
+    RunWorkflow,
+    AppAction,
 };
 
 class AiToolCallRouter {

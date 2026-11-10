@@ -5,6 +5,7 @@
 
 #include "sak/ai/ai_command_guard.h"
 #include "sak/ai/ai_credential_store.h"
+#include "sak/ai/ai_tool_error.h"
 
 #include <algorithm>
 
@@ -14,20 +15,17 @@ namespace {
 
 constexpr qsizetype kSessionMemoryPreviewChars = 500;
 
-QJsonObject toolError(const QString& message) {
-    QJsonObject result;
-    result[QStringLiteral("success")] = false;
-    result[QStringLiteral("error_message")] = message;
-    return result;
-}
-
 QJsonObject resultJson(const AiCommandRequest& request,
                        const QString& command_id,
                        const QString& preview,
                        const AiCommandResult& result) {
     QJsonObject result_json = result.toJson();
+    // exit_status == 0 is QProcess::NormalExit: a crashed process can report exit_code 0
+    // (onProcessError ignores the non-FailedToStart crash), so require a normal exit too or a
+    // crash would be recorded as a success.
     result_json[QStringLiteral("success")] = result.started && !result.cancelled &&
-                                             !result.timed_out && result.exit_code == 0;
+                                             !result.timed_out && result.exit_code == 0 &&
+                                             result.exit_status == 0;
     result_json[QStringLiteral("command_id")] = command_id;
     result_json[QStringLiteral("command")] = CredentialStore::redactSecrets(request.command);
     result_json[QStringLiteral("preview")] = CredentialStore::redactSecrets(preview);
@@ -49,7 +47,8 @@ QJsonObject validateWorkflowCallbacks(const AiWorkflowPowerShellToolCallbacks& c
 QJsonObject enforceWorkflowGuard(const AiCommandRequest& request,
                                  const QString& preview,
                                  const AiWorkflowPowerShellToolCallbacks& callbacks) {
-    const QString block_error = commandGuardBlockError(request, preview);
+    const AiCommandGuardResult guard = evaluateCommandGuard(request);
+    const QString& block_error = guard.blockError();
     if (!block_error.isEmpty()) {
         if (callbacks.append_local_event) {
             callbacks.append_local_event(
@@ -58,7 +57,7 @@ QJsonObject enforceWorkflowGuard(const AiCommandRequest& request,
         return toolError(block_error);
     }
 
-    const QString approval_reason = commandGuardApprovalReason(request, preview);
+    const QString& approval_reason = guard.approvalReason();
     if (approval_reason.isEmpty()) {
         return {};
     }
@@ -66,7 +65,14 @@ QJsonObject enforceWorkflowGuard(const AiCommandRequest& request,
         return toolError(
             QStringLiteral("Sensitive workflow command confirmation callback is not configured"));
     }
-    const QString approval_preview = QStringLiteral("%1\n\n%2").arg(approval_reason, preview);
+    QString approval_preview = QStringLiteral("%1\n\n%2").arg(approval_reason, preview);
+    // The preview is independent of the command that actually runs; when it differs, also
+    // show the real (redacted) command so a benign preview cannot conceal what is being
+    // authorized. Bind the confirmation to request.command, not the free-form preview.
+    if (preview.trimmed() != request.command.trimmed()) {
+        approval_preview +=
+            QStringLiteral("\n\nCommand: %1").arg(CredentialStore::redactSecrets(request.command));
+    }
     if (callbacks.confirm(QStringLiteral("Sensitive Workflow Command"), approval_preview, true)) {
         return {};
     }
@@ -100,10 +106,13 @@ void recordWorkflowCompletion(const QString& command_id,
         callbacks.record_command(preview, json);
     }
     if (callbacks.append_session_memory) {
+        // Redact before truncating so a secret cannot survive by being split.
+        const QString safe_preview =
+            CredentialStore::redactSecrets(preview).left(kSessionMemoryPreviewChars);
         callbacks.append_session_memory(QStringLiteral("Tool"),
                                         QStringLiteral("Workflow PowerShell finished"),
                                         QStringLiteral("%1 exit=%2 cancelled=%3 timed_out=%4")
-                                            .arg(preview.left(kSessionMemoryPreviewChars))
+                                            .arg(safe_preview)
                                             .arg(command_result.exit_code)
                                             .arg(command_result.cancelled)
                                             .arg(command_result.timed_out));
@@ -126,9 +135,12 @@ QJsonObject AiWorkflowPowerShellToolRunner::run(const QJsonObject& args,
                                                 const AiWorkflowPowerShellToolCallbacks& callbacks,
                                                 AiWorkflowPowerShellToolOptions options) {
     AiCommandRequest request = ExecutionBroker::requestFromJson(args);
+    // Clamp the caller-supplied cap on BOTH sides: a lower floor keeps output usable,
+    // an upper ceiling stops a phase from requesting ~2GB and OOMing the process.
+    const int requested_output_bytes =
+        args.value(QStringLiteral("max_output_bytes")).toInt(options.default_output_bytes);
     request.max_output_bytes =
-        std::max(args.value(QStringLiteral("max_output_bytes")).toInt(options.default_output_bytes),
-                 options.min_output_bytes);
+        std::clamp(requested_output_bytes, options.min_output_bytes, options.max_output_bytes);
     if (request.command.trimmed().isEmpty()) {
         return toolError(
             QStringLiteral("Workflow PowerShell phase requires explicit arguments.command"));

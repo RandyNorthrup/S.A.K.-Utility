@@ -30,6 +30,12 @@ public:
         const QVector<QVector<MapiProperty>>& all_properties,
         const QString& output_directory);
 
+    /// @brief Make a value safe for a CSV cell: neutralize spreadsheet formula injection (a value
+    /// beginning with = + - @ or a leading tab/CR is prefixed with a single quote so Excel/Calc
+    /// treat it as literal text, not a formula) AND apply RFC 4180 quoting (wrap + double quotes
+    /// when it contains a comma, quote, or newline). Pure; unit-tested.
+    [[nodiscard]] static QString csvSafeCell(const QString& value);
+
 private:
     [[nodiscard]] static QString buildReportHtml(const OstConversionBatchResult& batch);
 
@@ -39,6 +45,8 @@ private:
     [[nodiscard]] static QString buildFileResultsTableHtml(const OstConversionBatchResult& batch);
 
     [[nodiscard]] static QString buildErrorLogHtml(const OstConversionBatchResult& batch);
+    /// What each file left out, by message class. Empty when nothing was.
+    [[nodiscard]] static QString buildLeftOutHtml(const OstConversionBatchResult& batch);
 
     [[nodiscard]] static int writeCsvDataRows(QTextStream& out,
                                               const QVector<PstItemDetail>& items,

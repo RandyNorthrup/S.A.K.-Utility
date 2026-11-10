@@ -44,6 +44,13 @@ QString humanGateFailedStatus() {
     return QStringLiteral("failed");
 }
 
+bool isKnownHumanGateStatus(const QString& status) {
+    return status == humanGateWaitingStatus() || status == humanGateCompletedStatus() ||
+           status == humanGateCancelledStatus() || status == humanGateRejectedStatus() ||
+           status == humanGateSkippedStatus() || status == humanGateApprovedStatus() ||
+           status == humanGateFailedStatus();
+}
+
 bool AiHumanGate::isPending() const {
     return status == humanGateWaitingStatus();
 }

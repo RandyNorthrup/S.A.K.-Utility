@@ -3,12 +3,17 @@
 
 #pragma once
 
+#include <QMargins>
+#include <QRect>
+#include <QStringList>
 #include <QTextEdit>
 #include <QWidget>
 
 class QEvent;
+class QHBoxLayout;
 class QPushButton;
 class QTimer;
+class QVBoxLayout;
 
 namespace sak {
 
@@ -28,8 +33,16 @@ public:
     explicit DetachableLogWindow(const QString& title, QWidget* parent = nullptr);
     ~DetachableLogWindow() override;
 
-    /** Append a timestamped log entry. */
-    void appendLog(const QString& message);
+    /// Replace the shown log with @p lines (one panel's backing store). Does nothing while the
+    /// window is hidden and returns false: whoever shows it refills it then (MainWindow does on
+    /// visibilityChanged). Rebuilding a 5000-line document on every tab switch while nobody
+    /// could see it was pure GUI-thread work. One edit block per refill.
+    bool replaceLog(const QStringList& lines);
+
+    /// Add @p line at the end, as literal text. Its first line is the message; the lines under
+    /// it, a report or a script a program wrote, are set apart in a fixed-width font that does
+    /// not wrap, so their columns line up. replaceLog() lays each line out the same way.
+    void appendLine(const QString& line);
 
     /** Clear the log. */
     void clearLog();
@@ -44,6 +57,24 @@ public:
     /** Re-snap to main window (called when main window moves/resizes). */
     void repositionIfAnchored();
 
+    /// Where the anchored window goes: its frame against the main window's right edge and top,
+    /// its content as tall as the main window's, but the whole frame (content plus
+    /// @p log_frame) always inside @p available (the screen's work area). Beside a maximized
+    /// main window there is no room on the right, so it overlaps the right edge instead of
+    /// opening off-screen. topLeft() is the frame position for move(); size() is the content
+    /// size for resize(). Pure; tested offscreen.
+    [[nodiscard]] static QRect anchoredGeometry(const QRect& main_frame,
+                                                const QRect& main_geometry,
+                                                int log_width,
+                                                const QMargins& log_frame,
+                                                const QRect& available);
+
+    /// @brief How far left a main window must move for a log frame this wide to fit on its right,
+    /// limited by the screen's left edge. Pure; tested offscreen.
+    [[nodiscard]] static int mainWindowShiftForLog(const QRect& main_frame,
+                                                   int log_frame_width,
+                                                   const QRect& available);
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void showEvent(QShowEvent* event) override;
@@ -55,6 +86,9 @@ Q_SIGNALS:
 
 private:
     void snapToMainWindow();
+    /// @brief Move a main window that leaves the log no room to its left, as far as the screen
+    ///        allows. A maximized or full-screen one has nowhere to go, and stays.
+    void makeRoomBesideMainWindow();
     QWidget* findMainWindow() const;
 
     QTextEdit* m_logEdit{nullptr};
@@ -93,5 +127,12 @@ private:
     bool m_checked{false};
     QString m_label;
 };
+
+/// @brief Puts @p toggle at the foot of a tool page, kMarginMedium from the page's left edge, and
+///        returns the row so the page can add its own controls after it.
+/// @details Every tool tab calls this, so the Log switch sits in one place on all of them; a tab
+///          whose page holds sub-tabs puts it under them, not inside one. @p page_layout's own
+///          margins are counted, so the switch lands in the same place whatever they are.
+QHBoxLayout* addLogFooter(QVBoxLayout* page_layout, LogToggleSwitch* toggle);
 
 }  // namespace sak

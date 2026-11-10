@@ -18,6 +18,7 @@
 
 #include <QThread>
 #include <QUrl>
+#include <QVariant>
 
 #include <algorithm>
 #include <chrono>
@@ -35,7 +36,11 @@ constexpr int kReplyExtraSize = 8;  // Extra bytes for ICMP_ECHO_REPLY
 constexpr double kFullPercent = 100.0;
 constexpr WORD kWinsockMajorVersion = 2;
 constexpr WORD kWinsockMinorVersion = 2;
-constexpr int kUrlSchemeSeparatorLength = 3;
+
+// Dynamic-property key holding a non-zero WSAStartup error code. Stored as a per-instance dynamic
+// property (the header is not modified) so the destructor can skip an unbalanced WSACleanup and
+// operations can fail closed with the real Winsock error instead of a misleading resolve failure.
+constexpr char kWsaInitErrorProperty[] = "sak_wsaInitError";
 
 void updateHopStats(sak::MtrHopStats& stats,
                     const sak::PingReply& reply,
@@ -43,7 +48,7 @@ void updateHopStats(sak::MtrHopStats& stats,
                     int& max_discovered) {
     stats.sent++;
 
-    bool got_response = reply.success || reply.errorMessage == QStringLiteral("TTL expired");
+    const bool got_response = reply.success || reply.errorMessage == QStringLiteral("TTL expired");
     if (got_response) {
         stats.received++;
         stats.ipAddress = reply.replyFrom;
@@ -54,10 +59,11 @@ void updateHopStats(sak::MtrHopStats& stats,
         max_discovered = std::max(max_discovered, ttl);
     }
 
-    stats.lossPercent = (stats.sent > 0) ? (1.0 - static_cast<double>(stats.received) /
-                                                      static_cast<double>(stats.sent)) *
-                                               kFullPercent
-                                         : 0.0;
+    stats.lossPercent =
+        (stats.sent > 0)
+            ? (1.0 - (static_cast<double>(stats.received) / static_cast<double>(stats.sent))) *
+                  kFullPercent
+            : 0.0;
 }
 
 }  // namespace
@@ -74,8 +80,8 @@ void computePingStats(PingResult& result, const QVector<double>& rtts) {
         return;
     }
 
-    result.minRtt = *std::min_element(rtts.begin(), rtts.end());
-    result.maxRtt = *std::max_element(rtts.begin(), rtts.end());
+    result.minRtt = *std::ranges::min_element(rtts);
+    result.maxRtt = *std::ranges::max_element(rtts);
     result.avgRtt = std::accumulate(rtts.begin(), rtts.end(), 0.0) /
                     static_cast<double>(rtts.size());
 
@@ -85,7 +91,7 @@ void computePingStats(PingResult& result, const QVector<double>& rtts) {
     }
 
     double sumSqDiff = 0.0;
-    for (double rtt : rtts) {
+    for (const double rtt : rtts) {
         const double diff = rtt - result.avgRtt;
         sumSqDiff += diff * diff;
     }
@@ -116,6 +122,34 @@ void applyTtlExpiredEcho(PingReply& reply, const ICMP_ECHO_REPLY& echoReply) {
     reply.rttMs = static_cast<double>(echoReply.RoundTripTime);
     reply.replyFrom = ipv4AddressToString(echoReply.Address);
     reply.errorMessage = QStringLiteral("TTL expired");
+}
+
+// Translate a completed IcmpSendEcho into a PingReply. A zero numReplies is ambiguous -- a real
+// timeout or a local API failure -- so the already-captured sendError, not the zero itself,
+// decides which is reported.
+void settleEchoOutcome(
+    PingReply& reply, char* replyBuffer, DWORD numReplies, DWORD sendError, double elapsedMs) {
+    if (numReplies > 0) {
+        auto* echoReply = reinterpret_cast<PICMP_ECHO_REPLY>(replyBuffer);
+
+        if (echoReply->Status == IP_SUCCESS) {
+            applySuccessfulEcho(reply, *echoReply);
+        } else if (isTtlExpiredStatus(echoReply->Status)) {
+            applyTtlExpiredEcho(reply, *echoReply);
+        } else {
+            reply.success = false;
+            reply.errorMessage = QStringLiteral("ICMP error status %1").arg(echoReply->Status);
+        }
+    } else {
+        reply.success = false;
+        reply.rttMs = elapsedMs;
+        // A genuine timeout keeps its "Request timed out" label (probeHop/updateHopStats do not
+        // key on it, only on "TTL expired"); any other zero-return is a real API failure and is
+        // surfaced as such instead of being falsified as a timeout.
+        reply.errorMessage = (sendError == IP_REQ_TIMED_OUT || sendError == 0)
+                                 ? QStringLiteral("Request timed out")
+                                 : QStringLiteral("ICMP echo failed (error %1)").arg(sendError);
+    }
 }
 
 [[nodiscard]] QVector<MtrHopStats> initHopStats(int maxHops) {
@@ -153,25 +187,35 @@ void finalizeHopStats(QVector<MtrHopStats>& hopStats) {
 void populateMtrResult(MtrResult& result,
                        const QVector<MtrHopStats>& hopStats,
                        int maxDiscoveredHop,
-                       bool cancelled) {
+                       int completedCycles) {
     result.hops.clear();
     const int hopCount = static_cast<int>(hopStats.size());
     const int limit = std::min(maxDiscoveredHop, hopCount);
     for (int i = 0; i < limit; ++i) {
         result.hops.append(hopStats[i]);
     }
-    result.totalCycles =
-        cancelled ? 0 : static_cast<int>(result.hops.isEmpty() ? 0 : result.hops.first().sent);
+    // Report cycles that actually completed, independent of hop responsiveness: a run in which no
+    // hop ever replies still executed its cycles, so an empty hop list must not zero the count.
+    result.totalCycles = completedCycles;
 }
 }  // namespace
 
 ConnectivityTester::ConnectivityTester(QObject* parent) : QObject(parent) {
     WSADATA wsa_data{};
-    WSAStartup(MAKEWORD(kWinsockMajorVersion, kWinsockMinorVersion), &wsa_data);
+    // WSAStartup returns the error code directly (it does not set the last-error). Record a
+    // failure so operations fail closed with the true cause and the destructor skips cleanup.
+    const int wsaStatus = WSAStartup(MAKEWORD(kWinsockMajorVersion, kWinsockMinorVersion),
+                                     &wsa_data);
+    if (wsaStatus != 0) {
+        setProperty(kWsaInitErrorProperty, wsaStatus);
+    }
 }
 
 ConnectivityTester::~ConnectivityTester() {
-    WSACleanup();
+    // Only balance a successful WSAStartup; calling WSACleanup after a failed init is incorrect.
+    if (property(kWsaInitErrorProperty).toInt() == 0) {
+        WSACleanup();
+    }
 }
 
 void ConnectivityTester::cancel() {
@@ -180,6 +224,14 @@ void ConnectivityTester::cancel() {
 
 QString ConnectivityTester::resolveTargetIpOrEmitError(const QString& target,
                                                        const QString& operation) {
+    if (const int wsaError = property(kWsaInitErrorProperty).toInt(); wsaError != 0) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("%1 unavailable: Winsock initialization failed (error %2)")
+                .arg(operation)
+                .arg(wsaError));
+        return {};
+    }
+
     const QString trimmed = target.trimmed();
     if (trimmed.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("%1 target cannot be empty").arg(operation));
@@ -201,6 +253,7 @@ QString ConnectivityTester::resolveTargetIpOrEmitError(const QString& target,
 }
 
 QString ConnectivityTester::resolveHostname(const QString& hostname) {
+    // Sole caller resolveTargetIpOrEmitError() returns early when the trimmed target is empty.
     Q_ASSERT(!hostname.isEmpty());
     // -- Normalise user input -------------------------------------------
     // Users often paste full URLs ("https://example.com/path") or include
@@ -210,23 +263,23 @@ QString ConnectivityTester::resolveHostname(const QString& hostname) {
 
     // Strip URL scheme (http://, https://, ftp://, etc.)
     if (host.contains(QStringLiteral("://"))) {
-        QUrl url(host);
-        if (url.isValid() && !url.host().isEmpty()) {
-            host = url.host();
-        } else {
-            // Fallback: remove scheme manually
-            host = host.mid(host.indexOf(QStringLiteral("://")) + kUrlSchemeSeparatorLength);
+        const QUrl url(host);
+        // Reject a malformed URL rather than hand-stripping the scheme: a bad URL is untrusted
+        // input, and getaddrinfo below already fails closed for anything left unresolvable.
+        if (!url.isValid() || url.host().isEmpty()) {
+            return {};
         }
+        host = url.host();
     }
 
     // Strip path, query, and fragment (anything after the host)
-    const int slashPos = host.indexOf(QLatin1Char('/'));
+    const int slashPos = static_cast<int>(host.indexOf(QLatin1Char('/')));
     if (slashPos > 0) {
         host = host.left(slashPos);
     }
 
     // Strip port suffix (e.g. "example.com:443")
-    const int colonPos = host.lastIndexOf(QLatin1Char(':'));
+    const int colonPos = static_cast<int>(host.lastIndexOf(QLatin1Char(':')));
     if (colonPos > 0) {
         const auto maybPort = host.mid(colonPos + 1);
         bool isPort = false;
@@ -288,7 +341,10 @@ PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
 
     HANDLE hIcmp = IcmpCreateFile();
     if (hIcmp == INVALID_HANDLE_VALUE) {
-        reply.errorMessage = QStringLiteral("Failed to create ICMP handle");
+        // Fail closed with the real cause: a discarded GetLastError would leave a local API
+        // failure indistinguishable from a network timeout downstream.
+        reply.errorMessage =
+            QStringLiteral("Failed to create ICMP handle (error %1)").arg(GetLastError());
         return reply;
     }
 
@@ -325,33 +381,53 @@ PingReply ConnectivityTester::sendIcmpEcho(const QString& targetIP,
                                           replySize,
                                           static_cast<DWORD>(timeoutMs));
 
+    // Capture the extended error IMMEDIATELY: a zero return can mean IP_REQ_TIMED_OUT OR a
+    // real failure (bad parameter, buffer too small, allocation failure). Reading it here,
+    // before any other call can reset the thread's last-error, lets us tell them apart.
+    const DWORD sendError = (numReplies == 0) ? GetLastError() : 0;
+
     const auto end = std::chrono::high_resolution_clock::now();
 
     IcmpCloseHandle(hIcmp);
 
-    if (numReplies > 0) {
-        auto* echoReply = reinterpret_cast<PICMP_ECHO_REPLY>(replyBuffer.get());
-
-        if (echoReply->Status == IP_SUCCESS) {
-            applySuccessfulEcho(reply, *echoReply);
-        } else if (isTtlExpiredStatus(echoReply->Status)) {
-            applyTtlExpiredEcho(reply, *echoReply);
-        } else {
-            reply.success = false;
-            reply.errorMessage = QStringLiteral("ICMP error status %1").arg(echoReply->Status);
-        }
-    } else {
-        reply.success = false;
-        const double elapsed = std::chrono::duration<double, std::milli>(end - start).count();
-        reply.rttMs = elapsed;
-        reply.errorMessage = QStringLiteral("Request timed out");
-    }
+    const double elapsedMs = std::chrono::duration<double, std::milli>(end - start).count();
+    settleEchoOutcome(reply, replyBuffer.get(), numReplies, sendError, elapsedMs);
 
     return reply;
 }
 
-void ConnectivityTester::ping(const PingConfig& config) {
+ConnectivityTester::PingConfig ConnectivityTester::sanitizeConfig(PingConfig config) {
+    namespace nd = netdiag;
+    config.count = std::clamp(config.count, nd::kMinPingCount, nd::kMaxPingCount);
+    config.intervalMs = std::clamp(config.intervalMs, nd::kMinIntervalMs, nd::kMaxIntervalMs);
+    config.timeoutMs = std::clamp(config.timeoutMs, nd::kMinPingTimeoutMs, nd::kMaxPingTimeoutMs);
+    config.packetSizeBytes =
+        std::clamp(config.packetSizeBytes, nd::kMinPacketSizeBytes, nd::kMaxPacketSizeBytes);
+    config.ttl = std::clamp(config.ttl, nd::kMinTtl, nd::kMaxTtl);
+    return config;
+}
+
+ConnectivityTester::TracerouteConfig ConnectivityTester::sanitizeConfig(TracerouteConfig config) {
+    namespace nd = netdiag;
+    config.maxHops = std::clamp(config.maxHops, nd::kMinHops, nd::kMaxHops);
+    config.timeoutMs = std::clamp(config.timeoutMs, nd::kMinPingTimeoutMs, nd::kMaxPingTimeoutMs);
+    config.probesPerHop =
+        std::clamp(config.probesPerHop, nd::kMinProbesPerHop, nd::kMaxProbesPerHop);
+    return config;
+}
+
+ConnectivityTester::MtrConfig ConnectivityTester::sanitizeConfig(MtrConfig config) {
+    namespace nd = netdiag;
+    config.cycles = std::clamp(config.cycles, nd::kMinMtrCycles, nd::kMaxMtrCycles);
+    config.intervalMs = std::clamp(config.intervalMs, nd::kMinIntervalMs, nd::kMaxIntervalMs);
+    config.maxHops = std::clamp(config.maxHops, nd::kMinHops, nd::kMaxHops);
+    config.timeoutMs = std::clamp(config.timeoutMs, nd::kMinPingTimeoutMs, nd::kMaxPingTimeoutMs);
+    return config;
+}
+
+void ConnectivityTester::ping(const PingConfig& rawConfig) {
     m_cancelled.store(false);
+    const PingConfig config = sanitizeConfig(rawConfig);
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "Ping");
     if (targetIP.isEmpty()) {
@@ -362,7 +438,6 @@ void ConnectivityTester::ping(const PingConfig& config) {
     PingResult result;
     result.target = config.target;
     result.resolvedIP = targetIP;
-    result.sent = config.count;
 
     QVector<double> rtts;
 
@@ -388,6 +463,10 @@ void ConnectivityTester::ping(const PingConfig& config) {
             QThread::msleep(static_cast<unsigned long>(config.intervalMs));
         }
     }
+
+    // Report the number actually sent (== attempts made), not the configured count:
+    // a cancelled run stops early, and loss stats must reflect real attempts.
+    result.sent = static_cast<int>(result.replies.size());
 
     computePingStats(result, rtts);
 
@@ -424,9 +503,11 @@ TracerouteHop ConnectivityTester::probeHop(
     constexpr int kMaxRttSlots = 3;
 
     for (int probe_idx = 0; probe_idx < probes; ++probe_idx) {
-        PingReply reply = sendIcmpEcho(targetIP, timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
+        const PingReply reply =
+            sendIcmpEcho(targetIP, timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
 
-        bool got_response = reply.success || reply.errorMessage == QStringLiteral("TTL expired");
+        const bool got_response = reply.success ||
+                                  reply.errorMessage == QStringLiteral("TTL expired");
         if (got_response) {
             hopIP = reply.replyFrom;
             hop.timedOut = false;
@@ -434,7 +515,7 @@ TracerouteHop ConnectivityTester::probeHop(
         }
 
         if (probe_idx < kMaxRttSlots) {
-            bool has_ip = reply.success || !reply.replyFrom.isEmpty();
+            const bool has_ip = reply.success || !reply.replyFrom.isEmpty();
             *rtt_slots[probe_idx] = has_ip ? reply.rttMs : -1.0;
         }
     }
@@ -443,8 +524,9 @@ TracerouteHop ConnectivityTester::probeHop(
     return hop;
 }
 
-void ConnectivityTester::traceroute(const TracerouteConfig& config) {
+void ConnectivityTester::traceroute(const TracerouteConfig& rawConfig) {
     m_cancelled.store(false);
+    const TracerouteConfig config = sanitizeConfig(rawConfig);
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "Traceroute");
     if (targetIP.isEmpty()) {
@@ -462,7 +544,7 @@ void ConnectivityTester::traceroute(const TracerouteConfig& config) {
             break;
         }
 
-        TracerouteHop hop =
+        const TracerouteHop hop =
             probeHop(targetIP, ttl, config.timeoutMs, config.probesPerHop, config.resolveHostnames);
         result.hops.append(hop);
         Q_EMIT tracerouteHop(hop);
@@ -473,12 +555,33 @@ void ConnectivityTester::traceroute(const TracerouteConfig& config) {
         }
     }
 
-    result.totalHops = result.hops.size();
+    result.totalHops = static_cast<int>(result.hops.size());
     Q_EMIT tracerouteComplete(result);
 }
 
-void ConnectivityTester::mtr(const MtrConfig& config) {
+void ConnectivityTester::runMtrCycle(const QString& targetIP,
+                                     const MtrConfig& config,
+                                     QVector<MtrHopStats>& hopStats,
+                                     int& maxDiscoveredHop) {
+    for (int ttl = 1; ttl <= config.maxHops; ++ttl) {
+        if (m_cancelled.load()) {
+            break;
+        }
+
+        const PingReply reply =
+            sendIcmpEcho(targetIP, config.timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
+
+        updateHopStats(hopStats[ttl - 1], reply, ttl, maxDiscoveredHop);
+
+        if (reply.success && reply.replyFrom == targetIP) {
+            break;
+        }
+    }
+}
+
+void ConnectivityTester::mtr(const MtrConfig& rawConfig) {
     m_cancelled.store(false);
+    const MtrConfig config = sanitizeConfig(rawConfig);
 
     const QString targetIP = resolveTargetIpOrEmitError(config.target, "MTR");
     if (targetIP.isEmpty()) {
@@ -493,28 +596,21 @@ void ConnectivityTester::mtr(const MtrConfig& config) {
     QVector<MtrHopStats> hopStats = initHopStats(config.maxHops);
 
     int maxDiscoveredHop = 0;
+    int completedCycles = 0;
 
     for (int cycle = 0; cycle < config.cycles; ++cycle) {
         if (m_cancelled.load()) {
             break;
         }
 
-        for (int ttl = 1; ttl <= config.maxHops; ++ttl) {
-            if (m_cancelled.load()) {
-                break;
-            }
+        runMtrCycle(targetIP, config, hopStats, maxDiscoveredHop);
 
-            PingReply reply =
-                sendIcmpEcho(targetIP, config.timeoutMs, netdiag::kDefaultPingPacketSize, ttl);
-
-            updateHopStats(hopStats[ttl - 1], reply, ttl, maxDiscoveredHop);
-
-            if (reply.success && reply.replyFrom == targetIP) {
-                break;
-            }
+        // Do not count or publish a cycle that cancellation cut short mid-way: it would report a
+        // completed cycle when its hop sweep was interrupted.
+        if (!m_cancelled.load()) {
+            ++completedCycles;
+            Q_EMIT mtrUpdate(visibleHopStats(hopStats, maxDiscoveredHop), completedCycles);
         }
-
-        Q_EMIT mtrUpdate(visibleHopStats(hopStats, maxDiscoveredHop), cycle + 1);
 
         if (!m_cancelled.load() && cycle < config.cycles - 1) {
             QThread::msleep(static_cast<unsigned long>(config.intervalMs));
@@ -523,7 +619,7 @@ void ConnectivityTester::mtr(const MtrConfig& config) {
 
     finalizeHopStats(hopStats);
 
-    populateMtrResult(result, hopStats, maxDiscoveredHop, m_cancelled.load());
+    populateMtrResult(result, hopStats, maxDiscoveredHop, completedCycles);
 
     Q_EMIT mtrComplete(result);
 }

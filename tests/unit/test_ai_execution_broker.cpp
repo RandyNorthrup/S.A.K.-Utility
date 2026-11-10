@@ -2,12 +2,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/ai/ai_execution_broker.h"
+#include "sak/process_runner.h"
+#include "sak/windows_process_job.h"
 
+#include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
+#include <QRegularExpression>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QStringList>
+#include <QTemporaryDir>
+#include <QTimer>
 #include <QtTest/QtTest>
+
+#include <windows.h>
 
 Q_DECLARE_METATYPE(sak::ai::AiCommandResult)
 
@@ -21,21 +32,39 @@ private Q_SLOTS:
     void runPowerShell_rejectsElevatedWithoutRunner();
     void runPowerShell_usesElevatedRunnerWhenRequested();
     void runPowerShell_cancelsRunningProcess();
+    void runPowerShell_timesOutOnOneDeadlineTimer();
     void runPowerShell_rejectsConcurrentStarts();
     void elevatedCancel_isInvokedWhenCancelCalledDuringElevatedRun();
     void startCmd_capturesStdoutFromCmd();
     void startCmd_rejectsElevation();
     void startProcess_launchesProgramDirectly();
+    void startProcess_refusesUnresolvableBareName();
     void startProcess_reportsInvalidProgramAsAsyncFailure();
     void startProcess_rejectsEmptyProgram();
     void processRequestFromJson_parsesArguments();
+    void processRequestFromJson_refusesMalformedArguments();
+    void startProcess_refusesWorkingDirectoryRelativeProgram();
+    void startProcess_refusesAProgramThatIsNotTheApprovedFile();
+    void refusesEmbeddedNulThatTheLaunchWouldTruncate();
+    void embeddedNulSurvivesJsonTextSoTheGuardIsModelReachable();
     void toJson_redactsSecretsInStdoutAndStderr();
+    void runPowerShell_truncationKeepsTerminalError();
+    void grandchildDiesWhenTheCommandIsCancelled();
+    void grandchildDiesWhenTheCommandFinishes();
+    void launchIsRefusedWhenTheJobCannotBeCreated();
 };
 
 namespace {
 
-[[nodiscard]] bool waitForFinish(QSignalSpy& spy, int timeout_ms = 20'000) {
-    return spy.count() > 0 || spy.wait(timeout_ms);
+// The first PowerShell on a freshly booted CI runner has taken over 20 s to print one line, which
+// failed the first two cases here with nothing wrong. None of these cases is about the time limit.
+constexpr int kPowerShellBudgetSeconds = 60;
+
+[[nodiscard]] bool waitForFinish(QSignalSpy& spy, int timeout_ms = 90'000) {
+    // qWaitFor re-checks the predicate, so it returns immediately when the broker already
+    // emitted finished before the test reached this call. A bare spy.wait() latches the
+    // count on entry and would block for a second emission that never comes.
+    return QTest::qWaitFor([&spy]() { return spy.count() > 0; }, timeout_ms);
 }
 
 [[nodiscard]] sak::ai::AiCommandResult resultFromSpy(const QSignalSpy& spy) {
@@ -45,6 +74,59 @@ namespace {
     const QList<QVariant> args = spy.first();
     return args.at(1).value<sak::ai::AiCommandResult>();
 }
+
+// A PowerShell command whose FIRST statement starts a grandchild (a long ping, in its own hidden
+// console so it shares no pipe with the command) and prints its PID; @p then runs afterwards.
+QString grandchildCommand(const QString& then) {
+    return QStringLiteral(
+               "$g = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\\PING.EXE') "
+               "-ArgumentList '-n','120','127.0.0.1' -WindowStyle Hidden -PassThru; "
+               "Write-Output ('GRANDCHILD:' + $g.Id); ") +
+           then;
+}
+
+// Opens the grandchild the moment its PID is printed -- inside the chunk signal, so the handle
+// is taken while the process is certainly still alive and a later PID reuse cannot fool the
+// wait. The handle can terminate it, so a failing run does not leak a two-minute ping.
+class GrandchildWatch {
+public:
+    explicit GrandchildWatch(sak::ai::ExecutionBroker& broker) {
+        QObject::connect(&broker,
+                         &sak::ai::ExecutionBroker::stdoutChunk,
+                         &broker,
+                         [this](const QString&, const QString& chunk) { capture(chunk); });
+    }
+    GrandchildWatch(const GrandchildWatch&) = delete;
+    GrandchildWatch& operator=(const GrandchildWatch&) = delete;
+    ~GrandchildWatch() {
+        if (m_handle != nullptr) {
+            TerminateProcess(m_handle, 1);
+            CloseHandle(m_handle);
+        }
+    }
+    [[nodiscard]] bool opened() const { return m_handle != nullptr; }
+    // True when the grandchild has exited within @p timeout_ms.
+    [[nodiscard]] bool exitsWithin(DWORD timeout_ms) const {
+        return WaitForSingleObject(m_handle, timeout_ms) == WAIT_OBJECT_0;
+    }
+
+private:
+    void capture(const QString& chunk) {
+        static const QRegularExpression kPid(QStringLiteral(R"(GRANDCHILD:(\d+))"));
+        const QRegularExpressionMatch match = kPid.match(chunk);
+        if (m_handle != nullptr || !match.hasMatch()) {
+            return;
+        }
+        m_handle = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE,
+                               FALSE,
+                               static_cast<DWORD>(match.captured(1).toULong()));
+    }
+
+    HANDLE m_handle{nullptr};
+};
+
+constexpr int kGrandchildStartBudgetMs = 30'000;
+constexpr DWORD kGrandchildExitBudgetMs = 10'000;
 
 }  // namespace
 
@@ -59,7 +141,7 @@ void AiExecutionBrokerTests::runPowerShell_capturesStdoutAndEmitsFinished() {
 
     sak::ai::AiCommandRequest request;
     request.command = QStringLiteral("Write-Output 'sak-ai-ok'");
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_001")));
     QVERIFY(waitForFinish(finished_spy));
@@ -71,8 +153,23 @@ void AiExecutionBrokerTests::runPowerShell_capturesStdoutAndEmitsFinished() {
     QVERIFY(result.started);
     QVERIFY(!result.cancelled);
     QVERIFY(!result.timed_out);
+    // Plain (non-admin) path: onProcessFinished (ai_execution_broker.cpp:737) builds the result
+    // and never sets `elevated`, so an ordinary command MUST be reported unelevated. Nothing
+    // else in the suite pins this false, so without it a flipped struct default
+    // (ai_execution_broker.h:46) would audit every command as elevated with zero red.
+    QVERIFY(!result.elevated);
+    // Output is far under the cap, so fillCappedOutput (ai_execution_broker.cpp:727) must
+    // report the text as the complete run.
+    QVERIFY(!result.output_truncated);
     QCOMPARE(result.exit_code, 0);
-    QVERIFY(result.stdout_text.contains(QStringLiteral("sak-ai-ok")));
+    QCOMPARE(result.exit_status, 0);  // QProcess::NormalExit
+    QVERIFY(result.error_message.isEmpty());
+    // Measured at ai_execution_broker.cpp:742, not left at the {0} member default.
+    QVERIFY(result.duration_ms > 0);
+    // Exact output, not a substring: `Write-Output 'sak-ai-ok'` under -NoProfile emits exactly
+    // one line, and cappedHeadTail returns a sub-cap string unchanged, so a leaked prologue or
+    // a stray "...[N bytes truncated]..." marker has to show up here.
+    QCOMPARE(result.stdout_text.trimmed(), QStringLiteral("sak-ai-ok"));
 }
 
 void AiExecutionBrokerTests::runPowerShell_streamsStdoutChunks() {
@@ -82,7 +179,7 @@ void AiExecutionBrokerTests::runPowerShell_streamsStdoutChunks() {
 
     sak::ai::AiCommandRequest request;
     request.command = QStringLiteral("Write-Output 'stream-marker'");
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_stream")));
     QVERIFY(waitForFinish(finished_spy));
@@ -91,6 +188,9 @@ void AiExecutionBrokerTests::runPowerShell_streamsStdoutChunks() {
     bool seen_marker = false;
     for (const auto& call : chunk_spy) {
         if (call.at(1).toString().contains(QStringLiteral("stream-marker"))) {
+            // Argument 0 is the command id the timeline labels the chunk with; an empty or
+            // stale id makes the chunk unattributable, so pin it alongside the payload.
+            QCOMPARE(call.at(0).toString(), QStringLiteral("cmd_stream"));
             seen_marker = true;
             break;
         }
@@ -110,7 +210,9 @@ void AiExecutionBrokerTests::runPowerShell_rejectsElevatedWithoutRunner() {
     QVERIFY(waitForFinish(finished_spy));
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(!result.started);
-    QVERIFY(result.error_message.contains(QStringLiteral("Elevated")));
+    QVERIFY(result.elevated);  // the no-runner elevated branch still marks the result elevated
+    QCOMPARE(result.error_message,
+             QStringLiteral("Elevated AI command execution is not connected"));
 }
 
 void AiExecutionBrokerTests::runPowerShell_usesElevatedRunnerWhenRequested() {
@@ -121,6 +223,7 @@ void AiExecutionBrokerTests::runPowerShell_usesElevatedRunnerWhenRequested() {
         result.elevated = true;
         result.exit_code = 0;
         result.stdout_text = request.command;
+        result.duration_ms = 987'654;  // the elevated worker measured this run itself
         return result;
     });
     QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
@@ -138,7 +241,12 @@ void AiExecutionBrokerTests::runPowerShell_usesElevatedRunnerWhenRequested() {
     QVERIFY(result.started);
     QVERIFY(result.elevated);
     QCOMPARE(result.exit_code, 0);
-    QVERIFY(result.stdout_text.contains(QStringLiteral("admin")));
+    QCOMPARE(result.stdout_text, QStringLiteral("Write-Output 'admin'"));
+    // The runner reported its own measurement, so the broker must keep it. Its fallback timer
+    // (ai_execution_broker.cpp:403) fills in only when the runner reported 0 -- an unconditional
+    // `duration_ms = timer.elapsed()` would report a UAC-gated ten-minute run as the microseconds
+    // the synchronous call happened to sit on this stack.
+    QCOMPARE(result.duration_ms, static_cast<qint64>(987'654));
 }
 
 void AiExecutionBrokerTests::runPowerShell_cancelsRunningProcess() {
@@ -158,7 +266,43 @@ void AiExecutionBrokerTests::runPowerShell_cancelsRunningProcess() {
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(result.started);
     QVERIFY(result.cancelled);
+    QCOMPARE(result.error_message, QStringLiteral("Command cancelled"));
     QVERIFY(!result.timed_out);
+    QVERIFY(!broker.isRunning());
+}
+
+// The timeout is one single-shot timer armed for what is left of the run's limit, not a
+// 200 ms poll re-armed for the life of the command: while the child runs the broker owns
+// exactly one active timer, it fires the timeout on time, and nothing stays armed after.
+void AiExecutionBrokerTests::runPowerShell_timesOutOnOneDeadlineTimer() {
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy started_spy(&broker, &sak::ai::ExecutionBroker::started);
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+
+    sak::ai::AiCommandRequest request;
+    request.command = QStringLiteral("Start-Sleep -Seconds 60");
+    request.timeout_seconds = sak::ai::kAiCommandMinTimeoutSeconds;
+    const int timeout_ms = request.timeout_seconds * 1000;
+
+    QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_deadline")));
+    QVERIFY(QTest::qWaitFor([&started_spy]() { return started_spy.count() > 0; }, 20'000));
+    const auto timers = broker.findChildren<QTimer*>();
+    QCOMPARE(timers.size(), 1);
+    QTimer* deadline = timers.first();
+    QVERIFY(deadline->isActive());
+    QVERIFY(deadline->isSingleShot());
+    QVERIFY(deadline->remainingTime() <= timeout_ms);
+    QVERIFY(deadline->remainingTime() > 0);
+
+    QVERIFY(waitForFinish(finished_spy, 30'000));
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY(result.started);
+    QVERIFY(result.timed_out);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.error_message, QStringLiteral("Command timed out"));
+    QVERIFY2(result.duration_ms >= timeout_ms - 100,
+             qPrintable(QString::number(result.duration_ms)));
+    QVERIFY(!deadline->isActive());
     QVERIFY(!broker.isRunning());
 }
 
@@ -178,10 +322,11 @@ void AiExecutionBrokerTests::runPowerShell_rejectsConcurrentStarts() {
     QVERIFY(!broker.startPowerShell(second, QStringLiteral("cmd_second")));
 
     broker.cancel();
-    // Wait for both: deferred reject + actual cancel.
-    while (finished_spy.count() < 2) {
-        QVERIFY(finished_spy.wait(10'000));
-    }
+    // Wait for both: deferred reject + actual cancel. The old loop called wait(10'000) once
+    // per emission, so its real budget was up to 20s for the two signals; a single
+    // 10'000 here would have halved that for no reason, so the timeout is doubled to match
+    // what this test was actually allowed before.
+    QTRY_COMPARE_WITH_TIMEOUT(finished_spy.count(), 2, 20'000);
 
     bool saw_first_cancelled = false;
     bool saw_second_rejected = false;
@@ -189,10 +334,12 @@ void AiExecutionBrokerTests::runPowerShell_rejectsConcurrentStarts() {
         const QString id = call.at(0).toString();
         const auto result = call.at(1).value<sak::ai::AiCommandResult>();
         if (id == QStringLiteral("cmd_first")) {
-            saw_first_cancelled = result.started && result.cancelled;
+            saw_first_cancelled = result.started && result.cancelled &&
+                                  result.error_message == QStringLiteral("Command cancelled");
         } else if (id == QStringLiteral("cmd_second")) {
             saw_second_rejected = !result.started &&
-                                  result.error_message.contains(QStringLiteral("already running"));
+                                  result.error_message ==
+                                      QStringLiteral("Broker is already running a command");
         }
     }
 
@@ -231,6 +378,7 @@ void AiExecutionBrokerTests::elevatedCancel_isInvokedWhenCancelCalledDuringEleva
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(result.elevated);
     QVERIFY(result.cancelled);
+    QCOMPARE(result.error_message, QStringLiteral("Cancelled by user"));
 }
 
 void AiExecutionBrokerTests::startCmd_capturesStdoutFromCmd() {
@@ -239,7 +387,7 @@ void AiExecutionBrokerTests::startCmd_capturesStdoutFromCmd() {
 
     sak::ai::AiCommandRequest request;
     request.command = QStringLiteral("echo cmd-marker");
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     QVERIFY(broker.startCmd(request, QStringLiteral("cmd_cmd")));
     QVERIFY(waitForFinish(finished_spy));
@@ -263,7 +411,9 @@ void AiExecutionBrokerTests::startCmd_rejectsElevation() {
 
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(!result.started);
-    QVERIFY(result.error_message.contains(QStringLiteral("Elevated")));
+    QCOMPARE(result.error_message,
+             QStringLiteral("Elevated cmd.exe launch is not supported; use run_powershell "
+                            "for admin tasks."));
 }
 
 void AiExecutionBrokerTests::startProcess_launchesProgramDirectly() {
@@ -273,7 +423,7 @@ void AiExecutionBrokerTests::startProcess_launchesProgramDirectly() {
     sak::ai::AiCommandRequest request;
     request.program = QStringLiteral("cmd.exe");
     request.arguments = QStringList{QStringLiteral("/c"), QStringLiteral("echo proc-marker")};
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     QVERIFY(broker.startProcess(request, QStringLiteral("cmd_proc")));
     QVERIFY(waitForFinish(finished_spy));
@@ -281,7 +431,37 @@ void AiExecutionBrokerTests::startProcess_launchesProgramDirectly() {
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(result.started);
     QCOMPARE(result.exit_code, 0);
-    QVERIFY(result.stdout_text.contains(QStringLiteral("proc-marker")));
+    // `cmd /c echo proc-marker` is deterministic, so pin the exact line rather than a
+    // substring: a leaked prologue or elision marker has to show up here.
+    QCOMPARE(result.stdout_text.trimmed(), QStringLiteral("proc-marker"));
+}
+
+void AiExecutionBrokerTests::startProcess_refusesUnresolvableBareName() {
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+    QSignalSpy started_spy(&broker, &sak::ai::ExecutionBroker::started);
+
+    // A BARE name (no separator) is the input the System32/PATH resolver exists to harden:
+    // CreateProcess would search the current directory ahead of PATH and let a planted
+    // .\<name> win. A name that resolves under neither System32 nor an absolute PATH entry
+    // must be REFUSED synchronously, not handed to CreateProcess to find on its own.
+    // startProcess_launchesProgramDirectly cannot see this: cmd.exe resolves either way, and
+    // AiCommandResult carries no program field, so only the refusal side is observable.
+    sak::ai::AiCommandRequest request;
+    request.program = QStringLiteral("definitely-not-a-real-sak-test-binary.exe");
+    request.timeout_seconds = kPowerShellBudgetSeconds;
+
+    // Refusal is synchronous (false), unlike the async "Process start error" an absolute
+    // bad path produces -- delete the resolver and this flips to true.
+    QVERIFY(!broker.startProcess(request, QStringLiteral("cmd_bare_unresolvable")));
+    QVERIFY(waitForFinish(finished_spy));
+    QCOMPARE(started_spy.count(), 0);
+
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY(!result.started);
+    QCOMPARE(result.error_message,
+             QStringLiteral("Cannot resolve program 'definitely-not-a-real-sak-test-binary.exe' "
+                            "to an absolute path; refusing to launch a bare name"));
 }
 
 void AiExecutionBrokerTests::startProcess_reportsInvalidProgramAsAsyncFailure() {
@@ -291,7 +471,7 @@ void AiExecutionBrokerTests::startProcess_reportsInvalidProgramAsAsyncFailure() 
 
     sak::ai::AiCommandRequest request;
     request.program = QStringLiteral("C:/definitely-not-a-real-sak-test-binary.exe");
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     QVERIFY(broker.startProcess(request, QStringLiteral("cmd_bad_proc")));
     QVERIFY(waitForFinish(finished_spy));
@@ -312,7 +492,24 @@ void AiExecutionBrokerTests::startProcess_rejectsEmptyProgram() {
 
     const auto result = resultFromSpy(finished_spy);
     QVERIFY(!result.started);
-    QVERIFY(result.error_message.contains(QStringLiteral("Program path is empty")));
+    QCOMPARE(result.error_message, QStringLiteral("Program path is empty"));
+
+    // A whitespace-only program is the malformed input the .trimmed() half of the guard at
+    // ai_execution_broker.cpp:538 exists for (parseRequiredString does not trim, so a tool
+    // call of {"program": "   "} arrives here verbatim). It must be refused with this same
+    // contract message, not fall through to the bare-name resolver, which would report
+    // "Cannot resolve program '' to an absolute path; refusing to launch a bare name".
+    sak::ai::ExecutionBroker blank_broker;
+    QSignalSpy blank_finished_spy(&blank_broker, &sak::ai::ExecutionBroker::finished);
+
+    sak::ai::AiCommandRequest blank_request;
+    blank_request.program = QStringLiteral("   ");
+    QVERIFY(!blank_broker.startProcess(blank_request, QStringLiteral("cmd_blank")));
+    QVERIFY(waitForFinish(blank_finished_spy));
+
+    const auto blank_result = resultFromSpy(blank_finished_spy);
+    QVERIFY(!blank_result.started);
+    QCOMPARE(blank_result.error_message, QStringLiteral("Program path is empty"));
 }
 
 void AiExecutionBrokerTests::processRequestFromJson_parsesArguments() {
@@ -329,6 +526,254 @@ void AiExecutionBrokerTests::processRequestFromJson_parsesArguments() {
     QCOMPARE(request.arguments.at(1), QStringLiteral("echo hi"));
     QCOMPARE(request.timeout_seconds, 30);
     QVERIFY(!request.requires_admin);
+    QVERIFY(request.validation_error.isEmpty());  // accept path produces NO error
+
+    // requires_admin is the ELEVATION CLASSIFICATION: a present-but-non-bool value must be
+    // REJECTED, never coerced to false by QJsonValue::toBool()'s default. Without this,
+    // dropping the isBool() guard in parseOptionalRequiresAdmin turns a plan reviewed as
+    // elevated into an unelevated launch carrying an EMPTY validation_error.
+    QJsonObject mistyped = input;
+    mistyped[QStringLiteral("requires_admin")] = QStringLiteral("true");
+    const auto rejected = sak::ai::ExecutionBroker::processRequestFromJson(mistyped);
+    QCOMPARE(rejected.validation_error, QStringLiteral("requires_admin must be a boolean"));
+    QVERIFY(!rejected.requires_admin);  // stays at the fail-closed default, never coerced
+
+    // The accepted side must carry true through as well, not only false.
+    QJsonObject elevated = input;
+    elevated[QStringLiteral("requires_admin")] = true;
+    const auto elevated_request = sak::ai::ExecutionBroker::processRequestFromJson(elevated);
+    QVERIFY(elevated_request.validation_error.isEmpty());
+    QVERIFY(elevated_request.requires_admin);
+
+    // parseOptionalTimeoutSeconds fails closed on both an out-of-domain value and a wrong
+    // type (src/ai/ai_execution_broker.cpp:103-123), so probe each arm by its OWN message.
+    // A below-floor value must be REFUSED here, never accepted and silently substituted with
+    // a default by launchProcess's std::clamp at ai_execution_broker.cpp:663; and a wrong-typed
+    // value must speak the type message, not the range message that toDouble()'s 0 would give.
+    QJsonObject below_floor = input;
+    below_floor[QStringLiteral("timeout_seconds")] = 1;  // 1, not 0: 0 is caught by
+                                                         // launchLimitsError instead
+    const auto below = sak::ai::ExecutionBroker::processRequestFromJson(below_floor);
+    QCOMPARE(below.validation_error, QStringLiteral("timeout_seconds must be between 5 and 3600"));
+
+    QJsonObject above_ceiling = input;
+    above_ceiling[QStringLiteral("timeout_seconds")] = 999'999;
+    const auto above = sak::ai::ExecutionBroker::processRequestFromJson(above_ceiling);
+    QCOMPARE(above.validation_error, QStringLiteral("timeout_seconds must be between 5 and 3600"));
+
+    QJsonObject wrong_type = input;
+    wrong_type[QStringLiteral("timeout_seconds")] = QStringLiteral("30");
+    const auto typed = sak::ai::ExecutionBroker::processRequestFromJson(wrong_type);
+    QCOMPARE(typed.validation_error, QStringLiteral("timeout_seconds must be a number"));
+}
+
+void AiExecutionBrokerTests::startProcess_refusesWorkingDirectoryRelativeProgram() {
+    // THE BROKER USED TO BE THE FAIL-OPEN LAYER HERE. Its guard resolved only names with NO
+    // separator, so "sub/planted.exe" skipped resolution entirely and went to QProcess::start,
+    // which resolves a relative path against the WORKING DIRECTORY -- exactly the hijack the
+    // resolution exists to prevent. The planner already refused such a path, so production never
+    // reached it; but startProcess is public API and nothing here enforced the rule. A guard that
+    // holds only because every caller happened to check first is not a guard.
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+
+    sak::ai::AiCommandRequest request;
+    request.program = QStringLiteral("sub/planted.exe");
+    request.timeout_seconds = kPowerShellBudgetSeconds;
+
+    QVERIFY(!broker.startProcess(request, QStringLiteral("cmd_relative")));
+    QVERIFY(waitForFinish(finished_spy));
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY(!result.started);
+    QCOMPARE(result.error_message,
+             QStringLiteral("program must be an absolute path or a bare executable name, not a "
+                            "working-directory-relative path: sub/planted.exe"));
+
+    // Backslash form too -- the same string with the other separator must not slip through.
+    sak::ai::ExecutionBroker back_broker;
+    QSignalSpy back_spy(&back_broker, &sak::ai::ExecutionBroker::finished);
+    sak::ai::AiCommandRequest back_request;
+    back_request.program = QStringLiteral("sub\\planted.exe");
+    back_request.timeout_seconds = kPowerShellBudgetSeconds;
+    QVERIFY(!back_broker.startProcess(back_request, QStringLiteral("cmd_relative_back")));
+    QVERIFY(waitForFinish(back_spy));
+    QVERIFY(!resultFromSpy(back_spy).started);
+}
+
+void AiExecutionBrokerTests::startProcess_refusesAProgramThatIsNotTheApprovedFile() {
+    // The plan resolves the program to a path so the approval preview can name the binary that
+    // will run -- but a path is a NAME. The gap between naming it and running it spans an
+    // approval dialog, a UAC prompt and restore-point creation: minutes, during which the same
+    // string can come to mean a different file. The plan therefore carries the IDENTITY of the
+    // file it named, and the launch refuses if the file no longer matches.
+    const QString cmd = sak::system32Path(QStringLiteral("cmd.exe"));
+    QVERIFY2(!cmd.isEmpty() && QFileInfo(cmd).isFile(), qPrintable(cmd));
+
+    sak::ai::AiCommandRequest request;
+    request.program = cmd;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
+    // A VALID identity belonging to a DIFFERENT real file: this is what a swap looks like from
+    // the launch site -- the path still resolves, the file is still readable, it is simply not
+    // the one that was approved.
+    const QString other = sak::system32Path(QStringLiteral("ping.exe"));
+    QVERIFY2(!other.isEmpty() && QFileInfo(other).isFile(), qPrintable(other));
+    request.program_identity = sak::executableIdentity(other);
+    QVERIFY(request.program_identity.valid);
+
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+    QVERIFY(!broker.startProcess(request, QStringLiteral("cmd_swapped")));
+    QVERIFY(waitForFinish(finished_spy));
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY2(!result.started, "a program that is not the approved file must never launch");
+    QVERIFY2(result.error_message.contains(QStringLiteral("not the file that was approved")),
+             qPrintable(result.error_message));
+
+    // NON-VACUITY: the SAME request with the CORRECT identity launches. Without this, a guard
+    // that refused every identity-carrying request would pass the assertions above.
+    sak::ai::AiCommandRequest ok_request = request;
+    ok_request.arguments = QStringList{QStringLiteral("/c"), QStringLiteral("echo identity-ok")};
+    ok_request.program_identity = sak::executableIdentity(cmd);
+    QVERIFY(ok_request.program_identity.valid);
+
+    sak::ai::ExecutionBroker ok_broker;
+    QSignalSpy ok_spy(&ok_broker, &sak::ai::ExecutionBroker::finished);
+    QVERIFY(ok_broker.startProcess(ok_request, QStringLiteral("cmd_identity_ok")));
+    QVERIFY(waitForFinish(ok_spy));
+    const auto ok_result = resultFromSpy(ok_spy);
+    QVERIFY2(ok_result.started, qPrintable(ok_result.error_message));
+    QCOMPARE(ok_result.stdout_text.trimmed(), QStringLiteral("identity-ok"));
+}
+
+void AiExecutionBrokerTests::refusesEmbeddedNulThatTheLaunchWouldTruncate() {
+    // QProcess hands the program path and the assembled command line to CreateProcessW as C
+    // strings, which end at the first NUL. A value carrying one is therefore TRUNCATED at
+    // launch, while the approval preview -- built from the whole QString -- renders the NUL as
+    // a visible escape and shows the reader everything after it.
+    //
+    // The mismatch runs in the dangerous direction, which is why this is refused rather than
+    // merely escaped for display: the fixture below reads as a dry run and would delete for
+    // real, because the trailing flag the reviewer's eye lands on is exactly the part that
+    // never reaches the process.
+    const QString nul = QString(QChar(QChar::Null));
+    const QString deceptive = QStringLiteral("Remove-Item C:/temp -Recurse") + nul +
+                              QStringLiteral(" -WhatIf");
+
+    // NON-VACUITY, and it is the assertion this whole slot rests on: if the fixture did not
+    // actually carry a NUL, every rejection below would be testing nothing. QString is
+    // length-counted, so it holds one -- but assert it rather than assume it.
+    QCOMPARE(deceptive.size(), 29 + 1 + 7);
+    QVERIFY(deceptive.contains(QChar::Null));
+
+    const auto shell = sak::ai::ExecutionBroker::requestFromJson(
+        QJsonObject{{QStringLiteral("command"), deceptive}});
+    QCOMPARE(shell.validation_error,
+             QStringLiteral("command must not contain an embedded NUL character"));
+    // The value is CLEARED as well as rejected, matching the length-limit arm beside it: a
+    // caller that ignored validation_error must not find a usable truncated command waiting.
+    QVERIFY(shell.command.isEmpty());
+
+    const auto program = sak::ai::ExecutionBroker::processRequestFromJson(QJsonObject{
+        {QStringLiteral("program"),
+         QStringLiteral("C:/Windows/System32/cmd.exe") + nul + QStringLiteral("evil.exe")}});
+    QCOMPARE(program.validation_error,
+             QStringLiteral("program must not contain an embedded NUL character"));
+    QVERIFY(program.program.isEmpty());
+
+    // argv is where the truncation bites hardest: the approver reads one argument and the
+    // process receives a shorter prefix of it.
+    const auto argument = sak::ai::ExecutionBroker::processRequestFromJson(QJsonObject{
+        {QStringLiteral("program"), QStringLiteral("C:/Windows/System32/cmd.exe")},
+        {QStringLiteral("arguments"),
+         QJsonArray{QStringLiteral("/c"), QStringLiteral("dir") + nul + QStringLiteral(" /s")}}});
+    QCOMPARE(argument.validation_error,
+             QStringLiteral("an argument must not contain an embedded NUL character"));
+
+    // THE OTHER HALF OF THE BRACKET: the same fixtures WITHOUT the NUL are accepted, so a
+    // guard that refused every command, or one that keyed on "Remove-Item" or on length,
+    // turns this red while the rejections above stay green.
+    const auto clean_shell = sak::ai::ExecutionBroker::requestFromJson(
+        QJsonObject{{QStringLiteral("command"),
+                     QStringLiteral("Remove-Item C:/temp -Recurse") + QStringLiteral(" -WhatIf")}});
+    QVERIFY2(clean_shell.validation_error.isEmpty(), qPrintable(clean_shell.validation_error));
+    const auto clean_process = sak::ai::ExecutionBroker::processRequestFromJson(QJsonObject{
+        {QStringLiteral("program"), QStringLiteral("C:/Windows/System32/cmd.exe")},
+        {QStringLiteral("arguments"),
+         QJsonArray{QStringLiteral("/c"), QStringLiteral("dir") + QStringLiteral(" /s")}}});
+    QVERIFY2(clean_process.validation_error.isEmpty(), qPrintable(clean_process.validation_error));
+}
+
+void AiExecutionBrokerTests::embeddedNulSurvivesJsonTextSoTheGuardIsModelReachable() {
+    // THE REAL DELIVERY PATH, pinned rather than assumed. A model's tool call arrives as JSON
+    // TEXT, so whether a \u0000 escape survives QJsonDocument parsing is what decides whether a
+    // model can reach the guard at all -- i.e. whether the sibling slot above defends a live
+    // path or a merely theoretical one. Recording the answer in a test rather than in someone's
+    // memory means a future Qt that changes it says so out loud instead of quietly turning that
+    // slot into a test of an unreachable branch.
+    QJsonParseError parse_error{};
+    const QJsonDocument doc = QJsonDocument::fromJson(
+        QByteArray(R"({"command":"Remove-Item C:/temp -Recurse\u0000 -WhatIf"})"), &parse_error);
+    QCOMPARE(parse_error.error, QJsonParseError::NoError);
+    const QString from_json = doc.object().value(QStringLiteral("command")).toString();
+    QVERIFY2(from_json.contains(QChar::Null),
+             "JSON text parsing must preserve \\u0000 for the NUL guard to be model-reachable");
+    const auto via_json = sak::ai::ExecutionBroker::requestFromJson(doc.object());
+    QCOMPARE(via_json.validation_error,
+             QStringLiteral("command must not contain an embedded NUL character"));
+}
+
+void AiExecutionBrokerTests::processRequestFromJson_refusesMalformedArguments() {
+    // parseOptionalArguments has four rejection arms and the accept-path fixture reaches
+    // none of them (src/ai/ai_execution_broker.cpp:162-188). A wrong shape must be REFUSED,
+    // never silently repaired into a DIFFERENT command line than the one that was reviewed.
+    const QJsonObject program_only{
+        {QStringLiteral("program"), QStringLiteral("C:/Windows/System32/cmd.exe")}};
+    const auto parse_with = [&program_only](const QJsonValue& value) {
+        QJsonObject obj = program_only;
+        obj.insert(QStringLiteral("arguments"), value);
+        return sak::ai::ExecutionBroker::processRequestFromJson(obj);
+    };
+
+    // Absent / null is accepted and contributes no arguments.
+    const auto absent = sak::ai::ExecutionBroker::processRequestFromJson(program_only);
+    QVERIFY(absent.validation_error.isEmpty());
+    QVERIFY(absent.arguments.isEmpty());
+    const auto null_args = parse_with(QJsonValue(QJsonValue::Null));
+    QVERIFY(null_args.validation_error.isEmpty());
+    QVERIFY(null_args.arguments.isEmpty());
+
+    // A non-array must be refused, not degraded into an empty argument list. The
+    // validation_error compare is the killer here: toArray() on a string already yields an
+    // empty array, so the isEmpty() line alone would not catch a deleted guard.
+    const auto not_array = parse_with(QStringLiteral("/c echo hi"));
+    QCOMPARE(not_array.validation_error, QStringLiteral("arguments must be an array of strings"));
+    QVERIFY(not_array.arguments.isEmpty());
+
+    // A non-string entry must be refused, not turned into a blank argument. Parsing stops at
+    // the offending entry and keeps what it had already appended, so {"/c"} is the contract.
+    const auto bad_entry = parse_with(QJsonArray{QStringLiteral("/c"), QJsonValue(7)});
+    QCOMPARE(bad_entry.validation_error,
+             QStringLiteral("every entry of arguments must be a string"));
+    QCOMPARE(bad_entry.arguments, QStringList{QStringLiteral("/c")});  // no blank appended
+
+    // 256 entries accepted, 257 refused.
+    QJsonArray at_cap;
+    for (int i = 0; i < 256; ++i) {
+        at_cap.append(QStringLiteral("a"));
+    }
+    const auto at_count_limit = parse_with(at_cap);
+    QVERIFY(at_count_limit.validation_error.isEmpty());
+    QCOMPARE(at_count_limit.arguments.size(), 256);
+    QJsonArray over_cap = at_cap;
+    over_cap.append(QStringLiteral("a"));
+    QCOMPARE(parse_with(over_cap).validation_error,
+             QStringLiteral("arguments exceeds the 256 entry limit"));
+
+    // A 30000-char argument accepted, 30001 refused.
+    const auto at_char_limit = parse_with(QJsonArray{QString(30'000, QLatin1Char('a'))});
+    QVERIFY(at_char_limit.validation_error.isEmpty());
+    QCOMPARE(parse_with(QJsonArray{QString(30'001, QLatin1Char('a'))}).validation_error,
+             QStringLiteral("an argument exceeds the 30000 character limit"));
 }
 
 void AiExecutionBrokerTests::toJson_redactsSecretsInStdoutAndStderr() {
@@ -344,6 +789,12 @@ void AiExecutionBrokerTests::toJson_redactsSecretsInStdoutAndStderr() {
     const QString password_redaction_sample = QStringLiteral("hunter") + QStringLiteral("2") +
                                               QStringLiteral("hunter");
     result.stderr_text = QStringLiteral("password=%1 on stderr").arg(password_redaction_sample);
+    // toJson() routes THREE strings through redactSecrets (ai_execution_broker.cpp:202-204).
+    // error_message is the third and is not innocuous: it carries QProcess start errors
+    // (:756-757), the model-supplied program path (:558-561) and whatever text an elevated
+    // runner returns, straight into the AI transcript. Without pinning it, deleting the
+    // redactSecrets call on :204 leaves every assertion in this file green.
+    result.error_message = QStringLiteral("Process start error: %1").arg(github_redaction_sample);
 
     const QJsonObject json = result.toJson();
     const QString stdout_field = json.value(QStringLiteral("stdout")).toString();
@@ -351,9 +802,136 @@ void AiExecutionBrokerTests::toJson_redactsSecretsInStdoutAndStderr() {
     QVERIFY(!stdout_field.contains(openai_redaction_sample));
     QVERIFY(!stdout_field.contains(github_redaction_sample));
     QVERIFY(!stderr_field.contains(password_redaction_sample));
-    QVERIFY(stdout_field.contains(QStringLiteral("[redacted")) ||
-            stdout_field.contains(QStringLiteral("sk-...[redacted]")));
-    QVERIFY(stderr_field.contains(QStringLiteral("[redacted]")));
+    // Exact post-redaction output: the sk- token is collapsed by the assignment-secret rule
+    // (token=[redacted]) and the ghp_ token by the github rule; the earlier "sk-...[redacted]"
+    // disjunct was dead. Pins the whole redacted format, not just presence of a marker.
+    QCOMPARE(stdout_field, QStringLiteral("token=[redacted] [redacted-github-token]"));
+    QCOMPARE(stderr_field, QStringLiteral("password=[redacted] on stderr"));
+
+    const QString error_field = json.value(QStringLiteral("error_message")).toString();
+    QVERIFY(!error_field.contains(github_redaction_sample));
+    QCOMPARE(error_field, QStringLiteral("Process start error: [redacted-github-token]"));
+}
+
+void AiExecutionBrokerTests::runPowerShell_truncationKeepsTerminalError() {
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+
+    // Emit a large head of filler followed by a terminal marker line, with a cap small
+    // enough to force truncation but larger than the streaming buffer keeps, so the
+    // final-output-carrying tail must survive. Before the fix, only the head was kept.
+    sak::ai::AiCommandRequest request;
+    request.command = QStringLiteral("Write-Output ('A' * 20000); Write-Output 'TERMINAL-ERR-ZZZ'");
+    request.timeout_seconds = 20;
+    request.max_output_bytes = 8192;
+
+    QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_trunc")));
+    QVERIFY(waitForFinish(finished_spy));
+
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY(result.started);
+    QVERIFY(result.output_truncated);  // the dedicated flag, not just the appended marker text
+    QVERIFY(result.stdout_text.contains(QStringLiteral("truncated")));
+    QVERIFY(result.stdout_text.contains(QStringLiteral("TERMINAL-ERR-ZZZ")));
+
+    // Same output at the MINIMUM cap: appendCapped's rolling window drops ~19 KB, but leaves the
+    // buffer at exactly 1024 bytes, so half_cap == max(512, kMinOutputCap) == 1024 and the final
+    // cappedHeadTail never fires. output_truncated can then only be true through the
+    // m_output_dropped_bytes term (ai_execution_broker.cpp:727) -- the arm the run above
+    // short-circuits past. Without that term a 1 KB caller gets the last kilobyte of a 20 KB run
+    // presented as the COMPLETE output.
+    sak::ai::ExecutionBroker min_cap_broker;
+    QSignalSpy min_cap_spy(&min_cap_broker, &sak::ai::ExecutionBroker::finished);
+
+    sak::ai::AiCommandRequest min_cap_request;
+    min_cap_request.command = request.command;
+    min_cap_request.timeout_seconds = 20;
+    min_cap_request.max_output_bytes = 1024;
+
+    QVERIFY(min_cap_broker.startPowerShell(min_cap_request, QStringLiteral("cmd_trunc_min")));
+    QVERIFY(waitForFinish(min_cap_spy));
+
+    const auto min_cap_result = resultFromSpy(min_cap_spy);
+    QVERIFY(min_cap_result.started);
+    // Neither stream carries the elision marker, so both cappedHeadTail truncation flags were
+    // false: the dropped-bytes term is the sole reason the run is reported as partial.
+    QVERIFY(!min_cap_result.stdout_text.contains(QStringLiteral("bytes truncated")));
+    QVERIFY(!min_cap_result.stderr_text.contains(QStringLiteral("bytes truncated")));
+    QVERIFY(min_cap_result.stdout_text.toUtf8().size() <= 1024);
+    QVERIFY(min_cap_result.output_truncated);
+}
+
+void AiExecutionBrokerTests::grandchildDiesWhenTheCommandIsCancelled() {
+    // NEW-1. The command's process joined its kill-on-close Job only from the `started` slot,
+    // after CreateProcess, and ran on uncontained whenever the Job could not be attached; the
+    // only cleanup left was a PID-snapshot walk. The command below starts a grandchild as its
+    // very first statement and then waits: a Stop must end the grandchild too.
+    sak::ai::ExecutionBroker broker;
+    GrandchildWatch grandchild(broker);
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+
+    sak::ai::AiCommandRequest request;
+    request.command = grandchildCommand(QStringLiteral("Start-Sleep -Seconds 60"));
+    request.timeout_seconds = 120;
+    QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_grandchild_cancel")));
+    QVERIFY(
+        QTest::qWaitFor([&grandchild]() { return grandchild.opened(); }, kGrandchildStartBudgetMs));
+
+    broker.cancel();
+    QVERIFY(waitForFinish(finished_spy));
+    QVERIFY(resultFromSpy(finished_spy).cancelled);
+    QVERIFY2(grandchild.exitsWithin(kGrandchildExitBudgetMs),
+             "the grandchild survived the cancelled command");
+}
+
+void AiExecutionBrokerTests::grandchildDiesWhenTheCommandFinishes() {
+    // A command that exits on its own while something it started is still running: what it
+    // started ends with it, as kill-on-close always made it do -- now proved, not assumed.
+    sak::ai::ExecutionBroker broker;
+    GrandchildWatch grandchild(broker);
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+
+    sak::ai::AiCommandRequest request;
+    request.command = grandchildCommand(QStringLiteral("exit 0"));
+    request.timeout_seconds = 120;
+    QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_grandchild_finish")));
+    QVERIFY(waitForFinish(finished_spy, kGrandchildStartBudgetMs));
+    QVERIFY(grandchild.opened());
+    QCOMPARE(resultFromSpy(finished_spy).exit_code, 0);
+    QVERIFY2(grandchild.exitsWithin(kGrandchildExitBudgetMs),
+             "the grandchild outlived the command that started it");
+}
+
+void AiExecutionBrokerTests::launchIsRefusedWhenTheJobCannotBeCreated() {
+    // The old path dropped a Job it could not set up and RAN THE COMMAND ANYWAY. A launch with no
+    // Job to contain it is now refused before any process exists: the command below would create
+    // the marker file if it ran at all.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString marker = dir.filePath(QStringLiteral("ran.txt"));
+    sak::ai::ExecutionBroker::setJobFactoryForTesting(
+        []() -> std::expected<std::unique_ptr<sak::WindowsProcessJob>, QString> {
+            return std::unexpected(QStringLiteral("planted Job failure"));
+        });
+    const auto restore =
+        qScopeGuard([]() { sak::ai::ExecutionBroker::setJobFactoryForTesting({}); });
+
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+    QSignalSpy started_spy(&broker, &sak::ai::ExecutionBroker::started);
+    sak::ai::AiCommandRequest request;
+    request.command = QStringLiteral("Set-Content -LiteralPath '%1' -Value ran").arg(marker);
+    request.timeout_seconds = 30;
+    QVERIFY(!broker.startPowerShell(request, QStringLiteral("cmd_uncontained")));
+    QVERIFY(waitForFinish(finished_spy));
+
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY(!result.started);
+    QCOMPARE(started_spy.count(), 0);
+    QVERIFY2(result.error_message.contains(QStringLiteral("planted Job failure")),
+             qPrintable(result.error_message));
+    QVERIFY2(!QFileInfo::exists(marker), "the command ran without its Job");
+    QVERIFY(!broker.isRunning());
 }
 
 QTEST_GUILESS_MAIN(AiExecutionBrokerTests)

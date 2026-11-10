@@ -1,0 +1,83 @@
+{
+  "tool": "partition-manager-row-report",
+  "schema_version": 1,
+  "scenario_id": "external.boot-repair-bios",
+  "status": "Passed",
+  "failure": "",
+  "run_id": "438dc387-1ede-4f75-8054-3cea0f26c60a",
+  "started_utc": "2026-11-10T18:30:00.4707152Z",
+  "completed_utc": "2026-11-10T18:33:37.4809729Z",
+  "code": {
+    "digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "commit": "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+    "dirty": false
+  },
+  "binaries": {
+    "client_sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
+    "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+    "app_sha256": "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+  },
+  "rig": {
+    "machine_manufacturer": "innotek GmbH",
+    "machine_model": "VirtualBox",
+    "firmware": "UEFI",
+    "os_caption": "Microsoft Windows 11 Pro",
+    "os_build": "26200",
+    "consent_prompt_answered_by_policy": true
+  },
+  "media": {
+    "class": "virtual_machine",
+    "kind": "Windows on a VirtualBox VDI",
+    "model": "VBOX HARDDISK",
+    "bus_type": "SATA",
+    "media_type": "Unspecified",
+    "rotation_rate_rpm": 0,
+    "size_bytes": "107374182400",
+    "serial_sha256": "15e3499a31001812a7dd7a2130f6d0d5d45500448419dc0b8a67d506ca9cb274"
+  },
+  "steps": [
+    {
+      "id": "repair",
+      "operation": "RepairBoot",
+      "expect": "success",
+      "report": "repair.client.json",
+      "observed": {
+        "client_pid": 3628,
+        "exit_code": 0,
+        "client_token_elevated": false,
+        "helper_pid": 5852,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "helper_path": "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
+        "helper_token_elevated": true
+      }
+    }
+  ],
+  "independent_file": "independent.json",
+  "artifacts": [
+    {
+      "path": "bios-after.json",
+      "sha256": "fe2f351b42b00cec21113839aa79de8868cb9eff2e8976df288df91e8ab2257d",
+      "bytes": 243
+    },
+    {
+      "path": "bios-before.json",
+      "sha256": "b85fc852bc9e64c57eb3154b5e0af66722eedf79bd106998ad17d44d052165bb",
+      "bytes": 244
+    },
+    {
+      "path": "bios-broken.json",
+      "sha256": "5a68c397d73db4308a3253253f7758186f640f8c2ad4e769042c33538396e2d9",
+      "bytes": 200
+    },
+    {
+      "path": "independent.json",
+      "sha256": "deb6e8b3ce856eb583b2fdfdabfb5620b782c9d7b166b310c1e28db4e7373551",
+      "bytes": 829
+    },
+    {
+      "path": "repair.client.json",
+      "sha256": "b957a4b6ecc135ae829f9c4c703089a5249b65804e87af9f12ac4e8072cf1cdd",
+      "bytes": 3743
+    }
+  ]
+}

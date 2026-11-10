@@ -1,0 +1,104 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_uup_dump_api",
+  "ctest_regex": "^test_uup_dump_api$",
+  "mutants": [
+    {
+      "id": "metadata-allows-non-https",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "if (request.url.scheme() != QStringLiteral(\"https\"))",
+      "replace": "if (request.url.scheme() == QStringLiteral(\"https\"))",
+      "expect": "killed",
+      "why": "metadataSeam_rejectsInvalidSchemeTimeoutAndCap requires non-HTTPS metadata URLs to fail before dispatch."
+    },
+    {
+      "id": "metadata-zero-timeout-is-accepted",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "return QStringLiteral(\"Metadata URL must use HTTPS\");\r\n    }\r\n    if (request.timeout_ms <= 0)",
+      "replace": "return QStringLiteral(\"Metadata URL must use HTTPS\");\r\n    }\r\n    if (request.timeout_ms < 0)",
+      "expect": "killed",
+      "why": "metadataSeam_rejectsInvalidSchemeTimeoutAndCap requires zero timeout to fail rather than disable the deadline."
+    },
+    {
+      "id": "metadata-zero-cap-is-accepted",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "return QStringLiteral(\"Metadata timeout must be positive\");\r\n    }\r\n    if (request.max_response_bytes <= 0)",
+      "replace": "return QStringLiteral(\"Metadata timeout must be positive\");\r\n    }\r\n    if (request.max_response_bytes < 0)",
+      "expect": "killed",
+      "why": "metadataSeam_rejectsInvalidSchemeTimeoutAndCap requires zero response cap to fail instead of becoming unlimited."
+    },
+    {
+      "id": "metadata-http-200-is-rejected",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "bool isSuccessfulHttpStatus(int status) {\r\n    return status >= kHttpSuccessStatusMin && status < kHttpSuccessStatusEnd;",
+      "replace": "bool isSuccessfulHttpStatus(int status) {\r\n    return status > kHttpSuccessStatusMin && status < kHttpSuccessStatusEnd;",
+      "expect": "killed",
+      "why": "positive metadata caller controls require HTTP 200 to remain inside the accepted 2xx range."
+    },
+    {
+      "id": "metadata-http-300-is-accepted",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "bool isSuccessfulHttpStatus(int status) {\r\n    return status >= kHttpSuccessStatusMin && status < kHttpSuccessStatusEnd;",
+      "replace": "bool isSuccessfulHttpStatus(int status) {\r\n    return status >= kHttpSuccessStatusMin && status <= kHttpSuccessStatusEnd;",
+      "expect": "killed",
+      "why": "metadataSeam_acceptsOnly2xxStatus requires HTTP 300 to fail rather than masquerade as a complete body."
+    },
+    {
+      "id": "metadata-live-overflow-does-not-abort",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "if (received > limit || total > limit) {",
+      "replace": "if (received < limit || total < limit) {",
+      "expect": "killed",
+      "why": "metadataSeam_abortsOversizedLiveProgress emits over-cap progress and requires an oversized, non-cancelled failure."
+    },
+    {
+      "id": "metadata-final-overflow-is-accepted",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "if (limit <= 0 || result.body.size() > limit) {",
+      "replace": "if (limit <= 0 || result.body.size() < limit) {",
+      "expect": "killed",
+      "why": "metadataSeam_rejectsOversizedFinalBody requires a one-shot body beyond the cap to be cleared and refused."
+    },
+    {
+      "id": "metadata-cancel-is-misclassified-as-timeout-only",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "return reply->error() == QNetworkReply::OperationCanceledError && !result.timed_out &&\r\n           !oversized;",
+      "replace": "return reply->error() == QNetworkReply::OperationCanceledError && result.timed_out &&\r\n           !oversized;",
+      "expect": "killed",
+      "why": "metadataSeam_classifiesCancellationSeparately requires a cancelled reply to report cancelled without timed_out."
+    },
+    {
+      "id": "metadata-native-timeout-is-not-classified",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "result->timed_out = reply->property(kMetadataTimedOutProperty).toBool() ||\r\n                        reply->error() == QNetworkReply::TimeoutError;",
+      "replace": "result->timed_out = reply->property(kMetadataTimedOutProperty).toBool();",
+      "expect": "killed",
+      "why": "metadataSeam_classifiesNativeTimeout requires a native TimeoutError without the seam's private deadline property to report timed_out."
+    },
+    {
+      "id": "metadata-post-read-error-is-ignored",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "    // Qt can discover decompression/read errors while consuming an already-finished reply.\r\n    // A pre-read error check alone would publish partial metadata as a successful response.\r\n    if (recordMetadataReplyFailure(reply, &result)) {\r\n        result.body.clear();\r\n        return result;\r\n    }",
+      "replace": "",
+      "expect": "killed",
+      "why": "metadataSeam_rejectsReadFailureAfterFinished requires errors raised by readData after finished to reject and clear partial metadata."
+    },
+    {
+      "id": "metadata-negative-status-is-accepted",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "result->http_status != 0 && !isSuccessfulHttpStatus(result->http_status)",
+      "replace": "result->http_status > 0 && !isSuccessfulHttpStatus(result->http_status)",
+      "expect": "killed",
+      "why": "metadataSeam_acceptsOnly2xxStatus requires a negative status to fail instead of bypassing both positive non-2xx and missing-status branches."
+    },
+    {
+      "id": "metadata-oversize-is-misclassified-as-user-cancel",
+      "file": "src/core/network_transfer_runner.cpp",
+      "find": "return reply->error() == QNetworkReply::OperationCanceledError && !result.timed_out &&\r\n           !oversized;",
+      "replace": "return reply->error() == QNetworkReply::OperationCanceledError && !result.timed_out &&\r\n           oversized;",
+      "expect": "killed",
+      "why": "metadataSeam_abortsOversizedLiveProgress requires a size-limit abort not to be reported as user cancellation."
+    }
+  ]
+}

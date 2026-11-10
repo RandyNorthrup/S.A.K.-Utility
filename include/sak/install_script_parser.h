@@ -30,6 +30,10 @@ struct DownloadResource {
     QString checksum;
     /// @brief Checksum algorithm (sha256, md5, etc.)
     QString checksum_type;
+    /// @brief Expected checksum of the 64-bit file (checksum64)
+    QString checksum_64bit;
+    /// @brief Checksum algorithm for the 64-bit file (checksumType64)
+    QString checksum_type_64bit;
     /// @brief Suggested filename for the download
     QString file_name;
     /// @brief The Chocolatey helper function that references this download
@@ -58,7 +62,7 @@ struct ParsedInstallScript {
 ///
 /// Extracts download URLs and related metadata from Chocolatey install scripts
 /// by matching known PowerShell function patterns and variable assignments.
-/// Does not execute the script — static analysis only.
+/// Does not execute the script -- static analysis only.
 class InstallScriptParser {
 public:
     InstallScriptParser() = default;
@@ -96,21 +100,21 @@ private:
                                                           const QRegularExpressionMatch& match,
                                                           ParsedInstallScript& result) const;
 
-    void appendUniqueSplattingResource(ParsedInstallScript& result,
-                                       const DownloadResource& resource) const;
+    static void appendUniqueSplattingResource(ParsedInstallScript& result,
+                                              const DownloadResource& resource);
 
     /// @brief Resolve PowerShell variable references ($varName) in a value
-    [[nodiscard]] QString resolveVariables(const QString& value, const QString& script) const;
+    [[nodiscard]] static QString resolveVariables(const QString& value, const QString& script);
 
     /// @brief Extract a named parameter value from a function call
-    [[nodiscard]] QString extractParameter(const QString& call_text,
-                                           const QString& param_name) const;
+    [[nodiscard]] static QString extractParameter(const QString& call_text,
+                                                  const QString& param_name);
 
     /// @brief Extract a named parameter from a hashtable block
-    [[nodiscard]] QString extractHashtableValue(const QString& block, const QString& key) const;
+    [[nodiscard]] static QString extractHashtableValue(const QString& block, const QString& key);
 
     /// @brief Find the line number for a position in the script
-    [[nodiscard]] int lineNumberAt(const QString& script, int position) const;
+    [[nodiscard]] static int lineNumberAt(const QString& script, int position);
 };
 
 }  // namespace sak

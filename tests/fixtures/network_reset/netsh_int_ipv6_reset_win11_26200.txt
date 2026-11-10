@@ -1,0 +1,37 @@
+Resetting Compartment Forwarding, OK!
+Resetting Compartment, OK!
+Resetting Control Protocol, OK!
+Resetting Echo Sequence Request, OK!
+Resetting Global, OK!
+Resetting Interface, OK!
+Resetting Anycast Address, OK!
+Resetting Multicast Address, OK!
+Resetting Unicast Address, OK!
+Resetting Neighbor, OK!
+Resetting Path, OK!
+Resetting Potential, OK!
+Resetting Prefix Policy, OK!
+Resetting Proxy Neighbor, OK!
+Resetting Route, OK!
+Resetting Site Prefix, OK!
+Resetting Subinterface, OK!
+Resetting Wakeup Pattern, OK!
+Resetting Resolve Neighbor, OK!
+Resetting , OK!
+Resetting , OK!
+Resetting , OK!
+Resetting , OK!
+Resetting , failed.
+Access is denied.
+
+Resetting , OK!
+Resetting , OK!
+Resetting , OK!
+Resetting , OK!
+Resetting , OK!
+Resetting , OK!
+Resetting , OK!
+Resetting , OK!
+Resetting , OK!
+Resetting , OK!
+Restart the computer to complete this action.

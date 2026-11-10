@@ -14,36 +14,37 @@ class AdvancedSearchTypesTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── SearchMatch ──
+    // -- SearchMatch --
     void searchMatch_defaultConstruction();
     void searchMatch_valueSemantics();
     void searchMatch_contextLines();
 
-    // ── SearchConfig ──
+    // -- SearchConfig --
     void searchConfig_defaultValues();
     void searchConfig_defaultExcludes();
     void searchConfig_valueSemantics();
 
-    // ── SearchPreferences ──
+    // -- SearchPreferences --
     void searchPreferences_defaultValues();
     void searchPreferences_copyable();
 
-    // ── RegexPatternInfo ──
+    // -- RegexPatternInfo --
     void regexPatternInfo_defaultConstruction();
     void regexPatternInfo_copyable();
 
-    // ── Extension Sets ──
+    // -- Extension Sets --
     void imageExtensions_containsExpected();
     void imageExtensions_doesNotContainWrong();
     void fileMetadataExtensions_containsExpected();
     void archiveExtensions_containsExpected();
 
-    // ── Compile-Time Invariants ──
+    // -- Compile-Time Invariants --
     void staticAsserts_defaultConstructible();
     void staticAsserts_copyConstructible();
+    void previewNamesTheFileWithBackslashes();
 };
 
-// ── SearchMatch ─────────────────────────────────────────────────────────────
+// -- SearchMatch -------------------------------------------------------------
 
 void AdvancedSearchTypesTests::searchMatch_defaultConstruction() {
     sak::SearchMatch match;
@@ -77,10 +78,16 @@ void AdvancedSearchTypesTests::searchMatch_valueSemantics() {
     QCOMPARE(copy.context_before, original.context_before);
     QCOMPARE(copy.context_after, original.context_after);
 
-    // Move
+    // Move: parity with the copy half above -- every member must survive the move, not just the
+    // two scalars. Only `copy` is moved from, so `original` stays a valid oracle.
     sak::SearchMatch moved = std::move(copy);
     QCOMPARE(moved.file_path, original.file_path);
     QCOMPARE(moved.line_number, original.line_number);
+    QCOMPARE(moved.line_content, original.line_content);
+    QCOMPARE(moved.match_start, original.match_start);
+    QCOMPARE(moved.match_end, original.match_end);
+    QCOMPARE(moved.context_before, original.context_before);
+    QCOMPARE(moved.context_after, original.context_after);
 }
 
 void AdvancedSearchTypesTests::searchMatch_contextLines() {
@@ -94,7 +101,7 @@ void AdvancedSearchTypesTests::searchMatch_contextLines() {
     QCOMPARE(match.context_after[1], "line 6");
 }
 
-// ── SearchConfig ────────────────────────────────────────────────────────────
+// -- SearchConfig ------------------------------------------------------------
 
 void AdvancedSearchTypesTests::searchConfig_defaultValues() {
     sak::SearchConfig config;
@@ -113,46 +120,165 @@ void AdvancedSearchTypesTests::searchConfig_defaultValues() {
     QCOMPARE(config.max_results, 0);
     QCOMPARE(config.max_file_size, 50LL * 1024 * 1024);
     QCOMPARE(config.network_timeout_sec, 5);
+
+    // Routing/safety defaults. A fresh config must (a) walk the LOCAL tree: use_file_system_target
+    // false keeps execute() off the raw/image bridge branch (advanced_search_worker.cpp:939-945),
+    // whose can_advanced_search guard would NOT catch a blank target because that field defaults
+    // true (file_management_file_system.h:75); and (b) drop symlinked file entries before isFile()
+    // can resolve a planted UNC target. Every caller, including the GUI, gets that safe default;
+    // one that has a verified reason to follow links must opt out explicitly. The nested target
+    // must start blank.
+    QCOMPARE(config.use_file_system_target, false);
+    QCOMPARE(config.skip_symlinks, true);
+    QVERIFY(config.file_system_target.id.isEmpty());
+    QVERIFY(config.file_system_target.root_path.isEmpty());
 }
 
 void AdvancedSearchTypesTests::searchConfig_defaultExcludes() {
     sak::SearchConfig config;
 
-    // Default exclusion patterns should be non-empty
-    QVERIFY(!config.exclude_patterns.isEmpty());
-
-    // Should contain common exclusion patterns
-    bool hasGit = false;
-    bool hasNodeModules = false;
-    for (const auto& pattern : config.exclude_patterns) {
-        if (pattern.contains("git")) {
-            hasGit = true;
-        }
-        if (pattern.contains("node_modules")) {
-            hasNodeModules = true;
-        }
-    }
-    QVERIFY2(hasGit, "Default excludes should contain .git");
-    QVERIFY2(hasNodeModules, "Default excludes should contain node_modules");
+    // The default exclusion patterns are a fixed compile-time list; pin the exact ordered set
+    // (subsumes the old non-empty + substring-loop checks, and catches a dropped/reordered or
+    // mutated pattern -- e.g. \.git -> .git).
+    QCOMPARE(config.exclude_patterns,
+             (QStringList{R"(\.git)",
+                          R"(\.svn)",
+                          R"(__pycache__)",
+                          R"(node_modules)",
+                          R"(\.pyc$)",
+                          R"(\.exe$)",
+                          R"(\.dll$)",
+                          R"(\.so$)",
+                          R"(\.bin$)"}));
 }
 
-void AdvancedSearchTypesTests::searchConfig_valueSemantics() {
+namespace {
+
+/// A SearchConfig with every field set to a NON-default value, so a copy that silently re-runs
+/// a default member initializer cannot pass by coincidence.
+sak::SearchConfig fullyPopulatedSearchConfig() {
     sak::SearchConfig config;
     config.root_path = "/search/root";
     config.pattern = "test_pattern";
     config.case_sensitive = true;
     config.use_regex = true;
+    config.whole_word = true;
+    config.search_image_metadata = true;
+    config.search_file_metadata = true;
+    config.search_in_archives = true;
+    config.hex_search = true;
+    config.skip_symlinks = false;
+    config.file_extensions = QStringList{"cpp", "h"};
+    // Deliberately NOT the compile-time default list (pinned by searchConfig_defaultExcludes),
+    // so a copy that silently re-runs the default member initializer is caught here.
+    config.exclude_patterns = QStringList{R"(^build/)", R"(\.tmp$)"};
     config.context_lines = 5;
+    config.max_results = 250;
+    config.max_file_size = 7LL * 1024 * 1024;
+    config.network_timeout_sec = 11;
 
-    sak::SearchConfig copy = config;
-    QCOMPARE(copy.root_path, config.root_path);
-    QCOMPARE(copy.pattern, config.pattern);
-    QCOMPARE(copy.case_sensitive, true);
-    QCOMPARE(copy.use_regex, true);
-    QCOMPARE(copy.context_lines, 5);
+    // The nested target is the member the worker actually searches through
+    // (advanced_search_worker.cpp:939-945), and AdvancedSearchWorker takes SearchConfig
+    // BY VALUE (advanced_search_worker.h:42) -- so the copy must carry it. A copy that
+    // drops it leaves use_file_system_target true with an empty target root_path, and the
+    // :940 guard does not fire because can_advanced_search defaults true
+    // (file_management_file_system.h:75).
+    config.use_file_system_target = true;
+    config.file_system_target.id = "target-id";
+    config.file_system_target.label = "Raw image";
+    config.file_system_target.root_path = "/mnt/image";
+    config.file_system_target.file_system = "APFS";
+    config.file_system_target.source = "image-file";
+    config.file_system_target.details = QStringList{"detail"};
+    config.file_system_target.size_bytes = 4096;
+    config.file_system_target.kind = sak::FileManagementTargetKind::ImageFile;
+    config.file_system_target.local_file_system = false;
+    config.file_system_target.read_only = true;
+    config.file_system_target.can_browse = false;
+    config.file_system_target.can_read_files = false;
+    config.file_system_target.can_write_files = true;
+    config.file_system_target.can_organize = false;
+    config.file_system_target.can_duplicate_scan = false;
+    config.file_system_target.can_advanced_search = false;
+    config.file_system_target.blockers = QStringList{"blocked"};
+    return config;
 }
 
-// ── SearchPreferences ───────────────────────────────────────────────────────
+/// FileManagementTarget has no operator==, so pin it field by field. `kind` is compared as int
+/// because QTest has no toString for the enum.
+void compareFileSystemTargets(const sak::FileManagementTarget& actual,
+                              const sak::FileManagementTarget& expected) {
+    QCOMPARE(actual.id, expected.id);
+    QCOMPARE(actual.label, expected.label);
+    QCOMPARE(actual.root_path, expected.root_path);
+    QCOMPARE(actual.file_system, expected.file_system);
+    QCOMPARE(actual.source, expected.source);
+    QCOMPARE(actual.details, expected.details);
+    QCOMPARE(actual.size_bytes, expected.size_bytes);
+    QCOMPARE(static_cast<int>(actual.kind), static_cast<int>(expected.kind));
+    QCOMPARE(actual.local_file_system, expected.local_file_system);
+    QCOMPARE(actual.read_only, expected.read_only);
+    QCOMPARE(actual.can_browse, expected.can_browse);
+    QCOMPARE(actual.can_read_files, expected.can_read_files);
+    QCOMPARE(actual.can_write_files, expected.can_write_files);
+    QCOMPARE(actual.can_organize, expected.can_organize);
+    QCOMPARE(actual.can_duplicate_scan, expected.can_duplicate_scan);
+    QCOMPARE(actual.can_advanced_search, expected.can_advanced_search);
+    QCOMPARE(actual.blockers, expected.blockers);
+}
+
+void compareSearchConfigOwnFields(const sak::SearchConfig& actual,
+                                  const sak::SearchConfig& expected) {
+    QCOMPARE(actual.root_path, expected.root_path);
+    QCOMPARE(actual.pattern, expected.pattern);
+    QCOMPARE(actual.case_sensitive, expected.case_sensitive);
+    QCOMPARE(actual.use_regex, expected.use_regex);
+    QCOMPARE(actual.whole_word, expected.whole_word);
+    QCOMPARE(actual.search_image_metadata, expected.search_image_metadata);
+    QCOMPARE(actual.search_file_metadata, expected.search_file_metadata);
+    QCOMPARE(actual.search_in_archives, expected.search_in_archives);
+    QCOMPARE(actual.hex_search, expected.hex_search);
+    QCOMPARE(actual.skip_symlinks, expected.skip_symlinks);
+    QCOMPARE(actual.file_extensions, expected.file_extensions);
+    QCOMPARE(actual.exclude_patterns, expected.exclude_patterns);
+    QCOMPARE(actual.context_lines, expected.context_lines);
+    QCOMPARE(actual.max_results, expected.max_results);
+    QCOMPARE(actual.max_file_size, expected.max_file_size);
+    QCOMPARE(actual.network_timeout_sec, expected.network_timeout_sec);
+    QCOMPARE(actual.use_file_system_target, expected.use_file_system_target);
+}
+
+}  // namespace
+
+void AdvancedSearchTypesTests::searchConfig_valueSemantics() {
+    const sak::SearchConfig config = fullyPopulatedSearchConfig();
+
+    sak::SearchConfig copy = config;
+    compareSearchConfigOwnFields(copy, config);
+    // A QCOMPARE failure inside a helper returns from the HELPER, not from this slot, so bail
+    // out explicitly rather than reporting cascading failures from an already-broken copy.
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    compareFileSystemTargets(copy.file_system_target, config.file_system_target);
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    copy.pattern = QStringLiteral("mutated-copy-pattern");
+    QCOMPARE(config.pattern, QStringLiteral("test_pattern"));
+    QVERIFY(copy.pattern != config.pattern);
+
+    // Copy ASSIGNMENT is a separate special member and crosses the same boundary.
+    sak::SearchConfig assigned;
+    assigned = config;
+    compareSearchConfigOwnFields(assigned, config);
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    compareFileSystemTargets(assigned.file_system_target, config.file_system_target);
+}
+
+// -- SearchPreferences -------------------------------------------------------
 
 void AdvancedSearchTypesTests::searchPreferences_defaultValues() {
     sak::SearchPreferences prefs;
@@ -160,7 +286,7 @@ void AdvancedSearchTypesTests::searchPreferences_defaultValues() {
     QCOMPARE(prefs.max_results, 0);
     QCOMPARE(prefs.max_preview_file_size_mb, 10);
     QCOMPARE(prefs.max_search_file_size_mb, 50);
-    QCOMPARE(prefs.max_cache_size, 50);
+
     QCOMPARE(prefs.context_lines, 2);
 }
 
@@ -174,7 +300,7 @@ void AdvancedSearchTypesTests::searchPreferences_copyable() {
     QCOMPARE(copy.max_preview_file_size_mb, 20);
 }
 
-// ── RegexPatternInfo ────────────────────────────────────────────────────────
+// -- RegexPatternInfo --------------------------------------------------------
 
 void AdvancedSearchTypesTests::regexPatternInfo_defaultConstruction() {
     sak::RegexPatternInfo info;
@@ -199,16 +325,28 @@ void AdvancedSearchTypesTests::regexPatternInfo_copyable() {
     QCOMPARE(copy.enabled, true);
 }
 
-// ── Extension Sets ──────────────────────────────────────────────────────────
+// -- Extension Sets ----------------------------------------------------------
 
 void AdvancedSearchTypesTests::imageExtensions_containsExpected() {
-    QVERIFY(sak::kImageExtensions.contains("jpg"));
-    QVERIFY(sak::kImageExtensions.contains("jpeg"));
-    QVERIFY(sak::kImageExtensions.contains("png"));
-    QVERIFY(sak::kImageExtensions.contains("tiff"));
-    QVERIFY(sak::kImageExtensions.contains("gif"));
-    QVERIFY(sak::kImageExtensions.contains("bmp"));
-    QVERIFY(sak::kImageExtensions.contains("webp"));
+    // Exact catalog pin. This set is the EXIF/GPS routing gate
+    // (advanced_search_worker.cpp:999) and is mirrored by an unlinked duplicate
+    // list in shouldSearchText (advanced_search_worker.cpp:987-989), so a member
+    // dropped here silently makes those files unsearchable by BOTH paths rather
+    // than raising an error. Membership checks alone cannot catch that; compare
+    // the whole set so any removal or addition fails.
+    QStringList actual = sak::kImageExtensions.values();
+    actual.sort();
+    const QStringList expected{QStringLiteral("bmp"),
+                               QStringLiteral("gif"),
+                               QStringLiteral("heic"),
+                               QStringLiteral("heif"),
+                               QStringLiteral("jpeg"),
+                               QStringLiteral("jpg"),
+                               QStringLiteral("png"),
+                               QStringLiteral("tif"),
+                               QStringLiteral("tiff"),
+                               QStringLiteral("webp")};
+    QCOMPARE(actual, expected);
 }
 
 void AdvancedSearchTypesTests::imageExtensions_doesNotContainWrong() {
@@ -219,15 +357,28 @@ void AdvancedSearchTypesTests::imageExtensions_doesNotContainWrong() {
 }
 
 void AdvancedSearchTypesTests::fileMetadataExtensions_containsExpected() {
-    QVERIFY(sak::kFileMetadataExtensions.contains("pdf"));
-    QVERIFY(sak::kFileMetadataExtensions.contains("docx"));
-    QVERIFY(sak::kFileMetadataExtensions.contains("xlsx"));
-    QVERIFY(sak::kFileMetadataExtensions.contains("pptx"));
-    QVERIFY(sak::kFileMetadataExtensions.contains("epub"));
-    QVERIFY(sak::kFileMetadataExtensions.contains("mp3"));
-    QVERIFY(sak::kFileMetadataExtensions.contains("mp4"));
-    QVERIFY(sak::kFileMetadataExtensions.contains("json"));
-    QVERIFY(sak::kFileMetadataExtensions.contains("csv"));
+    // kFileMetadataExtensions is a fixed compile-time catalog and the SOLE routing switch at
+    // advanced_search_worker.cpp:1004: an extension in the set goes to searchFileMetadata, one
+    // outside it falls through to searchTextContent (:1019-1021) and is byte-searched as an
+    // opaque binary -- exactly what the header comment says the set exists to prevent. Pin the
+    // exact contents so BOTH drift directions go red: a dropped member (e.g. the Database
+    // group) and a smuggled-in text/source extension.
+    QStringList actual = sak::kFileMetadataExtensions.values();
+    actual.sort();
+
+    QStringList expected{"avi",      "celtx", "csv", "db",   "docx", "epub", "fdx",    "flac",
+                         "fountain", "json",  "m4a", "mkv",  "mov",  "mp3",  "mp4",    "odp",
+                         "ods",      "odt",   "ogg", "pdf",  "pptx", "rtf",  "sqlite", "sqlite3",
+                         "wav",      "wma",   "wmv", "xlsx", "xml"};
+    expected.sort();
+
+    QCOMPARE(actual, expected);
+    QCOMPARE(sak::kFileMetadataExtensions.size(), 29);
+
+    // Negative direction (mirrors imageExtensions_doesNotContainWrong): plain text/source
+    // files must NOT be diverted into metadata-only extraction.
+    QVERIFY(!sak::kFileMetadataExtensions.contains("txt"));
+    QVERIFY(!sak::kFileMetadataExtensions.contains("cpp"));
 }
 
 void AdvancedSearchTypesTests::archiveExtensions_containsExpected() {
@@ -235,9 +386,16 @@ void AdvancedSearchTypesTests::archiveExtensions_containsExpected() {
     QVERIFY(sak::kArchiveExtensions.contains("epub"));
     QVERIFY(!sak::kArchiveExtensions.contains("tar"));
     QVERIFY(!sak::kArchiveExtensions.contains("gz"));
+    // Pin the EXACT contents, not just two members: searchFile()
+    // (advanced_search_worker.cpp:1009-1012) hands every member of this set to
+    // searchArchive(), which is a ZIP-only reader (:2508-2581), and sets
+    // handled_as_special so shouldSearchText() (:983-986) skips the text
+    // fallback. A silently added extension would therefore be parsed by a
+    // reader that cannot read it AND lose its byte-level search.
+    QCOMPARE(sak::kArchiveExtensions, (QSet<QString>{"zip", "epub"}));
 }
 
-// ── Compile-Time Invariants Verification ────────────────────────────────────
+// -- Compile-Time Invariants Verification ------------------------------------
 
 void AdvancedSearchTypesTests::staticAsserts_defaultConstructible() {
     QVERIFY(std::is_default_constructible_v<sak::SearchMatch>);
@@ -247,10 +405,46 @@ void AdvancedSearchTypesTests::staticAsserts_defaultConstructible() {
 }
 
 void AdvancedSearchTypesTests::staticAsserts_copyConstructible() {
-    QVERIFY(std::is_copy_constructible_v<sak::SearchMatch>);
-    QVERIFY(std::is_copy_constructible_v<sak::SearchConfig>);
-    QVERIFY(std::is_copy_constructible_v<sak::SearchPreferences>);
-    QVERIFY(std::is_copy_constructible_v<sak::RegexPatternInfo>);
+    // Copy-CONSTRUCTIBILITY of all four types is already gated at compile time by the
+    // static_asserts at advanced_search_types.h:194-201 (and default-constructibility at
+    // :178-191), so a runtime QVERIFY of those traits can never observe false -- the binary
+    // only exists because they held. Pin the traits nothing gates: ASSIGNABILITY, which
+    // production actually leans on -- AdvancedSearchController::setPreferences does
+    // `m_preferences = prefs;` (advanced_search_controller.cpp:311), and QVector<SearchMatch>
+    // needs element assignment for erase/insert/reallocation. Adding a const or reference
+    // member to any of these structs silently deletes operator= and flips these to false.
+    QVERIFY(std::is_copy_assignable_v<sak::SearchMatch>);
+    QVERIFY(std::is_move_assignable_v<sak::SearchMatch>);
+    QVERIFY(std::is_copy_assignable_v<sak::SearchConfig>);
+    QVERIFY(std::is_move_assignable_v<sak::SearchConfig>);
+    QVERIFY(std::is_copy_assignable_v<sak::SearchPreferences>);
+    QVERIFY(std::is_copy_assignable_v<sak::RegexPatternInfo>);
+
+    // Behavioural half: the exact assignment advanced_search_controller.cpp:311 performs,
+    // pinned field-by-field so a hand-written lossy operator= (which keeps the traits true)
+    // is caught too.
+    sak::SearchPreferences source;
+    source.max_results = 1000;
+    source.max_preview_file_size_mb = 20;
+    source.max_search_file_size_mb = 100;
+
+    source.context_lines = 7;
+
+    sak::SearchPreferences target;
+    target = source;
+
+    QCOMPARE(target.max_results, 1000);
+    QCOMPARE(target.max_preview_file_size_mb, 20);
+    QCOMPARE(target.max_search_file_size_mb, 100);
+
+    QCOMPARE(target.context_lines, 7);
+}
+
+// Review 3: the preview header read "File: C:/SAK-Samples/Docs/sample-notes.txt" above a results
+// list that names the same file with backslashes.
+void AdvancedSearchTypesTests::previewNamesTheFileWithBackslashes() {
+    QCOMPARE(sak::searchPreviewFileLine(QStringLiteral("C:/SAK-Samples/Docs/sample-notes.txt")),
+             QStringLiteral("File: C:\\SAK-Samples\\Docs\\sample-notes.txt\n"));
 }
 
 QTEST_GUILESS_MAIN(AdvancedSearchTypesTests)

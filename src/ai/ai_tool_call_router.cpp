@@ -3,6 +3,7 @@
 
 #include "sak/ai/ai_tool_call_router.h"
 
+#include <QHash>
 #include <QJsonDocument>
 #include <QJsonParseError>
 
@@ -21,32 +22,22 @@ QString compactJson(const QJsonObject& object) {
 }  // namespace
 
 AiToolCallKind AiToolCallRouter::kindForName(const QString& name) {
-    const QString normalized = normalizedToolName(name);
-    if (normalized == QLatin1String("run_powershell") || normalized == QLatin1String("run_cmd")) {
-        return AiToolCallKind::Shell;
-    }
-    if (normalized == QLatin1String("run_process")) {
-        return AiToolCallKind::Process;
-    }
-    if (normalized == QLatin1String("take_screenshot")) {
-        return AiToolCallKind::Screenshot;
-    }
-    if (normalized == QLatin1String("download_file")) {
-        return AiToolCallKind::Download;
-    }
-    if (normalized == QLatin1String("sak_package_manager")) {
-        return AiToolCallKind::PackageManager;
-    }
-    if (normalized == QLatin1String("sak_offline_downloader")) {
-        return AiToolCallKind::OfflineDownloader;
-    }
-    if (normalized == QLatin1String("sak_provider_gateway")) {
-        return AiToolCallKind::ProviderGateway;
-    }
-    if (normalized == QLatin1String("sak_session_search")) {
-        return AiToolCallKind::SessionSearch;
-    }
-    return AiToolCallKind::Unknown;
+    static const QHash<QString, AiToolCallKind> kByName = {
+        {QStringLiteral("run_powershell"), AiToolCallKind::Shell},
+        {QStringLiteral("run_cmd"), AiToolCallKind::Shell},
+        {QStringLiteral("run_process"), AiToolCallKind::Process},
+        {QStringLiteral("take_screenshot"), AiToolCallKind::Screenshot},
+        {QStringLiteral("download_file"), AiToolCallKind::Download},
+        {QStringLiteral("sak_package_manager"), AiToolCallKind::PackageManager},
+        {QStringLiteral("sak_offline_downloader"), AiToolCallKind::OfflineDownloader},
+        {QStringLiteral("sak_provider_gateway"), AiToolCallKind::ProviderGateway},
+        {QStringLiteral("sak_session_search"), AiToolCallKind::SessionSearch},
+        {QStringLiteral("sak_skill"), AiToolCallKind::Skill},
+        {QStringLiteral("delegate_subagent"), AiToolCallKind::DelegateSubagent},
+        {QStringLiteral("run_workflow"), AiToolCallKind::RunWorkflow},
+        {QStringLiteral("sak_app_action"), AiToolCallKind::AppAction},
+    };
+    return kByName.value(normalizedToolName(name), AiToolCallKind::Unknown);
 }
 
 bool AiToolCallRouter::isCommandTool(AiToolCallKind kind) {
@@ -81,6 +72,17 @@ AiToolCallRouter::PreparedCall AiToolCallRouter::prepare(const OpenAIFunctionCal
 AiToolCallRouter::ParsedArguments AiToolCallRouter::parseArguments(const OpenAIFunctionCall& call) {
     ParsedArguments parsed;
     parsed.output.call_id = call.call_id;
+
+    // An empty arguments_json is a no-argument tool call. AiToolTurn::validateCall accepts
+    // empty arguments as valid, so the two validators must agree here: treat empty (or
+    // whitespace-only) arguments as an empty JSON object rather than feeding "" to
+    // QJsonDocument::fromJson, which would error and reject a legitimate no-arg call at
+    // dispatch. A tool that requires fields still fails on the missing field downstream.
+    if (call.arguments_json.trimmed().isEmpty()) {
+        parsed.arguments = QJsonObject{};
+        parsed.ok = true;
+        return parsed;
+    }
 
     QJsonParseError parse_error;
     const QJsonDocument doc = QJsonDocument::fromJson(call.arguments_json.toUtf8(), &parse_error);

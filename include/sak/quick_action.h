@@ -14,17 +14,19 @@
 
 namespace sak {
 
+/// How long a run of a quick action may take, end to end, unless the action declares its own
+/// bound (QuickAction::executionTimeoutMs). The assistant's registry thunk waits exactly this
+/// long, so one number bounds a run instead of an inner and an outer clock that disagree.
+inline constexpr int kDefaultQuickActionTimeoutMs = 30 * 60 * 1000;
+
 /**
  * @brief Base class for all quick actions
  *
  * Provides a common interface for one-click operations that technicians
- * frequently perform. Each action supports:
- * - Pre-scan to detect what will be affected (files, size, count)
- * - Execution with progress tracking
- * - Result reporting
- * - Applicability checking
+ * frequently perform. Each action supports execution with progress tracking
+ * and result reporting.
  *
- * Thread-Safety: scan() and execute() may be called from worker threads.
+ * Thread-Safety: execute() may be called from worker threads.
  * Signals are emitted on the thread where the action was created.
  */
 class QuickAction : public QObject {
@@ -47,27 +49,12 @@ public:
      */
     enum class ActionStatus {
         Idle,      // Not started
-        Scanning,  // Pre-scanning to determine scope
-        Ready,     // Scan complete, ready to execute
         Running,   // Currently executing
         Success,   // Completed successfully
         Failed,    // Failed with error
         Cancelled  // Cancelled by user
     };
     Q_ENUM(ActionStatus)
-
-    /**
-     * @brief Scan result from pre-execution scan
-     */
-    struct ScanResult {
-        bool applicable{false};           // Is this action applicable?
-        QString summary;                  // e.g., "Frees: 2.3 GB"
-        QString details;                  // Additional details
-        qint64 bytes_affected{0};         // Total bytes to process
-        qint64 files_count{0};            // Number of files
-        qint64 estimated_duration_ms{0};  // Estimated time
-        QString warning;                  // Optional warning message
-    };
 
     /**
      * @brief Execution result
@@ -80,6 +67,12 @@ public:
         qint64 duration_ms{0};      // Actual duration
         QString output_path;        // Path to backup/report (if applicable)
         QString log;                // Detailed operation log
+        /// It ran, but this app could not read what it found. Not a pass, so success stays false,
+        /// and not a failure, so nothing tells the person it failed.
+        bool inconclusive{false};
+        /// It worked, and what it left behind still needs the person's attention. Shown with the
+        /// outcome, wherever the outcome is shown.
+        QString warning;
     };
 
     /**
@@ -130,20 +123,39 @@ public:
     virtual bool requiresAdmin() const = 0;
 
     /**
+     * @brief Whether running the action leaves the machine as it found it
+     *
+     * A read-only action only reads system state and writes its own output (a report into
+     * the caller's output folder). The assistant runs it without the per-action approval and
+     * lease a system change needs. Defaults to false: an action has to state that it changes
+     * nothing.
+     */
+    virtual bool isReadOnly() const { return false; }
+
+    /**
+     * @brief The one end-to-end time bound for a run of this action, in milliseconds
+     *
+     * The assistant's registry thunk waits this long before it stops the run, and an action
+     * whose steps have their own timeouts keeps their sum inside it. Override when the work
+     * legitimately runs longer (or must stop sooner) than kDefaultQuickActionTimeoutMs.
+     */
+    virtual int executionTimeoutMs() const { return kDefaultQuickActionTimeoutMs; }
+
+    /**
      * @brief Get current status
      * @return Current action status
      */
-    ActionStatus status() const { return m_status; }
-
-    /**
-     * @brief Get last scan result
-     * @return Most recent scan result
-     */
-    const ScanResult& lastScanResult() const { return m_scan_result; }
+    ActionStatus status() const { return m_status.load(); }
 
     /**
      * @brief Get last execution result
      * @return Most recent execution result
+     *
+     * Thread-Safety: m_execution_result is not synchronized. execute() may write it
+     * from a worker thread, so this reference is only valid to read AFTER the queued
+     * executionComplete() signal has been delivered (that queued-connection delivery
+     * establishes the happens-before edge). Do NOT read it concurrently while an
+     * execute() is in progress on a worker thread -- that is an unsynchronized race.
      */
     const ExecutionResult& lastExecutionResult() const { return m_execution_result; }
 
@@ -152,6 +164,10 @@ public:
      * @param status New status
      */
     void updateStatus(ActionStatus status) { setStatus(status); }
+
+    /// @brief Clear the cancellation flag before a fresh run (a stale flag from a prior
+    ///        completed/cancelled run would otherwise make every future run cancel immediately).
+    void clearCancellation() { resetCancelled(); }
 
     /**
      * @brief Apply execution result from controller
@@ -163,24 +179,42 @@ public:
         setStatus(status);
     }
 
+    /**
+     * @brief The folder a run writes its files into (a report, screenshots, recovery keys)
+     *
+     * Empty for an action that writes nothing; an action that writes files refuses to run
+     * without an absolute folder. Set before execute() runs and read only by that run.
+     */
+    void setOutputFolder(const QString& folder) { m_output_folder = folder; }
+    [[nodiscard]] const QString& outputFolder() const { return m_output_folder; }
+
+    /**
+     * @brief What a person must read and agree to before this action writes into @p folder
+     *
+     * Empty when nothing needs saying. A caller with a person at hand asks them and says so in
+     * QuickActionRun::output_folder_warning_accepted. A caller with no one to ask leaves that
+     * false, and the action refuses what it would have warned about.
+     */
+    [[nodiscard]] virtual QString outputFolderWarning(const QString& folder) const {
+        static_cast<void>(folder);
+        return {};
+    }
+
+    /// Whether a person agreed to outputFolderWarning() for this run. Set before execute() runs
+    /// and read only by that run, like the folder itself.
+    void setOutputFolderWarningAccepted(bool accepted) {
+        m_output_folder_warning_accepted = accepted;
+    }
+    [[nodiscard]] bool outputFolderWarningAccepted() const {
+        return m_output_folder_warning_accepted;
+    }
+
 Q_SIGNALS:
     /**
      * @brief Emitted when status changes
      * @param status New status
      */
     void statusChanged(ActionStatus status);
-
-    /**
-     * @brief Emitted during scan progress
-     * @param message Progress message
-     */
-    void scanProgress(const QString& message);
-
-    /**
-     * @brief Emitted when scan completes
-     * @param result Scan result
-     */
-    void scanComplete(const ScanResult& result);
 
     /**
      * @brief Emitted during execution progress
@@ -209,16 +243,6 @@ Q_SIGNALS:
 
 public Q_SLOTS:
     /**
-     * @brief Perform pre-execution scan
-     *
-     * Scans the system to determine what files/data will be affected.
-     * This is called when the panel loads to show size estimates.
-     *
-     * Thread-Safety: May be called from worker thread
-     */
-    virtual void scan() = 0;
-
-    /**
      * @brief Execute the action
      *
      * Performs the actual operation (cleanup, backup, etc.)
@@ -239,12 +263,6 @@ protected:
      * @param status New status
      */
     void setStatus(ActionStatus status);
-
-    /**
-     * @brief Set scan result
-     * @param result Scan result to store
-     */
-    void setScanResult(const ScanResult& result);
 
     /**
      * @brief Set execution result
@@ -301,17 +319,6 @@ protected:
     static QString formatFileSize(qint64 bytes);
 
     /**
-     * @brief Build a box-drawing formatted log string
-     * @param title Title for the box header (e.g., "BROWSER CACHE CLEARING - RESULTS")
-     * @param content_lines Lines of content to display inside the box
-     * @param duration_ms Optional duration to append in footer (-1 to omit)
-     * @return Formatted string with box-drawing characters
-     */
-    static QString formatLogBox(const QString& title,
-                                const QStringList& content_lines,
-                                qint64 duration_ms = -1);
-
-    /**
      * @brief Sanitize a filesystem path for use as a backup subdirectory name
      * @param path Source filesystem path
      * @return Path with ':', '\\', '/' replaced by '_'
@@ -319,10 +326,11 @@ protected:
     static QString sanitizePathForBackup(const QString& path);
 
 private:
-    ActionStatus m_status{ActionStatus::Idle};
-    ScanResult m_scan_result;
+    std::atomic<ActionStatus> m_status{ActionStatus::Idle};
     ExecutionResult m_execution_result;
     std::atomic<bool> m_cancelled{false};
+    QString m_output_folder;
+    bool m_output_folder_warning_accepted{false};
 };
 
 }  // namespace sak

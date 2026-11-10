@@ -4,36 +4,33 @@
 #pragma once
 
 #include "sak/app_scanner.h"
-#include "sak/chocolatey_manager.h"
 
-#include <QCache>
 #include <QMap>
-#include <QMutex>
 #include <QString>
-#include <QtConcurrent>
 
 #include <optional>
 #include <vector>
 
-namespace sak {
+class PackageMatcherTests;  // unit-test friend (global namespace)
 
-inline constexpr double kPackageMatcherDefaultMinConfidence = 0.5;
-inline constexpr int kPackageMatcherDefaultMaxSearchResults = 5;
-inline constexpr int kPackageMatcherDefaultThreadCount = 8;
+namespace sak {
 
 /**
  * @brief PackageMatcher - Matches installed applications to Chocolatey packages
  *
- * This class uses multiple strategies to match application names from the registry
- * to their corresponding Chocolatey package names:
- * 1. Exact matches (common app name mappings database)
- * 2. Fuzzy matching with Levenshtein distance
- * 3. Chocolatey search API integration
- * 4. Confidence scoring
+ * Matches an application's registry display name against a reviewed table of well-known
+ * applications, once the build detail (version, architecture, locale) has been taken off the
+ * name. An application the table does not know has no match.
  *
- * Designed to work with real scanned data from AppScanner.
+ * It makes no network calls on purpose. `choco search` returns results alphabetically rather than
+ * by relevance, takes about two seconds per query, and the community feed answers excess traffic
+ * with an hour of 429s. A scan of the hundreds of entries a real PC lists would take many minutes
+ * and could cost the technician the install they came for. Whether a package installs is answered
+ * by the install itself, and the restore page reports each result.
  */
 class PackageMatcher {
+    friend class ::PackageMatcherTests;
+
 public:
     PackageMatcher();
     ~PackageMatcher() = default;
@@ -45,129 +42,32 @@ public:
         QString choco_package;   // Chocolatey package name
         QString matched_name;    // Name that was matched
         double confidence{0.0};  // 0.0 - 1.0 (1.0 = perfect match)
-        QString match_type;      // "exact", "fuzzy", "search", "manual"
+        QString match_type;      // "exact", "manual"
         bool available{false};   // Is package available in Chocolatey?
         QString version;         // Latest available version
     };
 
-    /**
-     * @brief Match configuration
-     */
-    struct MatchConfig {
-        bool use_exact_mappings{true};  // Use common app mappings
-        bool use_fuzzy_matching{true};  // Use fuzzy string matching
-        bool use_choco_search{true};    // Query Chocolatey search API
-        double min_confidence{kPackageMatcherDefaultMinConfidence};
-        int max_search_results{kPackageMatcherDefaultMaxSearchResults};
-        bool verify_availability{true};  // Verify package exists in Chocolatey
-        int thread_count{kPackageMatcherDefaultThreadCount};
-        bool use_cache{true};            // Cache search results
-    };
+    /// @brief Find the package for one application; nullopt when the table does not know it.
+    [[nodiscard]] std::optional<MatchResult> findMatch(const AppScanner::AppInfo& app) const;
 
-    // Matching operations
-    std::optional<MatchResult> findMatch(const AppScanner::AppInfo& app,
-                                         ChocolateyManager* choco_mgr = nullptr,
-                                         const MatchConfig& config = MatchConfig());
+    /// @brief Fill each application's Chocolatey fields where a real match exists: desktop
+    ///        applications from the table, and packages already reported by the bundled
+    ///        Chocolatey keep their own id. Store (AppX) applications are left unmatched because
+    ///        Chocolatey does not install them.
+    void applyMatches(std::vector<AppScanner::AppInfo>& apps) const;
 
-    std::vector<MatchResult> findMatches(const std::vector<AppScanner::AppInfo>& apps,
-                                         ChocolateyManager* choco_mgr = nullptr,
-                                         const MatchConfig& config = MatchConfig());
-
-    // Parallel batch processing (optimized for many apps)
-    std::vector<MatchResult> findMatchesParallel(const std::vector<AppScanner::AppInfo>& apps,
-                                                 ChocolateyManager* choco_mgr = nullptr,
-                                                 const MatchConfig& config = MatchConfig());
-
-    // Manual mapping management
+    /// @brief Add one name to the table. The constructor fills it from the reviewed list.
     void addMapping(const QString& app_name, const QString& choco_package);
-    void removeMapping(const QString& app_name);
-    bool hasMapping(const QString& app_name) const;
-    QString getMapping(const QString& app_name) const;
-
-    // Statistics
-    int getMappingCount() const;
-    int getExactMatchCount() const;
-    int getFuzzyMatchCount() const;
-    int getSearchMatchCount() const;
-
-    // Export/import mappings
-    void exportMappings(const QString& file_path) const;
-    void importMappings(const QString& file_path);
 
 private:
-    // Matching strategies
-    std::optional<MatchResult> exactMatch(const QString& app_name);
-    std::optional<MatchResult> fuzzyMatch(const QString& app_name, ChocolateyManager* choco_mgr);
-    std::optional<MatchResult> searchMatch(const QString& app_name,
-                                           ChocolateyManager* choco_mgr,
-                                           int max_results) const;
-    std::optional<MatchResult> tryFuzzyMatch(const QString& base_name,
-                                             ChocolateyManager* choco_mgr,
-                                             double min_confidence);
-    std::optional<MatchResult> trySearchMatch(const QString& base_name,
-                                              ChocolateyManager* choco_mgr,
-                                              const MatchConfig& config) const;
+    std::optional<MatchResult> exactMatch(const QString& app_name) const;
 
-    /// @brief Resolve an exact match with availability verification.
-    std::optional<MatchResult> resolveExactMatch(const QString& base_name,
-                                                 ChocolateyManager* choco_mgr,
-                                                 const MatchConfig& config);
-    /// @brief Fetch search output from cache or Chocolatey API.
-    QString fetchSearchOutput(const QString& keyword, ChocolateyManager* choco_mgr);
-    /// @brief Update best fuzzy match from a list of packages.
-    void updateBestFuzzyMatch(const QString& normalized,
-                              const std::vector<ChocolateyManager::PackageInfo>& packages,
-                              double& best_similarity,
-                              QString& best_package,
-                              QString& best_matched_name) const;
-    /// @brief Match a single app for parallel processing.
-    std::pair<int, std::optional<MatchResult>> matchSingleApp(int idx,
-                                                              const AppScanner::AppInfo& app,
-                                                              ChocolateyManager* choco_mgr,
-                                                              const MatchConfig& config);
-
-    /// @brief Phase 1: Collect exact matches and separate remaining fuzzy candidates.
-    void collectExactMatches(const std::vector<AppScanner::AppInfo>& apps,
-                             std::vector<std::pair<int, MatchResult>>& exact_results,
-                             std::vector<std::pair<int, AppScanner::AppInfo>>& fuzzy_candidates);
-    /// @brief Merge exact and fuzzy/search results in original order; return only matched entries.
-    static std::vector<MatchResult> mergeMatchResults(
-        size_t total_count,
-        const std::vector<std::pair<int, MatchResult>>& exact_results,
-        const std::vector<std::pair<int, std::optional<MatchResult>>>& fuzzy_results);
-
-    // Batch operations (for parallel processing)
-    std::vector<QString> batchSearchChocolatey(const QStringList& keywords,
-                                               ChocolateyManager* choco_mgr);
-
-    // Cache management
-    void clearCache();
-    QString getCachedSearch(const QString& keyword) const;
-    void cacheSearch(const QString& keyword, const QString& result);
-
-    // String processing
+    /// @brief The product name from a registry display name: "7-Zip 22.01 (x64)" -> "7-Zip".
     static QString normalizeAppName(const QString& app_name);
-    static QString extractBaseAppName(const QString& app_name);
-    static QStringList extractKeywords(const QString& app_name);
 
-    // Similarity scoring
-    double calculateSimilarity(const QString& str1, const QString& str2) const;
-    int levenshteinDistance(const QString& s1, const QString& s2) const;
-    static double jaroWinklerSimilarity(const QString& s1, const QString& s2);
-
-    // Common mappings database
     void initializeCommonMappings();
 
-    // Member variables
-    QMap<QString, QString> m_exact_mappings;  // app_name -> choco_package
-    QCache<QString, QString> m_search_cache;  // keyword -> search results (thread-safe)
-    mutable QMutex m_cache_mutex;             // Protect cache access
-    mutable QMutex m_stats_mutex;             // Protect statistics
-
-    // Statistics
-    mutable int m_exact_match_count;
-    mutable int m_fuzzy_match_count;
-    mutable int m_search_match_count;
+    QMap<QString, QString> m_exact_mappings;  // normalized app_name -> choco_package
 };
 
 }  // namespace sak

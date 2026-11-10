@@ -12,6 +12,8 @@
 #include <QJsonObject>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 class SmartDiskAnalyzerTests : public QObject {
     Q_OBJECT
 
@@ -20,7 +22,12 @@ private Q_SLOTS:
     void constructor_defaults();
 
     // smartctl availability
-    void isSmartctlAvailable_returnsBoolean();
+    void isSmartctlAvailable_isStableAndSideEffectFree();
+    void bundledSmartctlPath_onlyTheSmartmontoolsFolder();
+
+    // Why a drive could not be read
+    void failureReasonNamesAdministratorRightsOnAccessDenied();
+    void failureReasonQuotesAnythingElse();
 
     // Parse output tests (using known JSON structures)
     void parseOutput_validSataJson();
@@ -34,9 +41,47 @@ private Q_SLOTS:
     void healthAssessment_warning();
     void healthAssessment_critical();
 
+    // B5-11: fail-closed assessment of malformed/empty smartctl output
+    void reportHasAssessableData_signalDetection();
+    void assess_malformedJson_isUnknownNotHealthy();
+    void assess_emptyJsonObject_isUnknownNotHealthy();
+    void assess_unknownReport_recommendationsSayUnknown();
+    void assess_validSataPassed_isHealthy();
+    void assess_smartStatusFailed_isCritical();
+
     // Cancel
-    void cancel_stopsAnalysis();
+    void cancel_beforeAnalysisIsSafe();
+
+    // A drive smartctl cannot read
+    void unreadableDrive_keepsARowAndSaysWhy();
+    void unreadableDrive_withNoReasonStillSaysSo();
+    void readableDrive_isNotMarkedUnreadable();
+    void unreadableDrive_isNamedByWindowsModelAndBus();
+    void readableDrive_takesWindowsBusAndKeepsSmartctlModel();
 };
+
+namespace {
+
+/// Minimal well-formed SATA payload carrying exactly ONE ata_smart_attributes entry.
+/// value/worst are healthy normalized numbers and thresh is 0, so SmartAttribute::failing
+/// stays false and the only thing that can move overall_health is the attribute's RAW value
+/// against the analyzer's per-id warning/critical ladder.
+QByteArray sataAttributeJson(int id, const QString& name, qint64 raw) {
+    return QStringLiteral(R"({"device":{"type":"sat"},"model_name":"Test SATA",)"
+                          R"("smart_status":{"passed":true},"temperature":{"current":35},)"
+                          R"("ata_smart_attributes":{"table":[{"id":%1,"name":"%2",)"
+                          R"("value":100,"worst":100,"thresh":0,"raw":{"value":%3}}]}})")
+        .arg(id)
+        .arg(name)
+        .arg(raw)
+        .toUtf8();
+}
+
+sak::SmartHealthStatus healthOf(sak::SmartDiskAnalyzer& analyzer, const QByteArray& json) {
+    return analyzer.parseAndAssessForTesting(json, 0).overall_health;
+}
+
+}  // namespace
 
 // ============================================================================
 // Constructor
@@ -51,113 +96,388 @@ void SmartDiskAnalyzerTests::constructor_defaults() {
 // smartctl Availability
 // ============================================================================
 
-void SmartDiskAnalyzerTests::isSmartctlAvailable_returnsBoolean() {
+// CRASH-REGRESSION TEST. The RETURN VALUE cannot be asserted here: it depends on whether the
+// bundled smartmontools
+// payload was deployed next to the test binary. What this test does claim is that the probe
+// survives a build with NO bundled tools at all -- it first-touches the BundledToolsManager
+// singleton and then spawns a child process, so a regression there aborts or hangs rather
+// than returning false. The reports() check records the pure-query contract, but note it
+// cannot fail on its own: isSmartctlAvailable() is const and m_reports is not mutable. The
+// claim this test really carries is the absence of a crash or a hang.
+void SmartDiskAnalyzerTests::isSmartctlAvailable_isStableAndSideEffectFree() {
     sak::SmartDiskAnalyzer analyzer;
-    // Just verify it doesn't crash -- result depends on bundled tools
-    bool available = analyzer.isSmartctlAvailable();
-    Q_UNUSED(available);
-    QVERIFY(true);
+    const bool available = analyzer.isSmartctlAvailable();
+    QCOMPARE(analyzer.isSmartctlAvailable(), available);
+    QVERIFY(analyzer.reports().isEmpty());
+}
+
+// The bundle script and the configure check place smartctl in tools/smartmontools only. A copy
+// anywhere else (the old tools/generic fallback) is not the binary the build verified, so it must
+// never be found -- and a directory named smartctl.exe is not a runnable tool either.
+void SmartDiskAnalyzerTests::bundledSmartctlPath_onlyTheSmartmontoolsFolder() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QDir tools(root.path());
+    QVERIFY(tools.mkpath(QStringLiteral("generic")));
+    QFile stray(tools.filePath(QStringLiteral("generic/smartctl.exe")));
+    QVERIFY(stray.open(QIODevice::WriteOnly));
+    stray.close();
+    QCOMPARE(sak::SmartDiskAnalyzer::bundledSmartctlPath(root.path()), QString());
+    QCOMPARE(sak::SmartDiskAnalyzer::bundledSmartctlPath(QString()), QString());
+
+    QVERIFY(tools.mkpath(QStringLiteral("smartmontools/smartctl.exe")));
+    QCOMPARE(sak::SmartDiskAnalyzer::bundledSmartctlPath(root.path()), QString());
+    QVERIFY(tools.rmdir(QStringLiteral("smartmontools/smartctl.exe")));
+
+    const QString bundled = tools.filePath(QStringLiteral("smartmontools/smartctl.exe"));
+    QFile real(bundled);
+    QVERIFY(real.open(QIODevice::WriteOnly));
+    real.close();
+    QCOMPARE(sak::SmartDiskAnalyzer::bundledSmartctlPath(root.path()), bundled);
 }
 
 // ============================================================================
-// Parse Output Tests -- we use the private parseSmartctlOutput indirectly
-// by testing through the public API where possible, or verifying report
-// structure from known JSON formats
+// Failure reasons -- the message is smartctl 7.5's own, captured with --json on Windows 11 by a
+// normal user against a SATA drive behind USB. An NVMe drive read fine on the same run.
+void SmartDiskAnalyzerTests::failureReasonNamesAdministratorRightsOnAccessDenied() {
+    const QByteArray captured =
+        R"({"smartctl":{"messages":[{"string":"Smartctl open device: /dev/sdb [SAT] failed: )"
+        R"(\\\\.\\PhysicalDrive1: Open failed, Error=5","severity":"error"}],"exit_status":2}})";
+    const QString reason = sak::SmartDiskAnalyzer::smartctlFailureReason(captured);
+    QVERIFY2(reason.contains(QStringLiteral("administrator")), qPrintable(reason));
+}
+
+void SmartDiskAnalyzerTests::failureReasonQuotesAnythingElse() {
+    const QByteArray captured =
+        R"({"smartctl":{"messages":[{"string":"/dev/sdd: Unable to detect device type",)"
+        R"("severity":"error"}],"exit_status":1}})";
+    QCOMPARE(sak::SmartDiskAnalyzer::smartctlFailureReason(captured),
+             QStringLiteral("smartctl said: /dev/sdd: Unable to detect device type"));
+    QCOMPARE(sak::SmartDiskAnalyzer::smartctlFailureReason(QByteArray("not json")), QString());
+    // UI review F39: a USB adapter smartctl cannot see through was shown as smartctl's raw line.
+    const QByteArray usb =
+        R"({"smartctl":{"messages":[{"string":"/dev/pd5: Unknown USB bridge [0x80ee:0x0030 )"
+        R"((0x100)]","severity":"error"}],"exit_status":1}})";
+    QVERIFY2(sak::SmartDiskAnalyzer::smartctlFailureReason(usb).startsWith(
+                 QStringLiteral("SMART cannot be read through this drive's USB adapter")),
+             qPrintable(sak::SmartDiskAnalyzer::smartctlFailureReason(usb)));
+}
+
+// Parse Output Tests -- parseSmartctlOutput is private, so these drive it through
+// parseAndAssessForTesting(), the public seam that runs the real
+// parse -> assess -> recommend pipeline over raw smartctl JSON bytes.
 // ============================================================================
 
 void SmartDiskAnalyzerTests::parseOutput_validSataJson() {
-    // This tests the expected structure of SmartReport
-    // We can't easily call parseSmartctlOutput directly (private),
-    // but we verify the data structures work correctly
-    sak::SmartReport report;
-    report.device_path = "\\\\.\\PhysicalDrive0";
-    report.model = "Samsung SSD 860 EVO";
-    report.serial_number = "S5XXXXX";
-    report.firmware_version = "RVT04B6Q";
-    report.size_bytes = 500'107'862'016;
-    report.interface_type = "SATA";
-    report.overall_health = sak::SmartHealthStatus::Healthy;
-    report.smart_status = "PASSED";
-    report.temperature_celsius = 35.0;
-    report.power_on_hours = 12'000;
+    sak::SmartDiskAnalyzer analyzer;
+    const QByteArray json =
+        R"({"device":{"type":"sat"},"model_name":"Samsung SSD 860 EVO",)"
+        R"("serial_number":"S5XXXXX","firmware_version":"RVT04B6Q",)"
+        R"("user_capacity":{"bytes":500107862016},"smart_status":{"passed":true},)"
+        R"("temperature":{"current":35},"power_on_time":{"hours":12000},)"
+        R"("ata_smart_attributes":{"table":[)"
+        R"({"id":5,"name":"Reallocated_Sector_Ct","value":100,"worst":100,"thresh":10,)"
+        R"("flags":{"string":"PO--CK"},"raw":{"value":0}}]}})";
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(json, 0);
 
-    QCOMPARE(report.model, QString("Samsung SSD 860 EVO"));
+    // Identity fields. "sat" is smartctl's SATA device type and is normalized to "SATA".
+    QCOMPARE(report.device_path, QStringLiteral("\\\\.\\PhysicalDrive0"));
+    QCOMPARE(report.model, QStringLiteral("Samsung SSD 860 EVO"));
+    QCOMPARE(report.serial_number, QStringLiteral("S5XXXXX"));
+    QCOMPARE(report.firmware_version, QStringLiteral("RVT04B6Q"));
+    QCOMPARE(report.size_bytes, uint64_t{500'107'862'016});
+    QCOMPARE(report.interface_type, QStringLiteral("SATA"));
+
+    // Health fields.
+    QCOMPARE(report.smart_status, QStringLiteral("PASSED"));
     QCOMPARE(report.temperature_celsius, 35.0);
+    QCOMPARE(report.power_on_hours, static_cast<int64_t>(12'000));
+
+    // The ATA attribute table, including the key-metric extraction for attribute 5.
+    QCOMPARE(report.attributes.size(), 1);
+    const sak::SmartAttribute& attr = report.attributes.first();
+    QCOMPARE(static_cast<int>(attr.id), 5);
+    QCOMPARE(attr.name, QStringLiteral("Reallocated_Sector_Ct"));
+    QCOMPARE(static_cast<int>(attr.current_value), 100);
+    QCOMPARE(static_cast<int>(attr.worst_value), 100);
+    QCOMPARE(static_cast<int>(attr.threshold), 10);
+    QCOMPARE(attr.flags, QStringLiteral("PO--CK"));
+    QCOMPARE(attr.raw_value, static_cast<int64_t>(0));
+    QVERIFY(!attr.failing);  // normalized 100 is far above the threshold of 10
+    QCOMPARE(report.reallocated_sectors, static_cast<int64_t>(0));
+
+    QVERIFY(!report.nvme_health.has_value());  // a SATA payload must not synthesize an NVMe log
     QCOMPARE(report.overall_health, sak::SmartHealthStatus::Healthy);
-    QCOMPARE(report.smart_status, QString("PASSED"));
+    QVERIFY(report.warnings.isEmpty());
 }
 
 void SmartDiskAnalyzerTests::parseOutput_validNvmeJson() {
-    sak::SmartReport report;
-    report.device_path = "\\\\.\\PhysicalDrive1";
-    report.model = "Samsung 970 EVO Plus";
-    report.interface_type = "NVMe";
-    report.overall_health = sak::SmartHealthStatus::Healthy;
-    report.smart_status = "PASSED";
-    report.temperature_celsius = 42.0;
-    report.power_on_hours = 5000;
+    sak::SmartDiskAnalyzer analyzer;
+    const QByteArray json =
+        R"({"device":{"type":"nvme"},"model_name":"Samsung SSD 970 EVO Plus 1TB",)"
+        R"("nvme_smart_health_information_log":{"percentage_used":3,"data_units_read":1000,)"
+        R"("data_units_written":2000,"power_on_hours":5000,"unsafe_shutdowns":4,)"
+        R"("media_errors":0,"num_err_log_entries":0,"temperature":42,)"
+        R"("available_spare":100,"available_spare_threshold":10}})";
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(json, 1);
 
-    QCOMPARE(report.interface_type, QString("NVMe"));
-    QVERIFY(report.temperature_celsius <= 70.0);
+    QCOMPARE(report.device_path, QStringLiteral("\\\\.\\PhysicalDrive1"));
+    QCOMPARE(report.model, QStringLiteral("Samsung SSD 970 EVO Plus 1TB"));
+    // device.type is upper-cased verbatim, so smartctl's "nvme" surfaces as "NVME".
+    QCOMPARE(report.interface_type, QStringLiteral("NVME"));
+
+    QVERIFY(report.nvme_health.has_value());
+    const sak::NvmeHealthInfo& nvme = report.nvme_health.value();
+    QCOMPARE(static_cast<int>(nvme.percentage_used), 3);
+    QCOMPARE(nvme.data_units_read, uint64_t{1000});
+    QCOMPARE(nvme.data_units_written, uint64_t{2000});
+    QCOMPARE(nvme.power_on_hours, uint64_t{5000});
+    QCOMPARE(nvme.unsafe_shutdowns, uint32_t{4});
+    QCOMPARE(nvme.media_errors, uint32_t{0});
+    QCOMPARE(nvme.error_log_entries, uint32_t{0});  // num_err_log_entries, the last unpinned field
+    QCOMPARE(static_cast<int>(nvme.temperature), 42);
+    QCOMPARE(static_cast<int>(nvme.available_spare), 100);
+    QCOMPARE(static_cast<int>(nvme.available_spare_threshold), 10);
+
+    // The NVMe log also feeds the unified cross-interface metrics.
+    QCOMPARE(report.power_on_hours, static_cast<int64_t>(5000));
+    QCOMPARE(report.temperature_celsius, 42.0);
+    QCOMPARE(report.wear_level_percent, 3.0);
+
+    QVERIFY(report.attributes.isEmpty());  // no ATA table on an NVMe payload
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Healthy);
+    QVERIFY(report.warnings.isEmpty());
 }
 
+// A syntactically valid but content-free payload must yield DEFAULTS, not invented values --
+// and must still name the drive it failed to read.
 void SmartDiskAnalyzerTests::parseOutput_emptyJson() {
-    // An empty SmartReport should have safe default values
-    sak::SmartReport report;
+    sak::SmartDiskAnalyzer analyzer;
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting("{}", 2);
+
+    QCOMPARE(report.device_path, QStringLiteral("\\\\.\\PhysicalDrive2"));
     QVERIFY(report.model.isEmpty());
+    QVERIFY(report.serial_number.isEmpty());
+    QVERIFY(report.firmware_version.isEmpty());
+    QVERIFY(report.interface_type.isEmpty());
+    QVERIFY(report.smart_status.isEmpty());
     QCOMPARE(report.size_bytes, uint64_t{0});
     QCOMPARE(report.temperature_celsius, 0.0);
-}
-
-void SmartDiskAnalyzerTests::parseOutput_missingFields() {
-    // SmartReport with partial data should still be valid
-    sak::SmartReport report;
-    report.model = "Unknown Drive";
-    report.overall_health = sak::SmartHealthStatus::Unknown;
-
-    QVERIFY(!report.model.isEmpty());
-    QVERIFY(report.serial_number.isEmpty());
-}
-
-void SmartDiskAnalyzerTests::parseOutput_malformedJson() {
-    // Verify that SmartReport default-constructs safely
-    sak::SmartReport report;
-    QCOMPARE(report.power_on_hours, 0);
+    QCOMPARE(report.power_on_hours, static_cast<int64_t>(0));
     QVERIFY(report.attributes.isEmpty());
-    QVERIFY(report.recommendations.isEmpty());
+    QVERIFY(!report.nvme_health.has_value());
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
+}
+
+// A partial payload populates exactly the fields that were present; every absent field keeps
+// its default rather than picking up a neighbouring value.
+void SmartDiskAnalyzerTests::parseOutput_missingFields() {
+    sak::SmartDiskAnalyzer analyzer;
+    const QByteArray json =
+        R"({"device":{"type":"sat"},"model_name":"Unknown Drive","smart_status":{"passed":true}})";
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(json, 0);
+
+    QCOMPARE(report.model, QStringLiteral("Unknown Drive"));
+    QCOMPARE(report.interface_type, QStringLiteral("SATA"));
+    QCOMPARE(report.smart_status, QStringLiteral("PASSED"));
+
+    QVERIFY(report.serial_number.isEmpty());
+    QVERIFY(report.firmware_version.isEmpty());
+    QCOMPARE(report.size_bytes, uint64_t{0});
+    QCOMPARE(report.temperature_celsius, 0.0);
+    QCOMPARE(report.power_on_hours, static_cast<int64_t>(0));
+    QVERIFY(report.attributes.isEmpty());
+
+    // An overall status on its own is enough signal to assess.
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Healthy);
+}
+
+// A JSON parse error must abort the parse cleanly: the report identifies the drive and carries
+// nothing else. Anything half-populated here would be read downstream as real SMART data.
+void SmartDiskAnalyzerTests::parseOutput_malformedJson() {
+    sak::SmartDiskAnalyzer analyzer;
+    const sak::SmartReport report =
+        analyzer.parseAndAssessForTesting("{\"device\":{\"type\":\"sat\"", 3);
+
+    QCOMPARE(report.device_path, QStringLiteral("\\\\.\\PhysicalDrive3"));
+    QVERIFY(report.model.isEmpty());
+    QVERIFY(report.interface_type.isEmpty());
+    QVERIFY(report.smart_status.isEmpty());
+    QCOMPARE(report.size_bytes, uint64_t{0});
+    QCOMPARE(report.power_on_hours, static_cast<int64_t>(0));
+    QCOMPARE(report.temperature_celsius, 0.0);
+    QVERIFY(report.attributes.isEmpty());
+    QVERIFY(!report.nvme_health.has_value());
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
 }
 
 // ============================================================================
-// Health Assessment
+// Health Assessment -- driven through the real parse+assess pipeline so the
+// per-attribute warning/critical ladder is actually exercised. The thresholds are
+// private constants, so each test pins the BOUNDARY (one raw value either side of
+// it) rather than a single point that an off-by-one would sail straight past.
 // ============================================================================
 
 void SmartDiskAnalyzerTests::healthAssessment_healthy() {
-    sak::SmartReport report;
-    report.overall_health = sak::SmartHealthStatus::Healthy;
-    report.smart_status = "PASSED";
-    report.temperature_celsius = 35.0;
-    report.power_on_hours = 1000;
+    sak::SmartDiskAnalyzer analyzer;
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(
+        sataAttributeJson(199, QStringLiteral("UDMA_CRC_Error_Count"), 0), 0);
 
-    // Healthy indicators
     QCOMPARE(report.overall_health, sak::SmartHealthStatus::Healthy);
-    QVERIFY(report.temperature_celsius < 70.0);
+    QVERIFY(report.warnings.isEmpty());
+    // A clean drive gets the positive note -- and only then.
+    QVERIFY(report.recommendations.contains(
+        QStringLiteral("Drive health is good -- no action required")));
 }
 
 void SmartDiskAnalyzerTests::healthAssessment_warning() {
-    sak::SmartReport report;
-    report.overall_health = sak::SmartHealthStatus::Warning;
-    report.temperature_celsius = 65.0;  // Getting warm
-    report.power_on_hours = 50'000;     // Heavy use
+    sak::SmartDiskAnalyzer analyzer;
 
-    QVERIFY(report.temperature_celsius >= 60.0);
+    // UDMA_CRC_Error_Count warns at 10 raw errors and only turns critical at 100.
+    QCOMPARE(healthOf(analyzer, sataAttributeJson(199, QStringLiteral("UDMA_CRC_Error_Count"), 9)),
+             sak::SmartHealthStatus::Healthy);
+
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(
+        sataAttributeJson(199, QStringLiteral("UDMA_CRC_Error_Count"), 10), 0);
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Warning);
+    QVERIFY(report.warnings.contains(QStringLiteral("UDMA CRC errors detected: 10")));
+    QVERIFY(report.recommendations.contains(
+        QStringLiteral("Check SATA cable connections or replace SATA cable")));
+    // A drive with an open warning must NOT also be told it is fine.
+    QVERIFY(!report.recommendations.contains(
+        QStringLiteral("Drive health is good -- no action required")));
 }
 
+// testpc1: a Seagate 8 TB with 16 pending sectors read FAIL while the drive's own check passed.
+// FAIL is the drive's own verdict -- its self-assessment, or an attribute past the threshold the
+// drive sets. A count alone, however high, is WARN, with the count named as the reason.
 void SmartDiskAnalyzerTests::healthAssessment_critical() {
-    sak::SmartReport report;
-    report.overall_health = sak::SmartHealthStatus::Critical;
-    report.smart_status = "FAILED";
-    report.temperature_celsius = 80.0;
+    sak::SmartDiskAnalyzer analyzer;
 
+    QCOMPARE(healthOf(analyzer, sataAttributeJson(5, QStringLiteral("Reallocated_Sector_Ct"), 49)),
+             sak::SmartHealthStatus::Warning);
+
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(
+        sataAttributeJson(5, QStringLiteral("Reallocated_Sector_Ct"), 50), 0);
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Warning);
+    // Attribute 5 also feeds the unified reallocated-sector metric.
+    QCOMPARE(report.reallocated_sectors, static_cast<int64_t>(50));
+    QVERIFY(report.warnings.contains(QStringLiteral("Reallocated sectors detected: 50")));
+    QVERIFY(report.recommendations.contains(
+        QStringLiteral("Significant sector damage -- back up data now and plan to replace the "
+                       "drive")));
+    QVERIFY2(report.health_reason.contains(QStringLiteral("Reallocated_Sector_Ct 50")),
+             qPrintable(report.health_reason));
+
+    const sak::SmartReport pending = analyzer.parseAndAssessForTesting(
+        sataAttributeJson(197, QStringLiteral("Current_Pending_Sector"), 16), 0);
+    QCOMPARE(pending.overall_health, sak::SmartHealthStatus::Warning);
+    QVERIFY2(pending.health_reason.contains(QStringLiteral("Current_Pending_Sector 16")),
+             qPrintable(pending.health_reason));
+
+    // The drive's own threshold crossed is FAIL, and says which attribute.
+    const sak::SmartReport past = analyzer.parseAndAssessForTesting(
+        QByteArrayLiteral("{\"device\":{\"type\":\"sat\"},\"smart_status\":{\"passed\":true},"
+                          "\"ata_smart_attributes\":{\"table\":[{\"id\":5,"
+                          "\"name\":\"Reallocated_Sector_Ct\",\"value\":8,\"worst\":8,"
+                          "\"thresh\":10,\"raw\":{\"value\":900}}]}}"),
+        0);
+    QCOMPARE(past.overall_health, sak::SmartHealthStatus::Critical);
+    QVERIFY2(past.health_reason.contains(QStringLiteral("past the drive's own failure threshold")),
+             qPrintable(past.health_reason));
+    QVERIFY(past.warnings.contains(past.health_reason));
+}
+
+// ============================================================================
+// B5-11: fail-closed assessment -- malformed/empty smartctl output must never
+// read as Healthy. Before the fix, assessHealth() unconditionally set Healthy
+// at entry, so a JSON parse error (default, data-less report) came back green.
+// ============================================================================
+
+void SmartDiskAnalyzerTests::reportHasAssessableData_signalDetection() {
+    // No status, no attributes, no NVMe log -> nothing to judge -> false.
+    sak::SmartReport blank;
+    QVERIFY(!sak::SmartDiskAnalyzer::reportHasAssessableData(blank));
+
+    // An overall SMART status alone is enough signal.
+    sak::SmartReport with_status;
+    with_status.smart_status = "PASSED";
+    QVERIFY(sak::SmartDiskAnalyzer::reportHasAssessableData(with_status));
+
+    // A single SATA attribute is enough signal.
+    sak::SmartReport with_attr;
+    with_attr.attributes.append(sak::SmartAttribute{});
+    QVERIFY(sak::SmartDiskAnalyzer::reportHasAssessableData(with_attr));
+
+    // An NVMe health log is enough signal.
+    sak::SmartReport with_nvme;
+    with_nvme.nvme_health = sak::NvmeHealthInfo{};
+    QVERIFY(sak::SmartDiskAnalyzer::reportHasAssessableData(with_nvme));
+}
+
+void SmartDiskAnalyzerTests::assess_malformedJson_isUnknownNotHealthy() {
+    sak::SmartDiskAnalyzer analyzer;
+    const QByteArray garbage = "{ this is not valid json ";
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(garbage, 0);
+    // The old bug: a parse failure came back Healthy. It must be Unknown. The exact-value QCOMPARE
+    // above fully pins this; the previous `!= Healthy` line was redundant (Unknown implies it).
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
+}
+
+void SmartDiskAnalyzerTests::assess_emptyJsonObject_isUnknownNotHealthy() {
+    sak::SmartDiskAnalyzer analyzer;
+    // Valid JSON, but no smart_status / attributes / nvme log -> no signal.
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting("{}", 0);
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
+}
+
+void SmartDiskAnalyzerTests::assess_unknownReport_recommendationsSayUnknown() {
+    sak::SmartDiskAnalyzer analyzer;
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting("{}", 0);
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
+    // Must NOT claim the drive is fine.
+    for (const QString& rec : report.recommendations) {
+        QVERIFY2(!rec.contains("health is good", Qt::CaseInsensitive),
+                 "an indeterminate drive must not be reported as healthy");
+    }
+    // ...and DOES carry the exact unavailable-data recommendation (the Unknown branch appends
+    // exactly this one), so the negative loop is not vacuously satisfied by an empty list.
+    QVERIFY(report.recommendations.contains(
+        QStringLiteral("SMART data was unavailable or unreadable -- verify the drive connection "
+                       "and re-run with administrator privileges")));
+    // Must carry the exact indeterminate-health warning, naming the drive (pins the specific
+    // message, not just that some warning mentions "could not be determined"): the panel lists
+    // every drive's warnings together, and five unnamed ones could not be told apart.
+    QVERIFY2(report.warnings.contains(QStringLiteral(
+                 "PhysicalDrive0: SMART health could not be determined. It reported no "
+                 "SMART health data.")),
+             qPrintable(report.warnings.join(QLatin1Char('|'))));
+    sak::SmartDiskAnalyzer second;
+    const sak::SmartReport named =
+        second.parseAndAssessForTesting(R"({"model_name": "VBOX HARDDISK"})", 3);
+    QVERIFY2(named.warnings.contains(QStringLiteral(
+                 "PhysicalDrive3 (VBOX HARDDISK): SMART health could not be determined. It "
+                 "reported no SMART health data.")),
+             qPrintable(named.warnings.join(QLatin1Char('|'))));
+}
+
+void SmartDiskAnalyzerTests::assess_validSataPassed_isHealthy() {
+    sak::SmartDiskAnalyzer analyzer;
+    // A well-formed SATA report with a passing status and a benign attribute.
+    const QByteArray json =
+        R"({"device":{"type":"sat"},"model_name":"Test SATA","smart_status":{"passed":true},)"
+        R"("temperature":{"current":35},"ata_smart_attributes":{"table":[)"
+        R"({"id":5,"name":"Reallocated_Sector_Ct","value":100,"worst":100,"thresh":10,)"
+        R"("raw":{"value":0}}]}})";
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(json, 0);
+    // Regression guard: the fail-closed change must not break a genuine healthy read.
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Healthy);
+}
+
+void SmartDiskAnalyzerTests::assess_smartStatusFailed_isCritical() {
+    sak::SmartDiskAnalyzer analyzer;
+    const QByteArray json = R"({"device":{"type":"sat"},"smart_status":{"passed":false}})";
+    const sak::SmartReport report = analyzer.parseAndAssessForTesting(json, 0);
     QCOMPARE(report.overall_health, sak::SmartHealthStatus::Critical);
 }
 
@@ -165,11 +485,116 @@ void SmartDiskAnalyzerTests::healthAssessment_critical() {
 // Cancel
 // ============================================================================
 
-void SmartDiskAnalyzerTests::cancel_stopsAnalysis() {
+// Renamed from cancel_stopsAnalysis: nothing here observes an analysis stopping. cancel()
+// only stores a private atomic, and its sole effect is inside analyzeAll()'s per-drive loop
+// and the runProcess() cancel predicate -- both of which need a bundled smartctl and real
+// drives. This is therefore a CRASH-REGRESSION TEST: it catches cancel() faulting on an idle
+// analyzer. The reports() check records the no-op-on-the-cache contract but cannot fail by
+// itself, because a fresh analyzer's cache is empty by construction.
+void SmartDiskAnalyzerTests::cancel_beforeAnalysisIsSafe() {
     sak::SmartDiskAnalyzer analyzer;
-    // Cancel before starting -- should be safe
     analyzer.cancel();
+    analyzer.cancel();  // idempotent
     QVERIFY(analyzer.reports().isEmpty());
+}
+
+namespace {
+/// Stands in for smartctl, so no tool touches a real drive.
+class ScriptedSmartAnalyzer : public sak::SmartDiskAnalyzer {
+public:
+    QString failure;
+    QByteArray output;
+    QHash<uint32_t, DriveIdentity> identities;
+    int identity_reads = 0;
+
+protected:
+    QByteArray runSmartctl(uint32_t) override {
+        m_last_read_failure = failure;
+        return output;
+    }
+    QHash<uint32_t, DriveIdentity> queryDriveIdentities() override {
+        ++identity_reads;
+        return identities;
+    }
+};
+}  // namespace
+
+// Left out, an unreadable drive looks like no drive at all, and with none readable the table is
+// simply empty.
+void SmartDiskAnalyzerTests::unreadableDrive_keepsARowAndSaysWhy() {
+    ScriptedSmartAnalyzer analyzer;
+    analyzer.failure = QStringLiteral("Reading it needs administrator rights.");
+    QSignalSpy analyzed(&analyzer, &sak::SmartDiskAnalyzer::driveAnalyzed);
+    QSignalSpy errors(&analyzer, &sak::SmartDiskAnalyzer::errorOccurred);
+    QSignalSpy warnings(&analyzer, &sak::SmartDiskAnalyzer::driveWarning);
+
+    analyzer.analyzeDrive(7);
+
+    QCOMPARE(analyzed.count(), 1);
+    // Review 5 (Z23): the log said "ERROR: Failed to read SMART data for PhysicalDrive2" for a USB
+    // stick the table showed as an adapter's limit. It says the table's warning, as a warning.
+    QCOMPARE(errors.count(), 0);
+    QCOMPARE(warnings.count(), 1);
+    QCOMPARE(warnings.first().first().toString(),
+             QStringLiteral("PhysicalDrive7: SMART health could not be determined. "
+                            "Reading it needs administrator rights."));
+    QCOMPARE(analyzer.reports().size(), 1);
+    const sak::SmartReport& report = analyzer.reports().first();
+    QCOMPARE(report.device_path, QStringLiteral("\\\\.\\PhysicalDrive7"));
+    QCOMPARE(report.model, QStringLiteral("PhysicalDrive7"));
+    QCOMPARE(report.overall_health, sak::SmartHealthStatus::Unknown);
+    QCOMPARE(report.warnings,
+             QStringList{QStringLiteral("PhysicalDrive7: SMART health could not be determined. "
+                                        "Reading it needs administrator rights.")});
+}
+
+void SmartDiskAnalyzerTests::unreadableDrive_withNoReasonStillSaysSo() {
+    ScriptedSmartAnalyzer analyzer;
+    analyzer.analyzeDrive(2);
+    QCOMPARE(analyzer.reports().size(), 1);
+    QCOMPARE(analyzer.reports().first().warnings,
+             QStringList{QStringLiteral("PhysicalDrive2: SMART health could not be determined. "
+                                        "Its SMART data could not be read.")});
+}
+
+void SmartDiskAnalyzerTests::readableDrive_isNotMarkedUnreadable() {
+    ScriptedSmartAnalyzer analyzer;
+    analyzer.output = QByteArrayLiteral(R"({"model_name":"Disk","smart_status":{"passed":true}})");
+    analyzer.analyzeDrive(3);
+    QCOMPARE(analyzer.reports().size(), 1);
+    QCOMPARE(analyzer.reports().first().model, QStringLiteral("Disk"));
+    QVERIFY(analyzer.reports().first().overall_health != sak::SmartHealthStatus::Unknown);
+}
+
+// testpc1 with no hardware scan run: the USB-bridged NVMe smartctl cannot read was listed only as
+// "PhysicalDrive1" with Type N/A. Windows knows its model and bus, and the run reads them itself.
+void SmartDiskAnalyzerTests::unreadableDrive_isNamedByWindowsModelAndBus() {
+    ScriptedSmartAnalyzer analyzer;
+    analyzer.identities.insert(
+        1, {.model = QStringLiteral("NS-PCNVMEHDE"), .bus = QStringLiteral("USB")});
+    analyzer.analyzeDrive(1);
+    analyzer.analyzeDrive(4);  // one Windows does not list keeps its number
+    QCOMPARE(analyzer.reports().size(), 2);
+    QCOMPARE(analyzer.reports().at(0).model, QStringLiteral("NS-PCNVMEHDE"));
+    QCOMPARE(analyzer.reports().at(0).interface_type, QStringLiteral("USB"));
+    QCOMPARE(sak::SmartDiskAnalyzer::driveName(analyzer.reports().at(0).device_path,
+                                               analyzer.reports().at(0).model),
+             QStringLiteral("PhysicalDrive1 (NS-PCNVMEHDE)"));
+    QCOMPARE(analyzer.reports().at(1).model, QStringLiteral("PhysicalDrive4"));
+    QCOMPARE(analyzer.identity_reads, 1);  // once per run, not per drive
+}
+
+// smartctl says "nvme" (shown "NVME") and "sat" for a USB enclosure; the views say Windows' bus.
+void SmartDiskAnalyzerTests::readableDrive_takesWindowsBusAndKeepsSmartctlModel() {
+    ScriptedSmartAnalyzer analyzer;
+    analyzer.identities.insert(
+        3, {.model = QStringLiteral("Windows name"), .bus = QStringLiteral("NVMe")});
+    analyzer.output = QByteArrayLiteral(
+        R"({"device":{"type":"nvme"},"model_name":"SK hynix BC501","smart_status":{"passed":true}})");
+    analyzer.analyzeDrive(3);
+    QCOMPARE(analyzer.reports().size(), 1);
+    QCOMPARE(analyzer.reports().first().model, QStringLiteral("SK hynix BC501"));
+    QCOMPARE(analyzer.reports().first().interface_type, QStringLiteral("NVMe"));
 }
 
 QTEST_GUILESS_MAIN(SmartDiskAnalyzerTests)

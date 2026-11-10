@@ -24,8 +24,9 @@ namespace sak {
 
 /// @brief Hash algorithm selection
 enum class hash_algorithm {
-    md5,    ///< MD5 hash (fast, less secure)
-    sha256  ///< SHA-256 hash (slower, more secure)
+    md5,    ///< MD5: fast but NOT collision-resistant -- corruption-detection only
+            ///< (accidental damage / backup verification), never for adversarial use
+    sha256  ///< SHA-256: collision-resistant; the correct general-purpose choice
 };
 
 /// @brief Progress callback function type
@@ -39,10 +40,16 @@ public:
     /// @brief Default chunk size for reading (1MB)
     static constexpr std::size_t DEFAULT_CHUNK_SIZE = 1024 * 1024;
 
+    /// @brief Upper bound for the read chunk. A larger request is clamped down so the value
+    /// passed to QFile::read cannot narrow when converted to qint64 and cannot drive an
+    /// outsized per-read allocation.
+    static constexpr std::size_t MAX_CHUNK_SIZE = 256u * 1024u * 1024u;
+
     /// @brief Constructor
-    /// @param algorithm Hash algorithm to use
+    /// @param algorithm Hash algorithm to use (defaults to the collision-resistant SHA-256;
+    ///        md5 is corruption-detection only and must be requested explicitly)
     /// @param chunk_size Size of chunks to read
-    explicit file_hasher(hash_algorithm algorithm = hash_algorithm::md5,
+    explicit file_hasher(hash_algorithm algorithm = hash_algorithm::sha256,
                          std::size_t chunk_size = DEFAULT_CHUNK_SIZE) noexcept;
 
     /// @brief Calculate hash of a file
@@ -116,12 +123,13 @@ private:
         -> std::expected<std::string, error_code>;
 
     /// @brief Hash file content in chunks with progress reporting
-    void hashFileInChunks(
-        QFile& file,
-        QCryptographicHash& hash,
-        // cppcheck-suppress constParameterReference ; move_only_function has non-const operator()
-        hash_progress_callback& progress,
-        const std::stop_token& stop_token) const;
+    /// @return false if an I/O read error interrupted hashing (the accumulated
+    ///         digest is then incomplete and must not be reported as success);
+    ///         true on clean end-of-file or a cancellation via @p stop_token.
+    [[nodiscard]] bool hashFileInChunks(QFile& file,
+                                        QCryptographicHash& hash,
+                                        std::reference_wrapper<hash_progress_callback> progress,
+                                        const std::stop_token& stop_token) const;
 };
 
 /// @brief Convenience function to calculate MD5 hash of a file
@@ -139,10 +147,5 @@ private:
     -> std::expected<std::string, error_code> {
     return file_hasher(hash_algorithm::sha256).calculateHash(file_path);
 }
-
-/// @brief Convert hash bytes to hex string
-/// @param hash_bytes Hash bytes
-/// @return Hex string representation
-[[nodiscard]] std::string hashToHex(std::span<const unsigned char> hash_bytes);
 
 }  // namespace sak

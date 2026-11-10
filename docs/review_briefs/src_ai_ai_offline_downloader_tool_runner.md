@@ -1,0 +1,1 @@
+- **HIGH** -- [src/ai/ai_offline_downloader_tool_runner.cpp:53](src/ai/ai_offline_downloader_tool_runner.cpp:53): Busy check and operation start are separate callbacks. Concurrent calls can both observe idle and start overlapping download/build/install operations, defeating single-operation guard.

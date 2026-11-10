@@ -7,36 +7,32 @@
 #include "sak/file_scanner.h"
 
 #include "sak/logger.h"
+#include "sak/path_utils.h"
 
 #include <QtGlobal>
 
 #include <algorithm>
 
-#ifdef _WIN32
 #include <windows.h>
 // Undefine Windows macros that conflict with Qt
 #undef emit
 #undef signals
 #undef slots
-#else
-#include <sys/stat.h>
-#endif
 
 namespace sak {
 
 auto file_scanner::scan(const std::filesystem::path& root_path,
                         const scan_options& options,
                         std::stop_token stop_token) -> std::expected<scan_statistics, error_code> {
-    Q_ASSERT_X(!root_path.empty(), "file_scanner::scan", "root_path must not be empty");
-
-    // Validate root path
+    // Validate root path. An empty root_path never exists, so it is reported
+    // here as file_not_found.
     if (!std::filesystem::exists(root_path)) {
-        logError("Scan root path does not exist: {}", root_path.string());
+        logError("Scan root path does not exist: {}", pathAsUtf8(root_path));
         return std::unexpected(error_code::file_not_found);
     }
 
     if (!std::filesystem::is_directory(root_path)) {
-        logError("Scan root path is not a directory: {}", root_path.string());
+        logError("Scan root path is not a directory: {}", pathAsUtf8(root_path));
         return std::unexpected(error_code::not_a_directory);
     }
 
@@ -44,9 +40,20 @@ auto file_scanner::scan(const std::filesystem::path& root_path,
     m_files_processed.store(0, std::memory_order_relaxed);
     m_size_processed.store(0, std::memory_order_relaxed);
 
+    // Reset the symlink-cycle guard and seed it with the root so a link pointing
+    // back at the root is caught. Only meaningful when following symlinks.
+    m_visited_dirs.clear();
+    if (options.follow_symlinks) {
+        std::error_code root_ec;
+        const auto canonical_root = std::filesystem::canonical(root_path, root_ec);
+        if (!root_ec) {
+            m_visited_dirs.insert(pathAsUtf8(canonical_root));
+        }
+    }
+
     scan_statistics stats;
 
-    logInfo("Starting directory scan: {}", root_path.string());
+    logInfo("Starting directory scan: {}", pathAsUtf8(root_path));
 
     // Start recursive scan
     auto result = scanDirectoryRecursive(root_path, options, stats, 0, stop_token);
@@ -65,7 +72,9 @@ auto file_scanner::scan(const std::filesystem::path& root_path,
             stats.directories_found,
             stats.errors_encountered);
 
-    // Postcondition: stats counters must be consistent
+    // Postcondition: stats counters must be consistent. Every counter is an
+    // unsigned member of the local scan_statistics that this scan only ever
+    // increments, so a zero sum implies files_found == 0.
     Q_ASSERT_X(stats.files_found + stats.directories_found + stats.skipped_by_filter +
                            stats.errors_encountered >
                        0 ||
@@ -73,6 +82,12 @@ auto file_scanner::scan(const std::filesystem::path& root_path,
                "file_scanner::scan",
                "scan stats must be consistent");
 
+    // Incomplete-scan contract (R5-P9-20): this is a count-and-continue bulk scan.
+    // A non-zero stats.errors_encountered means one or more directories/entries could
+    // not be enumerated, so the returned statistics describe a PARTIAL scan. A caller
+    // that requires completeness must treat errors_encountered > 0 as incomplete and
+    // must not trust a successful expected<> alone. errors_encountered is the explicit
+    // incomplete indicator surfaced in the returned value.
     return stats;
 }
 
@@ -108,8 +123,8 @@ auto file_scanner::scanAndCollect(const std::filesystem::path& root_path,
 
 auto file_scanner::listFiles(const std::filesystem::path& root_path, bool recursive)
     -> std::expected<std::vector<std::filesystem::path>, error_code> {
-    Q_ASSERT_X(!root_path.empty(), "file_scanner::listFiles", "root_path must not be empty");
-
+    // An empty root_path is rejected by scan(), which scanAndCollect() reaches
+    // unconditionally, and reported as file_not_found.
     scan_options options;
     options.recursive = recursive;
     options.type_filter = file_type_filter::files_only;
@@ -122,8 +137,14 @@ auto file_scanner::findFiles(const std::filesystem::path& root_path,
                              const std::vector<std::string>& patterns,
                              bool recursive)
     -> std::expected<std::vector<std::filesystem::path>, error_code> {
-    Q_ASSERT_X(!root_path.empty(), "file_scanner::findFiles", "root_path must not be empty");
-    Q_ASSERT_X(!patterns.empty(), "file_scanner::findFiles", "patterns must not be empty");
+    // An empty root_path is rejected by scan() as file_not_found. An empty
+    // pattern list is not: it would leave include_patterns empty, which the scan
+    // reads as "no filter" and answers a filtered query with every file. Fail
+    // closed instead.
+    if (patterns.empty()) {
+        logError("findFiles requires at least one pattern");
+        return std::unexpected(error_code::invalid_argument);
+    }
 
     scan_options options;
     options.recursive = recursive;
@@ -150,16 +171,21 @@ bool passesTypeFilter(file_type_filter filter, bool is_dir, bool is_file) {
 
 bool isExcludedDirectory(const std::filesystem::path& path,
                          const std::vector<std::string>& exclude_dirs) {
-    const auto dir_name = path.filename().string();
+    const auto dir_name = pathAsUtf8(path.filename());
     return std::ranges::any_of(exclude_dirs,
                                [&dir_name](const auto& excl) { return dir_name == excl; });
 }
 
 bool checkSizeFilter(const std::filesystem::directory_entry& entry, const scan_options& options) {
+    const bool has_size_limit = options.min_file_size > 0 || options.max_file_size > 0;
     std::error_code ec;
     auto size = entry.file_size(ec);
     if (ec) {
-        return true;
+        // Fail closed (R5-P9-32): a size that cannot be stat'd cannot be shown to
+        // satisfy a configured min/max limit, so exclude the file rather than letting
+        // it bypass the limit. With no limit configured there is nothing to enforce,
+        // so the stat failure alone must not drop the file from an unfiltered scan.
+        return !has_size_limit;
     }
     if (options.min_file_size > 0 && size < options.min_file_size) {
         return false;
@@ -168,6 +194,20 @@ bool checkSizeFilter(const std::filesystem::directory_entry& entry, const scan_o
         return false;
     }
     return true;
+}
+
+// Non-following test for a reparse point (symbolic link OR junction/mount point). directory_entry::
+// is_symlink() alone is insufficient on Windows: MSVC maps a junction to file_type::junction (not
+// file_type::symlink), so is_symlink() returns false for junctions. We therefore read the reparse
+// attribute directly -- GetFileAttributesW returns the reparse point's OWN attributes and does NOT
+// follow the link, so it never resolves a (possibly UNC) target. Mirrors the leaf guard
+// sak::pathIsReparsePoint used across the file ops.
+bool isReparsePointEntry(const std::filesystem::directory_entry& entry) {
+    const DWORD attrs = GetFileAttributesW(entry.path().wstring().c_str());
+    if (attrs != INVALID_FILE_ATTRIBUTES) {
+        return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    }
+    return entry.is_symlink();
 }
 
 }  // namespace
@@ -191,8 +231,8 @@ bool file_scanner::shouldProcessEntry(const std::filesystem::directory_entry& en
             return false;
         }
 
-        bool is_dir = entry.is_directory();
-        bool is_file = entry.is_regular_file();
+        const bool is_dir = entry.is_directory();
+        const bool is_file = entry.is_regular_file();
 
         if (!passesTypeFilter(options.type_filter, is_dir, is_file)) {
             return false;
@@ -248,22 +288,23 @@ bool file_scanner::shouldIncludeFile(const std::filesystem::directory_entry& ent
 }
 
 bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
+    // Reached only through passesDepthAndVisibility(), whose two callers
+    // (shouldProcessEntry, canDescendInto) both pass directory_entry::path(),
+    // which is never empty.
     Q_ASSERT(!path.empty());
     try {
-        auto filename = path.filename().string();
+        auto filename = pathAsUtf8(path.filename());
 
         // Unix-style hidden files (start with .)
         if (!filename.empty() && filename[0] == '.') {
             return true;
         }
 
-#ifdef _WIN32
         // Windows hidden attribute
-        DWORD attrs = GetFileAttributesW(path.wstring().c_str());
+        DWORD const attrs = GetFileAttributesW(path.wstring().c_str());
         if (attrs != INVALID_FILE_ATTRIBUTES) {
             return (attrs & FILE_ATTRIBUTE_HIDDEN) != 0;
         }
-#endif
 
         return false;
 
@@ -295,31 +336,80 @@ auto file_scanner::recurseIntoDirectory(const std::filesystem::path& dir_path,
     return {};
 }
 
+bool file_scanner::canDescendInto(const std::filesystem::directory_entry& entry,
+                                  const scan_options& options,
+                                  scan_statistics& stats,
+                                  std::size_t current_depth,
+                                  const canonical_path_resolver& canonical_resolver) {
+    const auto& path = entry.path();
+    if (!passesDepthAndVisibility(path, options, current_depth)) {
+        return false;
+    }
+    if (isExcludedDirectory(path, options.exclude_dirs)) {
+        return false;
+    }
+    // Never follow a symlinked/junction directory unless explicitly enabled: a
+    // link can escape the scan root, and one pointing at an ancestor recurses
+    // without bound until the path length errors out (an effective hang).
+    // isReparsePointEntry (not is_symlink()) so a Windows JUNCTION -- which
+    // directory_entry maps to file_type::junction and is_symlink() misses -- is also
+    // refused; otherwise a planted junction steers the default walk out of the scan
+    // root (B8-16). This is the recursion gate even when skip_symlinks is off; the
+    // skip_symlinks path already drops reparse points wholesale before this runs.
+    if (isReparsePointEntry(entry) && !options.follow_symlinks) {
+        return false;
+    }
+    // When following is enabled, break cycles by canonical identity. A canonicalization
+    // FAILURE (unreadable junction/symlink target, access denied, IO error) leaves the entry
+    // with no identity to register, so descending would silently drop the cycle/confinement
+    // guard for that subtree -- a planted link could then loop or steer the walk out of the
+    // scan root. Fail closed: refuse the descent and count it as an error rather than
+    // traversing blind (a skip that is never reported would read as "nothing was there").
+    if (options.follow_symlinks) {
+        std::error_code ec;
+        const auto canonical = canonical_resolver ? canonical_resolver(path, ec)
+                                                  : std::filesystem::canonical(path, ec);
+        if (ec) {
+            logWarning("Refusing to follow {}: canonical path unresolved ({})",
+                       pathAsUtf8(path),
+                       ec.message());
+            stats.errors_encountered++;
+            return false;
+        }
+        if (!m_visited_dirs.insert(pathAsUtf8(canonical)).second) {
+            return false;  // already descended into this directory this scan
+        }
+    }
+    return true;
+}
+
 auto file_scanner::processScannedEntry(const std::filesystem::directory_entry& entry,
                                        const scan_options& options,
                                        scan_statistics& stats,
                                        std::size_t current_depth,
                                        std::stop_token stop_token)
     -> std::expected<void, error_code> {
-    if (!shouldProcessEntry(entry, options, current_depth)) {
+    const bool is_dir = entry.is_directory();
+    const bool is_file = entry.is_regular_file();
+
+    // Emission is gated by the output type filter (files_only/directories_only)
+    // and the file-specific filters. This is kept separate from the traversal
+    // decision so a files_only scan still recurses into subdirectories.
+    if (shouldProcessEntry(entry, options, current_depth)) {
+        if (is_file) {
+            updateFileStats(entry, options, stats);
+        } else if (is_dir) {
+            stats.directories_found++;
+        }
+        if (options.callback && !options.callback(entry.path(), is_dir)) {
+            return std::unexpected(error_code::operation_cancelled);
+        }
+    } else {
         stats.skipped_by_filter++;
-        return {};
     }
 
-    bool is_dir = entry.is_directory();
-    bool is_file = entry.is_regular_file();
-
-    if (is_file) {
-        updateFileStats(entry, options, stats);
-    } else if (is_dir) {
-        stats.directories_found++;
-    }
-
-    if (options.callback && !options.callback(entry.path(), is_dir)) {
-        return std::unexpected(error_code::operation_cancelled);
-    }
-
-    if (is_dir && options.recursive) {
+    // Traversal is decided independently of the output type filter.
+    if (is_dir && options.recursive && canDescendInto(entry, options, stats, current_depth)) {
         return recurseIntoDirectory(entry.path(), options, stats, current_depth, stop_token);
     }
 
@@ -355,9 +445,20 @@ auto file_scanner::processEntryWithErrorHandling(const std::filesystem::director
                                                  std::stop_token stop_token)
     -> std::expected<void, error_code> {
     try {
+        // R2: a reparse-point (symlink/junction) entry is dropped BEFORE processScannedEntry runs
+        // any type/size query when skip_symlinks is set. isReparsePointEntry reads the reparse
+        // attribute non-following, so unlike is_regular_file()/file_size() -- which resolve the
+        // target -- it never triggers the SMB/NTLM handshake a UNC-targeted symlink would. Skipping
+        // here means the entry is neither emitted NOR descended, so a planted junction also cannot
+        // steer the headless walk into an arbitrary local tree. Kept inside the try so the
+        // non-following stat's own errors are absorbed like any other per-entry failure.
+        if (options.skip_symlinks && isReparsePointEntry(entry)) {
+            stats.skipped_by_filter++;
+            return {};
+        }
         return processScannedEntry(entry, options, stats, current_depth, stop_token);
     } catch (const std::filesystem::filesystem_error& e) {
-        logWarning("Error processing entry: {} - {}", entry.path().string(), e.what());
+        logWarning("Error processing entry: {} - {}", pathAsUtf8(entry.path()), e.what());
         stats.errors_encountered++;
         return {};
     } catch (const std::exception& e) {
@@ -373,6 +474,8 @@ auto file_scanner::scanDirectoryRecursive(const std::filesystem::path& current_p
                                           std::size_t current_depth,
                                           std::stop_token stop_token)
     -> std::expected<void, error_code> {
+    // scan() rejects a root that does not exist (an empty path never does) before
+    // the first call, and recurseIntoDirectory() passes directory_entry::path().
     Q_ASSERT_X(!current_path.empty(), "scanDirectoryRecursive", "current_path must not be empty");
 
     if (stop_token.stop_requested()) {
@@ -386,10 +489,10 @@ auto file_scanner::scanDirectoryRecursive(const std::filesystem::path& current_p
         }
 
         std::error_code ec;
-        std::filesystem::directory_iterator dir_it(current_path, dir_options, ec);
+        const std::filesystem::directory_iterator dir_it(current_path, dir_options, ec);
 
         if (ec) {
-            logWarning("Failed to open directory: {} - {}", current_path.string(), ec.message());
+            logWarning("Failed to open directory: {} - {}", pathAsUtf8(current_path), ec.message());
             stats.errors_encountered++;
             return {};  // Continue with other directories
         }

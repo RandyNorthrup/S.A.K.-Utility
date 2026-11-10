@@ -11,6 +11,12 @@
 
 #include "sak/process_runner.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
+
+#include <algorithm>
 #include <chrono>
 
 #include <winsock2.h>
@@ -27,7 +33,10 @@ namespace sak {
 
 namespace {
 constexpr qsizetype kIpv4OctetCount = 4;
-}
+constexpr int kMaxOctetValue = 255;
+// Bound on the Get-DnsClientCache child process so a wedged launch cannot hang the tool.
+constexpr int kDisplayDnsTimeoutMs = 10'000;
+}  // namespace
 
 DnsDiagnosticTool::DnsDiagnosticTool(QObject* parent) : QObject(parent) {}
 
@@ -63,31 +72,85 @@ QStringList DnsDiagnosticTool::supportedRecordTypes() {
     };
 }
 
+bool DnsDiagnosticTool::isSupportedRecordType(const QString& recordType) {
+    return supportedRecordTypes().contains(recordType, Qt::CaseInsensitive);
+}
+
+bool DnsDiagnosticTool::isNumericIpv4(const QString& ipAddress) {
+    const auto parts = ipAddress.split(QLatin1Char('.'));
+    if (parts.size() != kIpv4OctetCount) {
+        return false;
+    }
+    return std::ranges::all_of(parts, [](const QString& part) {
+        if (part.isEmpty()) {
+            return false;
+        }
+        bool ok = false;
+        const int value = part.toInt(&ok);
+        return ok && value >= 0 && value <= kMaxOctetValue;
+    });
+}
+
+bool DnsDiagnosticTool::answersEquivalent(const QVector<QString>& a, const QVector<QString>& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    QVector<QString> sortedA = a;
+    QVector<QString> sortedB = b;
+    std::ranges::sort(sortedA);
+    std::ranges::sort(sortedB);
+    return sortedA == sortedB;
+}
+
 }  // namespace sak
 
 namespace {
 
 WORD mapRecordType(const QString& recordType) {
     struct TypeMapping {
-        const char* name;
-        WORD type;
+        const char* name{};
+        WORD type{};
     };
     static constexpr TypeMapping kTypes[] = {
-        {"AAAA", DNS_TYPE_AAAA},
-        {"MX", DNS_TYPE_MX},
-        {"CNAME", DNS_TYPE_CNAME},
-        {"TXT", DNS_TYPE_TEXT},
-        {"SOA", DNS_TYPE_SOA},
-        {"NS", DNS_TYPE_NS},
-        {"SRV", DNS_TYPE_SRV},
-        {"PTR", DNS_TYPE_PTR},
+        {.name = "AAAA", .type = DNS_TYPE_AAAA},
+        {.name = "MX", .type = DNS_TYPE_MX},
+        {.name = "CNAME", .type = DNS_TYPE_CNAME},
+        {.name = "TXT", .type = DNS_TYPE_TEXT},
+        {.name = "SOA", .type = DNS_TYPE_SOA},
+        {.name = "NS", .type = DNS_TYPE_NS},
+        {.name = "SRV", .type = DNS_TYPE_SRV},
+        {.name = "PTR", .type = DNS_TYPE_PTR},
     };
-    for (const auto& entry : kTypes) {
-        if (recordType == QLatin1String(entry.name)) {
-            return entry.type;
-        }
+    // isSupportedRecordType() accepts a type case-insensitively, so normalize here before the
+    // (case-sensitive) name compare -- otherwise "aaaa"/"mx" would fall through and silently query
+    // an A record instead of the type the caller asked for.
+    const QString normalized = recordType.toUpper();
+    const auto match = std::ranges::find_if(kTypes, [&normalized](const TypeMapping& entry) {
+        return normalized == QLatin1String(entry.name);
+    });
+    if (match != std::ranges::end(kTypes)) {
+        return match->type;
     }
     return DNS_TYPE_A;
+}
+
+// First successful answer -- including an empty answer set -- establishes the agreement baseline,
+// so the count of successes (not firstAnswers being empty) is what tells the comparison whether a
+// baseline already exists.
+int countSuccessfulResults(const QVector<sak::DnsQueryResult>& results) {
+    return static_cast<int>(
+        std::ranges::count_if(results, [](const sak::DnsQueryResult& r) { return r.success; }));
+}
+
+// Fail-closed failure text for the DNS cache read, appending the child's stderr when present so
+// the real OS error reaches the user instead of an empty cache being reported.
+QString displayDnsFailureMessage(const sak::ProcessResult& result) {
+    const QString detail = result.std_err.trimmed();
+    QString message = QStringLiteral("Failed to read the DNS resolver cache.");
+    if (!detail.isEmpty()) {
+        message += QLatin1Char(' ') + detail;
+    }
+    return message;
 }
 
 void appendTxtRecords(DNS_RECORD* rec, sak::DnsQueryResult& result) {
@@ -225,12 +288,18 @@ void DnsDiagnosticTool::query(const QString& hostname,
         return;
     }
 
+    // Reject an unknown record type rather than silently querying A for it.
+    if (!isSupportedRecordType(recordType)) {
+        Q_EMIT errorOccurred(QStringLiteral("Unsupported DNS record type: %1").arg(recordType));
+        Q_EMIT queryComplete({});
+        return;
+    }
+
     auto result = performQuery(hostname, recordType, dnsServer);
     Q_EMIT queryComplete(result);
 }
 
 void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& dnsServer) {
-    Q_ASSERT(!ipAddress.isEmpty());
     m_cancelled.store(false);
 
     if (ipAddress.isEmpty()) {
@@ -239,16 +308,19 @@ void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& d
         return;
     }
 
-    // Convert IP to reverse lookup format (e.g., 1.2.3.4 -> 4.3.2.1.in-addr.arpa)
-    const auto parts = ipAddress.split(QLatin1Char('.'));
-    if (parts.size() != kIpv4OctetCount) {
+    // Require four numeric 0..255 octets: a non-numeric part (e.g. "a.b.c.d") would
+    // otherwise build a bogus PTR name and issue a meaningless query.
+    if (!isNumericIpv4(ipAddress)) {
         Q_EMIT errorOccurred(QStringLiteral("Invalid IPv4 address format"));
         Q_EMIT queryComplete({});
         return;
     }
 
+    // Convert IP to reverse lookup format (e.g., 1.2.3.4 -> 4.3.2.1.in-addr.arpa)
+    const auto parts = ipAddress.split(QLatin1Char('.'));
+
     QString reverseName;
-    for (int i = parts.size() - 1; i >= 0; --i) {
+    for (int i = static_cast<int>(parts.size() - 1); i >= 0; --i) {
         if (!reverseName.isEmpty()) {
             reverseName += QLatin1Char('.');
         }
@@ -263,7 +335,7 @@ void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& d
 
 void DnsDiagnosticTool::updateComparisonWithResult(const DnsQueryResult& result,
                                                    DnsServerComparison& comparison,
-                                                   QVector<QString>& firstAnswers) {
+                                                   QVector<QString>& firstAnswers) const {
     comparison.results.append(result);
 
     if (result.success && result.responseTimeMs < comparison.fastestTimeMs) {
@@ -271,9 +343,17 @@ void DnsDiagnosticTool::updateComparisonWithResult(const DnsQueryResult& result,
         comparison.fastestServer = result.dnsServer;
     }
 
-    if (firstAnswers.isEmpty() && result.success) {
+    if (!result.success) {
+        return;
+    }
+
+    // The first success (already appended above, so count == 1) sets the baseline even when its
+    // answer set is empty; every later success is compared against it. Keying off the success
+    // count -- not firstAnswers.isEmpty() -- stops an empty-answer baseline from being skipped and
+    // a later differing answer from being mistaken for the baseline.
+    if (countSuccessfulResults(comparison.results) == 1) {
         firstAnswers = result.answers;
-    } else if (result.success && result.answers != firstAnswers) {
+    } else if (!answersEquivalent(result.answers, firstAnswers)) {
         comparison.allAgree = false;
     }
 }
@@ -285,6 +365,12 @@ void DnsDiagnosticTool::compareServers(const QString& hostname,
 
     if (hostname.isEmpty()) {
         Q_EMIT errorOccurred(QStringLiteral("Hostname cannot be empty"));
+        Q_EMIT comparisonComplete({});
+        return;
+    }
+
+    if (!isSupportedRecordType(recordType)) {
+        Q_EMIT errorOccurred(QStringLiteral("Unsupported DNS record type: %1").arg(recordType));
         Q_EMIT comparisonComplete({});
         return;
     }
@@ -309,60 +395,119 @@ void DnsDiagnosticTool::compareServers(const QString& hostname,
         comparison.fastestTimeMs = 0.0;
     }
 
+    // Fail closed: allAgree is a positive assurance that at least two servers returned the same
+    // answer. With fewer than two successful queries there is nothing to compare (a lone server
+    // cannot agree with itself, and an all-failed/empty-list run has no baseline at all), and a
+    // run cancelled part-way never compared them all -- so report no agreement rather than a
+    // misleading true (R5).
+    constexpr int kMinComparableAnswers = 2;
+    if (countSuccessfulResults(comparison.results) < kMinComparableAnswers || m_cancelled.load()) {
+        comparison.allAgree = false;
+    }
+
     Q_EMIT comparisonComplete(comparison);
 }
 
 void DnsDiagnosticTool::inspectDnsCache() {
     m_cancelled.store(false);
 
-    const auto result = sak::runProcess(QStringLiteral("ipconfig"),
-                                        {QStringLiteral("/displaydns")},
-                                        10'000,
-                                        [this]() { return m_cancelled.load(); });
-    if (!result.succeeded()) {
-        Q_EMIT dnsCacheResults({});
+    // Read the cache through Get-DnsClientCache rather than parsing `ipconfig /displaydns` text:
+    // the cmdlet and its Name/Data fields are language-neutral, whereas ipconfig's "Record Name" /
+    // "A (Host) Record" labels are localized -- matching those English literals on a non-English
+    // Windows silently yielded an EMPTY cache view for a non-empty cache. -Type A,AAAA filters at
+    // the source and Select-Object emits only the two neutral fields.
+    //
+    // System32-qualified powershell, never the bare name: CreateProcess searches the current
+    // directory ahead of System32, so a planted powershell.exe could feed this tool a fabricated
+    // cache. Unresolvable -> surface the error (fail closed), never a PATH/CWD launch.
+    const QString powershell_exe = sak::systemPowerShellPath();
+    if (powershell_exe.isEmpty()) {
+        Q_EMIT errorOccurred(QStringLiteral("Could not locate the System32 powershell.exe."));
         return;
     }
 
-    const auto lines = result.std_out.split(QLatin1Char('\n'));
-
-    QVector<QPair<QString, QString>> entries;
-    QString currentName;
-
-    for (const auto& line : lines) {
-        const auto trimmed = line.trimmed();
-
-        if (trimmed.startsWith(QStringLiteral("Record Name"))) {
-            const int colonPos = trimmed.indexOf(QLatin1Char(':'));
-            if (colonPos >= 0) {
-                currentName = trimmed.mid(colonPos + 1).trimmed();
-            }
-        } else if (trimmed.startsWith(QStringLiteral("A (Host) Record")) ||
-                   trimmed.startsWith(QStringLiteral("AAAA Record"))) {
-            const int colonPos = trimmed.indexOf(QLatin1Char(':'));
-            if (colonPos >= 0 && !currentName.isEmpty()) {
-                const auto value = trimmed.mid(colonPos + 1).trimmed();
-                entries.append({currentName, value});
-            }
-        }
+    const auto result =
+        sak::runProcess(powershell_exe,
+                        {QStringLiteral("-NoProfile"),
+                         QStringLiteral("-NonInteractive"),
+                         QStringLiteral("-Command"),
+                         QStringLiteral("$ErrorActionPreference='Stop'; "
+                                        "Get-DnsClientCache -Type A,AAAA | "
+                                        "Select-Object Name,Data | ConvertTo-Json -Compress")},
+                        kDisplayDnsTimeoutMs,
+                        [this]() { return m_cancelled.load(); });
+    // Fail closed: a failed enumeration must surface as an error, not an empty cache -- emitting
+    // no results here would be indistinguishable from a genuinely empty resolver cache.
+    if (!result.succeeded()) {
+        Q_EMIT errorOccurred(displayDnsFailureMessage(result));
+        return;
     }
 
-    Q_EMIT dnsCacheResults(entries);
+    Q_EMIT dnsCacheResults(parseDnsClientCacheJson(result.std_out));
+}
+
+QVector<QPair<QString, QString>> DnsDiagnosticTool::parseDnsClientCacheJson(const QString& json) {
+    QVector<QPair<QString, QString>> entries;
+
+    const QJsonDocument doc = QJsonDocument::fromJson(json.trimmed().toUtf8());
+    QJsonArray records;
+    if (doc.isArray()) {
+        records = doc.array();
+    } else if (doc.isObject()) {
+        // ConvertTo-Json emits a bare object (not a one-element array) for a single record.
+        records.append(doc.object());
+    } else {
+        // Empty input / JSON null / unparseable: a genuinely empty A,AAAA cache. Any process
+        // failure was already surfaced via the exit code, so this is not an error path.
+        return entries;
+    }
+
+    for (const QJsonValue& value : records) {
+        if (!value.isObject()) {
+            continue;
+        }
+        const QJsonObject record = value.toObject();
+        const QString name = record.value(QStringLiteral("Name")).toString();
+        // Skip negative-cache / pending entries: a queried name whose Data is JSON null (no
+        // resolved address) or a nameless record carries no useful (name, address) pair.
+        const QJsonValue data = record.value(QStringLiteral("Data"));
+        if (name.isEmpty() || !data.isString()) {
+            continue;
+        }
+        const QString address = data.toString();
+        if (address.isEmpty()) {
+            continue;
+        }
+        entries.append({name, address});
+    }
+
+    return entries;
 }
 
 void DnsDiagnosticTool::flushDnsCache() {
     m_cancelled.store(false);
 
-    const auto result = sak::runProcess(QStringLiteral("ipconfig"),
-                                        {QStringLiteral("/flushdns")},
-                                        10'000,
-                                        [this]() { return m_cancelled.load(); });
-    if (!result.succeeded()) {
-        Q_EMIT errorOccurred(QStringLiteral("Failed to flush DNS cache."));
-        Q_EMIT dnsCacheFlushed();
-        return;
+    // Flush via the dnsapi entry point DnsFlushResolverCache -- the same call `ipconfig /flushdns`
+    // makes internally, but it returns a BOOL that RELIABLY reflects success. `ipconfig /flushdns`
+    // can exit 0 even when the flush fails (e.g. the DNS Client service is stopped, where it prints
+    // "Could not flush the DNS Resolver Cache" yet still exits 0), which the exit-code check would
+    // read as a false success. The export is undocumented (not in windns.h) but stable since
+    // Windows 2000, so it is resolved by name at runtime from the already-loaded dnsapi.dll.
+    using DnsFlushFn = BOOL(WINAPI*)();
+    bool ok = false;
+    if (const HMODULE dnsapi = GetModuleHandleW(L"dnsapi.dll")) {
+        if (const auto flush =
+                reinterpret_cast<DnsFlushFn>(GetProcAddress(dnsapi, "DnsFlushResolverCache"))) {
+            ok = flush() != FALSE;
+        }
     }
 
+    if (!ok) {
+        // Do not emit dnsCacheFlushed() on failure -- that signal means the cache was
+        // actually flushed, and firing it here would report a false success.
+        Q_EMIT errorOccurred(QStringLiteral("Failed to flush the DNS resolver cache."));
+        return;
+    }
     Q_EMIT dnsCacheFlushed();
 }
 

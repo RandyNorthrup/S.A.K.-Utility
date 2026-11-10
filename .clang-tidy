@@ -1,5 +1,5 @@
 # =============================================================================
-# S.A.K. Utility — Clang-Tidy Configuration
+# S.A.K. Utility -- Clang-Tidy Configuration
 # Production-grade static analysis for C++23 / Qt 6 / MSVC 2022
 # Requires: clang-tidy 17+
 # =============================================================================
@@ -10,7 +10,7 @@ InheritParentConfig: false
 # Header filter: only analyze our own headers, not Qt/system
 HeaderFilterRegex: 'include/sak/.*\.h$'
 
-# Warnings are errors in CI — enforce zero tolerance
+# Warnings are errors in CI -- enforce zero tolerance
 WarningsAsErrors: '*'
 
 # Treat system headers as system (suppress diagnostics)
@@ -18,25 +18,99 @@ SystemHeaders: false
 
 FormatStyle: file
 
+# WARNING: 'Checks' below is a YAML folded block scalar. Inside a folded scalar a '#'
+# does NOT start a comment - it becomes part of the string. This file previously carried
+# decorative '# ---- bugprone ----' banners inside the scalar, which corrupted the glob
+# list so clang-tidy reported "Error: no checks enabled" and analyzed nothing. Keep every
+# comment ABOVE this key, never inside the scalar.
+#
+# Enabled families: bugprone, cert, clang-analyzer, concurrency, cppcoreguidelines,
+# google, hicpp, misc, modernize, performance, portability, readability.
+#
+# Each '-check' exclusion below carries its justification here in the config (R5-G21-3),
+# grouped by WHY it is off. History: docs/archive/CODEX_REVIEW_5_REMEDIATION.md (R5-G2).
+#
+# RESTORE-PENDING BUG CLASSES (re-enable as their debt is paid; highest priority -- these
+# hid real defects in the raw-filesystem parsers):
+#   bugprone-narrowing-conversions   qsizetype/uint64 truncation.
+#
+# SUPERSEDED BY A DEDICATED PROJECT GATE (running the clang-tidy version too would
+# CONTRADICT that gate -- see R5-G21-1):
+#   cppcoreguidelines-avoid-magic-numbers / readability-magic-numbers
+#                                    scripts/check_magic_numbers.py owns magic numbers,
+#                                    with an on-disk-format/crypto allowlist these cannot express.
+#   readability-function-cognitive-complexity
+#                                    lizard (CCN<=10) is the single complexity gate; a second
+#                                    differently-tuned metric would fight it.
+#   readability-convert-member-functions-to-static
+#                                    cppcheck functionStatic already enforces this in production.
+#   misc-include-cleaner             include hygiene is owned by the standalone
+#                                    clang-include-cleaner pass (R5-G6-3); Qt umbrella headers
+#                                    make the in-tidy version noise.
+#
+# INTRINSIC TO A RAW-FILESYSTEM / Qt CODEBASE (the pattern is correct here by construction;
+# the check cannot tell it from a bug):
+#   cppcoreguidelines-pro-bounds-array-to-pointer-decay / -pro-bounds-constant-array-index /
+#   -pro-bounds-pointer-arithmetic / hicpp-no-array-decay
+#                                    on-disk-format parsers walk byte buffers with bounded
+#                                    pointer/array arithmetic; a gsl::span rewrite of certified
+#                                    parsers buys no correctness.
+#   cppcoreguidelines-pro-type-reinterpret-cast
+#                                    struct overlays over raw disk blocks require reinterpret_cast;
+#                                    bounds-checked at the call site.
+#   cppcoreguidelines-pro-type-union-access
+#                                    APFS/HFS on-disk variant records require union access.
+#   cppcoreguidelines-owning-memory  ownership is Qt parent/child + std smart pointers, which this
+#                                    check does not model; it fires on every new QWidget(parent).
+#   cppcoreguidelines-non-private-member-variables-in-classes /
+#   misc-non-private-member-variables-in-classes
+#                                    Qt widgets and POD on-disk structs legitimately expose
+#                                    public/protected members.
+#   cppcoreguidelines-avoid-non-const-global-variables
+#                                    Qt requires non-const globals (metatype registration,
+#                                    static singletons).
+#   hicpp-signed-bitwise             bitwise ops on signed on-disk fields (masks/flags) are safe
+#                                    and pervasive; the check cannot separate them from
+#                                    sign-extension bugs.
+#   cert-err58-cpp                   Qt static QString/QRegularExpression idioms trip the
+#                                    throwing-static-ctor rule with no real init-order risk here.
+#   bugprone-easily-swappable-parameters
+#                                    fires on nearly every (x,y)/(width,height)/(offset,size)
+#                                    pair; too noisy to be a defensible gate.
+#   misc-no-recursion                a whole-tree audit (2026-08-18, R5-G2) found 118 first-party
+#                                    functions in recursive call chains and EVERY one is already
+#                                    bounded/guarded: the raw-filesystem parsers (APFS/HFS/PST)
+#                                    cap depth AND carry a visited-set against a crafted on-disk
+#                                    cycle (kMaxBTreeDepth, kMaxFsTreeDepth, kMaxObjectMapDepth,
+#                                    seen_nodes/visited); the directory walkers skip symlinks and
+#                                    NTFS reparse points / junctions and cap depth (copyDirectory,
+#                                    treeSize, scanDirectoryRecursive, *NoReparse); the mbox MIME
+#                                    walk caps nesting (kMaxMimeDepth); the AI tool-dispatch and
+#                                    the in-memory folder-tree walks are bounded mutual recursion
+#                                    over finite structures. So the check yields 118 false
+#                                    positives and zero true positives here -- runaway recursion
+#                                    is prevented by the per-site guards, not this lint. Enabling
+#                                    it would need 118 permanent NOLINTs (and a NOLINT on every
+#                                    future recursive helper) against the minimal-suppressions
+#                                    policy, catching no current defect. Kept off by design.
+#
+# PURE STYLE, NO CORRECTNESS VALUE (off to avoid churn against the established house style):
+#   modernize-use-trailing-return-type   house style uses leading return types.
+#   modernize-avoid-c-arrays             fixed-size C arrays back on-disk buffers/lookup tables.
+#   google-readability-todo              demands an owner on every TODO; single-owner repo.
+#   google-build-using-namespace         a few deliberate function-local using-namespace.
+#   readability-identifier-length        flags idiomatic short names (i, x, id).
+#   readability-else-after-return        style only.
+#   readability-uppercase-literal-suffix style only (1u vs 1U).
 Checks: >
   -*,
-
-  # ── bugprone: catch common programming mistakes ────────────────────
   bugprone-*,
   -bugprone-easily-swappable-parameters,
   -bugprone-narrowing-conversions,
-
-  # ── cert: CERT C++ secure coding rules ─────────────────────────────
   cert-*,
   -cert-err58-cpp,
-
-  # ── clang-analyzer: deep static analysis ───────────────────────────
   clang-analyzer-*,
-
-  # ── concurrency: thread-safety checks ──────────────────────────────
   concurrency-*,
-
-  # ── cppcoreguidelines: C++ Core Guidelines ─────────────────────────
   cppcoreguidelines-*,
   -cppcoreguidelines-avoid-magic-numbers,
   -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
@@ -47,35 +121,21 @@ Checks: >
   -cppcoreguidelines-owning-memory,
   -cppcoreguidelines-non-private-member-variables-in-classes,
   -cppcoreguidelines-avoid-non-const-global-variables,
-
-  # ── google: Google style subset ────────────────────────────────────
   google-*,
   -google-readability-todo,
   -google-build-using-namespace,
-
-  # ── hicpp: High Integrity C++ ──────────────────────────────────────
   hicpp-*,
   -hicpp-signed-bitwise,
   -hicpp-no-array-decay,
-
-  # ── misc: miscellaneous checks ─────────────────────────────────────
   misc-*,
   -misc-non-private-member-variables-in-classes,
   -misc-no-recursion,
   -misc-include-cleaner,
-
-  # ── modernize: use modern C++ idioms ───────────────────────────────
   modernize-*,
   -modernize-use-trailing-return-type,
   -modernize-avoid-c-arrays,
-
-  # ── performance: avoid unnecessary copies/allocations ──────────────
   performance-*,
-
-  # ── portability ────────────────────────────────────────────────────
   portability-*,
-
-  # ── readability: code clarity and consistency ──────────────────────
   readability-*,
   -readability-magic-numbers,
   -readability-function-cognitive-complexity,
@@ -85,7 +145,7 @@ Checks: >
   -readability-convert-member-functions-to-static,
 
 CheckOptions:
-  # ── Naming conventions (match existing codebase style) ─────────────
+  # -- Naming conventions (match existing codebase style) -------------
   # Classes: PascalCase
   - key: readability-identifier-naming.ClassCase
     value: CamelCase
@@ -104,11 +164,30 @@ CheckOptions:
   - key: readability-identifier-naming.MethodCase
     value: camelBack
 
-  # Members: m_ prefix + snake_case (match existing codebase)
+  # Members: PRIVATE / PROTECTED class members use m_ + snake_case; PUBLIC struct/DTO
+  # members (aggregate result types -- PartitionTarget, PartitionExecutionResult, the
+  # local wizard/widget result structs) use bare snake_case with NO prefix. That split
+  # IS the established codebase convention. Without the Public/Private/Protected overrides
+  # the generic MemberPrefix 'm_' applied to EVERY data member and wrongly demanded m_ on
+  # every public aggregate field -- the same too-broad-config class as the LocalConstant
+  # bug above. The generic Member* keys are kept only as a fallback for members with no
+  # access specifier (e.g. a union); the specific access-scoped keys win everywhere else.
   - key: readability-identifier-naming.MemberPrefix
     value: 'm_'
   - key: readability-identifier-naming.MemberCase
     value: lower_case
+  - key: readability-identifier-naming.PublicMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.PublicMemberPrefix
+    value: ''
+  - key: readability-identifier-naming.PrivateMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.PrivateMemberPrefix
+    value: 'm_'
+  - key: readability-identifier-naming.ProtectedMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.ProtectedMemberPrefix
+    value: 'm_'
 
   # Constants: k prefix + CamelCase
   - key: readability-identifier-naming.ConstantCase
@@ -123,6 +202,24 @@ CheckOptions:
     value: CamelCase
   - key: readability-identifier-naming.StaticConstantPrefix
     value: 'k'
+
+  # A plain `const` local / parameter / member is NOT a compile-time constant: the k prefix
+  # is reserved for constexpr / static / global / enum constants. Without these overrides the
+  # generic ConstantCase rule above would demand a k prefix on every `const QString bar` local
+  # (and even `for (const auto x : ...)` loop variables). Const locals and parameters follow
+  # their non-const kin (lower_case, no prefix); const members keep the m_ member prefix.
+  - key: readability-identifier-naming.LocalConstantCase
+    value: lower_case
+  - key: readability-identifier-naming.LocalConstantPointerCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstantParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstantPointerParameterCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstantMemberCase
+    value: lower_case
+  - key: readability-identifier-naming.ConstantMemberPrefix
+    value: 'm_'
 
   # Global constants (also k prefix)
   - key: readability-identifier-naming.GlobalConstantCase
@@ -158,7 +255,7 @@ CheckOptions:
   - key: readability-identifier-naming.MacroDefinitionCase
     value: UPPER_CASE
 
-  # ── Thresholds & limits ────────────────────────────────────────────
+  # -- Thresholds & limits --------------------------------------------
   - key: readability-function-size.LineThreshold
     value: '120'
   - key: readability-function-size.StatementThreshold
@@ -170,7 +267,7 @@ CheckOptions:
   - key: readability-function-size.NestingThreshold
     value: '5'
 
-  # ── Modernize preferences ─────────────────────────────────────────
+  # -- Modernize preferences -----------------------------------------
   - key: modernize-use-nullptr.NullMacros
     value: 'NULL'
   - key: modernize-use-auto.MinTypeNameLength
@@ -186,7 +283,7 @@ CheckOptions:
   - key: modernize-use-emplace.SmartPointers
     value: '::std::shared_ptr;::std::unique_ptr;::std::auto_ptr;::std::weak_ptr'
 
-  # ── Performance tuning ────────────────────────────────────────────
+  # -- Performance tuning --------------------------------------------
   - key: performance-unnecessary-value-param.AllowedTypes
     value: 'QString;QStringList;QVariant;QUrl;QByteArray'
   - key: performance-for-range-copy.WarnOnAllAutoCopies
@@ -194,11 +291,11 @@ CheckOptions:
   - key: performance-move-const-arg.CheckTriviallyCopyableMove
     value: 'false'
 
-  # ── Concurrency ───────────────────────────────────────────────────
+  # -- Concurrency ---------------------------------------------------
   - key: concurrency-mt-unsafe.FunctionSet
     value: 'posix'
 
-  # ── Miscellaneous ─────────────────────────────────────────────────
+  # -- Miscellaneous -------------------------------------------------
   - key: misc-unused-parameters.StrictMode
     value: 'false'
   - key: bugprone-argument-comment.StrictMode

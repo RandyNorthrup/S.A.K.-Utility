@@ -22,7 +22,6 @@ Win32/
 ARM64/
 
 # Old/backup builds
-build_old_*/
 *_old/
 *.bak
 
@@ -30,7 +29,6 @@ build_old_*/
 build_*.log
 build_*.txt
 aqtinstall.log
-test_results.log
 
 # CMake
 CMakeCache.txt
@@ -42,6 +40,12 @@ install_manifest.txt
 *.cmake
 # Build script invoked by a POST_BUILD -P command; must be tracked despite *.cmake
 !cmake/copy_tools_bundle.cmake
+# Source-bound certification stamp implementation is first-party build code.
+!cmake/SakSourceFingerprint.cmake
+# The product-library helper the root CMakeLists.txt includes is first-party build code too.
+!cmake/SakProductLibrary.cmake
+# Compiles Partition Manager's scripts into the program; must be tracked despite *.cmake
+!cmake/embed_text_files.cmake
 
 # ============================================================================
 # Visual Studio / MSBuild
@@ -111,7 +115,6 @@ bld/
 
 # EXCEPTION: Keep UUP Media Creator binaries (patched UUPMediaConverter)
 !tools/uup/uupmc/**/*.dll
-!tools/uup/uupmc/**/*.exe
 
 # Compiled Static libraries
 *.a
@@ -133,10 +136,7 @@ bld/
 !tools/uup/aria2c.exe
 !tools/iperf3/iperf3.exe
 !tools/iperf3/cygwin1.dll
-!tools/mcp/
-!tools/mcp/**
-tools/mcp/_build/
-tools/mcp/**/*.spec
+!tools/uup/uupmc/**/*.exe
 
 # Linker files
 *.ilk
@@ -188,20 +188,6 @@ coverage/
 *.testlog
 
 # ============================================================================
-# Documentation
-# ============================================================================
-
-# Generated docs
-docs/html/
-docs/latex/
-docs/xml/
-docs/_build/
-Doxyfile.bak
-
-# Archive (keep in repo but ignore changes)
-# docs/archive/
-
-# ============================================================================
 # Profiling & Debugging
 # ============================================================================
 
@@ -245,7 +231,6 @@ vcpkg_installed/
 *.log
 *.tlog
 _logs/
-cpp_logs_old/
 *.log.*
 
 # Temporary files
@@ -339,22 +324,6 @@ tramp
 *.sublime-workspace
 *.sublime-project
 
-# ============================================================================
-# Python (Legacy - in python_archive/)
-# ============================================================================
-
-# Keep python_archive/ but ignore Python artifacts inside it
-python_archive/**/__pycache__/
-python_archive/**/*.py[cod]
-python_archive/**/*.so
-python_archive/**/.venv/
-python_archive/**/venv/
-python_archive/**/.pytest_cache/
-python_archive/**/.mypy_cache/
-python_archive/**/dist/
-python_archive/**/build/
-python_archive/**/*.egg-info/
-
 # Ignore Python bytecode/caches everywhere (tools/, scripts/, etc.)
 **/__pycache__/
 **/*.py[cod]
@@ -367,13 +336,21 @@ python_archive/**/*.egg-info/
 *.csv
 *.html
 *.json
-!package_mappings.json
-!compile_commands.json
 !resources/ai/workflows/*.json
 !resources/ai/providers/*.json
 !resources/icons/files/manifest.json
-!resources/ai/app_manifests/*.json
-!docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json
+# CRLF fixture for the AI store resource loader regression tests.
+!tests/fixtures/ai_store_crlf/workflows/*.json
+# Reset Network fixtures: adapter captures from a stock Windows 11 VM (fix round S).
+!tests/fixtures/network_reset/*.json
+# Browser-control extension + native-host manifests are hand-written source.
+!browser/extension/*.json
+!browser/native-host/*.json
+!certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json
+# Mutation-test catalogs (R5-G18-1) are hand-written source, not report output.
+!scripts/mutation_catalogs/*.json
+# Error-message uniqueness gate baseline (committed allowlist of grandfathered duplicates).
+!scripts/error_message_duplicate_baseline.json
 
 # Partition Manager non-native filesystem tool bundle. This directory is
 # manifest-gated and may contain exe/dll/json/license/source artifacts.
@@ -384,10 +361,6 @@ tools/filesystem/**/_build/
 tools/filesystem/**/*.local
 !tools/filesystem/manifest.json
 
-# User data (if any)
-user_data/
-backup/
-
 # Chocolatey packages (embedded tools are kept)
 tools/chocolatey/lib/
 tools/chocolatey/.chocolatey/
@@ -396,7 +369,6 @@ tools/chocolatey/.chocolatey/
 !tools/chocolatey/lib/chocolatey/chocolatey.nupkg
 
 # Local configuration
-local_config.json
 *.local
 
 # Local build configuration (contains machine-specific paths)
@@ -404,9 +376,6 @@ cmake/SAK_BuildConfig.cmake
 
 # Archived/legacy code (kept locally but not version-controlled)
 /_archived/
-
-# cppcheck output (generated)
-cppcheck_errors.txt
 
 # Outlook/email test fixtures (large binary, kept locally)
 *.ost
@@ -447,6 +416,8 @@ artifacts/
 artifacts/*
 !artifacts/partition-manager-certification/
 artifacts/partition-manager-certification/*
+!artifacts/partition-manager-certification/evidence/
+!artifacts/partition-manager-certification/evidence/**
 !artifacts/partition-manager-certification/vhd-strict/
 artifacts/partition-manager-certification/vhd-strict/*
 !artifacts/partition-manager-certification/vhd-strict/run-20260602-194934/
@@ -461,6 +432,11 @@ artifacts/partition-manager-certification/vm-lab/external-evidence/*
 !artifacts/partition-manager-certification/vm-lab/external-evidence/external.*/
 artifacts/partition-manager-certification/vm-lab/external-evidence/external.*/*
 !artifacts/partition-manager-certification/vm-lab/external-evidence/external.*/report.json
+!artifacts/flash-live-certification/
+artifacts/flash-live-certification/*
+!artifacts/flash-live-certification/disk3-flashworker-b4/
+artifacts/flash-live-certification/disk3-flashworker-b4/*
+!artifacts/flash-live-certification/disk3-flashworker-b4/report.txt
 
 # ============================================================================
 # Miscellaneous
@@ -476,6 +452,9 @@ artifacts/partition-manager-certification/vm-lab/external-evidence/external.*/*
 *.diff
 !tools/filesystem/**/*.patch
 !tools/filesystem/**/*.diff
+# The UUP tools' sources and patches ship beside the binaries they produce.
+!tools/uup/**/*.patch
+!tools/uup/**/*.tar.gz
 
 # Lock files
 *.lock
@@ -504,9 +483,36 @@ scripts/sign-config.ps1
 !.gitignore
 !.gitattributes
 !CMakeLists.txt
-!package_mappings.json
 !resources/icon.ico
-!resources/sak_utility.rc
 
-# Local Qt 6.10.3 verification build tree
-build-qt610/
+# Ninja configuration used only to emit compile_commands.json for clang-tidy.
+# The Visual Studio generator cannot produce a compilation database, so this
+# parallel build tree exists purely to feed static analysis. See R5-G12.
+# build-tidy-fp holds the de-duplicated first-party-only database run-clang-tidy
+# actually analyzes (one entry per translation unit instead of one per target).
+build-tidy/
+build-tidy-fp/
+build-tidy-core/
+# clang-cl tree for source-based BRANCH coverage (R5-G14-16b). OpenCppCoverage
+# measures line coverage only, so an untaken arm that shares a line with a taken
+# one is invisible to it; MSVC emits no coverage mapping, so measuring branches
+# needs a parallel clang-cl tree. Built and driven by scripts/run_branch_coverage.ps1.
+build-cov/
+
+# Transient state of an in-flight mutation run (scripts/run_mutation_test.py): the
+# sentinel naming the mutant currently applied, and the pre-run bytes of every file
+# it touches. A finished run deletes both. Ignored so a survivor of a hard-killed run
+# can never be committed by accident -- the mutation-catalog-integrity pre-commit hook
+# reads them regardless of this file and BLOCKS the commit while they exist.
+.mutation-in-progress.json
+.mutation-snapshot/
+
+# Local-only Claude Code workspace tooling (personal skills, hardcoded paths)
+.claude/
+
+# Machine-local agent notes: this workstation's rigs, addresses and owner working
+# preferences. Kept in the repo directory so ANY agent working here can read it (agent
+# memories are per-tool and do not survive the machine), but never committed -- it
+# describes the developer's machine, not the product. Project conventions live in the
+# tracked AGENTS.md instead.
+AGENTS.local.md

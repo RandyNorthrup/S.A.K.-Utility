@@ -22,6 +22,8 @@
 #include <QDir>
 #include <QtConcurrent>
 
+#include <atomic>
+
 namespace sak {
 
 namespace {
@@ -34,6 +36,24 @@ constexpr int kSuiteMemoryBenchmarkProgress = 56;
 constexpr int kSuiteStressTestProgress = 70;
 constexpr int kSuiteReportGenerationProgress = 90;
 
+/// @brief Request-stop a worker and wait for it, logging if it does not stop.
+/// @return true if the worker stopped (or was not running); false on a wait
+///         timeout -- a stuck worker the caller must not assume is gone (it may
+///         still hold raw pointers into the controller being torn down).
+bool stopWorkerAndWait(WorkerBase* worker, const char* name) {
+    if (!worker->isRunning()) {
+        return true;
+    }
+    worker->requestStop();
+    if (!worker->wait(kWorkerShutdownWaitMs)) {
+        logError("{} worker did not stop within {} ms during teardown -- still running",
+                 name,
+                 kWorkerShutdownWaitMs);
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 // ============================================================================
@@ -44,10 +64,10 @@ DiagnosticController::DiagnosticController(QObject* parent)
     : QObject(parent)
     , m_hardware_scanner(std::make_unique<HardwareInventoryScanner>(this))
     , m_smart_analyzer(std::make_unique<SmartDiskAnalyzer>(this))
-    , m_cpu_benchmark(std::make_unique<CpuBenchmarkWorker>(this))
-    , m_disk_benchmark(std::make_unique<DiskBenchmarkWorker>(this))
-    , m_memory_benchmark(std::make_unique<MemoryBenchmarkWorker>(this))
-    , m_stress_test(std::make_unique<StressTestWorker>(this))
+    , m_cpu_benchmark(makeWorker<CpuBenchmarkWorker>(this))
+    , m_disk_benchmark(makeWorker<DiskBenchmarkWorker>(this))
+    , m_memory_benchmark(makeWorker<MemoryBenchmarkWorker>(this))
+    , m_stress_test(makeWorker<StressTestWorker>(this))
     , m_thermal_monitor(std::make_unique<ThermalMonitor>(this))
     , m_report_generator(std::make_unique<DiagnosticReportGenerator>(this)) {
     connectHardwareScanner();
@@ -88,6 +108,10 @@ void DiagnosticController::connectSmartAnalyzer() {
             &SmartDiskAnalyzer::errorOccurred,
             this,
             &DiagnosticController::errorOccurred);
+    connect(m_smart_analyzer.get(),
+            &SmartDiskAnalyzer::driveWarning,
+            this,
+            &DiagnosticController::driveWarning);
 }
 
 void DiagnosticController::connectCpuBenchmark() {
@@ -106,7 +130,8 @@ void DiagnosticController::connectCpuBenchmark() {
         m_cpu_benchmark.get(), &WorkerBase::failed, this, [this](int /*code*/, const QString& msg) {
             Q_EMIT errorOccurred(QString("CPU benchmark failed: %1").arg(msg));
             if (m_running_suite) {
-                advanceSuiteStep();
+                m_suite_failures.append("CPU benchmark");
+                advanceSuiteStep(SuiteState::CpuBenchmark);
             }
         });
 }
@@ -129,7 +154,8 @@ void DiagnosticController::connectDiskBenchmark() {
             [this](int /*code*/, const QString& msg) {
                 Q_EMIT errorOccurred(QString("Disk benchmark failed: %1").arg(msg));
                 if (m_running_suite) {
-                    advanceSuiteStep();
+                    m_suite_failures.append("Disk benchmark");
+                    advanceSuiteStep(SuiteState::DiskBenchmark);
                 }
             });
 }
@@ -152,7 +178,8 @@ void DiagnosticController::connectMemoryBenchmark() {
             [this](int /*code*/, const QString& msg) {
                 Q_EMIT errorOccurred(QString("Memory benchmark failed: %1").arg(msg));
                 if (m_running_suite) {
-                    advanceSuiteStep();
+                    m_suite_failures.append("Memory benchmark");
+                    advanceSuiteStep(SuiteState::MemoryBenchmark);
                 }
             });
 }
@@ -170,14 +197,16 @@ void DiagnosticController::connectStressTest() {
         m_stress_test.get(), &WorkerBase::failed, this, [this](int /*code*/, const QString& msg) {
             Q_EMIT errorOccurred(QString("Stress test failed: %1").arg(msg));
             if (m_running_suite) {
-                advanceSuiteStep();
+                m_suite_failures.append("Stress test");
+                advanceSuiteStep(SuiteState::StressTest);
             }
         });
     connect(m_stress_test.get(), &WorkerBase::cancelled, this, [this]() {
-        // Thermal abort calls requestStop() -> emitted as cancelled().
-        // Treat as completion so the suite advances.
+        // A user skip/cancel of the stress step emits cancelled(). Treat as
+        // completion so the suite advances (state-matched, so a stale cancel
+        // after the suite already moved on is ignored).
         if (m_running_suite) {
-            advanceSuiteStep();
+            advanceSuiteStep(SuiteState::StressTest);
         }
     });
 }
@@ -187,6 +216,10 @@ void DiagnosticController::connectThermalMonitor() {
             &ThermalMonitor::readingsUpdated,
             this,
             &DiagnosticController::thermalReadingsUpdated);
+    connect(m_thermal_monitor.get(),
+            &ThermalMonitor::sensorStatusesUpdated,
+            this,
+            &DiagnosticController::thermalSensorStatusesUpdated);
 }
 
 void DiagnosticController::connectReportGenerator() {
@@ -206,6 +239,14 @@ DiagnosticController::~DiagnosticController() {
 // ============================================================================
 
 void DiagnosticController::runHardwareScan() {
+    // A re-scan is when a drive that was spun down, or was just plugged in, gets asked again.
+    m_thermal_monitor->askEveryDiskAgain();
+    // Reassigning a running QFuture orphans it (never joined), which both races scan() on the
+    // shared scanner and leaves the orphan running past teardown -> UAF. Ignore redundant starts.
+    if (m_hw_scan_future.isRunning()) {
+        logWarning("Hardware scan already running -- ignoring request");
+        return;
+    }
     logInfo("Starting hardware inventory scan");
     // Run on a background thread to avoid blocking the UI
     m_hw_scan_future =
@@ -213,6 +254,11 @@ void DiagnosticController::runHardwareScan() {
 }
 
 void DiagnosticController::runSmartAnalysis() {
+    m_thermal_monitor->askEveryDiskAgain();  // as a hardware scan does
+    if (m_smart_analysis_future.isRunning()) {
+        logWarning("SMART analysis already running -- ignoring request");
+        return;
+    }
     logInfo("Starting SMART disk analysis");
     // Run on a background thread to avoid blocking the UI
     m_smart_analysis_future =
@@ -228,10 +274,14 @@ void DiagnosticController::runCpuBenchmark() {
 
 void DiagnosticController::runDiskBenchmark(const DiskBenchmarkConfig& config) {
     logInfo("Starting disk benchmark on {}", config.drive_path.toStdString());
-    m_disk_benchmark->setConfig(config);
-    if (!m_disk_benchmark->isRunning()) {
-        m_disk_benchmark->start();
+    // setConfig writes m_config (a QString) unsynchronized; the worker thread reads it during a
+    // run, so mutate it only when the worker is stopped. Ignore a duplicate start otherwise.
+    if (m_disk_benchmark->isRunning()) {
+        logWarning("Disk benchmark already running -- ignoring request");
+        return;
     }
+    m_disk_benchmark->setConfig(config);
+    m_disk_benchmark->start();
 }
 
 void DiagnosticController::runMemoryBenchmark() {
@@ -243,10 +293,13 @@ void DiagnosticController::runMemoryBenchmark() {
 
 void DiagnosticController::runStressTest(const StressTestConfig& config) {
     logInfo("Starting stress test ({} minutes)", config.duration_minutes);
-    m_stress_test->setConfig(config);
-    if (!m_stress_test->isRunning()) {
-        m_stress_test->start();
+    // Same unsynchronized-setConfig race as runDiskBenchmark: only mutate config while stopped.
+    if (m_stress_test->isRunning()) {
+        logWarning("Stress test already running -- ignoring request");
+        return;
     }
+    m_stress_test->setConfig(config);
+    m_stress_test->start();
 }
 
 // ============================================================================
@@ -259,10 +312,23 @@ void DiagnosticController::runFullSuite(const StressTestConfig& stress_config,
         logWarning("Full suite already running -- ignoring request");
         return;
     }
+    // Exclusivity: the suite adopts a worker's completion purely by SuiteState, so a
+    // standalone scan/benchmark overlapping the suite could have its (wrong-config or
+    // stale) result adopted as a suite step. Refuse to start while any operation runs.
+    if (m_hw_scan_future.isRunning() || m_smart_analysis_future.isRunning() ||
+        m_cpu_benchmark->isRunning() || m_disk_benchmark->isRunning() ||
+        m_memory_benchmark->isRunning() || m_stress_test->isRunning()) {
+        logWarning("A diagnostic operation is already running -- refusing to start full suite");
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot start the full suite while another operation is running"));
+        return;
+    }
 
     logInfo("Starting full diagnostic suite");
     m_running_suite = true;
     m_report_data = DiagnosticReportData{};
+    m_has_results = false;
+    m_suite_failures.clear();
     m_suite_stress_config = stress_config;
     m_suite_disk_config = disk_config;
 
@@ -274,6 +340,8 @@ void DiagnosticController::runFullSuite(const StressTestConfig& stress_config,
 }
 
 void DiagnosticController::cancelCurrent() {
+    // Invariant: both workers are make_unique'd in the constructor's member-init list and
+    // never reset or released, so they are non-null for this object's whole lifetime.
     Q_ASSERT(m_hardware_scanner);
     Q_ASSERT(m_smart_analyzer);
     logInfo("Cancelling current diagnostic operation");
@@ -283,27 +351,34 @@ void DiagnosticController::cancelCurrent() {
 
     // Wait for QtConcurrent futures to prevent dangling raw pointers
     if (m_hw_scan_future.isRunning()) {
+        // SAK-ALLOW-BLOCKING: both scanners were cancelled on the lines above and poll that
+        // flag, and their tasks hold raw pointers into this controller. Giving up on either
+        // wait would leave a task dereferencing them.
         m_hw_scan_future.waitForFinished();
     }
     if (m_smart_analysis_future.isRunning()) {
+        // SAK-ALLOW-BLOCKING: same contract as the hardware scan future above.
         m_smart_analysis_future.waitForFinished();
     }
 
-    if (m_cpu_benchmark->isRunning()) {
-        m_cpu_benchmark->requestStop();
-        m_cpu_benchmark->wait(kWorkerShutdownWaitMs);
-    }
-    if (m_disk_benchmark->isRunning()) {
-        m_disk_benchmark->requestStop();
-        m_disk_benchmark->wait(kWorkerShutdownWaitMs);
-    }
-    if (m_memory_benchmark->isRunning()) {
-        m_memory_benchmark->requestStop();
-        m_memory_benchmark->wait(kWorkerShutdownWaitMs);
-    }
-    if (m_stress_test->isRunning()) {
-        m_stress_test->requestStop();
-        m_stress_test->wait(kWorkerShutdownWaitMs);
+    // Check each wait(): a worker that does not stop within the timeout is still
+    // running, and proceeding to teardown while it holds raw pointers into this
+    // controller risks a use-after-free. Surface it instead of ignoring it.
+    bool all_stopped = true;
+    all_stopped &= stopWorkerAndWait(m_cpu_benchmark.get(), "CPU benchmark");
+    all_stopped &= stopWorkerAndWait(m_disk_benchmark.get(), "Disk benchmark");
+    all_stopped &= stopWorkerAndWait(m_memory_benchmark.get(), "Memory benchmark");
+    all_stopped &= stopWorkerAndWait(m_stress_test.get(), "Stress test");
+
+    if (!all_stopped) {
+        // A worker that missed its shutdown wait is still running and still holds raw
+        // pointers into this controller. Do not silently report a clean cancellation --
+        // surface it. No signal is emitted here because cancelCurrent also runs from the
+        // destructor; runFullSuite's exclusivity guard and each run* isRunning() check
+        // already prevent conflicting new work while such a worker winds down.
+        logError(
+            "Diagnostic cancellation incomplete -- one or more workers did not stop; "
+            "the operation may still be running");
     }
 
     m_running_suite = false;
@@ -316,10 +391,19 @@ void DiagnosticController::stopStressTest() {
     logInfo("Stopping stress test");
     if (m_stress_test->isRunning()) {
         m_stress_test->requestStop();
+        // Stopping the stress step early inside a suite omits the rest of its work.
+        // The worker emits cancelled() (not failed()), which the suite treats as an
+        // advance but not a failure, so record the omission here or the aggregate
+        // verdict would read AllPassed over a shortened run.
+        if (m_running_suite && m_suite_state == SuiteState::StressTest) {
+            m_suite_failures.append("Stress test");
+        }
     }
 }
 
 void DiagnosticController::skipCurrentStep() {
+    // Invariant: both workers are make_unique'd in the constructor's member-init list and
+    // never reset or released, so they are non-null for this object's whole lifetime.
     Q_ASSERT(m_hardware_scanner);
     Q_ASSERT(m_smart_analyzer);
     if (!m_running_suite || m_skipping_step) {
@@ -329,32 +413,49 @@ void DiagnosticController::skipCurrentStep() {
 
     logInfo("Skipping current suite step: {}", static_cast<int>(m_suite_state));
 
-    // Cancel the current worker
+    // Cancel the current worker and record the omission. A skipped step ran no
+    // work and produced no result; the worker emits cancelled() (which the
+    // benchmark connections do not treat as a failure), so without recording it
+    // here aggregateResults would report AllPassed over a suite with a skipped
+    // step. Recording is conservative: in the rare race where the worker actually
+    // completes as it is skipped, the run is downgraded to Warnings rather than
+    // falsely reading AllPassed.
     switch (m_suite_state) {
     case SuiteState::HardwareScan:
         m_hardware_scanner->cancel();
+        m_suite_failures.append("Hardware scan");
         break;
     case SuiteState::SmartAnalysis:
         m_smart_analyzer->cancel();
+        m_suite_failures.append("SMART analysis");
         break;
     case SuiteState::CpuBenchmark:
         m_cpu_benchmark->requestStop();
+        m_suite_failures.append("CPU benchmark");
         break;
     case SuiteState::DiskBenchmark:
         m_disk_benchmark->requestStop();
+        m_suite_failures.append("Disk benchmark");
         break;
     case SuiteState::MemoryBenchmark:
         m_memory_benchmark->requestStop();
+        m_suite_failures.append("Memory benchmark");
         break;
     case SuiteState::StressTest:
         m_stress_test->requestStop();
+        m_suite_failures.append("Stress test");
         break;
     default:
         break;
     }
 
-    // Advance to the next step after a brief delay for cleanup
-    QMetaObject::invokeMethod(this, &DiagnosticController::advanceSuiteStep, Qt::QueuedConnection);
+    // Advance to the next step after a brief delay for cleanup. Capture the step
+    // being skipped so the queued advance is state-matched: if the cancelled
+    // worker's own completion advances first, this queued call sees a mismatch
+    // and no-ops (no double-advance).
+    const SuiteState skipped_step = m_suite_state;
+    QMetaObject::invokeMethod(
+        this, [this, skipped_step]() { advanceSuiteStep(skipped_step); }, Qt::QueuedConnection);
 }
 
 // ============================================================================
@@ -369,19 +470,81 @@ void DiagnosticController::stopThermalMonitoring() {
     m_thermal_monitor->stop();
 }
 
-ThermalMonitor* DiagnosticController::thermalMonitor() const {
-    return m_thermal_monitor.get();
-}
-
 // ============================================================================
 // Report Generation
 // ============================================================================
+
+QStringList DiagnosticController::requestedReportFormats(const QString& formats) {
+    // Exact, comma-separated token matching. Substring matching accepted malformed specs
+    // ("xhtml" -> html, "notjson" -> json) and silently dropped unsupported tokens
+    // ("html,pdf" -> html); an unknown token now fails closed (empty result) so
+    // generateReport refuses rather than reporting a partial/coerced success.
+    static const QStringList known{QStringLiteral("html"),
+                                   QStringLiteral("json"),
+                                   QStringLiteral("csv")};
+    QStringList requested;
+    const QStringList tokens = formats.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const QString& raw : tokens) {
+        const QString token = raw.trimmed().toLower();
+        if (token.isEmpty()) {
+            continue;
+        }
+        if (!known.contains(token)) {
+            return {};
+        }
+        if (!requested.contains(token)) {
+            requested.append(token);
+        }
+    }
+    return requested;
+}
+
+QString DiagnosticController::uniqueReportBaseName(const QString& output_dir,
+                                                   const QDateTime& when,
+                                                   quint64 counter) {
+    return QString("%1/SAK_Diagnostic_%2_%3")
+        .arg(output_dir, when.toString(QStringLiteral("yyyyMMdd_HHmmss_zzz")))
+        .arg(counter);
+}
+
+QString DiagnosticController::reportPreconditionError(const QStringList& requested,
+                                                      const QString& dir,
+                                                      const QString& formats) const {
+    // Require at least one real output. Previously a spec naming no known format
+    // wrote nothing yet still reported success.
+    if (requested.isEmpty()) {
+        logError("Report generation requested with no valid format: '{}'", formats.toStdString());
+        return QString("No report format requested (expected html/json/csv): '%1'").arg(formats);
+    }
+    if (dir.isEmpty()) {
+        // A blank directory would resolve report paths to "/SAK_Diagnostic_..." -- an
+        // unintended (filesystem-root or relative) target. Fail closed.
+        logError("Report generation requested with an empty output directory");
+        return QStringLiteral("Report output directory is empty");
+    }
+    if (!m_has_results) {
+        // Aggregation resets status to AllPassed over an empty data set, so a controller
+        // that has run no diagnostics would emit a valid-looking "passed" report. Refuse.
+        logError("Report generation requested before any diagnostic produced a result");
+        return QStringLiteral(
+            "No diagnostic results to report -- run a scan or the full suite first");
+    }
+    return {};
+}
 
 void DiagnosticController::generateReport(const QString& output_dir,
                                           const QString& technician,
                                           const QString& ticket,
                                           const QString& notes,
                                           const QString& formats) {
+    const QStringList requested = requestedReportFormats(formats);
+    const QString dir = output_dir.trimmed();
+    const QString precondition_error = reportPreconditionError(requested, dir, formats);
+    if (!precondition_error.isEmpty()) {
+        Q_EMIT errorOccurred(precondition_error);
+        return;
+    }
+
     aggregateResults();
 
     m_report_data.technician_name = technician;
@@ -391,30 +554,36 @@ void DiagnosticController::generateReport(const QString& output_dir,
 
     m_report_generator->setReportData(m_report_data);
 
-    if (!QDir().mkpath(output_dir)) {
-        sak::logWarning("Failed to create report output directory: {}", output_dir.toStdString());
+    if (!QDir().mkpath(dir)) {
+        // Without a real output directory the writers below would fail or land reports
+        // somewhere unintended. Fail closed instead of warning and proceeding.
+        logError("Failed to create report output directory: {}", dir.toStdString());
+        Q_EMIT errorOccurred(QString("Failed to create report output directory: %1").arg(dir));
+        return;
     }
-    const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-    const QString base_name = QString("%1/SAK_Diagnostic_%2").arg(output_dir, timestamp);
+    // Millisecond timestamp + a monotonic counter so reports generated in quick
+    // succession never collide on a second-resolution name.
+    static std::atomic<quint64> s_report_counter{0};
+    const QString base_name =
+        uniqueReportBaseName(dir, m_report_data.report_timestamp, s_report_counter.fetch_add(1));
 
     bool success = true;
-
-    if (formats.contains("html", Qt::CaseInsensitive)) {
+    if (requested.contains("html")) {
         success &= m_report_generator->generateHtml(base_name + ".html");
     }
-    if (formats.contains("json", Qt::CaseInsensitive)) {
+    if (requested.contains("json")) {
         success &= m_report_generator->generateJson(base_name + ".json");
     }
-    if (formats.contains("csv", Qt::CaseInsensitive)) {
+    if (requested.contains("csv")) {
         success &= m_report_generator->generateCsv(base_name + ".csv");
     }
 
     if (success) {
-        logInfo("Reports generated in {}", output_dir.toStdString());
-        Q_EMIT reportsGenerated(output_dir);
+        logInfo("Reports generated in {}", dir.toStdString());
+        Q_EMIT reportsGenerated(dir);
     } else {
-        logError("Report generation failed for {}", output_dir.toStdString());
-        Q_EMIT errorOccurred(QString("Report generation failed in %1").arg(output_dir));
+        logError("Report generation failed for {}", dir.toStdString());
+        Q_EMIT errorOccurred(QString("Report generation failed in %1").arg(dir));
     }
 }
 
@@ -423,65 +592,66 @@ void DiagnosticController::generateReport(const QString& output_dir,
 // ============================================================================
 
 void DiagnosticController::onHardwareScanComplete(const HardwareInventory& inventory) {
+    m_has_results = true;
     m_report_data.inventory = inventory;
     Q_EMIT hardwareScanComplete(inventory);
-
-    if (m_running_suite) {
-        advanceSuiteStep();
-    }
+    advanceSuiteStep(SuiteState::HardwareScan);
 }
 
 void DiagnosticController::onSmartAnalysisComplete(const QVector<SmartReport>& reports) {
+    m_has_results = true;
     m_report_data.smart_reports = reports;
     Q_EMIT smartAnalysisComplete(reports);
-
-    if (m_running_suite) {
-        advanceSuiteStep();
-    }
+    advanceSuiteStep(SuiteState::SmartAnalysis);
 }
 
 void DiagnosticController::onCpuBenchmarkComplete(const CpuBenchmarkResult& result) {
+    m_has_results = true;
     m_report_data.cpu_benchmark = result;
     Q_EMIT cpuBenchmarkComplete(result);
-
-    if (m_running_suite) {
-        advanceSuiteStep();
-    }
+    advanceSuiteStep(SuiteState::CpuBenchmark);
 }
 
 void DiagnosticController::onDiskBenchmarkComplete(const DiskBenchmarkResult& result) {
+    m_has_results = true;
     m_report_data.disk_benchmark = result;
     Q_EMIT diskBenchmarkComplete(result);
-
-    if (m_running_suite) {
-        advanceSuiteStep();
-    }
+    advanceSuiteStep(SuiteState::DiskBenchmark);
 }
 
 void DiagnosticController::onMemoryBenchmarkComplete(const MemoryBenchmarkResult& result) {
+    m_has_results = true;
     m_report_data.memory_benchmark = result;
     Q_EMIT memoryBenchmarkComplete(result);
-
-    if (m_running_suite) {
-        advanceSuiteStep();
-    }
+    advanceSuiteStep(SuiteState::MemoryBenchmark);
 }
 
 void DiagnosticController::onStressTestComplete(const StressTestResult& result) {
+    m_has_results = true;
     m_report_data.stress_test = result;
     Q_EMIT stressTestComplete(result);
-
-    if (m_running_suite) {
-        advanceSuiteStep();
-    }
+    advanceSuiteStep(SuiteState::StressTest);
 }
 
 // ============================================================================
 // Suite State Machine
 // ============================================================================
 
-void DiagnosticController::advanceSuiteStep() {
-    m_skipping_step = false;  // Reset skip guard
+bool DiagnosticController::suiteAdvanceAllowed(bool runningSuite,
+                                               SuiteState current,
+                                               SuiteState completedStep) {
+    // Only the worker for the step currently in progress may advance the suite.
+    // A stale completion (a cancelled/skipped worker whose signal arrives after
+    // the suite already moved on, or skipCurrentStep's own queued advance) will
+    // not match and is ignored -- preventing a double-advance that skips a step.
+    return runningSuite && current == completedStep;
+}
+
+void DiagnosticController::advanceSuiteStep(SuiteState completedStep) {
+    if (!suiteAdvanceAllowed(m_running_suite, m_suite_state, completedStep)) {
+        return;
+    }
+    m_skipping_step = false;  // Reset skip guard (this advance is the accepted one)
 
     // State transition table: HW -> SMART -> CPU -> Disk -> Memory -> Stress -> Report -> Complete
     switch (m_suite_state) {
@@ -520,35 +690,34 @@ void DiagnosticController::advanceSuiteStep() {
             Q_EMIT suiteProgress(kSuiteStressTestProgress, "Running stress test...");
             runStressTest(m_suite_stress_config);
         } else {
-            // Skip stress test
-            m_suite_state = SuiteState::ReportGeneration;
-            Q_EMIT suiteStateChanged(m_suite_state);
-            Q_EMIT suiteProgress(kSuiteReportGenerationProgress, "Generating report...");
-            aggregateResults();
-            m_suite_state = SuiteState::Complete;
-            Q_EMIT suiteStateChanged(m_suite_state);
-            Q_EMIT suiteProgress(kPercentMax, "Suite complete");
-            m_running_suite = false;
-            Q_EMIT suiteComplete();
+            finalizeSuiteAndComplete();  // stress test skipped (duration 0)
         }
         break;
 
     case SuiteState::StressTest:
-        m_suite_state = SuiteState::ReportGeneration;
-        Q_EMIT suiteStateChanged(m_suite_state);
-        Q_EMIT suiteProgress(kSuiteReportGenerationProgress, "Generating report...");
-        aggregateResults();
-        m_suite_state = SuiteState::Complete;
-        Q_EMIT suiteStateChanged(m_suite_state);
-        Q_EMIT suiteProgress(kPercentMax, "Suite complete");
-        m_running_suite = false;
-        Q_EMIT suiteComplete();
+        finalizeSuiteAndComplete();
         break;
 
     default:
         m_running_suite = false;
         break;
     }
+}
+
+void DiagnosticController::finalizeSuiteAndComplete() {
+    m_suite_state = SuiteState::ReportGeneration;
+    Q_EMIT suiteStateChanged(m_suite_state);
+    // This phase only aggregates the collected results; it writes no report file.
+    // Report files are produced separately by generateReport() once the user supplies
+    // an output directory and formats. Announce what actually happens here so progress
+    // text does not promise a report that this step never writes.
+    Q_EMIT suiteProgress(kSuiteReportGenerationProgress, "Aggregating results...");
+    aggregateResults();
+    m_suite_state = SuiteState::Complete;
+    Q_EMIT suiteStateChanged(m_suite_state);
+    Q_EMIT suiteProgress(kPercentMax, "Suite complete");
+    m_running_suite = false;
+    Q_EMIT suiteComplete();
 }
 
 // ============================================================================
@@ -571,6 +740,11 @@ void DiagnosticController::aggregateSmartHealth() {
             m_report_data.warnings.append(QString("Drive %1 (%2): Warning health status")
                                               .arg(report.device_path, report.model));
         }
+        // No reading is not a good reading.
+        if (report.overall_health == SmartHealthStatus::Unknown &&
+            m_report_data.overall_status == DiagnosticStatus::AllPassed) {
+            m_report_data.overall_status = DiagnosticStatus::Warnings;
+        }
         m_report_data.warnings.append(report.warnings);
         m_report_data.recommendations.append(report.recommendations);
     }
@@ -581,7 +755,20 @@ void DiagnosticController::aggregateStressTest() {
         return;
     }
     const auto& stress = m_report_data.stress_test.value();
-    if (!stress.passed) {
+    if (!stress.cpuTemperatureRead()) {
+        m_report_data.warnings.append(
+            "CPU temperature could not be read during the stress test, so the thermal limit "
+            "was not enforced");
+    }
+    if (stress.stopped) {
+        // Not a failure, and not a pass either: the report must not read as all passed.
+        if (m_report_data.overall_status == DiagnosticStatus::AllPassed) {
+            m_report_data.overall_status = DiagnosticStatus::Warnings;
+        }
+        m_report_data.warnings.append(
+            QString("Stress test stopped after %1 s, before its time ran out: not judged")
+                .arg(stress.duration_seconds));
+    } else if (!stress.passed) {
         m_report_data.overall_status = DiagnosticStatus::CriticalIssues;
         m_report_data.critical_issues.append(
             QString("Stress test FAILED: %1").arg(stress.abort_reason));
@@ -602,6 +789,41 @@ void DiagnosticController::aggregateStressTest() {
     }
 }
 
+QStringList DiagnosticController::stepsWithNoResult(const DiagnosticReportData& data) {
+    QStringList missing;
+    if (data.inventory.cpu.name.isEmpty()) {
+        missing << QStringLiteral("Hardware scan");
+    }
+    if (std::ranges::none_of(data.smart_reports, [](const SmartReport& report) {
+            return report.overall_health != SmartHealthStatus::Unknown;
+        })) {
+        missing << QStringLiteral("SMART analysis");
+    }
+    if (!data.cpu_benchmark.has_value()) {
+        missing << QStringLiteral("CPU benchmark");
+    }
+    if (!data.disk_benchmark.has_value()) {
+        missing << QStringLiteral("Disk benchmark");
+    }
+    if (!data.memory_benchmark.has_value()) {
+        missing << QStringLiteral("Memory benchmark");
+    }
+    if (!data.stress_test.has_value()) {
+        missing << QStringLiteral("Stress test");
+    }
+    return missing;
+}
+
+DiagnosticStatus DiagnosticController::statusWithStepFailures(DiagnosticStatus current,
+                                                              bool anyStepFailed) {
+    if (!anyStepFailed) {
+        return current;
+    }
+    // A failed step means a result is missing -- the run cannot be "all passed".
+    // Never upgrade: a critical finding elsewhere outranks a missing benchmark.
+    return current == DiagnosticStatus::AllPassed ? DiagnosticStatus::Warnings : current;
+}
+
 void DiagnosticController::aggregateResults() {
     m_report_data.overall_status = DiagnosticStatus::AllPassed;
     m_report_data.critical_issues.clear();
@@ -611,8 +833,28 @@ void DiagnosticController::aggregateResults() {
     aggregateSmartHealth();
     aggregateStressTest();
 
+    // A suite step that failed produced no result -- do not let the aggregate
+    // read AllPassed as though every component succeeded.
+    for (const QString& step : m_suite_failures) {
+        m_report_data.warnings.append(
+            QString("%1 did not complete successfully -- results unavailable").arg(step));
+    }
+    // "All tests passed" is a claim about all of them. A report of one scan, or of a run where no
+    // drive could be read, has not passed the rest; it has not looked at them.
+    const QStringList no_result = stepsWithNoResult(m_report_data);
+    for (const QString& step : no_result) {
+        if (!m_suite_failures.contains(step)) {
+            m_report_data.warnings.append(
+                QString("%1 has no result in this report -- it was not run or could not read "
+                        "anything")
+                    .arg(step));
+        }
+    }
+    m_report_data.overall_status = statusWithStepFailures(
+        m_report_data.overall_status, !m_suite_failures.isEmpty() || !no_result.isEmpty());
+
     constexpr double kBatteryWarningThreshold = 50.0;
-    if (m_report_data.inventory.battery.present &&
+    if (m_report_data.inventory.battery.present && m_report_data.inventory.battery.health_known &&
         m_report_data.inventory.battery.health_percent < kBatteryWarningThreshold) {
         m_report_data.warnings.append(
             QString("Battery health is degraded: %1%")

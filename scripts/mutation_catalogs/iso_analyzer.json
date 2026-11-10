@@ -1,0 +1,120 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_iso_analyzer",
+  "ctest_regex": "^test_iso_analyzer$",
+  "mutants": [
+    {
+      "id": "pvd-descriptor-type-primary-inverted",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "if (descriptor_type != kVdTypePrimary) {",
+      "replace": "if (descriptor_type == kVdTypePrimary) {",
+      "expect": "killed",
+      "why": "the PVD parse must select the type-1 Primary Volume Descriptor; inverting the guard makes the reader SKIP the real PVD (continue) and never fill any field, so the volume label is never read. analyzeReadsPrimaryVolumeDescriptorFields asserts QCOMPARE(info.volume_label, QStringLiteral(\"SAK_TEST_VOL\"))"
+    },
+    {
+      "id": "pvd-volume-id-offset-shifted",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "info.volume_label = readFixedAscii(sector.data() + kPvdVolumeIdOffset, kPvdVolumeIdLength);",
+      "replace": "info.volume_label = readFixedAscii(sector.data() + kPvdVolumeIdOffset + 1, kPvdVolumeIdLength);",
+      "expect": "killed",
+      "why": "the Volume Identifier field starts at PVD offset 40; reading one byte late decodes \"AK_TEST_VOL\" instead of \"SAK_TEST_VOL\", dropping the leading char and mis-decoding the identifier a Windows-vs-Linux match depends on. analyzeReadsPrimaryVolumeDescriptorFields asserts QCOMPARE(info.volume_label, QStringLiteral(\"SAK_TEST_VOL\"))"
+    },
+    {
+      "id": "pvd-volume-size-offset-shifted",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "std::memcpy(&volume_blocks, sector.data() + kPvdVolumeSizeLsbOffset, sizeof(volume_blocks));",
+      "replace": "std::memcpy(&volume_blocks, sector.data() + kPvdVolumeSizeLsbOffset + 1, sizeof(volume_blocks));",
+      "expect": "killed",
+      "why": "the LE-32 Volume Space Size sits at PVD offset 80; a one-byte shift reads [81..84] = 0 for the synthetic image (little-endian value 20 -> 0), mis-decoding volume_size to 0. analyzeReadsPrimaryVolumeDescriptorFields asserts QCOMPARE(info.volume_size, static_cast<uint64_t>(kSyntheticSectors) * kSectorSize)"
+    },
+    {
+      "id": "udf-bea-magic-compare-inverted",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "if (std::memcmp(sector.data() + 1, kUdfBea, kIso9660MagicLength) == 0 ||",
+      "replace": "if (std::memcmp(sector.data() + 1, kUdfBea, kIso9660MagicLength) != 0 ||",
+      "expect": "killed",
+      "why": "the UDF BEA01 identifier compare must MATCH exactly; flipping ==0 to !=0 makes every non-UDF sector satisfy the branch, so non-UDF junk is stamped as a UDF filesystem (fail-open). analyzeRejectsBytesThatAreNotIso9660 asserts QVERIFY(info.filesystem.isEmpty())"
+    },
+    {
+      "id": "filesystem-iso9660-label-guard-inverted",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "if (!info.volume_label.isEmpty()) {",
+      "replace": "if (info.volume_label.isEmpty()) {",
+      "expect": "killed",
+      "why": "ISO 9660 is asserted only when a real PVD yielded a volume label; inverting makes a valid labelled ISO report an EMPTY filesystem (and would stamp label-less junk as ISO 9660). analyzeReadsPrimaryVolumeDescriptorFields asserts QCOMPARE(info.filesystem, QStringLiteral(\"ISO 9660\"))"
+    },
+    {
+      "id": "eltorito-boot-descriptor-type-inverted",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "if (descriptor_type != kVdTypeBoot || std::memcmp(sector.data() + kElToritoIdentifierOffset,",
+      "replace": "if (descriptor_type == kVdTypeBoot || std::memcmp(sector.data() + kElToritoIdentifierOffset,",
+      "expect": "killed",
+      "why": "the El Torito scan must process the type-0 Boot Record; inverting != to == makes it CONTINUE past every boot record so the catalog is never read and is_bootable stays false. analyzeReadsElToritoBootTypeFromCatalog asserts QVERIFY(efi_info.is_bootable)"
+    },
+    {
+      "id": "eltorito-catalog-lba-zero-guard-inverted",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "info.boot_type = (catalog_lba == 0) ? unknownBootType()",
+      "replace": "info.boot_type = (catalog_lba != 0) ? unknownBootType()",
+      "expect": "killed",
+      "why": "a zero catalog pointer means no bootable catalog; inverting the test routes a VALID non-zero pointer to Unknown/Invalid (never classifying the real catalog) so is_bootable becomes false. analyzeReadsElToritoBootTypeFromCatalog asserts QVERIFY(efi_info.is_bootable)"
+    },
+    {
+      "id": "is-bootable-decision-inverted",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "info.is_bootable = (info.boot_type != unknownBootType());",
+      "replace": "info.is_bootable = (info.boot_type == unknownBootType());",
+      "expect": "killed",
+      "why": "an image is bootable exactly when the catalog produced a recognized boot type (not Unknown/Invalid); inverting marks a \"UEFI\" catalog as non-bootable. analyzeReadsElToritoBootTypeFromCatalog asserts QVERIFY(efi_info.is_bootable)"
+    },
+    {
+      "id": "eltorito-platform-offset-reads-boot-indicator",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "const auto platform_id = static_cast<uint8_t>(catalog[kValidationEntryPlatformOffset]);",
+      "replace": "const auto platform_id = static_cast<uint8_t>(catalog[kDefaultBootCatalogEntryOffset]);",
+      "expect": "killed",
+      "why": "the boot platform is the Validation Entry byte at catalog offset 1, not the Default Entry boot-indicator (0x88) at offset 32; reading offset 32 reintroduces the historical bug that classified every EFI image (0x88 != 0xEF) as Legacy BIOS. analyzeReadsElToritoBootTypeFromCatalog asserts QCOMPARE(efi_info.boot_type, QStringLiteral(\"UEFI\"))"
+    },
+    {
+      "id": "catalog-sector-read-bounds-narrowed",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "return bytes_read >= kSectorSize;",
+      "replace": "return bytes_read > kSectorSize;",
+      "expect": "killed",
+      "why": "a full 2048-byte sector read is a success; a read caps at kSectorSize so > can never be true, making readSectorAt ALWAYS fail and classifyBootCatalog return Unknown/Invalid for every catalog. analyzeReadsElToritoBootTypeFromCatalog asserts QVERIFY(efi_info.is_bootable)"
+    },
+    {
+      "id": "windows-install-decision-or-to-and",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "return info.os_family == QLatin1String(\"Windows\") || !info.windows_editions.isEmpty();",
+      "replace": "return info.os_family == QLatin1String(\"Windows\") && !info.windows_editions.isEmpty();",
+      "expect": "killed",
+      "why": "either an os_family of Windows OR non-empty editions must route to the Windows installer; requiring BOTH makes a Windows-family image with no parsed editions fail the check. windowsFamilyIsInstallMedia sets only os_family and asserts QVERIFY(IsoAnalyzer::isWindowsInstallMedia(info)) (windowsEditionsImplyInstallMedia kills the other operand)"
+    },
+    {
+      "id": "windows-metadata-gate-inverted",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "if (!hasWindowsMetadata(label, app)) {",
+      "replace": "if (hasWindowsMetadata(label, app)) {",
+      "expect": "killed",
+      "why": "os_family is set to Windows only when the label/application ID carry Windows metadata; inverting the early-return makes a real Windows image bail out before setting os_family (and would stamp Windows on non-Windows media). analyzeClassifiesSyntheticWindowsMediaFromLabel asserts QCOMPARE(info.os_family, QStringLiteral(\"Windows\"))"
+    },
+    {
+      "id": "min-iso-size-boundary-off-by-one",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "if (info.file_size < kMinIsoSize) {",
+      "replace": "if (info.file_size <= kMinIsoSize) {",
+      "expect": "killed",
+      "why": "the minimum-size guard rejects an image smaller than the 16-sector system area plus one full descriptor sector (kMinIsoSize); the smallest LEGAL image is EXACTLY kMinIsoSize, so the bound must be '<' (accept the boundary) not '<=' (reject it). Relaxing '<' to '<=' rejects a valid minimal ISO and makes analyze() return an empty IsoInfo, so the volume descriptors are never read. analyzeAcceptsImageExactlyAtMinimumSize feeds a 17-sector image sized exactly kMinIsoSize with a valid PVD and asserts QCOMPARE(info.volume_label, QStringLiteral(\"SAK_MIN_ISO\"))"
+    },
+    {
+      "id": "pvd-non-descriptor-continues-instead-of-stopping",
+      "file": "src/core/iso_analyzer.cpp",
+      "find": "return;  // Not an ISO 9660 volume descriptor",
+      "replace": "continue;  // Not an ISO 9660 volume descriptor",
+      "expect": "killed",
+      "why": "before decoding any PVD field the reader confirms the scanned sector carries the \"CD001\" standard identifier; a sector that lacks it means the descriptor set ended (or the media is corrupt) and the scan must STOP fail-closed. Turning the 'return' into 'continue' walks past the invalid sector and mis-decodes a Primary Volume Descriptor from unrelated later data, surfacing a bogus volume label analyze() must never report. analyzeStopsScanAtFirstNonDescriptorSector puts a non-descriptor sector at LBA 16 and a valid PVD at LBA 17 and asserts QVERIFY(info.volume_label.isEmpty())"
+    }
+  ]
+}

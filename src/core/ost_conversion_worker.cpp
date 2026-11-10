@@ -6,29 +6,62 @@
 
 #include "sak/ost_conversion_worker.h"
 
-#include "sak/dbx_writer.h"
 #include "sak/deleted_item_scanner.h"
+#include "sak/email_constants.h"
+#include "sak/email_folder_selection.h"
 #include "sak/email_types.h"
-#include "sak/eml_writer.h"
 #include "sak/error_codes.h"
-#include "sak/html_email_writer.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/mbox_writer.h"
-#include "sak/msg_writer.h"
 #include "sak/ost_converter_constants.h"
-#include "sak/pdf_email_writer.h"
 #include "sak/pst_parser.h"
-#include "sak/pst_splitter.h"
-#include "sak/pst_writer.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
 
+#include <algorithm>
+#include <functional>
 #include <optional>
 #include <tuple>
+
+namespace {
+
+/// Upper bound on folder-tree recursion. Real mailbox hierarchies are only a handful deep; a
+/// crafted store declaring a far deeper tree must fail closed rather than overflow the stack.
+constexpr int kMaxFolderRecursionDepth = 256;
+
+/// First printable ASCII code point; anything below it is a C0 control character.
+constexpr char16_t kFirstPrintableCodePoint = 0x20;
+
+/// Sanitize one folder-tree path segment so a parsed PST/OST folder name can
+/// never escape the output root. Path separators, control and Windows-reserved
+/// characters are replaced, trailing dots/spaces are stripped, and a segment
+/// that reduces to "." / ".." / empty (which would traverse) becomes "_".
+QString sanitizeFolderSegment(const QString& raw) {
+    static const QString kForbidden = QStringLiteral("<>:\"/\\|?*");
+    QString out;
+    out.reserve(raw.size());
+    for (QChar character : raw) {
+        if (character.unicode() < kFirstPrintableCodePoint || kForbidden.contains(character)) {
+            out += QLatin1Char('_');
+        } else {
+            out += character;
+        }
+    }
+    out = out.trimmed();
+    while (out.endsWith(QLatin1Char('.')) || out.endsWith(QLatin1Char(' '))) {
+        out.chop(1);
+    }
+    if (out.isEmpty()) {
+        return QStringLiteral("_");
+    }
+    return out;
+}
+
+}  // namespace
 
 namespace sak {
 
@@ -51,14 +84,20 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
 
     OstConversionResult result;
     result.source_path = source_path;
-    result.format = config.format;
     result.started = QDateTime::currentDateTime();
 
     logInfo("OST Converter: starting conversion of {}", source_path.toStdString());
 
-    computeSourceChecksumIfRequested(source_path, config, result);
+    if (!computeSourceChecksumIfRequested(source_path, config, result)) {
+        // Provenance was requested but the digest could not be computed over the
+        // whole source. Abort closed rather than emit output missing its checksum.
+        result.finished = QDateTime::currentDateTime();
+        Q_EMIT conversionFinished(result);
+        return;
+    }
 
     if (m_cancelled.load()) {
+        result.cancelled = true;
         result.finished = QDateTime::currentDateTime();
         Q_EMIT conversionFinished(result);
         return;
@@ -69,54 +108,104 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
         return;
     }
 
-    PstFileInfo file_info = parser->fileInfo();
-    m_items_total = file_info.total_items;
+    const PstFolderTree tree = parser->folderTree();
+    m_items_total = countConvertibleItems(parser.get(), tree);
     result.output_path = config.output_directory;
 
     Q_EMIT conversionStarted(m_items_total);
 
-    initializeFormatWriters(config, source_path);
-
-    // Get folder tree and process
-    PstFolderTree tree = parser->folderTree();
-    processFolderTree(parser.get(), tree, config, result);
-
-    // Process deleted/recovered items if requested
-    if (config.recover_deleted_items && !m_cancelled.load()) {
-        processRecoveredItems(parser.get(), config, result);
+    // Abort before touching the source if the output writer could not be created,
+    // so nothing is reported as converted into a writer that was never opened.
+    if (!initializeMboxWriter(config, source_path, result)) {
+        result.finished = QDateTime::currentDateTime();
+        Q_EMIT conversionFinished(result);
+        return;
     }
 
-    finalizeWriters(result);
+    convertStore(parser.get(), tree, config, result);
+
+    // Record whether a user cancel cut the run short (processFolderTree/processRecoveredItems
+    // return early on cancel), so the controller classifies it Cancelled rather than Complete:
+    // a cancelled run's counts are partial even when nothing failed and no error was recorded.
+    result.cancelled = m_cancelled.load();
 
     result.finished = QDateTime::currentDateTime();
 
-    logInfo("OST Converter: completed {} — {} items converted, {} failed",
+    logInfo("OST Converter: completed {} -- {} items converted, {} failed",
             source_path.toStdString(),
             std::to_string(result.items_converted),
             std::to_string(result.items_failed));
+    if (result.itemsSkipped() > 0) {
+        logInfo("OST Converter: left out {} items that are not mail, by message class: {}",
+                std::to_string(result.itemsSkipped()),
+                result.leftOutByClassText().toStdString());
+    }
 
     Q_EMIT conversionFinished(result);
 }
 
-void OstConversionWorker::computeSourceChecksumIfRequested(const QString& source_path,
+void OstConversionWorker::convertStore(PstParser* parser,
+                                       const PstFolderTree& tree,
+                                       const OstConversionConfig& config,
+                                       OstConversionResult& result) {
+    processFolderTree(parser, tree, config, result);
+
+    // Process deleted/recovered items if requested. Deep recovery is the same scan plus the
+    // orphaned-node walk, so asking for it asks for the recovery.
+    const bool wants_recovery = config.recover_deleted_items ||
+                                config.recovery_mode == RecoveryMode::DeepRecovery;
+    if (wants_recovery && !m_cancelled.load()) {
+        processRecoveredItems(parser, config, result);
+    }
+
+    finalizeWriters(result);
+}
+
+bool OstConversionWorker::computeSourceChecksumIfRequested(const QString& source_path,
                                                            const OstConversionConfig& config,
                                                            OstConversionResult& result) {
     if (!config.include_source_checksums) {
-        return;
+        return true;
     }
 
     QFile source_file(source_path);
     if (!source_file.open(QIODevice::ReadOnly)) {
-        return;
+        const QString msg = QStringLiteral("Failed to open source for checksum: ") + source_path;
+        result.errors.append(msg);
+        Q_EMIT errorOccurred(msg);
+        return false;
     }
 
     QCryptographicHash hasher(QCryptographicHash::Sha256);
     constexpr qint64 kChunkSize = 64 * 1024;
+    bool read_failed = false;
     while (!source_file.atEnd() && !m_cancelled.load()) {
-        hasher.addData(source_file.read(kChunkSize));
+        const QByteArray chunk = source_file.read(kChunkSize);
+        if (chunk.isEmpty()) {
+            // read() returns empty only on error here (the loop guards atEnd()).
+            read_failed = true;
+            break;
+        }
+        hasher.addData(chunk);
+    }
+
+    // Fail closed: never store a checksum computed over a partial read. A cancelled
+    // run leaves it empty (cancellation is surfaced by the caller); a mid-stream
+    // read error is reported so the digest is not silently a prefix-only hash.
+    if (m_cancelled.load()) {
+        // Cancellation is surfaced by the caller's own m_cancelled check; leave the
+        // digest empty and let the normal cancelled path run.
+        return true;
+    }
+    if (read_failed || source_file.error() != QFileDevice::NoError) {
+        const QString msg = QStringLiteral("Failed to read source for checksum: ") + source_path;
+        result.errors.append(msg);
+        Q_EMIT errorOccurred(msg);
+        return false;
     }
     result.source_sha256 = hasher.result().toHex();
     source_file.close();
+    return true;
 }
 
 std::unique_ptr<PstParser> OstConversionWorker::openSourceParser(const QString& source_path,
@@ -127,7 +216,7 @@ std::unique_ptr<PstParser> OstConversionWorker::openSourceParser(const QString& 
         return parser;
     }
 
-    QString err_msg = "Failed to open file: " + source_path;
+    const QString err_msg = "Failed to open file: " + source_path;
     logError("OST Converter: {}", err_msg.toStdString());
     result.errors.append(err_msg);
     result.finished = QDateTime::currentDateTime();
@@ -137,69 +226,61 @@ std::unique_ptr<PstParser> OstConversionWorker::openSourceParser(const QString& 
 }
 
 namespace {
-constexpr uint64_t kPstRootFolderNid = 0x122;
-
-qint64 splitSizeToBytes(PstSplitSize split_size, qint64 custom_mb) {
-    switch (split_size) {
-    case PstSplitSize::Split2Gb:
-        return ost::kSplit2GbBytes;
-    case PstSplitSize::Split10Gb:
-        return ost::kSplit10GbBytes;
-    case PstSplitSize::Custom:
-        return custom_mb * kBytesPerMB;
-    default:
-        return ost::kSplit5GbBytes;
+/// Give each source its own MBOX output subdirectory. The MboxWriter always emits
+/// a fixed <dir>/mailbox.mbox (combined) or per-folder files under <dir>, so two
+/// jobs sharing one output directory -- run concurrently or back to back -- would
+/// otherwise truncate each other's mailbox. Pick a subdir that does not yet exist
+/// so distinct sources never collide.
+QString uniqueMboxSubdir(const QString& directory, const QString& base_name) {
+    const QString name = base_name.isEmpty() ? QStringLiteral("mbox") : base_name;
+    QString candidate = name;
+    int counter = 1;
+    while (QFileInfo::exists(directory + QStringLiteral("/") + candidate)) {
+        candidate = name + QStringLiteral("_") + QString::number(counter);
+        ++counter;
     }
+    return candidate;
 }
 
 }  // namespace
 
-void OstConversionWorker::initializeFormatWriters(const OstConversionConfig& config,
-                                                  const QString& source_path) {
-    m_pst_writer.reset();
-    m_pst_splitter.reset();
+bool OstConversionWorker::initializeMboxWriter(const OstConversionConfig& config,
+                                               const QString& source_path,
+                                               OstConversionResult& result) {
     m_mbox_writer.reset();
-    m_dbx_writer.reset();
-    m_pst_folder_nids.clear();
 
-    if (config.format == OstOutputFormat::Pst) {
-        QString base_name = QFileInfo(source_path).completeBaseName();
-        if (config.split_size != PstSplitSize::NoSplit) {
-            qint64 max_bytes = splitSizeToBytes(config.split_size, config.custom_split_mb);
-            QString base_path = config.output_directory + QStringLiteral("/") + base_name;
-            m_pst_splitter = std::make_unique<PstSplitter>(base_path, max_bytes);
-            if (!m_pst_splitter->create().has_value()) {
-                Q_EMIT errorOccurred(QStringLiteral("Failed to create PST output"));
-            }
-        } else {
-            QString out_path = config.output_directory + QStringLiteral("/") + base_name +
-                               QStringLiteral(".pst");
-            m_pst_writer = std::make_unique<PstWriter>(out_path);
-            if (!m_pst_writer->create().has_value()) {
-                Q_EMIT errorOccurred(QStringLiteral("Failed to create PST output"));
-            }
-        }
-    } else if (config.format == OstOutputFormat::Mbox) {
-        m_mbox_writer = std::make_unique<MboxWriter>(config.output_directory,
-                                                     config.one_mbox_per_folder);
-    } else if (config.format == OstOutputFormat::Dbx) {
-        m_dbx_writer = std::make_unique<DbxWriter>(config.output_directory);
+    if (config.output_directory.trimmed().isEmpty()) {
+        // Refuse rather than construct a writer rooted at the process working directory,
+        // which would scatter mailbox files somewhere the technician never chose.
+        const QString msg = QStringLiteral("No output directory was set for the conversion");
+        result.errors.append(msg);
+        Q_EMIT errorOccurred(msg);
+        return false;
     }
+
+    // Isolate each source under its own subdirectory so concurrent/sequential MBOX jobs
+    // sharing one output directory never truncate each other's mailbox.mbox.
+    const QString sub = uniqueMboxSubdir(config.output_directory,
+                                         QFileInfo(source_path).completeBaseName());
+    m_mbox_writer = std::make_unique<MboxWriter>(
+        config.output_directory + QStringLiteral("/") + sub, config.one_mbox_per_folder);
+    return true;
 }
 
 void OstConversionWorker::finalizeWriters(OstConversionResult& result) {
-    if (m_pst_writer) {
-        std::ignore = m_pst_writer->finalize();
+    if (!m_mbox_writer) {
+        return;
     }
-    if (m_pst_splitter) {
-        std::ignore = m_pst_splitter->finalizeAll();
-        result.pst_volumes_created = m_pst_splitter->volumeCount();
-    }
-    if (m_mbox_writer) {
-        m_mbox_writer->finalize();
-    }
-    if (m_dbx_writer) {
-        m_dbx_writer->finalize();
+    m_mbox_writer->finalize();
+    if (m_mbox_writer->hadFailure()) {
+        // finalize() latched a flush/close failure: the mailbox on disk is NOT what the run
+        // produced, so the conversion must not be reported clean. Record and surface it.
+        const QString msg = QStringLiteral(
+            "MBOX export did not finalize cleanly: a flush or close failed, so the mailbox on "
+            "disk is incomplete.");
+        logError("OST Converter: {}", msg.toStdString());
+        result.errors.append(msg);
+        Q_EMIT errorOccurred(msg);
     }
 }
 
@@ -211,48 +292,122 @@ void OstConversionWorker::cancel() {
 // Folder Processing
 // ============================================================================
 
+namespace {
+
+/// The folders mail lives under: the same starting point the Email Inspector's tree and "Export
+/// ALL Mail Folders" use, so a conversion covers exactly the mail a technician can see there.
+const PstFolderTree& mailFolderRoots(const PstFolderTree& tree) {
+    const PstFolder* ipm = findIpmSubtree(tree);
+    return (ipm != nullptr && !ipm->children.isEmpty()) ? ipm->children : tree;
+}
+
+/// A search folder lists messages that live in other folders; converting it would duplicate them.
+bool isSearchFolder(const PstFolder& folder) {
+    constexpr uint64_t kNidTypeMask = 0x1F;
+    return (folder.node_id & kNidTypeMask) == email::kNidTypeSearchFolder;
+}
+
+// A store's class name is read as it stands, from a file anyone could have written, so the report
+// and the log get a bounded, printable copy. A real mailbox has a few dozen classes at most.
+constexpr qsizetype kMaxLeftOutClassNameChars = 128;
+constexpr int kMaxLeftOutClassNames = 200;
+
+void recordLeftOutClass(const QString& message_class, OstConversionResult& result) {
+    QString name;
+    for (const QChar character : message_class.left(kMaxLeftOutClassNameChars)) {
+        if (character.isPrint()) {
+            name.append(character);
+        }
+    }
+    if (name.isEmpty()) {
+        name = QStringLiteral("(no class)");
+    }
+    if (!result.left_out_by_class.contains(name) &&
+        result.left_out_by_class.size() >= kMaxLeftOutClassNames) {
+        name = QStringLiteral("(more classes than listed)");
+    }
+    ++result.left_out_by_class[name];
+}
+
+void recordSkippedItem(const PstItemSummary& item, OstConversionResult& result) {
+    recordLeftOutClass(item.message_class, result);
+    switch (item.item_type) {
+    case EmailItemType::Contact:
+    case EmailItemType::DistList:
+        ++result.skipped_contacts;
+        break;
+    case EmailItemType::Calendar:
+    case EmailItemType::MeetingRequest:
+        ++result.skipped_calendar;
+        break;
+    case EmailItemType::Task:
+        ++result.skipped_tasks;
+        break;
+    case EmailItemType::StickyNote:
+        ++result.skipped_notes;
+        break;
+    default:
+        ++result.skipped_other;
+        break;
+    }
+}
+
+}  // namespace
+
+int OstConversionWorker::countConvertibleItems(PstParser* parser, const PstFolderTree& tree) {
+    int total = 0;
+    for (const auto& folder : tree) {
+        if (!isSearchFolder(folder)) {
+            const auto items = parser->readFolderItems(folder.node_id, 0, 0);
+            if (items.has_value()) {
+                total += static_cast<int>(std::ranges::count_if(*items, [](const auto& item) {
+                    return isRealEmail(item.item_type);
+                }));
+            }
+        }
+        total += countConvertibleItems(parser, folder.children);
+    }
+    return total;
+}
+
 void OstConversionWorker::processFolderTree(PstParser* parser,
                                             const PstFolderTree& tree,
                                             const OstConversionConfig& config,
                                             OstConversionResult& result) {
-    for (const auto& root_folder : tree) {
+    const PstFolderTree& mail_roots = mailFolderRoots(tree);
+    for (const auto& root_folder : mail_roots) {
         if (m_cancelled.load()) {
             return;
         }
-        processFolder(parser, root_folder, QString(), config, result);
+        processFolder(parser, root_folder, FolderPosition{}, config, result);
+    }
+    if (&mail_roots == &tree) {
+        return;
+    }
+    const PstFolder* mail_tree = findIpmSubtree(tree);
+    for (const auto& root_folder : tree) {
+        processFoldersOutsideMailTree(parser, root_folder, mail_tree, config, result);
     }
 }
 
-void OstConversionWorker::writeItemByFormat(const PstItemDetail& item,
-                                            PstParser* parser,
-                                            const QString& folder_path,
-                                            const OstConversionConfig& config,
-                                            OstConversionResult& result) {
-    switch (config.format) {
-    case OstOutputFormat::Eml:
-        writeItemEml(item, parser, folder_path, config, result);
-        break;
-    case OstOutputFormat::Pst:
-        writeItemPst(item, parser, folder_path, config, result);
-        break;
-    case OstOutputFormat::Msg:
-        writeItemMsg(item, parser, folder_path, config, result);
-        break;
-    case OstOutputFormat::Mbox:
-        writeItemMbox(item, parser, folder_path, config, result);
-        break;
-    case OstOutputFormat::Dbx:
-        writeItemDbx(item, parser, folder_path, config, result);
-        break;
-    case OstOutputFormat::Html:
-        writeItemHtml(item, parser, folder_path, config, result);
-        break;
-    case OstOutputFormat::Pdf:
-        writeItemPdf(item, parser, folder_path, config, result);
-        break;
-    case OstOutputFormat::ImapUpload:
-        // IMAP upload is handled by the controller, not per-item
-        break;
+void OstConversionWorker::processFoldersOutsideMailTree(PstParser* parser,
+                                                        const PstFolder& folder,
+                                                        const PstFolder* mail_tree,
+                                                        const OstConversionConfig& config,
+                                                        OstConversionResult& result) {
+    if (&folder == mail_tree || m_cancelled.load()) {
+        return;
+    }
+    if (!isSearchFolder(folder) && folderPassesFilter(folder.display_name, config)) {
+        // Listed apart from the mail tree, the same way the Email Inspector shows them.
+        const QString path = QStringLiteral("Other Folders/") +
+                             sanitizeFolderSegment(folder.display_name);
+        if (convertFolderItems(parser, folder, path, config, result)) {
+            ++result.folders_processed;
+        }
+    }
+    for (const auto& child : folder.children) {
+        processFoldersOutsideMailTree(parser, child, mail_tree, config, result);
     }
 }
 
@@ -267,13 +422,12 @@ void OstConversionWorker::processItemInFolder(const PstItemSummary& item_summary
 
     auto detail_result = parser->readItemDetail(item_summary.node_id);
     if (!detail_result.has_value()) {
-        if (config.recovery_mode == RecoveryMode::SkipCorrupt) {
-            ++result.items_failed;
-            Q_EMIT warningOccurred("Skipped corrupt item in " + folder_path);
-            return;
-        }
+        // One unreadable item never stops the run: it is named here, the rest carry on, and the
+        // file ends Failed so the gap cannot be missed.
         ++result.items_failed;
         result.errors.append("Failed to read item " + item_summary.subject + " in " + folder_path);
+        ++m_items_done;
+        Q_EMIT progressUpdated(m_items_done, m_items_total, folder_path);
         return;
     }
 
@@ -287,11 +441,13 @@ void OstConversionWorker::processItemInFolder(const PstItemSummary& item_summary
         return;
     }
 
-    writeItemByFormat(detail, parser, folder_path, config, result);
+    // Count exactly one outcome per item: the writers already increment
+    // items_failed on failure, so items_converted must only rise on success.
+    if (writeItemMbox(detail, parser, folder_path, result)) {
+        ++result.items_converted;
+    }
 
     ++m_items_done;
-    ++result.items_converted;
-    ++result.folders_processed;
 
     Q_EMIT progressUpdated(m_items_done, m_items_total, folder_path);
 }
@@ -301,58 +457,99 @@ void OstConversionWorker::loadAndProcessFolderItems(PstParser* parser,
                                                     const QString& folder_path,
                                                     const OstConversionConfig& config,
                                                     OstConversionResult& result) {
-    if (folder.content_count <= 0) {
+    // Every row the table holds, whatever PR_CONTENT_COUNT declares. The declared count can be low
+    // or absent, and walking up to it silently dropped the rest of the folder. What is not mail is
+    // left out and counted, in this folder or any other: real mail turns up in system folders, and
+    // a filed contact or a deleted appointment turns up among mail.
+    auto items_result = parser->readFolderItems(folder.node_id, 0, 0);
+    if (!items_result.has_value()) {
+        // Surface the loss in items_failed instead of silently under-reporting: the table could
+        // not be read, so every item the folder declares is a message we could not convert.
+        result.items_failed += std::max(folder.content_count, 1);
+        const QString err = "Failed to read items from folder: " + folder_path;
+        logWarning("OST Converter: {}", err.toStdString());
+        result.errors.append(err);
         return;
     }
 
-    constexpr int kBatchSize = 100;
-    int offset = 0;
-
-    while (offset < folder.content_count && !m_cancelled.load()) {
-        auto items_result = parser->readFolderItems(folder.node_id, offset, kBatchSize);
-
-        if (!items_result.has_value()) {
-            QString err = "Failed to read items from folder: " + folder_path;
-            logWarning("OST Converter: {}", err.toStdString());
-            result.errors.append(err);
-            break;
+    for (const auto& item_summary : *items_result) {
+        if (m_cancelled.load()) {
+            return;
         }
-
-        const auto& items = items_result.value();
-        if (items.isEmpty()) {
-            break;
-        }
-
-        for (const auto& item_summary : items) {
+        if (isRealEmail(item_summary.item_type)) {
             processItemInFolder(item_summary, parser, folder_path, config, result);
+        } else {
+            recordSkippedItem(item_summary, result);
         }
-
-        offset += items.size();
     }
+}
+
+bool OstConversionWorker::convertFolderItems(PstParser* parser,
+                                             const PstFolder& folder,
+                                             const QString& folder_path,
+                                             const OstConversionConfig& config,
+                                             OstConversionResult& result) {
+    const int converted_before = result.items_converted;
+    const int failed_before = result.items_failed;
+
+    Q_EMIT progressUpdated(m_items_done, m_items_total, folder_path);
+
+    loadAndProcessFolderItems(parser, folder, folder_path, config, result);
+
+    return result.items_converted != converted_before || result.items_failed != failed_before;
 }
 
 void OstConversionWorker::processFolder(PstParser* parser,
                                         const PstFolder& folder,
-                                        const QString& parent_path,
+                                        const FolderPosition& position,
                                         const OstConversionConfig& config,
                                         OstConversionResult& result) {
     if (m_cancelled.load()) {
         return;
     }
 
-    QString folder_path = parent_path.isEmpty() ? folder.display_name
-                                                : parent_path + "/" + folder.display_name;
+    // A crafted PST/OST can declare a folder tree nested far deeper than any real mailbox;
+    // recursing it unbounded would overflow the stack. Fail closed with a surfaced error
+    // (which classifyOutcome treats as a failed job) rather than crash.
+    if (position.depth > kMaxFolderRecursionDepth) {
+        const QString err = QStringLiteral(
+                                "Folder nesting exceeds the supported depth (%1); deeper "
+                                "folders were not converted under: ")
+                                .arg(kMaxFolderRecursionDepth) +
+                            position.parent_path;
+        logWarning("OST Converter: {}", err.toStdString());
+        result.errors.append(err);
+        return;
+    }
+
+    // Sanitize each segment: folder.display_name comes verbatim from the parsed
+    // PST/OST and is appended to the output directory by every writer, so a name
+    // containing "../" would otherwise write outside the chosen output root.
+    const QString safe_segment = sanitizeFolderSegment(folder.display_name);
+    const QString folder_path =
+        position.parent_path.isEmpty() ? safe_segment : position.parent_path + "/" + safe_segment;
+
+    if (isSearchFolder(folder)) {
+        return;
+    }
 
     if (!folderPassesFilter(folder.display_name, config)) {
         return;
     }
 
-    Q_EMIT progressUpdated(m_items_done, m_items_total, folder_path);
-
-    loadAndProcessFolderItems(parser, folder, folder_path, config, result);
+    // Each folder once, not once per item. One that is not a mail folder counts only if it held
+    // mail.
+    if (convertFolderItems(parser, folder, folder_path, config, result) ||
+        isMailFolder(folder.display_name, folder.container_class)) {
+        ++result.folders_processed;
+    }
 
     for (const auto& child : folder.children) {
-        processFolder(parser, child, folder_path, config, result);
+        processFolder(parser,
+                      child,
+                      {.parent_path = folder_path, .depth = position.depth + 1},
+                      config,
+                      result);
     }
 }
 
@@ -388,15 +585,17 @@ bool OstConversionWorker::folderPassesFilter(const QString& folder_name,
 
 bool OstConversionWorker::itemPassesDateFilter(const PstItemDetail& item,
                                                const OstConversionConfig& config) const {
-    if (!config.date_from.isNull() && item.date.isValid()) {
-        if (item.date < config.date_from) {
-            return false;
-        }
+    const bool filter_active = !config.date_from.isNull() || !config.date_to.isNull();
+    if (filter_active && !item.date.isValid()) {
+        // Fail closed: an item with no valid date cannot be proven to fall inside a
+        // requested date window, so exclude it rather than silently include it.
+        return false;
     }
-    if (!config.date_to.isNull() && item.date.isValid()) {
-        if (item.date > config.date_to) {
-            return false;
-        }
+    if (!config.date_from.isNull() && item.date < config.date_from) {
+        return false;
+    }
+    if (!config.date_to.isNull() && item.date > config.date_to) {
+        return false;
     }
     return true;
 }
@@ -405,224 +604,55 @@ bool OstConversionWorker::itemPassesDateFilter(const PstItemDetail& item,
 // Format Writers
 // ============================================================================
 
-QVector<QPair<QString, QByteArray>> OstConversionWorker::collectAttachments(
-    const PstItemDetail& item, PstParser* parser) {
-    QVector<QPair<QString, QByteArray>> attachment_data;
+bool OstConversionWorker::collectAttachments(const PstItemDetail& item,
+                                             PstParser* parser,
+                                             OstConversionResult& result,
+                                             QVector<QPair<QString, QByteArray>>& out) {
+    bool complete = true;
     for (const auto& att : item.attachments) {
+        const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
         auto data = parser->readAttachmentData(item.node_id, att.index);
         if (data.has_value()) {
-            QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
-            attachment_data.append({name, data.value()});
-        }
-    }
-    return attachment_data;
-}
-
-void OstConversionWorker::writeItemEml(const PstItemDetail& item,
-                                       PstParser* parser,
-                                       const QString& folder_path,
-                                       const OstConversionConfig& config,
-                                       OstConversionResult& result) {
-    auto attachment_data = collectAttachments(item, parser);
-
-    EmlWriter writer(config.output_directory,
-                     config.prefix_filename_with_date,
-                     config.preserve_folder_structure);
-
-    auto write_result = writer.writeMessage(item, attachment_data, folder_path);
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write EML for: " + item.subject);
-        return;
-    }
-
-    result.bytes_written += writer.totalBytesWritten();
-}
-
-std::optional<uint64_t> OstConversionWorker::ensurePstFolderHierarchy(const QString& folder_path) {
-    if (m_pst_folder_nids.contains(folder_path)) {
-        return m_pst_folder_nids.value(folder_path);
-    }
-
-    QStringList parts = folder_path.split(QStringLiteral("/"), Qt::SkipEmptyParts);
-    QString accumulated;
-    uint64_t parent_nid = kPstRootFolderNid;
-
-    for (const auto& part : parts) {
-        accumulated = accumulated.isEmpty() ? part : accumulated + QStringLiteral("/") + part;
-        if (!m_pst_folder_nids.contains(accumulated)) {
-            std::expected<uint64_t, error_code> folder_result;
-            if (m_pst_splitter) {
-                folder_result =
-                    m_pst_splitter->createFolder(parent_nid, part, QStringLiteral("IPF.Note"));
-            } else if (m_pst_writer) {
-                folder_result =
-                    m_pst_writer->createFolder(parent_nid, part, QStringLiteral("IPF.Note"));
-            } else {
-                return std::nullopt;
-            }
-            if (folder_result.has_value()) {
-                m_pst_folder_nids[accumulated] = folder_result.value();
-                parent_nid = folder_result.value();
-            }
+            out.append({name, data.value()});
         } else {
-            parent_nid = m_pst_folder_nids[accumulated];
+            // An attachment declared in the metadata could not be read: surface the
+            // loss and mark the item incomplete so it is not counted as converted.
+            complete = false;
+            result.errors.append(QStringLiteral("Attachment '%1' dropped from '%2' (read failed)")
+                                     .arg(name, item.subject));
         }
     }
-
-    return m_pst_folder_nids.value(folder_path, kPstRootFolderNid);
+    return complete;
 }
 
-void OstConversionWorker::writeItemPst(const PstItemDetail& item,
-                                       PstParser* parser,
-                                       const QString& folder_path,
-                                       const OstConversionConfig& config,
-                                       OstConversionResult& result) {
-    Q_UNUSED(config);
-    auto attachment_data = collectAttachments(item, parser);
-
-    auto hierarchy_result = ensurePstFolderHierarchy(folder_path);
-    if (!hierarchy_result.has_value()) {
-        ++result.items_failed;
-        return;
-    }
-
-    uint64_t folder_nid = hierarchy_result.value();
-
-    std::expected<void, error_code> write_result;
-    if (m_pst_splitter) {
-        write_result = m_pst_splitter->writeMessage(folder_nid, item, attachment_data);
-    } else if (m_pst_writer) {
-        write_result = m_pst_writer->writeMessage(folder_nid, item, attachment_data);
-    } else {
-        ++result.items_failed;
-        return;
-    }
-
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write PST item: " + item.subject);
-    } else {
-        if (m_pst_writer) {
-            result.bytes_written = m_pst_writer->currentSize();
-        }
-    }
-}
-
-void OstConversionWorker::writeItemMsg(const PstItemDetail& item,
-                                       PstParser* parser,
-                                       const QString& folder_path,
-                                       const OstConversionConfig& config,
-                                       OstConversionResult& result) {
-    auto attachment_data = collectAttachments(item, parser);
-
-    // Get all MAPI properties for forensic-grade export
-    QVector<MapiProperty> all_props;
-    auto props_result = parser->readItemProperties(item.node_id);
-    if (props_result.has_value()) {
-        all_props = props_result.value();
-    }
-
-    MsgWriter writer(config.output_directory,
-                     config.prefix_filename_with_date,
-                     config.preserve_folder_structure);
-
-    auto write_result = writer.writeMessage(item, all_props, attachment_data, folder_path);
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write MSG for: " + item.subject);
-        return;
-    }
-
-    result.bytes_written += writer.totalBytesWritten();
-}
-
-void OstConversionWorker::writeItemMbox(const PstItemDetail& item,
+bool OstConversionWorker::writeItemMbox(const PstItemDetail& item,
                                         PstParser* parser,
                                         const QString& folder_path,
-                                        const OstConversionConfig& config,
                                         OstConversionResult& result) {
-    Q_UNUSED(config);
     if (!m_mbox_writer) {
         ++result.items_failed;
         result.errors.append("MBOX writer not initialized for: " + item.subject);
-        return;
+        return false;
     }
-    auto attachment_data = collectAttachments(item, parser);
+    QVector<QPair<QString, QByteArray>> attachment_data;
+    if (!collectAttachments(item, parser, result, attachment_data)) {
+        // An attachment could not be read: fail the item closed rather than write
+        // and count a message that is missing declared content.
+        ++result.items_failed;
+        return false;
+    }
 
     auto write_result = m_mbox_writer->writeMessage(item, attachment_data, folder_path);
     if (!write_result.has_value()) {
         ++result.items_failed;
         result.errors.append("Failed to write MBOX for: " + item.subject);
-        return;
+        return false;
     }
 
-    result.bytes_written += m_mbox_writer->totalBytesWritten();
-}
-
-void OstConversionWorker::writeItemDbx(const PstItemDetail& item,
-                                       PstParser* parser,
-                                       const QString& folder_path,
-                                       const OstConversionConfig& config,
-                                       OstConversionResult& result) {
-    Q_UNUSED(config);
-    if (!m_dbx_writer) {
-        ++result.items_failed;
-        result.errors.append("DBX writer not initialized for: " + item.subject);
-        return;
-    }
-    auto attachment_data = collectAttachments(item, parser);
-
-    auto write_result = m_dbx_writer->writeMessage(item, attachment_data, folder_path);
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write DBX for: " + item.subject);
-        return;
-    }
-
-    result.bytes_written += m_dbx_writer->totalBytesWritten();
-}
-
-void OstConversionWorker::writeItemHtml(const PstItemDetail& item,
-                                        PstParser* parser,
-                                        const QString& folder_path,
-                                        const OstConversionConfig& config,
-                                        OstConversionResult& result) {
-    auto attachment_data = collectAttachments(item, parser);
-
-    HtmlEmailWriter writer(config.output_directory,
-                           config.prefix_filename_with_date,
-                           config.preserve_folder_structure);
-
-    auto write_result = writer.writeMessage(item, attachment_data, folder_path);
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write HTML for: " + item.subject);
-        return;
-    }
-
-    result.bytes_written += writer.totalBytesWritten();
-}
-
-void OstConversionWorker::writeItemPdf(const PstItemDetail& item,
-                                       PstParser* parser,
-                                       const QString& folder_path,
-                                       const OstConversionConfig& config,
-                                       OstConversionResult& result) {
-    auto attachment_data = collectAttachments(item, parser);
-
-    PdfEmailWriter writer(config.output_directory,
-                          config.prefix_filename_with_date,
-                          config.preserve_folder_structure);
-
-    auto write_result = writer.writeMessage(item, attachment_data, folder_path);
-    if (!write_result.has_value()) {
-        ++result.items_failed;
-        result.errors.append("Failed to write PDF for: " + item.subject);
-        return;
-    }
-
-    result.bytes_written += writer.totalBytesWritten();
+    // The writer persists across the run, so its byte count is cumulative: assign
+    // it rather than add a per-message delta (which would triangular-overcount).
+    result.bytes_written = m_mbox_writer->totalBytesWritten();
+    return true;
 }
 
 // ============================================================================
@@ -632,17 +662,17 @@ void OstConversionWorker::writeItemPdf(const PstItemDetail& item,
 bool OstConversionWorker::itemPassesSenderFilter(const PstItemDetail& item,
                                                  const OstConversionConfig& config) const {
     if (!config.sender_filter.isEmpty()) {
-        bool match = item.sender_email.contains(config.sender_filter, Qt::CaseInsensitive) ||
-                     item.sender_name.contains(config.sender_filter, Qt::CaseInsensitive);
+        const bool match = item.sender_email.contains(config.sender_filter, Qt::CaseInsensitive) ||
+                           item.sender_name.contains(config.sender_filter, Qt::CaseInsensitive);
         if (!match) {
             return false;
         }
     }
 
     if (!config.recipient_filter.isEmpty()) {
-        bool match = item.display_to.contains(config.recipient_filter, Qt::CaseInsensitive) ||
-                     item.display_cc.contains(config.recipient_filter, Qt::CaseInsensitive) ||
-                     item.display_bcc.contains(config.recipient_filter, Qt::CaseInsensitive);
+        const bool match = item.display_to.contains(config.recipient_filter, Qt::CaseInsensitive) ||
+                           item.display_cc.contains(config.recipient_filter, Qt::CaseInsensitive) ||
+                           item.display_bcc.contains(config.recipient_filter, Qt::CaseInsensitive);
         if (!match) {
             return false;
         }
@@ -655,28 +685,59 @@ bool OstConversionWorker::itemPassesSenderFilter(const PstItemDetail& item,
 // Deleted Item Recovery
 // ============================================================================
 
+void OstConversionWorker::recordRecoveryReliability(bool recoverable_reliable,
+                                                    bool orphan_reliable,
+                                                    bool orphans_scanned,
+                                                    OstConversionResult& result) {
+    if (!recoverable_reliable) {
+        result.recovery_complete = false;
+        result.errors.append(
+            QStringLiteral("Deleted-item recovery is INCOMPLETE: a read error truncated the "
+                           "Recoverable Items scan, so recoverable items are missing from the "
+                           "output. The recovered count is a floor, not a total."));
+    }
+    if (orphans_scanned && !orphan_reliable) {
+        result.recovery_complete = false;
+        result.errors.append(
+            QStringLiteral("Deleted-item recovery is INCOMPLETE: the orphaned-node scan could "
+                           "not enumerate every candidate, so orphaned items are missing from "
+                           "the output. The recovered count is a floor, not a total."));
+    }
+}
+
 void OstConversionWorker::processRecoveredItems(PstParser* parser,
                                                 const OstConversionConfig& config,
                                                 OstConversionResult& result) {
     DeletedItemScanner scanner(parser);
 
     QVector<PstItemDetail> recovered_items;
-    if (config.recovery_mode == RecoveryMode::DeepRecovery) {
+    const bool deep_recovery = config.recovery_mode == RecoveryMode::DeepRecovery;
+    if (deep_recovery) {
         recovered_items = scanner.recoverAll();
     } else {
         recovered_items = scanner.scanRecoverableItems();
     }
+    // Cancellation is reported through its own channel, not as unreliability (the scanner's
+    // flags already exclude it); everything else must reach the result before a single item is
+    // written, so a truncated scan can never be presented as a clean recovery.
+    if (!m_cancelled.load()) {
+        recordRecoveryReliability(
+            scanner.recoverableReliable(), scanner.orphanReliable(), deep_recovery, result);
+    }
 
-    QString recovery_folder = QStringLiteral("Recovered Items");
+    const QString recovery_folder = QStringLiteral("Recovered Items");
 
     for (const auto& item : recovered_items) {
         if (m_cancelled.load()) {
             return;
         }
 
-        writeItemByFormat(item, parser, recovery_folder, config, result);
+        // Only count a recovered item once it was actually written; a failed
+        // write already increments items_failed inside the writer.
+        if (writeItemMbox(item, parser, recovery_folder, result)) {
+            ++result.items_recovered;
+        }
 
-        ++result.items_recovered;
         ++m_items_done;
         Q_EMIT progressUpdated(m_items_done, m_items_total, recovery_folder);
     }

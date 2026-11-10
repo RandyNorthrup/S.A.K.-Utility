@@ -63,6 +63,10 @@ void TestEmailTypes::pstFolderDefaults() {
     QCOMPARE(folder.content_count, 0);
     QCOMPARE(folder.unread_count, 0);
     QCOMPARE(folder.subfolder_count, 0);
+    // container_class is the field that ROUTES the folder: isMailFolder() treats an unset
+    // class as mail, so a non-empty default would hide every PST folder that omits
+    // PR_CONTAINER_CLASS from the tree AND drop it from "Export ALL Mail Folders".
+    QVERIFY(folder.container_class.isEmpty());
     QVERIFY(folder.children.isEmpty());
 }
 
@@ -74,6 +78,10 @@ void TestEmailTypes::pstItemSummaryDefaults() {
     QCOMPARE(item.has_attachments, false);
     QCOMPARE(item.is_read, false);
     QCOMPARE(item.importance, 1);  // Normal priority default
+    QCOMPARE(item.size_bytes, qint64(0));
+    // pst_parser.cpp:698 derives is_read from bit 0x01 of this word and :700-702 derives
+    // has_attachments from bit 0x10, so a nonzero default would contradict the two bools above.
+    QCOMPARE(item.message_flags, uint32_t(0));
 }
 
 void TestEmailTypes::pstItemDetailDefaults() {
@@ -87,6 +95,14 @@ void TestEmailTypes::pstItemDetailDefaults() {
     QVERIFY(detail.attachments.isEmpty());
     QCOMPARE(detail.is_all_day, false);
     QCOMPARE(detail.task_percent_complete, 0.0);
+    // The two NON-ZERO defaults in this struct; nothing else in tests/ pins either, and both are
+    // live behaviour: importance 0 makes mbox_writer.cpp:713 -> appendImportanceHeader stamp
+    // "Importance: Low" (kImportanceLow == 0) and email_export_worker.cpp:412 write "Low" into the
+    // CSV column, while note_color is assigned NOWHERE in src/ -- this default alone picks the
+    // swatch email_inspector_panel.cpp:2234-2239 renders (index 3 == Yellow, 0 == Blue).
+    QCOMPARE(detail.importance, 1);  // Normal, not Low
+    QCOMPARE(detail.note_color, 3);  // Yellow
+    QCOMPARE(sak::kDefaultNoteColorYellow, 3);
 }
 
 void TestEmailTypes::pstAttachmentInfoDefaults() {
@@ -95,6 +111,14 @@ void TestEmailTypes::pstAttachmentInfoDefaults() {
     QVERIFY(att.filename.isEmpty());
     QCOMPARE(att.size_bytes, qint64(0));
     QCOMPARE(att.is_embedded_message, false);
+    QCOMPARE(att.attach_method, 0);  // unset: neither EmbeddedMessage(5) nor OLE(6), so not skipped
+    // derived flag must stay coherent with the raw method it is computed from
+    // (pst_parser.cpp:756-757)
+    QCOMPARE(att.is_embedded_message, att.attach_method == sak::email::kAttachEmbeddedMessage);
+    QVERIFY(att.attach_method != sak::email::kAttachOle);
+    QVERIFY(att.long_filename.isEmpty());
+    QVERIFY(att.mime_type.isEmpty());
+    QVERIFY(att.content_id.isEmpty());
 }
 
 void TestEmailTypes::mapiPropertyDefaults() {
@@ -110,6 +134,12 @@ void TestEmailTypes::mboxMessageDefaults() {
     sak::MboxMessage msg;
     QCOMPARE(msg.message_index, 0);
     QCOMPARE(msg.file_offset, qint64(0));
+    QCOMPARE(msg.message_size, qint64(0));
+    QVERIFY(msg.subject.isEmpty());
+    QVERIFY(msg.from.isEmpty());
+    QVERIFY(msg.to.isEmpty());
+    QVERIFY(msg.cc.isEmpty());
+    QVERIFY(!msg.date.isValid());
     QCOMPARE(msg.has_attachments, false);
 }
 
@@ -173,7 +203,22 @@ void TestEmailTypes::emailSearchHitDefaults() {
 // ============================================================================
 
 void TestEmailTypes::emailItemTypeValues() {
+    // Full-catalog census: naming all nine enumerators makes a removal or rename
+    // a compile error here, and pinning every ordinal makes a permutation or a
+    // mid-catalog insertion fail rather than slide past the endpoints.
     QCOMPARE(static_cast<int>(sak::EmailItemType::Email), 0);
+    QCOMPARE(static_cast<int>(sak::EmailItemType::Contact), 1);
+    QCOMPARE(static_cast<int>(sak::EmailItemType::Calendar), 2);
+    QCOMPARE(static_cast<int>(sak::EmailItemType::Task), 3);
+    QCOMPARE(static_cast<int>(sak::EmailItemType::StickyNote), 4);
+    QCOMPARE(static_cast<int>(sak::EmailItemType::JournalEntry), 5);
+    QCOMPARE(static_cast<int>(sak::EmailItemType::DistList), 6);
+    QCOMPARE(static_cast<int>(sak::EmailItemType::MeetingRequest), 7);
+
+    // Unknown is the terminal member: the search worker reads it as "match every
+    // type" (email_search_worker.cpp:379-382) and the parser as "message class
+    // not resolved yet" (pst_parser.cpp:3176, 3189), so pinning its ordinal after
+    // all eight real types proves both terminal placement and non-collision.
     QCOMPARE(static_cast<int>(sak::EmailItemType::Unknown), 8);
 }
 
@@ -192,6 +237,19 @@ void TestEmailTypes::exportFormatValues() {
     values.insert(static_cast<int>(sak::ExportFormat::CsvTasks));
     values.insert(static_cast<int>(sak::ExportFormat::PlainTextNotes));
     values.insert(static_cast<int>(sak::ExportFormat::Attachments));
+    QCOMPARE(static_cast<int>(sak::ExportFormat::Eml), 0);
+    QCOMPARE(static_cast<int>(sak::ExportFormat::Html), 1);
+    QCOMPARE(static_cast<int>(sak::ExportFormat::Text), 2);
+    QCOMPARE(static_cast<int>(sak::ExportFormat::Pdf), 3);
+    QCOMPARE(static_cast<int>(sak::ExportFormat::CsvEmails), 4);
+    QCOMPARE(static_cast<int>(sak::ExportFormat::Vcf), 5);
+    QCOMPARE(static_cast<int>(sak::ExportFormat::CsvContacts), 6);
+    QCOMPARE(static_cast<int>(sak::ExportFormat::Ics), 7);
+    QCOMPARE(static_cast<int>(sak::ExportFormat::CsvCalendar), 8);
+    QCOMPARE(static_cast<int>(sak::ExportFormat::CsvTasks), 9);
+    QCOMPARE(static_cast<int>(sak::ExportFormat::PlainTextNotes), 10);
+    QCOMPARE(static_cast<int>(sak::ExportFormat::Attachments), 11);
+    // Attachments==11 plus a 12-element set pins the catalog length from both ends.
     QCOMPARE(values.size(), 12);
 }
 
@@ -213,21 +271,21 @@ void TestEmailTypes::pstMagicConstant() {
 }
 
 void TestEmailTypes::parserLimitsPositive() {
-    QVERIFY(sak::email::kMaxFolderDepth > 0);
-    QVERIFY(sak::email::kMaxItemsPerLoad > 0);
-    QVERIFY(sak::email::kMaxSearchResults > 0);
-    QVERIFY(sak::email::kMaxAttachmentSize > 0);
-    QVERIFY(sak::email::kMaxFileSize > 0);
-    QVERIFY(sak::email::kMaxExportBatchSize > 0);
-    QVERIFY(sak::email::kMaxFilenameLength > 0);
+    QCOMPARE(sak::email::kMaxFolderDepth, 50);
+    QCOMPARE(sak::email::kMaxItemsPerLoad, 500);
+    QCOMPARE(sak::email::kMaxSearchResults, 10'000);
+    QCOMPARE(sak::email::kMaxAttachmentSize, static_cast<int64_t>(524'288'000));
+    QCOMPARE(sak::email::kMaxFileSize, static_cast<int64_t>(53'687'091'200));
+    QCOMPARE(sak::email::kMaxExportBatchSize, 50'000);
+    QCOMPARE(sak::email::kMaxFilenameLength, 200);
 }
 
 void TestEmailTypes::uiConstantsReasonable() {
-    QVERIFY(sak::email::kFolderTreeMinWidth > 0);
-    QVERIFY(sak::email::kFolderTreeDefaultWidth >= sak::email::kFolderTreeMinWidth);
-    QVERIFY(sak::email::kItemListMinHeight > 0);
-    QVERIFY(sak::email::kDetailPanelMinHeight > 0);
-    QVERIFY(sak::email::kSearchDebounceMs > 0);
+    QCOMPARE(sak::email::kFolderTreeMinWidth, 200);
+    QCOMPARE(sak::email::kFolderTreeDefaultWidth, 280);
+    QCOMPARE(sak::email::kItemListMinHeight, 150);
+    QCOMPARE(sak::email::kDetailPanelMinHeight, 200);
+    QCOMPARE(sak::email::kSearchDebounceMs, 300);
 }
 
 QTEST_MAIN(TestEmailTypes)

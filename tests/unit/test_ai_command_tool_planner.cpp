@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_command_tool_planner.h"
 
+#include <QCoreApplication>
+#include <QDir>
 #include <QJsonArray>
 #include <QtTest/QtTest>
 
@@ -12,9 +14,22 @@ class AiCommandToolPlannerTests : public QObject {
 private Q_SLOTS:
     void buildsPowerShellPlanWithPolicy();
     void buildsProcessPlanWithProgramPreview();
+    void rejectsRelativeProcessProgram();
+    void rejectsUnresolvableProcessProgram();
+    void processPreviewQuotesAmbiguousArgs();
+    void rejectsOversizedProcessCommandLine();
     void marksRiskyCommandAndPolicyDenial();
+    void policyRiskClassificationPropagatesToPlan();
     void carriesPidMutationGuardBlock();
     void carriesChecksumBypassBlock();
+    void carriesCachedInstallerApproval();
+    void rejectsNonCanonicalToolName();  // R5-G10-9
+    void shellPreviewIsSanitizedBeforeItIsShownToAHuman();
+    void previewEncodingDistinguishesControlsFromLiteralTokens();
+    void validationFailureIsAlwaysRisky();
+    void fractionalTimeoutIsRejectedInsteadOfTruncated();
+    void brokerPreconditionsAreRefusedAtPlanTime();
+    void planTimePreconditionsDoNotRefuseLegalPlans();
 };
 
 void AiCommandToolPlannerTests::buildsPowerShellPlanWithPolicy() {
@@ -32,13 +47,16 @@ void AiCommandToolPlannerTests::buildsPowerShellPlanWithPolicy() {
     QCOMPARE(plan.request.command, QStringLiteral("Get-Date"));
     QCOMPARE(plan.request.max_output_bytes, 4096);
     QVERIFY(plan.policy_decision.allowed);
+    QCOMPARE(plan.policy_decision.reason,
+             QStringLiteral("Read-only diagnostic shell command allowed"));
     QVERIFY(!plan.risky_change);
     QVERIFY(plan.guard_block_error.isEmpty());
 }
 
 void AiCommandToolPlannerTests::buildsProcessPlanWithProgramPreview() {
     QJsonObject args;
-    args[QStringLiteral("program")] = QStringLiteral("notepad.exe");
+    // A bare name (cmd.exe is present under System32 on every Windows install).
+    args[QStringLiteral("program")] = QStringLiteral("cmd.exe");
     args[QStringLiteral("arguments")] = QJsonArray{QStringLiteral("a.txt")};
 
     const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("run_process"),
@@ -46,11 +64,116 @@ void AiCommandToolPlannerTests::buildsProcessPlanWithProgramPreview() {
                                                                sak::ai::AiToolPolicy::ReadOnlyPc);
 
     QCOMPARE(plan.shell_label, QStringLiteral("Process"));
-    QCOMPARE(plan.request.program, QStringLiteral("notepad.exe"));
     QCOMPARE(plan.request.arguments, QStringList{QStringLiteral("a.txt")});
-    QVERIFY(plan.preview.contains(QStringLiteral("notepad.exe")));
+    // F43: the bare program name is resolved to an absolute, verified path AT PLAN TIME, and
+    // both the stored request AND the preview (the text the human approves) name that resolved
+    // binary -- not the bare string the broker would otherwise resolve against the process
+    // search order only AFTER the user approved.
+    QVERIFY(plan.guard_block_error.isEmpty());
+    QVERIFY2(QDir::isAbsolutePath(plan.request.program), qPrintable(plan.request.program));
+    QVERIFY2(plan.request.program.endsWith(QStringLiteral("cmd.exe"), Qt::CaseInsensitive),
+             qPrintable(plan.request.program));
+    QVERIFY(plan.preview.contains(QStringLiteral("cmd.exe"), Qt::CaseInsensitive));
     QVERIFY(plan.preview.contains(QStringLiteral("a.txt")));
-    QVERIFY(plan.policy_decision.allowed);
+    // A direct process launch can never be proven safe from its command line, so ReadOnlyPc
+    // refuses it even after the program resolves cleanly. The plan is still built (request +
+    // preview populated) for display.
+    QVERIFY(!plan.policy_decision.allowed);
+    QCOMPARE(plan.policy_decision.reason,
+             QStringLiteral("Read-only PC policy allows only known read-only diagnostic shell "
+                            "commands (ping, ipconfig, systeminfo, tasklist, netstat, whoami, "
+                            "Get-*/Test-* reads, ...); this command is not on the read-only "
+                            "allowlist"));
+}
+
+void AiCommandToolPlannerTests::rejectsRelativeProcessProgram() {
+    QJsonObject args;
+    // A working-directory-relative path has no defensible base and would launch CWD-relative;
+    // it must be refused at plan time rather than resolved against the current directory.
+    args[QStringLiteral("program")] = QStringLiteral("sub/planted.exe");
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("run_process"),
+                                                               args,
+                                                               sak::ai::AiToolPolicy::ReadOnlyPc);
+
+    // The refusal echoes the sanitized offending path -- the security-relevant part an injection
+    // or regression would corrupt -- and guard_block_error is copied verbatim from it.
+    const QString kRelativeError = QStringLiteral(
+        "program must be an absolute path or a bare executable name, not a "
+        "working-directory-relative path: sub/planted.exe");
+    QCOMPARE(plan.request.validation_error, kRelativeError);
+    QCOMPARE(plan.guard_block_error, kRelativeError);
+    QVERIFY(!plan.policy_decision.allowed);
+}
+
+void AiCommandToolPlannerTests::rejectsUnresolvableProcessProgram() {
+    QJsonObject args;
+    // A bare name that resolves nowhere under System32 or the absolute PATH entries fails
+    // closed instead of being handed to the broker to resolve after approval.
+    args[QStringLiteral("program")] = QStringLiteral("definitely-not-a-real-sak-test-binary.exe");
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("run_process"),
+                                                               args,
+                                                               sak::ai::AiToolPolicy::ReadOnlyPc);
+
+    // The refusal echoes the sanitized bare name it could not resolve; guard_block_error is the
+    // same string. Pin both so a dropped/garbled echo cannot pass unnoticed.
+    const QString kResolveError = QStringLiteral(
+        "Cannot resolve program 'definitely-not-a-real-sak-test-binary.exe' to an absolute "
+        "path; refusing to launch a bare name");
+    QCOMPARE(plan.request.validation_error, kResolveError);
+    QCOMPARE(plan.guard_block_error, kResolveError);
+    QVERIFY(!plan.policy_decision.allowed);
+}
+
+void AiCommandToolPlannerTests::processPreviewQuotesAmbiguousArgs() {
+    QJsonObject args;
+    args[QStringLiteral("program")] = QStringLiteral("C:\\Program Files\\app.exe");
+    args[QStringLiteral("arguments")] = QJsonArray{QStringLiteral("hello world"),
+                                                   QStringLiteral("plain"),
+                                                   QStringLiteral("tab\there")};
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("run_process"),
+                                                               args,
+                                                               sak::ai::AiToolPolicy::ReadOnlyPc);
+
+    // The whole preview is deterministic: the space-bearing absolute program path and the
+    // space-bearing arg are each quoted as one token, the plain arg is left bare, and the
+    // embedded tab is escaped visibly (never emitted raw). Pin the exact rendered command -- the
+    // security-relevant text the human approves -- which subsumes the per-token quoting, ordering,
+    // and no-raw-tab checks in a single assertion.
+    //
+    // THE ESCAPE FORM CHANGED DELIBERATELY, from "\t" to "<TAB>". A backslash escape is ambiguous
+    // the moment a value contains the literal characters '\' and 't', and disambiguating it would
+    // mean doubling every backslash -- unreadable in a product whose commands are full of Windows
+    // paths, as the program path in this very fixture shows. The bracketed form cannot be produced
+    // by escaping, so the path below stays exactly as the operator would type it.
+    QCOMPARE(plan.preview,
+             QStringLiteral(
+                 "\"C:\\Program Files\\app.exe\" \"hello world\" plain \"tab<TAB>here\""));
+    // buildProcessPreview already rendered every argv element safely. A second whole-string pass
+    // escaped its structural quote delimiters and reclassified generated <TAB> as literal input.
+    QCOMPARE(plan.display_preview, plan.preview);
+}
+
+void AiCommandToolPlannerTests::rejectsOversizedProcessCommandLine() {
+    constexpr int kMaximumSingleArgumentChars = 30'000;
+    QJsonObject args;
+    args[QStringLiteral("program")] = QCoreApplication::applicationFilePath();
+    // Each field is individually legal, but program + argv cannot fit in CreateProcessW's one
+    // command-line buffer. The shared broker precondition must refuse this BEFORE approval.
+    args[QStringLiteral("arguments")] =
+        QJsonArray{QString(kMaximumSingleArgumentChars, QLatin1Char('a'))};
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_process"), args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+
+    const QString expected = QStringLiteral("Process command line exceeds the %1 character limit")
+                                 .arg(kMaximumSingleArgumentChars);
+    QCOMPARE(plan.request.validation_error, expected);
+    QCOMPARE(plan.guard_block_error, expected);
+    QVERIFY(plan.risky_change);
+    QVERIFY(!plan.policy_decision.allowed);
 }
 
 void AiCommandToolPlannerTests::marksRiskyCommandAndPolicyDenial() {
@@ -63,7 +186,28 @@ void AiCommandToolPlannerTests::marksRiskyCommandAndPolicyDenial() {
 
     QVERIFY(plan.risky_change);
     QVERIFY(!plan.policy_decision.allowed);
+    QCOMPARE(plan.policy_decision.reason,
+             QStringLiteral("Read-only PC policy blocked mutating command"));
     QVERIFY(plan.policy_decision.risky_change);
+}
+
+void AiCommandToolPlannerTests::policyRiskClassificationPropagatesToPlan() {
+    QJsonObject args;
+    // Not on the mutation blacklist, but also not provably read-only. The policy layer therefore
+    // classifies it risky and requires a lease; planner/caller presentation must carry that fact.
+    args[QStringLiteral("command")] =
+        QStringLiteral("fsutil file setzerodata offset=0 length=1 C:\\temp\\sample.bin");
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"), args, sak::ai::AiToolPolicy::MutatingRequiresLease);
+
+    QVERIFY2(!sak::ai::AiCommandToolPlanner::isPotentiallyDestructiveCommand(plan.request,
+                                                                             plan.preview),
+             "fixture must miss the blacklist so policy propagation is the only risk source");
+    QVERIFY(plan.policy_decision.allowed);
+    QVERIFY(plan.policy_decision.risky_change);
+    QVERIFY(plan.policy_decision.requires_lease);
+    QVERIFY(plan.risky_change);
 }
 
 void AiCommandToolPlannerTests::carriesPidMutationGuardBlock() {
@@ -75,7 +219,10 @@ void AiCommandToolPlannerTests::carriesPidMutationGuardBlock() {
                                                                args,
                                                                sak::ai::AiToolPolicy::ReadOnlyPc);
 
-    QVERIFY(plan.guard_block_error.contains(QStringLiteral("$PID mutation")));
+    QCOMPARE(plan.guard_block_error,
+             QStringLiteral("Blocked PowerShell $PID mutation. $PID is a read-only automatic "
+                            "variable; use a different variable such as $processId or "
+                            "$windowProcessId."));
 }
 
 void AiCommandToolPlannerTests::carriesChecksumBypassBlock() {
@@ -86,10 +233,309 @@ void AiCommandToolPlannerTests::carriesChecksumBypassBlock() {
     const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
         QStringLiteral("run_powershell"), args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
 
-    QVERIFY(plan.guard_block_error.contains(QStringLiteral("checksum bypass")));
+    QCOMPARE(plan.guard_block_error,
+             QStringLiteral("Blocked package checksum bypass. Do not pass --ignore-checksums, "
+                            "substitute checksums, or run cached installers after a package "
+                            "checksum mismatch."));
     QVERIFY(plan.guard_approval_reason.isEmpty());
     QVERIFY(plan.policy_decision.allowed);
+    QCOMPARE(plan.policy_decision.reason,
+             QStringLiteral("Known local tool allowed with exclusive mutation policy"));
     QVERIFY(plan.policy_decision.requires_exclusive_lease);
+}
+
+void AiCommandToolPlannerTests::carriesCachedInstallerApproval() {
+    const QJsonObject args{
+        {QStringLiteral("command"),
+         QStringLiteral("choco install pkg -y; & '$env:TEMP\\chocolatey\\pkg\\setup.exe'")}};
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"), args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+
+    QVERIFY(plan.guard_block_error.isEmpty());
+    QCOMPARE(plan.guard_approval_reason,
+             QStringLiteral("Cached package installer execution requested after package-manager "
+                            "handling. Continue only with explicit user approval and verification "
+                            "evidence."));
+}
+
+void AiCommandToolPlannerTests::rejectsNonCanonicalToolName() {
+    // The command tools are a CLOSED set of EXACT names. The router matches names case- and
+    // whitespace-insensitively, so a case-variant like "Run_PowerShell" is routed here as a
+    // command tool; buildPlan must refuse the non-canonical spelling (default-denied) rather
+    // than fall through to the run_process branch and launch a model-supplied executable.
+    QJsonObject args;
+    args[QStringLiteral("command")] = QStringLiteral("Get-Date");
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("Run_PowerShell"),
+                                                               args,
+                                                               sak::ai::AiToolPolicy::ReadOnlyPc);
+    // The refusal echoes the sanitized non-canonical spelling that was rejected.
+    QCOMPARE(plan.guard_block_error, QStringLiteral("Unsupported command tool: Run_PowerShell"));
+    QCOMPARE(plan.request.validation_error,
+             QStringLiteral("Unsupported command tool: Run_PowerShell"));
+    QVERIFY(!plan.policy_decision.allowed);  // policy_decision stays default-denied
+    QVERIFY(plan.risky_change);
+
+    // Non-vacuity: the exact canonical name IS accepted (no guard block), so the refusal is
+    // the non-canonical spelling, not a rejection of the command itself.
+    const auto ok = sak::ai::AiCommandToolPlanner::buildPlan(QStringLiteral("run_powershell"),
+                                                             args,
+                                                             sak::ai::AiToolPolicy::ReadOnlyPc);
+    QVERIFY(ok.guard_block_error.isEmpty());
+}
+
+void AiCommandToolPlannerTests::shellPreviewIsSanitizedBeforeItIsShownToAHuman() {
+    // The approval dialog renders its text in a QPlainTextEdit with NoWrap and a COLLAPSED
+    // maximum height. A raw newline therefore does not merely look untidy -- it pushes whatever
+    // follows out of the visible box, so the operator approves the first line and the rest runs
+    // unseen. U+2028 does the same (QTextDocument treats it as a line separator), and a bidi
+    // override reverses the visual order of everything after it.
+    //
+    // The process branch was always safe because buildProcessPreview quotes each argument through
+    // the sanitiser. The two SHELL branches -- the ones a model actually uses -- passed the raw
+    // string straight to the dialog.
+    struct Case {
+        QString label;
+        QString injected;
+    };
+    const QList<Case> cases = {
+        {QStringLiteral("newline"), QStringLiteral("\n")},
+        {QStringLiteral("carriage return"), QStringLiteral("\r")},
+        {QStringLiteral("NEL"), QString(QChar(0x0085))},
+        {QStringLiteral("line separator"), QString(QChar(0x2028))},
+        {QStringLiteral("paragraph separator"), QString(QChar(0x2029))},
+        {QStringLiteral("RLO"), QString(QChar(0x202E))},
+        {QStringLiteral("LRI"), QString(QChar(0x2066))},
+        {QStringLiteral("zero width space"), QString(QChar(0x200B))},
+        {QStringLiteral("BOM"), QString(QChar(0xFEFF))},
+    };
+
+    for (const QString& tool : {QStringLiteral("run_powershell"), QStringLiteral("run_cmd")}) {
+        for (const Case& c : cases) {
+            QJsonObject args;
+            args[QStringLiteral("command")] = QStringLiteral("Get-Date") + c.injected +
+                                              QStringLiteral("Remove-Item -Recurse C:/");
+
+            const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
+                tool, args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+
+            const QString context = tool + QStringLiteral(" / ") + c.label;
+            // The RAW preview keeps the character: the guard and the risk classifier must judge
+            // the text that will actually run, not a display rendering of it.
+            QVERIFY2(plan.preview.contains(c.injected), qPrintable(context));
+            // The DISPLAYED preview must not.
+            QVERIFY2(!plan.display_preview.contains(c.injected), qPrintable(context));
+            // And nothing is lost: the dangerous tail is still visible to the reader.
+            QVERIFY2(plan.display_preview.contains(QStringLiteral("Remove-Item")),
+                     qPrintable(context + QStringLiteral(" -> ") + plan.display_preview));
+        }
+    }
+
+    // Ordinary Windows commands must survive UNCHANGED. A sanitiser that doubled backslashes to
+    // disambiguate its own escapes would mangle every path in the product, which is why the
+    // escape form is bracketed instead.
+    QJsonObject plain;
+    plain[QStringLiteral("command")] =
+        QStringLiteral(R"(Copy-Item "C:\Windows\System32\drivers\etc\hosts" "D:\backup target")");
+    const auto plain_plan = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"), plain, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+    QCOMPARE(plain_plan.display_preview, plain_plan.preview);
+}
+
+void AiCommandToolPlannerTests::previewEncodingDistinguishesControlsFromLiteralTokens() {
+    const auto build_shell = [](const QString& command) {
+        return sak::ai::AiCommandToolPlanner::buildPlan(
+            QStringLiteral("run_powershell"),
+            QJsonObject{{QStringLiteral("command"), command}},
+            sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+    };
+
+    const auto actual_line_feed = build_shell(QStringLiteral("Write-Output before\nafter"));
+    const auto literal_line_feed = build_shell(QStringLiteral("Write-Output before<LF>after"));
+    QCOMPARE(actual_line_feed.display_preview, QStringLiteral("Write-Output before<LF>after"));
+    QCOMPARE(literal_line_feed.display_preview,
+             QStringLiteral("Write-Output before<U+003C>LF>after"));
+    QVERIFY(actual_line_feed.display_preview != literal_line_feed.display_preview);
+
+    // U+061C is a bidi format control omitted from the old hand-maintained table. Category-based
+    // handling must expose it and preserve the text on both sides.
+    const QString arabic_mark_command = QStringLiteral("Write-Output before") + QChar(0x061c) +
+                                        QStringLiteral("after");
+    const auto arabic_mark = build_shell(arabic_mark_command);
+    QCOMPARE(arabic_mark.display_preview, QStringLiteral("Write-Output before<U+061C>after"));
+    QVERIFY(arabic_mark.preview.contains(QChar(0x061c)));
+    QVERIFY(!arabic_mark.display_preview.contains(QChar(0x061c)));
+
+    const auto non_breaking_space = build_shell(QStringLiteral("Write-Output before") +
+                                                QChar(0x00a0) + QStringLiteral("after"));
+    QCOMPARE(non_breaking_space.display_preview,
+             QStringLiteral("Write-Output before<U+00A0>after"));
+    const auto combining_overlay = build_shell(QStringLiteral("Write-Output before") +
+                                               QChar(0x0338) + QStringLiteral("after"));
+    QCOMPARE(combining_overlay.display_preview, QStringLiteral("Write-Output before<U+0338>after"));
+    const auto private_use = build_shell(QStringLiteral("Write-Output before") + QChar(0xe000) +
+                                         QStringLiteral("after"));
+    QCOMPARE(private_use.display_preview, QStringLiteral("Write-Output before<U+E000>after"));
+}
+
+void AiCommandToolPlannerTests::validationFailureIsAlwaysRisky() {
+    // buildPlan's contract says any call whose arguments fail the broker's typed validation comes
+    // back with risky_change SET, and the unsupported-tool branch honours it. The shell branches
+    // did not: a malformed request whose text did not look destructive returned
+    // risky_change == false, so a caller following the documented contract would skip the
+    // risky-command presentation and the restore-point offer for a request nothing could parse.
+    QJsonObject args;
+    args[QStringLiteral("command")] = QStringLiteral("Get-Date");
+    // A wrong-typed field the broker rejects; the command text itself is entirely benign.
+    args[QStringLiteral("timeout_seconds")] = QStringLiteral("not-a-number");
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"), args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+
+    QVERIFY2(!plan.request.validation_error.isEmpty(),
+             "fixture must actually fail typed validation");
+    QVERIFY2(!plan.guard_block_error.isEmpty(), qPrintable(plan.guard_block_error));
+    QVERIFY2(plan.risky_change, "a call that failed validation must be marked risky");
+    QVERIFY(!plan.policy_decision.allowed);
+    // The unsupported-tool sibling has always done this; pin it too so the two paths cannot
+    // drift apart again.
+    const auto unsupported = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("RUN_POWERSHELL"), args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+    QVERIFY(unsupported.risky_change);
+}
+
+void AiCommandToolPlannerTests::fractionalTimeoutIsRejectedInsteadOfTruncated() {
+    constexpr double kFractionalTimeoutSeconds = 5.5;
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"),
+        QJsonObject{{QStringLiteral("command"), QStringLiteral("Get-Date")},
+                    {QStringLiteral("timeout_seconds"), kFractionalTimeoutSeconds}},
+        sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+
+    QCOMPARE(plan.request.validation_error, QStringLiteral("timeout_seconds must be an integer"));
+    QCOMPARE(plan.guard_block_error, plan.request.validation_error);
+    QVERIFY(plan.risky_change);
+    QVERIFY(!plan.policy_decision.allowed);
+}
+
+namespace {
+
+// A request that PARSES cleanly -- typed validation has nothing to say about it -- and that the
+// broker nonetheless refuses at launch.
+struct PreconditionCase {
+    QString label;
+    QString tool;
+    QJsonObject args;
+    int max_output_bytes{};
+    QString expected;
+};
+
+// A budget well inside the broker's domain, so a case that is not ABOUT the budget cannot be
+// refused for one.
+constexpr int kOkOutputBudget = 4096;
+
+// The expected strings are the BROKER's own refusal text, character for character (two of them
+// are independently pinned in test_ai_execution_broker against a real broker). A plan-time
+// refusal that reworded the launch-time one would leave a reader comparing a plan against a log
+// unable to tell whether they were looking at one rule or two.
+QList<PreconditionCase> preconditionCases() {
+    const QString ceiling = QString::number(sak::ai::kAiCommandOutputBytesCeiling);
+    return {
+        // Whitespace-only is not "a command with odd spacing": the broker trims before testing,
+        // so this arrives at the door as nothing at all.
+        {QStringLiteral("blank powershell"),
+         QStringLiteral("run_powershell"),
+         QJsonObject{{QStringLiteral("command"), QStringLiteral("   \t  ")}},
+         kOkOutputBudget,
+         QStringLiteral("PowerShell command is empty")},
+        {QStringLiteral("blank cmd"),
+         QStringLiteral("run_cmd"),
+         QJsonObject{{QStringLiteral("command"), QString{}}},
+         kOkOutputBudget,
+         QStringLiteral("CMD command is empty")},
+        // Elevation is supported ONLY on the PowerShell entry point. The other two are refused
+        // outright, and a plan that exists only to be refused is exactly what a human should
+        // never be asked to approve.
+        {QStringLiteral("elevated cmd"),
+         QStringLiteral("run_cmd"),
+         QJsonObject{{QStringLiteral("command"), QStringLiteral("dir")},
+                     {QStringLiteral("requires_admin"), true}},
+         kOkOutputBudget,
+         QStringLiteral(
+             "Elevated cmd.exe launch is not supported; use run_powershell for admin tasks.")},
+        {QStringLiteral("elevated process"),
+         QStringLiteral("run_process"),
+         QJsonObject{{QStringLiteral("program"), QStringLiteral("cmd.exe")},
+                     {QStringLiteral("requires_admin"), true}},
+         kOkOutputBudget,
+         QStringLiteral("Elevated direct-process launch is not supported; use run_powershell for "
+                        "admin tasks.")},
+        // An output budget outside the broker's domain, supplied by the CALLER through Options
+        // rather than by the model, so no amount of argument validation reaches it.
+        {QStringLiteral("zero output budget"),
+         QStringLiteral("run_powershell"),
+         QJsonObject{{QStringLiteral("command"), QStringLiteral("Get-Date")}},
+         0,
+         QStringLiteral("max_output_bytes 0 is outside the range 1-") + ceiling},
+        {QStringLiteral("over-ceiling output budget"),
+         QStringLiteral("run_powershell"),
+         QJsonObject{{QStringLiteral("command"), QStringLiteral("Get-Date")}},
+         sak::ai::kAiCommandOutputBytesCeiling + 1,
+         QStringLiteral("max_output_bytes %1 is outside the range 1-%2")
+             .arg(sak::ai::kAiCommandOutputBytesCeiling + 1)
+             .arg(ceiling)},
+    };
+}
+
+}  // namespace
+
+void AiCommandToolPlannerTests::brokerPreconditionsAreRefusedAtPlanTime() {
+    // Before this, each of these was rendered into a preview, risk-classified, put in front of a
+    // human for approval and granted an execution lease, and only then declined at the broker's
+    // door. The approval was spent on a decision that had no effect, which is how an operator
+    // learns to click through the dialog.
+    for (const PreconditionCase& c : preconditionCases()) {
+        const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
+            c.tool,
+            c.args,
+            sak::ai::AiToolPolicy::ExclusiveMutatingExecutor,
+            sak::ai::AiCommandToolPlanner::Options{c.max_output_bytes});
+
+        const QString context = c.label + QStringLiteral(" -> ") + plan.guard_block_error;
+        QCOMPARE(plan.request.validation_error, c.expected);
+        // The refusal must also reach a caller that reads only guard_block_error, and the
+        // documented contract requires risky_change SET and a default-denied policy here.
+        QCOMPARE(plan.guard_block_error, c.expected);
+        QVERIFY2(plan.risky_change, qPrintable(context));
+        QVERIFY2(!plan.policy_decision.allowed, qPrintable(context));
+    }
+}
+
+void AiCommandToolPlannerTests::planTimePreconditionsDoNotRefuseLegalPlans() {
+    // THE OTHER HALF OF THE BRACKET around brokerPreconditionsAreRefusedAtPlanTime, and
+    // load-bearing rather than ceremonial. Every fixture in that slot differs from a working
+    // plan by exactly ONE field, so dropping the precondition check entirely turns it red while
+    // this one stays green; making the check too broad -- refusing elevation on all three
+    // targets, or rejecting a budget that is legal -- turns THIS one red while that one stays
+    // green. Neither mistake can pass both.
+    const auto elevated_powershell = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"),
+        QJsonObject{{QStringLiteral("command"), QStringLiteral("Get-Date")},
+                    {QStringLiteral("requires_admin"), true}},
+        sak::ai::AiToolPolicy::ExclusiveMutatingExecutor,
+        sak::ai::AiCommandToolPlanner::Options{kOkOutputBudget});
+    QVERIFY2(elevated_powershell.request.validation_error.isEmpty(),
+             qPrintable(elevated_powershell.request.validation_error));
+
+    // The ceiling itself is a legal budget -- the domain is inclusive, so an off-by-one in the
+    // comparison turns this red.
+    const auto at_ceiling = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"),
+        QJsonObject{{QStringLiteral("command"), QStringLiteral("Get-Date")}},
+        sak::ai::AiToolPolicy::ExclusiveMutatingExecutor,
+        sak::ai::AiCommandToolPlanner::Options{sak::ai::kAiCommandOutputBytesCeiling});
+    QVERIFY2(at_ceiling.request.validation_error.isEmpty(),
+             qPrintable(at_ceiling.request.validation_error));
 }
 
 QTEST_GUILESS_MAIN(AiCommandToolPlannerTests)

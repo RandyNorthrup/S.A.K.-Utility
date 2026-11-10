@@ -25,15 +25,36 @@ struct PartitionScriptCredential {
 };
 
 struct PartitionScript {
-    QString script;
-    QString dry_run_script;
-    QString preview;
-    QStringList blockers;
-    QList<PartitionScriptCredential> credential_files;
+    QString script{};
+    QString dry_run_script{};
+    QString preview{};
+    QStringList blockers{};
+    QList<PartitionScriptCredential> credential_files{};
     int timeout_seconds{kPartitionDefaultTaskTimeoutSeconds};
 
     [[nodiscard]] bool valid() const noexcept { return blockers.isEmpty() && !script.isEmpty(); }
 };
+
+/// The PowerShell that finds the dynamic disks Get-Disk does not list. The scan and the conversion
+/// both run it, so they cannot disagree about which disk is which.
+[[nodiscard]] QString dynamicDiskFunctionsScript();
+
+/// How long one question to a drive or a volume may take before it is that drive's or that
+/// volume's error, in a scan and in a script that asks the same question.
+inline constexpr int kDriveQuerySeconds = 20;
+
+/// PowerShell function Invoke-SakBoundedProgram: runs a program for at most a number of seconds and
+/// says whether it started and finished, with its exit code and output. Public so a test can run
+/// it.
+[[nodiscard]] QString boundedProgramFunctionScript();
+
+/// PowerShell function Get-SakRotationRateRpm: the rotation rate a drive reports through the tool
+/// at @p tool_path, or 0 when it reports none, or the tool is absent, fails, or takes too long.
+/// The scan and the defrag script both run it, so they cannot disagree. It takes the path so a
+/// test can run it against a stand-in that reads no disk.
+[[nodiscard]] QString driveRotationRateFunctionScript(const QString& tool_path);
+/// The same, for the smartctl this application ships.
+[[nodiscard]] QString bundledDriveRotationRateFunctionScript();
 
 class PartitionScriptBuilder {
 public:
@@ -41,6 +62,17 @@ public:
     [[nodiscard]] static QString quotePowerShell(const QString& value);
     [[nodiscard]] static bool isValidDriveLetter(const QString& value);
     [[nodiscard]] static bool isSupportedFileSystem(const QString& value);
+    /// PowerShell function: which file system a 512-byte sector is the boot sector of, or $null.
+    /// Public so a test can run it on bytes, with no disk involved.
+    [[nodiscard]] static QString bootSectorKindFunctionScript();
+    /// PowerShell functions of the partition recovery scan: what each boot sector found is, its
+    /// size, and whether it is a partition there now (Invoke-SakRecoveryScan reads any stream).
+    [[nodiscard]] static QString recoveryScanFunctionScript();
+    /// PowerShell function the helper runs before writing a recovered partition back: refuses
+    /// one past the disk's end or over any partition there now.
+    [[nodiscard]] static QString recoveredPartitionFitFunctionScript();
+    /// PowerShell function: a drive letter nothing holds, the preferred one if it is free.
+    [[nodiscard]] static QString freeBootLetterFunctionScript();
 
 private:
     using Builder = PartitionScript (PartitionScriptBuilder::*)(const PartitionOperation&) const;
@@ -60,9 +92,8 @@ private:
         const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildCheckFileSystemScript(
         const PartitionOperation& operation) const;
-    [[nodiscard]] PartitionScript buildExternalFileSystemToolScript(
-        const PartitionOperation& operation,
-        const ExternalFileSystemToolScriptRequest& request) const;
+    [[nodiscard]] static PartitionScript buildExternalFileSystemToolScript(
+        const PartitionOperation& operation, const ExternalFileSystemToolScriptRequest& request);
     [[nodiscard]] PartitionScript buildSurfaceTestScript(const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildPartitionRecoveryScanScript(
         const PartitionOperation& operation) const;
@@ -91,7 +122,10 @@ private:
         const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildCloneOrImageScript(
         const PartitionOperation& operation) const;
+    [[nodiscard]] PartitionScript buildOsMigrationScript(const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildBootRepairScript(const PartitionOperation& operation) const;
+    [[nodiscard]] static PartitionScript buildAttachedBootRepairScript(
+        const PartitionOperation& operation);
     [[nodiscard]] PartitionScript buildOptimizeSsdScript(const PartitionOperation& operation) const;
     [[nodiscard]] PartitionScript buildDefragVolumeScript(
         const PartitionOperation& operation) const;

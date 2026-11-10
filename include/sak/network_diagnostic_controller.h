@@ -82,17 +82,22 @@ public:
     /// @brief Check if any operation is running
     [[nodiscard]] bool hasActiveOperations() const;
 
+    /// @brief True only when no blocking operation is active (the passive connection
+    ///        monitor is permitted to overlap). Deterministic -- does not consult the
+    ///        order-dependent m_state.
+    [[nodiscard]] bool canGenerateReport() const;
+
     // -- Adapter Inspection --
     void scanAdapters();
 
     // -- Connectivity --
     struct PingParams {
         QString target;
-        int count;
-        int interval_ms;
-        int timeout_ms;
-        int packet_size;
-        int ttl;
+        int count{0};
+        int interval_ms{0};
+        int timeout_ms{0};
+        int packet_size{0};
+        int ttl{0};
     };
     void ping(const PingParams& params);
     void traceroute(
@@ -110,22 +115,22 @@ public:
     struct PortScanParams {
         QString target;
         QVector<uint16_t> ports;
-        uint16_t range_start;
-        uint16_t range_end;
-        int timeout_ms;
-        int max_concurrent;
-        bool grab_banners;
+        uint16_t range_start{0};
+        uint16_t range_end{0};
+        int timeout_ms{0};
+        int max_concurrent{0};
+        bool grab_banners{false};
     };
     void scanPorts(const PortScanParams& params);
 
     // -- Bandwidth --
     struct BandwidthTestParams {
         QString server_addr;
-        uint16_t port;
-        int duration_sec;
-        int streams;
-        bool bidirectional;
-        bool udp;
+        uint16_t port{0};
+        int duration_sec{0};
+        int streams{0};
+        bool bidirectional{false};
+        bool udp{false};
     };
     void startIperfServer(uint16_t port);
     void stopIperfServer();
@@ -173,13 +178,28 @@ public:
     // -- Ethernet Config --
 
     /// @brief Backup the current Ethernet adapter settings to a JSON file
-    void backupEthernetSettings(const QString& adapterName, const QString& filePath);
+    /// @param adapterType The adapter's type as the adapter list names it, kept in the backup so
+    ///        a restore can start on an adapter of the same kind.
+    void backupEthernetSettings(const QString& adapterName,
+                                const QString& filePath,
+                                const QString& adapterType = {});
+
+    /// @brief The adapter name and type a backup file was made from; both empty when the file
+    ///        cannot be read (the reason goes to errorOccurred).
+    [[nodiscard]] QPair<QString, QString> ethernetBackupIdentity(const QString& filePath);
 
     /// @brief Restore Ethernet adapter settings from a JSON backup file
     void restoreEthernetSettings(const QString& filePath, const QString& targetAdapter);
 
     /// @brief List available Ethernet adapter names
     [[nodiscard]] QStringList listEthernetAdapters() const;
+
+    /// @brief What the Log says about a finished iPerf3 test. Pure.
+    [[nodiscard]] static QString iperfLogLine(const BandwidthTestResult& result);
+    /// @brief What the Log says about a finished HTTP speed test. Pure.
+    [[nodiscard]] static QString httpSpeedLogLine(double downloadMbps,
+                                                  double uploadMbps,
+                                                  double latencyMs);
 
     // -- Report --
     void generateReport(const QString& outputPath,
@@ -240,8 +260,17 @@ private:
     void populateBasicReportSections(QSet<NetworkDiagnosticReportGenerator::Section>& sections);
     void populateAdvancedReportSections(QSet<NetworkDiagnosticReportGenerator::Section>& sections);
 
+    /// @brief Report sections whose diagnostic was attempted this session (mapped from
+    ///        m_attemptedOps). Subtracting the with-data sections yields the attempted-but-
+    ///        empty set the report renders as an explicit "not run" marker.
+    [[nodiscard]] QSet<NetworkDiagnosticReportGenerator::Section> attemptedReportSections() const;
+
+    /// @brief Keep a finished HTTP speed test's numbers for the report.
+    void cacheHttpSpeedResult(double downloadMbps, double uploadMbps, double latencyMs);
+
     State m_state = State::Idle;  ///< Legacy: first active op or Idle
     QSet<State> m_activeOps;      ///< Currently running operations
+    QSet<State> m_attemptedOps;   ///< Every op attempted this session (for not-run report state)
 
     std::unique_ptr<NetworkAdapterInspector> m_adapterInspector;
     std::unique_ptr<ConnectivityTester> m_connectivityTester;
@@ -249,6 +278,8 @@ private:
     std::unique_ptr<PortScanner> m_portScanner;
     std::unique_ptr<BandwidthTester> m_bandwidthTester;
     std::unique_ptr<WiFiAnalyzer> m_wifiAnalyzer;
+    int m_continuousWiFiIntervalMs{0};
+    bool m_continuousWiFiRequested{false};  ///< cleared by stop; read when the first scan lands
     std::unique_ptr<ActiveConnectionsMonitor> m_connectionMonitor;
     std::unique_ptr<FirewallRuleAuditor> m_firewallAuditor;
     std::unique_ptr<NetworkShareBrowser> m_shareBrowser;
@@ -279,10 +310,20 @@ private:
     void addOperation(State op);
     void removeOperation(State op);
     bool isWorkerGroupBusy(State op) const;
-    void runOnThread(std::function<void()> work, State operationState);
+    /// Runs @p work on a fresh worker thread; @p afterFinished (optional) runs on this thread once
+    /// the worker has finished and the operation has been removed.
+    void runOnThread(std::function<void()> work,
+                     State operationState,
+                     std::function<void()> afterFinished = {});
+    /// Starts the periodic WiFi refresh after the continuous scan's first (worker) scan.
+    void beginContinuousWiFiRefresh();
     void cleanupThread(State op);
     void cleanupAllThreads();
     void connectWorkerSignals();
+
+    /// @brief Drop the cached result for @p op so a failed re-run cannot leave stale
+    ///        prior-run data eligible for the next report.
+    void clearCacheFor(State op);
 
     /// @brief Handle an incoming LAN transfer client connection
     void handleLanClientConnection(QTcpSocket* socket);
@@ -303,10 +344,10 @@ private:
     /// Transfer result data for finalization
     struct LanTransferData {
         QString target_addr;
-        uint16_t port;
-        qint64 total_sent;
-        qint64 elapsed_ms;
-        double peak_mbps;
+        uint16_t port{};
+        qint64 total_sent{};
+        qint64 elapsed_ms{};
+        double peak_mbps{};
         QVector<double> speed_samples;
     };
 

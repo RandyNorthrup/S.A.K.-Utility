@@ -6,26 +6,21 @@
 
 #include "sak/user_migration_panel.h"
 
-#include "sak/actions/backup_bitlocker_keys_action.h"
-#include "sak/actions/screenshot_settings_action.h"
-#include "sak/config_manager.h"
+#include "sak/action_constants.h"
 #include "sak/detachable_log_window.h"
-#include "sak/info_button.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
-#include "sak/quick_action_controller.h"
+#include "sak/running_operations.h"
 #include "sak/style_constants.h"
-#include "sak/user_data_manager.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/widget_helpers.h"
 
 #include <QDateTime>
 #include <QDialog>
-#include <QDialogButtonBox>
+#include <QDir>
 #include <QFileDialog>
 #include <QFont>
-#include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -34,22 +29,26 @@
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QScrollArea>
-#include <QSpinBox>
+#include <QStandardPaths>
+#include <QUuid>
 #include <QVBoxLayout>
+
+#include <windows.h>
+
+#include <knownfolders.h>
 
 namespace sak {
 
 namespace {
 
-constexpr int kUserMigrationSettingsDialogMinWidth = 440;
-constexpr int kBackupThreadCountMin = 1;
-constexpr int kBackupThreadCountMax = 16;
 constexpr int kProgressBarMinimum = 0;
+/// This panel's owner token on the application's shared quick-action controller.
+constexpr auto kQuickActionOwner = "backup_restore";
 
 }  // namespace
 
-UserMigrationPanel::UserMigrationPanel(QWidget* parent)
-    : QWidget(parent), m_dataManager(std::make_shared<UserDataManager>()) {
+UserMigrationPanel::UserMigrationPanel(QuickActionController& quick_actions, QWidget* parent)
+    : QWidget(parent), m_quick_actions(quick_actions) {
     setupUi();
     setupConnections();
     createQuickActions();
@@ -62,54 +61,39 @@ UserMigrationPanel::~UserMigrationPanel() = default;
 
 void UserMigrationPanel::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
-    auto* rootLayout = new QVBoxLayout(this);
-    rootLayout->setContentsMargins(
+    auto* root_layout = new QVBoxLayout(this);
+    root_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
 
-    auto* scrollArea = new QScrollArea(this);
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
+    auto* scroll_area = new QScrollArea(this);
+    scroll_area->setWidgetResizable(true);
+    scroll_area->setFrameShape(QFrame::NoFrame);
 
-    auto* contentWidget = new QWidget(scrollArea);
-    auto* mainLayout = new QVBoxLayout(contentWidget);
-    mainLayout->setContentsMargins(sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium,
-                                   sak::ui::kMarginMedium);
-    mainLayout->setSpacing(sak::ui::kSpacingLarge);
+    auto* content_widget = new QWidget(scroll_area);
+    auto* main_layout = new QVBoxLayout(content_widget);
+    main_layout->setContentsMargins(sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium,
+                                    sak::ui::kMarginMedium);
+    main_layout->setSpacing(sak::ui::kSpacingLarge);
 
-    scrollArea->setWidget(contentWidget);
-    rootLayout->addWidget(scrollArea);
+    scroll_area->setWidget(content_widget);
+    root_layout->addWidget(scroll_area);
 
-    sak::createPanelHeader(contentWidget,
+    sak::createPanelHeader(content_widget,
                            QStringLiteral(":/icons/icons/panel_backup_restore.svg"),
                            tr("Backup and Restore"),
                            tr("Comprehensive backup and restore wizards"
                               " for Windows user profiles."),
-                           mainLayout);
+                           main_layout);
 
-    createMigrationCards(contentWidget, mainLayout);
-    mainLayout->addWidget(createQuickToolsSection(contentWidget));
+    createMigrationCards(content_widget, main_layout);
+    main_layout->addWidget(createQuickToolsSection(content_widget));
 
-    mainLayout->addStretch();
-
-    // Bottom row: Settings + Log toggle
-    auto* bottomLayout = new QHBoxLayout();
-    bottomLayout->setContentsMargins(sak::ui::kMarginMedium,
-                                     sak::ui::kMarginTight,
-                                     sak::ui::kMarginMedium,
-                                     sak::ui::kMarginSmall);
-
-    auto* settingsBtn = new QPushButton(tr("Settings"), this);
-    settingsBtn->setAccessibleName(QStringLiteral("User Migration Settings"));
-    settingsBtn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(settingsBtn, &QPushButton::clicked, this, &UserMigrationPanel::onSettingsClicked);
-    bottomLayout->addWidget(settingsBtn);
+    main_layout->addStretch();
 
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
-    bottomLayout->addWidget(m_logToggle);
-    bottomLayout->addStretch();
-    rootLayout->addLayout(bottomLayout);
+    sak::addLogFooter(root_layout, m_logToggle);
 }
 
 void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layout) {
@@ -117,28 +101,29 @@ void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layo
     auto* row = new QHBoxLayout();
     row->setSpacing(sak::ui::kSpacingLarge);
 
-    row->addWidget(createMigrationCard(parent,
-                                       {QStringLiteral(":/icons/icons/backup.svg"),
-                                        tr("Backup User Profiles"),
-                                        tr("Scan and select users, choose folders, configure"
-                                           " filters, and create backup packages."),
-                                        tr("Start Backup Wizard..."),
-                                        sak::ui::kSecondaryButtonStyle,
-                                        tr("Step-by-step wizard to select apps, configure"
-                                           " options, and create backups"),
-                                        QStringLiteral("Start Backup Wizard")},
-                                       m_backupButton));
+    row->addWidget(
+        createMigrationCard(parent,
+                            {.icon = QStringLiteral(":/icons/icons/backup.svg"),
+                             .title = tr("Backup User Profiles"),
+                             .desc = tr("Scan and select users, choose folders, configure"
+                                        " filters, and create backup packages."),
+                             .btn_text = tr("Start Backup Wizard..."),
+                             .btn_style = sak::ui::kSecondaryButtonStyle,
+                             .tip = tr("Step-by-step wizard to select apps, configure"
+                                       " options, and create backups"),
+                             .acc = QStringLiteral("Start Backup Wizard")},
+                            m_backupButton));
 
     row->addWidget(createMigrationCard(parent,
-                                       {QStringLiteral(":/icons/icons/restore.svg"),
-                                        tr("Restore User Profiles"),
-                                        tr("Select backup, map users, configure merge"
-                                           " options, and restore data with permissions."),
-                                        tr("Start Restore Wizard..."),
-                                        sak::ui::kSecondaryButtonStyle,
-                                        tr("Step-by-step wizard to select backups, map"
-                                           " users, and restore data"),
-                                        QStringLiteral("Start Restore Wizard")},
+                                       {.icon = QStringLiteral(":/icons/icons/restore.svg"),
+                                        .title = tr("Restore User Profiles"),
+                                        .desc = tr("Select backup, map users, configure merge"
+                                                   " options, and restore data with permissions."),
+                                        .btn_text = tr("Start Restore Wizard..."),
+                                        .btn_style = sak::ui::kSecondaryButtonStyle,
+                                        .tip = tr("Step-by-step wizard to select backups, map"
+                                                  " users, and restore data"),
+                                        .acc = QStringLiteral("Start Restore Wizard")},
                                        m_restoreButton));
 
     layout->addLayout(row);
@@ -147,38 +132,14 @@ void UserMigrationPanel::createMigrationCards(QWidget* parent, QVBoxLayout* layo
 QFrame* UserMigrationPanel::createMigrationCard(QWidget* parent,
                                                 const MigrationCardConfig& config,
                                                 QPushButton*& btn) {
-    constexpr int kLogoSize = 96;
-    auto* card = new QFrame(parent);
-    card->setProperty("sakCard", true);
-    card->setStyleSheet(sak::ui::cardFrameStyle(sak::ui::kCssRadiusXLargePx));
-    auto* lay = new QVBoxLayout(card);
-    lay->setSpacing(sak::ui::kSpacingMedium);
-    lay->setContentsMargins(
-        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
-
-    auto* logo = new QLabel(card);
-    logo->setPixmap(QIcon(config.icon).pixmap(kLogoSize, kLogoSize));
-    logo->setAlignment(Qt::AlignCenter);
-    logo->setStyleSheet(sak::ui::kTransparentWidgetStyle);
-    lay->addWidget(logo);
-
-    auto* title_label = new QLabel(config.title, card);
-    title_label->setStyleSheet(sak::ui::cardTitleTextStyle());
-    lay->addWidget(title_label);
-
-    auto* desc_label = new QLabel(config.desc, card);
-    desc_label->setWordWrap(true);
-    desc_label->setStyleSheet(sak::ui::cardDescriptionTextStyle());
-    lay->addWidget(desc_label);
-
-    lay->addStretch();
-    btn = new QPushButton(config.btn_text, card);
+    // The one card layout (UI review F41: these cards left-aligned their titles under a 96 px
+    // logo, Help's and the Image Flasher's centred them under a 48 px one).
+    btn = new QPushButton(config.btn_text, parent);
     btn->setMinimumHeight(sak::kButtonHeightTall);
     btn->setStyleSheet(config.btn_style);
     btn->setToolTip(config.tip);
     btn->setAccessibleName(config.acc);
-    lay->addWidget(btn);
-    return card;
+    return sak::createActionCard(parent, config.icon, config.title, config.desc, btn).card;
 }
 
 void UserMigrationPanel::setupConnections() {
@@ -187,7 +148,6 @@ void UserMigrationPanel::setupConnections() {
 }
 
 void UserMigrationPanel::onBackupSelected() {
-    Q_ASSERT(m_dataManager);
     // Launch the comprehensive user profile backup wizard
     auto* wizard = new UserProfileBackupWizard(this);
 
@@ -212,7 +172,6 @@ void UserMigrationPanel::onBackupSelected() {
 }
 
 void UserMigrationPanel::onRestoreBackup() {
-    Q_ASSERT(m_dataManager);
     // Launch the comprehensive user profile restore wizard
     auto* wizard = new UserProfileRestoreWizard(this);
 
@@ -293,158 +252,172 @@ QGroupBox* UserMigrationPanel::createQuickToolsSection(QWidget* parent) {
 }
 
 void UserMigrationPanel::createQuickActions() {
-    constexpr auto kDefaultBackupPath = "C:/SAK_Backups";
-    const auto backup_path = QString::fromLatin1(kDefaultBackupPath);
-
-    m_action_controller = new QuickActionController(this);
-    m_action_controller->setBackupLocation(backup_path);
-
-    m_action_controller->registerAction(std::make_unique<ScreenshotSettingsAction>(backup_path));
-    m_action_controller->registerAction(std::make_unique<BackupBitlockerKeysAction>(backup_path));
-
-    // Connect controller signals
-    connect(m_action_controller,
-            &QuickActionController::actionExecutionProgress,
-            this,
-            &UserMigrationPanel::onQuickActionProgress,
-            Qt::QueuedConnection);
-    connect(m_action_controller,
-            &QuickActionController::actionExecutionComplete,
-            this,
-            &UserMigrationPanel::onQuickActionComplete,
-            Qt::QueuedConnection);
-    connect(m_action_controller,
-            &QuickActionController::actionError,
-            this,
-            &UserMigrationPanel::onQuickActionError,
-            Qt::QueuedConnection);
-    connect(
-        m_action_controller,
-        &QuickActionController::logMessage,
+    // No default output folder: both Quick Tools ask where to save on every run (Screenshot
+    // Settings wrote to a fixed C:/SAK_Backups without saying so).
+    const QString owner = QString::fromLatin1(kQuickActionOwner);
+    RunningOperations::add(
         this,
-        [this](const QString& msg) { appendLog(msg); },
-        Qt::QueuedConnection);
+        tr("Quick action"),
+        [this, owner]() { return m_quick_actions.hasRunsOf(owner); },
+        [this, owner]() { m_quick_actions.cancelRunsOf(owner); });
 
-    // Connect buttons to actions
+    connectRunsOf(m_quick_actions,
+                  owner,
+                  this,
+                  {.queued =
+                       [this](const QuickActionRun& run, const QString& running_action) {
+                           const QString text = quickActionQueuedText(run, running_action);
+                           appendLog(text);
+                           Q_EMIT statusMessage(text, sak::kTimerStatusDefaultMs);
+                       },
+                   .progress =
+                       [this](const QuickActionRun&, const QString& message, int percent) {
+                           Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
+                           m_action_progress_bar->setValue(percent);
+                       },
+                   .log = [this](const QuickActionRun&, const QString& line) { appendLog(line); },
+                   .finished =
+                       [this](const QuickActionRun& run,
+                              const QuickAction::ExecutionResult& result,
+                              QuickAction::ActionStatus status) {
+                           onQuickActionFinished(run, result, status);
+                       }});
+
     for (auto it = m_action_buttons.constBegin(); it != m_action_buttons.constEnd(); ++it) {
         const QString action_name = it.key();
-        QPushButton* btn = it.value();
-        QuickAction* action = m_action_controller->getAction(action_name);
-        if (action) {
-            connect(btn, &QPushButton::clicked, this, [this, action]() {
-                onQuickActionClicked(action);
-            });
+        if (m_quick_actions.getAction(action_name) != nullptr) {
+            connect(
+                it.value(),
+                &QPushButton::clicked,
+                this,
+                [this, action_name]() { onQuickActionClicked(action_name); },
+                Qt::QueuedConnection);
         }
     }
 }
 
-void UserMigrationPanel::onQuickActionClicked(QuickAction* action) {
-    Q_ASSERT(action);
-    appendLog(QString("Executing: %1").arg(action->name()));
-    Q_EMIT statusMessage(QString("Running: %1...").arg(action->name()), sak::kTimerStatusMessageMs);
+QUrl UserMigrationPanel::keyBackupStartFolder() {
+    // This PC (FOLDERID_ComputerFolder), the way Qt's Windows folder picker takes a virtual
+    // folder: the clsid scheme and the GUID without braces.
+    QUrl url;
+    url.setScheme(QStringLiteral("clsid"));
+    url.setPath(QUuid(FOLDERID_ComputerFolder).toString(QUuid::WithoutBraces));
+    return url;
+}
+
+QString UserMigrationPanel::chooseQuickActionOutputFolder(const QString& action_name) {
+    if (action_name == QLatin1String(quick_action_elevation::kBackupBitLockerKeysName)) {
+        // Recovery keys are asked a destination every time. The picker opens on This PC, its
+        // drives side by side: a folder on the system drive is usually on the very volume the keys
+        // unlock, and the working folder showed the app's own Qt folders first (review 3, F36).
+        // The action refuses any folder on a BitLocker volume whose key it is backing up.
+        QFileDialog picker(this,
+                           tr("Choose where to save the BitLocker recovery keys (use another "
+                              "drive; NTFS can restrict who reads them)"));
+        picker.setFileMode(QFileDialog::Directory);
+        picker.setOption(QFileDialog::ShowDirsOnly, true);
+        // A folder on a disk, never a virtual one: only file: answers are taken.
+        picker.setSupportedSchemes({QStringLiteral("file")});
+        picker.setDirectoryUrl(keyBackupStartFolder());
+        const QString destination = picker.exec() == QDialog::Accepted
+                                        ? picker.selectedUrls().value(0).toLocalFile()
+                                        : QString();
+        if (destination.isEmpty()) {
+            appendLog(tr("BitLocker key backup cancelled: no destination was chosen"));
+        }
+        return destination;
+    }
+    // Screenshot Settings, the panel's other Quick Tool: asked every time, starting in
+    // Documents, like the System Inventory Report.
+    const QString folder = QFileDialog::getExistingDirectory(
+        this,
+        tr("Choose where to save the Settings screenshots"),
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+        QFileDialog::ShowDirsOnly);
+    if (folder.isEmpty()) {
+        appendLog(tr("Screenshot Settings cancelled: no folder was chosen"));
+    }
+    return folder;
+}
+
+bool UserMigrationPanel::confirmOutputFolderWarning(const QString& action_name,
+                                                    const QString& warning) {
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(action_name);
+    box.setText(warning);
+    const QPushButton* const go_ahead = box.addButton(tr("Save Here Anyway"),
+                                                      QMessageBox::AcceptRole);
+    QPushButton* const cancel = box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(cancel);
+    box.setEscapeButton(cancel);
+    box.exec();
+    return box.clickedButton() == go_ahead;
+}
+
+void UserMigrationPanel::onQuickActionClicked(const QString& action_name) {
+    const QString folder = chooseQuickActionOutputFolder(action_name);
+    if (folder.isEmpty()) {
+        return;
+    }
+    const QuickAction* const action = m_quick_actions.getAction(action_name);
+    const QString warning = action != nullptr ? action->outputFolderWarning(folder) : QString();
+    if (!warning.isEmpty() && !confirmOutputFolderWarning(action_name, warning)) {
+        appendLog(tr("%1 cancelled at the warning about %2: nothing was written")
+                      .arg(action_name, QDir::toNativeSeparators(folder)));
+        return;
+    }
+    appendLog(QString("Executing: %1").arg(action_name));
+    Q_EMIT statusMessage(QString("Running: %1...").arg(action_name), sak::kTimerStatusMessageMs);
     m_action_progress_bar->setValue(0);
     m_action_progress_bar->setVisible(true);
-    m_action_controller->executeAction(action->name(), false);
+    // The folder travels with this run: one queued behind another caller's still writes here.
+    m_quick_actions.requestRun(
+        {action_name, QString::fromLatin1(kQuickActionOwner), folder, !warning.isEmpty()});
 }
 
-void UserMigrationPanel::onQuickActionProgress(QuickAction* action,
-                                               const QString& message,
-                                               int progress) {
-    Q_ASSERT(action);
-    Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
-    m_action_progress_bar->setValue(progress);
-}
-
-void UserMigrationPanel::onQuickActionComplete(QuickAction* action) {
-    Q_ASSERT(action);
-    const auto& result = action->lastExecutionResult();
-    const QString status = result.success
-                               ? QString("Completed: %1").arg(action->name())
-                               : QString("Failed: %1 - %2").arg(action->name(), result.message);
-    m_action_progress_bar->setVisible(false);
-    appendLog(status);
-    Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
-}
-
-void UserMigrationPanel::onQuickActionError(QuickAction* action, const QString& error_message) {
-    Q_ASSERT(action);
-    const QString status = QString("Error: %1 - %2").arg(action->name(), error_message);
-    m_action_progress_bar->setVisible(false);
-    appendLog(status);
-    Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
-    sak::logError("Quick action error: {} - {}",
-                  action->name().toStdString(),
-                  error_message.toStdString());
-}
-
-void UserMigrationPanel::onSettingsClicked() {
-    auto& config = ConfigManager::instance();
-
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("User Migration Settings"));
-    dialog.setMinimumWidth(kUserMigrationSettingsDialogMinWidth);
-    auto* layout = new QVBoxLayout(&dialog);
-
-    auto* formLayout = new QFormLayout();
-
-    auto* threadSpin = new QSpinBox(&dialog);
-    threadSpin->setRange(kBackupThreadCountMin, kBackupThreadCountMax);
-    threadSpin->setValue(config.getBackupThreadCount());
-    formLayout->addRow(
-        InfoButton::createInfoLabel(
-            tr("Thread Count:"),
-            tr("Number of parallel copy threads \u2014 higher values speed up backup but increase "
-               "CPU and disk I/O load"),
-            &dialog),
-        threadSpin);
-
-    auto* verifyCheck = new QCheckBox(tr("Verify files using MD5 hash after backup"), &dialog);
-    verifyCheck->setChecked(config.getBackupVerifyMD5());
-    formLayout->addRow(
-        InfoButton::createInfoLabel(
-            tr("Verify MD5:"),
-            tr("Re-read each copied file and verify its MD5 checksum matches the original \u2014 "
-               "slower but ensures integrity"),
-            &dialog),
-        verifyCheck);
-
-    auto* locRow = new QHBoxLayout();
-    auto* locEdit = new QLineEdit(config.getLastBackupLocation(), &dialog);
-    locEdit->setReadOnly(true);
-    auto* browseBtn = new QPushButton(tr("Browse..."), &dialog);
-    browseBtn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(browseBtn, &QPushButton::clicked, &dialog, [&locEdit, &dialog]() {
-        QString dir = QFileDialog::getExistingDirectory(&dialog,
-                                                        tr("Select Backup Location"),
-                                                        locEdit->text());
-        if (!dir.isEmpty()) {
-            locEdit->setText(dir);
-        }
-    });
-    locRow->addWidget(locEdit);
-    locRow->addWidget(browseBtn);
-    formLayout->addRow(
-        InfoButton::createInfoLabel(
-            tr("Backup Location:"), tr("Choose the destination folder for backup files"), &dialog),
-        locRow);
-
-    layout->addLayout(formLayout);
-
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    layout->addWidget(buttons);
-
-    if (dialog.exec() == QDialog::Accepted) {
-        config.setBackupThreadCount(threadSpin->value());
-        config.setBackupVerifyMD5(verifyCheck->isChecked());
-        config.setLastBackupLocation(locEdit->text());
-        config.sync();
-        appendLog(QString("Settings updated: threads=%1, verify=%2, location=%3")
-                      .arg(threadSpin->value())
-                      .arg(verifyCheck->isChecked() ? "yes" : "no")
-                      .arg(locEdit->text()));
+void UserMigrationPanel::onQuickActionFinished(const QuickActionRun& run,
+                                               const QuickAction::ExecutionResult& result,
+                                               QuickAction::ActionStatus status) {
+    if (!m_quick_actions.hasRunsOf(QString::fromLatin1(kQuickActionOwner))) {
+        m_action_progress_bar->setVisible(false);
     }
+    const QString text = quickActionOutcomeText(run, result, status);
+    appendLog(text);
+    Q_EMIT statusMessage(text, sak::kTimerStatusDefaultMs);
+    if (status == QuickAction::ActionStatus::Failed) {
+        sak::logError("Backup and Restore quick action failed: {} - {}",
+                      run.action_name.toStdString(),
+                      result.message.toStdString());
+    }
+    showQuickToolResult(run, result, status);
+}
+
+void UserMigrationPanel::showQuickToolResult(const QuickActionRun& run,
+                                             const QuickAction::ExecutionResult& result,
+                                             QuickAction::ActionStatus status) {
+    if (status == QuickAction::ActionStatus::Cancelled) {
+        return;
+    }
+    // Review 2: a key backup wrote its folder in 3 s and the window said "Ready"; the result was
+    // only in the log. What was saved, and where, or what failed, is told to the person who
+    // asked. The box does not block the window.
+    QString text = result.message.isEmpty() ? quickActionOutcomeText(run, result, status)
+                                            : result.message;
+    if (!result.output_path.isEmpty()) {
+        text += tr("\n\nSaved to: %1").arg(QDir::toNativeSeparators(result.output_path));
+    }
+    if (!result.warning.isEmpty()) {
+        text += QStringLiteral("\n\n%1").arg(result.warning);
+    }
+    auto* box = new QMessageBox(result.success ? QMessageBox::Information : QMessageBox::Warning,
+                                run.action_name,
+                                text,
+                                QMessageBox::Ok,
+                                this);
+    box->setObjectName(QStringLiteral("quickToolResultBox"));
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->open();
 }
 
 }  // namespace sak

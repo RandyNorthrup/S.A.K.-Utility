@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <!-- Windows requires four numeric fields here. S.A.K. versions have three, so the last is always 0. -->
   <assemblyIdentity
     type="win32"
     name="SAK.Utility"
-    version="@PROJECT_VERSION_MAJOR@.@PROJECT_VERSION_MINOR@.@PROJECT_VERSION_PATCH@.@PROJECT_VERSION_TWEAK@"
+    version="@PROJECT_VERSION_MAJOR@.@PROJECT_VERSION_MINOR@.@PROJECT_VERSION_PATCH@.0"
     processorArchitecture="amd64"
   />
   <description>S.A.K. Utility - Swiss Army Knife Utility</description>

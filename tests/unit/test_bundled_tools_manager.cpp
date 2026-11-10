@@ -35,32 +35,37 @@ void TestBundledToolsManager::singleton_instance() {
 void TestBundledToolsManager::toolsPath_nonEmpty() {
     const auto& manager = BundledToolsManager::instance();
     const QString path = manager.toolsPath();
-    QVERIFY(!path.isEmpty());
+    QCOMPARE(path, QCoreApplication::applicationDirPath() + QStringLiteral("/tools"));
 }
 
 void TestBundledToolsManager::scriptsPath_nonEmpty() {
     const auto& manager = BundledToolsManager::instance();
     const QString path = manager.scriptsPath();
-    QVERIFY(!path.isEmpty());
+    QCOMPARE(path, QCoreApplication::applicationDirPath() + QStringLiteral("/scripts"));
 }
 
 void TestBundledToolsManager::psModulePath_nonEmpty() {
     const auto& manager = BundledToolsManager::instance();
     const QString path = manager.psModulePath(QStringLiteral("SomeModule"));
-    QVERIFY(!path.isEmpty());
+    QCOMPARE(path,
+             QCoreApplication::applicationDirPath() +
+                 QStringLiteral("/tools/ps_modules/SomeModule"));
 }
 
 void TestBundledToolsManager::scriptPath_nonEmpty() {
     const auto& manager = BundledToolsManager::instance();
     const QString path = manager.scriptPath(QStringLiteral("test_script.ps1"));
-    QVERIFY(!path.isEmpty());
+    QCOMPARE(path,
+             QCoreApplication::applicationDirPath() + QStringLiteral("/scripts/test_script.ps1"));
 }
 
 void TestBundledToolsManager::toolPath_nonEmpty() {
     const auto& manager = BundledToolsManager::instance();
     const QString path = manager.toolPath(QStringLiteral("sysinternals"),
                                           QStringLiteral("PsExec.exe"));
-    QVERIFY(!path.isEmpty());
+    QCOMPARE(path,
+             QCoreApplication::applicationDirPath() +
+                 QStringLiteral("/tools/sysinternals/PsExec.exe"));
 }
 
 void TestBundledToolsManager::toolExists_nonExistent() {
@@ -82,8 +87,9 @@ void TestBundledToolsManager::moduleExists_nonExistent() {
 void TestBundledToolsManager::getModuleImportCommand_format() {
     const auto& manager = BundledToolsManager::instance();
     const QString command = manager.getModuleImportCommand(QStringLiteral("PSWindowsUpdate"));
-    QVERIFY(!command.isEmpty());
-    QVERIFY(command.contains(QStringLiteral("PSWindowsUpdate")));
+    QCOMPARE(command,
+             QStringLiteral("Import-Module '") + QCoreApplication::applicationDirPath() +
+                 QStringLiteral("/tools/ps_modules/PSWindowsUpdate' -Force"));
 }
 
 QTEST_MAIN(TestBundledToolsManager)

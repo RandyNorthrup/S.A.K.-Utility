@@ -6,25 +6,24 @@
 
 #include "sak/hardware_inventory_scanner.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QStorageInfo>
+#include <QTimeZone>
 
-#ifdef SAK_PLATFORM_WINDOWS
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <Windows.h>
 
 #include <dxgi.h>
 #include <wrl/client.h>
 #pragma comment(lib, "dxgi.lib")
-#endif
 
 namespace {
 constexpr int kScanProgressCpu = 0;
@@ -52,23 +51,22 @@ constexpr unsigned int kVendorIdNvidia = 0x10DE;
 constexpr unsigned int kVendorIdAmd = 0x1002;
 constexpr unsigned int kVendorIdIntel = 0x8086;
 
-QString classifyInterfaceType(const QString& iface, const QString& model) {
-    if (iface.contains("NVMe", Qt::CaseInsensitive) ||
-        model.contains("NVMe", Qt::CaseInsensitive)) {
-        return QStringLiteral("NVMe");
-    }
-    if (iface.contains("SCSI", Qt::CaseInsensitive) || iface.contains("IDE", Qt::CaseInsensitive)) {
-        return QStringLiteral("SATA");
-    }
-    if (iface.contains("USB", Qt::CaseInsensitive)) {
-        return QStringLiteral("USB");
-    }
-    return iface;
-}
+// MSFT_PhysicalDisk.MediaType: 3 HDD, 4 SSD, 5 SCM; 0 Unspecified.
+constexpr int kPhysicalDiskMediaHdd = 3;
+constexpr int kPhysicalDiskMediaSsd = 4;
+constexpr int kPhysicalDiskMediaScm = 5;
 
 QString classifyMediaType(const QString& interface_type,
                           const QString& model,
-                          const QString& media) {
+                          const QString& media,
+                          int physical_media_type) {
+    if (physical_media_type == kPhysicalDiskMediaSsd ||
+        physical_media_type == kPhysicalDiskMediaScm) {
+        return QStringLiteral("SSD");
+    }
+    if (physical_media_type == kPhysicalDiskMediaHdd) {
+        return QStringLiteral("HDD");
+    }
     if (interface_type == "NVMe" || model.contains("SSD", Qt::CaseInsensitive) ||
         media.contains("SSD", Qt::CaseInsensitive) ||
         media.contains("Solid", Qt::CaseInsensitive)) {
@@ -79,6 +77,102 @@ QString classifyMediaType(const QString& interface_type,
         return QStringLiteral("HDD");
     }
     return QStringLiteral("Unknown");
+}
+
+/// @brief Copy driver/display metadata from a WMI Win32_VideoController row.
+void enrichGpuFromWmi(sak::GpuInfo& gpu, const QVariantMap& wmi) {
+    gpu.driver_version = wmi.value("DriverVersion").toString().trimmed();
+    gpu.driver_date = wmi.value("DriverDate").toString().left(kWmiDatePrefixLength);
+    gpu.current_res_x = wmi.value("CurrentHorizontalResolution").toUInt();
+    gpu.current_res_y = wmi.value("CurrentVerticalResolution").toUInt();
+    gpu.refresh_rate = wmi.value("CurrentRefreshRate").toUInt();
+}
+
+/// @brief Find the WMI video-controller row whose Name matches @p name.
+///
+/// DXGI enumeration filters out software (WARP) adapters while
+/// Win32_VideoController lists every controller, so zipping the two lists by
+/// index can attach one GPU's driver metadata to a different GPU on multi-GPU
+/// systems. Matching by name attaches it to the right adapter; a null return
+/// leaves the driver fields empty rather than mis-attributing them.
+const QVariantMap* findWmiGpuByName(const QVector<QVariantMap>& wmiGpus, const QString& name) {
+    for (const auto& wmi : wmiGpus) {
+        if (wmi.value("Name").toString().trimmed().compare(name, Qt::CaseInsensitive) == 0) {
+            return &wmi;
+        }
+    }
+    return nullptr;
+}
+
+
+// Insert one {Letter, DiskIndex} mapping, dropping entries that cannot be
+// resolved to a real disk. DiskIndex is null when the partition had no matching
+// disk (never attribute an unresolved volume to disk 0), and a negative index is
+// out-of-range garbage (never wrap it into a huge uint32_t disk number).
+void insertVolumeDiskEntry(QHash<QString, uint32_t>& map, const QJsonObject& obj) {
+    const QString letter = obj.value("Letter").toString().trimmed().toUpper();
+    const QJsonValue disk = obj.value("DiskIndex");
+    if (letter.isEmpty() || disk.isNull() || !disk.isDouble() || disk.toInt() < 0) {
+        return;
+    }
+    map.insert(letter, static_cast<uint32_t>(disk.toInt()));
+}
+
+// Parse trimmed WMI JSON @p output into @p results. Returns false on a genuine
+// failure -- a JSON parse error, OR a syntactically valid but unexpected top-level
+// shape (a scalar rather than the object/array that
+// Get-CimInstance|ConvertTo-Json emits) -- so the caller flags an incomplete
+// inventory instead of silently treating an empty parse as a clean success. An
+// empty output is a valid "no instances" result and returns true.
+bool parseWmiJsonOutput(const QByteArray& output,
+                        const QString& wmiClass,
+                        QVector<QVariantMap>& results) {
+    if (output.isEmpty()) {
+        return true;
+    }
+    QJsonParseError parse_error{};
+    const QJsonDocument doc = QJsonDocument::fromJson(output, &parse_error);
+    if (parse_error.error != QJsonParseError::NoError) {
+        sak::logError("WMI JSON parse error for class {}: {}",
+                      wmiClass.toStdString(),
+                      parse_error.errorString().toStdString());
+        return false;
+    }
+    if (!doc.isObject() && !doc.isArray()) {
+        sak::logError("WMI query for class {} returned an unexpected JSON shape",
+                      wmiClass.toStdString());
+        return false;
+    }
+    results = sak::HardwareInventoryScanner::jsonDocToVariantMaps(doc);
+    return true;
+}
+
+/// @brief Map a DXGI vendor ID to a human-readable manufacturer name.
+QString dxgiVendorName(unsigned int vendor_id) {
+    switch (vendor_id) {
+    case kVendorIdNvidia:
+        return QStringLiteral("NVIDIA");
+    case kVendorIdAmd:
+        return QStringLiteral("AMD");
+    case kVendorIdIntel:
+        return QStringLiteral("Intel");
+    default:
+        return QStringLiteral("Unknown");
+    }
+}
+
+/// @brief Fill a GpuInfo from a (non-null) DXGI adapter.
+/// @return false if the adapter description is unreadable or is a software
+///         (WARP) adapter that should be skipped.
+bool tryBuildGpuFromAdapter(IDXGIAdapter1* adapter, sak::GpuInfo& out) {
+    DXGI_ADAPTER_DESC1 desc{};
+    if (!SUCCEEDED(adapter->GetDesc1(&desc)) || ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0u)) {
+        return false;
+    }
+    out.name = QString::fromWCharArray(desc.Description);
+    out.vram_bytes = desc.DedicatedVideoMemory;
+    out.manufacturer = dxgiVendorName(desc.VendorId);
+    return true;
 }
 
 }  // namespace
@@ -97,99 +191,116 @@ HardwareInventoryScanner::HardwareInventoryScanner(QObject* parent) : QObject(pa
 
 void HardwareInventoryScanner::scan() {
     m_cancelled.store(false, std::memory_order_relaxed);
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
 
     m_inventory = HardwareInventory{};
 
-    // CPU ---------------------------------------------------------
-    if (m_cancelled.load(std::memory_order_relaxed)) {
+    // A cancelled checkpoint must still emit a TERMINAL signal or a UI awaiting
+    // completion hangs forever: surface the cancel via errorOccurred (never a
+    // clean scanComplete-as-success) then the terminal scanComplete with partials.
+    const auto cancelled = [this]() -> bool {
+        if (!m_cancelled.load(std::memory_order_relaxed)) {
+            return false;
+        }
+        m_inventory.scan_timestamp = QDateTime::currentDateTime();
+        Q_EMIT errorOccurred(QStringLiteral("Hardware inventory scan cancelled"));
+        Q_EMIT scanComplete(m_inventory);
+        return true;
+    };
+
+    if (cancelled()) {
         return;
     }
     Q_EMIT scanProgress(kScanProgressCpu, "Scanning CPU...");
     m_inventory.cpu = queryCpu();
 
-    // Memory ------------------------------------------------------
-    if (m_cancelled.load(std::memory_order_relaxed)) {
+    if (cancelled()) {
         return;
     }
     Q_EMIT scanProgress(kScanProgressMemory, "Scanning Memory...");
     m_inventory.memory = queryMemory();
 
-    // Storage -----------------------------------------------------
-    if (m_cancelled.load(std::memory_order_relaxed)) {
+    if (cancelled()) {
         return;
     }
     Q_EMIT scanProgress(kScanProgressStorage, "Scanning Storage...");
     m_inventory.storage = queryStorage();
 
-    // GPU ---------------------------------------------------------
-    if (m_cancelled.load(std::memory_order_relaxed)) {
+    if (cancelled()) {
         return;
     }
     Q_EMIT scanProgress(kScanProgressGpu, "Scanning GPU...");
     m_inventory.gpus = queryGpu();
 
-    // Motherboard -------------------------------------------------
-    if (m_cancelled.load(std::memory_order_relaxed)) {
+    if (cancelled()) {
         return;
     }
     Q_EMIT scanProgress(kScanProgressMotherboard, "Scanning Motherboard...");
     m_inventory.motherboard = queryMotherboard();
 
-    // Battery -----------------------------------------------------
-    if (m_cancelled.load(std::memory_order_relaxed)) {
+    if (cancelled()) {
         return;
     }
     Q_EMIT scanProgress(kScanProgressBattery, "Scanning Battery...");
     m_inventory.battery = queryBattery();
 
-    // OS info -----------------------------------------------------
-    if (m_cancelled.load(std::memory_order_relaxed)) {
+    if (cancelled()) {
         return;
     }
     Q_EMIT scanProgress(kScanProgressOs, "Querying OS information...");
     queryOsInfo();
 
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-
     Q_EMIT scanProgress(kScanProgressComplete, "Scan complete");
-    Q_EMIT scanComplete(m_inventory);
-    logInfo("Hardware inventory scan completed successfully");
+    if (m_wmiQueryFailed) {
+        logWarning("Hardware inventory scan completed with at least one WMI query failure");
+    } else {
+        logInfo("Hardware inventory scan completed successfully");
+    }
+    finishScan();
 }
 
 void HardwareInventoryScanner::scanCpu() {
+    // Clear any stale cancel from a prior aborted scan: otherwise m_cancelled
+    // stays true, wmiQuery's process is torn down as "cancelled", and finishScan
+    // reports an empty inventory as a clean success (fail-open).
+    m_cancelled.store(false, std::memory_order_relaxed);
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
     m_inventory.cpu = queryCpu();
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-    Q_EMIT scanComplete(m_inventory);
+    finishScan();
 }
 
 void HardwareInventoryScanner::scanMemory() {
+    m_cancelled.store(false, std::memory_order_relaxed);
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
     m_inventory.memory = queryMemory();
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-    Q_EMIT scanComplete(m_inventory);
+    finishScan();
 }
 
 void HardwareInventoryScanner::scanStorage() {
+    m_cancelled.store(false, std::memory_order_relaxed);
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
     m_inventory.storage = queryStorage();
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-    Q_EMIT scanComplete(m_inventory);
+    finishScan();
 }
 
 void HardwareInventoryScanner::scanGpu() {
+    m_cancelled.store(false, std::memory_order_relaxed);
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
     m_inventory.gpus = queryGpu();
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-    Q_EMIT scanComplete(m_inventory);
+    finishScan();
 }
 
 void HardwareInventoryScanner::scanBattery() {
+    m_cancelled.store(false, std::memory_order_relaxed);
+    m_wmiQueryFailed = false;
     Q_EMIT scanStarted();
     m_inventory.battery = queryBattery();
-    m_inventory.scan_timestamp = QDateTime::currentDateTime();
-    Q_EMIT scanComplete(m_inventory);
+    finishScan();
 }
 
 void HardwareInventoryScanner::cancel() {
@@ -201,18 +312,54 @@ void HardwareInventoryScanner::cancel() {
 // WMI Helper
 // ============================================================================
 
+uint64_t HardwareInventoryScanner::uptimeSecondsSinceBoot(const QString& boot_time,
+                                                          const QDateTime& now) {
+    // The boot time, not GetTickCount64, so uptime includes sleep and hibernation. Windows
+    // PowerShell's ConvertTo-Json writes a date as "/Date(ms)/", which the CIM-only parse turned
+    // into 0, and every PC showed "0 min".
+    static const QRegularExpression json_date(QStringLiteral(R"(^/Date\((-?\d+)\)/$)"));
+    QDateTime boot;
+    if (const auto match = json_date.match(boot_time); match.hasMatch()) {
+        boot = QDateTime::fromMSecsSinceEpoch(match.captured(1).toLongLong(), QTimeZone::UTC);
+    } else {
+        constexpr int kCimDateTimeSecondsWidth = 14;  // yyyyMMddHHmmss
+        if (boot_time.size() >= kCimDateTimeSecondsWidth) {
+            boot = QDateTime::fromString(boot_time.left(kCimDateTimeSecondsWidth),
+                                         QStringLiteral("yyyyMMddHHmmss"));
+        }
+    }
+    if (!boot.isValid()) {
+        return 0;
+    }
+    const qint64 secs = boot.secsTo(now);
+    return secs > 0 ? static_cast<uint64_t>(secs) : 0;
+}
+
 QVector<QVariantMap> HardwareInventoryScanner::wmiQuery(const QString& wmi_class,
                                                         const QStringList& properties,
-                                                        int timeout_ms) {
+                                                        int timeout_ms,
+                                                        const QString& cim_namespace) {
     const QString prop_list = properties.join(", ");
+    const QString namespace_arg =
+        cim_namespace.isEmpty() ? QString() : QStringLiteral("-Namespace %1 ").arg(cim_namespace);
     const QString ps_command = QString(
-                                   "Get-CimInstance -ClassName %1 | "
+                                   "Get-CimInstance %3-ClassName %1 | "
                                    "Select-Object %2 | "
                                    "ConvertTo-Json -Compress")
-                                   .arg(wmi_class, prop_list);
+                                   .arg(wmi_class, prop_list, namespace_arg);
+
+    // Shared resolver: the System32-qualified interpreter, empty when unresolvable so
+    // this query aborts instead of letting CreateProcess search PATH/CWD.
+    const QString ps_exe = sak::systemPowerShellPath();
+    if (ps_exe.isEmpty()) {
+        logError("WMI query for class {} aborted: system powershell.exe not resolvable",
+                 wmi_class.toStdString());
+        m_wmiQueryFailed = true;
+        return {};
+    }
 
     const auto result =
-        sak::runProcess(QStringLiteral("powershell.exe"),
+        sak::runProcess(ps_exe,
                         {QStringLiteral("-NoProfile"),
                          QStringLiteral("-NoLogo"),
                          QStringLiteral("-Command"),
@@ -220,34 +367,41 @@ QVector<QVariantMap> HardwareInventoryScanner::wmiQuery(const QString& wmi_class
                         timeout_ms,
                         [this]() { return m_cancelled.load(std::memory_order_relaxed); });
 
+    bool parse_failed = false;
+    QVector<QVariantMap> results;
+
     if (result.timed_out) {
         logError("WMI query timed out for class {}", wmi_class.toStdString());
-        return {};
-    }
-
-    if (result.exit_code != 0 || result.cancelled) {
+    } else if (result.exit_code != 0 || result.cancelled) {
         logError("WMI query failed for class {} (exit code {})",
                  wmi_class.toStdString(),
                  result.exit_code);
-        return {};
+    } else {
+        parse_failed = !parseWmiJsonOutput(result.std_out.toUtf8().trimmed(), wmi_class, results);
     }
 
-    const QByteArray output = result.std_out.toUtf8().trimmed();
-    if (output.isEmpty()) {
-        return {};
+    // Record a genuine failure so scan() can report an incomplete inventory
+    // instead of a silent success. An empty-but-successful result is fine.
+    if (wmiQueryIsReportableFailure(
+            result.timed_out, result.cancelled, result.exit_code, parse_failed)) {
+        m_wmiQueryFailed = true;
     }
 
-    QJsonParseError parse_error{};
-    const QJsonDocument doc = QJsonDocument::fromJson(output, &parse_error);
-    if (parse_error.error != QJsonParseError::NoError) {
-        logError("WMI JSON parse error for class {}: {}",
-                 wmi_class.toStdString(),
-                 parse_error.errorString().toStdString());
-        return {};
-    }
+    return results;
+}
 
+bool HardwareInventoryScanner::wmiQueryIsReportableFailure(bool timedOut,
+                                                           bool cancelled,
+                                                           int exitCode,
+                                                           bool jsonParseFailed) {
+    if (cancelled) {
+        return false;  // user aborted the scan -- not a data-integrity failure
+    }
+    return timedOut || exitCode != 0 || jsonParseFailed;
+}
+
+QVector<QVariantMap> HardwareInventoryScanner::jsonDocToVariantMaps(const QJsonDocument& doc) {
     QVector<QVariantMap> results;
-
     if (doc.isArray()) {
         const QJsonArray arr = doc.array();
         results.reserve(arr.size());
@@ -257,11 +411,25 @@ QVector<QVariantMap> HardwareInventoryScanner::wmiQuery(const QString& wmi_class
             }
         }
     } else if (doc.isObject()) {
-        // Single result comes back as an object, not an array
+        // A single result comes back as an object, not an array.
         results.append(doc.object().toVariantMap());
     }
-
     return results;
+}
+
+void HardwareInventoryScanner::finishScan() {
+    m_inventory.scan_timestamp = QDateTime::currentDateTime();
+    if (m_cancelled.load(std::memory_order_relaxed)) {
+        // A cancel observed during a single-component scan (the full scan() runs
+        // its own cancel checkpoints and returns before here) must surface as a
+        // terminal error, never a clean scanComplete-as-success over data the
+        // query was torn down mid-read.
+        Q_EMIT errorOccurred(QStringLiteral("Hardware inventory scan cancelled"));
+    } else if (m_wmiQueryFailed) {
+        Q_EMIT errorOccurred(
+            "One or more hardware queries failed; the inventory may be incomplete.");
+    }
+    Q_EMIT scanComplete(m_inventory);
 }
 
 // ============================================================================
@@ -284,7 +452,11 @@ CpuInfo HardwareInventoryScanner::queryCpu() {
                                    "LoadPercentage"});
 
     if (results.isEmpty()) {
+        // Every system has a processor: an empty Win32_Processor result with a
+        // clean exit is a failed query, not a legitimately empty class. Flag it so
+        // the scan reports an incomplete inventory instead of a silent success.
         logWarning("No CPU information returned from WMI");
+        m_wmiQueryFailed = true;
         return info;
     }
 
@@ -316,10 +488,10 @@ CpuInfo HardwareInventoryScanner::queryCpu() {
         break;
     }
 
-    // Base clock: WMI doesn't distinguish base vs boost reliably;
-    // MaxClockSpeed is the advertised max. For base, query CurrentClockSpeed
-    // fallback but it changes with power states.
-    info.base_clock_mhz = info.max_clock_mhz;
+    // Base clock is not exposed reliably via WMI: MaxClockSpeed is the advertised
+    // max and CurrentClockSpeed swings with power state. Leave base_clock_mhz at 0
+    // (unknown) rather than fabricate it from the max, which would misreport the
+    // max frequency as the base.
 
     logInfo("CPU detected: {} ({} cores / {} threads)",
             info.name.toStdString(),
@@ -333,14 +505,16 @@ MemorySummary HardwareInventoryScanner::queryMemory() {
     MemorySummary summary;
 
     // Global memory status from Windows API
-#ifdef SAK_PLATFORM_WINDOWS
     MEMORYSTATUSEX mem_status{};
     mem_status.dwLength = sizeof(mem_status);
-    if (GlobalMemoryStatusEx(&mem_status)) {
+    if (GlobalMemoryStatusEx(&mem_status) != 0) {
         summary.total_bytes = mem_status.ullTotalPhys;
         summary.available_bytes = mem_status.ullAvailPhys;
+    } else {
+        logWarning("GlobalMemoryStatusEx failed ({}); total/available memory unknown",
+                   GetLastError());
+        m_wmiQueryFailed = true;
     }
-#endif
 
     // Per-module info from WMI
     const auto results = wmiQuery("Win32_PhysicalMemory",
@@ -362,12 +536,13 @@ MemorySummary HardwareInventoryScanner::queryMemory() {
 
     summary.slots_used = static_cast<uint32_t>(summary.modules.size());
 
-    // Total memory slots from Win32_PhysicalMemoryArray
+    // Total memory slots from Win32_PhysicalMemoryArray. If the query returns
+    // nothing, leave slots_total at 0 (unknown) rather than fabricating it from
+    // slots_used -- wmiQuery already flags a genuine query failure so an
+    // incomplete inventory is surfaced instead of a fake "all slots populated".
     const auto array_results = wmiQuery("Win32_PhysicalMemoryArray", {"MemoryDevices"});
     if (!array_results.isEmpty()) {
         summary.slots_total = array_results.first().value("MemoryDevices").toUInt();
-    } else {
-        summary.slots_total = summary.slots_used;
     }
 
     logInfo("Memory: {} GB total, {}/{} slots used",
@@ -430,7 +605,62 @@ MemoryModuleInfo HardwareInventoryScanner::parseMemoryModule(const QVariantMap& 
     return module;
 }
 
+QString HardwareInventoryScanner::storageBusName(int bus_type) {
+    // STORAGE_BUS_TYPE (winioctl.h), which MSFT_PhysicalDisk.BusType carries.
+    static const QHash<int, QString> kNames{{1, QStringLiteral("SCSI")},
+                                            {2, QStringLiteral("ATAPI")},
+                                            {3, QStringLiteral("ATA")},
+                                            {4, QStringLiteral("IEEE 1394")},
+                                            {5, QStringLiteral("SSA")},
+                                            {6, QStringLiteral("Fibre Channel")},
+                                            {7, QStringLiteral("USB")},
+                                            {8, QStringLiteral("RAID")},
+                                            {9, QStringLiteral("iSCSI")},
+                                            {10, QStringLiteral("SAS")},
+                                            {11, QStringLiteral("SATA")},
+                                            {12, QStringLiteral("SD")},
+                                            {13, QStringLiteral("MMC")},
+                                            {15, QStringLiteral("Virtual")},
+                                            {16, QStringLiteral("Storage Spaces")},
+                                            {17, QStringLiteral("NVMe")},
+                                            {18, QStringLiteral("SCM")},
+                                            {19, QStringLiteral("UFS")}};
+    return kNames.value(bus_type);
+}
+
+QString HardwareInventoryScanner::storageInterfaceName(const QString& bus_name,
+                                                       const QString& wmi_interface) {
+    return bus_name.isEmpty() ? wmi_interface.trimmed() : bus_name;
+}
+
 QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage() {
+    QVector<StorageDeviceInfo> devices = queryPhysicalDisks();
+    // Enrich with partition/volume info from Qt
+    enrichStorageWithVolumeInfo(devices);
+    logInfo(
+        "Storage: {} detected",
+        countOf(devices.size(), QStringLiteral("device"), QStringLiteral("devices")).toStdString());
+    return devices;
+}
+
+QVector<StorageDeviceInfo> HardwareInventoryScanner::queryPhysicalDisks() {
+    // The bus and media as Windows' storage stack knows them, by disk number. A standard user may
+    // read MSFT_PhysicalDisk; a disk missing from it keeps Win32_DiskDrive's own words.
+    QHash<uint32_t, QPair<int, int>> physical;
+    for (const auto& disk : wmiQuery(
+             QStringLiteral("MSFT_PhysicalDisk"),
+             {QStringLiteral("DeviceId"), QStringLiteral("BusType"), QStringLiteral("MediaType")},
+             sak::kTimeoutProcessMediumMs,
+             QStringLiteral("root/Microsoft/Windows/Storage"))) {
+        bool numeric = false;
+        const uint32_t number = disk.value(QStringLiteral("DeviceId")).toString().toUInt(&numeric);
+        if (numeric) {
+            physical.insert(number,
+                            {disk.value(QStringLiteral("BusType")).toInt(),
+                             disk.value(QStringLiteral("MediaType")).toInt()});
+        }
+    }
+
     const auto results = wmiQuery("Win32_DiskDrive",
                                   {"Model",
                                    "SerialNumber",
@@ -451,40 +681,121 @@ QVector<StorageDeviceInfo> HardwareInventoryScanner::queryStorage() {
         dev.firmware_version = disk.value("FirmwareRevision").toString().trimmed();
         dev.disk_number = disk.value("Index").toUInt();
 
-        const QString iface = disk.value("InterfaceType").toString().trimmed();
-        dev.interface_type = classifyInterfaceType(iface, dev.model);
+        const auto known = physical.value(dev.disk_number, {0, 0});
+        dev.interface_type = storageInterfaceName(storageBusName(known.first),
+                                                  disk.value("InterfaceType").toString());
 
         const QString media = disk.value("MediaType").toString();
-        dev.media_type = classifyMediaType(dev.interface_type, dev.model, media);
+        dev.media_type = classifyMediaType(dev.interface_type, dev.model, media, known.second);
 
         devices.append(dev);
     }
-
-    // Enrich with partition/volume info from Qt
-    enrichStorageWithVolumeInfo(devices);
-
-    logInfo("Storage: {} device(s) detected", devices.size());
     return devices;
 }
 
 void HardwareInventoryScanner::enrichStorageWithVolumeInfo(QVector<StorageDeviceInfo>& devices) {
     const auto volumes = QStorageInfo::mountedVolumes();
+    const auto volume_disk_map = queryVolumeDiskMap();
+    if (volume_disk_map.isEmpty() && !devices.isEmpty()) {
+        logWarning("No volume-to-disk mapping available; partitions left unassigned");
+    }
     for (auto& dev : devices) {
-        enrichDeviceWithVolumes(dev, volumes);
+        enrichDeviceWithVolumes(dev, volumes, volume_disk_map);
     }
 }
 
-void HardwareInventoryScanner::enrichDeviceWithVolumes(StorageDeviceInfo& dev,
-                                                       const QList<QStorageInfo>& volumes) {
+QHash<QString, uint32_t> HardwareInventoryScanner::queryVolumeDiskMap() {
+    // Build "C:" -> physical disk index by chaining the two WMI association
+    // classes: Win32_LogicalDiskToPartition (letter <-> partition) and
+    // Win32_DiskPartition.DiskIndex (partition -> disk). Association-class
+    // references carry only key properties, so join by partition DeviceID.
+    const QString script = QStringLiteral(
+        "$p=@{};"
+        "Get-CimInstance Win32_DiskPartition|"
+        "ForEach-Object{$p[$_.DeviceID]=$_.DiskIndex};"
+        "Get-CimInstance Win32_LogicalDiskToPartition|"
+        "ForEach-Object{[PSCustomObject]@{"
+        "Letter=$_.Dependent.DeviceID;"
+        "DiskIndex=$p[$_.Antecedent.DeviceID]}}|"
+        "ConvertTo-Json -Compress");
+
+    const QString ps_exe = sak::systemPowerShellPath();
+    if (ps_exe.isEmpty()) {
+        logWarning("Volume-to-disk mapping query aborted: system powershell.exe not resolvable");
+        m_wmiQueryFailed = true;
+        return {};
+    }
+
+    const auto result =
+        sak::runProcess(ps_exe,
+                        {QStringLiteral("-NoProfile"),
+                         QStringLiteral("-NoLogo"),
+                         QStringLiteral("-Command"),
+                         script},
+                        kDefaultWmiQueryTimeoutMs,
+                        [this]() { return m_cancelled.load(std::memory_order_relaxed); });
+
+    if (!result.succeeded()) {
+        // Flag a genuine failure (not a user cancel) so the inventory is reported
+        // incomplete instead of silently leaving partitions unassigned as if clean,
+        // matching wmiQuery's failure convention.
+        if (!result.cancelled) {
+            m_wmiQueryFailed = true;
+        }
+        logWarning("Volume-to-disk mapping query failed (exit code {})", result.exit_code);
+        return {};
+    }
+
+    return parseVolumeDiskMap(result.std_out.toUtf8().trimmed());
+}
+
+QHash<QString, uint32_t> HardwareInventoryScanner::parseVolumeDiskMap(const QByteArray& json) {
+    QHash<QString, uint32_t> map;
+    if (json.isEmpty()) {
+        return map;
+    }
+
+    QJsonParseError parse_error{};
+    const QJsonDocument doc = QJsonDocument::fromJson(json, &parse_error);
+    if (parse_error.error != QJsonParseError::NoError) {
+        return map;
+    }
+
+    if (doc.isArray()) {
+        const QJsonArray arr = doc.array();
+        for (const auto& val : arr) {
+            if (val.isObject()) {
+                insertVolumeDiskEntry(map, val.toObject());
+            }
+        }
+    } else if (doc.isObject()) {
+        // A single mapping comes back as an object, not an array.
+        insertVolumeDiskEntry(map, doc.object());
+    }
+
+    return map;
+}
+
+void HardwareInventoryScanner::enrichDeviceWithVolumes(
+    StorageDeviceInfo& dev,
+    const QList<QStorageInfo>& volumes,
+    const QHash<QString, uint32_t>& volumeDiskMap) {
     for (const auto& vol : volumes) {
-        // Match by checking if the volume's device contains the disk number
-        // This is a best-effort match; exact mapping requires more APIs
         if (!vol.isValid() || !vol.isReady()) {
             continue;
         }
 
         const QString root = vol.rootPath();
         if (root.isEmpty()) {
+            continue;
+        }
+
+        // Exact match: attach a volume only when its drive letter resolves to
+        // THIS physical disk. Volumes with no known mapping are skipped (fail
+        // closed) rather than attributed to an arbitrary device by size.
+        const QString letter = root.left(kDriveRootPrefixLength).toUpper();
+        const auto it = volumeDiskMap.constFind(letter);
+        if (it == volumeDiskMap.constEnd() || *it != dev.disk_number) {
             continue;
         }
 
@@ -495,22 +806,15 @@ void HardwareInventoryScanner::enrichDeviceWithVolumes(StorageDeviceInfo& dev,
         part.total_bytes = static_cast<uint64_t>(vol.bytesTotal());
         part.free_bytes = static_cast<uint64_t>(vol.bytesFree());
         part.is_boot = vol.isRoot();
-
-        // Assign volumes to the first device that has capacity
-        // (simplified; exact matching requires Win32_LogicalDiskToPartition)
-        if (dev.partitions.isEmpty() || dev.size_bytes > part.total_bytes) {
-            dev.partitions.append(part);
-        }
+        dev.partitions.append(part);
     }
 }
 
 QVector<GpuInfo> HardwareInventoryScanner::queryGpu() {
     QVector<GpuInfo> gpus;
 
-#ifdef SAK_PLATFORM_WINDOWS
     // Primary method: DXGI adapter enumeration (most accurate VRAM reporting)
     enumerateDxgiAdapters(gpus);
-#endif
 
     // Enrich with driver info from WMI
     const auto wmi_gpus = wmiQuery("Win32_VideoController",
@@ -521,15 +825,19 @@ QVector<GpuInfo> HardwareInventoryScanner::queryGpu() {
                                     "CurrentVerticalResolution",
                                     "CurrentRefreshRate"});
 
-    for (int i = 0; i < gpus.size() && i < wmi_gpus.size(); ++i) {
-        gpus[i].driver_version = wmi_gpus[i].value("DriverVersion").toString().trimmed();
-        gpus[i].driver_date = wmi_gpus[i].value("DriverDate").toString().left(kWmiDatePrefixLength);
-        gpus[i].current_res_x = wmi_gpus[i].value("CurrentHorizontalResolution").toUInt();
-        gpus[i].current_res_y = wmi_gpus[i].value("CurrentVerticalResolution").toUInt();
-        gpus[i].refresh_rate = wmi_gpus[i].value("CurrentRefreshRate").toUInt();
+    // Attach WMI driver metadata to the matching adapter BY NAME, not by array
+    // index: DXGI skips software adapters while Win32_VideoController lists all,
+    // so a positional zip can bind one GPU's driver info to a different GPU on
+    // multi-GPU systems. No name match -> driver fields stay empty (fail closed).
+    for (auto& gpu : gpus) {
+        const QVariantMap* match = findWmiGpuByName(wmi_gpus, gpu.name);
+        if (match != nullptr) {
+            enrichGpuFromWmi(gpu, *match);
+        }
     }
 
-    // Fallback: if DXGI returned nothing, use WMI only
+    // If DXGI enumerated no hardware adapter, WMI is the only remaining source
+    // (not an error-masking fallback -- it is a distinct enumeration path).
     if (gpus.isEmpty()) {
         for (const auto& wmi_gpu : wmi_gpus) {
             GpuInfo gpu;
@@ -543,49 +851,40 @@ QVector<GpuInfo> HardwareInventoryScanner::queryGpu() {
         }
     }
 
-    logInfo("GPU: {} adapter(s) detected", gpus.size());
+    logInfo(
+        "GPU: {} detected",
+        countOf(gpus.size(), QStringLiteral("adapter"), QStringLiteral("adapters")).toStdString());
     return gpus;
 }
 
 void HardwareInventoryScanner::enumerateDxgiAdapters(QVector<GpuInfo>& gpus) {
-#ifdef SAK_PLATFORM_WINDOWS
     Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
     if (!SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
         return;
     }
 
     Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
-    for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
-        DXGI_ADAPTER_DESC1 desc{};
-        if (!SUCCEEDED(adapter->GetDesc1(&desc)) || (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)) {
-            adapter.Reset();
-            continue;
+    for (UINT i = 0;; ++i) {
+        const HRESULT hr = factory->EnumAdapters1(i, &adapter);
+        if (hr == DXGI_ERROR_NOT_FOUND) {
+            break;  // enumerated every adapter
+        }
+        // Any other failure leaves `adapter` unpopulated -- stop rather than
+        // dereference a null ComPtr (GetDesc1 would crash). The old loop only
+        // broke on NOT_FOUND, so an error HRESULT fell through to the deref.
+        if (FAILED(hr) || (adapter == nullptr)) {
+            logWarning("DXGI EnumAdapters1 failed at index {} (hr {:#x})",
+                       i,
+                       static_cast<unsigned long>(hr));
+            break;
         }
 
         GpuInfo gpu;
-        gpu.name = QString::fromWCharArray(desc.Description);
-        gpu.vram_bytes = desc.DedicatedVideoMemory;
-
-        // Determine manufacturer from vendor ID
-        switch (desc.VendorId) {
-        case kVendorIdNvidia:
-            gpu.manufacturer = "NVIDIA";
-            break;
-        case kVendorIdAmd:
-            gpu.manufacturer = "AMD";
-            break;
-        case kVendorIdIntel:
-            gpu.manufacturer = "Intel";
-            break;
-        default:
-            gpu.manufacturer = "Unknown";
-            break;
+        if (tryBuildGpuFromAdapter(adapter.Get(), gpu)) {
+            gpus.append(gpu);
         }
-
-        gpus.append(gpu);
         adapter.Reset();
     }
-#endif
 }
 
 MotherboardInfo HardwareInventoryScanner::queryMotherboard() {
@@ -614,10 +913,14 @@ MotherboardInfo HardwareInventoryScanner::queryMotherboard() {
     return info;
 }
 
-#ifdef SAK_PLATFORM_WINDOWS
 bool HardwareInventoryScanner::queryBatteryPowerStatus(BatteryInfo& info) {
     SYSTEM_POWER_STATUS power_status{};
-    if (!GetSystemPowerStatus(&power_status)) {
+    if (GetSystemPowerStatus(&power_status) == 0) {
+        // Do not swallow the failure silently: log it, then continue to the WMI
+        // Win32_Battery query (the authoritative presence source) rather than
+        // asserting a battery state we could not read.
+        logWarning("GetSystemPowerStatus failed ({}); AC/battery state from API unavailable",
+                   GetLastError());
         return true;
     }
 
@@ -633,30 +936,31 @@ bool HardwareInventoryScanner::queryBatteryPowerStatus(BatteryInfo& info) {
                                  ? 0
                                  : power_status.BatteryLifeTime / sak::kSecondsPerMinute;
 
-    switch (power_status.ACLineStatus) {
-    case 0:
-        info.status = "Discharging";
-        break;
-    case 1:
-        info.status = "Charging";
-        break;
-    default:
+    // Charging is the battery's own flag. ACLineStatus says only that a charger is connected,
+    // and a full battery on a charger is not charging.
+    constexpr BYTE kChargingFlag = 8;
+    constexpr BYTE kUnknownBatteryStatus = 255;
+    if (power_status.BatteryFlag == kUnknownBatteryStatus) {
         info.status = "Unknown";
-        break;
+    } else if ((power_status.BatteryFlag & kChargingFlag) != 0) {
+        info.status = "Charging";
+    } else if (power_status.ACLineStatus == 1) {
+        info.status = "On AC power";
+    } else if (power_status.ACLineStatus == 0) {
+        info.status = "Discharging";
+    } else {
+        info.status = "Unknown";
     }
 
     return true;
 }
-#endif
 
 BatteryInfo HardwareInventoryScanner::queryBattery() {
     BatteryInfo info;
 
-#ifdef SAK_PLATFORM_WINDOWS
     if (!queryBatteryPowerStatus(info)) {
         return info;
     }
-#endif
 
     const auto batteries = wmiQuery("Win32_Battery",
                                     {"Name",
@@ -675,6 +979,7 @@ BatteryInfo HardwareInventoryScanner::queryBattery() {
             info.health_percent = (static_cast<double>(info.full_charge_capacity) /
                                    static_cast<double>(info.design_capacity)) *
                                   sak::kPercentMaxF;
+            info.health_known = true;
         }
     }
 
@@ -691,7 +996,11 @@ void HardwareInventoryScanner::queryOsInfo() {
                  {"Caption", "Version", "BuildNumber", "OSArchitecture", "LastBootUpTime"});
 
     if (results.isEmpty()) {
+        // The host always runs an OS: an empty Win32_OperatingSystem result with a
+        // clean exit is a failed query. Flag it so the scan reports an incomplete
+        // inventory rather than a silent success with blank OS fields.
         logWarning("No OS information returned from WMI");
+        m_wmiQueryFailed = true;
         return;
     }
 
@@ -704,10 +1013,11 @@ void HardwareInventoryScanner::queryOsInfo() {
     const QString version_string = os.value("Version").toString().trimmed();
     m_inventory.os_version = version_string;
 
-    // Uptime: parse LastBootUpTime (CIM_DATETIME format) or use GetTickCount64
-#ifdef SAK_PLATFORM_WINDOWS
-    m_inventory.uptime_seconds = GetTickCount64() / sak::kMillisecondsPerSecond;
-#endif
+    // Uptime from the queried LastBootUpTime (CIM_DATETIME) so it reflects
+    // wall-clock uptime including sleep/hibernate, unlike GetTickCount64. Fails
+    // closed to 0 (unknown) when the boot time is missing/unparseable.
+    m_inventory.uptime_seconds = uptimeSecondsSinceBoot(
+        os.value("LastBootUpTime").toString().trimmed(), QDateTime::currentDateTime());
 
     logInfo("OS: {} (Build {})",
             m_inventory.os_name.toStdString(),

@@ -87,8 +87,9 @@ Latest host-side package/live harness pass:
 `artifacts\ai-assistant-vm-smoke\run-20260604-060003\ai-assistant-vm-smoke-report.json`.
 It covered targeted AI CTest, live OpenAI plain response and function tool-loop,
 portable startup smoke, runtime accessibility audit, and the smoke checklist.
-The latest local quality pass also completed a full Release build and full CTest
-run: 136/136 tests passed.
+That same 2026-06-04 pass also completed a full Release build and full CTest run,
+136/136 on the day. The current registered count is the CTest registration itself
+(`ctest -N`); no document carries it.
 The current workflow runner uses a per-subagent OpenAI model-client factory and
 a conservative three-subagent production cap, so workflow-declared read-only
 delegates can run in parallel without sharing one Responses client instance.
@@ -126,10 +127,6 @@ Expected:
 - Confirm the header exposes background agent activity as active/completed.
 - Confirm the composer exposes exact `Ctx: x/y` context usage immediately to
   the left of Send for the selected model.
-- Confirm the right-side Session role is plain text, not a dropdown. Selecting a
-  workflow updates it before Add; first prompt inference handles no-workflow
-  chats; explicit requests such as `act as a report writer` change it for later
-  turns.
 
 ## Harmless SAK Tool Smoke
 

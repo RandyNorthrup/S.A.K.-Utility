@@ -6,6 +6,8 @@
 
 #include "sak/partition_operation_planner.h"
 
+#include "sak/format_utils.h"
+
 #include <QHash>
 
 #include <initializer_list>
@@ -159,18 +161,30 @@ OperationRisk riskForType(PartitionOperationType type) {
     return kRisks.value(static_cast<int>(type), OperationRisk::Low);
 }
 
+// The type alone does not decide the risk of a file-system check: a Windows check is a scan,
+// but the non-Windows check queues the bundled tool's REPAIR (fsck/e2fsck/fsck_hfs/APFS repair),
+// which rewrites metadata. Classifying that as read-only showed a repair as "Read-only" in the
+// Apply review and would have let it bypass the queue.
+OperationRisk riskForOperation(PartitionOperationType type, const QJsonObject& payload) {
+    if (type == PartitionOperationType::CheckFileSystem &&
+        payload.value(QStringLiteral("non_native_file_system_tool")).toBool(false)) {
+        return OperationRisk::Destructive;
+    }
+    return riskForType(type);
+}
+
 QString targetSummary(const PartitionTarget& target) {
     switch (target.kind) {
     case PartitionTargetKind::Disk:
-        return QStringLiteral("Disk %1").arg(target.disk_number);
+        return QStringLiteral("Disk %1").arg(target.disk_number.value());
     case PartitionTargetKind::Partition:
     case PartitionTargetKind::Volume:
         return QStringLiteral("Disk %1 Partition %2")
-            .arg(target.disk_number)
-            .arg(target.partition_number);
+            .arg(target.disk_number.value())
+            .arg(target.partition_number.value());
     case PartitionTargetKind::Unallocated:
         return QStringLiteral("Disk %1 unallocated region at %2")
-            .arg(target.disk_number)
+            .arg(target.disk_number.value())
             .arg(formatPartitionBytes(target.offset_bytes));
     }
     return QStringLiteral("Unknown target");
@@ -194,10 +208,12 @@ OperationPreview PartitionOperationPlanner::previewOperation(const PartitionInve
     preview.warnings.append(validation.warnings);
 
     expandCompositeOperation(operation, &preview);
-    preview.after_layout_description =
-        preview.operations.isEmpty()
-            ? QStringLiteral("No operation planned")
-            : QStringLiteral("%1 operation(s) queued").arg(preview.operations.size());
+    preview.after_layout_description = preview.operations.isEmpty()
+                                           ? QStringLiteral("No operation planned")
+                                           : QStringLiteral("%1 queued")
+                                                 .arg(countOf(preview.operations.size(),
+                                                              QStringLiteral("operation"),
+                                                              QStringLiteral("operations")));
     return preview;
 }
 
@@ -209,18 +225,18 @@ PartitionOperation PartitionOperationPlanner::makeOperation(PartitionOperationTy
     operation.type = type;
     operation.target = target;
     operation.payload = payload;
-    operation.risk = riskForType(type);
+    operation.risk = riskForOperation(type, payload);
     return operation;
 }
 
-void PartitionOperationPlanner::fillRiskAndSummary(PartitionOperation* operation) const {
-    operation->risk = riskForType(operation->type);
+void PartitionOperationPlanner::fillRiskAndSummary(PartitionOperation* operation) {
+    operation->risk = riskForOperation(operation->type, operation->payload);
     operation->summary = QStringLiteral("%1 - %2").arg(toDisplayString(operation->type),
                                                        targetSummary(operation->target));
 }
 
 void PartitionOperationPlanner::expandCompositeOperation(const PartitionOperation& operation,
-                                                         OperationPreview* preview) const {
+                                                         OperationPreview* preview) {
     preview->operations.append(operation);
 }
 

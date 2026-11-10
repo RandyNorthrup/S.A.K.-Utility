@@ -6,11 +6,18 @@
 
 #pragma once
 
+// sak::AdapterAdminOutcome -- the outcome type every adapter mutation this panel launches returns.
+#include "sak/network_adapter_admin.h"
 #include "sak/network_diagnostic_types.h"
+#include "sak/network_reset_safeguard.h"
+#include "sak/quick_action_controller.h"
 
 #include <QComboBox>
+#include <QFuture>
 #include <QLabel>
 #include <QLineEdit>
+#include <QList>
+#include <QPair>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
@@ -19,6 +26,7 @@
 #include <QTextEdit>
 #include <QWidget>
 
+#include <expected>
 #include <functional>
 #include <memory>
 #include <type_traits>
@@ -33,20 +41,33 @@ namespace sak {
 
 class NetworkDiagnosticController;
 class LogToggleSwitch;
-class QuickAction;
-class QuickActionController;
+
+namespace ui {
+class ViewEmptyState;
+}  // namespace ui
 
 /// @brief Network Diagnostics & Troubleshooting Panel
 ///
 /// Sub-tabbed interface with adapter inspector (always visible),
 /// diagnostic tool tabs (Ping, Traceroute, MTR, DNS, Port Scan,
-/// Bandwidth, WiFi, Connections, Firewall, Shares), and report
-/// generation section.
+/// Bandwidth, WiFi, Connections, Firewall, Shares), and a Generate Report action.
+/// @brief What Diagnose opens for an adapter: its Windows troubleshooter, or the Settings page
+///        that replaces it where msdt.exe has been removed from Windows. Pure.
+struct AdapterDiagnosePlan {
+    bool use_settings{false};
+    QString settings_page;
+    QString diagnostic_id;
+};
+[[nodiscard]] AdapterDiagnosePlan adapterDiagnosePlan(const QString& adapter_type,
+                                                      bool msdt_present);
+
 class NetworkDiagnosticPanel : public QWidget {
     Q_OBJECT
 
 public:
-    explicit NetworkDiagnosticPanel(QWidget* parent = nullptr);
+    /// @param quick_actions Runs Reset Network; it must outlive the panel
+    explicit NetworkDiagnosticPanel(QuickActionController& quick_actions,
+                                    QWidget* parent = nullptr);
     ~NetworkDiagnosticPanel() override;
 
     NetworkDiagnosticPanel(const NetworkDiagnosticPanel&) = delete;
@@ -55,10 +76,8 @@ public:
     NetworkDiagnosticPanel& operator=(NetworkDiagnosticPanel&&) = delete;
 
     /// @brief Access the log toggle switch for MainWindow connection
-    [[nodiscard]] LogToggleSwitch* logToggle() const { return m_logToggle; }
 
     /// @brief Access the adapter-tab log toggle for MainWindow connection
-    [[nodiscard]] LogToggleSwitch* adapterLogToggle() const { return m_adapterLogToggle; }
 
     /// @brief Access the adapter section widget for external tab placement
     [[nodiscard]] QWidget* adapterWidget() const { return m_adapterWidget; }
@@ -92,7 +111,6 @@ private Q_SLOTS:
     void onRenewDhcpLease();
     void onOpenAdapterSettings();
     void onViewBluetoothDevices();
-    void onBridgeConnections();
 
     // Ping
     void onStartPing();
@@ -130,9 +148,11 @@ private Q_SLOTS:
 
     // Bandwidth
     void onStartBandwidthTest();
+    void onStopBandwidthTest();
     void onStartIperfServer();
     void onStopIperfServer();
     void onRunHttpSpeedTest();
+    void onStopHttpSpeedTest();
     void onBandwidthComplete(sak::BandwidthTestResult result);
     void onHttpSpeedComplete(double down, double up, double latency);
 
@@ -161,22 +181,25 @@ private Q_SLOTS:
     void onStartLanTransferServer();
     void onStopLanTransferServer();
     void onRunLanTransferTest();
-    void onLanTransferProgress(double currentMbps, double elapsedSec, qint64 totalBytes);
+    void onLanTransferProgress(double current_mbps, double elapsed_sec, qint64 total_bytes);
     void onLanTransferComplete(sak::LanTransferResult result);
 
     // Controller
-    void onStateChanged(int newState);
-    void onOperationFinished(int finishedState);
+    void onOperationFinished(int finished_state);
     void onError(QString error);
 
     // Button reset helpers for onOperationFinished
-    void resetDiagnosticButtons(int finishedState);
-    void resetToolButtons(int finishedState);
+    void resetDiagnosticButtons(int finished_state);
+    void resetToolButtons(int finished_state);
+    void setBandwidthRunButtons(bool enabled);
+    [[nodiscard]] QString noBandwidthResultText() const;
+
+    // Report
+    void onGenerateReportClicked();
 
     // Quick Action
     void onResetNetworkClicked();
-    void onResetNetworkComplete(QuickAction* action);
-    void onResetNetworkError(QuickAction* action, const QString& error);
+    void onResetNetworkFinished(const QuickAction::ExecutionResult& result);
 
 private:
     // -- UI Setup --
@@ -207,9 +230,9 @@ private:
     void setupPortScanControls(QWidget* widget, QVBoxLayout* layout);
     void setupPortScanResults(QWidget* widget, QVBoxLayout* layout);
     QWidget* createBandwidthTab();
-    void setupBandwidthIperfConfig(QWidget* widget, QVBoxLayout* iperfLayout);
-    void setupBandwidthIperfControls(QWidget* widget, QVBoxLayout* iperfLayout);
-    void setupBandwidthIperfResults(QWidget* widget, QVBoxLayout* iperfLayout);
+    void setupBandwidthIperfConfig(QWidget* widget, QVBoxLayout* iperf_layout);
+    void setupBandwidthIperfControls(QWidget* widget, QVBoxLayout* iperf_layout);
+    void setupBandwidthIperfResults(QWidget* widget, QVBoxLayout* iperf_layout);
     void setupBandwidthHttpSection(QWidget* widget, QVBoxLayout* layout);
     QWidget* createWiFiTab();
     void setupWifiControls(QWidget* widget, QVBoxLayout* layout);
@@ -250,17 +273,25 @@ private:
 
     // -- Adapter context menu helpers --
     [[nodiscard]] const NetworkAdapterInfo* selectedAdapter() const;
-    [[nodiscard]] QVector<const NetworkAdapterInfo*> selectedAdapters() const;
-    bool runNetshCommand(const QStringList& args, QString* output = nullptr);
-    void runCommandAsync(const QString& program,
-                         const QStringList& args,
-                         int timeout_ms,
-                         std::function<void(bool success, QString output)> callback);
-    void runNetshCommandAsync(const QStringList& args,
-                              std::function<void(bool success, QString output)> callback);
-    void addTypeSpecificMenuItems(QMenu& menu,
-                                  const NetworkAdapterInfo& adapter,
-                                  const QVector<const NetworkAdapterInfo*>& selected);
+    /// The adapter a backup is restored to: the only one there is, or the user's choice from a list
+    /// that starts on @p preferred. Empty if they cancel.
+    [[nodiscard]] QString chooseRestoreTarget(const QStringList& adapters,
+                                              const QString& preferred);
+    /// Restore a backup file. @p clicked_adapter is the adapter a right-click chose; from the
+    /// toolbar it is empty, and the list starts on the backed-up adapter's name, then its type.
+    void restoreEthernetSettings(const QString& clicked_adapter);
+    /// Ask before a reset, naming what it clears, from a read-only capture of every adapter.
+    void confirmResetNetwork(const std::expected<sak::NetworkSettingsCapture, QString>& capture);
+    /// "Connected", "No valid address" (only a self-assigned 169.254.x.x) or "Disconnected".
+    [[nodiscard]] QString adapterStatusText(const NetworkAdapterInfo& adapter) const;
+    // Runs ONE adapter operation from sak/network_adapter_admin.h on a worker thread and reports
+    // its outcome back on the GUI thread. This panel supplies the thread, the confirmation dialogs
+    // and the reporting; it does not build or run the command. Per the owner's R5-IDX-19b ruling
+    // the GUI points at the headless seam rather than carrying a second implementation -- the two
+    // it used to carry had already drifted apart from the ones the assistant drives.
+    void launchAdapterWork(std::function<sak::AdapterAdminOutcome()> work,
+                           std::function<void(const sak::AdapterAdminOutcome&)> report);
+    void addTypeSpecificMenuItems(QMenu& menu, const NetworkAdapterInfo& adapter);
     void buildIpConfigSubmenu(QMenu& parent, const NetworkAdapterInfo& adapter);
     void populateStatusTree(QTreeWidget* tree, const NetworkAdapterInfo& adapter);
     void populateStatusIpv4(QTreeWidget* tree, const NetworkAdapterInfo& adapter);
@@ -269,6 +300,18 @@ private:
     void addStatusCategory(QTreeWidget* tree,
                            const QString& category,
                            const QVector<QPair<QString, QString>>& items);
+    // Runs the modal static-IP entry dialog, prefilled from the adapter's current IPv4
+    // configuration. On accept, hands back the trimmed field text and returns true;
+    // returns false if the user cancelled.
+    bool promptStaticIpInput(const NetworkAdapterInfo& adapter,
+                             QString& ip,
+                             QString& mask,
+                             QString& gateway);
+    // Runs the modal rename dialog and VALIDATES the typed name with the same rule the headless
+    // network.rename_adapter action uses. Returns true, with @p new_name set, only for a name
+    // that is safe to hand to netsh; returns false on cancel, on an unchanged/empty name, and on
+    // a rejected name (having already told the user why).
+    bool promptForNewAdapterName(const QString& current_name, QString& new_name);
     void applyStaticIp(const QString& adapter_name,
                        const QString& ip,
                        const QString& mask,
@@ -297,9 +340,17 @@ private:
 
     // -- Controller --
     std::unique_ptr<NetworkDiagnosticController> m_controller;
-    QuickActionController* m_qa_controller{nullptr};
-    LogToggleSwitch* m_logToggle = nullptr;         ///< Owned by layout hierarchy
-    LogToggleSwitch* m_adapterLogToggle = nullptr;  ///< Log toggle on adapter tab
+    // The application's one quick-action controller, shared with the Backup and Restore and
+    // Diagnostics panels and the assistant; this panel reacts only to its own reset.
+    QuickActionController& m_quick_actions;
+
+    // In-flight launchAdapterWork() futures (several are MUTATING adapter admin ops). Tracked so
+    // ~NetworkDiagnosticPanel can bounded-wait any still running instead of letting the mutation
+    // run detached past teardown; each carries its own process timeout so the wait is bounded.
+    // Finished futures are pruned on each new call so this never grows unbounded.
+    QList<QFuture<sak::AdapterAdminOutcome>> m_pending_command_futures;
+
+    QPushButton* m_generateReportBtn = nullptr;  ///< Owned by layout hierarchy
 
     // All widget pointers below are owned by the Qt parent/layout hierarchy.
     // They are destroyed automatically when this panel is destroyed.
@@ -307,10 +358,11 @@ private:
     // -- Adapter UI --
     QWidget* m_adapterWidget = nullptr;
     QTableWidget* m_adapterTable = nullptr;
-    QLabel* m_detailIdentity = nullptr;    ///< Name / Description / MAC
-    QLabel* m_detailAddressing = nullptr;  ///< IPv4 / IPv6
-    QLabel* m_detailGatewayDns = nullptr;  ///< Gateways / DNS
-    QLabel* m_detailStatus = nullptr;      ///< DHCP / Speed / Status
+    ui::ViewEmptyState* m_adapterEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
+    QLabel* m_detailIdentity = nullptr;                 ///< Name / Description / MAC
+    QLabel* m_detailAddressing = nullptr;               ///< IPv4 / IPv6
+    QLabel* m_detailGatewayDns = nullptr;               ///< Gateways / DNS
+    QLabel* m_detailStatus = nullptr;                   ///< DHCP / Speed / Status
     QPushButton* m_refreshBtn = nullptr;
     QPushButton* m_copyConfigBtn = nullptr;
     QPushButton* m_backupEthernetBtn = nullptr;
@@ -327,6 +379,7 @@ private:
     QSpinBox* m_pingInterval = nullptr;
     QSpinBox* m_pingPacketSize = nullptr;
     QTableWidget* m_pingTable = nullptr;
+    ui::ViewEmptyState* m_pingEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_pingStatsLabel = nullptr;
     QPushButton* m_pingStartBtn = nullptr;
     QPushButton* m_pingStopBtn = nullptr;
@@ -335,6 +388,7 @@ private:
     QLineEdit* m_traceTarget = nullptr;
     QSpinBox* m_traceMaxHops = nullptr;
     QTableWidget* m_traceTable = nullptr;
+    ui::ViewEmptyState* m_traceEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_traceStatusLabel = nullptr;
     QPushButton* m_traceStartBtn = nullptr;
     QPushButton* m_traceStopBtn = nullptr;
@@ -343,6 +397,7 @@ private:
     QLineEdit* m_mtrTarget = nullptr;
     QSpinBox* m_mtrCycles = nullptr;
     QTableWidget* m_mtrTable = nullptr;
+    ui::ViewEmptyState* m_mtrEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_mtrStatusLabel = nullptr;
     QPushButton* m_mtrStartBtn = nullptr;
     QPushButton* m_mtrStopBtn = nullptr;
@@ -352,11 +407,12 @@ private:
     QComboBox* m_dnsRecordType = nullptr;
     QComboBox* m_dnsServer = nullptr;
     QTableWidget* m_dnsTable = nullptr;
+    ui::ViewEmptyState* m_dnsEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_dnsStatusLabel = nullptr;
-    QPushButton* m_dnsQueryBtn = nullptr;    ///< Owned by layout hierarchy
-    QPushButton* m_dnsReverseBtn = nullptr;  ///< Owned by layout hierarchy
-    QPushButton* m_dnsCompareBtn = nullptr;  ///< Owned by layout hierarchy
-    QPushButton* m_dnsFlushBtn = nullptr;    ///< Owned by layout hierarchy
+    QPushButton* m_dnsQueryBtn = nullptr;           ///< Owned by layout hierarchy
+    QPushButton* m_dnsReverseBtn = nullptr;         ///< Owned by layout hierarchy
+    QPushButton* m_dnsCompareBtn = nullptr;         ///< Owned by layout hierarchy
+    QPushButton* m_dnsFlushBtn = nullptr;           ///< Owned by layout hierarchy
 
     // -- Port Scanner UI --
     QLineEdit* m_portTarget = nullptr;
@@ -366,6 +422,7 @@ private:
     QSpinBox* m_portConcurrent = nullptr;
     QCheckBox* m_portBannerGrab = nullptr;
     QTableWidget* m_portTable = nullptr;
+    ui::ViewEmptyState* m_portEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QProgressBar* m_portProgress = nullptr;
     QLabel* m_portSummaryLabel = nullptr;
     QPushButton* m_portStartBtn = nullptr;
@@ -379,14 +436,17 @@ private:
     QCheckBox* m_bwBidirectional = nullptr;
     QLabel* m_bwResultLabel = nullptr;
     QPushButton* m_bwTestBtn = nullptr;
+    QPushButton* m_bwStopBtn = nullptr;  ///< Cancels the iPerf3 bandwidth test (R5-G20-2)
     QPushButton* m_bwServerStartBtn = nullptr;
     QPushButton* m_bwServerStopBtn = nullptr;
     QLabel* m_bwServerStatus = nullptr;
     QLabel* m_httpSpeedLabel = nullptr;
-    QPushButton* m_httpSpeedBtn = nullptr;  ///< Owned by layout hierarchy
+    QPushButton* m_httpSpeedBtn = nullptr;      ///< Owned by layout hierarchy
+    QPushButton* m_httpSpeedStopBtn = nullptr;  ///< Cancels the HTTP speed test (R5-G20-2)
 
     // -- WiFi UI --
     QTableWidget* m_wifiTable = nullptr;
+    ui::ViewEmptyState* m_wifiEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLabel* m_wifiChannelLabel = nullptr;
     QPushButton* m_wifiScanBtn = nullptr;
     QPushButton* m_wifiContBtn = nullptr;
@@ -394,6 +454,7 @@ private:
 
     // -- Connection UI --
     QTableWidget* m_connTable = nullptr;
+    ui::ViewEmptyState* m_connEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QCheckBox* m_connShowTcp = nullptr;
     QCheckBox* m_connShowUdp = nullptr;
     QLineEdit* m_connProcessFilter = nullptr;
@@ -404,6 +465,7 @@ private:
 
     // -- Firewall UI --
     QTableWidget* m_fwRuleTable = nullptr;
+    ui::ViewEmptyState* m_fwRuleEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
     QLineEdit* m_fwSearchBox = nullptr;
     QComboBox* m_fwDirFilter = nullptr;
     QComboBox* m_fwActionFilter = nullptr;
@@ -414,12 +476,13 @@ private:
     QVector<FirewallRule> m_cachedFwRules;  ///< Cached for local filtering
 
     void filterFirewallRules();
-    void populateFirewallTable(const QVector<FirewallRule>& rules);
+    void populateFirewallTable(const QVector<FirewallRule>& filtered);
 
     // -- Shares UI --
     QLineEdit* m_shareHostname = nullptr;
     QTableWidget* m_shareTable = nullptr;
-    QPushButton* m_shareDiscoverBtn = nullptr;  ///< Owned by layout hierarchy
+    ui::ViewEmptyState* m_shareEmptyState = nullptr;  ///< Empty/loading overlay (R5-G20-7)
+    QPushButton* m_shareDiscoverBtn = nullptr;        ///< Owned by layout hierarchy
 
     // -- LAN Transfer UI --
     QLineEdit* m_lanTarget = nullptr;

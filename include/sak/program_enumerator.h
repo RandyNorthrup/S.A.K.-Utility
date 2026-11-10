@@ -7,17 +7,19 @@
 #pragma once
 
 #include "sak/advanced_uninstall_types.h"
+#include "sak/process_runner.h"
 
 #include <QObject>
 #include <QVector>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <type_traits>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
+
+class TestProgramEnumerator;
 
 namespace sak {
 
@@ -29,6 +31,8 @@ namespace sak {
 class ProgramEnumerator : public QObject {
     Q_OBJECT
 
+    friend class ::TestProgramEnumerator;
+
 public:
     explicit ProgramEnumerator(QObject* parent = nullptr);
     ~ProgramEnumerator() override;
@@ -38,8 +42,25 @@ public:
     ProgramEnumerator(ProgramEnumerator&&) = delete;
     ProgramEnumerator& operator=(ProgramEnumerator&&) = delete;
 
-    /// @brief Start async enumeration of all installed programs
-    void enumerateAll();
+    /// @brief Start async enumeration of all installed programs.
+    /// @param generation An opaque token echoed back in enumerationFinished/Failed so a driver can
+    ///        drop a stale completion from a superseded (e.g. cancelled-then-restarted) run instead
+    ///        of applying its results to the new one. 0 for callers that do not track generations.
+    void enumerateAll(int generation = 0);
+
+    /// @brief Synchronously enumerate ONLY UWP + provisioned packages -- no registry scan and
+    ///        no icon/size enrichment (the slow whole-machine phases of enumerateAll). For a
+    ///        headless caller that needs the authoritative package list (with PackageFullName)
+    ///        FAST. Blocks on the two Get-AppxPackage PowerShell calls. @p scanOk is set false
+    ///        if either Appx scan failed, so an empty result reads as "scan failed", never a
+    ///        false "no packages installed".
+    [[nodiscard]] QVector<ProgramInfo> enumerateUwpPackagesSync(bool& scanOk);
+
+    /// @brief Synchronously enumerate ONLY Win32 registry programs (HKLM / HKCU / WOW64) --
+    ///        no UWP scan and no icon/size enrichment. For a headless caller that needs the
+    ///        authoritative Win32 program list (with uninstall strings) FAST. Reads the
+    ///        registry directly (no external process), deduped across hives.
+    [[nodiscard]] QVector<ProgramInfo> enumerateRegistryProgramsSync();
 
     /// @brief Request cancellation of an in-progress enumeration
     void requestCancel();
@@ -54,19 +75,49 @@ public:
     void detectOrphaned(QVector<ProgramInfo>& programs);
 
     /// @brief Mark known bloatware using pattern database
-    void markBloatware(QVector<ProgramInfo>& programs);
+    void markBloatware(QVector<ProgramInfo>& programs) const;
 
-    /// @brief Calculate actual disk usage for a program's install directory
-    [[nodiscard]] static qint64 calculateDirSize(const QString& path);
+    /// @brief Bytes under @p path, measured on demand for one selected program.
+    /// Enumeration never calls this; the list shows the registry EstimatedSize. Refuses (0) an
+    /// empty path and a remote/device path, skips symlinks, saturates instead of overflowing,
+    /// and stops early when @p should_cancel returns true. Static and thread-safe, so a panel
+    /// can run it off the GUI thread.
+    [[nodiscard]] static qint64 measureFolderBytes(const QString& path,
+                                                   const std::function<bool()>& should_cancel = {});
+
+    /// @brief True when @p path names a local folder measureFolderBytes would walk: not empty
+    ///        and not a remote (UNC) or device path. Touches nothing on disk, so it is safe to
+    ///        ask about an attacker-writable Uninstall value before offering a measurement.
+    [[nodiscard]] static bool isLocalInstallFolder(const QString& path);
+
+    /// @brief The publisher's name in a Store package's Publisher, which is the subject of the
+    ///        certificate the package was signed with ("CN=Microsoft Corporation, O=Microsoft
+    ///        Corporation, L=Redmond, ..."): the organization (O), else the common name (CN). A
+    ///        subject naming neither, or one whose CN is only an ID, comes back as it is. Pure.
+    [[nodiscard]] static QString publisherFromSubject(const QString& subject);
+
+    /// A Store package's publisher: its organisation or common name from the certificate subject
+    /// (publisherFromSubject), or, when the subject names no one (a Store ID), the manifest's
+    /// PublisherDisplayName, the name the Store and Settings show.
+    [[nodiscard]] static QString packagePublisher(const QString& subject,
+                                                  const QString& display_name);
+
+    /// A Store package's name in the list: the display name Windows resolved for it, as Settings
+    /// shows it, or the package name when Windows gives none (or only an unresolved resource
+    /// reference).
+    [[nodiscard]] static QString packageDisplayName(const QString& name,
+                                                    const QString& display_name);
 
 Q_SIGNALS:
     void enumerationStarted();
     void enumerationProgress(int current, int total);
-    void enumerationFinished(QVector<ProgramInfo> programs);
-    void enumerationFailed(const QString& error);
+    /// @p generation echoes the value passed to enumerateAll (see there); a driver compares it to
+    /// its current generation to ignore a stale, superseded run's completion.
+    void enumerationFinished(int generation, QVector<ProgramInfo> programs);
+    void enumerationFailed(int generation, const QString& error);
+    void enumerationWarning(const QString& message);
 
 private:
-#ifdef Q_OS_WIN
     /// @brief Scan Win32 programs from all registry hives
     QVector<ProgramInfo> scanRegistryPrograms();
 
@@ -77,7 +128,7 @@ private:
     void parseRegistryEntry(HKEY app_key,
                             ProgramInfo::Source source,
                             const QString& reg_path,
-                            QVector<ProgramInfo>& results);
+                            QVector<ProgramInfo>& results) const;
 
     /// @brief Read a single registry string value
     [[nodiscard]] static QString readRegString(HKEY key, const wchar_t* valueName);
@@ -87,25 +138,36 @@ private:
 
     /// @brief Check if entry is a system component (filter out)
     [[nodiscard]] static bool isSystemComponent(HKEY key);
-#endif
 
-    /// @brief Scan UWP/AppX packages via PowerShell
-    QVector<ProgramInfo> scanUwpPackages();
+    /// @brief True when an Appx/provisioned scan produced a real, parseable result. False for
+    ///        process/timeout/exit failures or unparseable output, so a failed scan is never
+    ///        mistaken for an empty success.
+    [[nodiscard]] static bool appxScanSucceeded(const ProcessResult& result);
+
+    /// @brief Scan UWP/AppX packages via PowerShell (scanOk reports scan success vs failure)
+    QVector<ProgramInfo> scanUwpPackages(bool& scanOk);
     void parseUwpPackage(const QJsonObject& obj, QVector<ProgramInfo>& results);
 
-    /// @brief Scan provisioned (all-users) UWP packages
-    QVector<ProgramInfo> scanProvisionedPackages();
+    /// @brief Scan provisioned (all-users) UWP packages (scanOk reports success vs failure)
+    QVector<ProgramInfo> scanProvisionedPackages(bool& scanOk);
+
+    /// @brief Emit enumerationWarning when either Appx scan failed (fail-closed completeness)
+    void warnIfAppxIncomplete(bool uwpOk, bool provisionedOk);
 
     /// @brief Extract icon image from executable file
     [[nodiscard]] static QImage extractIcon(const QString& path);
 
     /// @brief Deduplicate programs from multiple sources
-    void deduplicatePrograms(QVector<ProgramInfo>& programs);
+    void deduplicatePrograms(QVector<ProgramInfo>& programs) const;
+
+    /// @brief Resolve one program's icon in place: prefer its declared displayIcon, else the
+    ///        first .exe in a LOCAL install location. @p locationIsLocal is false for remote/device
+    ///        install paths, which must never be scanned (SMB auth / remote I/O).
+    void resolveProgramIcon(ProgramInfo& program, bool locationIsLocal);
 
     /// @brief Extract icons and calculate sizes for enumerated programs
     [[nodiscard]] bool enrichWithIconsAndSizes(QVector<ProgramInfo>& programs);
 
-#ifdef Q_OS_WIN
     // Registry paths
     static constexpr const wchar_t* kUninstallKey64 =
         L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
@@ -113,10 +175,12 @@ private:
         L"SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
     static constexpr const wchar_t* kUninstallKeyHKCU =
         L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
-#endif
 
     QVector<ProgramInfo> m_cachedPrograms;
     std::atomic<bool> m_cancelRequested{false};
+    // Generation of the CURRENT enumerateAll run, echoed in enumerationFinished/Failed. Written and
+    // read only on the enumeration worker thread (runs are serialized), so a plain int is safe.
+    int m_generation{0};
 };
 
 // -- Compile-Time Invariants -------------------------------------------------

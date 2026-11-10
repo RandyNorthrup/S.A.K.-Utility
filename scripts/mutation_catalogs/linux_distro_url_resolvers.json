@@ -1,0 +1,96 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_linux_distro_catalog",
+  "ctest_regex": "^test_linux_distro_catalog$",
+  "mutants": [
+    {
+      "id": "download-url-source-swapped-to-checksum",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "return substituteVersion(distro.downloadUrl, distro.version);",
+      "replace": "return substituteVersion(distro.checksumUrl, distro.version);",
+      "expect": "killed",
+      "why": "resolveDownloadUrl now returns the checksum URL instead of the ISO URL (fetch the wrong file). testResolveDownloadUrl asserts QVERIFY(url.contains(ubuntu.version)); ubuntu-desktop's checksumUrl 'https://releases.ubuntu.com/resolute/SHA256SUMS' contains no '26.04', so the assert fails."
+    },
+    {
+      "id": "download-version-field-swapped-to-label",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "substituteVersion(distro.downloadUrl, distro.version)",
+      "replace": "substituteVersion(distro.downloadUrl, distro.versionLabel)",
+      "expect": "killed",
+      "why": "the {version} placeholder is filled from versionLabel ('Resolute Raccoon (LTS)') instead of version ('26.04'). testResolveDownloadUrl QVERIFY(url.contains(ubuntu.version)) fails because the URL no longer contains '26.04'."
+    },
+    {
+      "id": "download-resolve-returns-empty",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "return substituteVersion(distro.downloadUrl, distro.version);",
+      "replace": "return {};",
+      "expect": "killed",
+      "why": "resolveDownloadUrl yields an empty URL (fail-open on the DirectURL path). testResolveDownloadUrl QVERIFY(!url.isEmpty()) fails."
+    },
+    {
+      "id": "version-placeholder-token-typo",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "result.replace(\"{version}\", version);",
+      "replace": "result.replace(\"{versionX}\", version);",
+      "expect": "killed",
+      "why": "substituteVersion searches for the non-existent token '{versionX}', so the real '{version}' placeholder is left un-substituted in every template. testResolveDownloadUrl QVERIFY(!url.contains(\"{version}\")) fails (and QVERIFY(url.contains(ubuntu.version)) also fails)."
+    },
+    {
+      "id": "version-substituted-with-empty-string",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": ".replace(\"{version}\", version)",
+      "replace": ".replace(\"{version}\", QString())",
+      "expect": "killed",
+      "why": "the {version} placeholder is replaced by an empty string instead of the real version, so the resolved URL loses '26.04'. testResolveDownloadUrl QVERIFY(url.contains(ubuntu.version)) fails."
+    },
+    {
+      "id": "checksum-empty-guard-inverted",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "if (distro.checksumUrl.isEmpty()) {",
+      "replace": "if (!distro.checksumUrl.isEmpty()) {",
+      "expect": "killed",
+      "why": "inverting the fail-closed empty-checksum guard makes a distro that HAS a checksum URL take the empty-return branch. ubuntu-desktop's checksumUrl is non-empty, so testResolveChecksumUrl (which asserts QVERIFY(!url.isEmpty()) when checksumUrl is non-empty) fails."
+    },
+    {
+      "id": "filename-extension-iso-to-img",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": ".fileName = \"ubuntu-{version}-desktop-amd64.iso\",",
+      "replace": ".fileName = \"ubuntu-{version}-desktop-amd64.img\",",
+      "expect": "killed",
+      "why": "resolveFileName now yields '...-amd64.img'. testResolveFileName QVERIFY(name.endsWith(\".iso\")) fails."
+    },
+    {
+      "id": "checksum-url-source-swapped-to-download",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "return substituteVersion(distro.checksumUrl, distro.version);",
+      "replace": "return substituteVersion(distro.downloadUrl, distro.version);",
+      "expect": "killed",
+      "why": "resolveChecksumUrl now returns the ISO download URL, so a later verify would fetch its 'expected' digest from the ISO URL rather than SHA256SUMS (integrity break). testResolveChecksumUrl now asserts QCOMPARE(url, ubuntu.checksumUrl) and QCOMPARE(url, 'https://releases.ubuntu.com/resolute/SHA256SUMS') AND QVERIFY(url != resolveDownloadUrl(ubuntu)); the mutant makes url == the ISO download URL, so every one of those turns red."
+    },
+    {
+      "id": "filename-middle-segment-wrong",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": ".fileName = \"ubuntu-{version}-desktop-amd64.iso\",",
+      "replace": ".fileName = \"ubuntu-{version}-server-amd64.iso\",",
+      "expect": "killed",
+      "why": "resolveFileName yields a wrong filename ('...-server-amd64.iso') that a checksum-by-filename lookup would never match. testResolveFileName now asserts QCOMPARE(name, \"ubuntu-\" + ubuntu.version + \"-desktop-amd64.iso\") -- the whole filename, every segment -- so the mutated middle segment '-server-' turns it red even though it still ends in \".iso\" and carries no \"{version}\"."
+    },
+    {
+      "id": "github-download-resolve-uncovered",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "auto it = m_githubAssetUrls.find(distro.id);",
+      "replace": "auto it = m_githubAssetUrls.find(distro.id + \"_x\");",
+      "expect": "killed",
+      "why": "GitHubRelease branch of resolveDownloadUrl (cached-asset lookup): the mutant changes the find key from distro.id to distro.id + \"_x\". testResolveGitHubReleaseCachedAsset seeds m_githubAssetUrls[ventoy.id] directly -- with no network, via the friend-class test seam (friend class TestLinuxDistroCatalog on LinuxDistroCatalog) -- with the exact asset URL a successful resolveGitHubAsset would cache ('https://github.com/ventoy/Ventoy/releases/download/v1.1.12/ventoy-1.1.12-livecd.iso'), then asserts QCOMPARE(resolveDownloadUrl(ventoy), that URL). The real code finds distro.id and returns the cached URL; the mutant looks up distro.id + \"_x\" -> cache miss -> {}, so the QCOMPARE turns red. Killed offline. grep -Fc of the find string in src/core/linux_distro_catalog.cpp == 1 (line 504)."
+    },
+    {
+      "id": "github-filename-empty-guard-inverted",
+      "file": "src/core/linux_distro_catalog.cpp",
+      "find": "if (!distro.fileName.isEmpty()) {",
+      "replace": "if (distro.fileName.isEmpty()) {",
+      "expect": "killed",
+      "why": "resolveFileName's GitHubRelease branch: inverting the static-template guard makes a GitHubRelease distro that HAS a filename template (ventoy: 'ventoy-{version}-livecd.iso') skip it and fall to the fail-closed 'return {}'. testResolveGitHubReleaseBranch asserts QCOMPARE(resolveFileName(ventoy), \"ventoy-\" + ventoy.version + \"-livecd.iso\") == 'ventoy-1.1.12-livecd.iso', which turns red when the branch returns empty. grep -Fc of the find string in src/core/linux_distro_catalog.cpp == 1 (line 541)."
+    }
+  ]
+}

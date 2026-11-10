@@ -1,0 +1,56 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_elevated_task_dispatcher",
+  "ctest_regex": "^test_elevated_task_dispatcher$",
+  "mutants": [
+    {
+      "id": "handler-registered-under-wrong-id",
+      "file": "src/core/elevated_task_dispatcher.cpp",
+      "find": "m_handlers[task_id.toStdString()] = std::move(handler);",
+      "replace": "m_handlers[QStringLiteral(\"__mutant__\").toStdString()] = std::move(handler);",
+      "expect": "killed",
+      "why": "testRegisterSingle requires the registered task id itself to enter the allowlist and the handler count to become one."
+    },
+    {
+      "id": "allowlist-result-inverted",
+      "file": "src/core/elevated_task_dispatcher.cpp",
+      "find": "return m_handlers.contains(task_id.toStdString());",
+      "replace": "return !m_handlers.contains(task_id.toStdString());",
+      "expect": "killed",
+      "why": "testIsAllowedReturnsTrueForRegistered and testIsAllowedReturnsFalseForUnregistered pin both sides of the allowlist predicate."
+    },
+    {
+      "id": "unregistered-task-error-weakened",
+      "file": "src/core/elevated_task_dispatcher.cpp",
+      "find": "return std::unexpected(sak::error_code::task_not_allowed);",
+      "replace": "return std::unexpected(sak::error_code::internal_error);",
+      "expect": "killed",
+      "why": "testDispatchUnregisteredTask requires the distinct task_not_allowed error so callers can treat allowlist rejection as a security refusal."
+    },
+    {
+      "id": "handler-payload-dropped",
+      "file": "src/core/elevated_task_dispatcher.cpp",
+      "find": "return it->second(payload, std::move(progress), std::move(is_cancelled));",
+      "replace": "return it->second(QJsonObject{{QStringLiteral(\"__mutant__\"), payload}}, std::move(progress), std::move(is_cancelled));",
+      "expect": "killed",
+      "why": "testPayloadForwarding requires the complete caller payload to reach the registered handler unchanged."
+    },
+    {
+      "id": "handler-progress-callback-dropped",
+      "file": "src/core/elevated_task_dispatcher.cpp",
+      "find": "std::move(progress)",
+      "replace": "ProgressCallback{[progress = std::move(progress)](int percent, const QString& status) { progress(percent + 1, status); }}",
+      "expect": "killed",
+      "why": "testProgressCallback requires every ordered progress event emitted by the handler to reach the caller callback."
+    },
+    {
+      "id": "handler-cancel-check-forced-false",
+      "file": "src/core/elevated_task_dispatcher.cpp",
+      "find": "std::move(is_cancelled)",
+      "replace": "CancelCheck{[is_cancelled = std::move(is_cancelled)] { return !is_cancelled(); }}",
+      "expect": "killed",
+      "why": "testCancelCheck dispatches both false and true cancellation callbacks and requires the handler result to change for the cancelled run."
+    }
+  ]
+}

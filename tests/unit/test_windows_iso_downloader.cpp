@@ -9,6 +9,7 @@
 #include "sak/uup_dump_api.h"
 #include "sak/windows_iso_downloader.h"
 
+#include <QSet>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
@@ -52,6 +53,18 @@ void WindowsISODownloaderTests::cleanupTestCase() {
 }
 
 void WindowsISODownloaderTests::init() {
+    // The tests that hit the third-party UUP dump API over the network are opt-in, so the
+    // automated suite skips them DETERMINISTICALLY (a network-dependent pass/skip is exactly the
+    // accidental environment dependence G18-5 bans, and it made the skip baseline flaky). A
+    // technician runs the real API by setting SAK_RUN_LIVE_UUP_TESTS. Centralised here so the
+    // guard lives in one place rather than three test bodies.
+    static const QSet<QString> live_network_tests = {QStringLiteral("testFetchBuilds"),
+                                                     QStringLiteral("testGetFilesReturnsResults"),
+                                                     QStringLiteral("testFileUrlsAreValid")};
+    if (live_network_tests.contains(QString::fromLatin1(QTest::currentTestFunction())) &&
+        !qEnvironmentVariableIsSet("SAK_RUN_LIVE_UUP_TESTS")) {
+        QSKIP("Live UUP dump API network test; set SAK_RUN_LIVE_UUP_TESTS=1 to run");
+    }
     downloader = new WindowsISODownloader(this);
     api = new UupDumpApi(this);
 }
@@ -75,18 +88,25 @@ void WindowsISODownloaderTests::cleanup() {
  */
 void WindowsISODownloaderTests::testAvailableArchitectures() {
     auto archs = WindowsISODownloader::availableArchitectures();
-    QCOMPARE(archs.size(), 2);
-    QVERIFY(archs.contains("amd64"));
-    QVERIFY(archs.contains("arm64"));
+    // Exact ordered list; size()==2 + order-independent contains() accepted a reordered
+    // {arm64,amd64}.
+    QCOMPARE(archs, QStringList({"amd64", "arm64"}));
 }
 
 /**
  * Test availableChannels()
- * Should return 5 channels.
+ * Should return exactly the five UUP dump release rings.
  */
 void WindowsISODownloaderTests::testAvailableChannels() {
     auto channels = WindowsISODownloader::availableChannels();
-    QCOMPARE(channels.size(), 5);
+    // The exact ordered ring list; the set-only contains() checks accepted any permutation, but the
+    // production order maps directly to the wizard dropdown display order.
+    QCOMPARE(channels,
+             QList<UupDumpApi::ReleaseChannel>({UupDumpApi::ReleaseChannel::Retail,
+                                                UupDumpApi::ReleaseChannel::ReleasePreview,
+                                                UupDumpApi::ReleaseChannel::Beta,
+                                                UupDumpApi::ReleaseChannel::Dev,
+                                                UupDumpApi::ReleaseChannel::Canary}));
 }
 
 /**
@@ -94,20 +114,23 @@ void WindowsISODownloaderTests::testAvailableChannels() {
  * Should emit buildsFetched with at least one result.
  */
 void WindowsISODownloaderTests::testFetchBuilds() {
+    // Opt-in live network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set.
     QSignalSpy buildsSpy(downloader, &WindowsISODownloader::buildsFetched);
     QSignalSpy errorSpy(downloader, &WindowsISODownloader::downloadError);
 
     downloader->fetchBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
 
-    // Wait up to 15 seconds for API response
-    bool ok = buildsSpy.wait(15'000) || errorSpy.count() > 0;
+    // Wait up to 15 seconds for whichever signal lands first. QSignalSpy::wait()
+    // latches the count on entry, so an emission that already arrived is invisible to
+    // it, and it never looks at the error spy -- an early apiError would still burn the
+    // whole timeout. Polling the absolute counts settles as soon as either one fires.
+    QTRY_VERIFY_WITH_TIMEOUT(buildsSpy.count() > 0 || errorSpy.count() > 0, 15'000);
 
     if (errorSpy.count() > 0) {
-        qWarning() << "API error:" << errorSpy.at(0).at(0).toString();
-        QSKIP("UUP dump API unreachable - skipping network test");
+        const QString error = errorSpy.at(0).at(0).toString();
+        QFAIL(qPrintable(QStringLiteral("Opted-in UUP build fetch failed: %1").arg(error)));
     }
 
-    QVERIFY2(ok, "Timeout waiting for buildsFetched signal");
     QCOMPARE(buildsSpy.count(), 1);
 
     auto builds = buildsSpy.at(0).at(0).value<QList<UupDumpApi::BuildInfo>>();
@@ -122,13 +145,29 @@ void WindowsISODownloaderTests::testFetchBuilds() {
 }
 
 /**
- * Test cancel() does not crash.
+ * Test cancel() aborts an in-flight API fetch.
+ *
+ * The primary claim is a CRASH regression: cancelAll() aborts every pending QNetworkReply, and
+ * abort() delivers finished() SYNCHRONOUSLY, whose slot removes the reply from the very list
+ * being walked. Iterating that list directly is use-after-free / iterator invalidation, so
+ * "the process is still alive after this line" is the assertion QVERIFY(true) stands for.
+ * The spy makes the functional half non-vacuous: once aborted, the fetch must never deliver
+ * results. (It can be latched before the cancel if the network was fast, hence the baseline.)
  */
 void WindowsISODownloaderTests::testCancel() {
+    QSignalSpy buildsSpy(downloader, &WindowsISODownloader::buildsFetched);
     downloader->fetchBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
     QTest::qWait(500);
+
+    const auto delivered_before_cancel = buildsSpy.count();
     downloader->cancel();
-    // No crash is success
+    QTest::qWait(500);
+
+    // An aborted fetch reports an apiError, never a buildsFetched: the count cannot grow.
+    // (isDownloading() is deliberately NOT asserted here -- fetchBuilds never sets the
+    // downloading flag, so it reads false with or without the cancel.)
+    QCOMPARE(buildsSpy.count(), delivered_before_cancel);
+    // Surviving the abort/teardown above (no crash, no hang) is the rest of the claim.
     QVERIFY(true);
 }
 
@@ -136,11 +175,14 @@ void WindowsISODownloaderTests::testCancel() {
  * Test channel display names are non-empty.
  */
 void WindowsISODownloaderTests::testChannelDisplayNames() {
-    for (auto ch : UupDumpApi::allChannels()) {
-        QString name = UupDumpApi::channelToDisplayName(ch);
-        QVERIFY2(!name.isEmpty(),
-                 qPrintable(QString("Empty name for channel %1").arg(static_cast<int>(ch))));
-    }
+    using RC = UupDumpApi::ReleaseChannel;
+    // Each channel maps to its exact display name; the old `!isEmpty()` loop caught no wrong label.
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Retail), QStringLiteral("Public Release"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::ReleasePreview),
+             QStringLiteral("Release Preview"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Beta), QStringLiteral("Beta Channel"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Dev), QStringLiteral("Dev Channel"));
+    QCOMPARE(UupDumpApi::channelToDisplayName(RC::Canary), QStringLiteral("Canary Channel"));
 }
 
 /**
@@ -148,21 +190,24 @@ void WindowsISODownloaderTests::testChannelDisplayNames() {
  * Verifies the URL validation logic accepts Microsoft CDN HTTP URLs.
  */
 void WindowsISODownloaderTests::testGetFilesReturnsResults() {
+    // Opt-in live network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set.
     // First fetch a build UUID from the API
     QSignalSpy buildsSpy(api, &UupDumpApi::buildsFetched);
     QSignalSpy buildErrorSpy(api, &UupDumpApi::apiError);
 
     api->fetchAvailableBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
 
-    bool ok = buildsSpy.wait(15'000) || buildErrorSpy.count() > 0;
-    if (buildErrorSpy.count() > 0 || !ok) {
-        QSKIP("UUP dump API unreachable - skipping network test");
-    }
+    // Poll absolute counts for the same reason as testFetchBuilds.
+    const bool ok = QTest::qWaitFor(
+        [&]() { return buildsSpy.count() > 0 || buildErrorSpy.count() > 0; }, 15'000);
+    QVERIFY2(ok, "Opted-in UUP build fetch timed out after 15 seconds");
+    const QString build_error = buildErrorSpy.isEmpty() ? QString()
+                                                        : buildErrorSpy.at(0).at(0).toString();
+    QVERIFY2(buildErrorSpy.isEmpty(),
+             qPrintable(QStringLiteral("Opted-in UUP build fetch failed: %1").arg(build_error)));
 
     auto builds = buildsSpy.at(0).at(0).value<QList<UupDumpApi::BuildInfo>>();
-    if (builds.isEmpty()) {
-        QSKIP("No builds returned - skipping");
-    }
+    QVERIFY2(!builds.isEmpty(), "Opted-in UUP build fetch returned no builds");
 
     // Now fetch files for the first build
     QString uuid = builds.first().uuid;
@@ -171,13 +216,12 @@ void WindowsISODownloaderTests::testGetFilesReturnsResults() {
 
     api->getFiles(uuid, "en-us", "PROFESSIONAL");
 
-    ok = filesSpy.wait(15'000) || fileErrorSpy.count() > 0;
+    QTRY_VERIFY_WITH_TIMEOUT(filesSpy.count() > 0 || fileErrorSpy.count() > 0, 15'000);
     if (fileErrorSpy.count() > 0) {
-        qWarning() << "API error:" << fileErrorSpy.at(0).at(0).toString();
-        QSKIP("getFiles API call failed - skipping");
+        const QString error = fileErrorSpy.at(0).at(0).toString();
+        QFAIL(qPrintable(QStringLiteral("Opted-in UUP file fetch failed: %1").arg(error)));
     }
 
-    QVERIFY2(ok, "Timeout waiting for filesFetched signal");
     QCOMPARE(filesSpy.count(), 1);
 
     auto files = filesSpy.at(0).at(1).value<QList<UupDumpApi::FileInfo>>();
@@ -192,21 +236,23 @@ void WindowsISODownloaderTests::testGetFilesReturnsResults() {
  * Verifies filenames are safe (no path traversal) and URLs are valid.
  */
 void WindowsISODownloaderTests::testFileUrlsAreValid() {
+    // Opt-in live network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set.
     // First fetch a build UUID
     QSignalSpy buildsSpy(api, &UupDumpApi::buildsFetched);
     QSignalSpy buildErrorSpy(api, &UupDumpApi::apiError);
 
     api->fetchAvailableBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
 
-    bool ok = buildsSpy.wait(15'000) || buildErrorSpy.count() > 0;
-    if (buildErrorSpy.count() > 0 || !ok) {
-        QSKIP("UUP dump API unreachable - skipping network test");
-    }
+    const bool ok = QTest::qWaitFor(
+        [&]() { return buildsSpy.count() > 0 || buildErrorSpy.count() > 0; }, 15'000);
+    QVERIFY2(ok, "Opted-in UUP build fetch timed out after 15 seconds");
+    const QString build_error = buildErrorSpy.isEmpty() ? QString()
+                                                        : buildErrorSpy.at(0).at(0).toString();
+    QVERIFY2(buildErrorSpy.isEmpty(),
+             qPrintable(QStringLiteral("Opted-in UUP build fetch failed: %1").arg(build_error)));
 
     auto builds = buildsSpy.at(0).at(0).value<QList<UupDumpApi::BuildInfo>>();
-    if (builds.isEmpty()) {
-        QSKIP("No builds returned - skipping");
-    }
+    QVERIFY2(!builds.isEmpty(), "Opted-in UUP build fetch returned no builds");
 
     QString uuid = builds.first().uuid;
     QSignalSpy filesSpy(api, &UupDumpApi::filesFetched);
@@ -214,15 +260,16 @@ void WindowsISODownloaderTests::testFileUrlsAreValid() {
 
     api->getFiles(uuid, "en-us", "PROFESSIONAL");
 
-    ok = filesSpy.wait(15'000) || fileErrorSpy.count() > 0;
-    if (fileErrorSpy.count() > 0 || !ok) {
-        QSKIP("getFiles API call failed - skipping");
-    }
+    const bool filesOk =
+        QTest::qWaitFor([&]() { return filesSpy.count() > 0 || fileErrorSpy.count() > 0; }, 15'000);
+    QVERIFY2(filesOk, "Opted-in UUP file fetch timed out after 15 seconds");
+    const QString file_error = fileErrorSpy.isEmpty() ? QString()
+                                                      : fileErrorSpy.at(0).at(0).toString();
+    QVERIFY2(fileErrorSpy.isEmpty(),
+             qPrintable(QStringLiteral("Opted-in UUP file fetch failed: %1").arg(file_error)));
 
     auto files = filesSpy.at(0).at(1).value<QList<UupDumpApi::FileInfo>>();
-    if (files.isEmpty()) {
-        QSKIP("No files returned - skipping");
-    }
+    QVERIFY2(!files.isEmpty(), "Opted-in UUP file fetch returned no files");
 
     for (const auto& file_entry : files) {
         validateFileEntry(file_entry);

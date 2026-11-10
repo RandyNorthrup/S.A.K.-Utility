@@ -10,8 +10,12 @@
 #include "sak/actions/verify_system_files_action.h"
 #include "sak/quick_action.h"
 
+#include <QHash>
 #include <QSet>
 #include <QTest>
+
+#include <algorithm>
+#include <vector>
 
 using namespace sak;
 
@@ -39,12 +43,11 @@ private Q_SLOTS:
     void testAllCategoriesValid();
     void testRequiresAdminIsBool();
 
-    // Category distribution — every category has at least one action
+    // Category distribution -- every category has at least one action
     void testAllCategoriesPopulated();
 
     // Initial state
     void testInitialStatusIsIdle();
-    void testInitialScanResultNotApplicable();
     void testInitialExecutionResultNotSuccess();
 
     void cleanupTestCase();
@@ -104,30 +107,92 @@ void TestActionFactory::testAllNamesNonEmpty() {
 }
 
 void TestActionFactory::testAllDescriptionsNonEmpty() {
+    // Every description() is a compile-time literal, so pin the exact text. A !isEmpty() floor
+    // lets a truncated blurb through -- notably the two adjacent split literals in
+    // reset_network_action.h and backup_bitlocker_keys_action.h, where dropping a half leaves a
+    // non-empty but wrong string that a .contains() check also fails to catch.
+    const QHash<QString, QString> expected = {
+        {QStringLiteral("BitLocker Key Backup"),
+         QStringLiteral("Backup BitLocker recovery keys for all encrypted volumes")},
+        {QStringLiteral("Check Disk Errors"),
+         QStringLiteral("Run read-only online scans on all drives")},
+        {QStringLiteral("System Inventory Report"),
+         QStringLiteral("Collect a live system inventory into a text report")},
+        {QStringLiteral("Optimize Power Settings"),
+         QStringLiteral("Switch to High performance power plan")},
+        {QStringLiteral("Reset Network Settings"),
+         QStringLiteral("Reset TCP/IP, DNS, Winsock and Windows Firewall rules, and restart "
+                        "network adapters")},
+        {QStringLiteral("Screenshot Settings"),
+         QStringLiteral("Capture screenshots of Windows Settings")},
+        {QStringLiteral("Verify System Files"),
+         QStringLiteral("Run SFC and DISM to repair system files")},
+    };
+
+    // The table must cover the factory exactly -- a new action cannot slip past unpinned.
+    QCOMPARE(static_cast<int>(expected.size()), static_cast<int>(m_actions.size()));
+
     for (const auto& action : m_actions) {
-        QVERIFY2(!action->description().isEmpty(),
-                 qPrintable(
-                     QStringLiteral("Action '%1' has empty description()").arg(action->name())));
+        const QString action_name = action->name();
+        QVERIFY2(
+            expected.contains(action_name),
+            qPrintable(
+                QStringLiteral("No expected description pinned for action '%1'").arg(action_name)));
+        QCOMPARE(action->description(), expected.value(action_name));
     }
 }
 
 void TestActionFactory::testAllCategoriesValid() {
-    for (const auto& action : m_actions) {
-        const auto cat = action->category();
-        QVERIFY2(cat == QuickAction::ActionCategory::SystemOptimization ||
-                     cat == QuickAction::ActionCategory::Maintenance ||
-                     cat == QuickAction::ActionCategory::Troubleshooting ||
-                     cat == QuickAction::ActionCategory::EmergencyRecovery,
-                 qPrintable(QStringLiteral("Action '%1' has unknown category %2")
-                                .arg(action->name())
-                                .arg(static_cast<int>(cat))));
+    // The old disjunction listed ALL FOUR enumerators of QuickAction::ActionCategory
+    // (quick_action.h:37-42), so every in-range value satisfied it -- it could only ever catch an
+    // out-of-range static_cast, which no action performs. Pin the ROUTING instead, in
+    // initTestCase() construction order, the same convention testRequiresAdminIsBool uses.
+    // category() is the single source for the AI app-action descriptor's category string
+    // (registerQuickActionsInto), so a mis-route files a destructive recovery action under
+    // routine maintenance in the catalog the assistant lists.
+    struct Expected {
+        QString name;
+        QuickAction::ActionCategory category{};
+    };
+    const std::vector<Expected> expected = {
+        {QStringLiteral("BitLocker Key Backup"), QuickAction::ActionCategory::EmergencyRecovery},
+        {QStringLiteral("Check Disk Errors"), QuickAction::ActionCategory::Maintenance},
+        {QStringLiteral("System Inventory Report"), QuickAction::ActionCategory::Troubleshooting},
+        {QStringLiteral("Optimize Power Settings"),
+         QuickAction::ActionCategory::SystemOptimization},
+        {QStringLiteral("Reset Network Settings"), QuickAction::ActionCategory::Maintenance},
+        {QStringLiteral("Screenshot Settings"), QuickAction::ActionCategory::EmergencyRecovery},
+        {QStringLiteral("Verify System Files"), QuickAction::ActionCategory::Maintenance},
+    };
+    QCOMPARE(m_actions.size(), expected.size());
+    for (size_t i = 0; i < m_actions.size(); ++i) {
+        QCOMPARE(m_actions[i]->name(), expected[i].name);
+        QCOMPARE(m_actions[i]->category(), expected[i].category);
     }
 }
 
 void TestActionFactory::testRequiresAdminIsBool() {
-    for (const auto& action : m_actions) {
-        const bool val = action->requiresAdmin();
-        QVERIFY(val == true || val == false);
+    // `val == true || val == false` is a tautology over a bool: it holds for every
+    // implementation, so the elevation contract was entirely unpinned. Pin it exactly, in
+    // initTestCase() construction order -- which action needs admin decides whether the run is
+    // launched elevated at all.
+    struct Expected {
+        QString name;
+        bool requires_admin{};
+    };
+    const std::vector<Expected> expected = {
+        {QStringLiteral("BitLocker Key Backup"), true},
+        {QStringLiteral("Check Disk Errors"), true},
+        {QStringLiteral("System Inventory Report"), false},
+        {QStringLiteral("Optimize Power Settings"), false},
+        {QStringLiteral("Reset Network Settings"), true},
+        {QStringLiteral("Screenshot Settings"), false},
+        {QStringLiteral("Verify System Files"), true},
+    };
+    QCOMPARE(m_actions.size(), expected.size());
+    for (size_t i = 0; i < m_actions.size(); ++i) {
+        QCOMPARE(m_actions[i]->name(), expected[i].name);
+        QCOMPARE(m_actions[i]->requiresAdmin(), expected[i].requires_admin);
     }
 }
 
@@ -136,13 +201,9 @@ void TestActionFactory::testRequiresAdminIsBool() {
 // ============================================================================
 
 int TestActionFactory::countByCategory(QuickAction::ActionCategory cat) const {
-    int count = 0;
-    for (const auto& action : m_actions) {
-        if (action->category() == cat) {
-            ++count;
-        }
-    }
-    return count;
+    return static_cast<int>(std::ranges::count_if(m_actions, [cat](const auto& action) {
+        return action->category() == cat;
+    }));
 }
 
 void TestActionFactory::testAllCategoriesPopulated() {
@@ -153,12 +214,22 @@ void TestActionFactory::testAllCategoriesPopulated() {
         QuickAction::ActionCategory::EmergencyRecovery,
     };
 
+    // The shipped distribution is deterministic and knowable, so pin the census rather than a
+    // floor. `n > 0` only rejects a category emptied ENTIRELY, so an action drifting into an
+    // already-populated bucket stayed invisible -- and the trailing total could not fail either:
+    // countByCategory() sums over all four enumerators while testAllCategoriesValid has already
+    // accepted every value as in-range, so it merely re-derives the fixture size from the fixture.
+    const std::vector<int> expected_counts = {1, 3, 1, 2};
+    QCOMPARE(categories.size(), expected_counts.size());
+
     int categorized_total = 0;
-    for (const auto cat : categories) {
-        const int n = countByCategory(cat);
-        QVERIFY2(n > 0,
-                 qPrintable(
-                     QStringLiteral("Category %1 has zero actions").arg(static_cast<int>(cat))));
+    for (size_t i = 0; i < categories.size(); ++i) {
+        const int n = countByCategory(categories[i]);
+        QVERIFY2(n == expected_counts[i],
+                 qPrintable(QStringLiteral("Category %1 holds %2 actions, expected %3")
+                                .arg(static_cast<int>(categories[i]))
+                                .arg(n)
+                                .arg(expected_counts[i])));
         categorized_total += n;
     }
 
@@ -177,20 +248,29 @@ void TestActionFactory::testInitialStatusIsIdle() {
     }
 }
 
-void TestActionFactory::testInitialScanResultNotApplicable() {
-    for (const auto& action : m_actions) {
-        QVERIFY2(
-            !action->lastScanResult().applicable,
-            qPrintable(
-                QStringLiteral("Action '%1' initial scan claims applicable").arg(action->name())));
-    }
-}
-
 void TestActionFactory::testInitialExecutionResultNotSuccess() {
     for (const auto& action : m_actions) {
-        QVERIFY2(!action->lastExecutionResult().success,
+        // A freshly constructed action has run nothing, so EVERY field of the default
+        // ExecutionResult must read clean: the constructor sets none of them, and the panels
+        // publish these counters before any run.
+        const QuickAction::ExecutionResult& result = action->lastExecutionResult();
+        QVERIFY2(!result.success,
                  qPrintable(QStringLiteral("Action '%1' initial execution claims success")
                                 .arg(action->name())));
+        QVERIFY2(
+            result.message.isEmpty(),
+            qPrintable(
+                QStringLiteral("Action '%1' initial execution has a message").arg(action->name())));
+        QCOMPARE(result.bytes_processed, Q_INT64_C(0));
+        QCOMPARE(result.files_processed, Q_INT64_C(0));
+        QCOMPARE(result.duration_ms, Q_INT64_C(0));
+        QVERIFY2(result.output_path.isEmpty(),
+                 qPrintable(QStringLiteral("Action '%1' initial execution has an output_path")
+                                .arg(action->name())));
+        QVERIFY2(
+            result.log.isEmpty(),
+            qPrintable(
+                QStringLiteral("Action '%1' initial execution has a log").arg(action->name())));
     }
 }
 

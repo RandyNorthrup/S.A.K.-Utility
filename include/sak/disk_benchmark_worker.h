@@ -10,7 +10,9 @@
 #include "sak/worker_base.h"
 
 #include <QObject>
+#include <QStringList>
 
+#include <functional>
 #include <vector>
 
 namespace sak {
@@ -19,7 +21,8 @@ namespace sak {
 ///
 /// Uses direct I/O (FILE_FLAG_NO_BUFFERING | FILE_FLAG_WRITE_THROUGH) to
 /// bypass OS caching for accurate measurements. Tests sequential read/write
-/// with 1 MB blocks and random 4K at queue depths 1 and 32.
+/// and random read/write at queue depths 1 and 32, using the configured block
+/// sizes (default 1 MB sequential / 4K random; see DiskBenchmarkConfig).
 ///
 /// The test file is created at the start and cleaned up on completion or
 /// cancellation.
@@ -40,7 +43,10 @@ public:
     /// @brief Construct a DiskBenchmarkWorker
     /// @param parent Parent QObject
     explicit DiskBenchmarkWorker(QObject* parent = nullptr);
-    ~DiskBenchmarkWorker() override = default;
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin. Then the test
+    // file goes, if a run left it.
+    ~DiskBenchmarkWorker() override;
 
     /// @brief Set the benchmark configuration
     /// @param config Benchmark parameters (drive, sizes, queue depth, etc.)
@@ -49,6 +55,45 @@ public:
     /// @brief Get the result from the last completed benchmark
     /// @return Benchmark result (valid only after benchmarkComplete signal)
     [[nodiscard]] const DiskBenchmarkResult& result() const { return m_result; }
+
+    /// @brief Build a unique, per-run benchmark temp-file name.
+    /// @param pid current process id.
+    /// @param msecs a millisecond timestamp.
+    /// @param counter a monotonically increasing per-run counter.
+    /// @return e.g. "sak_disk_benchmark_<pid>_<msecs>_<counter>.tmp".
+    /// @note Pure + static for unit testing. A unique name (plus exclusive
+    ///       CREATE_NEW) removes the fixed-name TOCTOU: no pre-existing file or
+    ///       planted link at a guessable path is truncated/deleted, and
+    ///       concurrent runs do not collide.
+    [[nodiscard]] static QString makeUniqueBenchmarkFileName(quint32 pid,
+                                                             qint64 msecs,
+                                                             quint64 counter);
+
+    /// @brief Convert a configured block size (KiB) into a validated,
+    ///        sector-aligned byte count for direct I/O.
+    /// @param block_kb Requested block size in KiB (from DiskBenchmarkConfig).
+    /// @param min_kb Smallest accepted block size in KiB.
+    /// @param max_kb Largest accepted block size in KiB.
+    /// @return Effective block size in bytes, or 0 (fail closed) when @p block_kb
+    ///         is nonpositive, falls outside [min_kb, max_kb], or the bounds are
+    ///         invalid (min_kb <= 0 or max_kb < min_kb). An out-of-range request
+    ///         is REJECTED, not silently coerced to a bound (no-fallbacks rule).
+    ///         In-range values are rounded up to the sector boundary so every
+    ///         FILE_FLAG_NO_BUFFERING transfer stays aligned.
+    /// @note Pure + static for unit testing.
+    [[nodiscard]] static size_t effectiveBlockBytes(int block_kb, int min_kb, int max_kb);
+
+    /// @brief Whether @p file_name is a benchmark test file a process no longer running left
+    ///        behind: this app's name pattern, a process id that is not @p self_pid, and
+    ///        @p process_running false for it. Pure; unit-testable.
+    [[nodiscard]] static bool isAbandonedBenchmarkFileName(
+        const QString& file_name,
+        quint32 self_pid,
+        const std::function<bool(quint32)>& process_running);
+
+    /// @brief Remove the benchmark test files in @p folder whose process is gone (a run that
+    ///        was killed before delete-on-close existed). Returns the paths removed.
+    static QStringList removeAbandonedBenchmarkFiles(const QString& folder);
 
 Q_SIGNALS:
     /// @brief Emitted when the benchmark suite completes
@@ -60,6 +105,16 @@ protected:
     /// @return Success or error code
     auto execute() -> std::expected<void, sak::error_code> override;
 
+#ifdef SAK_CORE_TEST_HOOKS
+public:
+    /// @brief Test-only: claim the test file the way a run does, remove it again, and say where it
+    ///        was. With a zero test size nothing is written to it.
+    [[nodiscard]] QString claimTestFileForTesting();
+    /// @brief Test-only: claim the test file and drop the run's handle on it without removing
+    ///        it, as Windows does for a process that is killed. Says where the file was.
+    [[nodiscard]] QString abandonTestFileForTesting();
+#endif  // SAK_CORE_TEST_HOOKS
+
 private:
     /// @brief Create the test file with random data
     /// @return true if file was created successfully
@@ -69,10 +124,12 @@ private:
     void cleanupTestFile();
 
     /// @brief Run sequential read benchmark
-    void runSequentialRead();
+    /// @return Success, or an error code if the test file could not be opened/allocated
+    auto runSequentialRead() -> std::expected<void, sak::error_code>;
 
     /// @brief Run sequential write benchmark
-    void runSequentialWrite();
+    /// @return Success, or an error code if the test file could not be opened/allocated
+    auto runSequentialWrite() -> std::expected<void, sak::error_code>;
 
     /// @brief Run random 4K read benchmark at the given queue depth
     /// @param queue_depth Number of concurrent I/O operations
@@ -80,11 +137,12 @@ private:
     /// @param iops Output: I/O operations per second
     /// @param avg_latency_us Output: average latency in microseconds
     /// @param latencies_out Optional: raw latency samples for P99 calculation
-    void runRandom4KRead(int queue_depth,
+    auto runRandom4KRead(int queue_depth,
                          double& read_mbps,
                          double& iops,
                          double& avg_latency_us,
-                         std::vector<double>* latencies_out = nullptr);
+                         std::vector<double>* latencies_out = nullptr)
+        -> std::expected<void, sak::error_code>;
 
     /// @brief Run random 4K write benchmark at the given queue depth
     /// @param queue_depth Number of concurrent I/O operations
@@ -92,11 +150,12 @@ private:
     /// @param iops Output: I/O operations per second
     /// @param avg_latency_us Output: average latency in microseconds
     /// @param latencies_out Optional: raw latency samples for P99 calculation
-    void runRandom4KWrite(int queue_depth,
+    auto runRandom4KWrite(int queue_depth,
                           double& write_mbps,
                           double& iops,
                           double& avg_latency_us,
-                          std::vector<double>* latencies_out = nullptr);
+                          std::vector<double>* latencies_out = nullptr)
+        -> std::expected<void, sak::error_code>;
 
     /// @brief Run all benchmark phases (sequential + random I/O)
     /// @return Success or error code (cancellation)
@@ -106,11 +165,33 @@ private:
     auto runRandomQd32Benchmarks() -> std::expected<void, sak::error_code>;
     auto continueOrCancelBenchmark() -> std::expected<void, sak::error_code>;
 
+    /// @brief Resolve the configured block sizes into m_seq_block_bytes /
+    ///        m_rand_block_bytes, failing closed on a nonpositive size.
+    /// @return Success, or invalid_argument when a configured block size is
+    ///         nonpositive (effectiveBlockBytes returned 0).
+    auto resolveBlockSizes() -> std::expected<void, sak::error_code>;
+
+    /// @brief Fail closed on a configured test-file size outside the sane range.
+    /// @return Success, or invalid_argument when test_file_size_mb is below the
+    ///         minimum (offset-math underflow) or above the maximum (size_t wrap).
+    auto validateTestFileSize() const -> std::expected<void, sak::error_code>;
+
+    /// @brief Reject a queue depth the random-I/O phases cannot use. setConfig is public and
+    ///        copies the config verbatim, so these are caller-supplied, not invariants.
+    auto validateQueueDepths() const -> std::expected<void, sak::error_code>;
+
+    /// @brief Resolve drive info and fail closed on an unusable target or when the
+    ///        drive lacks room for the test file. Records drive_capacity_bytes.
+    /// @return Success, invalid_path (drive not valid/ready), or
+    ///         insufficient_disk_space (free space < test file size).
+    auto validateDriveAndSpace() -> std::expected<void, sak::error_code>;
+
     /// Accumulated I/O stats for random benchmark loops
     struct RandomIoStats {
         std::vector<double>& latencies;
-        uint64_t& total_ops;
+        uint64_t& total_ops;       ///< Fully-completed ops (full-size transfer)
         uint64_t& total_bytes;
+        uint64_t& total_failures;  ///< Ops that failed or completed short
     };
 
     /// Configuration for a random I/O loop iteration
@@ -168,11 +249,34 @@ private:
     /// @brief Calculate a normalized score
     void calculateScore();
 
-    /// @brief Resolve test file path
+    /// @brief The claimed test file path for this run (set by createTestFile).
+    /// @return The unique path createTestFile exclusively claimed, or an empty
+    ///         string before a file has been claimed.
     [[nodiscard]] QString testFilePath() const;
 
     DiskBenchmarkConfig m_config;
     DiskBenchmarkResult m_result;
+
+    /// @brief Effective, validated I/O block sizes in bytes for this run.
+    ///        Set from m_config by execute() (via effectiveBlockBytes) before any
+    ///        benchmark phase runs; the defaults mirror the config defaults so a
+    ///        member is never read uninitialized.
+    size_t m_seq_block_bytes{static_cast<size_t>(kDiskBenchmarkSequentialBlockSizeKb) *
+                             static_cast<size_t>(kBytesPerKB)};
+    size_t m_rand_block_bytes{static_cast<size_t>(kDiskBenchmarkRandomBlockSizeKb) *
+                              static_cast<size_t>(kBytesPerKB)};
+
+    /// @brief Path exclusively claimed by createTestFile for this run. Empty
+    ///        until a file is claimed; every read/write/cleanup uses it so the
+    ///        benchmark never touches a fixed, guessable path.
+    QString m_test_file_path;
+
+    /// @brief The run's delete-on-close handle on the test file (a HANDLE), held from its
+    ///        creation to its cleanup, so a killed run leaves nothing behind. Null when none.
+    void* m_test_file_anchor{nullptr};
+
+    /// @brief Close the delete-on-close handle, which removes the file once nothing else has it.
+    void releaseTestFileAnchor();
 };
 
 }  // namespace sak

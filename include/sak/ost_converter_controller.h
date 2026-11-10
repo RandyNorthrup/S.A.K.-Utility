@@ -59,6 +59,16 @@ public:
     /// Get the path to the last generated report
     [[nodiscard]] const QString& reportPath() const;
 
+    /// Classify a finished conversion into a queue status. Fail closed: any failed
+    /// item or recorded error demotes the job to Failed even when some items
+    /// converted, so a partial/errored run is never reported as a clean Complete.
+    /// Why a file cannot join the queue, or empty when it can. Outlook's own stores are accepted by
+    /// their extension: .pst, .ost, and .nst, which has an OST's layout.
+    [[nodiscard]] static QString refusalForFile(const QString& path);
+
+    [[nodiscard]] static OstConversionJob::Status classifyOutcome(
+        const OstConversionResult& result);
+
 Q_SIGNALS:
     void fileAdded(int index, sak::OstConversionJob job);
     void fileRemoved(int index);
@@ -76,7 +86,6 @@ Q_SIGNALS:
 
     // Errors
     void errorOccurred(int file_index, QString message);
-    void warningOccurred(int file_index, QString message);
 
     // Status
     void statusMessage(QString message, int timeout_ms);
@@ -88,13 +97,16 @@ private Q_SLOTS:
 
 private:
     void startNextFile();
+
+    /// Stop and destroy the worker + thread at @p worker_index, then drop it from
+    /// m_active_workers.
+    void destroyActiveWorker(int worker_index);
     void finalizeBatch();
 
     QVector<OstConversionJob> m_queue;
     OstConversionConfig m_config;
     std::atomic<bool> m_cancelled{false};
     bool m_running = false;
-    int m_current_file_index = -1;
 
     // Worker threads (supports N concurrent workers)
     struct ActiveWorker {
@@ -102,6 +114,12 @@ private:
         OstConversionWorker* worker = nullptr;
         int file_index = -1;
     };
+
+    /// Stop and dispose one active worker/thread. Deletes both only once the
+    /// thread has actually stopped; if it refuses to stop, defers deletion to the
+    /// thread's finished signal instead of deleting a live thread (abort/UAF).
+    void disposeWorker(ActiveWorker& aw);
+
     QVector<ActiveWorker> m_active_workers;
     int m_next_queued_index = 0;
 

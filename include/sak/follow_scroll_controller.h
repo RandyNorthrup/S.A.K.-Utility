@@ -35,7 +35,7 @@ protected:
 
 private:
     [[nodiscard]] bool canDeferredScroll(bool force) const;
-    [[nodiscard]] bool ownsScrollEvent(QObject* watched, bool* scrollbar_event) const;
+    [[nodiscard]] bool ownsScrollEvent(const QObject* watched, bool* scrollbar_event) const;
     void finishFirstDeferredScroll(bool force);
     void finishSecondDeferredScroll(bool force);
     void handleMouseButtonEvent(QEvent::Type type, bool scrollbar_event);

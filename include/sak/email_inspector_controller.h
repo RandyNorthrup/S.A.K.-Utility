@@ -8,9 +8,11 @@
 
 #include "sak/email_types.h"
 
+#include <QFutureSynchronizer>
 #include <QObject>
 #include <QSet>
 
+#include <functional>
 #include <memory>
 
 class PstParser;
@@ -19,9 +21,11 @@ class EmailSearchWorker;
 class EmailExportWorker;
 class EmailProfileManager;
 class EmailReportGenerator;
+class EmailAttachmentsBrowserDialogTests;
 
 class EmailInspectorController : public QObject {
     Q_OBJECT
+    friend class EmailAttachmentsBrowserDialogTests;
 
 public:
     /// Controller state machine
@@ -139,13 +143,27 @@ Q_SIGNALS:
 
     // Navigation
     void folderItemsLoaded(uint64_t folder_id, QVector<sak::PstItemSummary> items, int total_count);
+    /// Terminal failure for the exact folder page requested by loadFolderItems.
+    void folderItemsFailed(uint64_t folder_id, int offset, QString error);
     void itemDetailLoaded(sak::PstItemDetail detail);
+    /// Terminal failure for the exact item requested by loadItemDetail.
+    void itemDetailFailed(uint64_t item_id, QString error);
     void itemPropertiesLoaded(uint64_t item_id, QVector<sak::MapiProperty> properties);
     void attachmentContentReady(uint64_t message_id, int index, QByteArray data, QString filename);
+    /// Emitted when a specific attachment's content could NOT be produced (extract
+    /// failure, or a request refused because an operation was already in progress).
+    /// Carries the same (message_id, index) identity as attachmentContentReady so a
+    /// batch save correlates the failure to the exact request it issued. Every
+    /// loadAttachmentContent call resolves to exactly one of ready/failed, so a batch
+    /// never hangs on an unresolved request and never miscounts an unrelated error.
+    void attachmentContentFailed(uint64_t message_id, int index, QString error);
 
     // Search
     void searchHit(sak::EmailSearchHit hit);
     void searchComplete(int total_hits);
+    /// Terminal outcome for a cancelled search: partial_hits were found before the user stopped
+    /// it. Distinct from searchComplete so the UI reports a cancel as a cancel (R5-P6-18).
+    void searchCancelled(int partial_hits);
 
     // Export
     void exportStarted(int total_items);
@@ -173,12 +191,26 @@ Q_SIGNALS:
 
 private:
     void setState(State new_state);
+    /// True when a tracked background task (search/export/profile/report) or a file
+    /// open is in flight. Navigation must be refused in these states because it would
+    /// race the same parser QFile that the background task is reading (B7-B).
+    [[nodiscard]] bool isBusyWithBackgroundOp() const;
+    void runTracked(std::function<void()> task);
     void connectPstSignals();
     void connectMboxSignals();
     void connectSearchSignals();
     void connectExportSignals();
     void connectProfileSignals();
+    void handleParserError(const QString& error);
     State m_state = State::Idle;
+
+    // Identity of the one in-flight navigation request. Parser errorOccurred carries
+    // no request identity, so the controller restores it before forwarding a failure.
+    bool m_folder_request_pending{false};
+    uint64_t m_pending_folder_id{0};
+    int m_pending_folder_offset{0};
+    bool m_detail_request_pending{false};
+    uint64_t m_pending_detail_id{0};
 
     // File type tracking
     enum class FileType {
@@ -196,6 +228,11 @@ private:
     std::unique_ptr<EmailExportWorker> m_export_worker;
     std::unique_ptr<EmailProfileManager> m_profile_manager;
     std::unique_ptr<EmailReportGenerator> m_report_generator;
+
+    /// Retains every detached QtConcurrent::run future so cancelOperation() (and
+    /// thus the destructor) can block until no background thread is still using
+    /// the parsers/workers before they are destroyed.
+    QFutureSynchronizer<void> m_tasks;
 
     // Cached data for reports
     sak::PstFileInfo m_cached_file_info;

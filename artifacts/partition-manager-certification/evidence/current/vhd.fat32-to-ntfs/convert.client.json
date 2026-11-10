@@ -1,0 +1,88 @@
+{
+    "client": {
+        "allow_elevated_client": false,
+        "elevated": false,
+        "file_name": "sak_utility.exe",
+        "helper_found": true,
+        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+    },
+    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
+    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_dirty": false,
+    "completed_utc": "2026-11-10T15:56:38.833Z",
+    "disk_before": {
+        "bus_type": "File Backed Virtual",
+        "disk_number": 1,
+        "is_boot": false,
+        "is_system": false,
+        "media_type": "Unspecified",
+        "model": "Msft Virtual Disk",
+        "partition_count": 2,
+        "partition_style": "GPT",
+        "serial_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "size_bytes": "1073741824"
+    },
+    "execution": {
+        "cancelled": false,
+        "dry_run": false,
+        "message": "Partition operation batch complete",
+        "steps": [
+            {
+                "error_message": "",
+                "operation_id": "4184836d-6cfe-48c9-8e5a-d622f7fac954",
+                "skipped": false,
+                "stderr": "",
+                "stdout": "SAK Partition Manager: Convert T: to NTFS\r\nThe type of the file system is FAT32.\r\nEnter current volume label for drive T: SAKFAT\r\nVolume SAKFAT created 11/10/2026 7:56 AM\r\nVolume Serial Number is CE05-FFCB\r\nWindows is verifying files and folders...\r\n0 percent completed.                  \r1 percent completed..                 \r7 percent completed...                \r10 percent completed....               \r13 percent completed.....              \r20 percent completed......             \r24 percent completed.                  \r31 percent completed..                 \r33 percent completed...                \r40 percent completed....               \r46 percent completed.....              \r52 percent completed......             \r54 percent completed.                  \r61 percent completed..                 \r62 percent completed...                \r64 percent completed....               \r67 percent completed.....              \r69 percent completed......             \r72 percent completed.                  \r79 percent completed..                 \r84 percent completed...                \r89 percent completed....               \r96 percent completed.....              \r99 percent completed......             \r100 percent completed.                  \rFile and folder verification is complete.\r\n\r\nWindows has scanned the file system and found no problems.\r\nNo further action is required.\r\n\r\n  532,676,608 bytes total disk space.\r\n        4,096 bytes in 1 hidden files.\r\n       20,480 bytes in 5 folders.\r\n   28,184,576 bytes in 26 files.\r\n  504,463,360 bytes available on disk.\r\n\r\n        4,096 bytes in each allocation unit.\r\n      130,048 total allocation units on disk.\r\n      123,160 allocation units available on disk.\r\n\r\nDetermining disk space required for file system conversion...\r\nTotal disk space:                524288 KB\r\nFree space on volume:            492640 KB\r\nSpace required for conversion:     5556 KB\r\nConverting file system\r\nConversion complete\r\n",
+                "success": true,
+                "summary": "Convert File System - Disk 1 Partition 2"
+            }
+        ],
+        "success": true,
+        "timed_out": false
+    },
+    "execution_engine": "PartitionManagerController",
+    "expect": "success",
+    "expectation_met": true,
+    "helper_connected": true,
+    "helper_connected_after_scan": false,
+    "inventory_warnings": [
+    ],
+    "operation": "ConvertFileSystem",
+    "queue_refusal_reasons": [
+    ],
+    "queued_operations": [
+        {
+            "id": "4184836d-6cfe-48c9-8e5a-d622f7fac954",
+            "payload": {
+            },
+            "script_sha256": "476ea7af229870346056612946057ae8bb6e805313545e54d166e802e801aafb",
+            "summary": "Convert File System - Disk 1 Partition 2",
+            "target": {
+                "disk_number": 1,
+                "disk_unique_id": "60022480F9FE82C11A8E50730DC767C1",
+                "drive_letter": "T",
+                "kind": "Partition",
+                "offset_bytes": "16777216",
+                "partition_number": 2,
+                "size_bytes": "536870912"
+            },
+            "type": "Convert File System",
+            "warnings": [
+            ]
+        }
+    ],
+    "review": {
+        "fingerprint": "ae83081a66f599311fada9c89ae341eb4559ac835d2043cfeaa4ce1325d01c6c",
+        "layout_hash": "ab55aa369c001ace5e3ba470a1b056c68379c817197622a7e67b4cc8bf8f21a0",
+        "revision": "2"
+    },
+    "route": "elevated-helper",
+    "run_id": "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "scenario_id": "vhd.fat32-to-ntfs",
+    "schema_version": 1,
+    "started_utc": "2026-11-10T15:56:23.496Z",
+    "status": "Passed",
+    "step": "convert",
+    "tool": "partition-manager-scenario-step"
+}

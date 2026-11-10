@@ -54,11 +54,18 @@ bool containsUnsafeText(const QString& value) {
 }
 
 void appendTargetBlockers(const QString& targetPath, QStringList* blockers) {
-    if (targetPath.trimmed().isEmpty()) {
+    const QString trimmed = targetPath.trimmed();
+    if (trimmed.isEmpty()) {
         blockers->append(QStringLiteral("Target device or image path is required"));
     }
     if (containsUnsafeText(targetPath)) {
         blockers->append(QStringLiteral("Target path contains unsafe control characters"));
+    }
+    // A real device or image path never begins with '-'. Reject one that does so it can never
+    // be smuggled to fsck as an option instead of the positional target (argument injection);
+    // this is tool-agnostic, unlike a '--' separator that not every bundled fsck accepts.
+    if (trimmed.startsWith(QLatin1Char('-'))) {
+        blockers->append(QStringLiteral("Target path must not begin with '-'"));
     }
 }
 
@@ -153,7 +160,8 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildReadOnlyCheck
             .tool_id = QString::fromLatin1(kE2fsckToolId),
             .operation = readOnlyCheckOperation(),
             .file_system = fileSystem,
-            .arguments = {QStringLiteral("-n"), QStringLiteral("-f"), targetPath}};
+            .arguments = {QStringLiteral("-n"), QStringLiteral("-f"), targetPath},
+            .blockers = {}};
         appendTargetBlockers(target_path, &command.blockers);
         return command;
     }
@@ -161,7 +169,8 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildReadOnlyCheck
         PartitionFileSystemToolCommand command{.tool_id = QString::fromLatin1(kXfsRepairToolId),
                                                .operation = readOnlyCheckOperation(),
                                                .file_system = fileSystem,
-                                               .arguments = {QStringLiteral("-n"), targetPath}};
+                                               .arguments = {QStringLiteral("-n"), targetPath},
+                                               .blockers = {}};
         appendTargetBlockers(target_path, &command.blockers);
         return command;
     }
@@ -170,7 +179,8 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildReadOnlyCheck
             .tool_id = QString::fromLatin1(kBtrfsToolId),
             .operation = readOnlyCheckOperation(),
             .file_system = fileSystem,
-            .arguments = {QStringLiteral("check"), QStringLiteral("--readonly"), targetPath}};
+            .arguments = {QStringLiteral("check"), QStringLiteral("--readonly"), targetPath},
+            .blockers = {}};
         appendTargetBlockers(target_path, &command.blockers);
         return command;
     }
@@ -180,7 +190,8 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildReadOnlyCheck
             .tool_id = QString::fromLatin1(kFsckHfsToolId),
             .operation = readOnlyCheckOperation(),
             .file_system = normalizedHfsToolFileSystem(fileSystem),
-            .arguments = {QStringLiteral("-n"), QStringLiteral("-f"), hfsTargetPath}};
+            .arguments = {QStringLiteral("-n"), QStringLiteral("-f"), hfsTargetPath},
+            .blockers = {}};
         appendTargetBlockers(target_path, &command.blockers);
         return command;
     }
@@ -205,7 +216,8 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildFormatCommand
                                                .operation = formatOperation(),
                                                .file_system =
                                                    normalizedHfsToolFileSystem(fileSystem),
-                                               .arguments = {}};
+                                               .arguments = {},
+                                               .blockers = {}};
         if (fileSystem == QString::fromLatin1(kHfsxFileSystem)) {
             command.arguments.append(QStringLiteral("-s"));
         }
@@ -233,7 +245,8 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildFormatCommand
         .tool_id = QString::fromLatin1(kMke2fsToolId),
         .operation = formatOperation(),
         .file_system = fileSystem,
-        .arguments = {QStringLiteral("-t"), fileSystem, QStringLiteral("-F")}};
+        .arguments = {QStringLiteral("-t"), fileSystem, QStringLiteral("-F")},
+        .blockers = {}};
     const QString trimmedLabel = label.trimmed();
     if (!trimmedLabel.isEmpty()) {
         command.arguments.append(QStringLiteral("-L"));
@@ -255,7 +268,8 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildRepairCommand
             .tool_id = QString::fromLatin1(kFsckHfsToolId),
             .operation = repairOperation(),
             .file_system = normalizedHfsToolFileSystem(fileSystem),
-            .arguments = {QStringLiteral("-p"), QStringLiteral("-f"), hfsTargetPath}};
+            .arguments = {QStringLiteral("-p"), QStringLiteral("-f"), hfsTargetPath},
+            .blockers = {}};
         appendTargetBlockers(target_path, &command.blockers);
         appendDestructiveConfirmationBlocker(destructive_confirmed, &command.blockers);
         return command;
@@ -274,7 +288,8 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildRepairCommand
         .tool_id = QString::fromLatin1(kE2fsckToolId),
         .operation = repairOperation(),
         .file_system = fileSystem,
-        .arguments = {QStringLiteral("-p"), QStringLiteral("-f"), targetPath}};
+        .arguments = {QStringLiteral("-p"), QStringLiteral("-f"), targetPath},
+        .blockers = {}};
     appendTargetBlockers(target_path, &command.blockers);
     appendDestructiveConfirmationBlocker(destructive_confirmed, &command.blockers);
     return command;
@@ -299,7 +314,8 @@ PartitionFileSystemToolCommand PartitionFileSystemToolRunner::buildResizeCommand
     PartitionFileSystemToolCommand command{.tool_id = QString::fromLatin1(kResize2fsToolId),
                                            .operation = resizeOperation(),
                                            .file_system = fileSystem,
-                                           .arguments = {targetPath}};
+                                           .arguments = {targetPath},
+                                           .blockers = {}};
     const QString sizeArgument = new_size_argument.trimmed();
     if (!sizeArgument.isEmpty()) {
         command.arguments.append(sizeArgument);

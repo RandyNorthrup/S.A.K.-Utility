@@ -3,7 +3,9 @@
 
 #include "sak/smart_file_filter.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 
 #include <QDir>
 
@@ -12,8 +14,11 @@
 namespace sak {
 
 namespace {
-constexpr int kFileSizeDisplayPrecision = 1;
-constexpr int kFileSizeLimitDisplayPrecision = 0;
+
+// Upper bound on an exclude-pattern's source length. Filename-matching regexes
+// are short in practice; anything longer is treated as invalid rather than
+// compiled, bounding the work a pathological rule can force on every filename.
+constexpr int kMaxExcludePatternLength = 1024;
 }  // namespace
 
 SmartFileFilter::SmartFileFilter(const SmartFilter& rules) : m_rules(rules) {
@@ -21,6 +26,14 @@ SmartFileFilter::SmartFileFilter(const SmartFilter& rules) : m_rules(rules) {
 
     // Convert lists to sets for faster lookup
     for (const QString& file : m_rules.dangerous_files) {
+        m_dangerousFilesSet.insert(file.toLower());
+    }
+
+    // Defense in depth: the registry-hive protections are non-negotiable. A caller can
+    // hand us an empty or hand-built rules struct whose dangerous_files list dropped
+    // them, so re-union the mandatory set -- NTUSER.DAT and friends can never be
+    // filtered back in as copyable and corrupt a live profile on restore.
+    for (const QString& file : SmartFilter::mandatoryDangerousFiles()) {
         m_dangerousFilesSet.insert(file.toLower());
     }
 
@@ -37,6 +50,10 @@ void SmartFileFilter::setRules(const SmartFilter& rules) {
     for (const QString& file : m_rules.dangerous_files) {
         m_dangerousFilesSet.insert(file.toLower());
     }
+    // Mandatory registry-hive protections survive any supplied rules (see ctor).
+    for (const QString& file : SmartFilter::mandatoryDangerousFiles()) {
+        m_dangerousFilesSet.insert(file.toLower());
+    }
 
     m_excludeFoldersSet.clear();
     for (const QString& folder : m_rules.exclude_folders) {
@@ -46,19 +63,35 @@ void SmartFileFilter::setRules(const SmartFilter& rules) {
 
 void SmartFileFilter::compileRegexPatterns() {
     m_compiledPatterns.clear();
+    m_invalidPatterns.clear();
 
     for (const QString& pattern : m_rules.exclude_patterns) {
-        QRegularExpression regex(pattern, QRegularExpression::CaseInsensitiveOption);
-        if (regex.isValid()) {
-            m_compiledPatterns.append(regex);
+        // Record and log every rejected rule instead of dropping it silently:
+        // otherwise files the user meant to exclude are processed with no
+        // indication the pattern was invalid. Callers can fail closed via
+        // hasInvalidPatterns().
+        QString error;
+        if (pattern.length() > kMaxExcludePatternLength) {
+            error =
+                QStringLiteral("pattern exceeds %1-character limit").arg(kMaxExcludePatternLength);
+        } else {
+            const QRegularExpression regex(pattern, QRegularExpression::CaseInsensitiveOption);
+            if (regex.isValid()) {
+                m_compiledPatterns.append(regex);
+                continue;
+            }
+            error = regex.errorString();
         }
+        const QString detail = QStringLiteral("%1: %2").arg(pattern, error);
+        m_invalidPatterns.append(detail);
+        logWarning("SmartFileFilter: ignoring invalid exclude pattern {}", detail.toStdString());
     }
 }
 
 bool SmartFileFilter::shouldExcludeFile(const QFileInfo& fileInfo,
                                         const QString& profilePath) const {
-    QString fileName = fileInfo.fileName();
-    QString absolutePath = fileInfo.absoluteFilePath();
+    const QString fileName = fileInfo.fileName();
+    const QString absolutePath = fileInfo.absoluteFilePath();
 
     // 1. Check if it's a dangerous file (NTUSER.DAT, etc.)
     if (isDangerousFile(fileName)) {
@@ -76,13 +109,13 @@ bool SmartFileFilter::shouldExcludeFile(const QFileInfo& fileInfo,
     }
 
     // 4. Check if in excluded folder (Cache, Temp, etc.)
-    QString relativePath = QDir(profilePath).relativeFilePath(absolutePath);
+    const QString relativePath = QDir(profilePath).relativeFilePath(absolutePath);
     if (isInExcludedFolder(relativePath)) {
         return true;
     }
 
     // 5. Check if in cache directory
-    if (isInCacheDirectory(absolutePath)) {
+    if (m_rules.exclude_cache_paths && isInCacheDirectory(absolutePath)) {
         return true;
     }
 
@@ -91,8 +124,8 @@ bool SmartFileFilter::shouldExcludeFile(const QFileInfo& fileInfo,
 
 bool SmartFileFilter::shouldExcludeFolder(const QFileInfo& folderInfo,
                                           const QString& profilePath) const {
-    QString folderName = folderInfo.fileName();
-    QString absolutePath = folderInfo.absoluteFilePath();
+    const QString folderName = folderInfo.fileName();
+    const QString absolutePath = folderInfo.absoluteFilePath();
 
     // Check if folder name is in exclusion list
     if (m_excludeFoldersSet.contains(folderName.toLower())) {
@@ -100,13 +133,13 @@ bool SmartFileFilter::shouldExcludeFolder(const QFileInfo& folderInfo,
     }
 
     // Check relative path for excluded folders
-    QString relativePath = QDir(profilePath).relativeFilePath(absolutePath);
+    const QString relativePath = QDir(profilePath).relativeFilePath(absolutePath);
     if (isInExcludedFolder(relativePath)) {
         return true;
     }
 
     // Exclude cache directories
-    if (isInCacheDirectory(absolutePath)) {
+    if (m_rules.exclude_cache_paths && isInCacheDirectory(absolutePath)) {
         return true;
     }
 
@@ -126,26 +159,29 @@ bool SmartFileFilter::isDangerousFile(const QString& fileName) const {
 }
 
 bool SmartFileFilter::matchesPattern(const QString& fileName) const {
-    return std::any_of(m_compiledPatterns.begin(),
-                       m_compiledPatterns.end(),
-                       [&fileName](const QRegularExpression& regex) {
-                           return regex.match(fileName).hasMatch();
-                       });
+    return std::ranges::any_of(m_compiledPatterns,
+
+                               [&fileName](const QRegularExpression& regex) {
+                                   return regex.match(fileName).hasMatch();
+                               });
 }
 
 bool SmartFileFilter::isInExcludedFolder(const QString& relativePath) const {
-    Q_ASSERT(!relativePath.isEmpty());
+    // relativePath is whatever QDir::relativeFilePath() returned for a caller's
+    // QFileInfo, so it can legitimately be empty; an empty path simply has no
+    // components and is not in an excluded folder.
     // Split path into components
     QStringList components = relativePath.split('/', Qt::SkipEmptyParts);
     components.append(relativePath.split('\\', Qt::SkipEmptyParts));
 
-    return std::any_of(components.begin(), components.end(), [this](const QString& component) {
+    return std::ranges::any_of(components, [this](const QString& component) {
         return m_excludeFoldersSet.contains(component.toLower());
     });
 }
 
 bool SmartFileFilter::isInCacheDirectory(const QString& path) {
-    Q_ASSERT(!path.isEmpty());
+    // Public entry point: path comes from the caller and an empty one contains no
+    // cache pattern, which the search below already reports correctly.
     QString lowerPath = path.toLower();
 
     // Common cache directory patterns
@@ -164,37 +200,30 @@ bool SmartFileFilter::isInCacheDirectory(const QString& path) {
                                  "/service worker/",
                                  "/session storage/"};
 
-    return std::any_of(cachePatterns.begin(),
-                       cachePatterns.end(),
-                       [&lowerPath](const QString& pattern) {
-                           return lowerPath.contains(pattern);
-                       });
+    return std::ranges::any_of(cachePatterns,
+
+                               [&lowerPath](const QString& pattern) {
+                                   return lowerPath.contains(pattern);
+                               });
 }
 
 QString SmartFileFilter::getExclusionReason(const QFileInfo& fileInfo) const {
-    QString fileName = fileInfo.fileName();
+    const QString fileName = fileInfo.fileName();
 
     if (isDangerousFile(fileName)) {
         return QString("Dangerous system file: %1 (would corrupt profile)").arg(fileName);
     }
 
-    if (exceedsSizeLimit(fileInfo.size())) {
-        double sizeMB = fileInfo.size() / kBytesPerMBf;
-        if (m_rules.enable_file_size_limit) {
-            return QString("File too large: %1 MB (limit: %2 MB)")
-                .arg(sizeMB, 0, 'f', kFileSizeDisplayPrecision)
-                .arg(m_rules.max_single_file_size_bytes / kBytesPerMBf,
-                     0,
-                     'f',
-                     kFileSizeLimitDisplayPrecision);
-        }
+    if (exceedsSizeLimit(fileInfo.size()) && m_rules.enable_file_size_limit) {
+        return QString("File too large: %1 (limit: %2)")
+            .arg(formatBytes(fileInfo.size()), formatBytes(m_rules.max_single_file_size_bytes));
     }
 
     if (matchesPattern(fileName)) {
         return QString("Matches exclusion pattern: %1").arg(fileName);
     }
 
-    if (isInCacheDirectory(fileInfo.absoluteFilePath())) {
+    if (m_rules.exclude_cache_paths && isInCacheDirectory(fileInfo.absoluteFilePath())) {
         return "Located in cache directory";
     }
 

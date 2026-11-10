@@ -6,6 +6,7 @@
 
 #include "sak/partition_hfs_file_system_reader.h"
 
+#include "sak/partition_export_containment.h"
 #include "sak/partition_hfs_internal.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -20,9 +21,6 @@
 
 #include <algorithm>
 #include <functional>
-#include <limits>
-#include <optional>
-#include <utility>
 
 namespace sak {
 
@@ -79,22 +77,16 @@ QString uniquePath(const QDir& dir, const QString& safeName, const QString& suff
     return {};
 }
 
-bool writeExportFile(const QString& path,
-                     const QByteArray& data,
-                     QStringList* blockers,
-                     const QString& label) {
-    QFile output(path);
-    if (!output.open(QIODevice::WriteOnly | QIODevice::NewOnly) ||
-        output.write(data) != data.size()) {
-        blockers->append(QStringLiteral("Unable to write exported %1: %2").arg(label, path));
-        return false;
-    }
-    return true;
-}
+// The containment guard is defined once, in sak/partition_export_containment.h, and shared
+// with the other raw-filesystem exporters. It used to be copied into each of the three,
+// which is exactly how HFS+ came to ship without it (R5-P4-44).
+using sak::partition_export::pathWithinRoot;
+using sak::partition_export::writeFile;
 
 struct HfsExportFrame {
     QString source_path;
     QString output_directory;
+    uint32_t catalog_id{0};  // CNID of this directory; 0 = the export root
 };
 
 void appendHfsExportRequestBlockers(const QString& imagePath,
@@ -117,14 +109,16 @@ void appendHfsExportRequestBlockers(const QString& imagePath,
 
 class HfsDirectoryExporter {
 public:
-    HfsDirectoryExporter(QIODevice* image, PartitionHfsDirectoryExportOptions options)
-        : image_(image), options_(options) {}
+    HfsDirectoryExporter(QIODevice* image,
+                         const PartitionHfsDirectoryExportOptions& options,
+                         const QString& canonicalRoot)
+        : image_(image), options_(options), canonical_root_(canonicalRoot) {}
 
     PartitionHfsDirectoryExportResult run(const QString& sourcePath,
                                           const QString& outputDirectory) {
-        pending_.append(
-            {sourcePath.trimmed().isEmpty() ? QStringLiteral("/") : sourcePath.trimmed(),
-             outputDirectory});
+        pending_.append({.source_path = sourcePath.trimmed().isEmpty() ? QStringLiteral("/")
+                                                                       : sourcePath.trimmed(),
+                         .output_directory = outputDirectory});
         while (!pending_.isEmpty()) {
             if (!processFrame(pending_.takeLast())) {
                 break;
@@ -136,11 +130,14 @@ public:
 
 private:
     bool processFrame(const HfsExportFrame& frame) {
-        const QString visitKey = frame.source_path.toLower();
-        if (visited_directories_.contains(visitKey)) {
+        // Dedupe by CNID, not a folded path: on an HFSX (binary-compare) volume /Foo and /foo
+        // are genuinely distinct directories that a lowercased path key would collide (dropping
+        // one subtree), and HFS+ directory hard links reach one CNID by several paths (a path
+        // key would re-export it or loop). The catalog id is unambiguous under either compare.
+        if (visited_directories_.contains(frame.catalog_id)) {
             return true;
         }
-        visited_directories_.insert(visitKey);
+        visited_directories_.insert(frame.catalog_id);
 
         const auto listing = PartitionHfsFileSystemReader::listDirectory(
             image_, frame.source_path, std::max(1, options_.max_entries - result_.entries_scanned));
@@ -199,8 +196,18 @@ private:
                 QStringLiteral("Unable to create exported directory: %1").arg(targetPath));
             return false;
         }
+        // mkpath follows an existing reparse point instead of failing, so prove the realized
+        // directory is still under the export root before anything is written beneath it.
+        if (!pathWithinRoot(canonical_root_, targetPath)) {
+            result_.blockers.append(
+                QStringLiteral("Exported directory escapes the export root (reparse point): %1")
+                    .arg(targetPath));
+            return false;
+        }
         ++result_.directories_exported;
-        pending_.append({entry.path, targetPath});
+        pending_.append({.source_path = entry.path,
+                         .output_directory = targetPath,
+                         .catalog_id = entry.catalog_id});
         return true;
     }
 
@@ -227,7 +234,7 @@ private:
             result_.blockers.append(dataFork.blockers);
             return false;
         }
-        if (!writeExportFile(targetPath, dataFork.data, &result_.blockers, entry.path)) {
+        if (!writeFile(targetPath, dataFork.data, &result_.blockers, entry.path, canonical_root_)) {
             return false;
         }
         ++result_.files_exported;
@@ -254,10 +261,11 @@ private:
                     .arg(entry.path));
             return false;
         }
-        if (!writeExportFile(resourcePath,
-                             resourceFork.data,
-                             &result_.blockers,
-                             QStringLiteral("%1 resource fork").arg(entry.path))) {
+        if (!writeFile(resourcePath,
+                       resourceFork.data,
+                       &result_.blockers,
+                       QStringLiteral("%1 resource fork").arg(entry.path),
+                       canonical_root_)) {
             return false;
         }
         ++result_.resource_forks_exported;
@@ -283,8 +291,22 @@ private:
     PartitionHfsDirectoryExportOptions options_;
     PartitionHfsDirectoryExportResult result_;
     QVector<HfsExportFrame> pending_;
-    QSet<QString> visited_directories_;
+    QSet<uint32_t> visited_directories_;
+    const QString canonical_root_;
 };
+
+// Why a load() failed, as the reader itself recorded it. The public entry points used to replace
+// that detail with a single generic sentence, so "no readable device", "volume header not found"
+// and every specific validateVolume rejection reached the operator as the same unactionable
+// string. The ext reader already surfaces its own blockers(); this brings HFS+ into line. The
+// generic line is kept as a suffix -- it names which operation was refused -- and as the sole
+// message if the reader somehow failed without recording a reason, so the result is never an
+// empty blocker list claiming failure.
+QStringList hfsLoadFailureBlockers(const HfsReader& reader, const QString& context) {
+    QStringList blockers = reader.blockers();
+    blockers.append(context);
+    return blockers;
+}
 
 }  // namespace
 
@@ -292,8 +314,11 @@ PartitionHfsConsistencyCheckResult PartitionHfsFileSystemReader::checkConsistenc
                                                                                   int max_records) {
     HfsReader reader(device);
     if (!reader.load()) {
-        return reader.consistencyFailureResult(
+        PartitionHfsConsistencyCheckResult result = reader.consistencyFailureResult(
             QStringLiteral("Unable to open HFS+ filesystem for consistency check"));
+        result.blockers = hfsLoadFailureBlockers(
+            reader, QStringLiteral("Unable to open HFS+ filesystem for consistency check"));
+        return result;
     }
     return reader.checkConsistency(max_records);
 }
@@ -321,7 +346,8 @@ PartitionHfsFileReadResult PartitionHfsFileSystemReader::listDirectory(QIODevice
     HfsReader reader(device);
     if (!reader.load()) {
         PartitionHfsFileReadResult result;
-        result.blockers.append(QStringLiteral("Unable to open HFS+ filesystem for listing"));
+        result.blockers = hfsLoadFailureBlockers(
+            reader, QStringLiteral("Unable to open HFS+ filesystem for listing"));
         return result;
     }
     return reader.listDirectory(path, max_entries);
@@ -340,7 +366,8 @@ PartitionHfsFileReadResult PartitionHfsFileSystemReader::readFile(QIODevice* dev
     HfsReader reader(device);
     if (!reader.load()) {
         PartitionHfsFileReadResult result;
-        result.blockers.append(QStringLiteral("Unable to open HFS+ filesystem for reading"));
+        result.blockers = hfsLoadFailureBlockers(
+            reader, QStringLiteral("Unable to open HFS+ filesystem for reading"));
         return result;
     }
     return reader.readFile(path, max_bytes);
@@ -359,7 +386,8 @@ PartitionHfsFileReadResult PartitionHfsFileSystemReader::readResourceFork(QIODev
     HfsReader reader(device);
     if (!reader.load()) {
         PartitionHfsFileReadResult result;
-        result.blockers.append(QStringLiteral("Unable to open HFS+ filesystem for reading"));
+        result.blockers = hfsLoadFailureBlockers(
+            reader, QStringLiteral("Unable to open HFS+ filesystem for reading"));
         return result;
     }
     return reader.readResourceFork(path, max_bytes);
@@ -379,8 +407,8 @@ PartitionHfsAttributeReadResult PartitionHfsFileSystemReader::readAttributeValue
         PartitionHfsAttributeReadResult result;
         result.file_id = file_id;
         result.attribute_name = attribute_name.trimmed();
-        result.blockers.append(
-            QStringLiteral("Unable to open HFS+ filesystem for attribute reading"));
+        result.blockers = hfsLoadFailureBlockers(
+            reader, QStringLiteral("Unable to open HFS+ filesystem for attribute reading"));
         return result;
     }
     return reader.readAttributeValue(file_id, attribute_name, max_bytes);
@@ -427,13 +455,29 @@ PartitionHfsDirectoryExportResult PartitionHfsFileSystemReader::exportDirectoryF
         return exportResult;
     }
 
-    QDir root(output_directory);
+    const QDir root(output_directory);
     if (!root.mkpath(QStringLiteral("."))) {
         exportResult.blockers.append(QStringLiteral("Unable to create output directory"));
         return exportResult;
     }
+    // Resolve the export root ONCE: every realized directory and file target is proved to sit
+    // under this canonical path, so an image-supplied name or a reparse point planted at an
+    // ancestor cannot redirect a write outside it.
+    const QString canonicalRoot = QFileInfo(root.absolutePath()).canonicalFilePath();
+    if (canonicalRoot.isEmpty()) {
+        exportResult.blockers.append(QStringLiteral("Unable to resolve export root path"));
+        return exportResult;
+    }
 
-    return HfsDirectoryExporter(image.get(), options).run(source_path, root.absolutePath());
+    return HfsDirectoryExporter(image.get(), options, canonicalRoot)
+        .run(source_path, root.absolutePath());
 }
+
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+bool PartitionHfsFileSystemReader::exportPathWithinRootForTesting(const QString& canonical_root,
+                                                                  const QString& child) {
+    return pathWithinRoot(canonical_root, child);
+}
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
 
 }  // namespace sak

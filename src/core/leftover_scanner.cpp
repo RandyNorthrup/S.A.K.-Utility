@@ -7,9 +7,10 @@
 
 #include "sak/leftover_scanner.h"
 
-#include "sak/layout_constants.h"
 #include "sak/process_runner.h"
+#include "sak/program_enumerator.h"
 #include "sak/registry_snapshot_engine.h"
+#include "sak/windows_path_policy.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -17,18 +18,43 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 
+#include <algorithm>
+#include <array>
+#include <map>
+#include <vector>
+
+#include <msi.h>
+#include <msiquery.h>
+#include <shlobj.h>
+
+#pragma comment(lib, "msi.lib")
+
 namespace sak {
 
 namespace {
 constexpr int kPowerShellTimeoutMs = 15'000;
+// Hard backstop on how many files calculateSize will enumerate for one folder's size, so even a
+// pathological install tree (millions of files) cannot make the walk unbounded when nothing
+// cancels.
+constexpr int kMaxSizeWalkEntries = 200'000;
 constexpr int kMinConcatNameLen = 4;
 constexpr int kRegistryHivePrefixLength = 5;
-constexpr int kServiceOutputValueOffset = 14;
 
-#ifdef Q_OS_WIN
 constexpr DWORD kMaxRegistryValueNameLen = 256;
 constexpr DWORD kMaxRegistryValueDataLen = 1024;
-#endif
+
+// Resolve a System32 executable to its absolute path so an elevated leftover scan
+// cannot be hijacked by a PATH/CWD-planted binary of the same name. Fail closed
+// (empty) if the Windows root cannot be trusted.
+QString system32Exe(const QString& exe) {
+    wchar_t buffer[MAX_PATH];
+    const UINT len = GetWindowsDirectoryW(buffer, MAX_PATH);
+    if (len == 0 || len >= MAX_PATH) {
+        return {};
+    }
+    return QDir::cleanPath(QString::fromWCharArray(buffer, static_cast<int>(len)) +
+                           QStringLiteral("/System32/") + exe);
+}
 
 const QSet<QString> kGenericDirNames = {
     "bin",
@@ -61,14 +87,14 @@ void appendAndReportItems(QVector<LeftoverItem>& out,
 }
 
 void appendEnvDir(QStringList& dirs, const char* env_var) {
-    QString value = QDir::toNativeSeparators(qEnvironmentVariable(env_var));
+    const QString value = QDir::toNativeSeparators(qEnvironmentVariable(env_var));
     if (!value.isEmpty()) {
         dirs.append(value);
     }
 }
 
 void appendStandardDir(QStringList& dirs, QStandardPaths::StandardLocation loc) {
-    QString path = QStandardPaths::writableLocation(loc);
+    const QString path = QStandardPaths::writableLocation(loc);
     if (!path.isEmpty()) {
         dirs.append(path);
     }
@@ -79,9 +105,104 @@ bool isSignificantParentDir(const QString& parent) {
            parent != "program files (x86)" && parent != "programdata";
 }
 
+// Directory or registry-subkey leaf names that are shared OS or vendor containers, never a
+// single product's private location. Any path ending in one of these must never be
+// auto-selected for deletion.
+const QSet<QString> kSharedRootNames = {
+    "windows",
+    "system32",
+    "syswow64",
+    "winsxs",
+    "program files",
+    "program files (x86)",
+    "programdata",
+    "common files",
+    "microsoft",
+    "microsoft shared",
+    "windowsapps",
+};
+
+/// A leftover is pre-selected only when it may actually be deleted AND is classified Safe:
+/// a report-only item (one whose path could not be tied to the program) is never checked.
+bool leftoverPreSelected(const LeftoverItem& item) {
+    return item.deletable && item.risk == LeftoverItem::RiskLevel::Safe;
+}
+
+/// Reduce a name to its comparable core: lower-cased, non-alphanumerics dropped. Lets
+/// "Vendor App 2.0" and "VendorApp" compare equal without a substring free-for-all.
+QString foldedName(const QString& value) {
+    static const QRegularExpression kNoise(QStringLiteral("[^a-z0-9]+"));
+    QString folded = value.toLower();
+    folded.remove(kNoise);
+    return folded;
+}
+
+/// Two folded names match when they are equal, or one is a prefix of the other and the
+/// shorter side is long enough to be distinctive. Installer display names routinely carry
+/// a version/architecture suffix the install directory omits ("Notepad++ (64-bit)" vs
+/// "Notepad++"), and vendor directories routinely omit the vendor ("Google Chrome" vs
+/// "Google\\Chrome"), so an exact-only rule would reject real installs. The length floor
+/// stops a two-letter leaf from matching every program on the machine.
+bool foldedNamesMatch(const QString& a, const QString& b) {
+    constexpr int kMinDistinctiveFoldedLen = 4;
+    if (a.isEmpty() || b.isEmpty()) {
+        return false;
+    }
+    if (a == b) {
+        return true;
+    }
+    if (std::min(a.size(), b.size()) < kMinDistinctiveFoldedLen) {
+        return false;
+    }
+    return a.startsWith(b) || b.startsWith(a);
+}
+
+/// Append the profiles container (e.g. C:\\Users) and EVERY user profile root under it.
+/// Deleting another user's whole profile is as catastrophic as deleting our own, and a
+/// registry value can name any of them.
+void appendProfileRoots(QStringList& roots) {
+    const QString user_profile = qEnvironmentVariable("USERPROFILE");
+    if (user_profile.isEmpty()) {
+        return;
+    }
+    QDir profiles(user_profile);
+    if (!profiles.cdUp()) {
+        return;
+    }
+    roots.append(QDir::toNativeSeparators(profiles.absolutePath()));
+    const auto children = profiles.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString& child : children) {
+        roots.append(QDir::toNativeSeparators(profiles.absoluteFilePath(child)));
+    }
+}
+
 }  // namespace
 
-// Protected system paths that should NEVER be auto-selected for deletion
+namespace {
+
+// The folder @p folder_id names on this machine, in native form; empty when the API fails.
+QString knownFolderPath(REFKNOWNFOLDERID folder_id) {
+    PWSTR raw = nullptr;
+    const HRESULT hr = SHGetKnownFolderPath(folder_id, KF_FLAG_DEFAULT, nullptr, &raw);
+    const QString path = (SUCCEEDED(hr) && raw != nullptr) ? QString::fromWCharArray(raw)
+                                                           : QString();
+    CoTaskMemFree(raw);
+    return path.isEmpty() ? QString() : QDir::toNativeSeparators(QDir::cleanPath(path));
+}
+
+// kProtectedPaths plus the same folders where this machine keeps them, resolved once. A system
+// installed on D: (or with Users or ProgramData moved) is protected exactly like a C: install;
+// the C: entries stay, so a second Windows installation on C: keeps its protection too.
+const QStringList& protectedPathsOnThisMachine() {
+    static const QStringList paths =
+        LeftoverScanner::protectedPathsFor(LeftoverScanner::liveSystemFolders());
+    return paths;
+}
+
+}  // namespace
+
+// Protected system paths that should NEVER be auto-selected for deletion, as a C: install lays
+// them out; protectedPathsFor() rebases them onto this machine's own folders.
 const QStringList LeftoverScanner::kProtectedPaths = {
     "C:\\Windows",
     "C:\\Windows\\System32",
@@ -107,15 +228,196 @@ LeftoverScanner::LeftoverScanner(const ProgramInfo& program,
                                  ScanLevel level,
                                  const QSet<QString>& registryBefore)
     : m_program(program), m_level(level), m_registryBefore(registryBefore) {
+    // Screen the registry-supplied InstallLocation ONCE, before anything derives names or
+    // deletion targets from it. Everything downstream reads the screened/trusted copies;
+    // m_program.installLocation is never used as authority again.
+    const ScreenedInstallLocation screened = screenInstallLocation(program);
+    m_screenedInstallLocation = screened.syntactic;
+    m_trustedInstallLocation = screened.trusted;
+    m_installLocationRefusal = screened.refusal;
     buildExactNames();
 }
 
+LeftoverScanner::LeftoverScanner(const ProgramInfo& program,
+                                 ScanLevel level,
+                                 const QSet<QString>& registryBefore,
+                                 const QVector<ProgramInfo>& stillInstalled)
+    : LeftoverScanner(program, level, registryBefore) {
+    m_stillInstalled = stillInstalled;
+}
+
+QStringList LeftoverScanner::criticalInstallRoots() {
+    QStringList roots;
+    const auto addEnv = [&roots](const char* variable) {
+        const QString value = qEnvironmentVariable(variable);
+        if (!value.isEmpty()) {
+            roots.append(QDir::toNativeSeparators(value));
+        }
+    };
+    addEnv("SystemRoot");
+    addEnv("windir");
+    addEnv("ProgramFiles");
+    addEnv("ProgramFiles(x86)");
+    addEnv("ProgramW6432");
+    addEnv("ProgramData");
+    addEnv("CommonProgramFiles");
+    addEnv("CommonProgramFiles(x86)");
+    addEnv("ALLUSERSPROFILE");
+    addEnv("APPDATA");
+    addEnv("LOCALAPPDATA");
+    addEnv("PUBLIC");
+    addEnv("TEMP");
+    addEnv("TMP");
+    addEnv("USERPROFILE");
+    roots.append(QDir::toNativeSeparators(QDir::homePath()));
+    appendProfileRoots(roots);
+    return roots;
+}
+
+QString LeftoverScanner::installLocationSyntaxRefusal(const QString& rawLocation,
+                                                      const QStringList& criticalRoots) {
+    if (rawLocation.trimmed().isEmpty()) {
+        return QStringLiteral("no install location is recorded");
+    }
+    // Same dialect as the UninstallString screen: refuses relative, drive-relative,
+    // root-relative, UNC, traversal-bearing, "%VAR%"-carrying and volume-root values.
+    if (!literalLocalPathTrusted(rawLocation)) {
+        return QStringLiteral(
+            "it is not a literal local directory path (relative, UNC, traversal, "
+            "unexpanded variable or a whole volume)");
+    }
+    const QString screened = screeningPathForm(rawLocation);
+    if (std::ranges::any_of(criticalRoots, [&screened](const QString& root) {
+            return screeningPathForm(root).compare(screened, Qt::CaseInsensitive) == 0;
+        })) {
+        return QStringLiteral("it is a system, shared or user-profile root directory");
+    }
+    return {};
+}
+
+bool LeftoverScanner::installLocationMatchesProgram(const QString& canonicalLocation,
+                                                    const QString& displayName,
+                                                    const QString& packageFamilyName) {
+    QDir dir(canonicalLocation);
+    const QString leaf = foldedName(dir.dirName());
+    QString parent_leaf;
+    if (dir.cdUp()) {
+        parent_leaf = foldedName(dir.dirName());
+    }
+    // "App" and the "Publisher\App" pair are the two shapes a real install uses.
+    const QStringList location_names{leaf, parent_leaf + leaf};
+    const QStringList program_names{foldedName(displayName), foldedName(packageFamilyName)};
+    return std::ranges::any_of(location_names, [&program_names](const QString& location_name) {
+        return std::ranges::any_of(program_names, [&location_name](const QString& program_name) {
+            return foldedNamesMatch(location_name, program_name);
+        });
+    });
+}
+
+LeftoverScanner::ScreenedInstallLocation LeftoverScanner::screenInstallLocation(
+    const ProgramInfo& program) {
+    ScreenedInstallLocation out;
+    if (program.installLocation.trimmed().isEmpty()) {
+        return out;  // nothing recorded: no candidate, and nothing to refuse
+    }
+    const QString refusal = installLocationSyntaxRefusal(program.installLocation,
+                                                         criticalInstallRoots());
+    if (!refusal.isEmpty()) {
+        // Fail closed and do NOT touch the filesystem: a UNC or traversal value must not
+        // even be stat'ed, let alone become a deletion candidate.
+        out.refusal = refusal;
+        return out;
+    }
+    out.syntactic = QDir::toNativeSeparators(screeningPathForm(program.installLocation));
+    out.trusted = provenInstallLocation(out.syntactic, program, out.refusal);
+    return out;
+}
+
+QString LeftoverScanner::provenInstallLocation(const QString& screenedLocation,
+                                               const ProgramInfo& program,
+                                               QString& refusalOut) {
+    const QFileInfo info(screenedLocation);
+    if (!info.exists() || !info.isDir()) {
+        refusalOut = QStringLiteral("it is not an existing directory");
+        return {};
+    }
+    // A junction/symlink lets the registry value aim a recursive delete at a target it
+    // does not name. Refuse the reparse point itself; canonicalFilePath() additionally
+    // resolves one in any PARENT component, and the resolved path is screened again so it
+    // cannot land on a UNC share or a critical root by redirection.
+    if (info.isSymLink()) {
+        refusalOut = QStringLiteral("it is a reparse point (junction or symbolic link)");
+        return {};
+    }
+    const QString canonical = QDir::toNativeSeparators(info.canonicalFilePath());
+    if (canonical.isEmpty() ||
+        !installLocationSyntaxRefusal(canonical, criticalInstallRoots()).isEmpty()) {
+        refusalOut = QStringLiteral("it does not resolve to a literal local directory");
+        return {};
+    }
+    if (!installLocationMatchesProgram(canonical, program.displayName, program.packageFamilyName)) {
+        refusalOut = QStringLiteral("it cannot be tied to this program by name");
+        return {};
+    }
+    return canonical;
+}
+
+namespace {
+
+/// The program file a registry command or icon value names: a quoted path, or the text up to and
+/// including ".exe". Empty when it names none.
+QString registryProgramPath(const QString& value) {
+    const QString text = value.trimmed();
+    if (text.startsWith(QLatin1Char('"'))) {
+        const qsizetype close = text.indexOf(QLatin1Char('"'), 1);
+        return close > 1 ? text.mid(1, close - 1) : QString();
+    }
+    const QString exe = QStringLiteral(".exe");
+    const qsizetype at = text.indexOf(exe, 0, Qt::CaseInsensitive);
+    return at > 0 ? text.left(at + exe.size()) : QString();
+}
+
+}  // namespace
+
+QString LeftoverScanner::uninstallerFolderName(const ProgramInfo& program) {
+    for (const QString& value : {program.uninstallString, program.displayIcon}) {
+        const QString path = registryProgramPath(value);
+        if (path.isEmpty()) {
+            continue;
+        }
+        const QString folder = QFileInfo(QDir::fromNativeSeparators(path)).dir().dirName();
+        const QString lower = folder.toLower();
+        // Only a folder named for the program: an uninstaller kept in a shared or vendor folder
+        // ("Common Files", "Uninstall Information") names nothing of this program's.
+        if (!lower.isEmpty() && !kGenericDirNames.contains(lower) &&
+            foldedNamesMatch(foldedName(folder), foldedName(program.displayName))) {
+            return lower;
+        }
+    }
+    return {};
+}
+
 void LeftoverScanner::extractInstallDirNames() {
-    if (m_program.installLocation.isEmpty()) {
+    // Names are derived from the SYNTACTICALLY screened value, not the raw registry
+    // string: a "%VAR%"/UNC/volume-root value must not seed the exact-name set that
+    // decides which unrelated directories get matched elsewhere. The full trust tier is
+    // deliberately NOT required here -- after an uninstall the directory is usually gone,
+    // and its name is still the best signal for finding what it left behind.
+    if (m_screenedInstallLocation.isEmpty()) {
+        // Many installers record no InstallLocation. Notepad++ records none, and its display name
+        // is "Notepad++ (64-bit x64)", so "%APPDATA%\Notepad++", which its uninstaller keeps when
+        // asked to keep settings, matched no name and the scan found nothing (review 3). The
+        // folder its own uninstaller sits in names it, when that folder is named for the program.
+        // A name only: it never becomes a deletion target by itself.
+        const QString folder = uninstallerFolderName(m_program);
+        if (!folder.isEmpty() && !m_exactNames.contains(folder)) {
+            m_installDirName = folder;
+            m_exactNames.append(folder);
+        }
         return;
     }
-    QDir install_dir(m_program.installLocation);
-    QString dir_name = install_dir.dirName().toLower();
+    QDir install_dir(m_screenedInstallLocation);
+    const QString dir_name = install_dir.dirName().toLower();
     if (!dir_name.isEmpty() && !kGenericDirNames.contains(dir_name)) {
         m_installDirName = dir_name;
         if (!m_exactNames.contains(dir_name)) {
@@ -124,7 +426,7 @@ void LeftoverScanner::extractInstallDirNames() {
     }
 
     if (install_dir.cdUp()) {
-        QString parent = install_dir.dirName().toLower();
+        const QString parent = install_dir.dirName().toLower();
         if (isSignificantParentDir(parent)) {
             m_installParentName = parent;
         }
@@ -140,7 +442,7 @@ void LeftoverScanner::buildExactNames() {
     extractInstallDirNames();
 
     if (!m_program.packageFamilyName.isEmpty()) {
-        QString pkg = m_program.packageFamilyName.toLower();
+        const QString pkg = m_program.packageFamilyName.toLower();
         if (!m_exactNames.contains(pkg)) {
             m_exactNames.append(pkg);
         }
@@ -156,14 +458,328 @@ void LeftoverScanner::buildExactNames() {
 }
 
 // ======================================================================
+// Name-only matching: the display name without its architecture tag
+// ======================================================================
+
+namespace {
+
+// Folded names of vendors whose name alone says nothing about one product.
+const QSet<QString> kVendorNames = {
+    "microsoft",      "microsoftcorporation",
+    "google",         "googlellc",
+    "adobe",          "apple",
+    "intel",          "nvidia",
+    "oracle",         "mozilla",
+    "hewlettpackard", "dell",
+    "lenovo",         "samsung",
+    "realtek",        "logitech",
+    "autodesk",       "vmware",
+    "citrix",         "cisco",
+    "asus",           "acer",
+    "sony",
+};
+
+/// The lower-case leaf of a recorded install location, or empty.
+QString installFolderLeaf(const QString& installLocation) {
+    QString path = QDir::fromNativeSeparators(installLocation.trimmed());
+    while (path.endsWith(QLatin1Char('/'))) {
+        path.chop(1);
+    }
+    return path.isEmpty() ? QString() : QDir(path).dirName().toLower();
+}
+
+/// Whether @p other, a program still installed, carries @p name as its own.
+bool installedProgramHasName(const ProgramInfo& other, const QString& name) {
+    return other.displayName.trimmed().toLower() == name ||
+           LeftoverScanner::architectureStrippedName(other.displayName) == name ||
+           installFolderLeaf(other.installLocation) == name ||
+           LeftoverScanner::uninstallerFolderName(other) == name;
+}
+
+/// The programs still installed, from the registry; nullopt when the registry could not be read
+/// completely, so a name-only match is never allowed on a partial list.
+std::optional<QVector<ProgramInfo>> liveInstalledPrograms() {
+    ProgramEnumerator enumerator;
+    bool complete = true;
+    QObject::connect(&enumerator,
+                     &ProgramEnumerator::enumerationWarning,
+                     &enumerator,
+                     [&complete](const QString&) { complete = false; });
+    QVector<ProgramInfo> programs = enumerator.enumerateRegistryProgramsSync();
+    if (!complete) {
+        return std::nullopt;
+    }
+    return programs;
+}
+
+}  // namespace
+
+QString LeftoverScanner::architectureStrippedName(const QString& displayName) {
+    static const QRegularExpression kArchitectureTag(
+        QStringLiteral(R"(\s*\(\s*(?:x64|x86|64-bit|32-bit)(?:[\s,/]+(?:x64|x86|64-bit|32-bit))*)"
+                       R"(\s*\)\s*$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = kArchitectureTag.match(displayName);
+    if (!match.hasMatch()) {
+        return {};
+    }
+    return displayName.left(match.capturedStart()).trimmed().toLower();
+}
+
+QString LeftoverScanner::nameOnlyNameRefusal(const QString& strippedName,
+                                             const ProgramInfo& program,
+                                             const QVector<ProgramInfo>& stillInstalled) {
+    constexpr int kMinNameOnlyFoldedLen = 4;
+    const QString folded = foldedName(strippedName);
+    if (folded.size() < kMinNameOnlyFoldedLen) {
+        return QStringLiteral("it is shorter than four letters or digits");
+    }
+    if (folded == foldedName(program.publisher) || kVendorNames.contains(folded) ||
+        kGenericDirNames.contains(strippedName) || kSharedRootNames.contains(strippedName)) {
+        return QStringLiteral("it is a publisher or shared folder name");
+    }
+    for (const ProgramInfo& other : stillInstalled) {
+        const bool is_self = !program.registryKeyPath.isEmpty() &&
+                             other.registryKeyPath.compare(program.registryKeyPath,
+                                                           Qt::CaseInsensitive) == 0;
+        if (!is_self && installedProgramHasName(other, strippedName)) {
+            return QStringLiteral("%1, still installed, has that name").arg(other.displayName);
+        }
+    }
+    return {};
+}
+
+void LeftoverScanner::resolveNameOnlyName() {
+    m_nameOnlyName.clear();
+    const QString candidate = architectureStrippedName(m_program.displayName);
+    // Nothing to add when the name has no tag, or when the tagless name is already an exact
+    // name (an install or uninstaller folder named it): those matches stay exact.
+    if (candidate.isEmpty() || m_exactNames.contains(candidate)) {
+        return;
+    }
+    if (!m_stillInstalled) {
+        m_stillInstalled = liveInstalledPrograms();
+        if (!m_stillInstalled) {
+            return;  // a partial program list cannot prove nobody else uses the name
+        }
+    }
+    if (nameOnlyNameRefusal(candidate, m_program, *m_stillInstalled).isEmpty()) {
+        m_nameOnlyName = candidate;
+    }
+}
+
+LeftoverScanner::NameMatch LeftoverScanner::matchName(const QString& nameLower) const {
+    if (matchesProgramExact(nameLower)) {
+        return NameMatch::Exact;
+    }
+    if (!m_nameOnlyName.isEmpty() && nameLower == m_nameOnlyName) {
+        return NameMatch::NameOnly;
+    }
+    return NameMatch::None;
+}
+
+void LeftoverScanner::markIfNameOnly(LeftoverItem& item, NameMatch match) const {
+    if (match != NameMatch::NameOnly) {
+        return;
+    }
+    // Found through the program's name alone, not through anything Windows recorded about where
+    // it was installed: shown for the technician to judge, never pre-selected or auto-cleaned.
+    item.risk = LeftoverItem::RiskLevel::Risky;
+    item.description +=
+        QStringLiteral(" -- matched only by the name \"%1\"; check it belongs to this program")
+            .arg(m_nameOnlyName);
+}
+
+// ======================================================================
+// Windows Installer: where an MSI product put its files
+// ======================================================================
+
+namespace {
+
+constexpr int kMaxWindowsInstallerComponents = 20'000;
+constexpr DWORD kMsiPathBufferChars = 1024;
+constexpr DWORD kMsiComponentIdChars = 64;  // a component ID is a 38-character GUID
+
+/// One installed-product property (INSTALLPROPERTY_*), or empty.
+QString msiProductProperty(const std::wstring& productCode, const wchar_t* property) {
+    DWORD chars = 0;
+    if (MsiGetProductInfoW(productCode.c_str(), property, nullptr, &chars) != ERROR_SUCCESS ||
+        chars == 0) {
+        return {};
+    }
+    std::vector<wchar_t> buffer(static_cast<size_t>(chars) + 1);
+    DWORD size = chars + 1;
+    if (MsiGetProductInfoW(productCode.c_str(), property, buffer.data(), &size) != ERROR_SUCCESS) {
+        return {};
+    }
+    return QString::fromWCharArray(buffer.data(), static_cast<int>(size));
+}
+
+/// The installed path of one component of the product ("C:\...\file.exe", "C:\...\folder\", or a
+/// registry key path such as "02:\SOFTWARE\..."), or empty when it is not installed locally.
+QString msiComponentPath(const std::wstring& productCode, const std::wstring& componentId) {
+    std::vector<wchar_t> buffer(kMsiPathBufferChars);
+    DWORD size = kMsiPathBufferChars;
+    INSTALLSTATE state =
+        MsiGetComponentPathW(productCode.c_str(), componentId.c_str(), buffer.data(), &size);
+    if (state == INSTALLSTATE_MOREDATA) {
+        buffer.resize(static_cast<size_t>(size) + 1);
+        size = static_cast<DWORD>(buffer.size());
+        state =
+            MsiGetComponentPathW(productCode.c_str(), componentId.c_str(), buffer.data(), &size);
+    }
+    if (state != INSTALLSTATE_LOCAL) {
+        return {};
+    }
+    return QString::fromWCharArray(buffer.data(), static_cast<int>(size));
+}
+
+/// The component IDs in the product's cached package (read-only), at most the cap.
+std::vector<std::wstring> msiComponentIds(const QString& localPackage) {
+    std::vector<std::wstring> ids;
+    PMSIHANDLE database;
+    // A null persist mode is MSIDBOPEN_READONLY: the cached package is never written.
+    if (MsiOpenDatabaseW(reinterpret_cast<LPCWSTR>(localPackage.utf16()), nullptr, &database) !=
+        ERROR_SUCCESS) {
+        return ids;
+    }
+    PMSIHANDLE view;
+    if (MsiDatabaseOpenViewW(database, L"SELECT `ComponentId` FROM `Component`", &view) !=
+            ERROR_SUCCESS ||
+        MsiViewExecute(view, 0) != ERROR_SUCCESS) {
+        return ids;
+    }
+    while (static_cast<int>(ids.size()) < kMaxWindowsInstallerComponents) {
+        PMSIHANDLE record;  // one per row: a PMSIHANDLE closes its handle on leaving scope
+        if (MsiViewFetch(view, &record) != ERROR_SUCCESS) {
+            break;
+        }
+        std::array<wchar_t, kMsiComponentIdChars> id{};
+        DWORD size = kMsiComponentIdChars;
+        if (MsiRecordGetStringW(record, 1, id.data(), &size) == ERROR_SUCCESS && size > 0) {
+            ids.emplace_back(id.data(), size);
+        }
+    }
+    return ids;
+}
+
+/// @p path without its last "/" segment ("C:/A/B" gives "C:/A", "C:/A" gives "C:"), on the text.
+QString parentFolderText(const QString& path) {
+    const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
+    return slash < 0 ? QString() : path.left(slash);
+}
+
+/// @p path's last "/" segment, on the text.
+QString lastPathSegment(const QString& path) {
+    return path.mid(path.lastIndexOf(QLatin1Char('/')) + 1);
+}
+
+/// Whether @p folder ("C:/Program Files/Vendor/App", forward slashes) is named for the program:
+/// its leaf matches the folded display name (a version or architecture suffix may differ), or its
+/// "Vendor\App" pair equals it ("Google\Chrome" for "Google Chrome"). The pair must be equal, not
+/// a prefix, so a product's own subfolder ("Notepad++\plugins") never passes for it. On the text
+/// alone, so a folder that is gone still answers.
+bool folderNamesProgram(const QString& folder, const QString& displayName) {
+    const QString program = foldedName(displayName);
+    const QString leaf = foldedName(lastPathSegment(folder));
+    const QString parent = parentFolderText(folder);
+    const QString parent_leaf =
+        parent.contains(QLatin1Char('/')) ? foldedName(lastPathSegment(parent)) : QString();
+    return foldedNamesMatch(leaf, program) ||
+           (!parent_leaf.isEmpty() && !program.isEmpty() && parent_leaf + leaf == program);
+}
+
+/// The Windows Installer product code an Uninstall entry names: the GUID in an MsiExec
+/// uninstall string, else the Uninstall key's own name when that is a GUID. Empty otherwise.
+QString windowsInstallerProductCode(const ProgramInfo& program) {
+    static const QRegularExpression kGuid(QStringLiteral(R"(\{[0-9A-Fa-f\-]{36}\})"));
+    if (program.uninstallString.contains(QStringLiteral("msiexec"), Qt::CaseInsensitive)) {
+        const QRegularExpressionMatch match = kGuid.match(program.uninstallString);
+        if (match.hasMatch()) {
+            return match.captured(0);
+        }
+    }
+    const QString key_name = program.registryKeyPath.section(QLatin1Char('\\'), -1);
+    const QRegularExpressionMatch match = kGuid.match(key_name);
+    return match.hasMatch() && match.capturedLength() == key_name.size() ? key_name : QString();
+}
+
+}  // namespace
+
+QString LeftoverScanner::installFolderFromComponentPaths(const QStringList& componentPaths,
+                                                         const QString& displayName) {
+    static const QRegularExpression kRegistryPath(QStringLiteral(R"(^\d\d:)"));
+    std::map<QString, int> components_per_folder;
+    for (const QString& raw : componentPaths) {
+        if (raw.isEmpty() || kRegistryPath.match(raw).hasMatch()) {
+            continue;
+        }
+        // A folder component's path ends in a separator; a file's names the file. The walk is
+        // on the text alone (the folders need not exist) and stops above the drive root.
+        QString folder = QDir::cleanPath(QDir::fromNativeSeparators(raw));
+        if (!raw.endsWith(QLatin1Char('\\')) && !raw.endsWith(QLatin1Char('/'))) {
+            folder = parentFolderText(folder);
+        }
+        while (folder.count(QLatin1Char('/')) >= 1) {
+            if (folderNamesProgram(folder, displayName)) {
+                ++components_per_folder[QDir::toNativeSeparators(folder)];
+                break;
+            }
+            folder = parentFolderText(folder);
+        }
+    }
+    QString best;
+    int best_count = 0;
+    for (const auto& [folder, count] : components_per_folder) {
+        if (count > best_count) {
+            best = folder;
+            best_count = count;
+        }
+    }
+    return best;
+}
+
+ProgramInfo LeftoverScanner::withWindowsInstallerLocation(const ProgramInfo& program) {
+    if (!program.installLocation.trimmed().isEmpty()) {
+        return program;
+    }
+    const QString code = windowsInstallerProductCode(program);
+    if (code.isEmpty()) {
+        return program;
+    }
+    const std::wstring product = code.toStdWString();
+    if (MsiQueryProductStateW(product.c_str()) != INSTALLSTATE_DEFAULT) {
+        return program;  // not installed for this user or the machine: nothing to ask
+    }
+    ProgramInfo out = program;
+    out.installLocation = msiProductProperty(product, INSTALLPROPERTY_INSTALLLOCATION);
+    if (!out.installLocation.trimmed().isEmpty()) {
+        return out;
+    }
+    const QString package = msiProductProperty(product, INSTALLPROPERTY_LOCALPACKAGE);
+    if (package.isEmpty()) {
+        return program;
+    }
+    QStringList paths;
+    for (const std::wstring& id : msiComponentIds(package)) {
+        paths.append(msiComponentPath(product, id));
+    }
+    out.installLocation = installFolderFromComponentPaths(paths, program.displayName);
+    return out;
+}
+
+// ======================================================================
 // Scan Orchestrator
 // ======================================================================
 
 QVector<LeftoverItem> LeftoverScanner::scan(
     const std::atomic<bool>& stopRequested,
-    std::function<void(const QString&, int)> progressCallback) {
+    std::function<void(const QString&, int)> progressCallback,
+    LeftoverScanReliability* reliability) {
     QVector<LeftoverItem> all_items;
     int found_count = 0;
+    LeftoverScanReliability rel;  // per-phase reliability, copied to the out-param at the end
+    resolveNameOnlyName();
 
     auto report = [&](const QString& path) {
         ++found_count;
@@ -186,18 +802,24 @@ QVector<LeftoverItem> LeftoverScanner::scan(
 
     // Phase 3: Registry (snapshot diff + known paths)
     if (m_level == ScanLevel::Moderate || m_level == ScanLevel::Advanced) {
-#ifdef Q_OS_WIN
-        runPhase([&] { return scanRegistryDiff(stopRequested); });
+        runPhase([&] { return scanRegistryDiff(stopRequested, rel.registry_ok); });
         runPhase([&] { return scanKnownRegistryPaths(stopRequested); });
-#endif
     }
 
     // Phase 4: System objects (Advanced only)
     if (m_level == ScanLevel::Advanced) {
-        runPhase([&] { return scanServices(stopRequested); });
-        runPhase([&] { return scanScheduledTasks(stopRequested); });
-        runPhase([&] { return scanFirewallRules(stopRequested); });
-        runPhase([&] { return scanStartupEntries(stopRequested); });
+        runPhase([&] { return scanServices(stopRequested, rel.services_ok); });
+        runPhase([&] { return scanScheduledTasks(stopRequested, rel.scheduled_tasks_ok); });
+        runPhase([&] { return scanFirewallRules(stopRequested, rel.firewall_ok); });
+        runPhase([&] { return scanStartupEntries(stopRequested, rel.startup_ok); });
+    }
+
+    // Surface per-phase reliability (a shell-out phase that failed returns empty, which without
+    // this would read as an honest "nothing found"). runPhase skips a phase entirely when a stop
+    // was already requested; leaving its flag true is correct -- the op reports cancellation
+    // separately.
+    if (reliability != nullptr) {
+        *reliability = rel;
     }
 
     // Deduplicate by path and pre-select safe items
@@ -209,7 +831,7 @@ QVector<LeftoverItem> LeftoverScanner::scan(
             continue;
         }
         seen.insert(item.path);
-        item.selected = (item.risk == LeftoverItem::RiskLevel::Safe);
+        item.selected = leftoverPreSelected(item);
         result.append(std::move(item));
     }
 
@@ -221,22 +843,49 @@ QVector<LeftoverItem> LeftoverScanner::scan(
 // ======================================================================
 
 QVector<LeftoverItem> LeftoverScanner::scanInstallLocation(const std::atomic<bool>& stopRequested) {
-    if (m_program.installLocation.isEmpty() || stopRequested.load()) {
+    if (stopRequested.load()) {
         return {};
     }
-
-    QDir install_dir(m_program.installLocation);
-    if (!install_dir.exists()) {
-        return {};
+    // Only the TRUSTED location may become a deletion candidate. Anything less is either
+    // reported without deletion authority or dropped entirely (see reportOnlyInstallLocation).
+    if (m_trustedInstallLocation.isEmpty()) {
+        return reportOnlyInstallLocation();
     }
 
     LeftoverItem item;
     item.type = LeftoverItem::Type::Folder;
-    item.path = QDir::toNativeSeparators(install_dir.absolutePath());
+    item.path = m_trustedInstallLocation;
     item.description = "Program install directory still exists";
-    item.sizeBytes = calculateSize(install_dir.absolutePath());
-    item.risk = LeftoverItem::RiskLevel::Safe;
+    item.sizeBytes = calculateSize(item.path, stopRequested);
+    // Route through classifyRisk so a shared publisher/OS install location (e.g. a program
+    // whose InstallLocation is Program Files\Common Files) is Risky, not auto-selected.
+    item.risk = classifyRisk(item.path, item.type);
 
+    return {item};
+}
+
+QVector<LeftoverItem> LeftoverScanner::reportOnlyInstallLocation() const {
+    // A value that failed the SYNTAX screen yields nothing at all -- it is never stat'ed
+    // and never becomes a candidate, with or without a warning attached.
+    if (m_screenedInstallLocation.isEmpty() || m_installLocationRefusal.isEmpty()) {
+        return {};
+    }
+    if (!QFileInfo(m_screenedInstallLocation).exists()) {
+        return {};
+    }
+
+    // Syntactically clean and present, but not provably this program's directory. Surface
+    // it so a technician can see and judge it, with deletion authority withheld: the size
+    // walk is skipped too, since we will not be deleting this tree.
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::Folder;
+    item.path = m_screenedInstallLocation;
+    item.description = QStringLiteral(
+                           "Registered install directory -- REVIEW ONLY, not "
+                           "deletable because %1")
+                           .arg(m_installLocationRefusal);
+    item.risk = LeftoverItem::RiskLevel::Risky;
+    item.deletable = false;
     return {item};
 }
 
@@ -244,9 +893,15 @@ QVector<LeftoverItem> LeftoverScanner::scanInstallLocation(const std::atomic<boo
 // Phase 2: Known Application Paths
 // ======================================================================
 
-QVector<LeftoverItem> LeftoverScanner::scanKnownPaths(const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanKnownPaths(
+    const std::atomic<bool>& stopRequested) const {
     QVector<LeftoverItem> items;
 
+    // Scan roots come from environment variables (there is no OS-agnostic other source). That is
+    // safe: isProtectedPath covers the system folders where this machine keeps them (known-folder
+    // API, not the environment), and isSharedContainerPath matches a shared-container LEAF name
+    // (windows/system32/programdata/...) on ANY drive. A poisoned APPDATA/ProgramFiles only
+    // redirects WHERE we look; anything found is still classified before it can be auto-selected.
     QStringList base_dirs;
     appendEnvDir(base_dirs, "APPDATA");
     appendEnvDir(base_dirs, "LOCALAPPDATA");
@@ -275,10 +930,10 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownPaths(const std::atomic<bool>& s
     return items;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(const QString& basePath,
-                                                        const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(
+    const QString& basePath, const std::atomic<bool>& stopRequested) const {
     QVector<LeftoverItem> items;
-    QDir base(basePath);
+    const QDir base(basePath);
     if (!base.exists()) {
         return items;
     }
@@ -292,14 +947,9 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(const QString& basePath,
         const QString dir_lower = entry.fileName().toLower();
 
         // Direct match: directory name matches program or install dir
-        if (matchesProgramExact(dir_lower)) {
-            LeftoverItem item;
-            item.type = LeftoverItem::Type::Folder;
-            item.path = QDir::toNativeSeparators(entry.absoluteFilePath());
-            item.description = QString("Leftover folder in %1").arg(basePath);
-            item.sizeBytes = calculateSize(entry.absoluteFilePath());
-            item.risk = classifyRisk(item.path, item.type);
-            items.append(item);
+        if (const NameMatch match = matchName(dir_lower); match != NameMatch::None) {
+            items.append(folderLeftover(
+                entry, QString("Leftover folder in %1").arg(basePath), match, stopRequested));
             continue;
         }
 
@@ -307,32 +957,44 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(const QString& basePath,
         if (!isPublisherDir(dir_lower)) {
             continue;
         }
-        QDir pub_dir(entry.absoluteFilePath());
+        const QDir pub_dir(entry.absoluteFilePath());
         const auto sub_entries = pub_dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
         for (const auto& sub : sub_entries) {
             if (stopRequested.load()) {
                 break;
             }
-            if (!matchesProgramExact(sub.fileName().toLower())) {
+            const NameMatch match = matchName(sub.fileName().toLower());
+            if (match == NameMatch::None) {
                 continue;
             }
-            LeftoverItem item;
-            item.type = LeftoverItem::Type::Folder;
-            item.path = QDir::toNativeSeparators(sub.absoluteFilePath());
-            item.description = "Leftover folder under publisher directory";
-            item.sizeBytes = calculateSize(sub.absoluteFilePath());
-            item.risk = classifyRisk(item.path, item.type);
-            items.append(item);
+            items.append(folderLeftover(sub,
+                                        QStringLiteral("Leftover folder under publisher directory"),
+                                        match,
+                                        stopRequested));
         }
     }
 
     return items;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(const QString& basePath,
-                                                         const std::atomic<bool>& stopRequested) {
+LeftoverItem LeftoverScanner::folderLeftover(const QFileInfo& folder,
+                                             const QString& description,
+                                             NameMatch match,
+                                             const std::atomic<bool>& stopRequested) const {
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::Folder;
+    item.path = QDir::toNativeSeparators(folder.absoluteFilePath());
+    item.description = description;
+    item.sizeBytes = calculateSize(folder.absoluteFilePath(), stopRequested);
+    item.risk = classifyRisk(item.path, item.type);
+    markIfNameOnly(item, match);
+    return item;
+}
+
+QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(
+    const QString& basePath, const std::atomic<bool>& stopRequested) const {
     QVector<LeftoverItem> items;
-    QDir base(basePath);
+    const QDir base(basePath);
     if (!base.exists()) {
         return items;
     }
@@ -342,7 +1004,8 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(const QString& basePath
         if (stopRequested.load()) {
             break;
         }
-        if (!matchesProgramExact(file.completeBaseName().toLower())) {
+        const NameMatch match = matchName(file.completeBaseName().toLower());
+        if (match == NameMatch::None) {
             continue;
         }
         LeftoverItem item;
@@ -351,6 +1014,7 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(const QString& basePath
         item.description = QString("Leftover file in %1").arg(basePath);
         item.sizeBytes = file.size();
         item.risk = classifyRisk(item.path, item.type);
+        markIfNameOnly(item, match);
         items.append(item);
     }
 
@@ -361,14 +1025,19 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(const QString& basePath
 // Phase 3: Registry
 // ======================================================================
 
-#ifdef Q_OS_WIN
-
-QVector<LeftoverItem> LeftoverScanner::scanRegistryDiff(const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanRegistryDiff(const std::atomic<bool>& stopRequested,
+                                                        bool& ok) {
     if (m_registryBefore.isEmpty() || stopRequested.load()) {
         return {};
     }
 
-    auto registry_after = RegistrySnapshotEngine::captureSnapshot();
+    // A PARTIAL "after" snapshot silently drops keys, so a survived leftover would be
+    // missed and read as an honest "clean" -- surface that as a reliability failure.
+    bool snapshot_ok = true;
+    auto registry_after = RegistrySnapshotEngine::captureSnapshot(&snapshot_ok);
+    if (!snapshot_ok) {
+        ok = false;
+    }
     QVector<LeftoverItem> items;
 
     for (const auto& key : registry_after) {
@@ -379,7 +1048,8 @@ QVector<LeftoverItem> LeftoverScanner::scanRegistryDiff(const std::atomic<bool>&
         if (!m_registryBefore.contains(key)) {
             continue;
         }
-        if (!registryKeyMatchesProgram(key)) {
+        const NameMatch match = registryKeyMatchesProgram(key);
+        if (match == NameMatch::None) {
             continue;
         }
         LeftoverItem item;
@@ -387,13 +1057,15 @@ QVector<LeftoverItem> LeftoverScanner::scanRegistryDiff(const std::atomic<bool>&
         item.path = key;
         item.description = "Registry key survived uninstallation";
         item.risk = classifyRisk(key, LeftoverItem::Type::RegistryKey);
+        markIfNameOnly(item, match);
         items.append(item);
     }
 
     return items;
 }
 
-bool LeftoverScanner::registryKeyMatchesProgram(const QString& keyPath) const {
+LeftoverScanner::NameMatch LeftoverScanner::registryKeyMatchesProgram(
+    const QString& keyPath) const {
     const QString key_lower = keyPath.toLower();
 
     // Skip Windows system keys
@@ -401,7 +1073,7 @@ bool LeftoverScanner::registryKeyMatchesProgram(const QString& keyPath) const {
         key_lower.contains("\\microsoft\\windows nt\\") ||
         key_lower.contains("\\currentcontrolset\\control\\") ||
         key_lower.contains("\\currentcontrolset\\enum\\")) {
-        return false;
+        return NameMatch::None;
     }
 
     static const QSet<QString> kRootComponents = {
@@ -414,18 +1086,22 @@ bool LeftoverScanner::registryKeyMatchesProgram(const QString& keyPath) const {
         "services",
     };
 
-    const QStringList components = keyPath.split('\\', Qt::SkipEmptyParts);
-    for (const auto& component : components) {
+    // An exact component anywhere in the key wins over a name-only one.
+    NameMatch best = NameMatch::None;
+    for (const QString& component : keyPath.split('\\', Qt::SkipEmptyParts)) {
         const QString comp_lower = component.toLower();
         if (kRootComponents.contains(comp_lower)) {
             continue;
         }
-        if (matchesProgramExact(comp_lower)) {
-            return true;
+        const NameMatch match = matchName(comp_lower);
+        if (match == NameMatch::Exact) {
+            return match;
+        }
+        if (match == NameMatch::NameOnly) {
+            best = match;
         }
     }
-
-    return false;
+    return best;
 }
 
 QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
@@ -438,7 +1114,7 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
     auto checkKey =
         [&](HKEY hive, const QString& subkey, const QString& hiveName, const QString& description) {
             HKEY key = nullptr;
-            LONG rc =
+            LONG const rc =
                 RegOpenKeyExW(hive, reinterpret_cast<LPCWSTR>(subkey.utf16()), 0, KEY_READ, &key);
             if (rc != ERROR_SUCCESS) {
                 return;
@@ -448,7 +1124,9 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
             item.type = LeftoverItem::Type::RegistryKey;
             item.path = hiveName + "\\" + subkey;
             item.description = description;
-            item.risk = LeftoverItem::RiskLevel::Safe;
+            // Route through classifyRisk so a heuristically-guessed shared vendor subkey (e.g.
+            // SOFTWARE\Microsoft) is Risky rather than blindly Safe/auto-selected.
+            item.risk = classifyRisk(item.path, item.type);
             items.append(item);
         };
 
@@ -469,7 +1147,7 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
 
     // Check for product keys under standard hives
     if (!m_installDirName.isEmpty()) {
-        QString dir_proper = QDir(m_program.installLocation).dirName();
+        const QString dir_proper = QDir(m_screenedInstallLocation).dirName();
         checkKey(
             HKEY_CURRENT_USER, "Software\\" + dir_proper, "HKCU", "Leftover product registry key");
         checkKey(
@@ -479,59 +1157,138 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
     return items;
 }
 
-#endif  // Q_OS_WIN
-
-QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> buildServiceLeftoverItems(const QVector<QPair<QString, QString>>& services,
+                                                const std::function<bool(const QString&)>& matches,
+                                                const std::atomic<bool>& stopRequested) {
     QVector<LeftoverItem> items;
-
-    const auto result = sak::runProcess(QStringLiteral("sc.exe"),
-                                        {QStringLiteral("query"),
-                                         QStringLiteral("type="),
-                                         QStringLiteral("service"),
-                                         QStringLiteral("state="),
-                                         QStringLiteral("all")},
-                                        kPowerShellTimeoutMs,
-                                        [&stopRequested]() { return stopRequested.load(); });
-    if (!result.succeeded()) {
-        return items;
-    }
-
-    QString output = result.std_out;
-    QStringList lines = output.split('\n');
-
-    QString current_service;
-    QString current_display;
-
-    for (const auto& line : lines) {
+    for (const auto& service : services) {
         if (stopRequested.load()) {
             break;
         }
-
-        QString trimmed = line.trimmed();
-
-        if (trimmed.startsWith("SERVICE_NAME:")) {
-            current_service = trimmed.mid(kServiceOutputValueOffset).trimmed();
-        } else if (trimmed.startsWith("DISPLAY_NAME:")) {
-            current_display = trimmed.mid(kServiceOutputValueOffset).trimmed();
-
-            if (matchesProgramStrict(current_service) || matchesProgramStrict(current_display)) {
-                LeftoverItem item;
-                item.type = LeftoverItem::Type::Service;
-                item.path = current_service;
-                item.description = QString("Windows service: %1").arg(current_display);
-                item.risk = LeftoverItem::RiskLevel::Risky;
-                items.append(item);
-            }
+        const QString& name = service.first;
+        const QString& display = service.second;
+        if (matches(name) || matches(display)) {
+            LeftoverItem item;
+            item.type = LeftoverItem::Type::Service;
+            item.path = name;
+            item.description = QString("Windows service: %1").arg(display);
+            item.risk = LeftoverItem::RiskLevel::Risky;
+            items.append(item);
         }
     }
-
     return items;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool>& stopRequested) {
+namespace {
+// Enumerate installed Win32 services as (keyName, displayName) pairs straight from the Service
+// Control Manager (EnumServicesStatusExW). Both fields are language-neutral, so the leftover match
+// no longer depends on English sc.exe console labels ("SERVICE_NAME:"/"DISPLAY_NAME:") that were
+// empty on localized Windows. Sets @p ok false on a real SCM/enumeration failure (an empty result
+// is then a FAILED read, not an honest "no services"); leaves it true on clean completion or a
+// cooperative cancel. Fails closed: a hard error discards any partial list.
+QVector<QPair<QString, QString>> enumerateWin32Services(const std::atomic<bool>& stopRequested,
+                                                        bool& ok) {
+    QVector<QPair<QString, QString>> services;
+
+    const SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_ENUMERATE_SERVICE);
+    if (scm == nullptr) {
+        ok = false;  // cannot even open the SCM -> a failed read, not "none found"
+        return services;
+    }
+
+    constexpr DWORD kInitialBufferBytes = 64u * 1024u;
+    std::vector<BYTE> buffer(kInitialBufferBytes);
+    DWORD resume_handle = 0;
+    for (;;) {
+        if (stopRequested.load()) {
+            break;  // cooperative cancel: ok stays true (a cancel is not a read failure)
+        }
+        DWORD bytes_needed = 0;
+        DWORD services_returned = 0;
+        const BOOL rc = EnumServicesStatusExW(scm,
+                                              SC_ENUM_PROCESS_INFO,
+                                              SERVICE_WIN32,
+                                              SERVICE_STATE_ALL,
+                                              buffer.data(),
+                                              static_cast<DWORD>(buffer.size()),
+                                              &bytes_needed,
+                                              &services_returned,
+                                              &resume_handle,
+                                              nullptr);
+        const DWORD err = (rc != 0) ? ERROR_SUCCESS : GetLastError();
+        if (rc == FALSE && err != ERROR_MORE_DATA) {
+            ok = false;  // genuine enumeration failure -> fail closed, discard the partial list
+            CloseServiceHandle(scm);
+            return {};
+        }
+
+        const auto* entries = reinterpret_cast<const ENUM_SERVICE_STATUS_PROCESSW*>(buffer.data());
+        for (DWORD i = 0; i < services_returned; ++i) {
+            services.append({QString::fromWCharArray(entries[i].lpServiceName),
+                             QString::fromWCharArray(entries[i].lpDisplayName)});
+        }
+
+        if (rc != FALSE) {
+            break;  // enumeration complete
+        }
+        // ERROR_MORE_DATA: grow the buffer if even one more entry will not fit, then resume.
+        if (bytes_needed > buffer.size()) {
+            buffer.resize(bytes_needed);
+        }
+    }
+
+    CloseServiceHandle(scm);
+    return services;
+}
+}  // namespace
+
+QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& stopRequested,
+                                                    bool& ok) const {
+    const QVector<QPair<QString, QString>> services = enumerateWin32Services(stopRequested, ok);
+    if (!ok) {
+        return {};  // enumeration failed -> empty is a FAILED read, honesty preserved by ok=false
+    }
+    return buildServiceLeftoverItems(
+        services,
+        [this](const QString& text) { return matchesProgramStrict(text); },
+        stopRequested);
+}
+
+// Extract the FIRST field of a CSV line, honoring RFC-4180 double-quoting so a task name that
+// itself contains a comma (e.g. "Acme, Inc. Updater") is not truncated -- a naive split(',')[0]
+// would take only "Acme and removeScheduledTask would then target the wrong/nonexistent task.
+// Doubled quotes ("") inside a quoted field are a single literal quote. External linkage so the
+// parse is unit-testable without schtasks.
+QString parseFirstCsvField(const QString& line) {
+    if (line.isEmpty() || line.at(0) != QLatin1Char('"')) {
+        const int comma = static_cast<int>(line.indexOf(QLatin1Char(',')));
+        return comma < 0 ? line : line.left(comma);
+    }
+    QString out;
+    for (int i = 1; i < line.length(); ++i) {
+        const QChar ch = line.at(i);
+        if (ch != QLatin1Char('"')) {
+            out.append(ch);
+        } else if (i + 1 < line.length() && line.at(i + 1) == QLatin1Char('"')) {
+            out.append(QLatin1Char('"'));  // escaped quote inside the quoted field
+            ++i;
+        } else {
+            break;  // closing quote of the field
+        }
+    }
+    return out;
+}
+
+QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool>& stopRequested,
+                                                          bool& ok) const {
     QVector<LeftoverItem> items;
 
-    const auto result = sak::runProcess(QStringLiteral("schtasks.exe"),
+    const QString schtasks = system32Exe(QStringLiteral("schtasks.exe"));
+    if (schtasks.isEmpty()) {
+        ok = false;  // cannot resolve a trusted System32 schtasks -> fail closed
+        return items;
+    }
+    const auto result = sak::runProcess(schtasks,
                                         {QStringLiteral("/query"),
                                          QStringLiteral("/fo"),
                                          QStringLiteral("CSV"),
@@ -539,30 +1296,30 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool
                                         kPowerShellTimeoutMs,
                                         [&stopRequested]() { return stopRequested.load(); });
     if (!result.succeeded()) {
+        ok =
+            false;  // schtasks failed/blocked/timed out -> empty is a FAILED read, not "none found"
         return items;
     }
 
-    QString output = result.std_out;
-    QStringList lines = output.split('\n');
+    const QString output = result.std_out;
+    const QStringList lines = output.split('\n');
 
     for (const auto& line : lines) {
         if (stopRequested.load()) {
             break;
         }
 
-        QString trimmed = line.trimmed();
+        const QString trimmed = line.trimmed();
         if (trimmed.isEmpty()) {
             continue;
         }
 
-        // CSV format: "TaskName","Next Run Time","Status"
-        QStringList fields = trimmed.split(',');
-        if (fields.isEmpty()) {
+        // CSV format: "TaskName","Next Run Time","Status" -- parse the quoted first field so an
+        // embedded comma in the task name does not truncate the task identity.
+        const QString task_name = parseFirstCsvField(trimmed);
+        if (task_name.isEmpty()) {
             continue;
         }
-
-        QString task_name = fields[0];
-        task_name.remove('"');
 
         if (matchesProgramStrict(task_name)) {
             LeftoverItem item;
@@ -577,157 +1334,320 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool
     return items;
 }
 
+namespace {
+// A netsh "advfirewall firewall show rule" block is delimited by a locale-neutral run of dashes
+// (exactly one separator per rule). Its presence proves rules exist even when the localized
+// "Rule Name:" label cannot be matched by this English-keyed parser.
+constexpr int kMinFirewallSeparatorDashes = 10;
+
+bool isNetshRuleSeparator(const QString& trimmed) {
+    if (trimmed.length() < kMinFirewallSeparatorDashes) {
+        return false;
+    }
+    return std::ranges::all_of(trimmed, [](const QChar ch) { return ch == QLatin1Char('-'); });
+}
+}  // namespace
+
+// A netsh dump whose per-rule dashed separators are present but whose "Rule Name:" headers are all
+// absent is a LOCALIZED dump this parser cannot read: the rules exist yet none can be extracted.
+// Returns true in exactly that case so the firewall phase is marked UNRELIABLE (fail closed) rather
+// than reporting a deceptively empty "no rules". A genuinely empty dump (no separators) returns
+// false -- that is an honest "nothing here". External linkage so it is unit-testable without netsh.
+bool firewallDumpHeaderMissing(const QStringList& lines) {
+    bool saw_block = false;
+    bool saw_header = false;
+    for (const QString& line : lines) {
+        const QString trimmed = line.trimmed();
+        if (isNetshRuleSeparator(trimmed)) {
+            saw_block = true;
+        } else if (trimmed.startsWith("Rule Name:", Qt::CaseInsensitive)) {
+            saw_header = true;
+        }
+    }
+    return saw_block && !saw_header;
+}
+
+namespace {
+// Lengths of the netsh rule-block label prefixes, each counting through the trailing colon.
+constexpr int kDirectionLabelLen = 10;  // "Direction:"
+constexpr int kProfilesLabelLen = 9;    // "Profiles:"
+// Value that follows a "Label:" prefix in a netsh rule block (labelLen counts the
+// prefix including the colon). Trimmed of the padding netsh inserts for alignment.
+QString netshFieldValue(const QString& trimmed, int labelLen) {
+    return trimmed.mid(labelLen).trimmed();
+}
+}  // namespace
+
+// Copy the direction/profile/program identity fields off one netsh rule-block line into
+// the pending item so cleanup can narrow the delete to this exact rule. An "Any"/empty
+// program means the rule is not program-bound, so program= is intentionally omitted.
+// External linkage so it is unit-testable without netsh.
+void applyFirewallField(const QString& trimmed, LeftoverItem& item) {
+    if (trimmed.startsWith("Direction:", Qt::CaseInsensitive)) {
+        item.firewallDirection = netshFieldValue(trimmed, kDirectionLabelLen).toLower();
+    } else if (trimmed.startsWith("Profiles:", Qt::CaseInsensitive)) {
+        item.firewallProfile = netshFieldValue(trimmed, kProfilesLabelLen);
+    } else if (trimmed.startsWith("Program:", Qt::CaseInsensitive)) {
+        const QString prog = netshFieldValue(trimmed, 8);
+        if (prog.compare("Any", Qt::CaseInsensitive) != 0) {
+            item.firewallProgram = prog;
+        }
+    }
+}
+
+int LeftoverScanner::appendFirewallRule(const QString& headerLine,
+                                        const QString& description,
+                                        QVector<LeftoverItem>& items) const {
+    const QString rule_name = netshFieldValue(headerLine, 10);
+    if (!matchesProgramStrict(rule_name)) {
+        return -1;
+    }
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::FirewallRule;
+    item.path = rule_name;
+    item.description = description;
+    item.risk = LeftoverItem::RiskLevel::Review;
+    items.append(item);
+    return static_cast<int>(items.size()) - 1;
+}
+
 void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
                                             const QString& description,
                                             const std::atomic<bool>& stopRequested,
-                                            QVector<LeftoverItem>& items) {
-    const auto result = sak::runProcess(QStringLiteral("netsh.exe"),
-                                        netsh_args,
-                                        kPowerShellTimeoutMs,
-                                        [&stopRequested]() { return stopRequested.load(); });
+                                            QVector<LeftoverItem>& items,
+                                            bool& ok) const {
+    const QString netsh = system32Exe(QStringLiteral("netsh.exe"));
+    if (netsh.isEmpty()) {
+        ok = false;  // cannot resolve a trusted System32 netsh -> fail closed
+        return;
+    }
+    const auto result =
+        sak::runProcess(netsh, netsh_args, kPowerShellTimeoutMs, [&stopRequested]() {
+            return stopRequested.load();
+        });
     if (!result.succeeded()) {
+        ok = false;  // netsh failed/blocked/timed out -> empty is a FAILED read, not "none found"
         return;
     }
 
     const QString output = result.std_out;
     const QStringList lines = output.split('\n');
 
+    // Track the pending matched rule by INDEX (append can reallocate items). Every
+    // field line after a matched "Rule Name:" feeds that rule until the next header;
+    // a non-matching header resets to -1 so its fields are ignored.
+    int current = -1;
     for (const auto& line : lines) {
         if (stopRequested.load()) {
             break;
         }
         const QString trimmed = line.trimmed();
-        if (!trimmed.startsWith("Rule Name:", Qt::CaseInsensitive)) {
-            continue;
+        if (trimmed.startsWith("Rule Name:", Qt::CaseInsensitive)) {
+            current = appendFirewallRule(trimmed, description, items);
+        } else if (current >= 0) {
+            applyFirewallField(trimmed, items[current]);
         }
-        const QString rule_name = trimmed.mid(10).trimmed();
-        if (!matchesProgramStrict(rule_name)) {
-            continue;
-        }
-        LeftoverItem item;
-        item.type = LeftoverItem::Type::FirewallRule;
-        item.path = rule_name;
-        item.description = description;
-        item.risk = LeftoverItem::RiskLevel::Review;
-        items.append(item);
+    }
+
+    // Rules clearly present (dashed separators) but zero parseable "Rule Name:" headers means the
+    // labels are localized and this parse is blind: fail closed so the empty item list is not read
+    // as an honest "no firewall rules".
+    if (firewallDumpHeaderMissing(lines)) {
+        ok = false;
     }
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanFirewallRules(const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanFirewallRules(const std::atomic<bool>& stopRequested,
+                                                         bool& ok) {
     QVector<LeftoverItem> items;
 
     scanFirewallDirection({"advfirewall", "firewall", "show", "rule", "name=all", "dir=in"},
                           "Windows Firewall rule",
                           stopRequested,
-                          items);
+                          items,
+                          ok);
 
     if (!stopRequested.load()) {
         scanFirewallDirection({"advfirewall", "firewall", "show", "rule", "name=all", "dir=out"},
                               "Windows Firewall rule (outbound)",
                               stopRequested,
-                              items);
+                              items,
+                              ok);
     }
 
     return items;
 }
 
-#ifdef Q_OS_WIN
-void LeftoverScanner::scanRunKey(HKEY hive,
+namespace {
+// Sane upper bounds for the ERROR_MORE_DATA retry loop. Genuine Run-key entries are tiny; these
+// caps exist only so a misbehaving provider cannot spin the grow loop forever. Past them we fail
+// closed (skip the value) rather than loop.
+constexpr DWORD kMaxRunValueNameChars = 32u * 1024u;
+constexpr std::size_t kMaxRunValueDataBytes = 1024u * 1024u;
+// The API never reports the required NAME buffer size, so on ERROR_MORE_DATA the name buffer is
+// grown by doubling until the ceiling above is reached.
+constexpr std::size_t kNameBufferGrowthFactor = 2;
+
+// Decode a REG_SZ / REG_EXPAND_SZ payload to a QString; empty for any other type or a buffer too
+// short to hold even one wide char.
+QString decodeRunValueBytes(DWORD type, const BYTE* data, DWORD data_bytes) {
+    if ((type != REG_SZ && type != REG_EXPAND_SZ) || data_bytes < sizeof(wchar_t)) {
+        return {};
+    }
+    const auto* wdata = reinterpret_cast<const wchar_t*>(data);
+    int chars = static_cast<int>(data_bytes / sizeof(wchar_t));
+    // REG_SZ SHOULD carry a NUL terminator, but the registry does not guarantee it. Only drop the
+    // final wide char when it actually IS the terminator; a non-terminated value keeps every char
+    // (the old unconditional "-1" silently lost the last character of such values).
+    if (chars > 0 && wdata[chars - 1] == L'\0') {
+        --chars;
+    }
+    return QString::fromWCharArray(wdata, chars);
+}
+
+struct RunValueRead {
+    QString name;
+    QString data;
+    bool ok = false;
+};
+}  // namespace
+
+// ERROR_MORE_DATA buffer-growth policy for Run-key value reads, factored out for unit testing.
+// @p data_len is RegEnumValueW's authoritative required data size; the required NAME size is never
+// reported by the API, so the name buffer is instead doubled. Resizes the buffers in place and
+// returns TRUE while still within sane ceilings; returns FALSE past them so the caller FAILS CLOSED
+// (skips the value) instead of looping forever on a pathological entry. External linkage for tests.
+bool growRunValueBuffers(std::vector<wchar_t>& name_buf,
+                         std::vector<BYTE>& data_buf,
+                         DWORD data_len) {
+    if (static_cast<std::size_t>(data_len) > data_buf.size()) {
+        data_buf.resize(data_len);
+    } else {
+        name_buf.resize(name_buf.size() * kNameBufferGrowthFactor);
+    }
+    return name_buf.size() <= kMaxRunValueNameChars && data_buf.size() <= kMaxRunValueDataBytes;
+}
+
+namespace {
+// Read one Run-key value, GROWING both buffers on ERROR_MORE_DATA so a long value name or command
+// line is never silently dropped (the old fixed 256/1024 buffers skipped such entries while the
+// phase still reported reliable). ok stays false on a genuine error or once the grow ceiling is
+// hit -- fail closed rather than emit a truncated value.
+RunValueRead readRunKeyValue(HKEY key, DWORD index) {
+    std::vector<wchar_t> name_buf(kMaxRegistryValueNameLen);
+    std::vector<BYTE> data_buf(kMaxRegistryValueDataLen);
+    RunValueRead out;
+    for (;;) {
+        DWORD name_len = static_cast<DWORD>(name_buf.size());
+        DWORD data_len = static_cast<DWORD>(data_buf.size());
+        DWORD type = 0;
+        const LONG rc = RegEnumValueW(
+            key, index, name_buf.data(), &name_len, nullptr, &type, data_buf.data(), &data_len);
+        if (rc == ERROR_SUCCESS) {
+            out.name = QString::fromWCharArray(name_buf.data(), static_cast<int>(name_len));
+            out.data = decodeRunValueBytes(type, data_buf.data(), data_len);
+            out.ok = true;
+            return out;
+        }
+        if (rc != ERROR_MORE_DATA || !growRunValueBuffers(name_buf, data_buf, data_len)) {
+            return out;  // genuine error or grow ceiling reached -> ok=false (fail closed)
+        }
+    }
+}
+}  // namespace
+
+bool LeftoverScanner::appendRunKeyValue(HKEY key,
+                                        DWORD index,
+                                        const QString& hive_name,
+                                        const wchar_t* subkey,
+                                        QVector<LeftoverItem>& items) const {
+    const RunValueRead read = readRunKeyValue(key, index);
+    if (!read.ok) {
+        // The value could not be read (genuine error or grow ceiling) and was dropped. Signal the
+        // failure so scanRunKey marks the startup phase incomplete rather than reporting a
+        // deceptively honest "no entries" for a Run key we actually failed to enumerate.
+        return false;
+    }
+    if (!matchesProgramStrict(read.name) && !matchesProgramStrict(read.data)) {
+        return true;  // read succeeded; this value simply does not belong to the program
+    }
+
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::StartupEntry;
+    item.path = QString("%1\\%2").arg(hive_name, QString::fromWCharArray(subkey));
+    item.registryValueName = read.name;
+    item.registryValueData = read.data;
+    item.description = QString("Startup entry: %1").arg(read.name);
+    item.risk = LeftoverItem::RiskLevel::Review;
+    items.append(item);
+    return true;
+}
+
+bool LeftoverScanner::scanRunKey(HKEY hive,
                                  const wchar_t* subkey,
                                  const QString& hive_name,
                                  const std::atomic<bool>& stopRequested,
-                                 QVector<LeftoverItem>& items) {
+                                 QVector<LeftoverItem>& items) const {
     HKEY key = nullptr;
-    LONG rc = RegOpenKeyExW(hive, subkey, 0, KEY_READ, &key);
+    const LONG rc = RegOpenKeyExW(hive, subkey, 0, KEY_READ, &key);
     if (rc != ERROR_SUCCESS) {
-        return;
+        // ERROR_FILE_NOT_FOUND = the Run key simply does not exist -> an honest "no entries here"
+        // (reliable). Any OTHER error (ERROR_ACCESS_DENIED under a constrained token, etc.) IS a
+        // failed enumeration, so the empty result must not be reported as complete.
+        return rc == ERROR_FILE_NOT_FOUND;
     }
 
     DWORD value_count = 0;
-    RegQueryInfoKeyW(key,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     &value_count,
-                     nullptr,
-                     nullptr,
-                     nullptr,
-                     nullptr);
+    if (RegQueryInfoKeyW(key,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         &value_count,
+                         nullptr,
+                         nullptr,
+                         nullptr,
+                         nullptr) != ERROR_SUCCESS) {
+        RegCloseKey(key);
+        return false;  // could not read the value count -> the (empty) enumeration is unreliable
+    }
 
-    wchar_t value_name[kMaxRegistryValueNameLen];
-    BYTE value_data[kMaxRegistryValueDataLen];
-
-    for (DWORD idx = 0; idx < value_count; ++idx) {
-        if (stopRequested.load()) {
-            break;
+    // A single per-value read failure makes the whole key's enumeration unreliable: some startup
+    // entry may have been dropped, so fail closed for the phase rather than report a partial list
+    // as complete.
+    bool all_reads_ok = true;
+    for (DWORD idx = 0; idx < value_count && !stopRequested.load(); ++idx) {
+        if (!appendRunKeyValue(key, idx, hive_name, subkey, items)) {
+            all_reads_ok = false;
         }
-
-        DWORD name_len = kMaxRegistryValueNameLen;
-        DWORD data_len = kMaxRegistryValueDataLen;
-        DWORD type = 0;
-
-        rc = RegEnumValueW(key, idx, value_name, &name_len, nullptr, &type, value_data, &data_len);
-        if (rc != ERROR_SUCCESS) {
-            continue;
-        }
-
-        QString name = QString::fromWCharArray(value_name, name_len);
-        QString data;
-        if ((type == REG_SZ || type == REG_EXPAND_SZ) && data_len >= sizeof(wchar_t)) {
-            data = QString::fromWCharArray(reinterpret_cast<wchar_t*>(value_data),
-                                           data_len / sizeof(wchar_t) - 1);
-        }
-
-        if (!matchesProgramStrict(name) && !matchesProgramStrict(data)) {
-            continue;
-        }
-
-        LeftoverItem item;
-        item.type = LeftoverItem::Type::StartupEntry;
-        item.path = QString("%1\\%2").arg(hive_name, QString::fromWCharArray(subkey));
-        item.registryValueName = name;
-        item.registryValueData = data;
-        item.description = QString("Startup entry: %1").arg(name);
-        item.risk = LeftoverItem::RiskLevel::Review;
-        items.append(item);
     }
 
     RegCloseKey(key);
+    return all_reads_ok;
 }
-#endif
 
-QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(const std::atomic<bool>& stopRequested,
+                                                          bool& ok) const {
     QVector<LeftoverItem> items;
 
-#ifdef Q_OS_WIN
-    scanRunKey(HKEY_CURRENT_USER,
-               L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
-               "HKCU",
-               stopRequested,
-               items);
-    scanRunKey(HKEY_CURRENT_USER,
-               L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
-               "HKCU",
-               stopRequested,
-               items);
-
+    // ok stays true only if EVERY Run-key read was reliable (a real failure -> phase incomplete).
+    const auto readRun = [&](HKEY hive, const wchar_t* subkey, const QString& hive_name) {
+        if (!scanRunKey(hive, subkey, hive_name, stopRequested, items)) {
+            ok = false;
+        }
+    };
+    readRun(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "HKCU");
+    readRun(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce", "HKCU");
     if (!stopRequested.load()) {
-        scanRunKey(HKEY_LOCAL_MACHINE,
-                   L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
-                   "HKLM",
-                   stopRequested,
-                   items);
-        scanRunKey(HKEY_LOCAL_MACHINE,
-                   L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
-                   "HKLM",
-                   stopRequested,
-                   items);
+        readRun(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", "HKLM");
+        readRun(HKEY_LOCAL_MACHINE,
+                L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+                "HKLM");
     }
-#endif
 
+    // cppcheck-suppress duplicateCondition ; atomic stop flag checked across threads
     if (!stopRequested.load()) {
         scanStartupFolder(stopRequested, items);
     }
@@ -736,13 +1656,13 @@ QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(const std::atomic<bool
 }
 
 void LeftoverScanner::scanStartupFolder(const std::atomic<bool>& stopRequested,
-                                        QVector<LeftoverItem>& items) {
+                                        QVector<LeftoverItem>& items) const {
     const QString startup_folder =
         QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation) + "/Startup";
     if (!QDir(startup_folder).exists()) {
         return;
     }
-    QDir dir(startup_folder);
+    const QDir dir(startup_folder);
     const auto files = dir.entryInfoList(QDir::Files);
     for (const auto& file : files) {
         if (stopRequested.load()) {
@@ -765,10 +1685,25 @@ void LeftoverScanner::scanStartupFolder(const std::atomic<bool>& stopRequested,
 // Classification and Matching
 // ======================================================================
 
+// By design: only File/Folder items reach here, and every File/Folder is produced by an EXACT
+// name match (matchesProgramExact), never the loose matchesProgramStrict substring test (which
+// only ever yields Risky services or Review tasks/firewall/startup that are NOT auto-selected). So
+// a Safe classification here still requires an exact program-name match -- the substring container
+// checks below only pick the risk tier for an already exact-matched path.
 LeftoverItem::RiskLevel LeftoverScanner::classifyFileRisk(const QString& path_lower) const {
-    if (!m_program.installLocation.isEmpty() &&
-        path_lower.startsWith(m_program.installLocation.toLower())) {
-        return LeftoverItem::RiskLevel::Safe;
+    // A bare startsWith would classify a sibling like C:\App2 as inside C:\App and
+    // exempt it from the protected-root check (eligible for auto-selected recursive
+    // deletion). Require an exact match or a real path-segment boundary.
+    // The TRUSTED location only: an unverifiable registry value must not be able to
+    // declare an arbitrary directory (and everything beneath it) Safe and pre-selected.
+    const QString install_lower = m_trustedInstallLocation.toLower();
+    if (!install_lower.isEmpty()) {
+        const QString install_with_sep = install_lower.endsWith(QLatin1Char('\\'))
+                                             ? install_lower
+                                             : install_lower + QLatin1Char('\\');
+        if (path_lower == install_lower || path_lower.startsWith(install_with_sep)) {
+            return LeftoverItem::RiskLevel::Safe;
+        }
     }
     if (path_lower.contains("appdata") || path_lower.contains("programdata") ||
         path_lower.contains("program files") || path_lower.contains("\\temp\\")) {
@@ -777,7 +1712,7 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyFileRisk(const QString& path_lo
     return LeftoverItem::RiskLevel::Review;
 }
 
-LeftoverItem::RiskLevel LeftoverScanner::classifyTypeRisk(LeftoverItem::Type type) const {
+LeftoverItem::RiskLevel LeftoverScanner::classifyTypeRisk(LeftoverItem::Type type) {
     switch (type) {
     case LeftoverItem::Type::File:
     case LeftoverItem::Type::Folder:
@@ -800,9 +1735,16 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyTypeRisk(LeftoverItem::Type typ
     return LeftoverItem::RiskLevel::Review;
 }
 
+bool LeftoverScanner::isSharedContainerPath(const QString& path) {
+    if (path.isEmpty()) {
+        return false;
+    }
+    return kSharedRootNames.contains(QDir(path).dirName().toLower());
+}
+
 LeftoverItem::RiskLevel LeftoverScanner::classifyRisk(const QString& path,
                                                       LeftoverItem::Type type) const {
-    if (isProtectedPath(path)) {
+    if (isSharedContainerPath(path) || isProtectedPath(path)) {
         return LeftoverItem::RiskLevel::Risky;
     }
 
@@ -813,44 +1755,93 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyRisk(const QString& path,
     return classifyTypeRisk(type);
 }
 
-bool LeftoverScanner::isProtectedPath(const QString& path) const {
+namespace {
+// A leftover is exempted from a protected root ONLY when it lives inside the
+// program's own install folder AND that folder is a strict subdirectory of the
+// protected root (e.g. C:\Program Files\MyApp under C:\Program Files). It is
+// never exempted when installLocation IS the protected root itself (e.g.
+// installLocation set to C:\Windows), which would classify the entire OS
+// directory as Safe and auto-select it for recursive deletion.
+bool leftoverInsideOwnInstallSubfolder(const QString& path_native,
+                                       const QString& install_native,
+                                       const QString& protected_path) {
+    const int len = static_cast<int>(protected_path.length());
+    const bool install_below_protected =
+        !install_native.isEmpty() && install_native.length() > len &&
+        install_native.startsWith(protected_path, Qt::CaseInsensitive) &&
+        install_native[len] == '\\';
+    return install_below_protected && path_native.startsWith(install_native, Qt::CaseInsensitive);
+}
+}  // namespace
+
+LeftoverScanner::SystemFolders LeftoverScanner::liveSystemFolders() {
+    return {.windows = knownFolderPath(FOLDERID_Windows),
+            .program_files = knownFolderPath(FOLDERID_ProgramFiles),
+            .program_files_common = knownFolderPath(FOLDERID_ProgramFilesCommon),
+            .program_data = knownFolderPath(FOLDERID_ProgramData),
+            .user_profiles = knownFolderPath(FOLDERID_UserProfiles),
+            .public_profile = knownFolderPath(FOLDERID_Public)};
+}
+
+QStringList LeftoverScanner::protectedPathsFor(const SystemFolders& folders) {
+    QStringList paths;
+    const auto add = [&paths](const QString& base, const QString& relative) {
+        if (base.isEmpty()) {
+            return;
+        }
+        const QString native = QDir::toNativeSeparators(QDir::cleanPath(base));
+        paths << (relative.isEmpty() ? native : native + QLatin1Char('\\') + relative);
+    };
+    add(folders.windows, {});
+    add(folders.windows, QStringLiteral("System32"));
+    add(folders.windows, QStringLiteral("SysWOW64"));
+    add(folders.windows, QStringLiteral("WinSxS"));
+    add(folders.program_files_common, QStringLiteral("Microsoft Shared"));
+    add(folders.program_files, QStringLiteral("Windows"));
+    add(folders.program_data, QStringLiteral("Microsoft"));
+    add(folders.user_profiles, QStringLiteral("Default"));
+    add(folders.public_profile, {});
+    return paths;
+}
+
+bool LeftoverScanner::pathUnderProtectedRoot(const QString& path,
+                                             const QStringList& roots,
+                                             const QString& trusted_install_location) {
     if (path.isEmpty()) {
         return false;
     }
     const QString path_native = QDir::toNativeSeparators(path);
-    const QString install_native = m_program.installLocation.isEmpty()
-                                       ? QString{}
-                                       : QDir::toNativeSeparators(m_program.installLocation);
-
-    for (const auto& protected_path : kProtectedPaths) {
+    for (const auto& protected_path : roots) {
         if (!path_native.startsWith(protected_path, Qt::CaseInsensitive)) {
             continue;
         }
-        const int len = protected_path.length();
+        const int len = static_cast<int>(protected_path.length());
         const bool direct = (path_native.length() == len);
         const bool child = (path_native.length() > len && path_native[len] == '\\');
         if (!direct && !child) {
             continue;
         }
-        if (!install_native.isEmpty() &&
-            path_native.startsWith(install_native, Qt::CaseInsensitive)) {
-            return false;
-        }
-        return true;
+        return !leftoverInsideOwnInstallSubfolder(path_native,
+                                                  trusted_install_location,
+                                                  protected_path);
     }
     return false;
+}
+
+bool LeftoverScanner::isProtectedPath(const QString& path) const {
+    // The protected-root exemption is granted only to a TRUSTED install location. An
+    // unverifiable registry value pointing inside C:\Windows must not be able to exempt
+    // that subtree from the protected-path check.
+    return pathUnderProtectedRoot(path, kProtectedPaths, m_trustedInstallLocation) ||
+           pathUnderProtectedRoot(path, protectedPathsOnThisMachine(), m_trustedInstallLocation);
 }
 
 bool LeftoverScanner::matchesProgramExact(const QString& nameLower) const {
     if (nameLower.isEmpty()) {
         return false;
     }
-    for (const auto& exact : m_exactNames) {
-        if (nameLower == exact) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(m_exactNames,
+                               [&nameLower](const QString& exact) { return nameLower == exact; });
 }
 
 bool LeftoverScanner::matchesProgramStrict(const QString& text) const {
@@ -881,17 +1872,31 @@ bool LeftoverScanner::isPublisherDir(const QString& dirNameLower) const {
     return false;
 }
 
-qint64 LeftoverScanner::calculateSize(const QString& path) {
-    QFileInfo info(path);
+// Returns a best-effort byte total. On cancel or the kMaxSizeWalkEntries cap it returns the partial
+// sum WITHOUT an "incomplete" flag by design: sizeBytes is purely informational UI data (it drives
+// no deletion decision), and a qint64 total cannot realistically overflow from file sizes, so a
+// capped/cancelled partial is an acceptable display value rather than a correctness hazard.
+qint64 LeftoverScanner::calculateSize(const QString& path, const std::atomic<bool>& stopRequested) {
+    const QFileInfo info(path);
     if (info.isFile()) {
         return info.size();
     }
 
     qint64 total = 0;
+    int seen = 0;
     QDirIterator it(path,
                     QDir::Files | QDir::Hidden | QDir::NoSymLinks,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
+        // Poll the shared cancel flag INSIDE the walk: scan() only checks stopRequested between
+        // phases/items, so without this a size accounting of a huge install tree (an installer that
+        // recorded InstallLocation=C:\ or a very large game/dev folder) would keep enumerating to
+        // completion after a DeadlineCanceller already fired -- the deadline would be theater. The
+        // entry cap is a hard backstop that bounds the walk even when nothing cancels.
+        if (stopRequested.load() || seen >= kMaxSizeWalkEntries) {
+            break;
+        }
+        ++seen;
         it.next();
         total += it.fileInfo().size();
     }

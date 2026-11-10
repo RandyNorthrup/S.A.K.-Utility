@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -109,6 +110,39 @@ public:
     /// @return True if initialized
     [[nodiscard]] bool isInitialized() const noexcept;
 
+    /// @brief Create the log directory (if needed) and verify it is writable.
+    /// @param dir Directory path.
+    /// @return Success, or an error code if it cannot be created/written.
+    /// @note Public + static so the write-probe hardening (unique, exclusively
+    ///       created probe file that never clobbers or follows a link) can be
+    ///       unit tested directly.
+    [[nodiscard]] static auto ensureLogDirectory(const std::filesystem::path& dir)
+        -> std::expected<void, error_code>;
+
+    /// @brief Bytes to charge against the rotation counter for a completed
+    ///        write. Fail closed: a write that left the stream in a bad state
+    ///        wrote nothing durable, so it must count as zero (not entry_size).
+    /// @param stream_good Result of ostream::good() after the write/flush.
+    /// @param entry_size Size of the entry that was attempted.
+    /// @return entry_size when the write is good, otherwise 0.
+    /// @note Public + static so the fail-closed accounting can be unit tested.
+    [[nodiscard]] static std::size_t bytesToCommit(bool stream_good,
+                                                   std::size_t entry_size) noexcept;
+
+    /// @brief One existing session log, as initialize() sees it when deciding what to prune.
+    struct SessionLogFile {
+        std::filesystem::path path;
+        std::filesystem::file_time_type modified{};
+        std::uintmax_t size_bytes{0};
+    };
+
+    /// @brief Which of @p logs to delete so that, with the session about to start, at most
+    ///        @p keep_newest logs remain and the kept ones total at most @p max_total_bytes.
+    ///        The newest are kept. Rotation only ran when ONE session passed 10 MB, so the logs
+    ///        folder used to gain a file per launch forever. Pure; unit tested.
+    [[nodiscard]] static std::vector<std::filesystem::path> sessionLogsToPrune(
+        std::vector<SessionLogFile> logs, std::size_t keep_newest, std::uintmax_t max_total_bytes);
+
     // Prevent copying and moving
     logger(const logger&) = delete;
     logger& operator=(const logger&) = delete;
@@ -127,12 +161,6 @@ private:
                      std::string_view message,
                      const std::source_location& loc) noexcept;
 
-    /// @brief Create log directory if it doesn't exist
-    /// @param dir Directory path
-    /// @return Expected containing success or error code
-    [[nodiscard]] static auto ensureLogDirectory(const std::filesystem::path& dir)
-        -> std::expected<void, error_code>;
-
     /// @brief Generate timestamp string
     /// @return Current timestamp in ISO 8601 format
     [[nodiscard]] static std::string getTimestamp() noexcept;
@@ -145,7 +173,11 @@ private:
     void rotateLog() noexcept;
 
     /// @brief Write a formatted log entry to the log file under lock
-    void writeEntryToFile(std::string_view log_entry, log_level level) noexcept;
+    void writeEntryToFile(std::string_view log_entry) noexcept;
+
+    /// @brief Emit a one-shot stderr notice on the first file-write failure so a
+    ///        persistent disk-write failure is surfaced rather than swallowed.
+    void noteWriteFailure() noexcept;
 
     /// @brief Write a formatted log entry to console (stdout/stderr)
     void writeEntryToConsole(std::string_view log_entry, log_level level) noexcept;
@@ -161,10 +193,16 @@ private:
     std::atomic<log_level> m_min_level{log_level::info};     ///< Minimum log level
     std::atomic<bool> m_console_output{true};                ///< Console output enabled
     std::atomic<bool> m_initialized{false};                  ///< Initialization flag
+    std::atomic<bool> m_write_failed{false};                 ///< One-shot write-failure latch
     std::atomic<std::size_t> m_bytes_written{0};             ///< Bytes written to current file
 
     static constexpr std::size_t MAX_LOG_SIZE = 10'000'000;  ///< 10MB max log size
     static constexpr std::size_t MAX_LOG_FILES = 5;          ///< Keep last 5 log files
+    static constexpr std::size_t kMaxSessionLogs = 30;       ///< Session logs kept at startup
+    static constexpr std::uintmax_t kMaxSessionLogBytes = 200ULL * 1024 * 1024;  ///< ...and bytes
+
+    /// @brief Delete old session logs (sessionLogsToPrune) before a new session opens its log.
+    void pruneSessionLogs() const noexcept;
 };
 
 /// @brief Log a debug message
@@ -268,8 +306,10 @@ void logger::log(log_level level,
         auto message = std::vformat(format, std::make_format_args(arg1, args...));
         logInternal(level, message, std::source_location::current());
     } catch (...) {
-        // Intentional: final safety net in noexcept function
-        // Never throw from logger - best effort only
+        // Final safety net in a noexcept function (never throw from the logger). Do not
+        // swallow silently: a malformed format string or formatter failure would otherwise
+        // erase the entry with no trace, so note it to stderr like logInternal's own catch.
+        std::fprintf(stderr, "SAK Logger: log formatting failed; entry dropped\n");
     }
 }
 

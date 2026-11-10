@@ -1,0 +1,24 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_workflow_store",
+  "ctest_regex": "^test_ai_workflow_store$",
+  "mutants": [
+    {
+      "id": "workflow-file-cap-doubled",
+      "file": "src/ai/ai_workflow_store.cpp",
+      "find": "constexpr qint64 kMaxWorkflowFileBytes = 1LL * 1024 * 1024;",
+      "replace": "constexpr qint64 kMaxWorkflowFileBytes = 2LL * 1024 * 1024;",
+      "expect": "killed",
+      "why": "rejectOversizedNativeWorkflowFile writes a valid padded JSON template at 1 MiB plus one byte and requires zero loaded workflows."
+    },
+    {
+      "id": "workflow-directory-cap-raised",
+      "file": "src/ai/ai_workflow_store.cpp",
+      "find": "constexpr int kMaxWorkflowFiles = 512;",
+      "replace": "constexpr int kMaxWorkflowFiles = 513;",
+      "expect": "killed",
+      "why": "boundDirectoryEnumerationBeforeSort creates exactly 513 templates and requires total refusal before sorting or parsing."
+    }
+  ]
+}

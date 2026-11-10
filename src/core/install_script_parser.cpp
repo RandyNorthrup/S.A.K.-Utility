@@ -50,8 +50,13 @@ QString capturedVariableName(const QRegularExpressionMatch& match) {
 }
 
 std::optional<QString> findVariableAssignment(const QString& variable_name, const QString& script) {
+    // PowerShell variable names ignore case. adobereader assigns $MUIchecksum and passes
+    // $MUIChecksum; read case-sensitively, the checksum stayed the text "$MUIChecksum", every
+    // offline bundle refused the installer as altered, and the message blamed the vendor (review 3:
+    // the installers' SHA-256 match the package's declared values).
     const QRegularExpression assign_pattern(QString::fromLatin1(kVariableAssignmentPattern)
-                                                .arg(QRegularExpression::escape(variable_name)));
+                                                .arg(QRegularExpression::escape(variable_name)),
+                                            QRegularExpression::CaseInsensitiveOption);
     const auto assign_match = assign_pattern.match(script);
     if (!assign_match.hasMatch()) {
         return std::nullopt;
@@ -108,7 +113,7 @@ ParsedInstallScript InstallScriptParser::parseFile(const QString& file_path) con
     }
 
     QTextStream stream(&file);
-    QString content = stream.readAll();
+    const QString content = stream.readAll();
     return parse(content);
 }
 
@@ -130,14 +135,17 @@ void InstallScriptParser::extractInstallPackageParams(const QString& call_text,
 
     resource.checksum = resolveVariables(extractParameter(call_text, "checksum"), script);
     resource.checksum_type = resolveVariables(extractParameter(call_text, "checksumType"), script);
+    resource.checksum_64bit = resolveVariables(extractParameter(call_text, "checksum64"), script);
+    resource.checksum_type_64bit = resolveVariables(extractParameter(call_text, "checksumType64"),
+                                                    script);
     resource.file_name = resolveVariables(extractParameter(call_text, "fileName"), script);
 
-    QString file_type = resolveVariables(extractParameter(call_text, "fileType"), script);
+    const QString file_type = resolveVariables(extractParameter(call_text, "fileType"), script);
     if (!file_type.isEmpty()) {
         result.package_type = file_type;
     }
 
-    QString silent = extractParameter(call_text, "silentArgs");
+    const QString silent = extractParameter(call_text, "silentArgs");
     if (!silent.isEmpty()) {
         result.silent_args = resolveVariables(silent, script);
     }
@@ -153,8 +161,8 @@ void InstallScriptParser::parseInstallChocolateyPackage(const QString& script,
     auto matches = pattern.globalMatch(script);
     while (matches.hasNext()) {
         auto match = matches.next();
-        QString call_text = match.captured(1);
-        int pos = match.capturedStart();
+        const QString call_text = match.captured(1);
+        const int pos = static_cast<int>(match.capturedStart());
 
         DownloadResource resource;
         resource.source_function = "Install-ChocolateyPackage";
@@ -181,8 +189,8 @@ void InstallScriptParser::parseInstallChocolateyZipPackage(const QString& script
     auto matches = pattern.globalMatch(script);
     while (matches.hasNext()) {
         auto match = matches.next();
-        QString call_text = match.captured(1);
-        int pos = match.capturedStart();
+        const QString call_text = match.captured(1);
+        const int pos = static_cast<int>(match.capturedStart());
 
         DownloadResource resource;
         resource.source_function = "Install-ChocolateyZipPackage";
@@ -192,6 +200,10 @@ void InstallScriptParser::parseInstallChocolateyZipPackage(const QString& script
         resource.checksum = resolveVariables(extractParameter(call_text, "checksum"), script);
         resource.checksum_type = resolveVariables(extractParameter(call_text, "checksumType"),
                                                   script);
+        resource.checksum_64bit = resolveVariables(extractParameter(call_text, "checksum64"),
+                                                   script);
+        resource.checksum_type_64bit =
+            resolveVariables(extractParameter(call_text, "checksumType64"), script);
 
         result.package_type = "zip";
 
@@ -214,8 +226,8 @@ void InstallScriptParser::parseGetChocolateyWebFile(const QString& script,
     auto matches = pattern.globalMatch(script);
     while (matches.hasNext()) {
         auto match = matches.next();
-        QString call_text = match.captured(1);
-        int pos = match.capturedStart();
+        const QString call_text = match.captured(1);
+        const int pos = static_cast<int>(match.capturedStart());
 
         DownloadResource resource;
         resource.source_function = "Get-ChocolateyWebFile";
@@ -226,6 +238,10 @@ void InstallScriptParser::parseGetChocolateyWebFile(const QString& script,
         resource.checksum = resolveVariables(extractParameter(call_text, "checksum"), script);
         resource.checksum_type = resolveVariables(extractParameter(call_text, "checksumType"),
                                                   script);
+        resource.checksum_64bit = resolveVariables(extractParameter(call_text, "checksum64"),
+                                                   script);
+        resource.checksum_type_64bit =
+            resolveVariables(extractParameter(call_text, "checksumType64"), script);
 
         if (!resource.url.isEmpty() || !resource.url_64bit.isEmpty()) {
             result.resources.append(resource);
@@ -259,7 +275,7 @@ DownloadResource InstallScriptParser::buildSplattingResource(const QString& scri
 
     DownloadResource resource;
     resource.source_function = QString("splatting (@%1)").arg(match.captured(1));
-    resource.line_number = lineNumberAt(script, match.capturedStart());
+    resource.line_number = lineNumberAt(script, static_cast<int>(match.capturedStart()));
     resource.url = resolveVariables(extractHashtableValue(block, "url"), script);
 
     QString url64 = extractHashtableValue(block, "url64bit");
@@ -269,6 +285,9 @@ DownloadResource InstallScriptParser::buildSplattingResource(const QString& scri
     resource.url_64bit = resolveVariables(url64, script);
     resource.checksum = resolveVariables(extractHashtableValue(block, "checksum"), script);
     resource.checksum_type = resolveVariables(extractHashtableValue(block, "checksumType"), script);
+    resource.checksum_64bit = resolveVariables(extractHashtableValue(block, "checksum64"), script);
+    resource.checksum_type_64bit = resolveVariables(extractHashtableValue(block, "checksumType64"),
+                                                    script);
     resource.file_name = resolveVariables(extractHashtableValue(block, "fileName"), script);
 
     const QString file_type = extractHashtableValue(block, "fileType");
@@ -285,17 +304,17 @@ DownloadResource InstallScriptParser::buildSplattingResource(const QString& scri
 }
 
 void InstallScriptParser::appendUniqueSplattingResource(ParsedInstallScript& result,
-                                                        const DownloadResource& resource) const {
+                                                        const DownloadResource& resource) {
     if (resource.url.isEmpty() && resource.url_64bit.isEmpty()) {
         return;
     }
 
-    const auto duplicate = std::any_of(result.resources.cbegin(),
-                                       result.resources.cend(),
-                                       [&resource](const DownloadResource& existing) {
-                                           return existing.url == resource.url &&
-                                                  existing.url_64bit == resource.url_64bit;
-                                       });
+    const auto duplicate = std::ranges::any_of(result.resources,
+
+                                               [&resource](const DownloadResource& existing) {
+                                                   return existing.url == resource.url &&
+                                                          existing.url_64bit == resource.url_64bit;
+                                               });
     if (!duplicate) {
         result.resources.append(resource);
         result.uses_splatting = true;
@@ -306,7 +325,7 @@ void InstallScriptParser::appendUniqueSplattingResource(ParsedInstallScript& res
 // Variable Resolution
 // ============================================================================
 
-QString InstallScriptParser::resolveVariables(const QString& value, const QString& script) const {
+QString InstallScriptParser::resolveVariables(const QString& value, const QString& script) {
     if (value.isEmpty()) {
         return value;
     }
@@ -334,7 +353,19 @@ QString InstallScriptParser::resolveVariables(const QString& value, const QStrin
             break;
         }
 
-        resolved.replace(match.captured(0), *assigned_value);
+        // Substitute ONLY the matched span, and fail closed if the result would exceed a sane
+        // bound. QString::replace(QString, QString) replaces EVERY occurrence, so an assignment
+        // whose value itself references the same/another chained variable multiplies the token
+        // count each pass -- a billion-laughs expansion (K^depth) from a tiny attacker-authored
+        // chocolateyInstall.ps1. Replacing just the matched span removes that multiplication and
+        // also fixes replace-all corrupting a reference that is a prefix of a longer name (e.g. $b
+        // inside $bc). An empty return makes the downstream url/checksum gate refuse.
+        constexpr qsizetype kMaxResolvedLength = 8 * 1024;
+        if (resolved.size() - match.capturedLength() + assigned_value->size() >
+            kMaxResolvedLength) {
+            return {};
+        }
+        resolved.replace(match.capturedStart(), match.capturedLength(), *assigned_value);
         iterations++;
     }
 
@@ -345,10 +376,9 @@ QString InstallScriptParser::resolveVariables(const QString& value, const QStrin
 // Parameter Extraction
 // ============================================================================
 
-QString InstallScriptParser::extractParameter(const QString& call_text,
-                                              const QString& param_name) const {
+QString InstallScriptParser::extractParameter(const QString& call_text, const QString& param_name) {
     // Match: -paramName 'value' or -paramName "value" or -paramName $var
-    QRegularExpression pattern(
+    const QRegularExpression pattern(
         QString::fromLatin1(kParameterPattern).arg(QRegularExpression::escape(param_name)),
         QRegularExpression::CaseInsensitiveOption);
 
@@ -360,7 +390,7 @@ QString InstallScriptParser::extractParameter(const QString& call_text,
     QString value = match.captured(1).trimmed();
 
     // Handle quoted strings: -param 'some value'
-    QRegularExpression quoted_pattern(
+    const QRegularExpression quoted_pattern(
         QString::fromLatin1(kQuotedParameterPattern).arg(QRegularExpression::escape(param_name)),
         QRegularExpression::CaseInsensitiveOption);
 
@@ -372,9 +402,9 @@ QString InstallScriptParser::extractParameter(const QString& call_text,
     return value;
 }
 
-QString InstallScriptParser::extractHashtableValue(const QString& block, const QString& key) const {
-    // Quoted values first — handles URLs containing ${var} or special chars
-    QRegularExpression quoted_pattern(
+QString InstallScriptParser::extractHashtableValue(const QString& block, const QString& key) {
+    // Quoted values first -- handles URLs containing ${var} or special chars
+    const QRegularExpression quoted_pattern(
         QString::fromLatin1(kQuotedHashtableValuePattern).arg(QRegularExpression::escape(key)),
         QRegularExpression::CaseInsensitiveOption);
 
@@ -384,7 +414,7 @@ QString InstallScriptParser::extractHashtableValue(const QString& block, const Q
     }
 
     // Fallback: unquoted values (variable references like $varName)
-    QRegularExpression unquoted_pattern(
+    const QRegularExpression unquoted_pattern(
         QString::fromLatin1(kUnquotedHashtableValuePattern).arg(QRegularExpression::escape(key)),
         QRegularExpression::CaseInsensitiveOption);
 
@@ -396,7 +426,7 @@ QString InstallScriptParser::extractHashtableValue(const QString& block, const Q
     return {};
 }
 
-int InstallScriptParser::lineNumberAt(const QString& script, int position) const {
+int InstallScriptParser::lineNumberAt(const QString& script, int position) {
     if (position < 0 || position > script.length()) {
         return 0;
     }

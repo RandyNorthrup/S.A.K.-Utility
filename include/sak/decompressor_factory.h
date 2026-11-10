@@ -79,10 +79,10 @@ private:
      * @brief Read magic number from file
      * @param filePath Path to file
      * @param buffer Buffer to read into (at least 16 bytes)
-     * @param size Number of bytes to read
-     * @return true if successful
+     * @param size Maximum number of bytes to read
+     * @return number of bytes actually read (0..size), or -1 if the file could not be opened
      */
-    static bool readMagicNumber(const QString& filePath, unsigned char* buffer, int size);
+    static int readMagicNumber(const QString& filePath, unsigned char* buffer, int size);
 };
 
 }  // namespace sak

@@ -29,10 +29,37 @@ struct PartitionApfsFileEntry {
     bool directory{false};
     bool regular_file{false};
     bool symlink{false};
+    // Transparent decmpfs compression (inline or resource-fork), read from the inode's
+    // decmpfs attribute / uncompressed-size flag during listing.
+    bool compressed{false};
+    // APFS_INODE_IS_SPARSE: the file has trailing/embedded holes that read as zeros.
+    bool sparse{false};
+    // The inode's full st_mode (type + permission bits), so a non-regular entry
+    // (symlink, FIFO, socket, device) can be preserved verbatim across a mutation.
+    uint16_t mode{0};
+    // Identity metadata recovered from the inode (owner/group @0x48/0x4C, bsd_flags @0x44,
+    // the four j_inode_val timestamps). has_inode_metadata is true only when the entry's
+    // inode record was found, so an arbitrary import can preserve a real Apple file's
+    // ownership/permissions/flags/times instead of stamping generated defaults.
+    uint32_t uid{0};
+    uint32_t gid{0};
+    uint32_t bsd_flags{0};
+    uint64_t create_time{0};
+    uint64_t mod_time{0};
+    uint64_t change_time{0};
+    uint64_t access_time{0};
+    bool has_inode_metadata{false};
 };
 
 struct PartitionApfsFileReadResult {
     bool ok{false};
+    // True if the returned data is a prefix of a larger file (the read hit the byte
+    // cap). Any caller that PERSISTS or HASHES these bytes -- export, copy-out, file
+    // hash, or a read-modify-write byte patch -- MUST treat this as failure: writing
+    // or hashing the prefix silently yields a short file or a wrong-file digest that
+    // is indistinguishable from a complete one. Only a purely on-screen preview may
+    // ignore it.
+    bool truncated{false};
     QString file_system;
     QString volume_name;
     QStringList blockers;
@@ -89,6 +116,16 @@ public:
         const QString& source_path,
         const QString& output_directory,
         const PartitionApfsDirectoryExportOptions& options);
+
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+    // Test-only: compiled only into test targets that define SAK_PARTITION_FS_TEST_HOOKS.
+    /// @brief True when @p child resolves (junctions/symlinks followed) to a real path at or
+    ///        under the canonical @p canonical_root. Pure seam for the export junction/symlink
+    ///        TOCTOU guard: fails closed on an empty root or an unresolvable/vanished child, and
+    ///        rejects a sibling-prefix (Root vs RootX). Same logic guards the ext exporter.
+    [[nodiscard]] static bool exportPathWithinRootForTesting(const QString& canonical_root,
+                                                             const QString& child);
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
 };
 
 }  // namespace sak

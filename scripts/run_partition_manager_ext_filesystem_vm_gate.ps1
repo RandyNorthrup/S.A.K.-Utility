@@ -16,7 +16,7 @@ param(
     [string]$ProjectRoot = "\\vboxsvr\sakrepo",
     [string]$EvidenceRoot = "\\vboxsvr\sakrepo\artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext-filesystem-write",
     [string]$ReportPath = "",
-    [int]$DiskNumber = 1,
+    [Parameter(Mandatory = $true)] [int]$DiskNumber,
     [string]$FileSystem = "ext4",
     [uint64]$InitialSizeBytes = 512MB,
     [uint64]$GrowByBytes = 256MB,
@@ -27,6 +27,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "process_capture.ps1")
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 
 function Test-IsAdmin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -74,25 +76,19 @@ function Invoke-NativeCommand {
     )
 
     $started = Get-Date
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        $output = & $FilePath @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
+    $captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments
+    $capturedOutput = @($captured.stdout, $captured.stderr)
+    $exitCode = [int]$captured.exit_code
     $record = [pscustomobject]@{
         name = $Name
         file_path = $FilePath
         arguments = $Arguments
-        exit_code = [int]$exitCode
+        exit_code = $exitCode
         duration_seconds = [Math]::Round(((Get-Date) - $started).TotalSeconds, 3)
-        output = ConvertTo-PlainText -Value $output
+        output = ConvertTo-PlainText -Value $capturedOutput
     }
     $Script:Commands.Add($record) | Out-Null
-    if ($AcceptedExitCodes -notcontains [int]$exitCode) {
+    if ($AcceptedExitCodes -notcontains $exitCode) {
         throw "$Name failed with exit code $exitCode. $($record.output)"
     }
     return $record
@@ -106,15 +102,15 @@ function Get-ToolRecord {
         [Parameter(Mandatory = $true)] [string]$FileSystem
     )
 
-    $matches = @($Manifest.tools | Where-Object {
+    $approved = @($Manifest.tools | Where-Object {
         $_.id -eq $ToolId -and
         @($_.operations) -contains $Operation -and
         @($_.file_systems) -contains $FileSystem
     })
-    if ($matches.Count -ne 1) {
+    if ($approved.Count -ne 1) {
         throw "Manifest does not approve exactly one $ToolId tool for $Operation/$FileSystem."
     }
-    return $matches[0]
+    return $approved[0]
 }
 
 function Resolve-ApprovedTool {
@@ -127,6 +123,13 @@ function Resolve-ApprovedTool {
 
     $tool = Get-ToolRecord -Manifest $Manifest -ToolId $ToolId -Operation $Operation -FileSystem $FileSystem
     $relativePath = [string]$tool.relative_path
+    # A manifest-supplied path must stay inside the bundled tools\filesystem tree:
+    # reject rooted paths and any parent traversal before it becomes an elevated exec target.
+    if ([string]::IsNullOrWhiteSpace($relativePath) -or
+        [System.IO.Path]::IsPathRooted($relativePath) -or
+        ($relativePath -match '\.\.')) {
+        throw "Manifest relative_path must be a non-rooted tools\filesystem path without traversal: $relativePath"
+    }
     $path = Join-Path (Join-Path $ProjectRoot "tools\filesystem") $relativePath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         $path = Join-Path $ProjectRoot ("build\Release\tools\filesystem\" + $relativePath)
@@ -151,7 +154,7 @@ function Get-DiskSnapshot {
 
     $disk = Get-Disk -Number $Number -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue | Sort-Object Offset)) {
+    foreach ($partition in @(Get-SakDiskPartitions -DiskNumber $Number | Sort-Object Offset)) {
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber
             drive_letter = if ($partition.DriveLetter) { [string]$partition.DriveLetter } else { "" }
@@ -202,7 +205,7 @@ function Clear-DisposableDisk {
 
     Assert-DisposableDisk -Number $Number
     $disk = Get-Disk -Number $Number -ErrorAction Stop
-    $partitions = @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue)
+    $partitions = @(Get-SakDiskPartitions -DiskNumber $Number)
     if ($disk.PartitionStyle -eq "RAW" -and $partitions.Count -eq 0) {
         return "Disk $Number already RAW."
     }
@@ -215,7 +218,16 @@ $started = (Get-Date).ToUniversalTime().ToString("o")
 if ([string]::IsNullOrWhiteSpace($ReportPath)) {
     $ReportPath = Join-Path $EvidenceRoot "report.json"
 }
-$runRoot = Join-Path $EvidenceRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+# A caller-supplied ReportPath must not escape the evidence root into an
+# attacker-chosen location for this elevated writer.
+$fullEvidenceRoot = [System.IO.Path]::GetFullPath($EvidenceRoot)
+if (-not $fullEvidenceRoot.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+    $fullEvidenceRoot += [System.IO.Path]::DirectorySeparatorChar
+}
+if (-not ([System.IO.Path]::GetFullPath($ReportPath)).StartsWith($fullEvidenceRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "ReportPath must reside under EvidenceRoot. ReportPath=$ReportPath EvidenceRoot=$EvidenceRoot"
+}
+$runRoot = Join-Path $EvidenceRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Split-Path -Parent $ReportPath) -Force | Out-Null
 
@@ -227,6 +239,7 @@ $toolHashes = @()
 $status = "Failed"
 $errorText = ""
 $transcriptStarted = $false
+$mutationStarted = $false
 try {
     Start-Transcript -Path (Join-Path $runRoot "ext-filesystem-vm-gate.log") -Force | Out-Null
     $transcriptStarted = $true
@@ -258,6 +271,27 @@ try {
 
     Assert-DisposableDisk -Number $DiskNumber
     $before = Get-DiskSnapshot -Number $DiskNumber
+
+    # Validate the full requested geometry BEFORE any destructive mutation, so a
+    # request that is guaranteed to fail never wipes the disk first.
+    $targetDisk = Get-Disk -Number $DiskNumber -ErrorAction Stop
+    if ([uint64]$InitialSizeBytes -le 0) {
+        throw "InitialSizeBytes must be greater than zero."
+    }
+    if ([uint64]$GrowByBytes -le 0) {
+        throw "GrowByBytes must be greater than zero."
+    }
+    if ([uint64]$ShrinkByBytes -le 0) {
+        throw "ShrinkByBytes must be greater than zero."
+    }
+    if ([uint64]$ShrinkByBytes -ge [uint64]$GrowByBytes) {
+        throw "ShrinkByBytes must be smaller than GrowByBytes so the shrunk partition stays above the initial size."
+    }
+    if (([uint64]$InitialSizeBytes + [uint64]$GrowByBytes) -ge [uint64]$targetDisk.Size) {
+        throw "Requested initial+grow geometry does not fit on disk ${DiskNumber} (disk size $([uint64]$targetDisk.Size) bytes)."
+    }
+
+    $mutationStarted = $true
     Clear-DisposableDisk -Number $DiskNumber | Out-Null
     Initialize-Disk -Number $DiskNumber -PartitionStyle GPT
     $partition = New-Partition -DiskNumber $DiskNumber -Size $InitialSizeBytes
@@ -270,7 +304,7 @@ try {
 
     $grownSize = [uint64]$partition.Size + [uint64]$GrowByBytes
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $grownSize
-    Update-HostStorageCache -ErrorAction SilentlyContinue
+    Update-HostStorageCache -ErrorAction Stop
     Invoke-NativeCommand -Name "resize2fs-grow-$FileSystem" -FilePath $resize2fs.path -Arguments @($rawTarget) | Out-Null
     Invoke-NativeCommand -Name "e2fsck-readonly-after-grow-$FileSystem" -FilePath $e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
 
@@ -285,10 +319,31 @@ try {
     Invoke-NativeCommand -Name "e2fsck-repair-before-shrink-$FileSystem" -FilePath $e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Out-Null
     Invoke-NativeCommand -Name "resize2fs-shrink-$FileSystem" -FilePath $resize2fs.path -Arguments @("-p", $rawTarget, "$($shrunkKilobytes)K") | Out-Null
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $shrunkSize
-    Update-HostStorageCache -ErrorAction SilentlyContinue
+    Update-HostStorageCache -ErrorAction Stop
     Invoke-NativeCommand -Name "e2fsck-readonly-after-shrink-$FileSystem" -FilePath $e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
 
     $after = Get-DiskSnapshot -Number $DiskNumber
+
+    # A pass requires the final layout to actually match the requested operation,
+    # not merely that each command returned an accepted exit code.
+    if ([int]$after.disk_number -ne [int]$DiskNumber) {
+        throw "Postcondition failed: after snapshot disk number $($after.disk_number) does not match target $DiskNumber."
+    }
+    if ($before.serial_number -ne $after.serial_number) {
+        throw "Postcondition failed: disk identity changed during run (before serial '$($before.serial_number)', after serial '$($after.serial_number)')."
+    }
+    if ($after.partition_style -ne "GPT") {
+        throw "Postcondition failed: disk is not GPT after operations (got '$($after.partition_style)')."
+    }
+    $finalPartitions = @($after.partitions)
+    if ($finalPartitions.Count -lt 1) {
+        throw "Postcondition failed: no partition present after operations."
+    }
+    $finalPartitionSize = [uint64](@($finalPartitions | Sort-Object size_bytes -Descending)[0].size_bytes)
+    if ($finalPartitionSize -le [uint64]$InitialSizeBytes -or $finalPartitionSize -ge [uint64]$grownSize) {
+        throw "Postcondition failed: final partition size $finalPartitionSize is not between initial ($InitialSizeBytes) and grown ($grownSize) sizes."
+    }
+
     $cleanup = if ($NoCleanup) { "Cleanup skipped by -NoCleanup." } else { Clear-DisposableDisk -Number $DiskNumber }
     $status = "Passed"
     $errorText = ""
@@ -297,7 +352,9 @@ catch {
     $status = "Failed"
     $errorText = ConvertTo-PlainText -Value @($_)
     try {
-        if (-not $NoCleanup) {
+        # Only clean the disk if we had actually begun mutating it; a rejected
+        # invocation (missing -Force, failed lab/geometry checks) must never wipe.
+        if (-not $NoCleanup -and $mutationStarted) {
             $cleanup = Clear-DisposableDisk -Number $DiskNumber
         }
     }
@@ -323,6 +380,12 @@ $report = [pscustomobject]@{
     allow_non_virtualbox_guest = [bool]$AllowNonVirtualBoxGuest
     disk_number = $DiskNumber
     file_system = $FileSystem
+    requested_geometry = [pscustomobject]@{
+        initial_size_bytes = [uint64]$InitialSizeBytes
+        grow_by_bytes = [uint64]$GrowByBytes
+        shrink_by_bytes = [uint64]$ShrinkByBytes
+    }
+    transcript_started = $transcriptStarted
     raw_target = $rawTarget
     before_layout = $before
     after_layout = $after

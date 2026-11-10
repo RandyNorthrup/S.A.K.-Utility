@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 
 /**
  * @brief Background UUP file downloader and ISO builder
@@ -35,8 +36,12 @@
  * Only actual Windows UUP files are downloaded at runtime.
  *
  * Thread-Safety:
- *   - startBuild() and cancel() may be called from any thread
- *   - All signals are emitted in a way that is safe for cross-thread connections
+ *   - startBuild(), cancel(), and all other methods must be called on the
+ *     thread that owns this object: they drive QProcess/QTimer members, which
+ *     are bound to their owning thread. Marshal a cross-thread request with
+ *     QMetaObject::invokeMethod(..., Qt::QueuedConnection).
+ *   - Signals are emitted on this object's thread and are safe for queued
+ *     cross-thread connections.
  *
  * Example:
  * @code
@@ -95,8 +100,10 @@ public:
     /**
      * @brief Cancel the current build operation
      *
-     * Terminates any running aria2c or converter processes and
-     * cleans up the work directory. Safe to call from any thread.
+     * Terminates any running aria2c or converter processes and cleans up the
+     * work directory. Must be called on this object's own thread (see the
+     * Thread-Safety note above); marshal from another thread with a queued
+     * QMetaObject::invokeMethod.
      */
     void cancel();
 
@@ -104,6 +111,44 @@ public:
      * @brief Get the current phase
      */
     Phase currentPhase() const { return m_phase; }
+
+    /**
+     * @brief Names of expected files that are not present in @p downloadDir as a
+     *        real regular file (never a directory, symlink, or junction) whose
+     *        size matches the API-declared size exactly when one was declared; an
+     *        unnamed expected entry is always reported. Empty means the download
+     *        set is complete. Used to reject a partial aria2c result (exit code 7)
+     *        before conversion. Unit-testable.
+     */
+    [[nodiscard]] static QStringList missingFiles(const QList<UupDumpApi::FileInfo>& expected,
+                                                  const QString& downloadDir);
+
+    /**
+     * @brief Move a freshly built ISO from @p tempPath onto @p finalPath,
+     *        replacing any prior ISO only now (convert-then-replace, so a failed
+     *        conversion never destroys an existing good ISO). Refuses (false) unless
+     *        @p tempPath is a real regular file and @p finalPath is absent or a real
+     *        regular file, so a planted link is never renamed in place of an image.
+     *        Unit-testable.
+     */
+    [[nodiscard]] static bool replaceFinalIso(const QString& tempPath, const QString& finalPath);
+
+    /**
+     * @brief Sum the API-declared sizes of @p files, rejecting negative sizes and
+     *        detecting qint64 overflow. Returns nullopt (fail closed) on either, so
+     *        malformed metadata cannot silently under-report the download total.
+     *        Unit-testable.
+     */
+    [[nodiscard]] static std::optional<qint64> computeTotalDownloadBytes(
+        const QList<UupDumpApi::FileInfo>& files);
+
+    /**
+     * @brief True if @p isoPath begins with a valid ISO 9660 Primary Volume
+     *        Descriptor signature ("CD001" at byte offset 0x8001). A zero-exit
+     *        converter that produced a non-ISO file is thereby rejected before the
+     *        output is promoted to the final image. Unit-testable.
+     */
+    [[nodiscard]] static bool hasIso9660Signature(const QString& isoPath);
 
     /**
      * @brief Check if a build is currently in progress
@@ -132,6 +177,9 @@ Q_SIGNALS:
      * @param downloadSpeedMBps Current download speed in MB/s
      */
     void speedUpdated(double downloadSpeedMBps);
+
+    /// Bytes of the build's files on disk, against the total, each time the download is measured.
+    void downloadBytesUpdated(qint64 downloaded, qint64 total);
 
     /**
      * @brief Emitted when the ISO has been successfully created
@@ -171,6 +219,12 @@ private:
                                       QString& uupMediaConverter);
     /// @brief Connect QProcess signals for the converter process
     void connectConverterSignals();
+    /// @brief Reparse-check, clear, and recreate the elevated conversion temp dir
+    bool ensureCleanConversionTempDir(const QString& conversionTempDir);
+    /// @brief Reparse-check and remove our own stale .partial ISO before reuse
+    bool clearStalePartialIso(const QString& partialIso);
+    /// @brief Validate + promote the converter output on a clean exit code
+    void finalizeSuccessfulConversion();
     void cleanupWorkDir();
 
     // Tool path resolution
@@ -179,7 +233,10 @@ private:
 
     // aria2c input file generation
     bool generateAria2InputFile(const QString& outputPath);
-    void writeAria2Entry(QTextStream& stream, const UupDumpApi::FileInfo& fileInfo);
+    /// @return false (fail closed) if the API-sourced url/fileName would inject an
+    ///         aria2 directive (newline) or escape the download dir (traversal/absolute
+    ///         out=); the caller then aborts the download-list generation.
+    [[nodiscard]] bool writeAria2Entry(QTextStream& stream, const UupDumpApi::FileInfo& fileInfo);
     void logAria2SkippedFiles(int skippedFiles, qint64 skippedBytes);
     void collectConverterError(const QString& line);
 
@@ -187,8 +244,6 @@ private:
     bool isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo,
                                  const QString& downloadDir) const;
 
-    // Check if process is running with administrator privileges
-    static bool isRunningAsAdmin();
 
     // Progress parsing
     /// @brief Poll download-phase progress and emit updates
@@ -212,6 +267,7 @@ private:
     // Build parameters
     QList<UupDumpApi::FileInfo> m_files;
     QString m_outputIsoPath;
+    QString m_converterOutputPath;  // temp ISO the converter writes; replaces m_outputIsoPath on ok
     QString m_edition;
     QString m_lang;
     QString m_updateId;
@@ -222,7 +278,6 @@ private:
     // Process management
     std::unique_ptr<QProcess> m_aria2Process;
     std::unique_ptr<QProcess> m_converterProcess;
-    QThread* m_workerThread = nullptr;
 
     // Progress tracking
     QElapsedTimer m_phaseTimer;

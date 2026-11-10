@@ -26,7 +26,7 @@ constexpr int kMaxSearchResults = 10'000;
 /// Maximum single attachment size (500 MB)
 constexpr int64_t kMaxAttachmentSize = 500LL * 1024 * 1024;
 
-/// Maximum PST file size (50 GB — format limit)
+/// Maximum PST file size (50 GB -- format limit)
 constexpr int64_t kMaxFileSize = 50LL * 1024 * 1024 * 1024;
 
 /// NDB page size in bytes (ANSI PST and legacy Unicode PST)
@@ -137,11 +137,13 @@ constexpr int kDetailPanelMinHeight = 200;
 /// Minimum width for detail/preview panel
 constexpr int kDetailPanelMinWidth = 400;
 
-/// Default width for item-list pane
-constexpr int kItemListDefaultWidth = 400;
+/// Default width for item-list pane. 480: at 400 the pane lost the 48 px the old count label had
+/// held open for it once that label wrapped (F46), and senders were cut to "Marisc" (review 3,
+/// RG2).
+constexpr int kItemListDefaultWidth = 480;
 
 /// Default width for message preview pane
-constexpr int kPreviewPaneDefaultWidth = 500;
+constexpr int kPreviewPaneDefaultWidth = 460;
 
 /// Default content pane width beside the folder tree
 constexpr int kContentPaneDefaultWidth = 700;
@@ -178,9 +180,6 @@ constexpr int kContactsListPaneWidth = 550;
 constexpr int kContactsDetailPaneWidth = 350;
 
 /// Contacts table column widths
-constexpr int kContactsNameColumnWidth = 200;
-constexpr int kContactsEmailColumnWidth = 250;
-constexpr int kContactsCompanyColumnWidth = 180;
 constexpr int kContactsDetailMinWidth = 280;
 
 /// Attachment browser dimensions
@@ -211,8 +210,10 @@ constexpr uint16_t kPstContentType = 0x4D53;
 /// OST content type: bytes { 0x53, 0x4F } = "SO"
 constexpr uint16_t kOstContentType = 0x4F53;
 
-/// ANSI PST format version
+/// ANSI PST format version (MS-PST 2.2.2.6: an ANSI wVer is 14 or 15; both use the
+/// same 32-bit BREF/trailer/page layout).
 constexpr uint16_t kAnsiVersion = 14;
+constexpr uint16_t kAnsiVersion2 = 15;
 
 /// Unicode PST format version
 constexpr uint16_t kUnicodeVersion = 23;
@@ -230,7 +231,7 @@ constexpr uint8_t kEncryptNone = 0x00;
 /// Compressible encryption (byte-substitution, reversible without key)
 constexpr uint8_t kEncryptCompressible = 0x01;
 
-/// High encryption (not supported — password-protected)
+/// High encryption (not supported -- password-protected)
 constexpr uint8_t kEncryptHigh = 0x02;
 
 // ============================================================================
@@ -243,6 +244,7 @@ constexpr uint16_t kPropTypeBoolean = 0x000B;
 constexpr uint16_t kPropTypeFloat64 = 0x0005;
 constexpr uint16_t kPropTypeCurrency = 0x0006;
 constexpr uint16_t kPropTypeAppTime = 0x0007;
+constexpr uint16_t kPropTypeObject = 0x000D;
 constexpr uint16_t kPropTypeInt64 = 0x0014;
 constexpr uint16_t kPropTypeString8 = 0x001E;
 constexpr uint16_t kPropTypeUnicode = 0x001F;
@@ -288,6 +290,13 @@ constexpr uint16_t kPropIdContentUnreadCount = 0x3603;
 constexpr uint16_t kPropIdSubfolders = 0x360A;
 constexpr uint16_t kPropIdContainerClass = 0x3613;
 
+// -- Message store properties --
+constexpr uint16_t kPropIdIpmSubtreeEntryId = 0x35E0;
+
+/// An EntryID is rgbFlags(4) + ProviderUID(16) + the object's NID(4).
+constexpr int kEntryIdBytes = 24;
+constexpr int kEntryIdNidOffset = 20;
+
 // -- Attachment properties --
 constexpr uint16_t kPropIdAttachFilename = 0x3704;
 constexpr uint16_t kPropIdAttachLongFilename = 0x3707;
@@ -296,6 +305,8 @@ constexpr uint16_t kPropIdAttachSize = 0x0E20;
 constexpr uint16_t kPropIdAttachMimeTag = 0x370E;
 constexpr uint16_t kPropIdAttachContentId = 0x3712;
 constexpr uint16_t kPropIdAttachMethod = 0x3705;
+constexpr uint16_t kPropIdAttachmentHidden = 0x7FFE;
+constexpr uint16_t kPropIdAttachmentContactPhoto = 0x7FFF;
 
 // -- Contact properties --
 constexpr uint16_t kPropIdEmailAddress = 0x3003;
@@ -309,6 +320,16 @@ constexpr uint16_t kPropIdSurname = 0x3A11;
 
 // -- Task properties --
 constexpr uint16_t kPropIdTaskPriority = 0x0026;
+
+// -- Recipient properties --
+constexpr uint16_t kPropIdAddressType = 0x3002;
+constexpr uint16_t kPropIdSmtpAddress = 0x39FE;
+constexpr uint16_t kPropIdRecipientType = 0x0C15;
+constexpr uint16_t kPropIdRecipientFlags = 0x5FFD;
+constexpr uint16_t kPropIdRecipientTrackStatus = 0x5FFF;
+
+/// PidTagRecipientFlags: this recipient is the meeting's organizer.
+constexpr uint32_t kRecipientOrganizer = 0x0002;
 
 // ============================================================================
 // PST Node ID Types (NID_TYPE)
@@ -331,6 +352,7 @@ constexpr uint8_t kNidTypeHierarchyTable = 0x0D;
 constexpr uint32_t kNidMessageStore = 0x21;
 constexpr uint32_t kNidNameToIdMap = 0x61;
 constexpr uint32_t kNidRootFolder = 0x122;
+constexpr uint32_t kNidRecipientTable = 0x692;  ///< A sub-node of a message
 
 // ============================================================================
 // Attachment Methods
@@ -423,27 +445,27 @@ constexpr int kCalendarBarGap = 1;
 // Calendar Busy-Status Colors (fill / border pairs)
 // ============================================================================
 
-/// Free — green tones
+/// Free -- green tones
 constexpr auto kCalColorFreeFill = "#bbf7d0";
 constexpr auto kCalColorFreeBorder = "#16a34a";
 
-/// Tentative — amber tones
+/// Tentative -- amber tones
 constexpr auto kCalColorTentativeFill = "#fde68a";
 constexpr auto kCalColorTentativeBorder = "#d97706";
 
-/// Busy — blue tones
+/// Busy -- blue tones
 constexpr auto kCalColorBusyFill = "#bfdbfe";
 constexpr auto kCalColorBusyBorder = "#2563eb";
 
-/// Out of Office — violet tones
+/// Out of Office -- violet tones
 constexpr auto kCalColorOofFill = "#ddd6fe";
 constexpr auto kCalColorOofBorder = "#7c3aed";
 
-/// Default / unknown — slate-blue
+/// Default / unknown -- slate-blue
 constexpr auto kCalColorDefaultFill = "#bfdbfe";
 constexpr auto kCalColorDefaultBorder = "#3b82f6";
 
-/// Meeting request — purple tones
+/// Meeting request -- purple tones
 constexpr auto kCalColorMeetingFill = "#e9d5ff";
 constexpr auto kCalColorMeetingBorder = "#9333ea";
 

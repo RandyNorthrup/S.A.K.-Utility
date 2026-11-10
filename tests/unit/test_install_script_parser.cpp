@@ -21,6 +21,8 @@ private Q_SLOTS:
     void parse_installChocolateyPackage_extractsUrl();
     void parse_installChocolateyPackage_extractsUrl64();
     void parse_installChocolateyPackage_extractsChecksum();
+    void parse_installChocolateyPackage_extractsChecksum64();
+    void parse_variableNamesIgnoreCase();
     void parse_installChocolateyPackage_extractsPackageType();
 
     // Install-ChocolateyZipPackage parsing
@@ -74,7 +76,7 @@ Install-ChocolateyPackage -PackageName $packageName `
     -SilentArgs '/S'
 )";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/setup.exe"));
 }
 
@@ -88,7 +90,7 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     -SilentArgs '/S'
 )";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/setup-x86.exe"));
     QCOMPARE(result.resources.first().url_64bit, QString("https://example.com/setup-x64.exe"));
 }
@@ -103,9 +105,65 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     -ChecksumType 'sha256'
 )";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().checksum, QString("abc123def456"));
     QCOMPARE(result.resources.first().checksum_type, QString("sha256"));
+}
+
+// Review 3: every offline bundle failed adobereader as "does not match the checksum its package
+// declares", but its installers' SHA-256 match the script's values. The script (adobereader
+// 2026.2.22031) assigns $MUIchecksum and passes $MUIChecksum; PowerShell ignores the case, and the
+// parser did not, so the checksum compared was the text "$MUIChecksum".
+void TestInstallScriptParser::parse_variableNamesIgnoreCase() {
+    const QString script = QStringLiteral(
+        "$allChecksumType = 'SHA256'\n"
+        "$MUIurl = 'https://ardownload3.adobe.com/pub/adobe/reader/win/AcrobatDC/2600222031/"
+        "AcroRdrDC2600222031_MUI.exe'\n"
+        "$MUIchecksum = 'D5ADBDD1860E540DDC4771D6009A3B9A2C3A649C63D6F30ADD66AADB6FCC7AE6'\n"
+        "$MUIurl64 = 'https://ardownload3.adobe.com/pub/adobe/acrobat/win/AcrobatDC/2600222031/"
+        "AcroRdrDCx642600222031_MUI.exe'\n"
+        "$MUIchecksum64 = '6FF26E9D58DF0E6AF633CED481A1EFFF97F17A30D2B1554D054C398E824E7C77'\n"
+        "   $DownloadArgs = @{\n"
+        "      packageName         = $env:ChocolateyPackageName\n"
+        "      url                 = $MUIurl\n"
+        "      checksum            = $MUIChecksum\n"
+        "      checksumType        = $allChecksumType\n"
+        "      url64bit            = $MUIurl64\n"
+        "      checksum64          = $MUIChecksum64\n"
+        "      checksumType64      = $allChecksumType\n"
+        "   }\n"
+        "   $MUIexePath = Get-ChocolateyWebFile @DownloadArgs\n");
+    sak::InstallScriptParser parser;
+    const auto parsed = parser.parse(script);
+    QVERIFY(!parsed.resources.isEmpty());
+    const auto& resource = parsed.resources.first();
+    QCOMPARE(resource.checksum,
+             QStringLiteral("D5ADBDD1860E540DDC4771D6009A3B9A2C3A649C63D6F30ADD66AADB6FCC7AE6"));
+    QCOMPARE(resource.checksum_64bit,
+             QStringLiteral("6FF26E9D58DF0E6AF633CED481A1EFFF97F17A30D2B1554D054C398E824E7C77"));
+    QCOMPARE(resource.checksum_type, QStringLiteral("SHA256"));
+    QVERIFY(resource.url_64bit.endsWith(QStringLiteral("AcroRdrDCx642600222031_MUI.exe")));
+}
+
+void TestInstallScriptParser::parse_installChocolateyPackage_extractsChecksum64() {
+    // The 64-bit installer's own checksum64/checksumType64 must be captured so the
+    // build can verify the 64-bit binary too (not just the 32-bit one).
+    sak::InstallScriptParser parser;
+    QString script = R"(
+Install-ChocolateyPackage -PackageName 'testpkg' `
+    -FileType 'exe' `
+    -Url 'https://example.com/setup-x86.exe' `
+    -Checksum 'aaa32' -ChecksumType 'sha256' `
+    -Url64bit 'https://example.com/setup-x64.exe' `
+    -Checksum64 'bbb64' -ChecksumType64 'sha512'
+)";
+    auto result = parser.parse(script);
+    QCOMPARE(result.resources.size(), 1);
+    QCOMPARE(result.resources.first().url, QString("https://example.com/setup-x86.exe"));
+    QCOMPARE(result.resources.first().url_64bit, QString("https://example.com/setup-x64.exe"));
+    QCOMPARE(result.resources.first().checksum, QString("aaa32"));
+    QCOMPARE(result.resources.first().checksum_64bit, QString("bbb64"));
+    QCOMPARE(result.resources.first().checksum_type_64bit, QString("sha512"));
 }
 
 void TestInstallScriptParser::parse_installChocolateyPackage_extractsPackageType() {
@@ -131,8 +189,9 @@ Install-ChocolateyZipPackage -PackageName 'testpkg' `
     -UnzipLocation "$(Split-Path -parent $MyInvocation.MyCommand.Definition)"
 )ps1";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/archive.zip"));
+    QCOMPARE(result.package_type, QString("zip"));
 }
 
 // ============================================================================
@@ -147,7 +206,7 @@ Get-ChocolateyWebFile -PackageName 'testpkg' `
     -Url 'https://example.com/binary.exe'
 )";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/binary.exe"));
 }
 
@@ -171,9 +230,13 @@ Install-ChocolateyPackage @packageArgs
 )";
     auto result = parser.parse(script);
     QVERIFY(result.uses_splatting);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/setup.exe"));
     QCOMPARE(result.resources.first().url_64bit, QString("https://example.com/setup-x64.exe"));
+    QCOMPARE(result.resources.first().checksum, QString("aabbccdd"));
+    QCOMPARE(result.resources.first().checksum_type, QString("sha256"));
+    QCOMPARE(result.silent_args, QString("/VERYSILENT /NORESTART"));
+    QCOMPARE(result.package_type, QString("exe"));
 }
 
 void TestInstallScriptParser::parse_splatting_detectsFlag() {
@@ -202,7 +265,7 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
     -Url $downloadUrl
 )";
     auto result = parser.parse(script);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/resolved.exe"));
 }
 
@@ -214,6 +277,8 @@ void TestInstallScriptParser::parse_emptyScript_returnsEmpty() {
     sak::InstallScriptParser parser;
     auto result = parser.parse(QString());
     QVERIFY(result.resources.isEmpty());
+    QCOMPARE(result.warnings.size(), 1);
+    QCOMPARE(result.warnings.first(), QString("Empty script content"));
 }
 
 void TestInstallScriptParser::parse_noDownloads_returnsEmpty() {
@@ -225,6 +290,8 @@ $path = Get-Location
 )";
     auto result = parser.parse(script);
     QVERIFY(result.resources.isEmpty());
+    QCOMPARE(result.warnings.size(), 1);
+    QCOMPARE(result.warnings.first(), QString("No download URLs found in script"));
 }
 
 void TestInstallScriptParser::parse_multipleResources_allExtracted() {
@@ -239,7 +306,11 @@ Get-ChocolateyWebFile -PackageName 'pkg1' `
     -Url 'https://example.com/extra.dll'
 )";
     auto result = parser.parse(script);
-    QVERIFY(result.resources.size() >= 2);
+    QCOMPARE(result.resources.size(), 2);
+    QCOMPARE(result.resources[0].url, QString("https://example.com/installer1.exe"));
+    QCOMPARE(result.resources[0].source_function, QString("Install-ChocolateyPackage"));
+    QCOMPARE(result.resources[1].url, QString("https://example.com/extra.dll"));
+    QCOMPARE(result.resources[1].source_function, QString("Get-ChocolateyWebFile"));
 }
 
 // ============================================================================
@@ -262,7 +333,7 @@ Install-ChocolateyPackage -PackageName 'testpkg' `
 
     sak::InstallScriptParser parser;
     auto result = parser.parseFile(file_path);
-    QVERIFY(!result.resources.isEmpty());
+    QCOMPARE(result.resources.size(), 1);
     QCOMPARE(result.resources.first().url, QString("https://example.com/fromfile.exe"));
 }
 
@@ -270,7 +341,8 @@ void TestInstallScriptParser::parseFile_nonexistentFile_returnsWarning() {
     sak::InstallScriptParser parser;
     auto result = parser.parseFile("C:/nonexistent/path/script.ps1");
     QVERIFY(result.resources.isEmpty());
-    QVERIFY(!result.warnings.isEmpty());
+    QCOMPARE(result.warnings.size(), 1);
+    QCOMPARE(result.warnings.first(), QString("Cannot open file: C:/nonexistent/path/script.ps1"));
 }
 
 // ============================================================================

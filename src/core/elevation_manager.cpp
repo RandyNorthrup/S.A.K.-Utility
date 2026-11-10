@@ -6,9 +6,9 @@
 
 #include "sak/elevation_manager.h"
 
-#ifdef _WIN32
-
 #include "sak/logger.h"
+
+#include <string_view>
 
 #include <windows.h>
 
@@ -25,8 +25,60 @@ namespace sak {
 
 namespace {
 constexpr BYTE kAdministratorsSidSubAuthorityCount = 2;
-constexpr DWORD kWindowsVistaMajorVersion = 6;
+
+// Append one argument using the exact quoting rules CommandLineToArgvW reverses, so the
+// elevated relaunch receives byte-identical arguments. Backslashes that precede a quote (or
+// the closing quote) must be doubled; otherwise a trailing backslash escapes the closing quote
+// and the argument is corrupted or the next argument is absorbed. An empty argument becomes an
+// explicit empty quoted token instead of vanishing.
+void appendQuotedArg(std::wstring& out, const std::wstring& arg) {
+    if (!arg.empty() && arg.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
+        out += arg;
+        return;
+    }
+    out += L'\"';
+    for (auto it = arg.begin();; ++it) {
+        size_t slashes = 0;
+        while (it != arg.end() && *it == L'\\') {
+            ++it;
+            ++slashes;
+        }
+        if (it == arg.end()) {
+            out.append(slashes + slashes, L'\\');
+            break;
+        }
+        if (*it == L'\"') {
+            out.append(slashes + slashes + 1, L'\\');
+        } else {
+            out.append(slashes, L'\\');
+        }
+        out += *it;
+    }
+    out += L'\"';
+}
+
 }  // namespace
+
+std::wstring ElevationManager::serializeArgsForRelaunch(int argc, wchar_t* const* argv) {
+    std::wstring args;
+    for (int i = 1; (argv != nullptr) && i < argc; ++i) {
+        if (i > 1) {
+            args += L' ';
+        }
+        appendQuotedArg(args, std::wstring(argv[i]));
+    }
+    return args;
+}
+
+std::wstring ElevationManager::relaunchArguments(const std::wstring& current_args) {
+    std::wstring args = current_args;
+    if (!args.empty()) {
+        args += L' ';
+    }
+    const std::string_view flag(kElevatedRelaunchArgument);
+    args.append(flag.begin(), flag.end());
+    return args;
+}
 
 bool ElevationManager::isElevated() noexcept {
     BOOL is_admin = FALSE;
@@ -43,33 +95,23 @@ bool ElevationManager::isElevated() noexcept {
                                  0,
                                  0,
                                  0,
-                                 &administrators_group)) {
-        CheckTokenMembership(nullptr, administrators_group, &is_admin);
+                                 &administrators_group) != 0) {
+        // A failed membership query is not an answer: fail closed (not elevated) explicitly.
+        if (CheckTokenMembership(nullptr, administrators_group, &is_admin) == 0) {
+            is_admin = FALSE;
+        }
         FreeSid(administrators_group);
     }
 
     return is_admin == TRUE;
 }
 
-bool ElevationManager::canElevate() noexcept {
-    // On Windows Vista+, UAC is available
-    OSVERSIONINFOEX osvi;
-    ZeroMemory(&osvi, sizeof(OSVERSIONINFOEX));
-    osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEX);
-    osvi.dwMajorVersion = kWindowsVistaMajorVersion;
-
-    DWORDLONG condition_mask = 0;
-    VER_SET_CONDITION(condition_mask, VER_MAJORVERSION, VER_GREATER_EQUAL);
-
-    return VerifyVersionInfo(&osvi, VER_MAJORVERSION, condition_mask) != FALSE;
-}
-
 auto ElevationManager::get_executable_path() -> std::expected<std::wstring, sak::error_code> {
     wchar_t path[MAX_PATH];
-    DWORD result = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    DWORD const result = GetModuleFileNameW(nullptr, path, MAX_PATH);
 
     if (result == 0 || result == MAX_PATH) {
-        DWORD error = GetLastError();
+        DWORD const error = GetLastError();
         sak::logError("Failed to get executable path: error {}", error);
         return std::unexpected(sak::error_code::execution_failed);
     }
@@ -77,41 +119,31 @@ auto ElevationManager::get_executable_path() -> std::expected<std::wstring, sak:
     return std::wstring(path);
 }
 
-std::wstring ElevationManager::get_command_line_args() {
+auto ElevationManager::get_command_line_args() -> std::expected<std::wstring, sak::error_code> {
     LPWSTR cmd_line = GetCommandLineW();
 
     // Skip the executable name (first argument)
-    int argc;
+    int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(cmd_line, &argc);
 
-    if (!argv || argc <= 1) {
-        if (argv) {
-            LocalFree(argv);
-        }
-        return {};
+    if (argv == nullptr) {
+        // A genuine parse failure is NOT the same as "no arguments": fail closed instead of
+        // relaunching elevated with whatever arguments this process was started with dropped.
+        sak::logError("CommandLineToArgvW failed: error {}", GetLastError());
+        return std::unexpected(sak::error_code::execution_failed);
     }
 
-    std::wstring args;
-    for (int i = 1; i < argc; ++i) {
-        if (i > 1) {
-            args += L" ";
-        }
-
-        std::wstring arg(argv[i]);
-
-        // Quote if contains spaces
-        if (arg.find(L' ') != std::wstring::npos) {
-            args += L"\"" + arg + L"\"";
-        } else {
-            args += arg;
-        }
+    if (argc <= 1) {
+        LocalFree(argv);
+        return std::wstring{};  // legitimately no arguments
     }
 
+    std::wstring args = serializeArgsForRelaunch(argc, argv);
     LocalFree(argv);
     return args;
 }
 
-auto ElevationManager::restartElevated(bool wait_for_exit) -> std::expected<void, sak::error_code> {
+auto ElevationManager::restartElevated() -> std::expected<void, sak::error_code> {
     if (isElevated()) {
         sak::logInfo("Already running with administrator privileges");
         return {};
@@ -122,10 +154,16 @@ auto ElevationManager::restartElevated(bool wait_for_exit) -> std::expected<void
         return std::unexpected(exe_path_result.error());
     }
 
-    std::wstring args = get_command_line_args();
+    auto args_result = get_command_line_args();
+    if (!args_result) {
+        return std::unexpected(args_result.error());
+    }
+    // The relaunch is told it is one: it waits for this instance to exit instead of bringing
+    // it forward as a second launch would (SingleInstanceGuard, owner request 2026-10-31).
+    const std::wstring args = relaunchArguments(args_result.value());
 
     // Log using narrow-string conversion for log output
-    int logLen = WideCharToMultiByte(
+    const int logLen = WideCharToMultiByte(
         CP_UTF8, 0, exe_path_result.value().c_str(), -1, nullptr, 0, nullptr, nullptr);
     std::string logPath(logLen > 0 ? static_cast<size_t>(logLen - 1) : 0, '\0');
     if (logLen > 0) {
@@ -140,67 +178,60 @@ auto ElevationManager::restartElevated(bool wait_for_exit) -> std::expected<void
     }
     sak::logInfo("Restarting with elevation: {}", logPath);
 
-    return executeElevated(exe_path_result.value(), args, wait_for_exit);
+    const auto launched = launchElevated(exe_path_result.value(), args, SW_NORMAL);
+    if (!launched) {
+        return std::unexpected(launched.error());
+    }
+    if (*launched != nullptr) {
+        CloseHandle(static_cast<HANDLE>(*launched));
+    }
+    return {};
 }
 
-auto ElevationManager::executeElevated(const std::wstring& executable,
-                                       const std::wstring& arguments,
-                                       bool wait_for_exit) -> std::expected<void, sak::error_code> {
-    SHELLEXECUTEINFOW sei = {sizeof(SHELLEXECUTEINFOW)};
+sak::error_code ElevationManager::elevationLaunchError(unsigned long win32_error) noexcept {
+    return win32_error == ERROR_CANCELLED ? sak::error_code::elevation_denied
+                                          : sak::error_code::elevation_failed;
+}
+
+auto ElevationManager::launchElevated(const std::wstring& executable,
+                                      const std::wstring& arguments,
+                                      int show_command) -> std::expected<void*, sak::error_code> {
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof(SHELLEXECUTEINFOW);
     sei.lpVerb = L"runas";  // Request elevation
     sei.lpFile = executable.c_str();
     sei.lpParameters = arguments.empty() ? nullptr : arguments.c_str();
-    sei.nShow = SW_NORMAL;
+    sei.nShow = show_command;
     sei.fMask = SEE_MASK_NOCLOSEPROCESS;
 
-    if (!ShellExecuteExW(&sei)) {
-        DWORD error = GetLastError();
-
-        if (error == ERROR_CANCELLED) {
-            sak::logInfo("User cancelled elevation request");
-            return std::unexpected(sak::error_code::operation_cancelled);
+    if (ShellExecuteExW(&sei) == 0) {
+        DWORD const error = GetLastError();
+        const sak::error_code mapped = elevationLaunchError(error);
+        if (mapped == sak::error_code::elevation_denied) {
+            sak::logInfo("User declined the UAC prompt");
+        } else {
+            sak::logError("Failed to launch with elevation: {}", getElevationErrorMessage(error));
         }
-
-        sak::logError("Failed to execute with elevation: {}", getElevationErrorMessage(error));
-        return std::unexpected(sak::error_code::elevation_failed);
+        return std::unexpected(mapped);
     }
-
-    sak::logInfo("Successfully launched elevated process");
-
-    if (wait_for_exit && sei.hProcess) {
-        sak::logInfo("Waiting for elevated process to complete...");
-        WaitForSingleObject(sei.hProcess, INFINITE);
-
-        DWORD exit_code = 0;
-        GetExitCodeProcess(sei.hProcess, &exit_code);
-        CloseHandle(sei.hProcess);
-
-        if (exit_code != 0) {
-            sak::logError("Elevated process failed with exit code {}", exit_code);
-            return std::unexpected(sak::error_code::execution_failed);
-        }
-        sak::logInfo("Elevated process completed successfully");
-    } else if (sei.hProcess) {
-        CloseHandle(sei.hProcess);
-    }
-
-    return {};
+    sak::logInfo("Launched elevated process");
+    return sei.hProcess;
 }
 
 std::string ElevationManager::getElevationErrorMessage(unsigned long error_code) {
     char* message_buffer = nullptr;
 
-    DWORD size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-                                    FORMAT_MESSAGE_IGNORE_INSERTS,
-                                nullptr,
-                                error_code,
-                                MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-                                reinterpret_cast<LPSTR>(&message_buffer),
-                                0,
-                                nullptr);
+    DWORD const size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+                                          FORMAT_MESSAGE_IGNORE_INSERTS,
+                                      nullptr,
+                                      error_code,
+                                      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+                                      reinterpret_cast<LPSTR>(&message_buffer),
+                                      0,
+                                      nullptr);
 
     std::string message;
-    if (size > 0 && message_buffer) {
+    if (size > 0 && (message_buffer != nullptr)) {
         message = message_buffer;
         // Remove trailing newlines
         while (!message.empty() && (message.back() == '\n' || message.back() == '\r')) {
@@ -215,5 +246,3 @@ std::string ElevationManager::getElevationErrorMessage(unsigned long error_code)
 }
 
 }  // namespace sak
-
-#endif  // _WIN32

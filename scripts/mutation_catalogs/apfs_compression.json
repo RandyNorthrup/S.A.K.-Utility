@@ -1,0 +1,80 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_partition_manager_core",
+  "ctest_regex": "^test_partition_manager_core$",
+  "mutants": [
+    {
+      "id": "decmpfs-signature-guard-inverted",
+      "file": "include/sak/apfs_compression.h",
+      "find": "if (header.signature != kApfsDecmpfsMagic) {",
+      "replace": "if (header.signature == kApfsDecmpfsMagic) {",
+      "expect": "killed",
+      "why": "apfsParseDecmpfsHeader must reject any attribute lacking the 'cmpf' magic and accept one that has it; inverting != to == returns nullopt for the valid header and accepts a forged one. apfsCompression_decmpfsHeaderRequiresCmpfSignature asserts QVERIFY(parsed.has_value()) on a good header and QVERIFY(!apfsParseDecmpfsHeader(bad).has_value()) after bad[0]='X'"
+    },
+    {
+      "id": "decmpfs-header-size-bound-off-by-one",
+      "file": "include/sak/apfs_compression.h",
+      "find": "if (attribute.size() < kApfsDecmpfsHeaderBytes) {",
+      "replace": "if (attribute.size() <= kApfsDecmpfsHeaderBytes) {",
+      "expect": "killed",
+      "why": "a decmpfs attribute of exactly kApfsDecmpfsHeaderBytes (16) is the minimal valid header; relaxing < to <= rejects it as too short. apfsCompression_decmpfsHeaderRequiresCmpfSignature builds a 16-byte header via apfsBuildDecmpfsHeader and asserts QVERIFY(parsed.has_value())"
+    },
+    {
+      "id": "inline-zlib-stored-branch-inverted",
+      "file": "include/sak/apfs_compression.h",
+      "find": "if ((static_cast<uint8_t>(payload.at(0)) & 0x0F) == 0x0F) {",
+      "replace": "if ((static_cast<uint8_t>(payload.at(0)) & 0x0F) != 0x0F) {",
+      "expect": "killed",
+      "why": "the inline-vs-stored branch: a zlib stream begins 0x78 (0x78 & 0x0F == 0x08) and must take the qUncompress path, not the stored path. Inverting the test misroutes the zlib payload into the stored branch, whose length check fails -> nullopt. The reader decodes inline zlib via apfsDecodeInlineDecmpfs -> apfsDecodeInlineZlibPayload; apfsWriter_createOrReplaceWriteHonorsCompression writes a highly-compressible 20000-byte inline-zlib file and asserts QVERIFY2(readBack.ok) and QCOMPARE(readBack.data, first)"
+    },
+    {
+      "id": "lzbitmap-block-magic-branch-inverted",
+      "file": "include/sak/apfs_lzbitmap.h",
+      "find": "if (first == zbm::kMagic[0]) {",
+      "replace": "if (first != zbm::kMagic[0]) {",
+      "expect": "killed",
+      "why": "apfsLzbitmapDecodeBlock selects the LZBITMAP-stream decode path when the block begins 0x5A; inverting == to != treats a valid ZBM stream as a stored block (low-nibble check then fails) and vice versa. apfsLzbitmapDecodesAppleReferenceStream feeds a 0x5A-led Apple stream and asserts QVERIFY2(decoded.has_value()) and QCOMPARE(*decoded, payload)"
+    },
+    {
+      "id": "lzbitmap-stored-block-length-off-by-one",
+      "file": "include/sak/apfs_lzbitmap.h",
+      "find": "if (block.size() - 1 != expectedBytes) {",
+      "replace": "if (block.size() != expectedBytes) {",
+      "expect": "killed",
+      "why": "a stored on-disk block is a 1-byte 0xFF marker plus expectedBytes of data, so block.size()-1 must equal expectedBytes; dropping the -1 makes the check compare marker+data against expectedBytes and reject every valid stored block -> nullopt. apfsLzbitmapCodecRoundTrips round-trips an incompressible payload that forces 0xFF stored blocks and asserts QVERIFY2(parsed.has_value()) and QCOMPARE(*parsed, payload)"
+    },
+    {
+      "id": "block-offs-table-start-offset-zeroed",
+      "file": "include/sak/apfs_lzbitmap.h",
+      "find": "int64_t offset = tableBytes;",
+      "replace": "int64_t offset = 0;",
+      "expect": "killed",
+      "why": "the first block_offs entry must point just past the (blockCount+1)-entry table; seeding the running offset at 0 instead of tableBytes places block 0 at offset 0 and corrupts the whole table. apfsLzbitmapResourceForkLayoutMatchesApfsck asserts QCOMPARE(static_cast<int>(offs), tableBytes) for the i==0 entry"
+    },
+    {
+      "id": "lzbitmap-backref-source-flipped",
+      "file": "include/sak/apfs_lzbitmap_codec.h",
+      "find": "s.dest[s.out_pos] = s.dest[s.out_pos - s.period];",
+      "replace": "s.dest[s.out_pos] = s.dest[s.out_pos + s.period];",
+      "expect": "killed",
+      "why": "a back-reference copies from period bytes EARLIER in the output; reading out_pos+period copies unwritten (zero) bytes ahead of the cursor and mis-decodes every compressed chunk. apfsLzbitmapDecodesAppleReferenceStream asserts QCOMPARE(*decoded, payload) on Apple's own encoded stream"
+    },
+    {
+      "id": "lzbitmap-literal-copy-bit-shifted",
+      "file": "include/sak/apfs_lzbitmap_codec.h",
+      "find": "if (bm.bitmap & (1 << i)) {",
+      "replace": "if (bm.bitmap & (1 << (i + 1))) {",
+      "expect": "killed",
+      "why": "the per-group 8-bit bitmap selects, for byte i, a fresh literal (bit set) or a back-reference copy (bit clear); testing bit i+1 instead of i flips the literal-vs-copy decision for every output byte and mis-decodes. apfsLzbitmapDecodesAppleReferenceStream asserts QCOMPARE(*decoded, payload)"
+    },
+    {
+      "id": "lzbitmap-chunk-decmp-len-bound-off-by-one",
+      "file": "include/sak/apfs_lzbitmap_codec.h",
+      "find": "if (s.decmp_len > kMaxDecmpChunkSize) {",
+      "replace": "if (s.decmp_len >= kMaxDecmpChunkSize) {",
+      "expect": "killed",
+      "why": "a full 64 KiB block is two chunks whose decmp_len is exactly kMaxDecmpChunkSize (0x8000, the legal maximum the encoder emits); relaxing > to >= rejects that legal chunk and fails the decode. apfsLzbitmapCodecRoundTrips round-trips exactly-one-block ('Q'*65536) and two-full-block ('Z'*131072) payloads and asserts QVERIFY2(parsed.has_value()) and QCOMPARE(*parsed, payload)"
+    }
+  ]
+}

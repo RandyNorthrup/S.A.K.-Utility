@@ -6,12 +6,14 @@
 
 #include "sak/network_diagnostic_report_generator.h"
 
+#include "sak/io_write_utils.h"
 #include "sak/report_style_constants.h"
 
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include <QTextStream>
 
 namespace sak {
@@ -42,6 +44,10 @@ void NetworkDiagnosticReportGenerator::setNotes(const QString& notes) {
 
 void NetworkDiagnosticReportGenerator::setIncludedSections(const QSet<Section>& sections) {
     m_sections = sections;
+}
+
+void NetworkDiagnosticReportGenerator::setNotRunSections(const QSet<Section>& sections) {
+    m_notRunSections = sections;
 }
 
 void NetworkDiagnosticReportGenerator::setAdapterData(const QVector<NetworkAdapterInfo>& adapters) {
@@ -89,32 +95,49 @@ void NetworkDiagnosticReportGenerator::setShareData(const QVector<NetworkShareIn
 }
 
 void NetworkDiagnosticReportGenerator::generateHtml(const QString& outputPath) {
-    QFile file(outputPath);
+    // QSaveFile stages to a temporary and renames on commit(), so a failed or
+    // short write never truncates a pre-existing report. The QTextStream must be
+    // flushed AND destroyed BEFORE commit() -- the previous code closed the file
+    // while the still-live stream held buffered data, then always emitted success
+    // regardless (B9-12).
+    QSaveFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         Q_EMIT errorOccurred(QStringLiteral("Cannot write to %1").arg(outputPath));
         return;
     }
-
-    QTextStream out(&file);
-    out << toHtml();
-    file.close();
-
+    {
+        QTextStream out(&file);
+        out << toHtml();
+        out.flush();
+        if (out.status() != QTextStream::Status::Ok) {
+            file.cancelWriting();
+            Q_EMIT errorOccurred(QStringLiteral("Incomplete write to %1").arg(outputPath));
+            return;
+        }
+    }
+    if (!file.commit()) {
+        Q_EMIT errorOccurred(QStringLiteral("Could not finalize %1").arg(outputPath));
+        return;
+    }
     Q_EMIT reportGenerated(outputPath);
 }
 
 void NetworkDiagnosticReportGenerator::generateJson(const QString& outputPath) {
-    QFile file(outputPath);
+    QSaveFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         Q_EMIT errorOccurred(QStringLiteral("Cannot write to %1").arg(outputPath));
         return;
     }
 
-    const QByteArray data = toJson().toUtf8();
-    if (file.write(data) != data.size()) {
+    if (!sak::writeFully(file, toJson().toUtf8())) {
+        file.cancelWriting();
         Q_EMIT errorOccurred(QStringLiteral("Incomplete write to %1").arg(outputPath));
         return;
     }
-    file.close();
+    if (!file.commit()) {
+        Q_EMIT errorOccurred(QStringLiteral("Could not finalize %1").arg(outputPath));
+        return;
+    }
 
     Q_EMIT reportGenerated(outputPath);
 }
@@ -172,10 +195,17 @@ QString NetworkDiagnosticReportGenerator::buildAdapterSection() const {
                                ? QStringLiteral("%1 Mbps").arg(a.linkSpeedBps / kBitsPerMegabit)
                                : QStringLiteral("--");
 
+        // status/speed are our own generated markup; every upstream-derived field
+        // (name/type/ip/mac) is HTML-escaped so a malformed value cannot inject markup.
         html += QStringLiteral(
                     "<tr><td>%1</td><td>%2</td><td>%3</td>"
                     "<td>%4</td><td>%5</td><td>%6</td></tr>\n")
-                    .arg(a.name.toHtmlEscaped(), a.adapterType, status, ip, a.macAddress, speed);
+                    .arg(a.name.toHtmlEscaped(),
+                         adapterTypeLabel(a.adapterType).toHtmlEscaped(),
+                         status,
+                         ip.toHtmlEscaped(),
+                         a.macAddress.toHtmlEscaped(),
+                         speed);
     }
     html += QStringLiteral("</table>\n");
     return html;
@@ -194,7 +224,7 @@ QString NetworkDiagnosticReportGenerator::buildPingSection() const {
     html += QStringLiteral(
                 "<div class=\"stat-box\">"
                 "Sent: %1 | Received: %2 | Lost: %3 "
-                "(<span class=\"%4\">%5%%</span>)<br>"
+                "(<span class=\"%4\">%5%</span>)<br>"
                 "Min: %6 ms | Max: %7 ms | Avg: %8 ms | Jitter: %9 ms"
                 "</div>\n")
                 .arg(m_pingResult.sent)
@@ -255,7 +285,7 @@ QString NetworkDiagnosticReportGenerator::buildDnsSection() const {
 
         html += QStringLiteral("<h3>%1 (%2) via %3 -- <span class=\"%4\">%5</span> (%6 ms)</h3>\n")
                     .arg(r.queryName.toHtmlEscaped(),
-                         r.recordType,
+                         r.recordType.toHtmlEscaped(),
                          r.dnsServer.toHtmlEscaped(),
                          statusClass,
                          statusText)
@@ -279,6 +309,7 @@ QString NetworkDiagnosticReportGenerator::buildPortScanSection() const {
     int openCount = 0;
     int closedCount = 0;
     int filteredCount = 0;
+    int errorCount = 0;
     for (const auto& r : m_portScanResults) {
         switch (r.state) {
         case PortScanResult::State::Open:
@@ -290,15 +321,22 @@ QString NetworkDiagnosticReportGenerator::buildPortScanSection() const {
         case PortScanResult::State::Filtered:
             ++filteredCount;
             break;
-        default:
+        case PortScanResult::State::Error:
+            ++errorCount;
             break;
         }
     }
 
-    html += QStringLiteral("<div class=\"stat-box\">Open: %1 | Closed: %2 | Filtered: %3</div>\n")
+    // Surface errored probes. A wholly-failed scan (every probe State::Error, also
+    // the default-constructed state) otherwise reads as "Open: 0 | Closed: 0 |
+    // Filtered: 0" as though every port were confirmed unreachable -- the error
+    // count is the honest signal that the scan itself did not run.
+    html += QStringLiteral(
+                "<div class=\"stat-box\">Open: %1 | Closed: %2 | Filtered: %3 | Errors: %4</div>\n")
                 .arg(openCount)
                 .arg(closedCount)
-                .arg(filteredCount);
+                .arg(filteredCount)
+                .arg(errorCount);
 
     html += QStringLiteral(
         "<table>\n<tr><th>Port</th><th>State</th><th>Service</th>"
@@ -325,28 +363,40 @@ QString NetworkDiagnosticReportGenerator::buildBandwidthSection() const {
     QString html;
     html += QStringLiteral("<h2>Bandwidth Test Results</h2>\n");
 
-    const auto modeStr = (m_bandwidthResult.mode == BandwidthTestResult::TestMode::LanIperf3)
-                             ? QStringLiteral("LAN (iPerf3)")
-                             : QStringLiteral("WAN (HTTP)");
+    const bool is_lan = m_bandwidthResult.mode == BandwidthTestResult::TestMode::LanIperf3;
+    const auto modeStr = is_lan ? QStringLiteral("LAN (iPerf3)") : QStringLiteral("WAN (HTTP)");
+
+    // An HTTP speed test measures no jitter or loss: it reports its latency instead, and printing
+    // the iPerf3 fields for it would state zeros nothing measured.
+    QString detail;
+    if (is_lan) {
+        detail = QStringLiteral("Jitter: %1 ms | Packet Loss: %2%")
+                     .arg(m_bandwidthResult.jitterMs, 0, 'f', kReportMetricPrecision)
+                     .arg(m_bandwidthResult.packetLossPercent, 0, 'f', kReportMetricPrecision);
+    } else if (m_bandwidthResult.latencyMs < 0.0) {
+        detail = QStringLiteral("Latency: unknown");
+    } else {
+        detail = QStringLiteral("Latency: %1 ms")
+                     .arg(m_bandwidthResult.latencyMs, 0, 'f', kReportMetricPrecision);
+    }
 
     html += QStringLiteral(
                 "<div class=\"stat-box\">"
                 "Mode: %1 | Target: %2<br>"
                 "Download: <b>%3 Mbps</b> | Upload: <b>%4 Mbps</b><br>"
-                "Jitter: %5 ms | Packet Loss: %6%%"
+                "%5"
                 "</div>\n")
                 .arg(modeStr, m_bandwidthResult.target.toHtmlEscaped())
                 .arg(m_bandwidthResult.downloadMbps, 0, 'f', kReportMetricPrecision)
                 .arg(m_bandwidthResult.uploadMbps, 0, 'f', kReportMetricPrecision)
-                .arg(m_bandwidthResult.jitterMs, 0, 'f', kReportMetricPrecision)
-                .arg(m_bandwidthResult.packetLossPercent, 0, 'f', kReportMetricPrecision);
+                .arg(detail);
 
     return html;
 }
 
 QString NetworkDiagnosticReportGenerator::buildWiFiSection() const {
     QString html;
-    html += QStringLiteral("<h2>WiFi Analysis</h2>\n");
+    html += QStringLiteral("<h2>Wi-Fi Analysis</h2>\n");
     html += QStringLiteral(
         "<table>\n<tr><th>SSID</th><th>BSSID</th><th>Signal</th>"
         "<th>Channel</th><th>Band</th><th>Security</th><th>Vendor</th></tr>\n");
@@ -360,15 +410,18 @@ QString NetworkDiagnosticReportGenerator::buildWiFiSection() const {
 
         const auto connected = net.isConnected ? QStringLiteral(" *") : QString();
 
-        html += QStringLiteral(
-                    "<tr><td>%1%2</td><td>%3</td>"
-                    "<td class=\"%4\">%5 dBm (%6%%)</td>"
-                    "<td>%7</td><td>%8</td><td>%9</td><td>%10</td></tr>\n")
-                    .arg(net.ssid.toHtmlEscaped(), connected, net.bssid, signalClass)
-                    .arg(net.rssiDbm)
-                    .arg(net.signalQuality)
-                    .arg(net.channelNumber)
-                    .arg(net.band, net.authentication, net.apVendor);
+        html +=
+            QStringLiteral(
+                "<tr><td>%1%2</td><td>%3</td>"
+                "<td class=\"%4\">%5 dBm (%6%)</td>"
+                "<td>%7</td><td>%8</td><td>%9</td><td>%10</td></tr>\n")
+                .arg(net.ssid.toHtmlEscaped(), connected, net.bssid.toHtmlEscaped(), signalClass)
+                .arg(net.rssiDbm)
+                .arg(net.signalQuality)
+                .arg(net.channelNumber)
+                .arg(net.band.toHtmlEscaped(),
+                     net.authentication.toHtmlEscaped(),
+                     net.apVendor.toHtmlEscaped());
     }
     html += QStringLiteral("</table>\n");
     return html;
@@ -460,19 +513,21 @@ QString NetworkDiagnosticReportGenerator::buildConnectionSection() const {
         "<th>State</th><th>Process</th></tr>\n");
 
     // Only show first 100 to avoid huge reports
-    const int limit = qMin(m_connections.size(), 100);
+    const int limit = static_cast<int>(qMin(m_connections.size(), 100));
     for (int i = 0; i < limit; ++i) {
         const auto& c = m_connections[i];
         const auto proto = (c.protocol == ConnectionInfo::Protocol::TCP) ? QStringLiteral("TCP")
                                                                          : QStringLiteral("UDP");
+        // proto is our own literal; the OS-derived address/state fields are HTML-escaped
+        // (consistent with processName) so a malformed value cannot inject markup.
         html += QStringLiteral(
                     "<tr><td>%1</td><td>%2:%3</td><td>%4:%5</td>"
                     "<td>%6</td><td>%7</td></tr>\n")
-                    .arg(proto, c.localAddress)
+                    .arg(proto, c.localAddress.toHtmlEscaped())
                     .arg(c.localPort)
-                    .arg(c.remoteAddress)
+                    .arg(c.remoteAddress.toHtmlEscaped())
                     .arg(c.remotePort)
-                    .arg(c.state, c.processName.toHtmlEscaped());
+                    .arg(c.state.toHtmlEscaped(), c.processName.toHtmlEscaped());
     }
     html += QStringLiteral("</table>\n");
 
@@ -531,6 +586,17 @@ QString NetworkDiagnosticReportGenerator::buildShareSection() const {
     return html;
 }
 
+QString NetworkDiagnosticReportGenerator::buildNotRunSection(const QString& title) const {
+    // Render an explicit marker for a diagnostic that was attempted but returned no data
+    // (it failed or produced nothing), rather than silently omitting the section. No data
+    // is fabricated -- only the not-run state is stated.
+    return QStringLiteral(
+               "<h2>%1</h2>\n"
+               "<p class=\"warning\">This diagnostic was run but returned no "
+               "results (it failed or produced no data).</p>\n")
+        .arg(title.toHtmlEscaped());
+}
+
 QString NetworkDiagnosticReportGenerator::buildHtmlFooter() const {
     return QStringLiteral(
         "<hr>\n"
@@ -540,8 +606,8 @@ QString NetworkDiagnosticReportGenerator::buildHtmlFooter() const {
 }
 
 void NetworkDiagnosticReportGenerator::populateRootJson(QJsonObject& root) const {
-    Q_ASSERT(!root.isEmpty());
-    Q_ASSERT(!m_sections.isEmpty());
+    // root is built up by this function, so a non-empty precondition is inverted and always fires;
+    // an empty m_sections (metadata-only report) is a legitimate, test-covered case.
     root[QStringLiteral("reportType")] = QStringLiteral("NetworkDiagnostic");
     root[QStringLiteral("generated")] = QDateTime::currentDateTime().toString(Qt::ISODate);
     root[QStringLiteral("technician")] = m_technicianName;
@@ -554,58 +620,109 @@ void NetworkDiagnosticReportGenerator::populateRootJson(QJsonObject& root) const
 void NetworkDiagnosticReportGenerator::appendHtmlSections(QString& html) const {
     using Builder = QString (NetworkDiagnosticReportGenerator::*)() const;
     struct SectionBuilder {
-        Section section;
-        Builder builder;
+        Section section{};
+        Builder builder{};
+        const char* name{};
     };
     static const SectionBuilder kBuilders[] = {
-        {Section::AdapterConfig, &NetworkDiagnosticReportGenerator::buildAdapterSection},
-        {Section::PingResults, &NetworkDiagnosticReportGenerator::buildPingSection},
-        {Section::TracerouteResults, &NetworkDiagnosticReportGenerator::buildTracerouteSection},
-        {Section::DnsResults, &NetworkDiagnosticReportGenerator::buildDnsSection},
-        {Section::PortScanResults, &NetworkDiagnosticReportGenerator::buildPortScanSection},
-        {Section::BandwidthResults, &NetworkDiagnosticReportGenerator::buildBandwidthSection},
-        {Section::WiFiAnalysis, &NetworkDiagnosticReportGenerator::buildWiFiSection},
-        {Section::FirewallAudit, &NetworkDiagnosticReportGenerator::buildFirewallSection},
-        {Section::ActiveConnections, &NetworkDiagnosticReportGenerator::buildConnectionSection},
-        {Section::NetworkShares, &NetworkDiagnosticReportGenerator::buildShareSection},
+        {Section::AdapterConfig,
+         &NetworkDiagnosticReportGenerator::buildAdapterSection,
+         "Network Adapters"},
+        {Section::PingResults, &NetworkDiagnosticReportGenerator::buildPingSection, "Ping Results"},
+        {Section::TracerouteResults,
+         &NetworkDiagnosticReportGenerator::buildTracerouteSection,
+         "Traceroute"},
+        {Section::DnsResults,
+         &NetworkDiagnosticReportGenerator::buildDnsSection,
+         "DNS Query Results"},
+        {Section::PortScanResults,
+         &NetworkDiagnosticReportGenerator::buildPortScanSection,
+         "Port Scan Results"},
+        {Section::BandwidthResults,
+         &NetworkDiagnosticReportGenerator::buildBandwidthSection,
+         "Bandwidth Test Results"},
+        {Section::WiFiAnalysis,
+         &NetworkDiagnosticReportGenerator::buildWiFiSection,
+         "Wi-Fi Analysis"},
+        {Section::FirewallAudit,
+         &NetworkDiagnosticReportGenerator::buildFirewallSection,
+         "Firewall Audit"},
+        {Section::ActiveConnections,
+         &NetworkDiagnosticReportGenerator::buildConnectionSection,
+         "Active Connections"},
+        {Section::NetworkShares,
+         &NetworkDiagnosticReportGenerator::buildShareSection,
+         "Network Shares"},
     };
 
     for (const auto& entry : kBuilders) {
         if (m_sections.contains(entry.section)) {
             html += (this->*entry.builder)();
+        } else if (m_notRunSections.contains(entry.section)) {
+            html += buildNotRunSection(QString::fromLatin1(entry.name));
         }
     }
 }
 
 void NetworkDiagnosticReportGenerator::appendJsonSections(QJsonObject& root) const {
-    using Appender = void (NetworkDiagnosticReportGenerator::*)(QJsonObject&) const;
+    // The `root` parameter name is load-bearing, not decoration: without it cppcheck parses
+    // `(QJsonObject&)` as a C-style cast to a reference and reports cstyleCast here. Deleting
+    // it -- as a "drop unused parameter names" tidy-up would -- silently re-breaks the gate.
+    using Appender = void (NetworkDiagnosticReportGenerator::*)(QJsonObject& root) const;
     struct SectionAppender {
-        Section section;
-        Appender appender;
+        Section section{};
+        Appender appender{};
+        const char* name{};
     };
     static const SectionAppender kAppenders[] = {
-        {Section::AdapterConfig, &NetworkDiagnosticReportGenerator::appendAdapterConfigJson},
-        {Section::PingResults, &NetworkDiagnosticReportGenerator::appendPingResultsJson},
+        {Section::AdapterConfig,
+         &NetworkDiagnosticReportGenerator::appendAdapterConfigJson,
+         "Network Adapters"},
+        {Section::PingResults,
+         &NetworkDiagnosticReportGenerator::appendPingResultsJson,
+         "Ping Results"},
         {Section::TracerouteResults,
-         &NetworkDiagnosticReportGenerator::appendTracerouteResultsJson},
-        {Section::DnsResults, &NetworkDiagnosticReportGenerator::appendDnsResultsJson},
-        {Section::PortScanResults, &NetworkDiagnosticReportGenerator::appendPortScanResultsJson},
-        {Section::BandwidthResults, &NetworkDiagnosticReportGenerator::appendBandwidthResultsJson},
-        {Section::WiFiAnalysis, &NetworkDiagnosticReportGenerator::appendWiFiAnalysisJson},
-        {Section::FirewallAudit, &NetworkDiagnosticReportGenerator::appendFirewallAuditJson},
+         &NetworkDiagnosticReportGenerator::appendTracerouteResultsJson,
+         "Traceroute"},
+        {Section::DnsResults,
+         &NetworkDiagnosticReportGenerator::appendDnsResultsJson,
+         "DNS Query Results"},
+        {Section::PortScanResults,
+         &NetworkDiagnosticReportGenerator::appendPortScanResultsJson,
+         "Port Scan Results"},
+        {Section::BandwidthResults,
+         &NetworkDiagnosticReportGenerator::appendBandwidthResultsJson,
+         "Bandwidth Test Results"},
+        {Section::WiFiAnalysis,
+         &NetworkDiagnosticReportGenerator::appendWiFiAnalysisJson,
+         "Wi-Fi Analysis"},
+        {Section::FirewallAudit,
+         &NetworkDiagnosticReportGenerator::appendFirewallAuditJson,
+         "Firewall Audit"},
         {Section::ActiveConnections,
-         &NetworkDiagnosticReportGenerator::appendActiveConnectionsJson},
-        {Section::NetworkShares, &NetworkDiagnosticReportGenerator::appendNetworkSharesJson},
+         &NetworkDiagnosticReportGenerator::appendActiveConnectionsJson,
+         "Active Connections"},
+        {Section::NetworkShares,
+         &NetworkDiagnosticReportGenerator::appendNetworkSharesJson,
+         "Network Shares"},
     };
 
+    QJsonArray notRun;
     for (const auto& entry : kAppenders) {
         if (m_sections.contains(entry.section)) {
             (this->*entry.appender)(root);
+        } else if (m_notRunSections.contains(entry.section)) {
+            notRun.append(QString::fromLatin1(entry.name));
         }
+    }
+    if (!notRun.isEmpty()) {
+        root[QStringLiteral("sectionsNotRun")] = notRun;
     }
 }
 
 void NetworkDiagnosticReportGenerator::appendAdapterConfigJson(QJsonObject& root) const {
+    // populateRootJson() writes five metadata keys before dispatching through
+    // appendJsonSections(), the only path that reaches this appender.
     Q_ASSERT(!root.isEmpty());
     QJsonArray adapters;
     for (const auto& a : m_adapters) {
@@ -640,6 +757,8 @@ void NetworkDiagnosticReportGenerator::appendPingResultsJson(QJsonObject& root) 
 }
 
 void NetworkDiagnosticReportGenerator::appendTracerouteResultsJson(QJsonObject& root) const {
+    // populateRootJson() writes five metadata keys before dispatching through
+    // appendJsonSections(), the only path that reaches this appender.
     Q_ASSERT(!root.isEmpty());
     QJsonObject trace;
     trace[QStringLiteral("target")] = m_tracerouteResult.target;
@@ -660,6 +779,8 @@ void NetworkDiagnosticReportGenerator::appendTracerouteResultsJson(QJsonObject& 
 }
 
 void NetworkDiagnosticReportGenerator::appendDnsResultsJson(QJsonObject& root) const {
+    // populateRootJson() writes five metadata keys before dispatching through
+    // appendJsonSections(), the only path that reaches this appender.
     Q_ASSERT(!root.isEmpty());
     QJsonArray dnsArr;
     for (const auto& r : m_dnsResults) {
@@ -681,6 +802,8 @@ void NetworkDiagnosticReportGenerator::appendDnsResultsJson(QJsonObject& root) c
 }
 
 void NetworkDiagnosticReportGenerator::appendPortScanResultsJson(QJsonObject& root) const {
+    // populateRootJson() writes five metadata keys before dispatching through
+    // appendJsonSections(), the only path that reaches this appender.
     Q_ASSERT(!root.isEmpty());
     QJsonArray portArr;
     for (const auto& r : m_portScanResults) {
@@ -700,10 +823,20 @@ void NetworkDiagnosticReportGenerator::appendPortScanResultsJson(QJsonObject& ro
 
 void NetworkDiagnosticReportGenerator::appendBandwidthResultsJson(QJsonObject& root) const {
     QJsonObject bw;
+    bw[QStringLiteral("target")] = m_bandwidthResult.target;
     bw[QStringLiteral("downloadMbps")] = m_bandwidthResult.downloadMbps;
     bw[QStringLiteral("uploadMbps")] = m_bandwidthResult.uploadMbps;
-    bw[QStringLiteral("jitterMs")] = m_bandwidthResult.jitterMs;
-    bw[QStringLiteral("packetLoss")] = m_bandwidthResult.packetLossPercent;
+    if (m_bandwidthResult.mode == BandwidthTestResult::TestMode::LanIperf3) {
+        bw[QStringLiteral("mode")] = QStringLiteral("lan-iperf3");
+        bw[QStringLiteral("jitterMs")] = m_bandwidthResult.jitterMs;
+        bw[QStringLiteral("packetLoss")] = m_bandwidthResult.packetLossPercent;
+    } else {
+        bw[QStringLiteral("mode")] = QStringLiteral("wan-http");
+        // Null, not a number, when the probe could not measure a latency.
+        bw[QStringLiteral("latencyMs")] = m_bandwidthResult.latencyMs < 0.0
+                                              ? QJsonValue()
+                                              : QJsonValue(m_bandwidthResult.latencyMs);
+    }
     root[QStringLiteral("bandwidth")] = bw;
 }
 
@@ -753,7 +886,7 @@ QString NetworkDiagnosticReportGenerator::toJson() const {
     QJsonObject root;
     populateRootJson(root);
 
-    QJsonDocument doc(root);
+    const QJsonDocument doc(root);
     return QString::fromUtf8(doc.toJson(QJsonDocument::Indented));
 }
 

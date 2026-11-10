@@ -1,0 +1,29 @@
+# JavaScript complexity baseline -- a RATCHET, not an exclusion list.
+#
+# browser/extension/background.js drives a real user's browser over the DevTools protocol
+# and had never been seen by any gate (R5-G21-9), so it arrived over the limit in two dozen
+# places. Excluding it would have left that exactly as it was. Instead every violation is
+# enumerated here with its measured numbers, and scripts/run_lizard.py enforces:
+#
+#   - a violation NOT listed here fails            -> no new debt
+#   - a listed function that gets worse fails      -> no drift
+#   - a listed function that no longer violates
+#     fails until its row is deleted               -> the list can only shrink
+#
+# That last rule is what keeps this from becoming a permanent carve-out. Fix a function,
+# delete its row; there is no way to leave a stale row behind.
+#
+# Thresholds are the repo's own, unchanged: CCN <= 10, PARAM <= 5, length <= 70.
+#
+# RE-BASELINED 2026-08-27 when lizard moved 1.21.2 -> 1.24.0 (R5-IDX-21). Not one line of
+# background.js changed. The old parser desynchronized on certain string literals and stopped
+# reporting functions, so EIGHT of the rows below were never measured by any gate -- they are
+# pre-existing debt that has just become visible, not new debt. Several already-listed rows also
+# moved because the corrected parse measures them accurately: collectMediaNodes 18 -> 15 CCN,
+# handleWaitFor 16 -> 12 CCN and 60 -> 38 length, mediaFn 17 -> 15 CCN and 27 -> 23 length. Every
+# number here was re-measured under 1.24.0; none was raised to accommodate a change.
+#
+# Format:  function@path | ccn | params | length
+#
+# CLOSED 2026-08-30 (extension 0.3.22): zero rows remain. Keep this empty ratchet file wired so
+# any future JavaScript violation is rejected as new debt rather than silently re-baselined.

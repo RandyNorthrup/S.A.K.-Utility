@@ -6,13 +6,26 @@
 
 #include "sak/email_attachment_saver.h"
 
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 
 #include <QByteArray>
 #include <QFile>
+#include <QHashFunctions>
 #include <QRegularExpression>
+#include <QSaveFile>
+
+#include <utility>
 
 namespace sak {
+
+// ============================================================================
+// Attachment identity
+// ============================================================================
+
+size_t qHash(const AttachmentRef& ref, size_t seed) noexcept {
+    return qHashMulti(seed, ref.message_id, ref.index);
+}
 
 // ============================================================================
 // Filename sanitization
@@ -40,15 +53,27 @@ QString sanitizeAttachmentFilename(const QString& filename) {
 // ============================================================================
 
 AttachmentSaveResult saveAttachmentToPath(const QString& path, const QByteArray& data) {
-    QFile file(path);
+    // QSaveFile writes to a temporary and only replaces the target on commit(),
+    // so a short/failed write never leaves a truncated file reported as saved.
+    QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
-        QString error = QStringLiteral("Failed to save attachment: %1").arg(path);
+        const QString error = QStringLiteral("Failed to save attachment: %1").arg(path);
         sak::logError("Failed to save attachment: {}", path.toStdString());
-        return {false, path, error};
+        return {.success = false, .saved_path = path, .error_message = error};
     }
-    file.write(data);
-    file.close();
-    return {true, path, {}};
+    const qint64 written = file.write(data);
+    if (written != static_cast<qint64>(data.size())) {
+        file.cancelWriting();
+        const QString error = QStringLiteral("Short write saving attachment: %1").arg(path);
+        sak::logError("Short write saving attachment: {}", path.toStdString());
+        return {.success = false, .saved_path = path, .error_message = error};
+    }
+    if (!file.commit()) {
+        const QString error = QStringLiteral("Failed to finalize attachment: %1").arg(path);
+        sak::logError("Failed to finalize attachment: {}", path.toStdString());
+        return {.success = false, .saved_path = path, .error_message = error};
+    }
+    return {.success = true, .saved_path = path, .error_message = {}};
 }
 
 // ============================================================================
@@ -58,19 +83,43 @@ AttachmentSaveResult saveAttachmentToPath(const QString& path, const QByteArray&
 AttachmentSaveResult saveAttachmentToDirectory(const QString& dir,
                                                const QString& filename,
                                                const QByteArray& data) {
-    QString safe_name = sanitizeAttachmentFilename(filename);
+    if (dir.isEmpty()) {
+        // An empty dir would produce a root-relative "/<name>" target. Refuse rather than
+        // write to a guessed location.
+        return {.success = false,
+                .saved_path = {},
+                .error_message = QStringLiteral("No attachment directory specified")};
+    }
+    if (data.isNull()) {
+        // A null (absent) payload means the content was never delivered. Saving a zero-byte
+        // file and reporting success would hide that failure. A genuinely empty attachment
+        // arrives as a non-null zero-length QByteArray and is still saved.
+        return {.success = false,
+                .saved_path = {},
+                .error_message = QStringLiteral("No attachment content to save")};
+    }
+    const QString safe_name = sanitizeAttachmentFilename(filename);
     QString file_path = dir + QStringLiteral("/") + safe_name;
 
     if (QFile::exists(file_path)) {
-        int dot = safe_name.lastIndexOf(QLatin1Char('.'));
-        QString base = (dot > 0) ? safe_name.left(dot) : safe_name;
-        QString ext = (dot > 0) ? safe_name.mid(dot) : QString();
+        const int dot = static_cast<int>(safe_name.lastIndexOf(QLatin1Char('.')));
+        const QString base = (dot > 0) ? safe_name.left(dot) : safe_name;
+        const QString ext = (dot > 0) ? safe_name.mid(dot) : QString();
         int counter = 1;
         constexpr int kMaxDedupeAttempts = 999;
         do {
             file_path = QStringLiteral("%1/%2_%3%4").arg(dir, base, QString::number(counter), ext);
             ++counter;
         } while (QFile::exists(file_path) && counter <= kMaxDedupeAttempts);
+    }
+
+    // Never write onto an existing file: when every dedupe slot is taken the loop
+    // above exits with a path that still exists, and saveAttachmentToPath would
+    // otherwise truncate it.
+    if (QFile::exists(file_path)) {
+        const QString error = QStringLiteral("No unique attachment name available in: %1").arg(dir);
+        sak::logError("No unique attachment name available in: {}", dir.toStdString());
+        return {.success = false, .saved_path = file_path, .error_message = error};
     }
 
     return saveAttachmentToPath(file_path, data);
@@ -80,18 +129,44 @@ AttachmentSaveResult saveAttachmentToDirectory(const QString& dir,
 // AttachmentBatchSave
 // ============================================================================
 
-void AttachmentBatchSave::begin(const QString& dir, int count) {
-    Q_ASSERT(!dir.isEmpty());
-    Q_ASSERT(count > 0);
+bool AttachmentBatchSave::begin(const QString& dir, const QVector<AttachmentRef>& expected) {
+    // Refuse to overlap batches: two live expectation sets would interleave their
+    // arrivals, and each batch would record payloads the other asked for.
+    if (isActive() || dir.isEmpty() || expected.isEmpty()) {
+        return false;
+    }
+    QSet<AttachmentRef> outstanding;
+    outstanding.reserve(expected.size());
+    for (const auto& ref : expected) {
+        outstanding.insert(ref);
+    }
     m_dir = dir;
-    m_pending = count;
+    m_outstanding = std::move(outstanding);
+    m_expected_count = static_cast<int>(m_outstanding.size());
     m_succeeded = 0;
     m_failed = 0;
+    return true;
 }
 
-AttachmentSaveResult AttachmentBatchSave::recordOne(const QString& filename,
+bool AttachmentBatchSave::expects(const AttachmentRef& ref) const {
+    return isActive() && m_outstanding.contains(ref);
+}
+
+AttachmentSaveResult AttachmentBatchSave::recordOne(const AttachmentRef& ref,
+                                                    const QString& filename,
                                                     const QByteArray& data) {
-    Q_ASSERT(isActive());
+    // An arrival this batch did not ask for, or already recorded, is refused
+    // outright. Writing it would put the wrong payload in one of the batch's
+    // slots and let the batch report a full count it never actually filled.
+    if (!expects(ref)) {
+        return {.success = false,
+                .saved_path = {},
+                .error_message =
+                    QStringLiteral("Attachment %1 of message %2 is not outstanding in this batch")
+                        .arg(ref.index)
+                        .arg(ref.message_id)};
+    }
+    m_outstanding.remove(ref);
     auto result = saveAttachmentToDirectory(m_dir, filename, data);
     if (result.success) {
         ++m_succeeded;
@@ -101,13 +176,23 @@ AttachmentSaveResult AttachmentBatchSave::recordOne(const QString& filename,
     return result;
 }
 
-void AttachmentBatchSave::recordError() {
-    Q_ASSERT(isActive());
+bool AttachmentBatchSave::recordError(const AttachmentRef& ref) {
+    // Symmetric to recordOne(): a failure may only be counted for an attachment this
+    // batch is still waiting on. Anything else -- a failure for an attachment the batch
+    // never asked for, or a second failure for one already resolved -- is refused, so an
+    // unrelated upstream error (an inline-image fetch, a leftover from a previous batch,
+    // an "operation in progress" rejection meant for a different request) can never be
+    // charged against this batch or push it to a premature complete count.
+    if (!expects(ref)) {
+        return false;
+    }
+    m_outstanding.remove(ref);
     ++m_failed;
+    return true;
 }
 
 bool AttachmentBatchSave::isComplete() const {
-    return m_pending > 0 && (m_succeeded + m_failed >= m_pending);
+    return m_expected_count > 0 && (m_succeeded + m_failed >= m_expected_count);
 }
 
 bool AttachmentBatchSave::isActive() const {
@@ -116,17 +201,20 @@ bool AttachmentBatchSave::isActive() const {
 
 QString AttachmentBatchSave::summaryText() const {
     if (m_failed == 0) {
-        return QStringLiteral("Saved %1 attachment(s) to %2").arg(m_succeeded).arg(m_dir);
+        return QStringLiteral("Saved %1 to %2")
+            .arg(countOf(m_succeeded, QStringLiteral("attachment"), QStringLiteral("attachments")),
+                 m_dir);
     }
-    return QStringLiteral("Saved %1 of %2 attachment(s) (%3 failed)")
+    return QStringLiteral("Saved %1 of %2 (%3 failed)")
         .arg(m_succeeded)
-        .arg(m_pending)
+        .arg(countOf(m_expected_count, QStringLiteral("attachment"), QStringLiteral("attachments")))
         .arg(m_failed);
 }
 
 void AttachmentBatchSave::reset() {
     m_dir.clear();
-    m_pending = 0;
+    m_outstanding.clear();
+    m_expected_count = 0;
     m_succeeded = 0;
     m_failed = 0;
 }

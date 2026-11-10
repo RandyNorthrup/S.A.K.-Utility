@@ -3,6 +3,15 @@
 
 #include "sak/file_explorer_icon_registry.h"
 
+#include "sak/style_constants.h"
+
+#include <QApplication>
+#include <QHash>
+#include <QIconEngine>
+#include <QPainter>
+#include <QPalette>
+#include <QPixmap>
+
 #include <algorithm>
 #include <array>
 #include <utility>
@@ -12,16 +21,97 @@ namespace {
 
 using IconDescriptor = FileExplorerIconDescriptor;
 
+// Pixmap cache key packs the requested QSize and tint into one quint64: each dimension is
+// masked to 12 bits, the width shifted above the height, and the tint RGBA held in the low bits.
+constexpr int kIconCacheDimensionMask = 0xFFF;
+constexpr int kIconCacheWidthShift = 44;
+constexpr int kIconCacheHeightShift = 32;
+
 [[nodiscard]] IconDescriptor descriptor(const char* key,
                                         const char* file_name,
                                         const char* upstream_key,
                                         const char* upstream_source) {
-    return {QString::fromLatin1(key),
-            QStringLiteral(":/icons/icons/files/%1.svg").arg(QString::fromLatin1(file_name)),
-            QString::fromLatin1(upstream_key),
-            QString::fromLatin1(upstream_source),
-            QStringLiteral("MIT")};
+    return {.key = QString::fromLatin1(key),
+            .resource_path = ui::kIconExplorerFilesTemplate.arg(QString::fromLatin1(file_name)),
+            .upstream_key = QString::fromLatin1(upstream_key),
+            .upstream_source = QString::fromLatin1(upstream_source),
+            .license = QStringLiteral("MIT")};
 }
+
+[[nodiscard]] IconDescriptor fluentDescriptor(const char* key) {
+    return {.key = QString::fromLatin1(key),
+            .resource_path = ui::kIconExplorerFluentTemplate.arg(QString::fromLatin1(key)),
+            .upstream_key = QString(),
+            .upstream_source =
+                QStringLiteral("S.A.K.-Utility original, Fluent-style outline glyph"),
+            .license = QStringLiteral("AGPL-3.0-or-later")};
+}
+
+// The bundled SVGs carry a fixed dark fill, so a raw QIcon disappears on dark
+// backgrounds. This engine recolors every rendered pixel with the palette
+// foreground at paint time, which keeps icons legible in both theme modes
+// without regenerating buttons on a theme switch.
+class PaletteTintedIconEngine final : public QIconEngine {
+public:
+    explicit PaletteTintedIconEngine(QString resource_path)
+        : m_resource_path(std::move(resource_path)), m_source(m_resource_path) {}
+
+    void paint(QPainter* painter,
+               const QRect& rect,
+               const QIcon::Mode mode,
+               const QIcon::State state) override {
+        if (painter == nullptr) {
+            return;
+        }
+        painter->drawPixmap(rect, pixmap(rect.size(), mode, state));
+    }
+
+    QPixmap pixmap(const QSize& size, const QIcon::Mode mode, const QIcon::State state) override {
+        const QColor tint = tintColor(mode);
+        const quint64 cache_key = (static_cast<quint64>(size.width() & kIconCacheDimensionMask)
+                                   << kIconCacheWidthShift) |
+                                  (static_cast<quint64>(size.height() & kIconCacheDimensionMask)
+                                   << kIconCacheHeightShift) |
+                                  static_cast<quint64>(tint.rgba());
+        const auto it = m_cache.constFind(cache_key);
+        if (it != m_cache.constEnd()) {
+            return it.value();
+        }
+        QPixmap tinted = m_source.pixmap(size, QIcon::Normal, state);
+        if (!tinted.isNull()) {
+            QPainter overlay(&tinted);
+            overlay.setCompositionMode(QPainter::CompositionMode_SourceIn);
+            overlay.fillRect(tinted.rect(), tint);
+        }
+        m_cache.insert(cache_key, tinted);
+        return tinted;
+    }
+
+    [[nodiscard]] QIconEngine* clone() const override {
+        return new PaletteTintedIconEngine(m_resource_path);
+    }
+
+private:
+    [[nodiscard]] static QColor tintColor(const QIcon::Mode mode) {
+        const QPalette palette = QApplication::palette();
+        // A selected row keeps the text colour: the theme's selection is a pale tint under the
+        // ordinary text, and the white HighlightedText drawing vanished on it (#d4e4fd, 1.18:1,
+        // review 5, Z5).
+        switch (mode) {
+        case QIcon::Disabled:
+            return palette.color(QPalette::Disabled, QPalette::WindowText);
+        case QIcon::Selected:
+        case QIcon::Active:
+        case QIcon::Normal:
+            break;
+        }
+        return palette.color(QPalette::WindowText);
+    }
+
+    QString m_resource_path;
+    QIcon m_source;
+    QHash<quint64, QPixmap> m_cache;
+};
 
 [[nodiscard]] QVector<IconDescriptor> fileActionDescriptors() {
     return {
@@ -147,18 +237,33 @@ using IconDescriptor = FileExplorerIconDescriptor;
     };
 }
 
+[[nodiscard]] QVector<IconDescriptor> fluentGlyphDescriptors() {
+    QVector<IconDescriptor> items;
+    static constexpr std::array kFluentKeys = {
+        "nav-back", "nav-forward", "nav-up",     "search", "plus",        "chevron-right",
+        "home",     "drive",       "folder",     "file",   "image-file",  "recent",
+        "tag",      "shield",      "scan-disks", "close",  "select-mode", "sort",
+        "copy",     "paste",       "cut"};
+    items.reserve(static_cast<qsizetype>(kFluentKeys.size()));
+    for (const char* key : kFluentKeys) {
+        items.append(fluentDescriptor(key));
+    }
+    return items;
+}
+
 [[nodiscard]] QVector<IconDescriptor> buildIconDescriptors() {
     QVector<IconDescriptor> items;
     items += fileActionDescriptors();
     items += viewLayoutDescriptors();
     items += viewLayout28Descriptors();
     items += panelAndStatusDescriptors();
+    items += fluentGlyphDescriptors();
     return items;
 }
 
 [[nodiscard]] const QVector<IconDescriptor>& iconDescriptors() {
-    static const QVector<IconDescriptor> items = buildIconDescriptors();
-    return items;
+    static const QVector<IconDescriptor> kItems = buildIconDescriptors();
+    return kItems;
 }
 
 }  // namespace
@@ -177,12 +282,15 @@ QIcon FileExplorerIconRegistry::iconForKey(const QString& key) {
     if (icon.resource_path.isEmpty()) {
         return {};
     }
-    return QIcon(icon.resource_path);
+    return QIcon(new PaletteTintedIconEngine(icon.resource_path));
 }
 
 QString FileExplorerIconRegistry::iconKeyForCommand(const FileExplorerCommandId command) {
     using Id = FileExplorerCommandId;
     static constexpr auto kIconKeys = std::to_array<std::pair<Id, const char*>>({
+        {Id::Back, "nav-back"},
+        {Id::Forward, "nav-forward"},
+        {Id::Up, "nav-up"},
         {Id::Open, "open"},
         {Id::OpenInNewTab, "open-in-new-tab"},
         {Id::CopyPath, "copy-path"},
@@ -201,6 +309,13 @@ QString FileExplorerIconRegistry::iconKeyForCommand(const FileExplorerCommandId 
         {Id::TogglePreviewPane, "details-pane"},
         {Id::ToggleDualPane, "dual-pane"},
         {Id::OpenInSecondPane, "dual-pane"},
+        {Id::CopyItems, "copy"},
+        {Id::CutItems, "cut"},
+        {Id::Paste, "paste"},
+        {Id::PasteIntoSelection, "paste"},
+        {Id::Properties, "properties-general"},
+        {Id::SelectAll, "select-mode"},
+        {Id::Home, "home"},
     });
     const auto it = std::ranges::find(kIconKeys, command, &std::pair<Id, const char*>::first);
     return it != kIconKeys.end() ? QString::fromLatin1(it->second) : QString();

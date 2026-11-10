@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "sak/quick_action_controller.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLabel>
@@ -12,6 +14,7 @@
 #include <QStandardItemModel>
 #include <QTableView>
 #include <QTextEdit>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -23,10 +26,7 @@ class QGroupBox;
 class QProgressBar;
 
 namespace sak {
-class UserDataManager;
 class LogToggleSwitch;
-class QuickAction;
-class QuickActionController;
 
 /**
  * @brief Windows User Migration Panel
@@ -46,9 +46,11 @@ class UserMigrationPanel : public QWidget {
 public:
     /**
      * @brief Constructor
+     * @param quick_actions Runs the Quick Tools actions (Screenshot Settings, BitLocker Key
+     *        Backup); it must outlive the panel
      * @param parent Parent widget
      */
-    explicit UserMigrationPanel(QWidget* parent = nullptr);
+    explicit UserMigrationPanel(QuickActionController& quick_actions, QWidget* parent = nullptr);
 
     /**
      * @brief Destructor
@@ -64,6 +66,10 @@ public:
     /** @brief Access the log toggle switch for MainWindow connection */
     LogToggleSwitch* logToggle() const { return m_logToggle; }
 
+    /// Where the BitLocker key picker opens: This PC, as a clsid URL Qt's Windows folder picker
+    /// takes (review 3, F36).
+    [[nodiscard]] static QUrl keyBackupStartFolder();
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void logOutput(const QString& message);
@@ -72,13 +78,6 @@ private Q_SLOTS:
     // Main actions
     void onBackupSelected();
     void onRestoreBackup();
-    void onSettingsClicked();
-
-    // Quick action slots
-    void onQuickActionClicked(QuickAction* action);
-    void onQuickActionProgress(QuickAction* action, const QString& message, int progress);
-    void onQuickActionComplete(QuickAction* action);
-    void onQuickActionError(QuickAction* action, const QString& error_message);
 
 private:
     /// @brief Configuration for a migration card widget
@@ -99,6 +98,20 @@ private:
                                 QPushButton*& btn);
     QGroupBox* createQuickToolsSection(QWidget* parent);
     void createQuickActions();
+    void onQuickActionClicked(const QString& action_name);
+    void onQuickActionFinished(const QuickActionRun& run,
+                               const QuickAction::ExecutionResult& result,
+                               QuickAction::ActionStatus status);
+    /// Tells what a Quick Tool saved and where, or what failed, in a box that does not block.
+    void showQuickToolResult(const QuickActionRun& run,
+                             const QuickAction::ExecutionResult& result,
+                             QuickAction::ActionStatus status);
+    /// Asks where @p action_name saves this run; empty (and logged) when the user cancels.
+    [[nodiscard]] QString chooseQuickActionOutputFolder(const QString& action_name);
+    /// Shows @p warning about the folder chosen for @p action_name. Cancel is the default button,
+    /// and true means the person chose to go on.
+    [[nodiscard]] bool confirmOutputFolderWarning(const QString& action_name,
+                                                  const QString& warning);
     void setupConnections();
     void appendLog(const QString& message);
 
@@ -107,13 +120,11 @@ private:
     QPushButton* m_restoreButton{nullptr};
     LogToggleSwitch* m_logToggle{nullptr};
 
-    // Quick action components
-    QuickActionController* m_action_controller{nullptr};
+    // Quick action components. The controller is the application's one, shared with the
+    // Diagnostics and Network panels and the assistant; this panel reacts only to its own runs.
+    QuickActionController& m_quick_actions;
     QHash<QString, QPushButton*> m_action_buttons;
     QProgressBar* m_action_progress_bar{nullptr};
-
-    // Data
-    std::shared_ptr<UserDataManager> m_dataManager;
 };
 
 }  // namespace sak

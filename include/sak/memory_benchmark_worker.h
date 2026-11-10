@@ -33,7 +33,9 @@ public:
     /// @brief Construct a MemoryBenchmarkWorker
     /// @param parent Parent QObject
     explicit MemoryBenchmarkWorker(QObject* parent = nullptr);
-    ~MemoryBenchmarkWorker() override = default;
+    // Join the worker thread while this class's members are still alive (the base
+    // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
+    ~MemoryBenchmarkWorker() override { stopAndJoin(); }
 
     /// @brief Get the result from the last completed benchmark
     /// @return Benchmark result (valid only after benchmarkComplete signal)
@@ -72,7 +74,8 @@ private:
     [[nodiscard]] double runRandomLatency();
 
     /// @brief Run allocation stress test
-    void runAllocationStress();
+    /// @return Success, or out_of_memory if a fixed-size stress allocation fails
+    [[nodiscard]] auto runAllocationStress() -> std::expected<void, sak::error_code>;
 
     MemoryBenchmarkResult m_result;
 };

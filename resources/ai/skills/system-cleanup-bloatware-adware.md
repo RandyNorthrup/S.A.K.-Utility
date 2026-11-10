@@ -1,3 +1,8 @@
+---
+id: system-cleanup-bloatware-adware
+description: Clean slow PCs, low disk space, startup clutter, and unwanted/adware apps with evidence-first, approval-gated removal.
+when_to_use: slow PC; low disk space; startup clutter; unwanted apps; adware or browser hijack cleanup
+---
 # System Cleanup, Bloatware, and Adware Skill
 
 Use this skill for slow PCs, low disk space, startup clutter, unwanted apps, adware, browser hijacks, and cleanup requests.

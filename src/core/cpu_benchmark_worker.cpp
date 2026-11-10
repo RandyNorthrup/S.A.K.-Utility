@@ -7,6 +7,7 @@
 #include "sak/cpu_benchmark_worker.h"
 
 #include "sak/action_constants.h"
+#include "sak/dedicated_threads.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
@@ -17,7 +18,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <future>
 #include <numeric>
 #include <random>
 #include <thread>
@@ -70,9 +70,9 @@ void multiplyMatrixRow(const std::vector<double>& a,
                        int row,
                        int n) {
     for (int k = 0; k < n; ++k) {
-        const double a_ik = a[row * n + k];
+        const double a_ik = a[(row * n) + k];
         for (int j = 0; j < n; ++j) {
-            c[row * n + j] += a_ik * b[k * n + j];
+            c[(row * n) + j] += a_ik * b[(k * n) + j];
         }
     }
 }
@@ -112,17 +112,19 @@ CpuBenchmarkWorker::CpuBenchmarkWorker(QObject* parent) : WorkerBase(parent) {}
 auto CpuBenchmarkWorker::execute() -> std::expected<void, sak::error_code> {
     logInfo("Starting CPU benchmark suite");
     m_result = CpuBenchmarkResult{};
-    m_result.thread_count = std::thread::hardware_concurrency();
+    // Clamp once to >=1 (hardware_concurrency() returns 0 when "not computable") and reuse
+    // this single value for the reported thread_count, the multi-thread pass, and scoring --
+    // otherwise a 0 leaks into calculateScores and forces multi_thread_score to 0 even though
+    // the multi-thread pass actually ran.
+    m_result.thread_count = std::max(1U, std::thread::hardware_concurrency());
 
-    if (auto result = runSingleThreadBenchmarks(); !result) {
-        return result;
+    if (auto single_thread_result = runSingleThreadBenchmarks(); !single_thread_result) {
+        return single_thread_result;
     }
     updateDerivedMetrics();
 
-    const double st_total = m_result.prime_sieve_time_ms + m_result.matrix_multiply_time_ms +
-                            m_result.zlib_compression_time_ms + m_result.aes_encryption_time_ms;
-    if (auto result = runMultiThreadBenchmark(st_total); !result) {
-        return result;
+    if (auto multi_thread_result = runMultiThreadBenchmark(); !multi_thread_result) {
+        return multi_thread_result;
     }
 
     reportProgress(kProgressStepScoring, kBenchmarkStepTotal, "Calculating scores...");
@@ -158,6 +160,12 @@ std::expected<void, sak::error_code> CpuBenchmarkWorker::runSingleThreadBenchmar
         return std::unexpected(sak::error_code::operation_cancelled);
     }
     m_result.zlib_compression_time_ms = runZlibCompression();
+    // A non-positive throughput means compress2 returned non-Z_OK: the subtest
+    // produced no valid measurement, so fail the whole benchmark rather than scoring
+    // a failed compression.
+    if (m_zlib_throughput_mbps <= 0.0) {
+        return std::unexpected(sak::error_code::execution_failed);
+    }
 
     reportProgress(kProgressStepAes, kBenchmarkStepTotal, "Running AES encryption benchmark...");
     if (checkStop()) {
@@ -179,7 +187,7 @@ void CpuBenchmarkWorker::updateDerivedMetrics() {
     m_result.matrix_gflops = m_matrix_gflops;
 }
 
-std::expected<void, sak::error_code> CpuBenchmarkWorker::runMultiThreadBenchmark(double st_total) {
+std::expected<void, sak::error_code> CpuBenchmarkWorker::runMultiThreadBenchmark() {
     reportProgress(kProgressStepMultiThread,
                    kBenchmarkStepTotal,
                    "Running multi-threaded benchmark...");
@@ -187,12 +195,21 @@ std::expected<void, sak::error_code> CpuBenchmarkWorker::runMultiThreadBenchmark
         return std::unexpected(sak::error_code::operation_cancelled);
     }
 
-    const int hw_threads = static_cast<int>(std::thread::hardware_concurrency());
+    // m_result.thread_count was already clamped to >=1 in execute() (hardware_concurrency()
+    // may return 0 = "not computable"). Reuse that single value so the pass runs one thread
+    // instead of tripping runMultiThreaded's Q_ASSERT_X(>0), which would abort a Debug build
+    // (0xC0000409) -- reachable when this worker is driven headless off the GUI thread.
+    const int hw_threads = static_cast<int>(m_result.thread_count);
     const double mt_total = runMultiThreaded(hw_threads);
 
-    if (mt_total > 0.0 && hw_threads > 0) {
-        m_result.thread_scaling_efficiency = (st_total / mt_total) /
-                                             static_cast<double>(hw_threads);
+    // Scaling efficiency compares the SAME per-thread workload run once single-threaded
+    // (m_mt_single_ref_ms, measured inside runMultiThreaded) against the wall time to run
+    // hw_threads of them at once. Perfect linear scaling finishes all of them in the time
+    // of one, so efficiency = single_ref / parallel_time, clamped to [0, 1]. The old formula
+    // divided the full four-test single-thread total by the two-test parallel time, which is
+    // neither a speedup nor a scaling ratio.
+    if (mt_total > 0.0) {
+        m_result.thread_scaling_efficiency = std::clamp(m_mt_single_ref_ms / mt_total, 0.0, 1.0);
     }
 
     return {};
@@ -203,6 +220,9 @@ std::expected<void, sak::error_code> CpuBenchmarkWorker::runMultiThreadBenchmark
 // ============================================================================
 
 double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
+    // Invariant: this private helper has exactly two callers, both in this file, and both
+    // pass a compile-time constant -- runSingleThreadBenchmarks takes the
+    // kDefaultPrimeSieveLimit default and runMultiThreaded passes kMultiThreadPrimeLimit.
     Q_ASSERT_X(limit >= kSmallestPrime, "runPrimeSieve", "limit must be >= 2");
     // Sieve of Eratosthenes -- stresses integer arithmetic + memory
     QElapsedTimer timer;
@@ -223,14 +243,18 @@ double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
     }
 
     // Count primes (prevents optimizer from eliding the work)
-    [[maybe_unused]] const auto count = std::count(sieve.begin(), sieve.end(), true);
+    const auto count = std::count(sieve.begin(), sieve.end(), true);
 
-    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
+    const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
+                              kNanosecondsPerMillisecond;
     logInfo("Prime sieve ({} primes up to {}) completed in {:.1f} ms", count, limit, elapsed_ms);
     return elapsed_ms;
 }
 
 double CpuBenchmarkWorker::runMatrixMultiply(int size) {
+    // Invariant: this private helper has exactly two callers, both in this file, and both
+    // pass a compile-time constant -- runSingleThreadBenchmarks takes the kDefaultMatrixSize
+    // default and runMultiThreaded passes kMultiThreadMatrixSize.
     Q_ASSERT_X(size > 0, "runMatrixMultiply", "matrix size must be positive");
     // Dense matrix multiply C = A x B -- stresses FP pipeline + cache
     const int element_count = size;
@@ -242,8 +266,8 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
     std::mt19937 rng(kMatrixRandomSeed);
     std::uniform_real_distribution<double> dist(-1.0, 1.0);
 
-    std::generate(a.begin(), a.end(), [&]() { return dist(rng); });
-    std::generate(b.begin(), b.end(), [&]() { return dist(rng); });
+    std::ranges::generate(a, [&]() { return dist(rng); });
+    std::ranges::generate(b, [&]() { return dist(rng); });
 
     QElapsedTimer timer;
     timer.start();
@@ -253,7 +277,8 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
         multiplyMatrixRow(a, b, c, i, element_count);
     }
 
-    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
+    const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
+                              kNanosecondsPerMillisecond;
 
     // GFLOPS = 2*N^3 / (time_sec * 10^9)
     const double ops = kMatrixOperationMultiplier * static_cast<double>(element_count) *
@@ -263,7 +288,7 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
                               : 0.0;
 
     // Prevent optimizer from eliding c
-    volatile double sink = c[0];
+    const volatile double sink = c[0];
     (void)sink;
 
     logInfo("Matrix {}x{} multiply completed in {:.1f} ms ({:.2f} GFLOPS)",
@@ -275,7 +300,13 @@ double CpuBenchmarkWorker::runMatrixMultiply(int size) {
 }
 
 double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
+    // Invariant: runSingleThreadBenchmarks is this private helper's only caller and takes
+    // the kDefaultZlibDataSizeMb default.
     Q_ASSERT_X(data_size_mb > 0, "runZlibCompression", "data_size_mb must be positive");
+    // Reset the throughput channel so a failed compression cannot leave a stale,
+    // positive value behind: runSingleThreadBenchmarks reads it back as the
+    // pass/fail signal for this subtest.
+    m_zlib_throughput_mbps = 0.0;
     const size_t data_size = static_cast<size_t>(data_size_mb) * sak::kBytesPerMB;
 
     // Generate compressible data (mixed patterns)
@@ -303,9 +334,13 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
                               static_cast<uLong>(data_size),
                               Z_DEFAULT_COMPRESSION);
 
-    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
+    const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
+                              kNanosecondsPerMillisecond;
 
     if (ret != Z_OK) {
+        // Leave m_zlib_throughput_mbps at 0.0 so the caller fails the benchmark
+        // instead of scoring the elapsed time of a compression that never produced
+        // valid output.
         logError("ZLIB compression failed with code {}", ret);
         return elapsed_ms;
     }
@@ -323,6 +358,8 @@ double CpuBenchmarkWorker::runZlibCompression(int data_size_mb) {
 }
 
 double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
+    // Invariant: runSingleThreadBenchmarks is this private helper's only caller and takes
+    // the kDefaultAesDataSizeMb default.
     Q_ASSERT_X(data_size_mb > 0, "runAesEncryption", "data_size_mb must be positive");
     const size_t data_size = static_cast<size_t>(data_size_mb) * sak::kBytesPerMB;
 
@@ -354,8 +391,9 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
     QElapsedTimer timer;
     timer.start();
 
-    // AES-like S-Box substitution with key mixing -- representative of
-    // real encryption workload without requiring a full AES implementation.
+    // S-box substitution + key XOR proxy (NOT a real AES cipher): a byte-permutation
+    // workload representative of encryption-style CPU load without a full AES implementation.
+    // The figure below is a substitution-proxy throughput, not AES-128 cipher throughput.
     // Processes data in 16-byte blocks, applying SubBytes + AddRoundKey x 10 rounds.
     for (size_t block = 0; block + kAesBlockBytes <= data_size; block += kAesBlockBytes) {
         for (int round = 0; round < kAesRounds; ++round) {
@@ -365,16 +403,17 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
         }
     }
 
-    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
+    const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
+                              kNanosecondsPerMillisecond;
 
     // Prevent optimizer from eliding
-    volatile uint8_t sink = data[0];
+    const volatile uint8_t sink = data[0];
     (void)sink;
 
     m_aes_throughput_mbps = static_cast<double>(data_size) / sak::kBytesPerMBf /
                             (elapsed_ms / kBenchmarkMillisecondsPerSecond);
 
-    logInfo("AES: {} MB encrypted in {:.1f} ms ({:.1f} MB/s)",
+    logInfo("S-box substitution proxy: {} MB in {:.1f} ms ({:.1f} MB/s, NOT real AES)",
             data_size_mb,
             elapsed_ms,
             m_aes_throughput_mbps);
@@ -382,33 +421,46 @@ double CpuBenchmarkWorker::runAesEncryption(int data_size_mb) {
 }
 
 double CpuBenchmarkWorker::runMultiThreaded(int thread_count) {
-    Q_ASSERT(thread_count >= 0);
+    // Invariant: runMultiThreadBenchmark is this private helper's only caller and passes
+    // m_result.thread_count, which execute() clamped to std::max(1U, hardware_concurrency()).
     Q_ASSERT_X(thread_count > 0, "runMultiThreaded", "thread_count must be positive");
-    // Run all four benchmarks in parallel across thread_count threads.
-    // Each thread executes the full benchmark suite; the total wall time is measured.
+    // The per-thread workload is a REDUCED prime sieve + matrix multiply (smaller than the
+    // single-thread suite), chosen to keep the parallel pass short. To make the scaling
+    // number valid, the SAME workload is first timed once single-threaded as a reference,
+    // then run thread_count times in parallel; runMultiThreadBenchmark compares the two
+    // matched measurements.
+    const auto per_thread_workload = [this]() {
+        (void)runPrimeSieve(kMultiThreadPrimeLimit);
+        (void)runMatrixMultiply(kMultiThreadMatrixSize);
+    };
 
+    // Single-thread reference: one unit of the identical workload.
+    QElapsedTimer ref_timer;
+    ref_timer.start();
+    per_thread_workload();
+    m_mt_single_ref_ms = static_cast<double>(ref_timer.nsecsElapsed()) / kNanosecondsPerMillisecond;
+
+    // Parallel pass: thread_count units of the same workload at once, each on a thread of its
+    // own. std::async ran them on the process's shared thread pool, which they filled for the
+    // whole pass: a child process the app was waiting on did not return until it ended. The
+    // threads join before this frame returns, so none can outlive `this`.
     QElapsedTimer timer;
     timer.start();
 
-    std::vector<std::future<void>> futures;
-    futures.reserve(static_cast<size_t>(thread_count));
-
+    DedicatedThreads threads;
     for (int thread_index = 0; thread_index < thread_count; ++thread_index) {
-        futures.push_back(std::async(std::launch::async, [this]() {
-            // Smaller workloads per thread to keep total duration reasonable
-            (void)runPrimeSieve(kMultiThreadPrimeLimit);
-            (void)runMatrixMultiply(kMultiThreadMatrixSize);
-        }));
+        threads.launch(per_thread_workload);
     }
+    threads.joinAll();
 
-    for (auto& future : futures) {
-        future.get();
-    }
-
-    const double elapsed_ms = timer.nsecsElapsed() / kNanosecondsPerMillisecond;
-    logInfo("Multi-threaded benchmark ({} threads) completed in {:.1f} ms",
-            thread_count,
-            elapsed_ms);
+    const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
+                              kNanosecondsPerMillisecond;
+    logInfo(
+        "Multi-threaded benchmark ({} threads, {:.1f} ms single-thread reference) "
+        "completed in {:.1f} ms",
+        thread_count,
+        m_mt_single_ref_ms,
+        elapsed_ms);
     return elapsed_ms;
 }
 
@@ -428,8 +480,9 @@ void CpuBenchmarkWorker::calculateScores() {
 
     m_result.single_thread_score = static_cast<int>(geometric_mean * kBaselineScore);
 
-    // Multi-thread score: single_thread x thread_count x efficiency
-    const int hw_threads = static_cast<int>(std::thread::hardware_concurrency());
+    // Multi-thread score: single_thread x thread_count x efficiency. Reuse the clamped
+    // thread_count computed in execute() so an unknown (0) core count cannot zero the score.
+    const int hw_threads = static_cast<int>(m_result.thread_count);
     m_result.multi_thread_score = static_cast<int>(m_result.single_thread_score *
                                                    static_cast<double>(hw_threads) *
                                                    m_result.thread_scaling_efficiency);

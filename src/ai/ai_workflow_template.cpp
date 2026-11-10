@@ -3,9 +3,12 @@
 
 #include "sak/ai/ai_workflow_template.h"
 
+#include "sak/ai/ai_workflow_placeholders.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
+#include <QSet>
 
 namespace sak::ai {
 
@@ -13,6 +16,21 @@ namespace {
 
 QString cleanString(const QJsonObject& object, const QString& key) {
     return object.value(key).toString().trimmed();
+}
+
+// A 'required' flag that is PRESENT but not a JSON bool (e.g. the string "true") would
+// coerce to false via toBool(false) and silently drop the input/requirement from the
+// required set -- a fail-open authoring error. Reject it at load rather than treat a
+// mistyped value as "optional". An absent flag legitimately defaults to false.
+void checkRequiredFlagType(const QJsonObject& object,
+                           const QString& subject,
+                           const QString& id,
+                           QStringList* errors) {
+    if (errors == nullptr || !object.contains(QStringLiteral("required")) ||
+        object.value(QStringLiteral("required")).isBool()) {
+        return;
+    }
+    errors->append(QStringLiteral("%1 '%2' has a non-boolean 'required' value").arg(subject, id));
 }
 
 QStringList stringListFromJson(const QJsonValue& value) {
@@ -27,7 +45,8 @@ QStringList stringListFromJson(const QJsonValue& value) {
     return result;
 }
 
-QVector<WorkflowRequiredInput> requiredInputsFromJson(const QJsonValue& value) {
+QVector<WorkflowRequiredInput> requiredInputsFromJson(const QJsonValue& value,
+                                                      QStringList* errors) {
     QVector<WorkflowRequiredInput> result;
     const QJsonArray array = value.toArray();
     result.reserve(array.size());
@@ -41,12 +60,13 @@ QVector<WorkflowRequiredInput> requiredInputsFromJson(const QJsonValue& value) {
         input.label = cleanString(object, QStringLiteral("label"));
         input.type = cleanString(object, QStringLiteral("type"));
         input.required = object.value(QStringLiteral("required")).toBool(false);
+        checkRequiredFlagType(object, QStringLiteral("Required input"), input.id, errors);
         result.append(input);
     }
     return result;
 }
 
-QVector<WorkflowRequirement> requirementsFromJson(const QJsonValue& value) {
+QVector<WorkflowRequirement> requirementsFromJson(const QJsonValue& value, QStringList* errors) {
     QVector<WorkflowRequirement> result;
     const QJsonArray array = value.toArray();
     result.reserve(array.size());
@@ -59,6 +79,7 @@ QVector<WorkflowRequirement> requirementsFromJson(const QJsonValue& value) {
         requirement.id = cleanString(object, QStringLiteral("id"));
         requirement.kind = cleanString(object, QStringLiteral("kind"));
         requirement.required = object.value(QStringLiteral("required")).toBool(false);
+        checkRequiredFlagType(object, QStringLiteral("Required software"), requirement.id, errors);
         requirement.install_policy = cleanString(object, QStringLiteral("install_policy"));
         result.append(requirement);
     }
@@ -84,7 +105,7 @@ QVector<WorkflowAgent> agentsFromJson(const QJsonValue& value) {
     return result;
 }
 
-QVector<WorkflowPhase> phasesFromJson(const QJsonValue& value) {
+QVector<WorkflowPhase> phasesFromJson(const QJsonValue& value, QStringList* errors) {
     QVector<WorkflowPhase> result;
     const QJsonArray array = value.toArray();
     result.reserve(array.size());
@@ -93,6 +114,14 @@ QVector<WorkflowPhase> phasesFromJson(const QJsonValue& value) {
             continue;
         }
         const QJsonObject object = item.toObject();
+        // A PRESENT-but-non-object 'arguments' (e.g. a string or array) would coerce to {} via
+        // toObject(), so a tool phase authored with a mistyped arguments block would silently
+        // run with no command/parameters. Reject it at load rather than execute an empty action.
+        if (errors != nullptr && object.contains(QStringLiteral("arguments")) &&
+            !object.value(QStringLiteral("arguments")).isObject()) {
+            errors->append(QStringLiteral("Phase %1 has non-object arguments")
+                               .arg(cleanString(object, QStringLiteral("id"))));
+        }
         WorkflowPhase phase;
         phase.id = cleanString(object, QStringLiteral("id"));
         phase.type = cleanString(object, QStringLiteral("type"));
@@ -115,20 +144,6 @@ QVector<WorkflowPhase> phasesFromJson(const QJsonValue& value) {
         result.append(phase);
     }
     return result;
-}
-
-WorkflowCancelPolicy cancelPolicyFromJson(const QJsonValue& value) {
-    WorkflowCancelPolicy policy;
-    if (!value.isObject()) {
-        return policy;
-    }
-    const QJsonObject object = value.toObject();
-    policy.cancel_children = object.value(QStringLiteral("cancel_children")).toBool(true);
-    policy.cancel_tools = object.value(QStringLiteral("cancel_tools")).toBool(true);
-    policy.preserve_partial_artifacts =
-        object.value(QStringLiteral("preserve_partial_artifacts")).toBool(true);
-    policy.report_partial_state = object.value(QStringLiteral("report_partial_state")).toBool(true);
-    return policy;
 }
 
 void addMissingError(QStringList* errors, const QString& field) {
@@ -159,16 +174,117 @@ void validateWorkflowRequiredFields(const WorkflowTemplate& workflow, QStringLis
     }
 }
 
+[[nodiscard]] bool isKnownPhaseType(const QString& type) {
+    return type.compare(QStringLiteral("delegate"), Qt::CaseInsensitive) == 0 ||
+           type.compare(QStringLiteral("tool_action"), Qt::CaseInsensitive) == 0 ||
+           type.compare(QStringLiteral("cleanup"), Qt::CaseInsensitive) == 0 ||
+           type.compare(QStringLiteral("overseer"), Qt::CaseInsensitive) == 0;
+}
+
+[[nodiscard]] bool isKnownModelPolicy(const QString& policy) {
+    const QString normalized = policy.trimmed().toLower();
+    return normalized == QLatin1String("fast_reasoning") ||
+           normalized == QLatin1String("deep_reasoning") ||
+           normalized == QLatin1String("careful_reasoning") ||
+           normalized == QLatin1String("web_research") || normalized == QLatin1String("writer");
+}
+
+void validateWorkflowAgents(const WorkflowTemplate& workflow, QStringList* errors) {
+    QSet<QString> seen_ids;
+    for (const auto& agent : workflow.agents) {
+        if (agent.id.isEmpty() || seen_ids.contains(agent.id)) {
+            errors->append(
+                QStringLiteral("Workflow %1 has an empty or duplicate agent id").arg(workflow.id));
+        } else {
+            seen_ids.insert(agent.id);
+        }
+        if (!isKnownModelPolicy(agent.model_policy)) {
+            errors->append(QStringLiteral("Agent %1 has unsupported model_policy '%2'")
+                               .arg(agent.id, agent.model_policy));
+        }
+    }
+    for (const auto& phase : workflow.phases) {
+        if (phase.type.compare(QStringLiteral("delegate"), Qt::CaseInsensitive) == 0 &&
+            !seen_ids.contains(phase.agent)) {
+            errors->append(QStringLiteral("Delegate phase %1 references unknown agent '%2'")
+                               .arg(phase.id, phase.agent));
+        }
+    }
+}
+
+// A shell phase's command template is validated at LOAD, for user AND bundled workflows,
+// because both shells build their command by string substitution:
+//   * run_powershell substitutes in PowerShellSingleQuoted mode, which only doubles embedded
+//     single quotes, so every ${...} must be provably inside a '...' literal;
+//   * run_cmd has no literal-quoting construct at all, so its command must carry no ${...}
+//     placeholder (a value that cannot be proven inert is rejected, never escaped-and-hoped).
+// Either violation would inject a placeholder value into the command unescaped.
+void validatePhaseCommandTemplate(const WorkflowPhase& phase, QStringList* errors) {
+    const bool powershell = phase.tool == QLatin1String("run_powershell");
+    const bool cmd = phase.tool == QLatin1String("run_cmd");
+    if (!powershell && !cmd) {
+        return;
+    }
+    const QString command = phase.arguments.value(QStringLiteral("command")).toString();
+    QString detail;
+    const bool safe = powershell ? powerShellCommandTemplateIsSingleQuoteSafe(command, &detail)
+                                 : cmdCommandTemplateIsPlaceholderFree(command, &detail);
+    if (!safe) {
+        errors->append(QStringLiteral("Phase %1: %2").arg(phase.id, detail));
+    }
+}
+
 void validateWorkflowPhases(const WorkflowTemplate& workflow, QStringList* errors) {
+    QSet<QString> seen_ids;
     for (const auto& phase : workflow.phases) {
         if (phase.id.isEmpty()) {
             errors->append(QStringLiteral("Phase missing id in workflow %1").arg(workflow.id));
+        } else if (seen_ids.contains(phase.id)) {
+            // Duplicate phase ids alias each other in phase_results (later results silently
+            // overwrite earlier ones and placeholders resolve to the wrong phase): reject.
+            errors->append(QStringLiteral("Duplicate phase id '%1' in workflow %2")
+                               .arg(phase.id, workflow.id));
+        } else {
+            seen_ids.insert(phase.id);
         }
         if (phase.type.isEmpty()) {
             errors->append(QStringLiteral("Phase %1 missing type").arg(phase.id));
+        } else if (!isKnownPhaseType(phase.type)) {
+            // Reject unknown types at load: at runtime they have no handler and only
+            // surface as a per-phase error, hiding the author's typo (e.g. "tool-action").
+            errors->append(
+                QStringLiteral("Phase %1 has unsupported type '%2'").arg(phase.id, phase.type));
+        }
+        // A tool_action phase dispatches to phase.tool via runToolPhase; with no tool it is a
+        // silent no-op that reports success without doing anything. Require the tool at load.
+        // (cleanup phases legitimately run without a tool -- they are model-driven housekeeping
+        // steps -- so this applies only to tool_action.)
+        if (phase.type.compare(QStringLiteral("tool_action"), Qt::CaseInsensitive) == 0 &&
+            phase.tool.isEmpty()) {
+            errors->append(
+                QStringLiteral("Phase %1 is a tool_action but names no tool").arg(phase.id));
         }
         if (phase.prompt.isEmpty() && phase.completion.isEmpty()) {
             errors->append(QStringLiteral("Phase %1 needs prompt or completion").arg(phase.id));
+        }
+        validatePhaseCommandTemplate(phase, errors);
+    }
+}
+
+void validateWorkflowInputs(const WorkflowTemplate& workflow, QStringList* errors) {
+    QSet<QString> seen_ids;
+    for (const auto& input : workflow.required_inputs) {
+        if (input.id.isEmpty()) {
+            errors->append(
+                QStringLiteral("Workflow %1 has a required input with no id").arg(workflow.id));
+            continue;
+        }
+        if (seen_ids.contains(input.id)) {
+            // Duplicate input ids collide in input_values; the second wins silently.
+            errors->append(QStringLiteral("Duplicate required-input id '%1' in workflow %2")
+                               .arg(input.id, workflow.id));
+        } else {
+            seen_ids.insert(input.id);
         }
     }
 }
@@ -242,9 +358,15 @@ void appendStringListSummary(QStringList* lines,
 bool WorkflowTemplate::isValid(QStringList* errors) const {
     QStringList local_errors;
     QStringList* target = errors != nullptr ? errors : &local_errors;
+    // Judge validity by whether THIS workflow adds errors, not by whether the (possibly
+    // shared, accumulating) list is empty: a caller that reuses one list across files
+    // must not have an earlier file's error invalidate a later valid one.
+    const qsizetype before = target->size();
     validateWorkflowRequiredFields(*this, target);
     validateWorkflowPhases(*this, target);
-    return target->isEmpty();
+    validateWorkflowInputs(*this, target);
+    validateWorkflowAgents(*this, target);
+    return target->size() == before;
 }
 
 QString WorkflowTemplate::promptSummary() const {
@@ -279,16 +401,15 @@ WorkflowTemplate WorkflowTemplate::fromJson(const QJsonObject& object,
     workflow.description = cleanString(object, QStringLiteral("description"));
     workflow.starter_prompt = cleanString(object, QStringLiteral("starter_prompt"));
     workflow.required_inputs =
-        requiredInputsFromJson(object.value(QStringLiteral("required_inputs")));
+        requiredInputsFromJson(object.value(QStringLiteral("required_inputs")), errors);
     workflow.required_software =
-        requirementsFromJson(object.value(QStringLiteral("required_software")));
+        requirementsFromJson(object.value(QStringLiteral("required_software")), errors);
     workflow.instructions = stringListFromJson(object.value(QStringLiteral("instructions")));
     workflow.skills = stringListFromJson(object.value(QStringLiteral("skills")));
     workflow.agents = agentsFromJson(object.value(QStringLiteral("agents")));
-    workflow.phases = phasesFromJson(object.value(QStringLiteral("phases")));
+    workflow.phases = phasesFromJson(object.value(QStringLiteral("phases")), errors);
     workflow.acceptance_criteria =
         stringListFromJson(object.value(QStringLiteral("acceptance_criteria")));
-    workflow.cancel_policy = cancelPolicyFromJson(object.value(QStringLiteral("cancel_policy")));
     (void)workflow.isValid(errors);
     return workflow;
 }

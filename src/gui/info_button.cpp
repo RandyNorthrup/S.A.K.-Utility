@@ -8,7 +8,6 @@
 
 #include <QApplication>
 #include <QFrame>
-#include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
@@ -29,9 +28,6 @@ constexpr int kInfoGlyphBarBottomPercent = 78;
 constexpr int kInfoGlyphDotTopPercent = 28;
 constexpr int kInfoGlyphDotRadiusDivisor = 8;
 constexpr int kInfoGlyphCornerRadiusPx = 1;
-constexpr qreal kInfoPopupShadowBlurRadius = 16;
-constexpr int kInfoPopupShadowAlpha = 40;
-constexpr qreal kInfoPopupShadowYOffset = 2;
 constexpr int kInfoPopupScreenPaddingPx = 4;
 
 }  // namespace
@@ -60,19 +56,19 @@ QIcon InfoButton::createInfoIcon(int size) {
     p.setPen(Qt::NoPen);
     p.setBrush(Qt::white);
     const int cx = size / kInfoIconInsetTotalPx;
-    const int barW = qMax(kInfoGlyphMinBarWidthPx, size / kInfoGlyphBarWidthDivisor);
-    const int barTop = size * kInfoGlyphBarTopPercent / kPercentMax;
-    const int barBot = size * kInfoGlyphBarBottomPercent / kPercentMax;
-    p.drawRoundedRect(cx - barW,
-                      barTop,
-                      barW * kInfoIconInsetTotalPx,
-                      barBot - barTop,
+    const int bar_w = qMax(kInfoGlyphMinBarWidthPx, size / kInfoGlyphBarWidthDivisor);
+    const int bar_top = size * kInfoGlyphBarTopPercent / kPercentMax;
+    const int bar_bot = size * kInfoGlyphBarBottomPercent / kPercentMax;
+    p.drawRoundedRect(cx - bar_w,
+                      bar_top,
+                      bar_w * kInfoIconInsetTotalPx,
+                      bar_bot - bar_top,
                       kInfoGlyphCornerRadiusPx,
                       kInfoGlyphCornerRadiusPx);
 
     // White "i" dot
-    const int dotR = qMax(kInfoIconInsetPx, size / kInfoGlyphDotRadiusDivisor);
-    p.drawEllipse(QPoint(cx, size * kInfoGlyphDotTopPercent / kPercentMax), dotR, dotR);
+    const int dot_r = qMax(kInfoIconInsetPx, size / kInfoGlyphDotRadiusDivisor);
+    p.drawEllipse(QPoint(cx, size * kInfoGlyphDotTopPercent / kPercentMax), dot_r, dot_r);
 
     p.end();
     return QIcon(pixmap);
@@ -82,17 +78,17 @@ QIcon InfoButton::createInfoIcon(int size) {
 // InfoButton
 // ============================================================================
 
-InfoButton::InfoButton(const QString& infoText, QWidget* parent)
-    : QToolButton(parent), m_infoText(infoText) {
-    static const QIcon s_icon(QStringLiteral(":/icons/icons/icons8-settings_help.svg"));
-    setIcon(s_icon);
+InfoButton::InfoButton(const QString& info_text, QWidget* parent)
+    : QToolButton(parent), m_infoText(info_text) {
+    static const QIcon kSIcon(QStringLiteral(":/icons/icons/icons8-settings_help.svg"));
+    setIcon(kSIcon);
     setIconSize(QSize(ui::kUiIconSmall, ui::kUiIconSmall));
     setCursor(Qt::PointingHandCursor);
     setAutoRaise(true);
     setFixedSize(sak::kInfoButtonSize, sak::kInfoButtonSize);
     setFocusPolicy(Qt::TabFocus);
     setAccessibleName(QStringLiteral("Info"));
-    setAccessibleDescription(infoText);
+    setAccessibleDescription(info_text);
     setToolTip(QStringLiteral("Show more info"));
 
     // Transparent background -- the icon alone is the visual
@@ -131,30 +127,25 @@ void InfoButton::togglePopup() {
     label->setStyleSheet(sak::ui::infoPopupLabelStyle());
     layout->addWidget(label);
 
-    // Drop shadow
-    auto* shadow = new QGraphicsDropShadowEffect(popup);
-    shadow->setBlurRadius(kInfoPopupShadowBlurRadius);
-    QColor shadow_color(Qt::black);
-    shadow_color.setAlpha(kInfoPopupShadowAlpha);
-    shadow->setColor(shadow_color);
-    shadow->setOffset(0, kInfoPopupShadowYOffset);
-    popup->setGraphicsEffect(shadow);
+    // The frame's 1px border (infoPopupFrameStyle) outlines it; a popup window gets Windows'
+    // own drop shadow, so no graphics effect is drawn over it.
 
     popup->adjustSize();
 
     // Position: below the button, left-aligned
-    QPoint globalPos = mapToGlobal(QPoint(0, height() + kInfoPopupScreenPaddingPx));
-    QRect screenRect = screen()->availableGeometry();
+    QPoint global_pos = mapToGlobal(QPoint(0, height() + kInfoPopupScreenPaddingPx));
+    const QRect screen_rect = screen()->availableGeometry();
 
     // Ensure popup stays on screen
-    if (globalPos.y() + popup->height() > screenRect.bottom()) {
-        globalPos.setY(mapToGlobal(QPoint(0, 0)).y() - popup->height() - kInfoPopupScreenPaddingPx);
+    if (global_pos.y() + popup->height() > screen_rect.bottom()) {
+        global_pos.setY(mapToGlobal(QPoint(0, 0)).y() - popup->height() -
+                        kInfoPopupScreenPaddingPx);
     }
-    if (globalPos.x() + popup->width() > screenRect.right()) {
-        globalPos.setX(screenRect.right() - popup->width() - kInfoPopupScreenPaddingPx);
+    if (global_pos.x() + popup->width() > screen_rect.right()) {
+        global_pos.setX(screen_rect.right() - popup->width() - kInfoPopupScreenPaddingPx);
     }
 
-    popup->move(globalPos);
+    popup->move(global_pos);
     popup->show();
     m_popup = popup;
 }
@@ -163,8 +154,8 @@ void InfoButton::togglePopup() {
 // Factory helper
 // ============================================================================
 
-QWidget* InfoButton::createInfoLabel(const QString& labelText,
-                                     const QString& infoText,
+QWidget* InfoButton::createInfoLabel(const QString& label_text,
+                                     const QString& info_text,
                                      QWidget* parent) {
     auto* container = new QWidget(parent);
     auto* layout = new QHBoxLayout(container);
@@ -172,10 +163,10 @@ QWidget* InfoButton::createInfoLabel(const QString& labelText,
         sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     layout->setSpacing(sak::ui::kSpacingTight);
 
-    auto* label = new QLabel(labelText, container);
+    auto* label = new QLabel(label_text, container);
     layout->addWidget(label);
 
-    auto* btn = new InfoButton(infoText, container);
+    auto* btn = new InfoButton(info_text, container);
     layout->addWidget(btn);
 
     layout->addStretch();

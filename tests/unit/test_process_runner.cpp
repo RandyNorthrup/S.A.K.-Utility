@@ -4,10 +4,26 @@
 /// @file test_process_runner.cpp
 /// @brief Unit tests for process execution utilities
 
+#include "sak/contained_process_quarantine.h"
 #include "sak/process_runner.h"
+#include "sak/process_runner_containment.h"
+#include "sak/windows_process_job.h"
 
+#include "../support/ai_mcp_native_fixture.h"
+#include "../support/test_hardware_guard.h"
+
+#include <QDir>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QtTest/QtTest>
+
+#include <atomic>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <utility>
 
 class ProcessRunnerTests : public QObject {
     Q_OBJECT
@@ -20,13 +36,115 @@ private Q_SLOTS:
     void runProcess_nonExistentProgram();
     void runProcess_timeout();
     void runProcess_timeoutKillsChildTree();
+    void runProcess_primaryExitWithLiveDescendantFailsAndCleansJob();
+    void onlyConsoleHostsRemain_judgesTheProgramAlone();
+    void runProcess_startedCallbackExceptionStillCleansJob();
+    void runProcess_outputCallbackExceptionStillCleansJob();
     void runProcess_cancellation();
+    void runProcess_cancellationKillsChild();
+    void unprovedCleanupIsReportedAndRetained();
+    void waitForJobEmpty_letsTheRelaunchedChildFinish();
+    void waitForJobEmpty_reportsAndStopsAFamilyThatOutlivesTheWait();
+    void waitForJobEmpty_cancelStopsTheFamily();
+    void installersAndUninstallersWaitForTheirFamily();
 
     // runPowerShell
     void runPowerShell_simpleScript();
     void runPowerShell_withNoProfile();
     void runPowerShell_scriptError();
+    void powerShellInvocation_longScriptReadsItselfFromStandardInput();
+    void runProcessStreaming_standardInputReachesTheChild();
+    void runPowerShell_longScriptRunsAndKeepsItsExitCode();
+
+    // B5-07: bounded output accumulation
+    void appendCappedOutput_boundsAccumulation();
+
+    // B5-05: strict success (cancellation counts as failure)
+    void completedSuccessfully_strictOutcome();
+
+    // CODEX_REVIEW_4 H14: System32 qualification of system executables
+    void system32Path_qualifiesUnderSystem32();
+
+    // R5-P7-22: the shared PowerShell resolver every privileged caller must use
+    void systemPowerShellPath_resolvesAbsoluteInterpreter();
+
+    // R5-G14-17: shared process fault-injection seam
+    void processFaultInjector_substitutesResultForEveryLauncher();
+    void processFaultInjector_scopeRestoresRealLaunch();
+    void detachedToolLaunchersConsultFaultInjector();
+    void guiDetachedLaunchFailuresAreGuarded();
+    void guiTerminalLaunch_hasNoUserWritableFallback();
+    void guiTerminalLaunch_failureIsSurfaced();
 };
+
+namespace {
+using Generation = sak::testfixtures::mcp::ProcessGeneration;
+
+QString readRepoSource(const QString& relative_path) {
+    const QDir repo_root(QStringLiteral(SAK_REPO_ROOT));
+    QFile file(repo_root.filePath(relative_path));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return QString::fromUtf8(file.readAll());
+}
+
+QString sleepingChildScript(const QString& parent_tail, int child_seconds = 30) {
+    return QStringLiteral(
+               "$child = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') "
+               "-WindowStyle Hidden -ArgumentList @('-NoProfile','-NonInteractive',"
+               "'-Command','Start-Sleep -Seconds %2') -PassThru; "
+               "Write-Output ('CHILD_PID=' + $child.Id); %1")
+        .arg(parent_tail)
+        .arg(child_seconds);
+}
+
+void captureChildGeneration(const QString& chunk,
+                            bool is_stderr,
+                            QString* transcript,
+                            std::optional<Generation>* generation,
+                            QString* error);
+
+/// A program that starts a child which outlives it by @p child_seconds, then exits 0 at once --
+/// the shape of an NSIS uninstaller relaunching itself from %TEMP%.
+sak::ProcessStreamingRequest relaunchingProgram(int child_seconds,
+                                                QString* transcript,
+                                                std::optional<Generation>* child,
+                                                QString* error) {
+    sak::ProcessStreamingRequest request;
+    request.program = sak::systemPowerShellPath();
+    request.args = {QStringLiteral("-NoProfile"),
+                    QStringLiteral("-NonInteractive"),
+                    QStringLiteral("-Command"),
+                    sleepingChildScript(QStringLiteral("exit 0"), child_seconds)};
+    request.timeout_ms = 60'000;
+    request.on_output = [transcript, child, error](const QString& chunk, bool is_stderr) {
+        captureChildGeneration(chunk, is_stderr, transcript, child, error);
+    };
+    return request;
+}
+
+void captureChildGeneration(const QString& chunk,
+                            bool is_stderr,
+                            QString* transcript,
+                            std::optional<Generation>* generation,
+                            QString* error) {
+    if (is_stderr || generation->has_value()) {
+        return;
+    }
+    *transcript += chunk;
+    const auto match = QRegularExpression(QStringLiteral("CHILD_PID=(\\d+)")).match(*transcript);
+    if (!match.hasMatch()) {
+        return;
+    }
+    auto observed = Generation::observe(match.captured(1).toLongLong());
+    if (observed) {
+        generation->emplace(std::move(*observed));
+    } else {
+        *error = observed.error();
+    }
+}
+}  // namespace
 
 // ============================================================================
 // runProcess Tests
@@ -38,7 +156,17 @@ void ProcessRunnerTests::runProcess_echoCommand() {
     QCOMPARE(result.exit_code, 0);
     QVERIFY(!result.timed_out);
     QVERIFY(!result.cancelled);
-    QVERIFY(result.std_out.trimmed().contains("Hello World"));
+    QVERIFY(result.completedSuccessfully());
+    QCOMPARE(result.std_out.trimmed(), QStringLiteral("Hello World"));
+    // The stream split is real: appendOutput routes each drained chunk to exactly ONE buffer
+    // (process_runner.cpp:58), so a child that wrote only to stdout leaves stderr EMPTY. A
+    // mutant that mirrored chunks into both buffers passes every other assertion in this file
+    // (runProcess_stderrCapture's child writes only to stderr), while ~20 callers that treat
+    // any stderr text as a failure -- e.g. reset_network_action.cpp:68 -- would break.
+    QVERIFY2(result.std_err.isEmpty(), qPrintable(result.std_err));
+    // Nothing was dropped, so the truncation flag must stay clear (process_runner.cpp:59-61).
+    QVERIFY(!result.output_truncated);
+    QCOMPARE(result.std_out.trimmed(), QStringLiteral("Hello World"));
 }
 
 void ProcessRunnerTests::runProcess_exitCode() {
@@ -51,8 +179,8 @@ void ProcessRunnerTests::runProcess_exitCode() {
 void ProcessRunnerTests::runProcess_stderrCapture() {
     auto result = sak::runProcess("cmd.exe", {"/C", "echo error message 1>&2"}, 10'000);
 
-    // stderr should contain the error message
-    QVERIFY(result.std_err.contains("error message"));
+    // cmd writes only the echoed text to stderr; trimmed() strips the trailing space/CRLF.
+    QCOMPARE(result.std_err.trimmed(), QStringLiteral("error message"));
 }
 
 void ProcessRunnerTests::runProcess_nonExistentProgram() {
@@ -61,46 +189,247 @@ void ProcessRunnerTests::runProcess_nonExistentProgram() {
     // After BUG-13 fix: waitForStarted() detects launch failure immediately.
     // exit_code should be -1 and std_err should contain an error message.
     QCOMPARE(result.exit_code, -1);
-    QVERIFY(!result.std_err.isEmpty());
+    // Launch failure always begins with this fixed, locale-independent prefix (only the
+    // trailing QProcess errorString() varies).
+    QVERIFY2(result.std_err.startsWith(QStringLiteral("Failed to start process:")),
+             qPrintable(result.std_err));
 }
 
 void ProcessRunnerTests::runProcess_timeout() {
     // Start a long-running process with a short timeout
     auto result = sak::runProcess("cmd.exe", {"/C", "ping -n 3 127.0.0.1"}, 1000);
 
+    // The timeout arm (process_runner.cpp:143-148) must be distinguishable from the cancel arm
+    // and from a normal finish: it sets timed_out and NOT cancelled, appends the timeout marker
+    // to stderr, and returns on the early path that never overwrites the fail-closed -1.
     QVERIFY(result.timed_out);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY2(result.std_err.contains(QStringLiteral("Process timed out")),
+             qPrintable(result.std_err));
+    QVERIFY(!result.completedSuccessfully());
 }
 
 void ProcessRunnerTests::runProcess_timeoutKillsChildTree() {
-#ifndef Q_OS_WIN
-    QSKIP("Process tree termination is Windows-specific");
-#else
-    const QString script =
-        "Set-StrictMode -Version Latest; "
-        "$child = Start-Process powershell.exe "
-        "-WindowStyle Hidden "
-        "-ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 30') "
-        "-PassThru; "
-        "Write-Output $child.Id; "
-        "Start-Sleep -Seconds 30";
+    const QString powershell = sak::systemPowerShellPath();
+    QVERIFY(!powershell.isEmpty());
+    QString observed_output;
+    QString observation_error;
+    std::optional<Generation> child_generation;
+    sak::ProcessStreamingRequest request;
+    request.program = powershell;
+    request.args = {QStringLiteral("-NoProfile"),
+                    QStringLiteral("-NonInteractive"),
+                    QStringLiteral("-Command"),
+                    sleepingChildScript(QStringLiteral("Start-Sleep -Seconds 30"))};
+    // The timeout must fire after the child exists. Windows PowerShell's cold start plus
+    // Start-Process took longer than 5 s on a loaded CI runner (b3c439f3, shard 0), so the run
+    // timed out before CHILD_PID was printed and there was no tree to prove killed.
+    request.timeout_ms = 15'000;
+    request.on_output = [&](const QString& chunk, bool is_stderr) {
+        captureChildGeneration(
+            chunk, is_stderr, &observed_output, &child_generation, &observation_error);
+    };
 
-    auto result = sak::runPowerShell(script, 1500);
+    const auto result = sak::runProcessStreaming(request);
     QVERIFY(result.timed_out);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY2(child_generation.has_value(),
+             qPrintable(observation_error.isEmpty() ? observed_output : observation_error));
+    const auto stopped = child_generation->waitForExit();
+    QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
+    QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
+}
 
-    const QRegularExpression pidRegex(QStringLiteral("\\b(\\d+)\\b"));
-    const auto match = pidRegex.match(result.std_out);
-    QVERIFY2(match.hasMatch(),
-             qPrintable(QStringLiteral("Child PID missing from stdout: %1").arg(result.std_out)));
-    const QString childPid = match.captured(1);
+void ProcessRunnerTests::runProcess_primaryExitWithLiveDescendantFailsAndCleansJob() {
+    const QString powershell = sak::systemPowerShellPath();
+    QVERIFY(!powershell.isEmpty());
+    const QString script = sleepingChildScript(QStringLiteral("Start-Sleep -Milliseconds 300"));
+    QString observed_output;
+    QString observation_error;
+    std::optional<Generation> child_generation;
+    bool started = false;
+    sak::ProcessStreamingRequest request;
+    request.program = powershell;
+    request.args = {QStringLiteral("-NoProfile"),
+                    QStringLiteral("-NonInteractive"),
+                    QStringLiteral("-Command"),
+                    script};
+    request.timeout_ms = 10'000;
+    request.on_started = [&started](qint64 pid) {
+        started = pid > 0;
+    };
+    request.on_output = [&](const QString& chunk, bool is_stderr) {
+        captureChildGeneration(
+            chunk, is_stderr, &observed_output, &child_generation, &observation_error);
+    };
 
-    QTest::qWait(750);
-    const auto tasklist = sak::runProcess(
-        "cmd.exe", {"/C", QStringLiteral("tasklist /FI \"PID eq %1\"").arg(childPid)}, 5000);
-    QVERIFY2(
-        !tasklist.std_out.contains(childPid),
-        qPrintable(
-            QStringLiteral("Timed-out child process still running: %1").arg(tasklist.std_out)));
-#endif
+    const auto result = sak::runProcessStreaming(request);
+    QVERIFY(started);
+    QVERIFY2(child_generation.has_value(),
+             qPrintable(observation_error.isEmpty() ? observed_output : observation_error));
+    QVERIFY(!result.cancelled);
+    QVERIFY(!result.timed_out);
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY2(result.std_err.contains(QStringLiteral("Contained process descendants remained")),
+             qPrintable(result.std_err));
+    QVERIFY(!result.completedSuccessfully());
+    const auto stopped = child_generation->waitForExit();
+    QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
+    QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
+}
+
+// A console program QProcess starts from the GUI gets a conhost.exe of its own in its Job, and on a
+// loaded PC that host can outlive the 1 s grace. It does none of the program's work: a family with
+// nothing else left is not one whose descendants remained (review 3: a restore's netsh failed that
+// way, though the adapter ended as it was asked to be). Anything else left still is.
+void ProcessRunnerTests::onlyConsoleHostsRemain_judgesTheProgramAlone() {
+    const QString console_host = sak::system32Path(QStringLiteral("conhost.exe"));
+    QVERIFY(!console_host.isEmpty());
+    const QString native = QDir::toNativeSeparators(console_host);
+    QVERIFY(sak::onlyConsoleHostsRemain({native}));
+    QVERIFY(sak::onlyConsoleHostsRemain({native.toUpper(), console_host}));
+    QVERIFY(!sak::onlyConsoleHostsRemain({}));
+    QVERIFY(!sak::onlyConsoleHostsRemain({native, sak::systemPowerShellPath()}));
+    QVERIFY(!sak::onlyConsoleHostsRemain({QStringLiteral("C:/Temp/conhost.exe")}));
+    QVERIFY(!sak::onlyConsoleHostsRemain({native, QString()}));
+}
+
+// An NSIS uninstaller copies itself to %TEMP%, relaunches and exits at once; the run used to stop
+// that relaunched child about 1 s later and report the uninstall failed. Under WaitForJobEmpty
+// the child finishes its work and the run reports the program's own exit code.
+void ProcessRunnerTests::waitForJobEmpty_letsTheRelaunchedChildFinish() {
+    QString transcript;
+    QString error;
+    std::optional<Generation> child;
+    auto request = relaunchingProgram(3, &transcript, &child, &error);
+    request.options = {.child_policy = sak::ChildProcessPolicy::WaitForJobEmpty,
+                       .job_wait_ms = 60'000};
+
+    const auto result = sak::runProcessStreaming(request);
+    QVERIFY2(child.has_value(), qPrintable(error.isEmpty() ? transcript : error));
+    QVERIFY2(result.completedSuccessfully(), qPrintable(result.std_err));
+    QVERIFY(!result.descendants_stopped);
+    QCOMPARE(result.exit_code, 0);
+    const auto exited = child->waitForExit();
+    QVERIFY2(exited.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(exited)));
+    QCOMPARE(*exited, 0);  // it finished on its own, it was not stopped by the Job
+}
+
+// The wait is bounded, and running out of it is said out loud: the family is stopped (nothing
+// outlives the Job) and descendants_stopped plus std_err report it, with the root's exit code.
+void ProcessRunnerTests::waitForJobEmpty_reportsAndStopsAFamilyThatOutlivesTheWait() {
+    QString transcript;
+    QString error;
+    std::optional<Generation> child;
+    auto request = relaunchingProgram(30, &transcript, &child, &error);
+    request.options = {.child_policy = sak::ChildProcessPolicy::WaitForJobEmpty,
+                       .job_wait_ms = 2000};
+
+    const auto result = sak::runProcessStreaming(request);
+    QVERIFY2(child.has_value(), qPrintable(error.isEmpty() ? transcript : error));
+    QVERIFY(result.descendants_stopped);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.exit_code, 0);
+    QVERIFY2(result.std_err.contains(QStringLiteral("still running")), qPrintable(result.std_err));
+    const auto stopped = child->waitForExit();
+    QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
+    QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
+}
+
+void ProcessRunnerTests::waitForJobEmpty_cancelStopsTheFamily() {
+    QString transcript;
+    QString error;
+    std::optional<Generation> child;
+    auto request = relaunchingProgram(30, &transcript, &child, &error);
+    request.options = {.child_policy = sak::ChildProcessPolicy::WaitForJobEmpty,
+                       .job_wait_ms = 120'000};
+    QElapsedTimer clock;
+    clock.start();
+    // Cancel a couple of seconds in: by then the program has exited and the run is waiting on
+    // the family.
+    request.should_cancel = [&clock, &child]() {
+        return child.has_value() && clock.elapsed() > 4000;
+    };
+
+    const auto result = sak::runProcessStreaming(request);
+    QVERIFY2(child.has_value(), qPrintable(error.isEmpty() ? transcript : error));
+    QVERIFY(result.cancelled);
+    QVERIFY(!result.descendants_stopped);
+    QVERIFY(!result.completedSuccessfully());
+    QVERIFY2(clock.elapsed() < 60'000, "cancel must cut the family wait short");
+    const auto stopped = child->waitForExit();
+    QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
+    QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
+}
+
+void ProcessRunnerTests::runProcess_startedCallbackExceptionStillCleansJob() {
+    const QString powershell = sak::systemPowerShellPath();
+    QVERIFY(!powershell.isEmpty());
+    std::optional<Generation> primary_generation;
+    QString observation_error;
+    sak::ProcessStreamingRequest request;
+    request.program = powershell;
+    request.args = {QStringLiteral("-NoProfile"),
+                    QStringLiteral("-NonInteractive"),
+                    QStringLiteral("-Command"),
+                    QStringLiteral("Start-Sleep -Seconds 30")};
+    request.timeout_ms = 10'000;
+    request.on_started = [&](qint64 pid) {
+        auto observed = Generation::observe(pid);
+        if (!observed) {
+            observation_error = observed.error();
+            return;
+        }
+        primary_generation.emplace(std::move(*observed));
+        throw std::runtime_error("owned start callback failure");
+    };
+
+    const auto result = sak::runProcessStreaming(request);
+    QVERIFY2(primary_generation.has_value(), qPrintable(observation_error));
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY2(result.std_err.contains(
+                 QStringLiteral("Process callback failed: owned start callback failure")),
+             qPrintable(result.std_err));
+    const auto stopped = primary_generation->waitForExit();
+    QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
+    QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
+}
+
+void ProcessRunnerTests::runProcess_outputCallbackExceptionStillCleansJob() {
+    const QString powershell = sak::systemPowerShellPath();
+    QVERIFY(!powershell.isEmpty());
+    QString observed_output;
+    QString observation_error;
+    std::optional<Generation> child_generation;
+    sak::ProcessStreamingRequest request;
+    request.program = powershell;
+    request.args = {QStringLiteral("-NoProfile"),
+                    QStringLiteral("-NonInteractive"),
+                    QStringLiteral("-Command"),
+                    sleepingChildScript(QStringLiteral("Start-Sleep -Seconds 30"))};
+    request.timeout_ms = 10'000;
+    request.on_output = [&](const QString& chunk, bool is_stderr) {
+        captureChildGeneration(
+            chunk, is_stderr, &observed_output, &child_generation, &observation_error);
+        if (child_generation.has_value()) {
+            throw std::runtime_error("owned callback failure");
+        }
+    };
+
+    const auto result = sak::runProcessStreaming(request);
+    QVERIFY2(child_generation.has_value(),
+             qPrintable(observation_error.isEmpty() ? observed_output : observation_error));
+    QVERIFY(!result.cancelled);
+    QVERIFY(!result.timed_out);
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY2(result.std_err.contains(
+                 QStringLiteral("Process callback failed: owned callback failure")),
+             qPrintable(result.std_err));
+    const auto stopped = child_generation->waitForExit();
+    QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
+    QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
 }
 
 void ProcessRunnerTests::runProcess_cancellation() {
@@ -110,7 +439,86 @@ void ProcessRunnerTests::runProcess_cancellation() {
                                   10'000,
                                   [&shouldCancel]() -> bool { return shouldCancel; });
 
+    // A cancel already set BEFORE the launch must make runProcessInternal refuse to START the
+    // child at all (process_runner.cpp:171-174), not kill it after the fact -- so it returns
+    // the fail-closed -1 with nothing ever captured.
     QVERIFY(result.cancelled);
+    QVERIFY(!result.timed_out);
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY(!result.completedSuccessfully());
+    QVERIFY2(result.std_out.isEmpty(), qPrintable(result.std_out));
+    QVERIFY2(result.std_err.isEmpty(), qPrintable(result.std_err));
+
+    // ...and prove it through the one channel that fires for every process that REALLY
+    // launches (process_runner.cpp:180-182): with the pre-launch guard deleted, the in-loop
+    // cancel check sets the very same `cancelled` flag AFTER the child has already started.
+    bool started = false;
+    bool cancelAtOnce = true;
+    sak::ProcessStreamingRequest request;
+    request.program = QStringLiteral("cmd.exe");
+    request.args = {QStringLiteral("/C"), QStringLiteral("ping -n 3 127.0.0.1")};
+    request.timeout_ms = 10'000;
+    request.should_cancel = [&cancelAtOnce]() -> bool {
+        return cancelAtOnce;
+    };
+    request.on_started = [&started](qint64) {
+        started = true;
+    };
+
+    const auto streamed = sak::runProcessStreaming(request);
+    QVERIFY(streamed.cancelled);
+    QVERIFY2(!started, "a request cancelled before launch must never start the child process");
+    QCOMPARE(streamed.exit_code, -1);
+
+    QVERIFY(result.cancelled);
+}
+
+// Cancellation must return only after the held descendant generation is signaled.
+// A PID string or an asynchronous taskkill dispatch is not cleanup proof.
+void ProcessRunnerTests::runProcess_cancellationKillsChild() {
+    QElapsedTimer timer;
+    timer.start();
+
+    bool shouldCancel = false;
+    bool started = false;
+    QString observed_output;
+    QString observation_error;
+    std::optional<Generation> child_generation;
+    sak::ProcessStreamingRequest request;
+    request.program = sak::systemPowerShellPath();
+    QVERIFY(!request.program.isEmpty());
+    request.args = {QStringLiteral("-NoProfile"),
+                    QStringLiteral("-NonInteractive"),
+                    QStringLiteral("-Command"),
+                    sleepingChildScript(QStringLiteral("Start-Sleep -Seconds 30"))};
+    request.timeout_ms = 30'000;
+    request.should_cancel = [&shouldCancel]() -> bool {
+        return shouldCancel;
+    };
+    request.on_started = [&started](qint64 pid) {
+        started = pid > 0;
+    };
+    request.on_output = [&](const QString& chunk, bool is_stderr) {
+        captureChildGeneration(
+            chunk, is_stderr, &observed_output, &child_generation, &observation_error);
+        shouldCancel = child_generation.has_value();
+    };
+
+    const auto result = sak::runProcessStreaming(request);
+
+    QVERIFY(result.cancelled);
+    QVERIFY(!result.timed_out);
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY(started);
+    // Cancellation must have returned promptly -- nowhere near the 60s child life.
+    QVERIFY2(timer.elapsed() < 20'000,
+             qPrintable(QStringLiteral("Cancel took %1 ms").arg(timer.elapsed())));
+
+    QVERIFY2(child_generation.has_value(),
+             qPrintable(observation_error.isEmpty() ? observed_output : observation_error));
+    const auto stopped = child_generation->waitForExit();
+    QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
+    QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
 }
 
 // ============================================================================
@@ -122,7 +530,7 @@ void ProcessRunnerTests::runPowerShell_simpleScript() {
 
     QCOMPARE(result.exit_code, 0);
     QVERIFY(!result.timed_out);
-    QVERIFY(result.std_out.contains("PowerShell Test"));
+    QCOMPARE(result.std_out.trimmed(), QStringLiteral("PowerShell Test"));
 }
 
 void ProcessRunnerTests::runPowerShell_withNoProfile() {
@@ -132,7 +540,57 @@ void ProcessRunnerTests::runPowerShell_withNoProfile() {
                                      true);  // bypass_policy
 
     QCOMPARE(result.exit_code, 0);
-    QVERIFY(!result.std_out.trimmed().isEmpty());
+    QVERIFY(!result.timed_out);
+    // $PSVersionTable.PSVersion.Major is a bare integer on every Windows PowerShell; pinning the
+    // shape (not the version) stays machine-invariant while proving the script actually ran.
+    QVERIFY2(
+        QRegularExpression(QStringLiteral("^\\d+$")).match(result.std_out.trimmed()).hasMatch(),
+        qPrintable(result.std_out));
+
+    // The flags this test is NAMED for were never observed. Capture the exact argv the launcher
+    // builds and pin it as an ORDERED catalog for BOTH arms of each switch, so a dropped
+    // -NoProfile (the user's profile then runs inside an elevated launch), a dropped
+    // -ExecutionPolicy Bypass, a reordering that puts -Command first, or a flag emitted when the
+    // caller asked for it OFF is all caught.
+    QStringList seen;
+    sak::ScopedProcessFaultInjector guard(
+        [&seen](const QString&, const QStringList& args) -> std::optional<sak::ProcessResult> {
+            seen = args;
+            sak::ProcessResult injected;
+            injected.exit_code = 3;  // distinctive: proves the injector, not a real child, ran
+            return injected;
+        });
+
+    seen.clear();
+    QCOMPARE(sak::runPowerShell(QStringLiteral("Write-Output 1"), 10'000, true, true).exit_code, 3);
+    QCOMPARE(seen,
+             (QStringList{QStringLiteral("-NoProfile"),
+                          QStringLiteral("-ExecutionPolicy"),
+                          QStringLiteral("Bypass"),
+                          QStringLiteral("-Command"),
+                          QStringLiteral("Write-Output 1")}));
+
+    seen.clear();
+    QCOMPARE(sak::runPowerShell(QStringLiteral("Write-Output 1"), 10'000, false, false).exit_code,
+             3);
+    QCOMPARE(seen, (QStringList{QStringLiteral("-Command"), QStringLiteral("Write-Output 1")}));
+
+    seen.clear();
+    QCOMPARE(sak::runPowerShell(QStringLiteral("Write-Output 1"), 10'000, true, false).exit_code,
+             3);
+    QCOMPARE(seen,
+             (QStringList{QStringLiteral("-NoProfile"),
+                          QStringLiteral("-Command"),
+                          QStringLiteral("Write-Output 1")}));
+
+    seen.clear();
+    QCOMPARE(sak::runPowerShell(QStringLiteral("Write-Output 1"), 10'000, false, true).exit_code,
+             3);
+    QCOMPARE(seen,
+             (QStringList{QStringLiteral("-ExecutionPolicy"),
+                          QStringLiteral("Bypass"),
+                          QStringLiteral("-Command"),
+                          QStringLiteral("Write-Output 1")}));
 }
 
 void ProcessRunnerTests::runPowerShell_scriptError() {
@@ -141,6 +599,476 @@ void ProcessRunnerTests::runPowerShell_scriptError() {
 
     // Should fail with non-zero exit code
     QVERIFY(result.exit_code != 0);
+}
+
+// Windows limits a command line to 32,767 characters, so a longer script could not start at all.
+void ProcessRunnerTests::powerShellInvocation_longScriptReadsItselfFromStandardInput() {
+    const QString short_script = QStringLiteral("Write-Output 'short'");
+    const auto small = sak::powerShellInvocation(short_script, true, true);
+    QVERIFY(small.std_in.isEmpty());
+    QVERIFY(small.args.contains(short_script));
+    const QString long_script =
+        QStringLiteral("# ").append(QString(sak::kMaxPowerShellCommandLineScriptChars, u'x'));
+    const auto large = sak::powerShellInvocation(long_script, true, true);
+    QCOMPARE(QString::fromUtf8(large.std_in), long_script);
+    QVERIFY(!large.args.contains(long_script));
+    QVERIFY(large.args.join(u' ').size() < sak::kMaxPowerShellCommandLineScriptChars);
+}
+
+void ProcessRunnerTests::runProcessStreaming_standardInputReachesTheChild() {
+    const QString findstr = sak::system32Path(QStringLiteral("findstr.exe"));
+    QVERIFY(!findstr.isEmpty());
+    sak::ProcessStreamingRequest request;
+    request.program = findstr;
+    request.args = {QStringLiteral("marker")};
+    request.timeout_ms = 60'000;
+    // Well past what a pipe buffers: this has to be written while the child reads it.
+    request.std_in = QByteArray(256 * 1024, 'x').append("\nmarker line\n");
+    const auto result = sak::runProcessStreaming(request);
+    QVERIFY2(result.completedSuccessfully(), qPrintable(result.std_err));
+    QVERIFY2(result.std_out.contains(QStringLiteral("marker line")), qPrintable(result.std_out));
+}
+
+void ProcessRunnerTests::runPowerShell_longScriptRunsAndKeepsItsExitCode() {
+    // The guard cannot read a script on standard input, so only CI starts one for real.
+    SAK_SKIP_UNLESS_REAL_HARDWARE_ALLOWED();
+    const QString padding = QStringLiteral("# ").append(
+        QString(sak::kMaxPowerShellCommandLineScriptChars, u'x').append(u'\n'));
+    const auto good =
+        sak::runPowerShell(padding + QStringLiteral("Write-Output 'read it all'; exit 7"), 60'000);
+    QVERIFY2(good.std_out.contains(QStringLiteral("read it all")), qPrintable(good.std_err));
+    QCOMPARE(good.exit_code, 7);
+    const auto thrown = sak::runPowerShell(
+        padding + QStringLiteral("$ErrorActionPreference = 'Stop'; throw 'refused on purpose'"),
+        60'000);
+    QVERIFY(thrown.exit_code != 0);
+    QVERIFY2(thrown.std_err.contains(QStringLiteral("refused on purpose")),
+             qPrintable(thrown.std_err));
+}
+
+// B5-07: output accumulation must be bounded so a runaway child cannot exhaust
+// memory. The retained buffer stops growing exactly at the cap, reporting the
+// drop, while a chunk that fits is appended in full.
+void ProcessRunnerTests::appendCappedOutput_boundsAccumulation() {
+    // A chunk that fits under the cap is appended whole; nothing dropped.
+    QString buf;
+    QVERIFY(!sak::appendCappedOutput(buf, QStringLiteral("hello"), 10));
+    QCOMPARE(buf, QStringLiteral("hello"));
+
+    // An empty chunk never drops.
+    QVERIFY(!sak::appendCappedOutput(buf, QString(), 10));
+    QCOMPARE(buf.size(), 5);
+
+    // A chunk that overflows the cap is clipped to fit exactly and reports a drop.
+    QVERIFY(sak::appendCappedOutput(buf, QStringLiteral("world!!!"), 10));
+    QCOMPARE(buf.size(), 10);
+    QCOMPARE(buf, QStringLiteral("helloworld"));
+
+    // Once full, further non-empty chunks are dropped entirely (buffer frozen).
+    QVERIFY(sak::appendCappedOutput(buf, QStringLiteral("more"), 10));
+    QCOMPARE(buf.size(), 10);
+    QCOMPARE(buf, QStringLiteral("helloworld"));
+
+    // A non-positive cap drops any non-empty chunk.
+    QString empty;
+    QVERIFY(sak::appendCappedOutput(empty, QStringLiteral("x"), 0));
+    QVERIFY(empty.isEmpty());
+
+    // An EMPTY chunk never reports a drop -- not against a FULL buffer, not against a zero cap.
+    // The empty-chunk check (process_runner.cpp:210-212) must come first; otherwise a harmless
+    // empty read from a saturated buffer sets output_truncated and the result claims output was
+    // lost. The case above uses a 5-of-10 buffer, which is not full, so it cannot see this.
+    QVERIFY(!sak::appendCappedOutput(buf, QString(), 10));
+    QCOMPARE(buf, QStringLiteral("helloworld"));
+    QString none;
+    QVERIFY(!sak::appendCappedOutput(none, QString(), 0));
+    QVERIFY(none.isEmpty());
+
+    // The exact-fit boundary: a chunk that exactly fills the remaining room is appended whole
+    // and reports NO drop (process_runner.cpp:217 compares <=, not <); the very next character
+    // does. Without this, `<` ships green -- identical content, but a spurious truncation
+    // report that propagates to ProcessResult::output_truncated.
+    QString exact;
+    QVERIFY(!sak::appendCappedOutput(exact, QStringLiteral("12345"), 5));
+    QCOMPARE(exact, QStringLiteral("12345"));
+    QVERIFY(sak::appendCappedOutput(exact, QStringLiteral("6"), 5));
+    QCOMPARE(exact, QStringLiteral("12345"));
+    QString split;
+    QVERIFY(!sak::appendCappedOutput(split, QStringLiteral("ab"), 5));
+    QVERIFY(!sak::appendCappedOutput(split, QStringLiteral("cde"), 5));
+    QCOMPARE(split, QStringLiteral("abcde"));
+}
+
+// B5-05: reporting an operation's outcome must treat a cancelled or timed-out or
+// non-zero-exit run as a failure. succeeded() ignores cancellation;
+// completedSuccessfully() must not.
+void ProcessRunnerTests::completedSuccessfully_strictOutcome() {
+    sak::ProcessResult clean;
+    clean.exit_code = 0;
+    QVERIFY(clean.completedSuccessfully());
+
+    sak::ProcessResult nonzero;
+    nonzero.exit_code = 1;
+    QVERIFY(!nonzero.completedSuccessfully());
+
+    sak::ProcessResult timed;
+    timed.exit_code = 0;
+    timed.timed_out = true;
+    QVERIFY(!timed.completedSuccessfully());
+
+    // The key case: a cancelled process that still reports exit_code 0 is NOT a
+    // success under completedSuccessfully(), even though succeeded() says it is.
+    sak::ProcessResult cancelled;
+    cancelled.exit_code = 0;
+    cancelled.cancelled = true;
+    QVERIFY(cancelled.succeeded());  // documents the weaker check
+    QVERIFY(!cancelled.completedSuccessfully());
+
+    // The crash arm: a child that CRASHED but still reports exit_code 0 must be rejected by
+    // BOTH predicates via exit_status (1 == QProcess::CrashExit, process_runner.h:21-22).
+    // Nothing above sets exit_status, so dropping that term from either predicate is invisible.
+    sak::ProcessResult crashed;
+    crashed.exit_code = 0;
+    crashed.exit_status = 1;
+    QVERIFY(!crashed.succeeded());
+    QVERIFY(!crashed.completedSuccessfully());
+
+    // ...and the crash term is not over-broad: a normal exit really is 0.
+    QCOMPARE(clean.exit_status, 0);
+
+    // A ProcessResult that was never run is a failure under both, because exit_code defaults
+    // to -1 rather than 0 (process_runner.h:17-20).
+    sak::ProcessResult never;
+    QCOMPARE(never.exit_code, -1);
+    QCOMPARE(never.exit_status, 0);
+    QVERIFY(!never.timed_out);
+    QVERIFY(!never.cancelled);
+    QVERIFY(!never.succeeded());
+    QVERIFY(!never.completedSuccessfully());
+}
+
+// CODEX_REVIEW_4 H14: an elevated process must launch system tools by their
+// System32-qualified absolute path, never a bare name a PATH/CWD-planted binary
+// could satisfy. system32Path resolves under the real system directory.
+void ProcessRunnerTests::system32Path_qualifiesUnderSystem32() {
+    const QString netsh = sak::system32Path(QStringLiteral("netsh.exe"));
+    QVERIFY(!netsh.isEmpty());
+    QVERIFY(QDir::isAbsolutePath(netsh));
+    QVERIFY2(netsh.endsWith(QStringLiteral("/System32/netsh.exe"), Qt::CaseInsensitive),
+             qPrintable(netsh));
+    QVERIFY2(QFileInfo::exists(netsh), qPrintable(netsh));
+
+    const QString ps = sak::system32Path(QStringLiteral("WindowsPowerShell/v1.0/powershell.exe"));
+    QVERIFY2(ps.endsWith(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe"),
+                         Qt::CaseInsensitive),
+             qPrintable(ps));
+    QVERIFY2(QFileInfo::exists(ps), qPrintable(ps));
+
+    // The REFUSAL arm nothing exercised (process_runner.cpp:280-283, gating 288-290): a name
+    // that could escape the resolved system directory is rejected outright -- empty return, no
+    // join, no bare-name fallback -- so the caller must fail closed. Without this, dropping the
+    // guard leaves every assertion above green while "../../Temp/netsh.exe" cleanPaths to
+    // C:/Temp/netsh.exe and is handed to an elevated CreateProcess.
+    QVERIFY(sak::system32Path(QString()).isEmpty());
+    QVERIFY(sak::system32Path(QStringLiteral("..")).isEmpty());
+    QVERIFY(sak::system32Path(QStringLiteral("../../Temp/netsh.exe")).isEmpty());
+    QVERIFY(sak::system32Path(QStringLiteral("..\\Temp\\netsh.exe")).isEmpty());
+    QVERIFY(sak::system32Path(QStringLiteral("C:/Temp/netsh.exe")).isEmpty());
+
+    // The Windows-directory sibling (process_runner.cpp:303-318) resolves and refuses on
+    // exactly the same terms, and had no coverage anywhere in the suite.
+    const QString explorer = sak::windowsDirPath(QStringLiteral("explorer.exe"));
+    QVERIFY2(QDir::isAbsolutePath(explorer), qPrintable(explorer));
+    QVERIFY2(explorer.endsWith(QStringLiteral("/explorer.exe"), Qt::CaseInsensitive),
+             qPrintable(explorer));
+    QVERIFY2(QFileInfo::exists(explorer), qPrintable(explorer));
+    QVERIFY(sak::windowsDirPath(QString()).isEmpty());
+    QVERIFY(sak::windowsDirPath(QStringLiteral("../../Temp/explorer.exe")).isEmpty());
+    QVERIFY(sak::windowsDirPath(QStringLiteral("C:/Temp/explorer.exe")).isEmpty());
+}
+
+// R5-P7-22: restore points, program enumeration, archiving and thermal polling all used
+// to launch a BARE "powershell.exe", which CreateProcess resolves through a search order
+// that puts the current directory ahead of System32 -- a planted powershell would then run
+// with an elevated token. Every one of those call sites now goes through this one resolver,
+// so it must hand back an ABSOLUTE path under the real system directory (never the bare
+// name, and never a relative form a caller could pass straight to CreateProcess).
+void ProcessRunnerTests::systemPowerShellPath_resolvesAbsoluteInterpreter() {
+    const QString ps = sak::systemPowerShellPath();
+    QVERIFY2(!ps.isEmpty(), "the system PowerShell must resolve on a healthy Windows install");
+    QVERIFY2(ps != QStringLiteral("powershell.exe"), qPrintable(ps));
+    QVERIFY2(QDir::isAbsolutePath(ps), qPrintable(ps));
+    QVERIFY2(ps.endsWith(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe"),
+                         Qt::CaseInsensitive),
+             qPrintable(ps));
+    // Fail-closed contract: the resolver only ever returns a path that really exists, so a
+    // non-empty result can be handed to CreateProcess without a PATH search.
+    QVERIFY2(QFileInfo(ps).isFile(), qPrintable(ps));
+    // It agrees with the generic System32 resolver used for netsh/reg/cmd/msiexec.
+    QCOMPARE(ps, sak::system32Path(QStringLiteral("WindowsPowerShell/v1.0/powershell.exe")));
+}
+
+// ============================================================================
+// R5-G14-17 process fault-injection seam
+// ============================================================================
+
+// The shared seam substitutes a chosen ProcessResult for the real launch through the ONE
+// internal runner every launcher funnels through, so a caller's mid-operation failure path
+// (non-zero exit, crash-exit, timeout) runs headless without a real child. Verified on
+// runProcess AND runPowerShell (which reaches the same runner via runProcess), proving the
+// seam covers every entry point, not just one.
+void ProcessRunnerTests::processFaultInjector_substitutesResultForEveryLauncher() {
+    int calls = 0;
+    QString lastProgram;
+    sak::ScopedProcessFaultInjector guard(
+        [&](const QString& program, const QStringList&) -> std::optional<sak::ProcessResult> {
+            ++calls;
+            lastProgram = program;
+            sak::ProcessResult injected;
+            injected.exit_code = 7;
+            injected.exit_status = 1;  // crash-exit
+            injected.std_err = QStringLiteral("INJECTED-FAILURE");
+            return injected;
+        });
+
+    // A command that would REALLY succeed (exit 0) instead returns the injected failure --
+    // proving no real process ran.
+    const auto direct = sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000);
+    QCOMPARE(direct.exit_code, 7);
+    QCOMPARE(direct.exit_status, 1);
+    QCOMPARE(direct.std_err, QStringLiteral("INJECTED-FAILURE"));
+    QVERIFY(!direct.succeeded());
+
+    // runPowerShell funnels through runProcess -> the same internal runner, so it is injected too.
+    const auto shell = sak::runPowerShell("Write-Output 'would-succeed'", 10'000);
+    QCOMPARE(shell.exit_code, 7);
+    QCOMPARE(shell.std_err, QStringLiteral("INJECTED-FAILURE"));
+
+    QCOMPARE(calls, 2);
+    // R5-P7-22: the launcher must hand the runner the ABSOLUTE System32 interpreter
+    // (process_runner.cpp:263 + 272). The bare string "powershell.exe" ALSO satisfies
+    // endsWith("powershell.exe"), so that check alone is green for exactly the hijackable
+    // launch this contract exists to forbid.
+    QVERIFY2(QDir::isAbsolutePath(lastProgram), qPrintable(lastProgram));
+    QVERIFY2(lastProgram.endsWith(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe"),
+                                  Qt::CaseInsensitive),
+             qPrintable(lastProgram));
+    QCOMPARE(lastProgram, sak::systemPowerShellPath());
+}
+
+void ProcessRunnerTests::detachedToolLaunchersConsultFaultInjector() {
+    QStringList programs;
+    QList<QStringList> argument_sets;
+    sak::ScopedProcessFaultInjector failure_guard(
+        [&](const QString& program, const QStringList& args) -> std::optional<sak::ProcessResult> {
+            programs.append(program);
+            argument_sets.append(args);
+            sak::ProcessResult failure;
+            failure.exit_code = 7;
+            return failure;
+        });
+
+    QVERIFY(!sak::startDetachedSystem32Tool(QStringLiteral("notepad.exe")));
+    QVERIFY(!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe")));
+    QVERIFY(!sak::startDetachedSystem32Tool(
+        QStringLiteral("cmd.exe"), {QStringLiteral("/D")}, QDir::tempPath()));
+    QCOMPARE(programs.size(), 3);
+    QCOMPARE(argument_sets.at(2), (QStringList{QStringLiteral("/D")}));
+    QVERIFY(QDir::isAbsolutePath(programs.at(0)));
+    QVERIFY(QDir::isAbsolutePath(programs.at(1)));
+    QVERIFY(QDir::isAbsolutePath(programs.at(2)));
+
+    const QString runner = readRepoSource(QStringLiteral("src/core/process_runner.cpp"));
+    QVERIFY2(!runner.isEmpty(), "process_runner.cpp could not be read");
+    QVERIFY(runner.contains(
+        QStringLiteral("QProcess::startDetached(program, args, working_directory)")));
+}
+
+void ProcessRunnerTests::guiDetachedLaunchFailuresAreGuarded() {
+    const QString advanced = readRepoSource(QStringLiteral("src/gui/advanced_search_panel.cpp"));
+    const QString files =
+        readRepoSource(QStringLiteral("src/gui/file_management_explorer_panel.cpp"));
+    const QString partitions =
+        readRepoSource(QStringLiteral("src/gui/partition_manager_panel.cpp"));
+    QVERIFY2(!advanced.isEmpty(), "advanced_search_panel.cpp could not be read");
+    QVERIFY2(!files.isEmpty(), "file_management_explorer_panel.cpp could not be read");
+    QVERIFY2(!partitions.isEmpty(), "partition_manager_panel.cpp could not be read");
+
+    QCOMPARE(advanced.count(QStringLiteral("if (!sak::startDetachedWindowsTool")), 1);
+    QVERIFY(advanced.contains(
+        QStringLiteral("sak::showWarningLogged(this, tr(\"Open Directory\"), failure);")));
+
+    QCOMPARE(files.count(QStringLiteral("if (!sak::startDetachedSystem32Tool")), 2);
+    QVERIFY(files.contains(
+        QStringLiteral("sak::showWarningLogged(this, tr(\"Edit in Notepad\"), failure);")));
+
+    QCOMPARE(partitions.count(QStringLiteral("if (!sak::startDetachedSystem32Tool")), 1);
+    QCOMPARE(partitions.count(QStringLiteral("if (!sak::startDetachedWindowsTool")), 1);
+    QCOMPARE(partitions.count(QStringLiteral("launchSystem32ToolOrWarn(")), 3);
+    QCOMPARE(partitions.count(QStringLiteral("launchWindowsToolOrWarn(")), 2);
+    QVERIFY(partitions.contains(QStringLiteral("Open Windows BitLocker")));
+    QVERIFY(partitions.contains(QStringLiteral("Open Windows Optimize Drives")));
+    QVERIFY(partitions.contains(QStringLiteral("Open File Location")));
+}
+
+void ProcessRunnerTests::guiTerminalLaunch_hasNoUserWritableFallback() {
+    const QString files =
+        readRepoSource(QStringLiteral("src/gui/file_management_explorer_panel.cpp"));
+    QVERIFY2(!files.isEmpty(), "file_management_explorer_panel.cpp could not be read");
+    QVERIFY2(!files.contains(QStringLiteral("Microsoft/WindowsApps/wt.exe")),
+             "Terminal launch still trusts a user-writable app-execution alias");
+    QVERIFY2(!files.contains(QStringLiteral("QProcess::startDetached")),
+             "Terminal launch still carries a panel-local process/fallback path");
+    const QRegularExpression trusted_launcher(
+        QStringLiteral(R"(startDetachedSystem32Tool\(\s*QStringLiteral\("cmd\.exe"\))"));
+    QVERIFY(trusted_launcher.match(files).hasMatch());
+}
+
+void ProcessRunnerTests::guiTerminalLaunch_failureIsSurfaced() {
+    const QString files =
+        readRepoSource(QStringLiteral("src/gui/file_management_explorer_panel.cpp"));
+    QVERIFY2(!files.isEmpty(), "file_management_explorer_panel.cpp could not be read");
+    const QRegularExpression checked_launcher(QStringLiteral(
+        R"(if\s*\(\s*!sak::startDetachedSystem32Tool\(\s*QStringLiteral\("cmd\.exe"\))"));
+    QVERIFY(checked_launcher.match(files).hasMatch());
+    QVERIFY(files.contains(QStringLiteral("Terminal launch failed: %1")));
+    QVERIFY(files.contains(QStringLiteral("Q_EMIT statusMessage(failure")));
+    QVERIFY(files.contains(
+        QStringLiteral("sak::showWarningLogged(this, tr(\"Open in Terminal\"), failure);")));
+}
+
+// The injector must not leak and must be a controllable OVERLAY, not a permanent break of
+// process execution. After the scoped guard ends, a REAL launch runs again; and an installed
+// injector that returns nullopt lets the real launch through (pass-through). This is the
+// non-vacuous half: without the disarm/pass-through paths these real launches would not run.
+void ProcessRunnerTests::processFaultInjector_scopeRestoresRealLaunch() {
+    {
+        sak::ScopedProcessFaultInjector guard(
+            [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+                sak::ProcessResult injected;
+                injected.exit_code = 99;
+                return injected;
+            });
+        QCOMPARE(sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000).exit_code, 99);
+    }
+    // Guard destroyed -> real launch restored.
+    const auto real = sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000);
+    QCOMPARE(real.exit_code, 0);
+    QVERIFY(real.succeeded());
+
+    // Nesting: the guard restores the PREVIOUS injector (process_runner.cpp:362-369), not
+    // merely "none". Every check above runs with an empty outer state, so a destructor that
+    // simply cleared the global would pass them all while silently disarming an enclosing
+    // guard -- the enclosing test's remaining launches would then spawn REAL processes.
+    {
+        sak::ScopedProcessFaultInjector outer(
+            [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+                sak::ProcessResult injected;
+                injected.exit_code = 11;
+                return injected;
+            });
+        QCOMPARE(sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000).exit_code, 11);
+        {
+            sak::ScopedProcessFaultInjector inner(
+                [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+                    sak::ProcessResult injected;
+                    injected.exit_code = 22;
+                    return injected;
+                });
+            QCOMPARE(sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000).exit_code, 22);
+        }
+        // inner gone -> outer is back, NOT "no injector" (which would give the real 0).
+        QCOMPARE(sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000).exit_code, 11);
+    }
+    QCOMPARE(sak::runProcess("cmd.exe", {"/C", "exit /b 0"}, 10'000).exit_code, 0);
+
+    // An armed injector that returns nullopt must let the real launch through.
+    sak::ScopedProcessFaultInjector passthrough(
+        [](const QString&, const QStringList&) -> std::optional<sak::ProcessResult> {
+            return std::nullopt;
+        });
+    const auto passed = sak::runProcess("cmd.exe", {"/C", "exit /b 5"}, 10'000);
+    QCOMPARE(passed.exit_code, 5);
+}
+
+// A Job whose cleanup cannot be proved -- here its accounting query fails, as it can under real
+// faults -- used to qFatal the whole application from inside a tool run. It must instead come back
+// as a failed result with the live process and its armed Job in custody, and a later retry that
+// can see the Job must still kill the child and prove the cleanup.
+void ProcessRunnerTests::unprovedCleanupIsReportedAndRetained() {
+    auto fail_query = std::make_shared<std::atomic_bool>(false);
+    auto api = sak::WindowsProcessJob::nativeApi();
+    const auto query = api.query_information;
+    api.query_information =
+        [fail_query,
+         query](HANDLE job, JOBOBJECTINFOCLASS kind, LPVOID info, DWORD size, LPDWORD returned) {
+            if (fail_query->load()) {
+                ::SetLastError(ERROR_ACCESS_DENIED);
+                return FALSE;
+            }
+            return query(job, kind, info, size, returned);
+        };
+    auto created = sak::WindowsProcessJob::createWithApi(std::move(api));
+    QVERIFY2(created.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(created)));
+    sak::ContainedProcessRun run{.process = std::make_unique<QProcess>(),
+                                 .job = std::move(*created)};
+    QVERIFY(run.job->installOn(*run.process).has_value());
+    run.process->start(sak::systemPowerShellPath(),
+                       {QStringLiteral("-NoProfile"),
+                        QStringLiteral("-NonInteractive"),
+                        QStringLiteral("-Command"),
+                        QStringLiteral("Start-Sleep -Seconds 30")});
+    const bool started = run.process->waitForStarted(10'000);
+    QVERIFY(run.job->completeLaunch(*run.process, started).has_value());
+    QVERIFY(started);
+    auto child = Generation::observe(run.process->processId());
+    QVERIFY2(child.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(child)));
+
+    const int custody_before = sak::ContainedProcessQuarantine::retainedCount();
+    sak::ProcessResult result;
+    result.exit_code = 0;
+    fail_query->store(true);
+    const std::optional<bool> settled = sak::settleContainedProcessRun(run, true, &result);
+    fail_query->store(false);
+
+    QVERIFY(!settled.has_value());
+    QVERIFY(!run.process && !run.job);
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY2(result.std_err.contains(
+                 QStringLiteral("Contained process cleanup could not be proved: Query Windows "
+                                "process Job accounting failed")),
+             qPrintable(result.std_err));
+    QCOMPARE(sak::ContainedProcessQuarantine::retainedCount(), custody_before + 1);
+    QVERIFY(sak::ContainedProcessQuarantine::retainedReasons().constLast().startsWith(
+        QStringLiteral("ProcessRunner could not prove Job cleanup: ")));
+    const auto alive = child->isAlive();
+    QVERIFY(alive.has_value() && *alive);
+
+    const auto released = sak::testfixtures::mcp::releaseCustodyTo(custody_before);
+    QVERIFY2(released.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(released)));
+    const auto stopped = child->waitForExit();
+    QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
+    QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
+}
+
+// The callers whose programs hand their work to a relaunched child: the native uninstaller and
+// Chocolatey install / uninstall / upgrade (and the offline installer) must ask for the family
+// wait, or the 1 s kill-and-fail comes back for exactly the programs it broke.
+void ProcessRunnerTests::installersAndUninstallersWaitForTheirFamily() {
+    const QString uninstall = readRepoSource(QStringLiteral("src/core/uninstall_worker.cpp"));
+    const qsizetype native =
+        uninstall.indexOf(QStringLiteral("bool UninstallWorker::runNativeUninstaller"));
+    QVERIFY(native >= 0);
+    const QString native_body =
+        uninstall.mid(native, uninstall.indexOf(QStringLiteral("\n}"), native) - native);
+    QVERIFY(native_body.contains(QStringLiteral("ChildProcessPolicy::WaitForJobEmpty")));
+    QVERIFY(native_body.contains(QStringLiteral("descendants_stopped")));
+    const QString choco = readRepoSource(QStringLiteral("src/core/chocolatey_manager.cpp"));
+    QCOMPARE(choco.count(QStringLiteral("packageFamilyOptions())")),
+             3);  // install, uninstall, upgrade
+    const QString offline =
+        readRepoSource(QStringLiteral("src/core/offline_deployment_worker.cpp"));
+    QVERIFY(offline.contains(QStringLiteral("request.options = packageFamilyOptions()")));
 }
 
 QTEST_GUILESS_MAIN(ProcessRunnerTests)

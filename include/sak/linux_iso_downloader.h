@@ -6,6 +6,8 @@
 #include "sak/linux_distro_catalog.h"
 
 #include <QCryptographicHash>
+#include <QFuture>
+#include <QList>
 #include <QObject>
 #include <QProcess>
 #include <QString>
@@ -13,6 +15,7 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 
 /**
  * @brief Orchestrator for downloading Linux ISO images
@@ -33,6 +36,8 @@
  * @see LinuxISODownloadDialog for the UI
  */
 class LinuxISODownloader : public QObject {
+    friend class LinuxISODownloaderTests;  // the checksum-name rule, without a real download
+
     Q_OBJECT
 
 public:
@@ -92,6 +97,53 @@ public:
      */
     Phase currentPhase() const { return m_phase; }
 
+    /// @brief True iff a checksum-verification result for operation-generation
+    ///        @p result_generation should still be applied: the downloader was
+    ///        not cancelled and no newer operation (@p current_generation) has
+    ///        begun. Guards against a stale background hash from a cancelled or
+    ///        superseded download acting on the current download's state. Pure;
+    ///        unit-testable.
+    [[nodiscard]] static bool shouldApplyVerifyResult(bool cancelled,
+                                                      quint64 result_generation,
+                                                      quint64 current_generation) {
+        return !cancelled && result_generation == current_generation;
+    }
+
+    /// @brief True iff @p token is exactly @p hex_length hexadecimal characters, i.e. it has
+    ///        the shape of a digest of the expected algorithm. A checksum source is not always
+    ///        a bare sums file -- some projects publish per-release digests inside a release
+    ///        note alongside prose -- so a token is only accepted as the digest when it looks
+    ///        like one. Without this an arbitrary word next to the ISO's name would be taken
+    ///        as the hash, verifying nothing. Pure; unit-testable.
+    [[nodiscard]] static bool isHexDigestOfLength(const QString& token, qsizetype hex_length);
+
+    /// @brief Remove a download at @p save_path and the .aria2 file aria2 keeps beside it to
+    ///        resume. False, with the file named in @p error, when one stays.
+    [[nodiscard]] static bool discardDownload(const QString& save_path, QString* error);
+
+    /// @brief The share of @p total that @p done is, for the progress bar: whole percent, but one
+    ///        decimal below 1%, where a whole percent read "0%" with 17.6 MB of a 6.07 GB ISO
+    ///        already down and the speed showing (review 2). Pure.
+    [[nodiscard]] static QString percentText(qint64 done, qint64 total);
+
+    /// @brief Algorithm name of a per-algorithm heading line such as "### SHA256SUMS:",
+    ///        uppercased ("SHA256"), or an empty string when @p line is not such a heading.
+    ///        A release note groups its digests under these headings, and a BLAKE3 digest is
+    ///        the same 64 hex characters as a SHA-256 one, so the heading is the only thing
+    ///        that distinguishes them. Pure; unit-testable.
+    [[nodiscard]] static QString checksumSectionAlgorithm(const QString& line);
+
+    /// @brief Digest carried by a BSD-style record line -- "SHA256 (file) = hash", as Fedora
+    ///        publishes -- or an empty string when @p line is not such a record, names an
+    ///        algorithm other than @p algorithm, names a file other than @p expectedFileName,
+    ///        or carries a token that is not a @p hex_length hex digest. The algorithm is
+    ///        named on the line, so it is followed exactly like a section heading: a SHA256
+    ///        record must never satisfy a SHA-512 configuration. Pure; unit-testable.
+    [[nodiscard]] static QString bsdRecordDigest(const QString& line,
+                                                 const QString& expectedFileName,
+                                                 const QString& algorithm,
+                                                 qsizetype hex_length);
+
 Q_SIGNALS:
     /**
      * @brief Emitted when the download phase changes
@@ -104,8 +156,9 @@ Q_SIGNALS:
      * @brief Emitted periodically with download progress
      * @param percent Overall progress percentage (0-100)
      * @param detail Detail text (e.g., "3.2 GB / 6.2 GB")
+     * @param percent_text What the bar shows, from percentText(); empty for "<percent>%"
      */
-    void progressUpdated(int percent, const QString& detail);
+    void progressUpdated(int percent, const QString& detail, const QString& percent_text = {});
 
     /**
      * @brief Emitted with current download speed
@@ -141,17 +194,60 @@ private Q_SLOTS:
     void onProgressPollTimer();
 
 private:
+    friend class LinuxISODownloaderTests;
+
     void setPhase(Phase phase, const QString& description);
     void startAria2cDownload(const QString& url, const QString& savePath, const QString& fileName);
     bool prepareAria2cDownload(const QString& url, const QString& fileName, QString* aria2Path);
     void resetAria2cProcess();
     static QString aria2cExitCodeMessage(int exit_code);
+
+    /// One aria2c progress readout: "[#c492f1 2146304B/6518974464B(0%) CN:1 DL:1062157B ...]".
+    struct Aria2cReadout {
+        qint64 downloaded_bytes{0};
+        qint64 total_bytes{0};  ///< 0 while aria2c does not know the size yet
+        qint64 bytes_per_second{0};
+    };
+    /// Parse one line of aria2c 1.37 console output; nullopt when it is not a readout.
+    [[nodiscard]] static std::optional<Aria2cReadout> parseAria2cReadout(const QString& line);
     QStringList buildAria2cArguments(const QString& url,
                                      const QString& outDir,
                                      const QString& outFile) const;
     void verifyChecksum();
-    void onChecksumReplyFinished(QNetworkReply* reply, QNetworkAccessManager* nam);
+    /// @brief Refuse a release whose integrity cannot be proven before it is written to
+    ///        removable media: a missing checksum URL/type leaves the ISO unverifiable, and a
+    ///        non-HTTPS checksum URL can be tampered with on the same leg as the artifact.
+    ///        Returns false and reports the failure when the download must not proceed.
+    bool requirePinnedChecksum(const QString& distroName);
+    /// @brief For a rolling-release distro (DistroInfo::rollingFilenamePattern set), fetch the
+    ///        pinned HTTPS SHA256SUMS and derive the current ISO filename before downloading.
+    ///        Fails closed (no download) on any fetch or parse failure (R5-G22-10).
+    void startRollingFilenameDiscovery();
+    void onRollingFilenameReplyFinished(QNetworkReply* reply,
+                                        QNetworkAccessManager* nam,
+                                        quint64 generation);
+    /// @brief Swap only the version-bearing last path segment of the download URL and save
+    ///        path to the discovered @p filename, keeping the pinned host/directory and the
+    ///        user's chosen folder. Keeps m_downloadUrl, m_savePath and m_expectedFileName
+    ///        consistent so the post-download checksum verify matches the right entry.
+    void applyDiscoveredFilename(const QString& filename);
+    void onChecksumReplyFinished(QNetworkReply* reply,
+                                 QNetworkAccessManager* nam,
+                                 quint64 generation);
+    /// @brief Launch the background file-hash + gen-tagged verify watcher.
+    void launchChecksumHash(QCryptographicHash::Algorithm algorithm, const QString& expectedHash);
     QString parseExpectedHash(const QString& checksumData, const QString& expectedFileName) const;
+    /// @brief The digest @p checksumData gives for the file upstream published, which is what is
+    ///        verified whatever the local copy was saved as.
+    [[nodiscard]] QString expectedHashFor(const QString& checksumData) const {
+        return parseExpectedHash(checksumData, m_expectedFileName);
+    }
+    /// @brief Hex-character count a digest of the configured checksum type must have.
+    [[nodiscard]] qsizetype expectedHashHexLength() const;
+    /// @brief Digest for @p expectedFileName carried by a single "hash filename" record line,
+    ///        or an empty string when the line carries no digest for that file.
+    [[nodiscard]] QString hashFromRecordLine(const QString& line,
+                                             const QString& expectedFileName) const;
     void onChecksumVerified(bool match, const QString& expected, const QString& actual);
     QString findAria2c() const;
     void cleanupPartialFiles();
@@ -168,7 +264,20 @@ private:
     QString m_checksumUrl;
     QString m_checksumType;
     QString m_expectedFileName;
+    // Non-empty only for a rolling-release distro whose current filename must be
+    // discovered from the checksum file before download (R5-G22-10).
+    QString m_rollingFilenamePattern;
+    QList<QNetworkReply*> m_pendingMetadataReplies;
     qint64 m_totalSize = 0;
     std::atomic<bool> m_cancelled{false};
+    // Bumped on every new download and on cancel; a background hash tags itself
+    // with the generation it started under so a stale result is discarded.
+    std::atomic<quint64> m_operationGeneration{0};
+    QFuture<QString>
+        m_hashFuture;  // background checksum hash; joined in the dtor (see cancel note)
+    // Cancel flag for the current background hash task. Captured by value into the task so
+    // the task never dereferences `this`; flipped by cancel() and superseded on relaunch so
+    // an overlapping/stale hash cannot use-after-free or read revived state.
+    std::shared_ptr<std::atomic<bool>> m_hashCancel;
     LinuxDistroCatalog::SourceType m_sourceType = LinuxDistroCatalog::SourceType::DirectURL;
 };

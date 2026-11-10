@@ -6,9 +6,9 @@
 
 #include "sak/partition_manager_types.h"
 
-#include <QUuid>
+#include "sak/format_utils.h"
 
-#include <array>
+#include <QUuid>
 
 namespace sak {
 
@@ -23,7 +23,9 @@ QStringList corePartitionOperationNames() {
         QStringLiteral("Set Drive Letter"),
         QStringLiteral("Set Partition Label"),
         QStringLiteral("Check File System"),
-        QStringLiteral("Surface Test"),
+        // Display names say what the operation does; the enum values (the stable IDs) keep their
+        // historical names. SurfaceTest scans file systems -- it never read the disk surface.
+        QStringLiteral("Scan File Systems"),
         QStringLiteral("Partition Recovery Scan"),
         QStringLiteral("Restore Recovered Partition"),
         QStringLiteral("Hide/Unhide Partition"),
@@ -50,7 +52,7 @@ QStringList advancedPartitionOperationNames() {
         QStringLiteral("Restore Image"),
         QStringLiteral("Migrate OS"),
         QStringLiteral("Repair Boot"),
-        QStringLiteral("Optimize SSD"),
+        QStringLiteral("TRIM SSD Volume"),
         QStringLiteral("Defrag Volume"),
         QStringLiteral("BitLocker Unlock"),
         QStringLiteral("BitLocker Suspend"),
@@ -60,7 +62,7 @@ QStringList advancedPartitionOperationNames() {
         QStringLiteral("Wipe Free Space"),
         QStringLiteral("Move Partition"),
         QStringLiteral("Convert Primary/Logical"),
-        QStringLiteral("Change Volume Serial Number"),
+        QStringLiteral("Reformat for New Volume Serial"),
         QStringLiteral("Convert Dynamic Disk to Basic"),
     };
 }
@@ -168,27 +170,7 @@ QString makePartitionOperationId() {
 }
 
 QString formatPartitionBytes(uint64_t bytes) {
-    constexpr double kUnit = 1024.0;
-    constexpr uint64_t kKiB = 1024ULL;
-    constexpr uint64_t kMiB = kKiB * 1024ULL;
-    constexpr uint64_t kGiB = kMiB * 1024ULL;
-    constexpr uint64_t kTiB = kGiB * 1024ULL;
-
-    if (bytes >= kTiB) {
-        return QStringLiteral("%1 TB").arg(
-            static_cast<double>(bytes) / kTiB, 0, 'f', kPartitionByteDisplayPrecision);
-    }
-    if (bytes >= kGiB) {
-        return QStringLiteral("%1 GB").arg(
-            static_cast<double>(bytes) / kGiB, 0, 'f', kPartitionByteDisplayPrecision);
-    }
-    if (bytes >= kMiB) {
-        return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / kMiB, 0, 'f', 1);
-    }
-    if (bytes >= kKiB) {
-        return QStringLiteral("%1 KB").arg(static_cast<double>(bytes) / kUnit, 0, 'f', 1);
-    }
-    return QStringLiteral("%1 bytes").arg(bytes);
+    return formatBytes(bytes);
 }
 
 }  // namespace sak

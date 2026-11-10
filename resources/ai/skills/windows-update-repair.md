@@ -1,3 +1,8 @@
+---
+id: windows-update-repair
+description: Diagnose Windows Update (services, pending reboot, CBS/DISM, error code) before low-risk-first repair.
+when_to_use: Windows Update failures; update error codes; stuck or failing updates
+---
 # Windows Update Repair Skill
 
 Diagnose before repair:

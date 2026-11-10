@@ -5,6 +5,9 @@
 
 #include <QJsonArray>
 
+#include <algorithm>
+#include <utility>  // std::move -- used directly below, so included directly
+
 namespace sak::ai {
 
 CancellationToken::CancellationToken(std::shared_ptr<State> state) : m_state(std::move(state)) {}
@@ -29,13 +32,19 @@ CancellationToken CancellationToken::createChild(const QString& id) const {
     }
 
     auto child = std::make_shared<State>();
-    child->id =
-        id.trimmed().isEmpty()
-            ? QStringLiteral("%1_child_%2").arg(m_state->id).arg(m_state->children.size() + 1)
-            : id.trimmed();
     child->parent = m_state;
-    if (m_state->cancelled) {
-        child->cancelled = true;
+    const std::lock_guard<std::mutex> lock(m_state->mutex);
+    // Drop children whose tokens are gone before appending. Without this a long-lived root that
+    // creates a child per operation grows its vector forever, and every cancel(), childCount()
+    // and toJson() walks every child it has ever had.
+    m_state->children.removeIf([](const auto& child_ref) { return child_ref.expired(); });
+    ++m_state->next_child_index;
+    child->id = id.trimmed().isEmpty()
+                    ? QStringLiteral("%1_child_%2").arg(m_state->id).arg(m_state->next_child_index)
+                    : id.trimmed();
+    if (m_state->cancelled.load(std::memory_order_relaxed)) {
+        // The child is not shared yet, so its fields need no synchronization here.
+        child->cancelled.store(true, std::memory_order_relaxed);
         child->reason = m_state->reason;
         child->cancelled_at_utc = m_state->cancelled_at_utc;
     }
@@ -48,13 +57,10 @@ int CancellationToken::childCount() const {
         return 0;
     }
 
-    int count = 0;
-    for (const auto& child : m_state->children) {
-        if (!child.expired()) {
-            ++count;
-        }
-    }
-    return count;
+    const std::lock_guard<std::mutex> lock(m_state->mutex);
+    return static_cast<int>(std::ranges::count_if(m_state->children, [](const auto& child) {
+        return !child.expired();
+    }));
 }
 
 void CancellationToken::cancel(const QString& reason) const {
@@ -67,15 +73,23 @@ void CancellationToken::cancel(const QString& reason) const {
 }
 
 bool CancellationToken::isCancellationRequested() const noexcept {
-    return m_state && m_state->cancelled;
+    return m_state && m_state->cancelled.load(std::memory_order_acquire);
 }
 
 QString CancellationToken::cancelReason() const {
-    return m_state ? m_state->reason : QString();
+    if (!m_state) {
+        return QString();
+    }
+    const std::lock_guard<std::mutex> lock(m_state->mutex);
+    return m_state->reason;
 }
 
 QDateTime CancellationToken::cancelledAtUtc() const {
-    return m_state ? m_state->cancelled_at_utc : QDateTime();
+    if (!m_state) {
+        return QDateTime();
+    }
+    const std::lock_guard<std::mutex> lock(m_state->mutex);
+    return m_state->cancelled_at_utc;
 }
 
 QJsonObject CancellationToken::toJson() const {
@@ -85,18 +99,26 @@ QJsonObject CancellationToken::toJson() const {
         return obj;
     }
 
-    obj[QStringLiteral("valid")] = true;
-    obj[QStringLiteral("id")] = m_state->id;
-    obj[QStringLiteral("cancelled")] = m_state->cancelled;
-    obj[QStringLiteral("reason")] = m_state->reason;
-    obj[QStringLiteral("cancelled_at")] = m_state->cancelled_at_utc.toString(Qt::ISODateWithMs);
+    QVector<std::weak_ptr<State>> child_snapshot;
+    {
+        const std::lock_guard<std::mutex> lock(m_state->mutex);
+        obj[QStringLiteral("valid")] = true;
+        obj[QStringLiteral("id")] = m_state->id;
+        obj[QStringLiteral("cancelled")] = m_state->cancelled.load(std::memory_order_relaxed);
+        obj[QStringLiteral("reason")] = m_state->reason;
+        obj[QStringLiteral("cancelled_at")] = m_state->cancelled_at_utc.toString(Qt::ISODateWithMs);
+        child_snapshot = m_state->children;
+    }
 
+    // Read each child under its OWN lock (never two locks at once) to avoid deadlock.
     QJsonArray children;
-    for (const auto& weak_child : m_state->children) {
+    for (const auto& weak_child : child_snapshot) {
         if (const auto child = weak_child.lock()) {
+            const std::lock_guard<std::mutex> child_lock(child->mutex);
             QJsonObject child_json;
             child_json[QStringLiteral("id")] = child->id;
-            child_json[QStringLiteral("cancelled")] = child->cancelled;
+            child_json[QStringLiteral("cancelled")] =
+                child->cancelled.load(std::memory_order_relaxed);
             child_json[QStringLiteral("reason")] = child->reason;
             children.append(child_json);
         }
@@ -108,15 +130,25 @@ QJsonObject CancellationToken::toJson() const {
 void CancellationToken::cancelState(const std::shared_ptr<State>& state,
                                     const QString& reason,
                                     const QDateTime& when_utc) {
-    if (!state || state->cancelled) {
+    if (!state) {
         return;
     }
 
-    state->cancelled = true;
-    state->reason = reason;
-    state->cancelled_at_utc = when_utc;
+    QVector<std::weak_ptr<State>> children;
+    {
+        const std::lock_guard<std::mutex> lock(state->mutex);
+        if (state->cancelled.load(std::memory_order_relaxed)) {
+            return;
+        }
+        state->reason = reason;
+        state->cancelled_at_utc = when_utc;
+        // Publish reason/time (written above, under the lock) before flagging cancelled,
+        // so a lock-free reader that observes cancelled==true then locks to read them.
+        state->cancelled.store(true, std::memory_order_release);
+        children = state->children;
+    }
 
-    const auto children = state->children;
+    // Recurse without holding this node's lock so only one mutex is ever held at a time.
     for (const auto& weak_child : children) {
         cancelState(weak_child.lock(), reason, when_utc);
     }

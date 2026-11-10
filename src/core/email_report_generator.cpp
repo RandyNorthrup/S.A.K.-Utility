@@ -7,6 +7,7 @@
 #include "sak/email_report_generator.h"
 
 #include "sak/email_constants.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/report_style_constants.h"
 
@@ -18,25 +19,30 @@
 
 namespace {
 
-constexpr int kByteSizePrecisionSmall = 1;
-constexpr int kByteSizePrecisionLarge = 2;
 constexpr int kFolderTreeIndentSpacesPerLevel = 2;
+// Bound the folder-tree recursion (HTML and JSON alike) so a crafted or corrupt PST/OST
+// with pathologically deep nesting cannot exhaust the stack, and surface the cut instead
+// of silently dropping the deeper folders.
+constexpr int kMaxFolderTreeDepth = 64;
 
-/// Format bytes into a human-readable string
+/// Quote a value as one RFC 4180 CSV cell: neutralize spreadsheet formula
+/// injection (a leading = + - @ or tab/CR is prefixed with a single quote) and
+/// double any embedded quotes. The file path was previously interpolated raw into
+/// a "%1" slot, so a value containing a quote broke the row (B7-34).
+QString csvCell(const QString& value) {
+    QString out = value;
+    static const QString kFormulaLeads = QStringLiteral("=+-@\t\r\n");
+    if (!out.isEmpty() && kFormulaLeads.contains(out.at(0))) {
+        out.prepend(QLatin1Char('\''));
+    }
+    out.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+    return QLatin1Char('"') + out + QLatin1Char('"');
+}
+
+/// Format bytes into a human-readable string. The shared compact style: this file carried one
+/// of five copies of it.
 QString formatBytes(qint64 bytes) {
-    if (bytes < sak::kBytesPerKB) {
-        return QString::number(bytes) + QStringLiteral(" B");
-    }
-    if (bytes < sak::kBytesPerMB) {
-        return QString::number(bytes / sak::kBytesPerKBf, 'f', kByteSizePrecisionSmall) +
-               QStringLiteral(" KB");
-    }
-    if (bytes < sak::kBytesPerGB) {
-        return QString::number(bytes / sak::kBytesPerMBf, 'f', kByteSizePrecisionSmall) +
-               QStringLiteral(" MB");
-    }
-    return QString::number(bytes / sak::kBytesPerGBf, 'f', kByteSizePrecisionLarge) +
-           QStringLiteral(" GB");
+    return sak::formatBytes(bytes);
 }
 
 /// Build an HTML table row
@@ -45,38 +51,59 @@ QString tableRow(const QString& label, const QString& value) {
         .arg(label.toHtmlEscaped(), value.toHtmlEscaped());
 }
 
-/// Recursively render folder tree as HTML
-void renderFolderTree(const QVector<sak::PstFolder>& folders, QString& html, int indent_level) {
-    constexpr int kMaxIndent = 20;
-    if (indent_level > kMaxIndent) {
+/// Recursively render folder tree as HTML.
+///
+/// Takes the QTextStream, like every other render* helper. It used to take the underlying
+/// QString by reference and append to it directly while generateHtml held a QTextStream
+/// bound to that same string. QTextStream buffers, so those direct appends landed at
+/// whatever offset the string happened to have at that moment rather than after the
+/// stream's pending output: the folder structure could be emitted ahead of the section
+/// heading that introduces it, and any later flush wrote past it.
+void renderFolderTree(QTextStream& stream,
+                      const QVector<sak::PstFolder>& folders,
+                      int indent_level) {
+    if (indent_level > kMaxFolderTreeDepth) {
+        // Fail closed: truncate a pathologically deep tree with a VISIBLE marker and
+        // bound the recursion, rather than silently dropping the deeper folders.
+        stream << QStringLiteral("<li><em>(folder tree truncated at depth %1)</em></li>\n")
+                      .arg(kMaxFolderTreeDepth);
         return;
     }
 
     for (const auto& folder : folders) {
-        QString indent(indent_level * kFolderTreeIndentSpacesPerLevel, QLatin1Char(' '));
-        html += QStringLiteral("<li>%1 <b>%2</b> (%3 items)")
-                    .arg(indent,
-                         folder.display_name.toHtmlEscaped(),
-                         QString::number(folder.content_count));
+        const QString indent(indent_level * kFolderTreeIndentSpacesPerLevel, QLatin1Char(' '));
+        stream << QStringLiteral("<li>%1 <b>%2</b> (%3 items)")
+                      .arg(indent,
+                           folder.display_name.toHtmlEscaped(),
+                           QString::number(folder.content_count));
         if (!folder.children.isEmpty()) {
-            html += QStringLiteral("<ul>\n");
-            renderFolderTree(folder.children, html, indent_level + 1);
-            html += QStringLiteral("</ul>\n");
+            stream << QStringLiteral("<ul>\n");
+            renderFolderTree(stream, folder.children, indent_level + 1);
+            stream << QStringLiteral("</ul>\n");
         }
-        html += QStringLiteral("</li>\n");
+        stream << QStringLiteral("</li>\n");
     }
 }
 
 /// Render folder tree as JSON
-QJsonArray folderTreeToJson(const QVector<sak::PstFolder>& folders) {
+QJsonArray folderTreeToJson(const QVector<sak::PstFolder>& folders, int depth = 0) {
     QJsonArray arr;
+    if (depth > kMaxFolderTreeDepth) {
+        // Fail closed: bound the recursion on a crafted/corrupt deeply-nested tree and
+        // surface the truncation rather than silently dropping the deeper folders.
+        QJsonObject truncated;
+        truncated[QStringLiteral("truncated")] = true;
+        truncated[QStringLiteral("reason")] = QStringLiteral("folder tree exceeded max depth");
+        arr.append(truncated);
+        return arr;
+    }
     for (const auto& folder : folders) {
         QJsonObject obj;
         obj[QStringLiteral("name")] = folder.display_name;
         obj[QStringLiteral("item_count")] = folder.content_count;
         obj[QStringLiteral("unread_count")] = folder.unread_count;
         if (!folder.children.isEmpty()) {
-            obj[QStringLiteral("children")] = folderTreeToJson(folder.children);
+            obj[QStringLiteral("children")] = folderTreeToJson(folder.children, depth + 1);
         }
         arr.append(obj);
     }
@@ -88,9 +115,10 @@ QJsonObject reportMetadataToJson(const EmailReportGenerator::ReportData& data) {
     metadata[QStringLiteral("technician")] = data.technician_name;
     metadata[QStringLiteral("customer")] = data.customer_name;
     metadata[QStringLiteral("ticket_number")] = data.ticket_number;
+    // Fail closed on a missing/invalid date: emit an empty value rather than fabricate
+    // the current time (which would also disagree with the separately-generated HTML).
     metadata[QStringLiteral("report_date")] =
-        data.report_date.isValid() ? data.report_date.toString(Qt::ISODate)
-                                   : QDateTime::currentDateTime().toString(Qt::ISODate);
+        data.report_date.isValid() ? data.report_date.toString(Qt::ISODate) : QString();
     metadata[QStringLiteral("tool")] = QStringLiteral("SAK Utility");
     return metadata;
 }
@@ -185,7 +213,7 @@ QString EmailReportGenerator::generateHtml(const ReportData& data) {
     // Folder Tree
     if (!data.folder_tree.isEmpty()) {
         stream << QStringLiteral("<h2>Folder Structure</h2>\n<ul>\n");
-        renderFolderTree(data.folder_tree, html, 0);
+        renderFolderTree(stream, data.folder_tree, 0);
         stream << QStringLiteral("</ul>\n");
     }
 
@@ -240,11 +268,13 @@ void EmailReportGenerator::renderMetadataSection(QTextStream& stream, const Repo
     if (!data.ticket_number.isEmpty()) {
         stream << tableRow(QStringLiteral("Ticket #"), data.ticket_number);
     }
-    QLocale locale;
+    const QLocale locale;
+    // Fail closed on a missing/invalid date: label it Unknown rather than fabricate the
+    // current time (which would also disagree with the separately-generated JSON).
     stream << tableRow(QStringLiteral("Report Date"),
                        data.report_date.isValid()
                            ? locale.toString(data.report_date, QLocale::LongFormat)
-                           : locale.toString(QDateTime::currentDateTime(), QLocale::LongFormat));
+                           : QStringLiteral("Unknown"));
     stream << QStringLiteral("</table>\n");
 }
 
@@ -285,8 +315,11 @@ void EmailReportGenerator::renderFileInfoSection(QTextStream& stream, const Repo
 }
 
 void EmailReportGenerator::renderStatisticsSection(QTextStream& stream, const ReportData& data) {
-    int total_items = data.total_emails + data.total_contacts + data.total_calendar_items +
-                      data.total_tasks + data.total_notes;
+    // Accumulate in 64-bit: these int counters come from a parsed (possibly hostile)
+    // PST/OST, and summing them as int is undefined on overflow -- which could also flip
+    // the sign and wrongly suppress the whole section through the <= 0 gate.
+    const qint64 total_items = static_cast<qint64>(data.total_emails) + data.total_contacts +
+                               data.total_calendar_items + data.total_tasks + data.total_notes;
     if (total_items <= 0) {
         return;
     }
@@ -294,7 +327,7 @@ void EmailReportGenerator::renderStatisticsSection(QTextStream& stream, const Re
         "<h2>Item Statistics</h2>\n"
         "<div class=\"stats-grid\">\n");
 
-    auto statCard = [&stream](const QString& value, const QString& label) {
+    auto stat_card = [&stream](const QString& value, const QString& label) {
         stream << QStringLiteral(
                       "<div class=\"stat-card\">"
                       "<div class=\"stat-value\">%1</div>"
@@ -303,12 +336,12 @@ void EmailReportGenerator::renderStatisticsSection(QTextStream& stream, const Re
                       .arg(value, label);
     };
 
-    statCard(QString::number(data.total_emails), QStringLiteral("Emails"));
-    statCard(QString::number(data.total_contacts), QStringLiteral("Contacts"));
-    statCard(QString::number(data.total_calendar_items), QStringLiteral("Calendar Items"));
-    statCard(QString::number(data.total_tasks), QStringLiteral("Tasks"));
-    statCard(QString::number(data.total_notes), QStringLiteral("Notes"));
-    statCard(QString::number(data.total_attachments), QStringLiteral("Attachments"));
+    stat_card(QString::number(data.total_emails), QStringLiteral("Emails"));
+    stat_card(QString::number(data.total_contacts), QStringLiteral("Contacts"));
+    stat_card(QString::number(data.total_calendar_items), QStringLiteral("Calendar Items"));
+    stat_card(QString::number(data.total_tasks), QStringLiteral("Tasks"));
+    stat_card(QString::number(data.total_notes), QStringLiteral("Notes"));
+    stat_card(QString::number(data.total_attachments), QStringLiteral("Attachments"));
 
     stream << QStringLiteral("</div>\n");
 }
@@ -351,9 +384,9 @@ QString EmailReportGenerator::generateCsv(const ReportData& data) {
     // Summary section
     stream << QStringLiteral("\"Email Inspection Report Summary\"\r\n\r\n");
     stream << QStringLiteral("\"Metric\",\"Value\"\r\n");
-    stream << QStringLiteral("\"File\",\"%1\"\r\n").arg(data.file_info.file_path);
-    stream
-        << QStringLiteral("\"Size\",\"%1\"\r\n").arg(formatBytes(data.file_info.file_size_bytes));
+    stream << QStringLiteral("\"File\",%1\r\n").arg(csvCell(data.file_info.file_path));
+    stream << QStringLiteral("\"Size\",%1\r\n")
+                  .arg(csvCell(formatBytes(data.file_info.file_size_bytes)));
     stream << QStringLiteral("\"Total Emails\",%1\r\n").arg(data.total_emails);
     stream << QStringLiteral("\"Total Contacts\",%1\r\n").arg(data.total_contacts);
     stream << QStringLiteral("\"Total Calendar Items\",%1\r\n").arg(data.total_calendar_items);

@@ -67,8 +67,13 @@ $logRoot = Join-Path $SharedRoot "artifacts\ai-assistant-vm-smoke"
 New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
 $launcherLog = Join-Path $logRoot ("launch-ai-assistant-vm-smoke-{0}.log" -f (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss"))
 
+$powershellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+if (-not (Test-Path -LiteralPath $powershellExe -PathType Leaf)) {
+    throw "Windows PowerShell not found at expected path: $powershellExe"
+}
+
 $process = Start-Process `
-    -FilePath "powershell.exe" `
+    -FilePath $powershellExe `
     -ArgumentList $argumentList `
     -WorkingDirectory $StageRoot `
     -RedirectStandardOutput "$launcherLog.out.txt" `

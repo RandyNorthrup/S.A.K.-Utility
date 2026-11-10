@@ -55,6 +55,11 @@ public:
     void setNotes(const QString& notes);
     void setIncludedSections(const QSet<Section>& sections);
 
+    /// @brief Sections that were attempted but produced no data (failed / not run).
+    ///        These render an explicit "not run" marker instead of being omitted, so a
+    ///        diagnostic that ran and failed is not silently absent from the report.
+    void setNotRunSections(const QSet<Section>& sections);
+
     void setAdapterData(const QVector<NetworkAdapterInfo>& adapters);
     void setPingData(const PingResult& result);
     void setTracerouteData(const TracerouteResult& result);
@@ -89,6 +94,7 @@ private:
     QString m_ticketNumber;
     QString m_notes;
     QSet<Section> m_sections;
+    QSet<Section> m_notRunSections;
 
     QVector<NetworkAdapterInfo> m_adapters;
     PingResult m_pingResult;
@@ -115,6 +121,7 @@ private:
     [[nodiscard]] QString buildFirewallSection() const;
     [[nodiscard]] QString buildConnectionSection() const;
     [[nodiscard]] QString buildShareSection() const;
+    [[nodiscard]] QString buildNotRunSection(const QString& title) const;
     [[nodiscard]] QString buildHtmlFooter() const;
 
     // -- JSON section builders --

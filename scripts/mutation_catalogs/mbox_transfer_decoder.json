@@ -1,0 +1,80 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_fuzz_mbox_transfer_decoder",
+  "ctest_regex": "^test_fuzz_mbox_transfer_decoder$",
+  "mutants": [
+    {
+      "id": "qp-nibble-shift-4-to-3",
+      "file": "include/sak/mbox_transfer_decoder.h",
+      "find": "kQuotedPrintableNibbleShift = 4",
+      "replace": "kQuotedPrintableNibbleShift = 3",
+      "expect": "killed",
+      "why": "high nibble must shift by 4; a wrong shift decodes every =XX byte to the wrong value"
+    },
+    {
+      "id": "qp-first-hex-offset-1-to-2",
+      "file": "include/sak/mbox_transfer_decoder.h",
+      "find": "kQuotedPrintableFirstHexOffset = 1",
+      "replace": "kQuotedPrintableFirstHexOffset = 2",
+      "expect": "killed",
+      "why": "the first hex digit sits at +1; reading +2 decodes the wrong nibble"
+    },
+    {
+      "id": "qp-second-hex-offset-2-to-1",
+      "file": "include/sak/mbox_transfer_decoder.h",
+      "find": "kQuotedPrintableSecondHexOffset = 2",
+      "replace": "kQuotedPrintableSecondHexOffset = 1",
+      "expect": "killed",
+      "why": "the second hex digit sits at +2; reading +1 decodes the wrong nibble"
+    },
+    {
+      "id": "qp-shift-direction-left-to-right",
+      "file": "include/sak/mbox_transfer_decoder.h",
+      "find": "(val1 << kQuotedPrintableNibbleShift)",
+      "replace": "(val1 >> kQuotedPrintableNibbleShift)",
+      "expect": "killed",
+      "why": "shifting the high nibble right instead of left collapses it to zero, corrupting every decoded byte"
+    },
+    {
+      "id": "qp-softbreak-cr-requires-lf",
+      "file": "include/sak/mbox_transfer_decoder.h",
+      "find": "hex1 == '\\r' && hex2 == '\\n'",
+      "replace": "hex1 == '\\r' || hex2 == '\\n'",
+      "expect": "killed",
+      "why": "a bare CR after = must skip only the CR (advance 1); treating CR-or-LF as CRLF over-consumes the following byte"
+    },
+    {
+      "id": "b64-drop-abort-flag",
+      "file": "include/sak/mbox_transfer_decoder.h",
+      "find": " | QByteArray::AbortOnBase64DecodingErrors",
+      "replace": "",
+      "expect": "killed",
+      "why": "SECURITY: without AbortOnBase64DecodingErrors Qt silently yields a partial decode for malformed base64, so a truncated attacker body is handed onward as if complete instead of failing closed"
+    },
+    {
+      "id": "b64-fail-open-return-true",
+      "file": "include/sak/mbox_transfer_decoder.h",
+      "find": "return {{}, false};",
+      "replace": "return {{}, true};",
+      "expect": "killed",
+      "why": "SECURITY: a strict-base64 decode failure must report ok==false; returning ok==true lets the caller treat a failed decode as a valid empty body"
+    },
+    {
+      "id": "b64-encoding-match-case-sensitive",
+      "file": "include/sak/mbox_transfer_decoder.h",
+      "find": "QLatin1String(\"base64\"), Qt::CaseInsensitive",
+      "replace": "QLatin1String(\"base64\"), Qt::CaseSensitive",
+      "expect": "killed",
+      "why": "Content-Transfer-Encoding tokens are case-insensitive per RFC 2045; a case-sensitive match sends a 'BASE64' part through undecoded"
+    },
+    {
+      "id": "qp-byte-assembly-or-to-plus",
+      "file": "include/sak/mbox_transfer_decoder.h",
+      "find": "<< kQuotedPrintableNibbleShift) | val2",
+      "replace": "<< kQuotedPrintableNibbleShift) + val2",
+      "expect": "equivalent",
+      "why": "val1 is shifted left by 4 so its low nibble is zero, and val2 is a single hex digit (0..15); OR and ADD produce the identical byte for every input, so no test can (or should) distinguish them"
+    }
+  ]
+}

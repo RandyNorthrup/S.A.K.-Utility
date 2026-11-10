@@ -6,40 +6,105 @@
 
 #include "sak/organizer_worker.h"
 
+#include "sak/app_organizer_helpers.h"
+#include "sak/format_utils.h"
 #include "sak/input_validator.h"
 #include "sak/logger.h"
+#include "sak/path_utils.h"
 
 #include <QFile>
 #include <QtGlobal>
 #include <QVector>
 
 #include <algorithm>
+#include <tuple>
 
 namespace {
 constexpr qsizetype kInitialFileReserveCount = 256;
+
+// The three policies handleCollision() actually implements. Anything else is a malformed
+// configuration: coercing it into the "rename" default would silently apply a policy the caller
+// never asked for (an "overwite" typo would quietly rename instead of overwriting).
+bool isKnownCollisionStrategy(const QString& strategy) {
+    return strategy == QLatin1String("rename") || strategy == QLatin1String("skip") ||
+           strategy == QLatin1String("overwrite");
 }
 
-OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
-    : WorkerBase(parent), m_config(config) {
-    Q_ASSERT_X(!config.target_directory.isEmpty(),
-               "OrganizerWorker",
-               "target_directory must not be empty");
+// Fail closed on a configuration that cannot be applied as asked, BEFORE anything is scanned or
+// moved. Each of these was previously coerced into a working default: an unknown collision
+// strategy became "rename"; a category name became a path component that std::filesystem's
+// operator/ resolves OUTSIDE the target (an absolute name REPLACES the target, ".." walks out of
+// it, an empty one collapses the destination onto the source and renames the file in place); an
+// empty mapping ran to an empty "success"; and a negative preview cap silently meant "unlimited".
+// The AI organize/preview ops screen a model-supplied mapping the same way (app_organizer_helpers
+// .h) -- this is the independent worker-side layer that covers every other caller too.
+std::expected<void, sak::error_code> validateOrganizerConfig(
+    const OrganizerWorker::Config& config) {
+    if (config.category_mapping.isEmpty()) {
+        sak::logError("Organizer refused: the category mapping is empty");
+        return std::unexpected(sak::error_code::invalid_configuration);
+    }
+    for (auto it = config.category_mapping.begin(); it != config.category_mapping.end(); ++it) {
+        if (it.key().isEmpty() || !sak::isSafeCategoryName(it.key())) {
+            sak::logError("Organizer refused: category '{}' is not a valid subfolder name",
+                          it.key().toStdString());
+            return std::unexpected(sak::error_code::invalid_configuration);
+        }
+    }
+    if (!isKnownCollisionStrategy(config.collision_strategy)) {
+        sak::logError("Organizer refused: unknown collision strategy '{}'",
+                      config.collision_strategy.toStdString());
+        return std::unexpected(sak::error_code::invalid_configuration);
+    }
+    if (config.max_preview_files < 0) {
+        sak::logError("Organizer refused: negative preview cap {}", config.max_preview_files);
+        return std::unexpected(sak::error_code::invalid_configuration);
+    }
+    return {};
 }
 
-auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
-    sak::logInfo("Starting directory organization: {}", m_config.target_directory.toStdString());
-
-    // Validate target directory path
+// Decide whether the target directory can serve THIS run. A preview is a pure dry run that writes
+// NOTHING, so it must not require write access -- otherwise a read-only inspection fails on
+// directories the user can fully read (notably folders carrying FILE_ATTRIBUTE_READONLY, which
+// Windows sets on many ordinary user folders and does not actually enforce for directories). An
+// apply still requires write permission.
+std::expected<void, sak::error_code> validateTargetDirectory(
+    const OrganizerWorker::Config& config) {
     sak::path_validation_config dir_cfg;
     dir_cfg.must_exist = true;
     dir_cfg.must_be_directory = true;
     dir_cfg.check_read_permission = true;
-    dir_cfg.check_write_permission = true;
+    dir_cfg.check_write_permission = !config.preview_mode;
     auto dir_result = sak::input_validator::validatePath(
-        std::filesystem::path(m_config.target_directory.toStdString()), dir_cfg);
+        std::filesystem::path(config.target_directory.toStdWString()), dir_cfg);
     if (!dir_result) {
         sak::logError("Target directory validation failed: {}", dir_result.error_message);
         return std::unexpected(sak::error_code::invalid_path);
+    }
+    return {};
+}
+}  // namespace
+
+// An empty target_directory is not asserted here: execute() validates the path (must_exist +
+// must_be_directory) and fails the run with invalid_path, which is the contract.
+OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
+    : WorkerBase(parent), m_config(config) {}
+
+auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
+    sak::logInfo("Starting directory organization: {}", m_config.target_directory.toStdString());
+    m_moved_count = 0;
+    m_failed_moves.clear();
+    m_plan_truncated = false;
+
+    // Refuse a malformed configuration before touching the filesystem (see
+    // validateOrganizerConfig): every field it screens used to fall back to a working default.
+    if (const auto config_ok = validateOrganizerConfig(m_config); !config_ok) {
+        return std::unexpected(config_ok.error());
+    }
+
+    // An apply needs a writable target; a preview deliberately does not.
+    if (const auto dir_ok = validateTargetDirectory(m_config); !dir_ok) {
+        return std::unexpected(dir_ok.error());
     }
 
     // Scan directory for files
@@ -71,14 +136,14 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
 
         Q_EMIT fileProgress(static_cast<int>(i + 1),
                             static_cast<int>(files.size()),
-                            QString::fromStdString(file.string()));
+                            QString::fromStdWString(file.wstring()));
     }
 
     sak::logInfo("Planned {} move operations", m_planned_operations.size());
 
     // If preview mode, emit results and exit
     if (m_config.preview_mode) {
-        QString summary = generatePreviewSummary();
+        const QString summary = generatePreviewSummary();
         Q_EMIT previewResults(summary, static_cast<int>(m_planned_operations.size()));
         sak::logInfo("Preview mode complete");
         return {};
@@ -96,17 +161,21 @@ auto OrganizerWorker::executePlannedMoves() -> std::expected<void, sak::error_co
         }
 
         const auto& operation = m_planned_operations[i];
-        auto result = executeMove(operation);
-        if (!result) {
-            sak::logError("Failed to move file: {}", operation.source.string());
-            return result;
-        }
+        // A file another program has open must not stop the rest. It stays where it is, and the
+        // run reports it by name when everything else is done.
+        std::ignore = executeMove(operation);
 
         Q_EMIT fileProgress(static_cast<int>(i + 1),
                             static_cast<int>(m_planned_operations.size()),
-                            QString::fromStdString(operation.source.string()));
+                            QString::fromStdWString(operation.source.wstring()));
     }
 
+    if (!m_failed_moves.isEmpty()) {
+        const QString failed =
+            sak::countOf(m_failed_moves.size(), QStringLiteral("file"), QStringLiteral("files"));
+        sak::logError("Organizer could not move {}", failed.toStdString());
+        return std::unexpected(sak::error_code::write_error);
+    }
     sak::logInfo("Directory organization complete");
     return {};
 }
@@ -114,15 +183,15 @@ auto OrganizerWorker::executePlannedMoves() -> std::expected<void, sak::error_co
 auto OrganizerWorker::scanDirectory()
     -> std::expected<std::vector<std::filesystem::path>, sak::error_code> {
     std::vector<std::filesystem::path> files;
-    std::filesystem::path target_path(m_config.target_directory.toStdString());
+    const std::filesystem::path target_path(m_config.target_directory.toStdWString());
 
     if (!std::filesystem::exists(target_path)) {
-        sak::logError("Target directory does not exist: {}", target_path.string());
+        sak::logError("Target directory does not exist: {}", sak::pathAsUtf8(target_path));
         return std::unexpected(sak::error_code::file_not_found);
     }
 
     if (!std::filesystem::is_directory(target_path)) {
-        sak::logError("Target path is not a directory: {}", target_path.string());
+        sak::logError("Target path is not a directory: {}", sak::pathAsUtf8(target_path));
         return std::unexpected(sak::error_code::invalid_path);
     }
 
@@ -138,6 +207,18 @@ auto OrganizerWorker::scanDirectory()
 
         if (entry.is_regular_file()) {
             files.push_back(entry.path());
+            // Preview mode bounds peak memory: a model-reachable dry run on a pathological
+            // directory (hundreds of thousands of immediate files) must not spike RSS building the
+            // file list plus one MoveOperation per file. Stop collecting at the cap and mark the
+            // plan truncated so the reported count is an honest lower bound. An apply
+            // (preview_mode=false, so max_preview_files unused) stays uncapped -- it must move
+            // every matching file.
+            if (m_config.preview_mode && m_config.max_preview_files > 0 &&
+                files.size() >= static_cast<size_t>(m_config.max_preview_files)) {
+                m_plan_truncated = true;
+                sak::logInfo("Preview scan capped at {} files", m_config.max_preview_files);
+                break;
+            }
         }
     }
 
@@ -150,20 +231,14 @@ auto OrganizerWorker::scanDirectory()
 }
 
 auto OrganizerWorker::categorizeFile(const std::filesystem::path& file_path) -> QString {
-    auto extension = file_path.extension().string();
-    if (extension.empty()) {
+    const QString extension = QString::fromStdWString(file_path.extension().wstring());
+    if (extension.isEmpty()) {
         return QString();
     }
 
     // Remove leading dot and convert to lowercase
-    if (extension[0] == '.') {
-        extension = extension.substr(1);
-    }
-    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
-        return std::tolower(c);
-    });
-
-    QString ext_lower = QString::fromStdString(extension);
+    const QString ext_lower =
+        (extension.startsWith(QLatin1Char('.')) ? extension.mid(1) : extension).toLower();
 
     // Find matching category
     for (auto it = m_config.category_mapping.begin(); it != m_config.category_mapping.end(); ++it) {
@@ -183,8 +258,8 @@ auto OrganizerWorker::planMove(const std::filesystem::path& file_path, const QSt
     op.category = category;
 
     // Build destination path
-    std::filesystem::path target_dir(m_config.target_directory.toStdString());
-    std::filesystem::path category_dir = target_dir / category.toStdString();
+    const std::filesystem::path target_dir(m_config.target_directory.toStdWString());
+    const std::filesystem::path category_dir = target_dir / category.toStdWString();
     op.destination = category_dir / file_path.filename();
 
     // Check for collision
@@ -201,20 +276,34 @@ auto OrganizerWorker::executeMove(const MoveOperation& operation)
             std::filesystem::create_directories(operation.destination.parent_path());
         }
 
-        // Handle collision
+        // Handle collision. Re-check existence at EXECUTE time, not just the plan-time
+        // would_overwrite flag: a file may have appeared at the destination between
+        // planning and this move, and a plain std::filesystem::rename silently REPLACES
+        // an existing destination (on Windows, MOVEFILE_REPLACE_EXISTING). Re-checking
+        // here closes that TOCTOU so a "rename"/"skip" run can never clobber a file.
         std::filesystem::path final_dest = operation.destination;
-        if (operation.would_overwrite) {
+        std::error_code exists_ec;
+        if (std::filesystem::exists(operation.destination, exists_ec)) {
             final_dest = handleCollision(operation);
         }
 
-        // Move file
+        // Move file. A "skip" collision resolves final_dest back to the source, which
+        // is a rename-to-self (no relocation) -- do not count it as moved.
         std::filesystem::rename(operation.source, final_dest);
-        sak::logInfo("Moved: {} -> {}", operation.source.string(), final_dest.string());
+        if (final_dest != operation.source) {
+            ++m_moved_count;
+        }
+        sak::logInfo("Moved: {} -> {}",
+                     sak::pathAsUtf8(operation.source),
+                     sak::pathAsUtf8(final_dest));
 
         return {};
 
     } catch (const std::filesystem::filesystem_error& e) {
         sak::logError("Failed to move file: {}", e.what());
+        m_failed_moves.append(
+            QStringLiteral("%1: %2").arg(QString::fromStdWString(operation.source.wstring()),
+                                         QString::fromStdString(e.code().message())));
         return std::unexpected(sak::error_code::write_error);
     }
 }
@@ -236,7 +325,7 @@ auto OrganizerWorker::handleCollision(const MoveOperation& operation) -> std::fi
 
     int counter = 1;
     while (std::filesystem::exists(dest)) {
-        auto new_filename = stem.string() + "_" + std::to_string(counter) + extension.string();
+        auto new_filename = stem.wstring() + L"_" + std::to_wstring(counter) + extension.wstring();
         dest = parent / new_filename;
         ++counter;
     }
@@ -265,7 +354,9 @@ auto OrganizerWorker::generatePreviewSummary() -> QString {
         }));
 
     if (collisions > 0) {
-        summary += QString("\nWarning: %1 file(s) would have collisions\n").arg(collisions);
+        summary +=
+            QString("\nWarning: %1 would have collisions\n")
+                .arg(sak::countOf(collisions, QStringLiteral("file"), QStringLiteral("files")));
     }
 
     return summary;

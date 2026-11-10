@@ -1,0 +1,5 @@
+- **MEDIUM** `src/ai/ai_skill.cpp:155` - Invalid UTF-8 is replacement-decoded and can pass `isValid()`, admitting corrupted guidance instead of failing closed.
+- **MEDIUM** `src/ai/ai_skill.cpp:115-121` - Paragraph before heading ends scan early, so title incorrectly falls back to filename instead of first Markdown heading.
+- **MEDIUM** `src/ai/ai_skill.cpp:88-117` - Markdown fallback misclassifies numbered/`+` lists, blockquotes, code fences, comments, and invalid `#heading` syntax; multiline paragraphs are truncated to one line.
+- **LOW** `src/ai/ai_skill.cpp:127-134` - `isValid()` accepts unnormalized whitespace-padded IDs; such programmatically added skills cannot be retrieved because store lookup trims IDs.
+- **LOW** `src/ai/ai_skill.cpp:149-152` - Oversized input becomes an empty body, causing misleading "empty body" diagnostics instead of reporting size-limit rejection.

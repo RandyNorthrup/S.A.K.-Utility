@@ -19,7 +19,9 @@ Set-Location $ProjectRoot
 $WindowsUserPathRegex = "C:[\\/]+Users[\\/]+(?!Username\b|Public\b|Default\b|All Users\b)[^\\/\s""']+"
 
 $Patterns = @(
-    @{ Name = "OpenAI/API key"; Regex = "sk-(proj-)?[A-Za-z0-9_-]{20,}" },
+    # Require a token start: an embedded suffix of an identifier is not an API key.
+    # Punctuation, whitespace and string boundaries still admit real key-shaped values.
+    @{ Name = "OpenAI/API key"; Regex = "(?<![A-Za-z0-9_])sk-(proj-)?[A-Za-z0-9_-]{20,}" },
     @{ Name = "Context7 API key"; Regex = "ctx7sk-[A-Za-z0-9-]{20,}" },
     @{ Name = "GitHub token"; Regex = "gh[pousr]_[A-Za-z0-9_]{30,}" },
     @{ Name = "AWS access key"; Regex = "(AKIA|ASIA)[0-9A-Z]{16}" },
@@ -62,15 +64,30 @@ function Test-IsScannableFile {
                                ".zip", ".7z", ".gz", ".bz2", ".xz", ".pdf")
 }
 
-$Files = git ls-files -c -m -o --exclude-standard |
+# $ErrorActionPreference does not turn a native nonzero exit into a terminating error, so
+# check it explicitly: a failed/wrong-directory git invocation must not yield an empty list
+# that then reports "clean".
+$trackedFiles = git ls-files -c -m -o --exclude-standard
+if ($LASTEXITCODE -ne 0) {
+    throw "git ls-files failed with exit code $LASTEXITCODE; cannot perform a complete secret scan."
+}
+$Files = $trackedFiles |
     ForEach-Object { Convert-ToRepoPath $_ } |
     Where-Object { Test-IsScannableFile $_ } |
     Sort-Object -Unique
 
 $Findings = @()
 foreach ($file in $Files) {
-    $text = Get-Content -LiteralPath $file -Raw -ErrorAction SilentlyContinue
+    # A tracked, scannable file that cannot be read must fail closed rather than be
+    # silently skipped -- a suppressed read error could hide a secret.
+    try {
+        $text = Get-Content -LiteralPath $file -Raw -ErrorAction Stop
+    }
+    catch {
+        throw "Secret scan cannot read tracked file '$file': $($_.Exception.Message)"
+    }
     if ($null -eq $text) {
+        # Genuinely empty file: nothing to scan.
         continue
     }
     foreach ($pattern in $Patterns) {
@@ -95,22 +112,38 @@ if ($SkipExternalTools) {
     exit 0
 }
 
-$gitleaks = Get-Command gitleaks -ErrorAction SilentlyContinue
+# -TotalCount 1: a tool reachable through two PATH entries (e.g. a hardlink plus its install
+# directory) otherwise yields an array, whose .Source joins both paths into one bogus command.
+$gitleaks = Get-Command gitleaks -CommandType Application -TotalCount 1 -ErrorAction SilentlyContinue
 if ($gitleaks) {
     & $gitleaks.Source detect --source . --config .gitleaks.toml --redact --verbose
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
 } else {
-    Write-Host "gitleaks not installed; skipped external gitleaks scan." -ForegroundColor Yellow
+    # Fail closed (R5-G21-4): the external scan was requested (no -SkipExternalTools), so a
+    # missing gitleaks is a gate that cannot run, not a pass. Install gitleaks, or pass
+    # -SkipExternalTools (as pre-commit and CI do) to run only the regex/path scan.
+    Write-Error "gitleaks is required for the external secret scan but was not found on PATH. Install gitleaks, or pass -SkipExternalTools to run only the regex/path scan."
+    exit 1
 }
 
-$trufflehog = Get-Command trufflehog -ErrorAction SilentlyContinue
+$trufflehog = Get-Command trufflehog -CommandType Application -TotalCount 1 -ErrorAction SilentlyContinue
 if ($trufflehog) {
-    & $trufflehog.Source git "file://$ProjectRoot" --only-verified --fail --no-update
+    # "file://." and NOT "file://$ProjectRoot". trufflehog mangles a Windows ABSOLUTE path in
+    # every other form: backslashes get percent-encoded into an ssh:// URI with a bogus
+    # hostname, and forward slashes get the drive letter prepended a second time. Both fail to
+    # clone, so this arm of the gate could never run on this platform. It fails CLOSED --
+    # blocking the push rather than skipping the scan -- which is why nothing surfaced it until
+    # a push was first attempted. The script has already Set-Location'd to $ProjectRoot, so the
+    # relative form names the same repository.
+    & $trufflehog.Source git "file://." --only-verified --fail --no-update
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
 } else {
-    Write-Host "trufflehog not installed; skipped external TruffleHog scan." -ForegroundColor Yellow
+    # Fail closed (R5-G21-4): same rule as gitleaks above -- a requested external scan whose
+    # tool is absent must fail loudly, never silently skip.
+    Write-Error "trufflehog is required for the external secret scan but was not found on PATH. Install trufflehog, or pass -SkipExternalTools to run only the regex/path scan."
+    exit 1
 }

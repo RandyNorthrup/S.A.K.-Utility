@@ -2,36 +2,56 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_leftover_scanner.cpp
-/// @brief Unit tests for LeftoverScanner — pattern matching, risk classification,
+/// @brief Unit tests for LeftoverScanner -- pattern matching, risk classification,
 ///        protected paths, file system scanning, and cancellation support
 
+#include "sak/advanced_uninstall_controller.h"
 #include "sak/leftover_scanner.h"
 
 #include <QDir>
 #include <QFile>
+#include <QStringList>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <algorithm>
 #include <atomic>
 #include <type_traits>
+#include <vector>
 
 using sak::LeftoverItem;
 using sak::LeftoverScanner;
 using sak::ProgramInfo;
 using sak::ScanLevel;
 
+// Free decision seams defined (external linkage) in leftover_scanner.cpp. Forward-declared here so
+// the security-critical parse/fail-closed logic can be exercised without netsh or a live registry.
+namespace sak {
+bool firewallDumpHeaderMissing(const QStringList& lines);
+void applyFirewallField(const QString& trimmed, LeftoverItem& item);
+QString parseFirstCsvField(const QString& line);
+bool growRunValueBuffers(std::vector<wchar_t>& name_buf,
+                         std::vector<BYTE>& data_buf,
+                         DWORD data_len);
+}  // namespace sak
+
 class LeftoverScannerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    // ── Construction ──
+    // -- Construction --
     void construction_safe();
     void construction_moderate();
     void construction_advanced();
     void construction_notCopyable();
 
-    // ── File System Scanning ──
+    // -- File System Scanning --
     void scan_findsMatchingFolder();
+    void scan_namesAProgramWithNoInstallLocationByItsUninstallerFolder();
+    void scan_findsAnMsiProductsSettingsByItsNameWithoutTheArchitectureTag();
+    void scan_nameOnlyMatchIsRefusedWhileAnotherProgramHasThatName();
+    void scan_autoCleanLeavesNameOnlyMatchesAlone();
+    void installFolderFromComponentPaths_namesTheProductsOwnFolder();
     void scan_findsMatchingFile();
     void scan_ignoresNonMatchingFolder();
     void scan_safeLevelSkipsRegistry();
@@ -39,25 +59,68 @@ private Q_SLOTS:
     void scan_progressCallbackInvoked();
     void scan_preSelectsSafeItems();
 
-    // ── Pattern Matching ──
+    // -- Pattern Matching --
     void scan_matchesProgramNameExact();
     void scan_matchesProgramNameCaseInsensitive();
     void scan_matchesConcatenatedName();
     void scan_skipsCommonWords();
     void scan_matchesInstallDirName();
 
-    // ── Risk Classification ──
+    // -- Risk Classification --
     void scan_safeInAppData();
     void scan_safeInProgramFiles();
     void scan_registryKeySafe();
     void scan_serviceScanAtAdvanced();
 
-    // ── Empty Program ──
+    // -- Empty Program --
     void scan_emptyProgram_noResults();
     void scan_emptyPublisher_noPublisherPatterns();
+
+    // -- Service leftover builder (SCM seam, locale-independent) --
+    void buildServiceItems_matchesNameOrDisplay();
+    void buildServiceItems_stopRequestedInterrupts();
+    void buildServiceItems_localeIndependentFields();
+
+    // -- Firewall parse reliability (localized dumps must fail closed) --
+    void firewallDump_englishParsesReliable();
+    void firewallDump_localizedMarksUnreliable();
+    void firewallDump_emptyIsHonestNotUnreliable();
+
+    // -- Firewall rule identity capture (narrows the delete to ONE rule) --
+    void firewallField_directionLowercased();
+    void firewallField_profileCaptured();
+    void firewallField_programPathCaptured();
+    void firewallField_programAnyIgnored();
+    void firewallField_unrelatedLineNoOp();
+
+    // -- Scheduled-task CSV first-field parse (embedded commas must not truncate task identity) --
+    void csvFirstField_plainUnquoted();
+    void csvFirstField_quotedWithEmbeddedComma();
+    void csvFirstField_escapedQuotes();
+
+    // -- Run-key ERROR_MORE_DATA buffer growth (long values must not be skipped) --
+    void runValueBuffers_growsDataToRequiredSize();
+    void runValueBuffers_doublesNameWhenDataFits();
+    void runValueBuffers_failsClosedPastCeiling();
+
+    // -- R5-P7-6: a registry InstallLocation must EARN deletion authority --
+    void installLocationSyntax_refusesUnpinnableShapes();
+    void installLocationSyntax_refusesCriticalRoots();
+    void installLocationSyntax_acceptsQualifiedProductDirectory();
+    void installLocationOwnership_provesOnlyRealProductDirectories();
+    void criticalInstallRoots_coverSystemAndProfileRoots();
+    void criticalInstallRoots_derivesNonCSystemDrive();  // R5-G23-4 non-C: drive via env injection
+    void scan_installLocationTiedToProgram_isDeletable();
+    void scan_installLocationNotTiedToProgram_isReportOnly();
+    void scan_installLocationUnpinnable_yieldsNoCandidate();
+
+    // -- R5-G23-4: shared-container protection is drive-agnostic (non-C: system drive) --
+    void isSharedContainerPath_isDriveAgnostic();
+    void protectedPaths_followThisMachinesSystemFolders();
+    void liveSystemFolders_comeFromTheKnownFolderApi();
 };
 
-// ── Helper ──────────────────────────────────────────────────────────────────
+// -- Helper ------------------------------------------------------------------
 
 namespace {
 
@@ -73,26 +136,213 @@ ProgramInfo makeTestProgram(const QString& name,
     return prog;
 }
 
+/// RAII override of an environment variable, restored (or unset) on destruction. scanKnownPaths()
+/// reads APPDATA/LOCALAPPDATA/ProgramData at Safe level via qEnvironmentVariable, so pointing one
+/// at a controlled tree makes the scanner actually walk it -- turning the "runs without error"
+/// smoke tests into real find-and-classify assertions.
+class ScopedEnv {
+public:
+    ScopedEnv(const char* name, const QString& value)
+        : m_name(name), m_had(qEnvironmentVariableIsSet(name)), m_saved(qgetenv(name)) {
+        qputenv(name, value.toUtf8());
+    }
+    ~ScopedEnv() {
+        if (m_had) {
+            qputenv(m_name, m_saved);
+        } else {
+            qunsetenv(m_name);
+        }
+    }
+    ScopedEnv(const ScopedEnv&) = delete;
+    ScopedEnv& operator=(const ScopedEnv&) = delete;
+
+private:
+    const char* m_name;
+    bool m_had;
+    QByteArray m_saved;
+};
+
+/// Create a scan-root directory whose name contains "AppData" so an exact-name match found beneath
+/// it classifies Safe (classifyFileRisk keys on the "appdata" substring), independent of where the
+/// host's real temp folder lives. Returns the created root path.
+QString makeAppDataScanRoot(const QString& parent) {
+    const QString root = QDir(parent).filePath(QStringLiteral("AppDataLocal"));
+    QDir().mkpath(root);
+    return root;
+}
+
+/// Create a scan-root directory whose name contains "Program Files" so a match beneath it is
+/// classified Safe by the "program files" substring rule. Used with a ProgramFiles env override at
+/// Moderate/Advanced level. Returns the created root path.
+QString makeProgramFilesScanRoot(const QString& parent) {
+    const QString root = QDir(parent).filePath(QStringLiteral("Program Files Test"));
+    QDir().mkpath(root);
+    return root;
+}
+
+/// Locate a scanned leftover by its on-disk path (native separators), or nullptr if absent.
+const LeftoverItem* findByPath(const QVector<LeftoverItem>& items, const QString& nativePath) {
+    for (const auto& item : items) {
+        if (item.path == nativePath) {
+            return &item;
+        }
+    }
+    return nullptr;
+}
+
+// The assertions in the caller are rooted in a default QTemporaryDir, i.e. under
+// %LOCALAPPDATA%\Temp, so the classified path contains "appdata" AND "	emp\" AND
+// "program files" at once. The Safe verdict there comes from the FIRST operand of the
+// short-circuit chain; the "program files" operand -- the rule that slot is NAMED for -- is
+// short-circuited away and measured by the coverage run as never once evaluated. Re-root
+// outside temp so ONLY that operand can produce Safe: delete it and this drops to Review.
+void verifyProgramFilesOperandAloneClassifiesSafe() {
+    // Everything above is rooted in a default QTemporaryDir, i.e. under %LOCALAPPDATA%\Temp, so
+    // the classified path contains "appdata" AND "\temp\" AND "program files" at once. The Safe
+    // verdict there comes from the FIRST operand of the short-circuit chain; the "program files"
+    // operand -- the rule this slot is NAMED for -- is short-circuited away and measured by the
+    // coverage run as never once evaluated. Re-root outside temp so ONLY that operand can
+    // produce Safe: delete it and this drops to Review.
+    QTemporaryDir outsideTemp(QDir(QDir::currentPath()).filePath(QStringLiteral("pfriskXXXXXX")));
+    QVERIFY(outsideTemp.isValid());
+    // Fail closed and name the path if the build tree itself carries a competing substring,
+    // rather than letting the probe go quietly vacuous the way the temp-rooted one did.
+    const QString baseLower = QDir::toNativeSeparators(outsideTemp.path()).toLower();
+    QVERIFY2(!baseLower.contains(QStringLiteral("appdata")) &&
+                 !baseLower.contains(QStringLiteral("programdata")) &&
+                 !baseLower.contains(QStringLiteral("\\temp\\")),
+             qPrintable(baseLower));
+
+    const QString pfRoot = makeProgramFilesScanRoot(outsideTemp.path());
+    const ScopedEnv isolatedProgramFiles("ProgramFiles", pfRoot);
+    QVERIFY(QDir(pfRoot).mkdir(QStringLiteral("ProgFilesOnlyZZ")));
+    const QString onlyPath =
+        QDir::toNativeSeparators(QDir(pfRoot).filePath(QStringLiteral("ProgFilesOnlyZZ")));
+
+    ProgramInfo onlyProg = makeTestProgram("ProgFilesOnlyZZ");
+    LeftoverScanner onlyScanner(onlyProg, ScanLevel::Moderate);
+    std::atomic<bool> onlyStop{false};
+    // Bind the results: findByPath returns a pointer INTO the returned vector, so the
+    // scan() temporary must outlive the dereferences below.
+    const auto onlyResults = onlyScanner.scan(onlyStop);
+    const LeftoverItem* onlyFound = findByPath(onlyResults, onlyPath);
+    QVERIFY2(onlyFound != nullptr, qPrintable(onlyPath));
+    QCOMPARE(onlyFound->path, onlyPath);
+    // The load-bearing pin: no "appdata"/"programdata"/"\temp\" in this path, so Safe here
+    // can only come from the "program files" operand.
+    QCOMPARE(onlyFound->risk, LeftoverItem::RiskLevel::Safe);
+}
+
+// The catalog is a CONTRACT, not a sample: the live-env probes in the caller spot-check four
+// roots while ten environment-derived ones have no assertion at all, so any one of them can
+// be dropped in silence -- and a value naming that root then stops being refused at the
+// syntax screen and falls through to the ownership tier. Live-env membership CANNOT prove
+// this: on a normal host windir == SystemRoot, ProgramW6432 == ProgramFiles,
+// ALLUSERSPROFILE == ProgramData, TMP == TEMP, and PUBLIC is re-added by the profile walk,
+// so deleting any one leaves an identical string behind. Inject a UNIQUE sentinel per
+// variable so each catalog line is pinned on its own.
+void verifyEveryEnvDerivedCriticalRootIsPinned() {
+    // The catalog is a CONTRACT, not a sample: the four probes above spot-check it while ten
+    // environment-derived roots have no assertion at all, so any one of them can be dropped in
+    // silence -- and a value naming that root then stops being refused at the syntax screen and
+    // falls through to the ownership tier. Live-env membership CANNOT prove this: on a normal
+    // host windir == SystemRoot, ProgramW6432 == ProgramFiles, ALLUSERSPROFILE == ProgramData,
+    // TMP == TEMP, and PUBLIC is re-added by the profile walk, so deleting any one of them
+    // leaves an identical string behind. Inject a UNIQUE sentinel per variable so each catalog
+    // line is pinned on its own. Env is process-global: save, inject, call, restore BEFORE
+    // asserting, the same discipline as criticalInstallRoots_derivesNonCSystemDrive.
+    const QList<QByteArray> catalog_variables{"SystemRoot",
+                                              "windir",
+                                              "ProgramFiles",
+                                              "ProgramFiles(x86)",
+                                              "ProgramW6432",
+                                              "ProgramData",
+                                              "CommonProgramFiles",
+                                              "CommonProgramFiles(x86)",
+                                              "ALLUSERSPROFILE",
+                                              "APPDATA",
+                                              "LOCALAPPDATA",
+                                              "PUBLIC",
+                                              "TEMP",
+                                              "TMP"};
+    QList<QByteArray> saved_values;
+    QStringList sentinels;
+    for (int i = 0; i < catalog_variables.size(); ++i) {
+        saved_values.append(qgetenv(catalog_variables.at(i).constData()));
+        const QString sentinel = QStringLiteral("Z:\\CatalogProbe%1").arg(i);
+        sentinels.append(sentinel);
+        qputenv(catalog_variables.at(i).constData(), sentinel.toLocal8Bit());
+    }
+    const QStringList probed = LeftoverScanner::criticalInstallRoots();
+    for (int i = 0; i < catalog_variables.size(); ++i) {
+        if (saved_values.at(i).isEmpty()) {
+            qunsetenv(catalog_variables.at(i).constData());
+        } else {
+            qputenv(catalog_variables.at(i).constData(), saved_values.at(i));
+        }
+    }
+    for (int i = 0; i < sentinels.size(); ++i) {
+        QVERIFY2(probed.contains(sentinels.at(i), Qt::CaseInsensitive),
+                 qPrintable(QStringLiteral("%1 dropped from the critical-root catalog: %2")
+                                .arg(QString::fromLatin1(catalog_variables.at(i)),
+                                     probed.join(QLatin1Char(';')))));
+    }
+    // USERPROFILE is deliberately left to the live-env assertion above: its deletion is a
+    // genuine masked equivalent (QDir::homePath() and the profile walk both re-add the same
+    // path), and injecting it would only change homePath() in lockstep.
+}
+
 }  // namespace
 
-// ── Construction ────────────────────────────────────────────────────────────
+// -- Construction ------------------------------------------------------------
 
+// These three slots constructed a scanner and discarded it, so they passed against any
+// implementation that compiled -- including one where ScanLevel is ignored entirely. Each now
+// pins the level gate it is named for, using a synthetic name that matches nothing on the host.
 void LeftoverScannerTests::construction_safe() {
-    ProgramInfo prog = makeTestProgram("TestApp");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString root = makeProgramFilesScanRoot(tempDir.path());
+    const ScopedEnv programFiles("ProgramFiles", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("LevelGateAppZZ")));
+    ProgramInfo prog = makeTestProgram(QStringLiteral("LevelGateAppZZ"));
     LeftoverScanner scanner(prog, ScanLevel::Safe);
-    Q_UNUSED(scanner);
+    std::atomic<bool> stop{false};
+    // Safe never walks ProgramFiles, so the planted match is invisible at this level.
+    QVERIFY(scanner.scan(stop).isEmpty());
 }
 
 void LeftoverScannerTests::construction_moderate() {
-    ProgramInfo prog = makeTestProgram("TestApp");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString root = makeProgramFilesScanRoot(tempDir.path());
+    const ScopedEnv programFiles("ProgramFiles", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("LevelGateAppZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("LevelGateAppZZ")));
+    ProgramInfo prog = makeTestProgram(QStringLiteral("LevelGateAppZZ"));
     LeftoverScanner scanner(prog, ScanLevel::Moderate);
-    Q_UNUSED(scanner);
+    std::atomic<bool> stop{false};
+    // Moderate adds ProgramFiles to the walked roots, so the same folder is now found.
+    QVERIFY2(findByPath(scanner.scan(stop), folderPath) != nullptr, qPrintable(folderPath));
 }
 
 void LeftoverScannerTests::construction_advanced() {
-    ProgramInfo prog = makeTestProgram("TestApp");
-    LeftoverScanner scanner(prog, ScanLevel::Advanced);
-    Q_UNUSED(scanner);
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString root = makeProgramFilesScanRoot(tempDir.path());
+    const ScopedEnv commonProgramFiles("CommonProgramFiles", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("AdvGateAppZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("AdvGateAppZZ")));
+    ProgramInfo prog = makeTestProgram(QStringLiteral("AdvGateAppZZ"));
+    std::atomic<bool> stop{false};
+    // CommonProgramFiles is Advanced-only, so Moderate must NOT see it and Advanced must.
+    LeftoverScanner moderate(prog, ScanLevel::Moderate);
+    QVERIFY2(findByPath(moderate.scan(stop), folderPath) == nullptr,
+             "CommonProgramFiles is Advanced-only");
+    LeftoverScanner advanced(prog, ScanLevel::Advanced);
+    QVERIFY2(findByPath(advanced.scan(stop), folderPath) != nullptr, qPrintable(folderPath));
 }
 
 void LeftoverScannerTests::construction_notCopyable() {
@@ -102,48 +352,329 @@ void LeftoverScannerTests::construction_notCopyable() {
     QVERIFY(std::is_move_constructible_v<LeftoverScanner>);
 }
 
-// ── File System Scanning ────────────────────────────────────────────────────
+// -- File System Scanning ----------------------------------------------------
+
+// Review 3 (testpc1): Notepad++ records no InstallLocation and calls itself "Notepad++ (64-bit
+// x64)", so the %APPDATA%\Notepad++ its uninstaller keeps with "keep your custom settings" matched
+// no name, the scan found nothing, and no Leftover Items list appeared.
+void LeftoverScannerTests::scan_namesAProgramWithNoInstallLocationByItsUninstallerFolder() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    QVERIFY(QDir(root).mkpath(QStringLiteral("Notepad++")));
+    const QString empty = QDir(tempDir.path()).filePath(QStringLiteral("EmptyRoot"));
+    QVERIFY(QDir().mkpath(empty));
+    const ScopedEnv appData("APPDATA", root);
+    const ScopedEnv localAppData("LOCALAPPDATA", empty);
+    const ScopedEnv programData("ProgramData", empty);
+
+    ProgramInfo prog = makeTestProgram(QStringLiteral("Notepad++ (64-bit x64)"),
+                                       QStringLiteral("Notepad++ Team"));
+    prog.uninstallString = QStringLiteral("\"C:\\Program Files\\Notepad++\\uninstall.exe\"");
+    prog.displayIcon = QStringLiteral("C:\\Program Files\\Notepad++\\notepad++.exe");
+    QCOMPARE(LeftoverScanner::uninstallerFolderName(prog), QStringLiteral("notepad++"));
+
+    LeftoverScanner scanner(prog, ScanLevel::Safe, {});
+    std::atomic<bool> stop{false};
+    const QString folder =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Notepad++")));
+    QVERIFY2(findByPath(scanner.scan(stop), folder) != nullptr, qPrintable(folder));
+
+    // The icon names it too, unquoted and with an index.
+    ProgramInfo by_icon = prog;
+    by_icon.uninstallString.clear();
+    by_icon.displayIcon = QStringLiteral("C:\\Program Files\\Notepad++\\notepad++.exe,0");
+    QCOMPARE(LeftoverScanner::uninstallerFolderName(by_icon), QStringLiteral("notepad++"));
+
+    // An uninstaller in a folder not named for the program names nothing.
+    ProgramInfo shared = prog;
+    shared.uninstallString = QStringLiteral("C:\\Windows\\Installer\\setup.exe /x");
+    shared.displayIcon = QStringLiteral("\"C:\\Program Files\\Common Files\\icons\\app.ico\"");
+    QCOMPARE(LeftoverScanner::uninstallerFolderName(shared), QString());
+}
+
+namespace {
+
+/// The Notepad++ MSI as winget installs it (review 5, testpc2): "Notepad++ (x64)", no
+/// InstallLocation, removed by msiexec, its Uninstall key named by its product code.
+ProgramInfo notepadPlusPlusMsi() {
+    ProgramInfo prog = makeTestProgram(QStringLiteral("Notepad++ (x64)"),
+                                       QStringLiteral("Notepad++ team (MSI installer)"));
+    prog.uninstallString = QStringLiteral("MsiExec.exe /X{86486789-08F5-4212-9519-733DBB1B3B31}");
+    prog.registryKeyPath = QStringLiteral(
+        "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
+        "{86486789-08F5-4212-9519-733DBB1B3B31}");
+    return prog;
+}
+
+/// An APPDATA scan root holding Notepad++'s settings folder, with the other Safe-level roots
+/// pointed at an empty folder. Returns the settings folder's native path.
+QString plantNotepadPlusPlusSettings(const QString& parent) {
+    const QString root = makeAppDataScanRoot(parent);
+    QDir(root).mkpath(QStringLiteral("Notepad++"));
+    return QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Notepad++")));
+}
+
+}  // namespace
+
+// Review 5 (testpc2): winget now installs Notepad++ from its MSI, "Notepad++ (x64)". It records
+// no InstallLocation and its uninstaller is msiexec in System32, so no exact name tied
+// %APPDATA%\Notepad++ to it, the scan found nothing and no Leftover Items list appeared. The name
+// without its architecture tag finds it now, as a Risky item a technician must choose.
+void LeftoverScannerTests::scan_findsAnMsiProductsSettingsByItsNameWithoutTheArchitectureTag() {
+    QCOMPARE(LeftoverScanner::architectureStrippedName(QStringLiteral("Notepad++ (x64)")),
+             QStringLiteral("notepad++"));
+    QCOMPARE(LeftoverScanner::architectureStrippedName(QStringLiteral("Notepad++ (64-bit x64)")),
+             QStringLiteral("notepad++"));
+    QCOMPARE(LeftoverScanner::architectureStrippedName(QStringLiteral("Tool Kit (x86)")),
+             QStringLiteral("tool kit"));
+    QCOMPARE(LeftoverScanner::architectureStrippedName(QStringLiteral("Notepad++")), QString());
+    QCOMPARE(LeftoverScanner::architectureStrippedName(QStringLiteral("Editor (beta)")), QString());
+
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString settings = plantNotepadPlusPlusSettings(tempDir.path());
+    const QString empty = QDir(tempDir.path()).filePath(QStringLiteral("EmptyRoot"));
+    QVERIFY(QDir().mkpath(empty));
+    const ScopedEnv appData("APPDATA", QFileInfo(settings).path());
+    const ScopedEnv localAppData("LOCALAPPDATA", empty);
+    const ScopedEnv programData("ProgramData", empty);
+
+    const ProgramInfo prog = notepadPlusPlusMsi();
+    QCOMPARE(LeftoverScanner::uninstallerFolderName(prog), QString());
+    // The program itself may still be listed (a preview runs before the uninstall): it is not
+    // "another program with that name".
+    LeftoverScanner scanner(prog, ScanLevel::Safe, {}, {prog});
+    std::atomic<bool> stop{false};
+    const auto results = scanner.scan(stop);
+    const LeftoverItem* found = findByPath(results, settings);
+    QVERIFY2(found != nullptr, qPrintable(settings));
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Risky);
+    QVERIFY(found->deletable);
+    QVERIFY(!found->selected);
+    QVERIFY2(found->description.contains(QStringLiteral("matched only by the name \"notepad++\"")),
+             qPrintable(found->description));
+}
+
+// The name without its tag is a guess, so it is never used while anything still installed has
+// that name: a 32-bit Notepad++ shares the 64-bit copy's settings folder.
+void LeftoverScannerTests::scan_nameOnlyMatchIsRefusedWhileAnotherProgramHasThatName() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString settings = plantNotepadPlusPlusSettings(tempDir.path());
+    const QString empty = QDir(tempDir.path()).filePath(QStringLiteral("EmptyRoot"));
+    QVERIFY(QDir().mkpath(empty));
+    const ScopedEnv appData("APPDATA", QFileInfo(settings).path());
+    const ScopedEnv localAppData("LOCALAPPDATA", empty);
+    const ScopedEnv programData("ProgramData", empty);
+    const ProgramInfo prog = notepadPlusPlusMsi();
+
+    // Each names it one way only: by its display name without the tag, its install folder, or
+    // the folder its uninstaller sits in.
+    const ProgramInfo by_display_name = makeTestProgram(QStringLiteral("Notepad++ (32-bit x86)"));
+    ProgramInfo by_install_folder = makeTestProgram(QStringLiteral("Portable Editors"),
+                                                    {},
+                                                    QStringLiteral("D:\\Tools\\Notepad++\\"));
+    ProgramInfo by_uninstaller_folder = makeTestProgram(QStringLiteral("Notepad++ Plugin Pack"));
+    by_uninstaller_folder.uninstallString =
+        QStringLiteral("\"C:\\Program Files\\Notepad++\\uninstall.exe\"");
+    for (const ProgramInfo& other : {by_display_name, by_install_folder, by_uninstaller_folder}) {
+        QVERIFY2(!LeftoverScanner::nameOnlyNameRefusal(QStringLiteral("notepad++"), prog, {other})
+                      .isEmpty(),
+                 qPrintable(other.displayName));
+        LeftoverScanner scanner(prog, ScanLevel::Safe, {}, {prog, other});
+        std::atomic<bool> stop{false};
+        QVERIFY2(findByPath(scanner.scan(stop), settings) == nullptr,
+                 qPrintable(other.displayName));
+    }
+
+    // Nor is a name too short to mean anything, or a publisher's name.
+    QVERIFY(!LeftoverScanner::nameOnlyNameRefusal(QStringLiteral("vlc"), prog, {}).isEmpty());
+    ProgramInfo vendor = prog;
+    vendor.displayName = QStringLiteral("Google (x64)");
+    vendor.publisher = QStringLiteral("Google LLC");
+    QVERIFY(!LeftoverScanner::nameOnlyNameRefusal(QStringLiteral("google"), vendor, {}).isEmpty());
+    QVERIFY(
+        LeftoverScanner::nameOnlyNameRefusal(QStringLiteral("notepad++"), prog, {prog}).isEmpty());
+}
+
+// A name-only match is listed for the technician and never cleaned automatically, while an exact
+// match from the same scan is.
+void LeftoverScannerTests::scan_autoCleanLeavesNameOnlyMatchesAlone() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString settings = plantNotepadPlusPlusSettings(tempDir.path());
+    const QString root = QFileInfo(settings).path();
+    QVERIFY(QDir(root).mkpath(QStringLiteral("Notepad++ (x64)")));
+    const QString exact =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Notepad++ (x64)")));
+    const QString empty = QDir(tempDir.path()).filePath(QStringLiteral("EmptyRoot"));
+    QVERIFY(QDir().mkpath(empty));
+    const ScopedEnv appData("APPDATA", root);
+    const ScopedEnv localAppData("LOCALAPPDATA", empty);
+    const ScopedEnv programData("ProgramData", empty);
+
+    LeftoverScanner scanner(notepadPlusPlusMsi(), ScanLevel::Safe, {}, {});
+    std::atomic<bool> stop{false};
+    const auto results = scanner.scan(stop);
+    QVERIFY2(findByPath(results, settings) != nullptr, qPrintable(settings));
+    QVERIFY2(findByPath(results, exact) != nullptr, qPrintable(exact));
+    const QVector<LeftoverItem> cleanable =
+        sak::AdvancedUninstallController::autoCleanableLeftovers(results);
+    QVERIFY2(findByPath(cleanable, exact) != nullptr, "the exact match is auto-cleanable");
+    QVERIFY2(findByPath(cleanable, settings) == nullptr, "a name-only match is never auto-cleaned");
+}
+
+// Windows Installer knows where an MSI product put its files even when its Uninstall entry
+// records no InstallLocation; its component paths name the folder, never a shared or vendor one.
+void LeftoverScannerTests::installFolderFromComponentPaths_namesTheProductsOwnFolder() {
+    const QStringList notepad{QStringLiteral("C:\\Program Files\\Notepad++\\notepad++.exe"),
+                              QStringLiteral("C:\\Program Files\\Notepad++\\plugins\\Config\\"),
+                              QStringLiteral(
+                                  "C:\\Program Files\\Notepad++\\localization\\english.xml"),
+                              QStringLiteral("02:\\SOFTWARE\\Notepad++\\"),
+                              QStringLiteral("C:\\Windows\\System32\\msvcp140.dll"),
+                              QStringLiteral("C:\\Windows\\System32\\vcruntime140.dll"),
+                              QStringLiteral("C:\\Windows\\System32\\vcruntime140_1.dll"),
+                              QStringLiteral("C:\\Windows\\System32\\concrt140.dll")};
+    QCOMPARE(LeftoverScanner::installFolderFromComponentPaths(notepad,
+                                                              QStringLiteral("Notepad++ (x64)")),
+             QStringLiteral("C:\\Program Files\\Notepad++"));
+    // Nor one of the product's own subfolders, when the display name has no suffix at all.
+    const QStringList plugins{
+        QStringLiteral("C:\\Program Files\\Notepad++\\plugins\\Config\\"),
+        QStringLiteral("C:\\Program Files\\Notepad++\\plugins\\mimeTools\\mimeTools.dll")};
+    QCOMPARE(LeftoverScanner::installFolderFromComponentPaths(plugins, QStringLiteral("Notepad++")),
+             QStringLiteral("C:\\Program Files\\Notepad++"));
+    // The nearest folder that names the product, never the vendor folder above it.
+    const QStringList chrome{
+        QStringLiteral("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe")};
+    QCOMPARE(LeftoverScanner::installFolderFromComponentPaths(chrome,
+                                                              QStringLiteral("Google Chrome")),
+             QStringLiteral("C:\\Program Files\\Google\\Chrome"));
+    // Components only in shared folders or the registry name nothing, though a registry key path
+    // may read like a folder named for the product.
+    const QStringList shared{QStringLiteral("C:\\Windows\\System32\\msvcp140.dll"),
+                             QStringLiteral("01:\\Software\\Classes\\.txt\\"),
+                             QStringLiteral("02:\\SOFTWARE\\Notepad++\\")};
+    QCOMPARE(LeftoverScanner::installFolderFromComponentPaths(shared,
+                                                              QStringLiteral("Notepad++ (x64)")),
+             QString());
+
+    // A program Windows Installer does not know passes through unchanged.
+    ProgramInfo unknown = notepadPlusPlusMsi();
+    unknown.uninstallString =
+        QStringLiteral("MsiExec.exe /X{00000000-5A4B-0000-0000-000000000000}");
+    QCOMPARE(LeftoverScanner::withWindowsInstallerLocation(unknown).installLocation, QString());
+
+    // The folder it names makes the settings folder an exact match, Safe as for the NSIS build.
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString settings = plantNotepadPlusPlusSettings(tempDir.path());
+    const QString empty = QDir(tempDir.path()).filePath(QStringLiteral("EmptyRoot"));
+    QVERIFY(QDir().mkpath(empty));
+    const ScopedEnv appData("APPDATA", QFileInfo(settings).path());
+    const ScopedEnv localAppData("LOCALAPPDATA", empty);
+    const ScopedEnv programData("ProgramData", empty);
+    ProgramInfo located = notepadPlusPlusMsi();
+    located.installLocation = LeftoverScanner::installFolderFromComponentPaths(notepad,
+                                                                               located.displayName);
+    LeftoverScanner scanner(located, ScanLevel::Safe, {}, {});
+    std::atomic<bool> stop{false};
+    const auto results = scanner.scan(stop);
+    const LeftoverItem* found = findByPath(results, settings);
+    QVERIFY2(found != nullptr, qPrintable(settings));
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+}
 
 void LeftoverScannerTests::scan_findsMatchingFolder() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
-    // Create a folder matching the program name
-    QDir dir(tempDir.path());
-    QVERIFY(dir.mkdir("SuperEditor"));
+    // Point the Safe-level scan root at a controlled tree and place an exactly-named folder in it.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("SuperEditor")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("SuperEditor")));
+
+    // The size shown to the technician comes from a RECURSIVE walk. Every folder fixture in
+    // this file used to be an EMPTY directory, so every sizeBytes assertion pinned 0 -- which
+    // is also what a walk that never accumulates returns, and the coverage run confirms that
+    // walk's loop body was never entered by ANY of the 246 test binaries. Plant a direct child
+    // AND one a level down, so both the accumulation and the recursion are load-bearing.
+    const QDir folderDir(QDir(root).filePath(QStringLiteral("SuperEditor")));
+    QFile payload(folderDir.filePath(QStringLiteral("payload.bin")));
+    QVERIFY(payload.open(QIODevice::WriteOnly));
+    QCOMPARE(payload.write(QByteArray(1000, 'x')), qint64{1000});
+    payload.close();
+    QVERIFY(folderDir.mkdir(QStringLiteral("nested")));
+    QFile deep(folderDir.filePath(QStringLiteral("nested/deep.bin")));
+    QVERIFY(deep.open(QIODevice::WriteOnly));
+    QCOMPARE(deep.write(QByteArray(23, 'y')), qint64{23});
+    deep.close();
 
     ProgramInfo prog = makeTestProgram("SuperEditor");
-    prog.installLocation = tempDir.path() + "/SuperEditor";
-
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
+    const auto results = scanner.scan(stop);
 
-    // The scanner scans standard system directories (Program Files, AppData, etc.)
-    // not our temp dir — so we just verify it runs without error
-    QVERIFY(results.size() >= 0);
+    // The exactly-named folder under the scanned root must be found, typed a Folder, classified
+    // Safe (AppData location) and therefore pre-selected. `size() >= 0` proved nothing.
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr,
+             qPrintable(QStringLiteral("scanner did not find %1").arg(folderPath)));
+    QCOMPARE(found->type, LeftoverItem::Type::Folder);
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+    QVERIFY(found->deletable);
+    QVERIFY(found->selected);
+    // The description names the SCAN ROOT, not the item; ".arg(item.path)" describes every
+    // folder leftover with its own path and leaves every assertion above green.
+    QCOMPARE(found->description,
+             QStringLiteral("Leftover folder in %1").arg(QDir::toNativeSeparators(root)));
+    // 1000 (direct child) + 23 (one level down). Deleting the accumulation, or dropping the
+    // subdirectory recursion, turns this red; the old qint64{0} stayed green for both, and
+    // every leftover folder in the cleanup table would report "0 bytes" however large the tree.
+    QCOMPARE(found->sizeBytes, qint64{1023});
 }
 
 void LeftoverScannerTests::scan_findsMatchingFile() {
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
 
-    // Create a file matching the program name
-    QFile file(tempDir.path() + "/SuperEditor.lnk");
+    // Point the Safe-level scan root at a controlled tree and place an exactly-named file in it.
+    // A plain extension (not ".lnk") is used deliberately: Qt resolves ".lnk" as a Windows
+    // shortcut, so a bogus one is not listed as a regular file. The scanner matches on the base
+    // name anyway.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QFile file(QDir(root).filePath(QStringLiteral("SuperEditor.dat")));
     QVERIFY(file.open(QIODevice::WriteOnly));
-    file.write("shortcut data");
+    file.write("leftover data");
     file.close();
+    const QString filePath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("SuperEditor.dat")));
 
     ProgramInfo prog = makeTestProgram("SuperEditor");
-
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
+    const auto results = scanner.scan(stop);
 
-    // Scanner scans standard dirs, not temp dir — no crash is the test
-    QVERIFY(results.size() >= 0);
+    // The exactly-named file (matched on its base name, extension stripped) must be found and typed
+    // a File. `size() >= 0` could not catch a regression that stopped scanning standard files.
+    const LeftoverItem* found = findByPath(results, filePath);
+    QVERIFY2(found != nullptr, qPrintable(QStringLiteral("scanner did not find %1").arg(filePath)));
+    QCOMPARE(found->type, LeftoverItem::Type::File);
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+    QCOMPARE(found->sizeBytes, qint64{13});  // the fixture file's byte length, previously unpinned
+    // A DISTINCT literal from the folder case ("file" vs "folder"), and the deletable/selected
+    // pair -- setting deletable=false makes the cleanup silently skip the item.
+    QCOMPARE(found->description,
+             QStringLiteral("Leftover file in %1").arg(QDir::toNativeSeparators(root)));
+    QVERIFY(found->deletable);
+    QVERIFY(found->selected);
 }
 
 void LeftoverScannerTests::scan_ignoresNonMatchingFolder() {
@@ -154,68 +685,181 @@ void LeftoverScannerTests::scan_ignoresNonMatchingFolder() {
 
     auto results = scanner.scan(stop);
 
-    // With a unique enough name, no real leftovers should be found
-    // on a system that never had this app installed
-    QVERIFY(results.size() >= 0);  // No crash, results should be minimal
+    // A uniquely-named program at Safe level exactly-matches no real dir/file
+    // (matchesProgramExact), records no install location, and runs no registry/system phase, so the
+    // result is reliably empty on ANY machine. `size() >= 0` was a tautology (a container length is
+    // never negative) that could not catch an over-match regression returning spurious leftovers.
+    QVERIFY(results.isEmpty());
 }
 
 void LeftoverScannerTests::scan_safeLevelSkipsRegistry() {
     ProgramInfo prog = makeTestProgram("TestRegSkip12345");
+    // The default fixture key (HKLM\SOFTWARE\TestRegSkip12345) does not exist, so checkKey
+    // returned early and the registry phase reported nothing at ANY level -- deleting the
+    // Moderate/Advanced gate left this slot green with an empty result and an unentered loop.
+    // Point the uninstall key at one that really exists (readable by any standard user) so the
+    // LEVEL GATE is the only thing that can suppress a registry item at Safe.
+    prog.registryKeyPath = QStringLiteral("HKLM\\SOFTWARE\\Microsoft");
+    const QString uninstallKey = QStringLiteral("HKLM\\SOFTWARE\\Microsoft");
 
-    LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
+    LeftoverScanner safe(prog, ScanLevel::Safe);
+    const auto safeResults = safe.scan(stop);
 
-    // At Safe level, registry scanning should be skipped.
-    // Verify no registry-type items are returned.
-    for (const auto& item : results) {
+    // At Safe the registry phase is skipped entirely and the unique display name matches
+    // nothing on disk, so the scan must produce NOTHING. The emptiness pin is what kills the
+    // deleted-gate mutation; the loop then also holds non-vacuously for any extra item.
+    QVERIFY2(safeResults.isEmpty(),
+             qPrintable(QStringLiteral("Safe produced %1 item(s), first=%2")
+                            .arg(safeResults.size())
+                            .arg(safeResults.isEmpty() ? QString() : safeResults.first().path)));
+    for (const auto& item : safeResults) {
         QVERIFY(item.type != LeftoverItem::Type::RegistryKey);
         QVERIFY(item.type != LeftoverItem::Type::RegistryValue);
     }
+
+    // CONTROL: the SAME program at Moderate DOES report that existing key. Without this the
+    // emptiness above is equally satisfied by a scanner that never reads the registry at all,
+    // or by a checkKey that can never open anything -- coverage reports its success arm as
+    // unreached across the entire suite.
+    LeftoverScanner moderate(prog, ScanLevel::Moderate);
+    const auto moderateResults = moderate.scan(stop);
+    const LeftoverItem* key = findByPath(moderateResults, uninstallKey);
+    QVERIFY2(key != nullptr,
+             qPrintable(QStringLiteral("Moderate did not report %1").arg(uninstallKey)));
+    QCOMPARE(key->type, LeftoverItem::Type::RegistryKey);
+    QCOMPARE(key->description, QStringLiteral("Program uninstall key still exists"));
 }
 
 void LeftoverScannerTests::scan_cancellationStopsScan() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    // POSITIVE CONTROL. The old body scanned for a unique name with nothing planted anywhere,
+    // so the empty result was the fixture's own pre-state: an implementation with every
+    // cancellation check deleted produced exactly the same empty vector. Plant a match the SAME
+    // scan provably finds when it is NOT cancelled, so the emptiness below can only come from
+    // the cancel. Single-field delta: identical program, level and roots; only `stop` differs.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("TestCancel12345")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("TestCancel12345")));
+
     ProgramInfo prog = makeTestProgram("TestCancel12345");
+
+    std::atomic<bool> running{false};
+    LeftoverScanner control(prog, ScanLevel::Advanced);
+    const auto controlResults = control.scan(running);
+    QVERIFY2(findByPath(controlResults, folderPath) != nullptr,
+             qPrintable(QStringLiteral("uncancelled scan must find %1").arg(folderPath)));
 
     LeftoverScanner scanner(prog, ScanLevel::Advanced);
     std::atomic<bool> stop{true};  // Already stopped!
 
-    auto results = scanner.scan(stop);
+    int callbackCount = 0;
+    const auto results = scanner.scan(stop, [&](const QString&, int) { ++callbackCount; });
 
-    // Should return immediately with no results when stop is already set
-    QVERIFY(results.isEmpty());
+    // A scan cancelled before it starts skips every phase, so the folder the control just found
+    // is NOT reported and the technician's progress line never moves.
+    QVERIFY2(results.isEmpty(),
+             qPrintable(QStringLiteral("cancelled scan produced %1 item(s), first=%2")
+                            .arg(results.size())
+                            .arg(results.isEmpty() ? QString() : results.first().path)));
+    QCOMPARE(callbackCount, 0);
 }
 
 void LeftoverScannerTests::scan_progressCallbackInvoked() {
-    ProgramInfo prog = makeTestProgram("Notepad");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
-    LeftoverScanner scanner(prog, ScanLevel::Moderate);
+    // A uniquely-named match guarantees exactly one found item, so the per-item progress callback
+    // fires a deterministic number of times. The old body guarded the assertion behind
+    // `if (!results.isEmpty())`, so it never ran when the real system produced no "Notepad" match.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("CallbackAppZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("CallbackAppZZ")));
+
+    ProgramInfo prog = makeTestProgram("CallbackAppZZ");
+    LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
     int callbackCount = 0;
-    auto callback = [&callbackCount](const QString& /*path*/, int /*found*/) {
+    QString reportedPath;
+    int reportedFound = 0;
+    auto callback = [&](const QString& path, int found) {
         ++callbackCount;
+        reportedPath = path;
+        reportedFound = found;
     };
 
-    auto results = scanner.scan(stop, callback);
+    const auto results = scanner.scan(stop, callback);
 
-    // If any items were found, callback should have been invoked
-    if (!results.isEmpty()) {
-        QVERIFY(callbackCount > 0);
-        QCOMPARE(callbackCount, results.size());
-    }
+    QVERIFY2(findByPath(results, folderPath) != nullptr, "injected match not found");
+    QCOMPARE(callbackCount, 1);  // the unique synthetic name matches exactly one injected folder
+    // The unique name matches nothing on the real host, so raw callbacks equal the deduped result.
+    QCOMPARE(callbackCount, results.size());
+    // Both callback arguments were named /*path*/ and /*found*/ and discarded, so reporting a
+    // constant path or a zero count -- the progress line the technician reads -- was invisible.
+    QCOMPARE(reportedPath, folderPath);
+    QCOMPARE(reportedFound, 1);
 }
 
 void LeftoverScannerTests::scan_preSelectsSafeItems() {
-    // Create a program name that might match something on the system
-    ProgramInfo prog = makeTestProgram("Notepad");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
-    LeftoverScanner scanner(prog, ScanLevel::Moderate);
+    // A Safe, deletable match is pre-selected; a deletable item that is NOT Safe must not be.
+    // The second half needs a deletable non-Safe item, which no fixture in this file produced --
+    // so the `else` arm below was dead and the risk half of the pre-selection rule was never
+    // falsified anywhere in the suite (coverage measures that operand as never once false).
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    // All three Safe-level roots are redirected: the "Microsoft" match below must not pick up
+    // the host's real AppData\Microsoft / ProgramData\Microsoft (nor walk those huge trees).
+    const ScopedEnv appData("APPDATA", root);
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    const ScopedEnv programData("ProgramData", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("PreselectAppZZ")));
+    // A shared-container LEAF name: classifyRisk makes it Risky while deletable stays true.
+    QVERIFY(QDir(root).mkdir(QStringLiteral("Microsoft")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("PreselectAppZZ")));
+    const QString sharedPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Microsoft")));
+
+    // A NON-EXISTENT install location whose leaf is "Microsoft" contributes no item of its own
+    // (a path that does not exist is dropped) but seeds the exact-name set, so the planted
+    // shared-container folder is matched too.
+    ProgramInfo prog = makeTestProgram(
+        QStringLiteral("PreselectAppZZ"),
+        {},
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Absent/Microsoft"))));
+    LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
+    const auto results = scanner.scan(stop);
+    QCOMPARE(results.size(), 2);
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr, qPrintable(QStringLiteral("not found: %1").arg(folderPath)));
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+    QVERIFY(found->selected);
+    QVERIFY(found->deletable);
+    QCOMPARE(found->description,
+             QStringLiteral("Leftover folder in %1").arg(QDir::toNativeSeparators(root)));
 
+    // THE RISK HALF: deletion authority IS present, yet the item is NOT pre-selected. Drop the
+    // risk operand from the pre-selection rule and this goes red -- today every Review/Risky but
+    // deletable leftover would arrive pre-checked for a recursive delete.
+    const LeftoverItem* shared = findByPath(results, sharedPath);
+    QVERIFY2(shared != nullptr, qPrintable(QStringLiteral("not found: %1").arg(sharedPath)));
+    QVERIFY(shared->deletable);
+    QCOMPARE(shared->risk, LeftoverItem::RiskLevel::Risky);
+    QVERIFY(!shared->selected);
+
+    // Now non-vacuous in BOTH arms: one Safe item and one non-Safe item.
     for (const auto& item : results) {
         if (item.risk == LeftoverItem::RiskLevel::Safe) {
             QVERIFY(item.selected);
@@ -225,129 +869,285 @@ void LeftoverScannerTests::scan_preSelectsSafeItems() {
     }
 }
 
-// ── Pattern Matching ────────────────────────────────────────────────────────
+// -- Pattern Matching --------------------------------------------------------
 
 void LeftoverScannerTests::scan_matchesProgramNameExact() {
-    // Use a program name that DOES exist in common system directories
-    // The "VLC" or "Notepad" test verifies exact matching behavior
-    ProgramInfo prog = makeTestProgram("VLC media player");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // A uniquely-named folder placed under the scanned root exactly matches the program's display
+    // name (matchesProgramExact) and is returned. The old body only scanned real system dirs and
+    // asserted `size() >= 0`, never exercising the match it claims to test.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("ExactMatchAppZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("ExactMatchAppZZ")));
+
+    ProgramInfo prog = makeTestProgram("ExactMatchAppZZ");
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    // This validates that the scanner runs without error
-    auto results = scanner.scan(stop);
-    QVERIFY(results.size() >= 0);
+    const auto results = scanner.scan(stop);
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr,
+             qPrintable(QStringLiteral("exact match not found: %1").arg(folderPath)));
+    QCOMPARE(found->type, LeftoverItem::Type::Folder);
 }
 
 void LeftoverScannerTests::scan_matchesProgramNameCaseInsensitive() {
-    // Scanner should do case-insensitive matching
-    ProgramInfo prog1 = makeTestProgram("TESTAPPUPPER");
-    ProgramInfo prog2 = makeTestProgram("testappupper");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // The on-disk folder and the two program names differ only in case; matching is
+    // case-insensitive, so both scanners must find the same folder under the injected root.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("CaseTestAppZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("CaseTestAppZZ")));
+
+    ProgramInfo prog1 = makeTestProgram("CASETESTAPPZZ");
+    ProgramInfo prog2 = makeTestProgram("casetestappzz");
     LeftoverScanner scanner1(prog1, ScanLevel::Safe);
     LeftoverScanner scanner2(prog2, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results1 = scanner1.scan(stop);
-    auto results2 = scanner2.scan(stop);
+    const auto results1 = scanner1.scan(stop);
+    const auto results2 = scanner2.scan(stop);
 
-    // Both should find the same results (case-insensitive matching)
-    QCOMPARE(results1.size(), results2.size());
+    // The sizes were compared to each other, never to 1: drop the exact-name filter and both
+    // scanners walk the identical roots under the identical match-all rule, so the equality
+    // still holds while every directory in the live roots is reported as a leftover.
+    QCOMPARE(results1.size(), 1);
+    QCOMPARE(results2.size(), 1);
+    const LeftoverItem* upper = findByPath(results1, folderPath);
+    const LeftoverItem* lower = findByPath(results2, folderPath);
+    QVERIFY2(upper != nullptr, "upper-case program did not match");
+    QVERIFY2(lower != nullptr, "lower-case program did not match");
+    QCOMPARE(upper->path, lower->path);
+    QCOMPARE(upper->risk, lower->risk);
+    QCOMPARE(upper->description, lower->description);
 }
 
 void LeftoverScannerTests::scan_matchesConcatenatedName() {
-    // "VLC Media Player" should also match "vlcmediaplayer" (concatenated)
-    ProgramInfo prog = makeTestProgram("Test App XYZ");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // A multi-word display name exactly matches a folder of the same (spaced) name. The
+    // whitespace-stripped "concatenated" form drives only the loose strict/service match (not the
+    // exact file/folder match), so the folder is named with the spaces. The old body scanned real
+    // dirs and asserted `size() >= 0`, testing nothing.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("Test App XYZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Test App XYZ")));
+
+    ProgramInfo prog = makeTestProgram("Test App XYZ");
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    // Validates no crash, pattern building with concatenation
-    auto results = scanner.scan(stop);
-    QVERIFY(results.size() >= 0);
+    const auto results = scanner.scan(stop);
+    QCOMPARE(results.size(), 1);
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr,
+             qPrintable(QStringLiteral("multi-word name not matched: %1").arg(folderPath)));
+    // Existence alone survives a classification regression: lose the "appdata" Safe rule and the
+    // folder becomes Review, is never pre-selected, and the cleanup silently skips it.
+    QCOMPARE(found->type, LeftoverItem::Type::Folder);
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+    QCOMPARE(found->description,
+             QStringLiteral("Leftover folder in %1").arg(QDir::toNativeSeparators(root)));
+    QVERIFY(found->selected);
 }
 
 void LeftoverScannerTests::scan_skipsCommonWords() {
-    // Common words like "the", "media", "player" should be excluded
-    // to reduce false positives. A program named only with common words
-    // should have fewer matches than expected.
-    ProgramInfo prog = makeTestProgram("The Free Player");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // Exact matching keys on the FULL program name, never a bare common sub-word: a folder named
+    // only "Player" must NOT match program "The Free Player", while the full-name folder does. The
+    // old body asserted `size() >= 0` and could not distinguish the two.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("The Free Player")));
+    QVERIFY(QDir(root).mkdir(QStringLiteral("Player")));
+    // The compare is EXACT, not a prefix test in either direction, and an embedded sub-word is
+    // only ONE of the three ways a loosened compare over-matches. An EXTENSION of the program
+    // name (a different, still-installed product) and a TRUNCATION are the other two.
+    QVERIFY(QDir(root).mkdir(QStringLiteral("The Free Player 2024")));
+    QVERIFY(QDir(root).mkdir(QStringLiteral("The Free")));
+    const QString fullPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("The Free Player")));
+    const QString commonWordPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("Player")));
+    const QString extendedPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("The Free Player 2024")));
+    const QString truncatedPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("The Free")));
+
+    ProgramInfo prog = makeTestProgram("The Free Player");
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
-    // "the", "free", "player" are all excluded words, so the full name
-    // "the free player" and concatenated "thefreeplayer" will be the patterns.
-    // With only the full name pattern, false positives are reduced.
-    QVERIFY(results.size() >= 0);
+    const auto results = scanner.scan(stop);
+    // Exactly one of the four planted directories may match; the count kills an over-match that
+    // findByPath alone would not notice.
+    QCOMPARE(results.size(), 1);
+    QVERIFY2(findByPath(results, fullPath) != nullptr, "full program name should match");
+    QVERIFY2(findByPath(results, commonWordPath) == nullptr,
+             "a bare common sub-word must not match");
+    QVERIFY2(findByPath(results, extendedPath) == nullptr,
+             "a LONGER product name must not match (a startsWith on the folder over-matches)");
+    QVERIFY2(findByPath(results, truncatedPath) == nullptr,
+             "a TRUNCATION must not match (a startsWith on the program name over-matches)");
 }
 
 void LeftoverScannerTests::scan_matchesInstallDirName() {
-    ProgramInfo prog = makeTestProgram("MySpecialApp");
-    prog.installLocation = "C:\\Program Files\\SpecialAppDir";
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // The install-directory leaf name seeds the exact-name set (extractInstallDirNames), so a
+    // folder named after the install dir is matched even when it differs from the display name.
+    // Planted under the scanned root; the fake install path itself does not exist, so the
+    // install-location phase adds nothing to confuse the result.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("SpecialAppDirZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("SpecialAppDirZZ")));
+
+    ProgramInfo prog = makeTestProgram("MySpecialApp");
+    prog.installLocation = "C:\\Program Files\\SpecialAppDirZZ";
     LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    // The scanner should also create patterns from the install dir name
-    auto results = scanner.scan(stop);
-    QVERIFY(results.size() >= 0);
+    const auto results = scanner.scan(stop);
+    // Exactly one: the non-existent install path must contribute NOTHING. Drop the existence
+    // guard in reportOnlyInstallLocation and a phantom item for a directory that does not exist
+    // reaches the technician's table, with findByPath still finding the real folder.
+    QCOMPARE(results.size(), 1);
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr,
+             qPrintable(QStringLiteral("install-dir-name match not found: %1").arg(folderPath)));
+    QCOMPARE(found->type, LeftoverItem::Type::Folder);
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+    QCOMPARE(found->description,
+             QStringLiteral("Leftover folder in %1").arg(QDir::toNativeSeparators(root)));
+    QVERIFY(found->deletable);
 }
 
-// ── Risk Classification ─────────────────────────────────────────────────────
+// -- Risk Classification -----------------------------------------------------
 
 void LeftoverScannerTests::scan_safeInAppData() {
-    // Items found in AppData directories should be classified as Safe
-    ProgramInfo prog = makeTestProgram("Notepad");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
-    LeftoverScanner scanner(prog, ScanLevel::Moderate);
+    // A matched folder whose path is under an AppData location classifies Safe (classifyFileRisk).
+    // The old loop was vacuous whenever the real system had no "Notepad" AppData leftover; inject a
+    // guaranteed match and assert the classification directly.
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("AppDataSafeZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("AppDataSafeZZ")));
+
+    ProgramInfo prog = makeTestProgram("AppDataSafeZZ");
+    LeftoverScanner scanner(prog, ScanLevel::Safe);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
-
-    for (const auto& item : results) {
-        if (item.path.toLower().contains("appdata")) {
-            // File/folder items in AppData matching program name should be Safe
-            if (item.type == LeftoverItem::Type::File || item.type == LeftoverItem::Type::Folder) {
-                QCOMPARE(item.risk, LeftoverItem::RiskLevel::Safe);
-            }
-        }
-    }
+    const auto results = scanner.scan(stop);
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr, qPrintable(QStringLiteral("not found: %1").arg(folderPath)));
+    // findByPath already established path equality and the fixture root is literally named
+    // "AppDataLocal", so the contains() probe re-checked the test's own fixture and could never
+    // fail while the line above passed.
+    QCOMPARE(found->path, folderPath);
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+    QCOMPARE(found->type, LeftoverItem::Type::Folder);
+    QCOMPARE(found->description,
+             QStringLiteral("Leftover folder in %1").arg(QDir::toNativeSeparators(root)));
+    QCOMPARE(found->sizeBytes, qint64{0});
+    QVERIFY(found->deletable);
+    QVERIFY(found->selected);
 }
 
 void LeftoverScannerTests::scan_safeInProgramFiles() {
-    ProgramInfo prog = makeTestProgram("Notepad");
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
 
+    // A matched folder whose path is under a Program Files location classifies Safe. ProgramFiles
+    // is only scanned at Moderate/Advanced, so override it and scan at Moderate. The old loop was
+    // vacuous whenever the host had no matching Program Files leftover.
+    const QString root = makeProgramFilesScanRoot(tempDir.path());
+    const ScopedEnv programFiles("ProgramFiles", root);
+    QVERIFY(QDir(root).mkdir(QStringLiteral("ProgFilesSafeZZ")));
+    const QString folderPath =
+        QDir::toNativeSeparators(QDir(root).filePath(QStringLiteral("ProgFilesSafeZZ")));
+
+    ProgramInfo prog = makeTestProgram("ProgFilesSafeZZ");
     LeftoverScanner scanner(prog, ScanLevel::Moderate);
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
+    const auto results = scanner.scan(stop);
+    const LeftoverItem* found = findByPath(results, folderPath);
+    QVERIFY2(found != nullptr, qPrintable(QStringLiteral("not found: %1").arg(folderPath)));
+    // Self-referential for the same reason (the fixture root is named "Program Files Test"),
+    // and the fragment is ambiguous by construction: "program files" makes classifyFileRisk
+    // return Safe, while the same name as a LEAF is a shared container and therefore Risky.
+    QCOMPARE(found->path, folderPath);
+    QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+    QCOMPARE(found->type, LeftoverItem::Type::Folder);
+    QCOMPARE(found->description,
+             QStringLiteral("Leftover folder in %1").arg(QDir::toNativeSeparators(root)));
+    QCOMPARE(found->sizeBytes, qint64{0});
+    QVERIFY(found->deletable);
+    QVERIFY(found->selected);
+    QVERIFY(LeftoverScanner::isSharedContainerPath(QStringLiteral("C:/Program Files")));
 
-    for (const auto& item : results) {
-        if (item.path.toLower().contains("program files")) {
-            if (item.type == LeftoverItem::Type::File || item.type == LeftoverItem::Type::Folder) {
-                QCOMPARE(item.risk, LeftoverItem::RiskLevel::Safe);
-            }
-        }
-    }
+    verifyProgramFilesOperandAloneClassifiesSafe();
 }
 
 void LeftoverScannerTests::scan_registryKeySafe() {
-    ProgramInfo prog = makeTestProgram("Notepad");
-
-    LeftoverScanner scanner(prog, ScanLevel::Moderate);
+    // The old loop never executed: the fixture's HKLM\SOFTWARE\Notepad does not exist, so
+    // checkKey() returned early (coverage measures its open-failure arm as never once false)
+    // and no RegistryKey item was ever produced -- and the body accepted 2 of the 3 risk levels
+    // anyway. Point registryKeyPath at keys that DO exist, both readable by a plain user on
+    // every Windows host, so the classification actually runs, and pin BOTH arms.
     std::atomic<bool> stop{false};
 
-    auto results = scanner.scan(stop);
+    // (1) A heuristically-guessed SHARED vendor container is Risky and never pre-selected.
+    {
+        ProgramInfo prog = makeTestProgram(QStringLiteral("RegSharedAppZZ"));
+        prog.registryKeyPath = QStringLiteral("HKLM\\SOFTWARE\\Microsoft");
+        LeftoverScanner scanner(prog, ScanLevel::Moderate);
 
-    for (const auto& item : results) {
-        if (item.type == LeftoverItem::Type::RegistryKey) {
-            // Registry keys matching program name patterns should be Safe
-            QVERIFY(item.risk == LeftoverItem::RiskLevel::Safe ||
-                    item.risk == LeftoverItem::RiskLevel::Review);
-        }
+        const auto results = scanner.scan(stop);
+        const LeftoverItem* found = findByPath(results,
+                                               QStringLiteral("HKLM\\SOFTWARE\\Microsoft"));
+        QVERIFY2(found != nullptr, "HKLM\\SOFTWARE\\Microsoft is readable on every Windows host");
+        QCOMPARE(found->type, LeftoverItem::Type::RegistryKey);
+        QCOMPARE(found->description, QStringLiteral("Program uninstall key still exists"));
+        // The shared-container rule matches the subkey LEAF name, so this must not be Safe.
+        QCOMPARE(found->risk, LeftoverItem::RiskLevel::Risky);
+        QVERIFY(!found->selected);
+    }
+
+    // (2) A non-shared key still classifies Safe and IS pre-selected, so the Risky pin above
+    //     cannot be satisfied by a blanket Risky.
+    {
+        ProgramInfo prog = makeTestProgram(QStringLiteral("RegOwnAppZZ"));
+        prog.registryKeyPath = QStringLiteral("HKCU\\Software");
+        LeftoverScanner scanner(prog, ScanLevel::Moderate);
+
+        const auto results = scanner.scan(stop);
+        const LeftoverItem* found = findByPath(results, QStringLiteral("HKCU\\Software"));
+        QVERIFY2(found != nullptr, "HKCU\\Software exists for every loaded user hive");
+        QCOMPARE(found->type, LeftoverItem::Type::RegistryKey);
+        QCOMPARE(found->risk, LeftoverItem::RiskLevel::Safe);
+        QVERIFY(found->deletable);
+        QVERIFY(found->selected);
     }
 }
 
@@ -361,6 +1161,11 @@ void LeftoverScannerTests::scan_serviceScanAtAdvanced() {
         std::atomic<bool> stop{false};
         auto results = scanner.scan(stop);
 
+        // The loop below never executes today, so its four assertions are vacuous: dropping the
+        // exact-name filter makes it run and pass (every item is a Folder/File) while the scan
+        // reports every directory under the live roots. The emptiness pin is what kills that.
+        QVERIFY2(results.isEmpty(),
+                 qPrintable(QStringLiteral("Safe produced %1 item(s)").arg(results.size())));
         for (const auto& item : results) {
             QVERIFY(item.type != LeftoverItem::Type::Service);
             QVERIFY(item.type != LeftoverItem::Type::ScheduledTask);
@@ -375,6 +1180,8 @@ void LeftoverScannerTests::scan_serviceScanAtAdvanced() {
         std::atomic<bool> stop{false};
         auto results = scanner.scan(stop);
 
+        QVERIFY2(results.isEmpty(),
+                 qPrintable(QStringLiteral("Moderate produced %1 item(s)").arg(results.size())));
         for (const auto& item : results) {
             QVERIFY(item.type != LeftoverItem::Type::Service);
             QVERIFY(item.type != LeftoverItem::Type::ScheduledTask);
@@ -384,7 +1191,7 @@ void LeftoverScannerTests::scan_serviceScanAtAdvanced() {
     }
 }
 
-// ── Empty Program ───────────────────────────────────────────────────────────
+// -- Empty Program -----------------------------------------------------------
 
 void LeftoverScannerTests::scan_emptyProgram_noResults() {
     ProgramInfo prog;  // All fields empty
@@ -398,16 +1205,696 @@ void LeftoverScannerTests::scan_emptyProgram_noResults() {
     QVERIFY(results.isEmpty());
 }
 
+// The slot is named for the publisher patterns, but its only observable used to be emptiness
+// over a fixture that planted nothing a publisher pattern could ever find -- so it held whatever
+// the publisher gate did, and the coverage run measures that gate as never once passing in the
+// whole suite. One fixture, two scans: the publisher-gated descent must fire ONLY when a
+// publisher is recorded.
 void LeftoverScannerTests::scan_emptyPublisher_noPublisherPatterns() {
-    ProgramInfo prog = makeTestProgram("UniqueTestApp99999");
-    // publisher left empty
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    const QString root = makeAppDataScanRoot(tempDir.path());
+    const ScopedEnv localAppData("LOCALAPPDATA", root);
 
-    LeftoverScanner scanner(prog, ScanLevel::Safe);
+    // A publisher\product tree: the container name matches NO program pattern, the leaf matches
+    // the display name exactly, so the leaf is reachable only through the publisher descent.
+    const QString container = QDir(root).filePath(QStringLiteral("SomeVendor"));
+    const QString nested = QDir(container).filePath(QStringLiteral("UniqueTestApp99999"));
+    QVERIFY(QDir().mkpath(nested));
+    const QString nestedNative = QDir::toNativeSeparators(nested);
+    const QString containerNative = QDir::toNativeSeparators(container);
+
     std::atomic<bool> stop{false};
 
-    // Should not crash and should work based on name patterns only
-    auto results = scanner.scan(stop);
-    QVERIFY(results.size() >= 0);
+    // (a) No publisher recorded: every container must be REFUSED. An empty publisher must not
+    // fail open into "every directory is a publisher container", which would silently double
+    // the scan's reach on exactly the programs that record no publisher.
+    ProgramInfo anonymous = makeTestProgram("UniqueTestApp99999");  // publisher left empty
+    LeftoverScanner anonymousScanner(anonymous, ScanLevel::Safe);
+    const auto anonymousResults = anonymousScanner.scan(stop);
+    QVERIFY2(findByPath(anonymousResults, nestedNative) == nullptr,
+             "an empty publisher must not authorize a publisher\\product descent");
+    QVERIFY2(findByPath(anonymousResults, containerNative) == nullptr,
+             "the container matches no program pattern and must not be reported either");
+    QVERIFY(anonymousResults.isEmpty());
+
+    // (b) CONTROL: the SAME tree with the publisher recorded. This proves the refusal above is
+    // the publisher gate doing its job rather than an unmatchable fixture -- and it is the only
+    // thing in the suite that executes the descent at all.
+    ProgramInfo attributed = makeTestProgram("UniqueTestApp99999", QStringLiteral("SomeVendor"));
+    LeftoverScanner attributedScanner(attributed, ScanLevel::Safe);
+    const auto attributedResults = attributedScanner.scan(stop);
+    const LeftoverItem* found = findByPath(attributedResults, nestedNative);
+    QVERIFY2(found != nullptr,
+             qPrintable(QStringLiteral("publisher descent did not find %1").arg(nestedNative)));
+    QCOMPARE(found->type, LeftoverItem::Type::Folder);
+    // The description proves it came from the DESCENT, not a direct top-level name match.
+    QCOMPARE(found->description, QStringLiteral("Leftover folder under publisher directory"));
+    // The publisher container itself is a descent waypoint, never a deletion candidate.
+    QVERIFY(findByPath(attributedResults, containerNative) == nullptr);
+}
+
+// -- Service leftover builder (SCM seam) --------------------------------------
+// buildServiceLeftoverItems is the locale-independent successor to the old sc.exe console parse:
+// it consumes (serviceName, displayName) pairs -- exactly what EnumServicesStatusExW yields -- so
+// the matching no longer depends on English "SERVICE_NAME:"/"DISPLAY_NAME:" labels. These pure
+// tests exercise it directly without touching the live SCM.
+
+void LeftoverScannerTests::buildServiceItems_matchesNameOrDisplay() {
+    const QVector<QPair<QString, QString>> services = {
+        {QStringLiteral("AcmeSync"), QStringLiteral("Acme Sync Service")},
+        {QStringLiteral("WSearch"), QStringLiteral("Windows Search")},
+        {QStringLiteral("svc-acme-helper"), QStringLiteral("Unrelated Display")},
+        {QStringLiteral("keynamemiss"), QStringLiteral("Acme Background Agent")},
+    };
+    // Matcher: anything containing "acme" (case-insensitive), applied to name AND display.
+    const auto matches = [](const QString& text) {
+        return text.contains(QStringLiteral("acme"), Qt::CaseInsensitive);
+    };
+    std::atomic<bool> stop{false};
+
+    const QVector<LeftoverItem> items = sak::buildServiceLeftoverItems(services, matches, stop);
+
+    // Rows 0 (name+display), 2 (name only), 3 (display only) match; row 1 does not.
+    QCOMPARE(items.size(), 3);
+    for (const auto& item : items) {
+        QCOMPARE(item.type, LeftoverItem::Type::Service);
+        QCOMPARE(item.risk, LeftoverItem::RiskLevel::Risky);
+    }
+    // path is the service KEY name (what an uninstall would target), not the display string.
+    QCOMPARE(items.at(0).path, QStringLiteral("AcmeSync"));
+    QCOMPARE(items.at(0).description, QStringLiteral("Windows service: Acme Sync Service"));
+    QCOMPARE(items.at(1).path, QStringLiteral("svc-acme-helper"));
+    QCOMPARE(items.at(1).description, QStringLiteral("Windows service: Unrelated Display"));
+    QCOMPARE(items.at(2).path, QStringLiteral("keynamemiss"));
+    QCOMPARE(items.at(2).description, QStringLiteral("Windows service: Acme Background Agent"));
+}
+
+void LeftoverScannerTests::buildServiceItems_stopRequestedInterrupts() {
+    QVector<QPair<QString, QString>> services;
+    for (int i = 0; i < 100; ++i) {
+        services.append({QStringLiteral("acme%1").arg(i), QStringLiteral("Acme %1").arg(i)});
+    }
+    const auto matches = [](const QString&) {
+        return true;
+    };  // would match every row
+    std::atomic<bool> stop{true};  // already cancelled before the first iteration
+
+    const QVector<LeftoverItem> items = sak::buildServiceLeftoverItems(services, matches, stop);
+    QVERIFY(items.isEmpty());  // cooperative cancel honored -> no items built
+
+    // The other side. Only the already-cancelled-on-entry case was exercised, and nothing there
+    // distinguishes a per-iteration poll from a single check made before the loop starts -- both
+    // return an empty vector for a flag that was true on entry. The whole point of polling
+    // INSIDE the loop is a cancel that arrives mid-walk: the walk must stop where the flag
+    // flipped and return what it had built, a partial list, never the whole 100.
+    std::atomic<bool> stop_midwalk{false};
+    const auto cancelAtRow3 = [&stop_midwalk](const QString& text) {
+        if (text == QStringLiteral("acme3")) {
+            stop_midwalk.store(true);  // flipped while row 3 is being matched
+        }
+        return true;                   // would otherwise match every row
+    };
+
+    const QVector<LeftoverItem> partial =
+        sak::buildServiceLeftoverItems(services, cancelAtRow3, stop_midwalk);
+
+    // Rows 0-3 were built (row 3's poll ran before the flag flipped); row 4's poll breaks out.
+    QCOMPARE(partial.size(), 4);
+    QCOMPARE(partial.at(3).path, QStringLiteral("acme3"));
+    // A cancel truncates the walk; it does not let it complete.
+    QVERIFY(partial.size() < services.size());
+}
+
+void LeftoverScannerTests::buildServiceItems_localeIndependentFields() {
+    // The SCM fields are language-neutral: even a display name in a non-Latin script flows through
+    // untouched (the old console parse keyed off English labels and would have dropped this row).
+    const QVector<QPair<QString, QString>> services = {
+        {QStringLiteral("AcmeSvc"),
+         QString::fromUtf8("\xE3\x82\xB5\xE3\x83\xBC\xE3\x83\x93\xE3\x82\xB9")},  // JP "service"
+    };
+    const auto matches = [](const QString& text) {
+        return text.contains(QStringLiteral("AcmeSvc"));  // matches the language-neutral key name
+    };
+    std::atomic<bool> stop{false};
+
+    const QVector<LeftoverItem> items = sak::buildServiceLeftoverItems(services, matches, stop);
+    QCOMPARE(items.size(), 1);
+    QCOMPARE(items.at(0).path, QStringLiteral("AcmeSvc"));
+    QCOMPARE(items.at(0).description,
+             QStringLiteral("Windows service: ") +
+                 QString::fromUtf8("\xE3\x82\xB5\xE3\x83\xBC\xE3\x83\x93\xE3\x82\xB9"));
+}
+
+// -- Firewall parse reliability ----------------------------------------------
+// netsh delimits each rule with a locale-neutral dashed separator, but the "Rule Name:" label is
+// localized. A dump with separators yet no parseable header is a blind (localized) parse: it MUST
+// mark the phase unreliable, never present its empty item list as an honest "no firewall rules".
+
+namespace {
+QStringList dumpLines(const QString& body) {
+    return body.split(QLatin1Char('\n'));
+}
+const QString kSep =
+    QStringLiteral("----------------------------------------------------------------------");
+}  // namespace
+
+void LeftoverScannerTests::firewallDump_englishParsesReliable() {
+    const QString body = QStringLiteral("Rule Name:  Acme Updater\n") + kSep +
+                         QStringLiteral("\nEnabled:  Yes\nRule Name:  Media Player\n") + kSep +
+                         QStringLiteral("\nEnabled:  Yes\n");
+    QVERIFY(!sak::firewallDumpHeaderMissing(dumpLines(body)));
+}
+
+void LeftoverScannerTests::firewallDump_localizedMarksUnreliable() {
+    // German labels: rules clearly present (separators) but the English "Rule Name:" is absent.
+    const QString body = QStringLiteral("Regelname:  Acme Updater\n") + kSep +
+                         QStringLiteral("\nAktiviert:  Ja\nRegelname:  Media Player\n") + kSep +
+                         QStringLiteral("\nAktiviert:  Ja\n");
+    QVERIFY(sak::firewallDumpHeaderMissing(dumpLines(body)));
+}
+
+void LeftoverScannerTests::firewallDump_emptyIsHonestNotUnreliable() {
+    // No rule blocks at all -> honest empty, not a failed parse.
+    const QString body = QStringLiteral("No rules match the specified criteria.\n");
+    QVERIFY(!sak::firewallDumpHeaderMissing(dumpLines(body)));
+}
+
+// -- Firewall rule identity capture ------------------------------------------
+// applyFirewallField pulls the dir=/profile=/program= identity off a netsh rule block so
+// cleanup deletes only the ONE matching rule instead of every rule sharing the name.
+
+void LeftoverScannerTests::firewallField_directionLowercased() {
+    LeftoverItem item;
+    sak::applyFirewallField(QStringLiteral("Direction:                            In"), item);
+    QCOMPARE(item.firewallDirection, QStringLiteral("in"));
+    // Each slot compared only its own field, so a stray cross-assignment inside one branch
+    // (profile = the direction value, say) left all three green while the cleanup's narrowed
+    // netsh delete matched nothing and silently removed no rule.
+    QVERIFY(item.firewallProfile.isEmpty());
+    QVERIFY(item.firewallProgram.isEmpty());
+}
+
+void LeftoverScannerTests::firewallField_profileCaptured() {
+    LeftoverItem item;
+    sak::applyFirewallField(QStringLiteral("Profiles:  Domain,Private,Public"), item);
+    QCOMPARE(item.firewallProfile, QStringLiteral("Domain,Private,Public"));
+    QVERIFY(item.firewallDirection.isEmpty());
+    QVERIFY(item.firewallProgram.isEmpty());
+}
+
+void LeftoverScannerTests::firewallField_programPathCaptured() {
+    LeftoverItem item;
+    sak::applyFirewallField(QStringLiteral("Program:  C:\\Apps\\Acme\\acme.exe"), item);
+    QCOMPARE(item.firewallProgram, QStringLiteral("C:\\Apps\\Acme\\acme.exe"));
+    QVERIFY(item.firewallDirection.isEmpty());
+    QVERIFY(item.firewallProfile.isEmpty());
+}
+
+void LeftoverScannerTests::firewallField_programAnyIgnored() {
+    LeftoverItem item;
+    sak::applyFirewallField(QStringLiteral("Program:  Any"), item);
+    QVERIFY(item.firewallProgram.isEmpty());
+
+    // The sentinel compare is deliberately case-INSENSITIVE, and only the folded direction
+    // proves it: if the match were case-sensitive, a dump spelling the not-program-bound marker
+    // "any"/"ANY" would be captured as a program path, and the narrowed netsh delete would then
+    // carry program=any, match no rule, and silently remove nothing.
+    LeftoverItem lowerAny;
+    sak::applyFirewallField(QStringLiteral("Program:  any"), lowerAny);
+    QVERIFY(lowerAny.firewallProgram.isEmpty());
+    LeftoverItem upperAny;
+    sak::applyFirewallField(QStringLiteral("Program:  ANY"), upperAny);
+    QVERIFY(upperAny.firewallProgram.isEmpty());
+
+    // ...and it is an EXACT match, not a prefix: a value that merely BEGINS with "Any" is a real
+    // program binding and must keep its program= identity, or the delete widens to every rule
+    // sharing the display name.
+    LeftoverItem nearMiss;
+    sak::applyFirewallField(QStringLiteral("Program:  Anydesk.exe"), nearMiss);
+    QCOMPARE(nearMiss.firewallProgram, QStringLiteral("Anydesk.exe"));
+}
+
+void LeftoverScannerTests::firewallField_unrelatedLineNoOp() {
+    LeftoverItem item;
+    sak::applyFirewallField(QStringLiteral("Enabled:  Yes"), item);
+    QVERIFY(item.firewallDirection.isEmpty());
+    QVERIFY(item.firewallProfile.isEmpty());
+    QVERIFY(item.firewallProgram.isEmpty());
+}
+
+// -- Scheduled-task CSV first-field parse -------------------------------------
+// schtasks /fo CSV quotes each field; a naive split(',')[0] truncates a task name that contains a
+// comma, so a later removeScheduledTask would target the wrong/nonexistent task. parseFirstCsvField
+// honors the quoting so the task identity is preserved.
+
+void LeftoverScannerTests::csvFirstField_plainUnquoted() {
+    QCOMPARE(sak::parseFirstCsvField(QStringLiteral("TaskName,Next Run Time,Status")),
+             QStringLiteral("TaskName"));
+    // The unquoted branch is a ternary with two arms and only the with-comma arm was ever taken
+    // -- coverage measures the no-comma arm as never once true. For a single-field line (what
+    // schtasks emits when the trailing fields are absent) the WHOLE line is the task identity;
+    // returning an empty string there stayed green, and the row would then be skipped and the
+    // task leftover would vanish from the report. The input must be non-empty: an empty line
+    // returns empty either way and cannot tell the two arms apart.
+    QCOMPARE(sak::parseFirstCsvField(QStringLiteral("\\Acme\\AcmeUpdater")),
+             QStringLiteral("\\Acme\\AcmeUpdater"));
+}
+
+void LeftoverScannerTests::csvFirstField_quotedWithEmbeddedComma() {
+    QCOMPARE(sak::parseFirstCsvField(QStringLiteral("\"Acme, Inc. Updater\",\"N/A\",\"Ready\"")),
+             QStringLiteral("Acme, Inc. Updater"));
+}
+
+void LeftoverScannerTests::csvFirstField_escapedQuotes() {
+    // A doubled quote inside a quoted field is a single literal quote.
+    QCOMPARE(sak::parseFirstCsvField(QStringLiteral("\"He said \"\"hi\"\"\",\"x\"")),
+             QStringLiteral("He said \"hi\""));
+}
+
+// -- Run-key ERROR_MORE_DATA buffer growth -----------------------------------
+// RegEnumValueW reports only the required DATA size on ERROR_MORE_DATA; the name size is unknown.
+// growRunValueBuffers must therefore grow data to the reported size and double the name buffer, and
+// must fail closed (return false) past a sane ceiling rather than skip a value silently or spin.
+
+void LeftoverScannerTests::runValueBuffers_growsDataToRequiredSize() {
+    std::vector<wchar_t> name_buf(256);
+    std::vector<BYTE> data_buf(1024);
+    const bool ok = sak::growRunValueBuffers(name_buf, data_buf, 4096);
+    QVERIFY(ok);
+    QCOMPARE(static_cast<int>(data_buf.size()), 4096);
+    QCOMPARE(static_cast<int>(name_buf.size()), 256);  // data-only shortfall leaves name untouched
+}
+
+void LeftoverScannerTests::runValueBuffers_doublesNameWhenDataFits() {
+    std::vector<wchar_t> name_buf(256);
+    std::vector<BYTE> data_buf(1024);
+    // data_len fits the current data buffer -> the shortfall is the name buffer, which doubles.
+    const bool ok = sak::growRunValueBuffers(name_buf, data_buf, 512);
+    QVERIFY(ok);
+    QCOMPARE(static_cast<int>(name_buf.size()), 512);
+    QCOMPARE(static_cast<int>(data_buf.size()), 1024);
+}
+
+void LeftoverScannerTests::runValueBuffers_failsClosedPastCeiling() {
+    std::vector<wchar_t> name_buf(256);
+    std::vector<BYTE> data_buf(1024);
+    // A pathological 2 MiB data requirement exceeds the 1 MiB ceiling -> fail closed.
+    const bool ok = sak::growRunValueBuffers(name_buf, data_buf, 2u * 1024u * 1024u);
+    QVERIFY(!ok);
+    // WHICH ceiling fired: data grew to the REQUESTED size (it is not clamped) and the name
+    // buffer was left untouched.
+    QCOMPARE(static_cast<int>(data_buf.size()), 2 * 1024 * 1024);
+    QCOMPARE(static_cast<int>(name_buf.size()), 256);
+    // The boundary itself. Tightening the guard from <= to < still fails this slot and both
+    // sibling slots, yet silently skips a legitimate exactly-1 MiB Run value -- the value-drop
+    // this whole seam exists to prevent.
+    std::vector<wchar_t> name_at_cap(256);
+    std::vector<BYTE> data_at_cap(1024);
+    QVERIFY(sak::growRunValueBuffers(name_at_cap, data_at_cap, 1024u * 1024u));
+    QCOMPARE(static_cast<int>(data_at_cap.size()), 1024 * 1024);
+}
+
+// -- R5-P7-6: registry InstallLocation as deletion authority -----------------
+//
+// InstallLocation lives in the Uninstall subtree, which ANY user can write under HKCU, and
+// the whole-directory leftover built from it is handed to a recursive delete run by an
+// administrator. It therefore has to EARN that authority: pin one literal local directory,
+// never a system/shared/profile root, and be tied back to the program being uninstalled.
+
+namespace {
+/// The screening tests supply their own root list so they stay independent of the machine
+/// they run on; criticalInstallRoots() itself is covered separately.
+QStringList testCriticalRoots() {
+    return {QStringLiteral("C:\\Windows"),
+            QStringLiteral("C:\\Program Files"),
+            QStringLiteral("C:\\Users"),
+            QStringLiteral("C:\\Users\\Username")};
+}
+}  // namespace
+
+void LeftoverScannerTests::installLocationSyntax_refusesUnpinnableShapes() {
+    const QStringList roots = testCriticalRoots();
+    // !isEmpty() collapsed three distinct technician-facing reasons into one bool. A surviving
+    // mutant: widen the empty check to `trimmed().size() < 4` and "C:\\", "D:\\" and "D:/" are
+    // reported as "no install location is recorded" for a value that DID name a whole volume --
+    // every old assertion in this slot stayed green.
+    const QString kNotLiteral = QStringLiteral(
+        "it is not a literal local directory path (relative, UNC, traversal, "
+        "unexpanded variable or a whole volume)");
+    const auto refusedAs = [&roots](const QString& value, const QString& reason) {
+        QCOMPARE(LeftoverScanner::installLocationSyntaxRefusal(value, roots), reason);
+    };
+
+    // Nothing recorded, or whitespace only.
+    refusedAs(QString(), QStringLiteral("no install location is recorded"));
+    refusedAs(QStringLiteral("   "), QStringLiteral("no install location is recorded"));
+    // Bare and relative forms name no fixed directory at all.
+    refusedAs(QStringLiteral("MyApp"), kNotLiteral);
+    refusedAs(QStringLiteral("tools\\MyApp"), kNotLiteral);
+    refusedAs(QStringLiteral(".\\MyApp"), kNotLiteral);
+    // Drive-relative resolves against that drive's CURRENT directory.
+    refusedAs(QStringLiteral("C:MyApp"), kNotLiteral);
+    // Root-relative resolves against the CURRENT drive.
+    refusedAs(QStringLiteral("\\MyApp"), kNotLiteral);
+    // A remote share is an origin this machine cannot vouch for.
+    refusedAs(QStringLiteral("\\\\server\\share\\MyApp"), kNotLiteral);
+    // A traversal segment moves the delete out of the directory the value names.
+    refusedAs(QStringLiteral("C:\\Apps\\MyApp\\..\\..\\Windows"), kNotLiteral);
+    refusedAs(QStringLiteral("C:\\Apps\\.\\MyApp"), kNotLiteral);
+    // An unexpanded variable does not name what its author meant.
+    refusedAs(QStringLiteral("%ProgramFiles%\\MyApp"), kNotLiteral);
+    // A WHOLE VOLUME must never become a recursive-delete target.
+    refusedAs(QStringLiteral("C:\\"), kNotLiteral);
+    refusedAs(QStringLiteral("D:\\"), kNotLiteral);
+    refusedAs(QStringLiteral("D:/"), kNotLiteral);
+}
+
+void LeftoverScannerTests::installLocationSyntax_refusesCriticalRoots() {
+    const QStringList roots = testCriticalRoots();
+    // Each row must be refused as a CRITICAL ROOT, not merely refused. "c:\\windows" is the only
+    // lowercase-drive input in the file: require an upper-case drive letter in the literal-path
+    // screen and it is refused with the not-literal message instead, every old assertion here
+    // stays green, and a real lowercase install location loses its deletable candidate.
+    const QString kCriticalRoot =
+        QStringLiteral("it is a system, shared or user-profile root directory");
+    const auto refusedAs = [&roots](const QString& value, const QString& reason) {
+        QCOMPARE(LeftoverScanner::installLocationSyntaxRefusal(value, roots), reason);
+    };
+
+    // The OS, shared-program and profile roots themselves, however they are spelled.
+    refusedAs(QStringLiteral("C:\\Windows"), kCriticalRoot);
+    refusedAs(QStringLiteral("c:\\windows"), kCriticalRoot);
+    refusedAs(QStringLiteral("C:/Windows"), kCriticalRoot);
+    refusedAs(QStringLiteral("C:\\Windows\\"), kCriticalRoot);
+    refusedAs(QStringLiteral("C:\\Program Files"), kCriticalRoot);
+    // The profiles container AND another user's profile root: wiping either is as
+    // catastrophic as wiping our own, and an HKCU value can name any of them.
+    refusedAs(QStringLiteral("C:\\Users"), kCriticalRoot);
+    refusedAs(QStringLiteral("C:\\Users\\Username"), kCriticalRoot);
+
+    // A product directory UNDER one of those roots is the normal, allowed case.
+    QVERIFY(LeftoverScanner::installLocationSyntaxRefusal(
+                QStringLiteral("C:\\Program Files\\MyApp"), roots)
+                .isEmpty());
+    QVERIFY(LeftoverScanner::installLocationSyntaxRefusal(
+                QStringLiteral("C:\\Users\\Username\\MyApp"), roots)
+                .isEmpty());
+}
+
+void LeftoverScannerTests::installLocationSyntax_acceptsQualifiedProductDirectory() {
+    const QStringList roots = testCriticalRoots();
+    // Separators either way, trailing separator tolerated (registry values carry one
+    // routinely), surrounding whitespace trimmed.
+    QVERIFY(LeftoverScanner::installLocationSyntaxRefusal(QStringLiteral("C:\\Apps\\MyApp"), roots)
+                .isEmpty());
+    QVERIFY(LeftoverScanner::installLocationSyntaxRefusal(QStringLiteral("C:/Apps/MyApp"), roots)
+                .isEmpty());
+    QVERIFY(
+        LeftoverScanner::installLocationSyntaxRefusal(QStringLiteral("C:\\Apps\\MyApp\\"), roots)
+            .isEmpty());
+    QVERIFY(
+        LeftoverScanner::installLocationSyntaxRefusal(QStringLiteral("  D:\\Apps\\MyApp  "), roots)
+            .isEmpty());
+}
+
+void LeftoverScannerTests::installLocationOwnership_provesOnlyRealProductDirectories() {
+    const auto proves = [](const QString& location, const QString& name) {
+        return LeftoverScanner::installLocationMatchesProgram(location, name, QString());
+    };
+
+    // The directory leaf is the program.
+    QVERIFY(
+        proves(QStringLiteral("C:\\Program Files\\SuperEditor"), QStringLiteral("SuperEditor")));
+    // Punctuation, case and spacing differences fold away.
+    QVERIFY(proves(QStringLiteral("C:\\Program Files\\Notepad++"),
+                   QStringLiteral("Notepad++ (64-bit)")));
+    QVERIFY(proves(QStringLiteral("C:\\Program Files\\7-Zip"), QStringLiteral("7 Zip")));
+    // The "Publisher\\Product" layout folds together with its parent.
+    QVERIFY(proves(QStringLiteral("C:\\Program Files\\Google\\Chrome"),
+                   QStringLiteral("Google Chrome")));
+    // A UWP package family name is accepted as the identity too.
+    QVERIFY(LeftoverScanner::installLocationMatchesProgram(
+        QStringLiteral("C:\\Apps\\ContosoReader"), QString(), QStringLiteral("ContosoReader_8we")));
+
+    // THE FINDING: a value that merely CLAIMS a directory proves nothing. Another user's
+    // documents folder is not this program's install location just because HKCU says so.
+    QVERIFY(
+        !proves(QStringLiteral("C:\\Users\\Username\\Documents"), QStringLiteral("SuperEditor")));
+    QVERIFY(!proves(QStringLiteral("C:\\Program Files\\SomeOtherVendor"),
+                    QStringLiteral("SuperEditor")));
+    // A program with no identity at all can never prove ownership of anything.
+    QVERIFY(!proves(QStringLiteral("C:\\Program Files\\SuperEditor"), QString()));
+    // A short leaf must not prefix-match its way onto an unrelated program.
+    QVERIFY(!proves(QStringLiteral("C:\\Apps\\Su"), QStringLiteral("SuperEditor")));
+    // Pin the distinctiveness floor EXACTLY, from both sides. It was bounded only from far
+    // below: this 2-character leaf is the sole probe, and the accepting cases all sit well above
+    // the floor or return true at the equality test before reaching it. A three-character leaf
+    // is still refused -- lower the floor to 3 and "C:\Apps\Sup" would hand a registry-supplied
+    // path full recursive-delete authority over SuperEditor on a three-letter coincidence. A
+    // four-character leaf IS accepted -- raise the floor and a real short install directory
+    // silently loses its deletable candidate.
+    QVERIFY(!proves(QStringLiteral("C:\\Apps\\Sup"), QStringLiteral("SuperEditor")));
+    QVERIFY(proves(QStringLiteral("C:\\Apps\\Supe"), QStringLiteral("SuperEditor")));
+}
+
+void LeftoverScannerTests::criticalInstallRoots_coverSystemAndProfileRoots() {
+    const QStringList roots = LeftoverScanner::criticalInstallRoots();
+    QVERIFY(!roots.isEmpty());
+    const auto covers = [&roots](const QString& expected) {
+        return std::any_of(roots.cbegin(), roots.cend(), [&expected](const QString& root) {
+            return root.compare(expected, Qt::CaseInsensitive) == 0;
+        });
+    };
+    // Derived from the live environment, so a non-C: system drive is protected too.
+    QVERIFY2(covers(QDir::toNativeSeparators(qEnvironmentVariable("SystemRoot"))),
+             qPrintable(roots.join(QLatin1Char(';'))));
+    QVERIFY2(covers(QDir::toNativeSeparators(qEnvironmentVariable("ProgramData"))),
+             qPrintable(roots.join(QLatin1Char(';'))));
+    QVERIFY2(covers(QDir::toNativeSeparators(qEnvironmentVariable("USERPROFILE"))),
+             qPrintable(roots.join(QLatin1Char(';'))));
+    // The profiles container itself, so "C:\\Users" can never be the delete target.
+    QDir profiles(qEnvironmentVariable("USERPROFILE"));
+    QVERIFY(profiles.cdUp());
+    QVERIFY2(covers(QDir::toNativeSeparators(profiles.absolutePath())),
+             qPrintable(roots.join(QLatin1Char(';'))));
+
+    verifyEveryEnvDerivedCriticalRootIsPinned();
+}
+
+void LeftoverScannerTests::criticalInstallRoots_derivesNonCSystemDrive() {
+    // R5-G23-4 (non-C: system drive): criticalInstallRoots derives every OS/shared root from the
+    // environment, so a machine whose system drive is Z: (not C:) is protected exactly like a C:
+    // machine. The live-env test above only proves derivation on THIS host, whose drive IS C:, so
+    // it cannot catch a guard that silently hard-codes "C:". This injects a fake non-C: SystemRoot
+    // and ProgramData and confirms the derived critical-root set follows the drive to Z:. Env is
+    // process-global, so save and restore -- and restore BEFORE asserting so a failed assertion
+    // cannot leave the suite's environment dirty for later tests.
+    const QByteArray savedSystemRoot = qgetenv("SystemRoot");
+    const QByteArray savedProgramData = qgetenv("ProgramData");
+    qputenv("SystemRoot", "Z:\\Windows");
+    qputenv("ProgramData", "Z:\\ProgramData");
+    const QStringList roots = LeftoverScanner::criticalInstallRoots();
+    const auto restore = [](const char* name, const QByteArray& saved) {
+        if (saved.isEmpty()) {
+            qunsetenv(name);
+        } else {
+            qputenv(name, saved);
+        }
+    };
+    restore("SystemRoot", savedSystemRoot);
+    restore("ProgramData", savedProgramData);
+
+    const auto covers = [&roots](const QString& expected) {
+        return std::any_of(roots.cbegin(), roots.cend(), [&expected](const QString& root) {
+            return root.compare(expected, Qt::CaseInsensitive) == 0;
+        });
+    };
+    // Non-vacuous: a guard that hard-coded C: instead of reading the environment would omit these,
+    // turning the assertion red.
+    QVERIFY2(covers(QStringLiteral("Z:\\Windows")), qPrintable(roots.join(QLatin1Char(';'))));
+    QVERIFY2(covers(QStringLiteral("Z:\\ProgramData")), qPrintable(roots.join(QLatin1Char(';'))));
+}
+
+namespace {
+/// The install-location leftover for @p location, or a default-constructed item when the
+/// scan produced no entry for that path at all.
+LeftoverItem installLocationItem(const QVector<LeftoverItem>& results, const QString& location) {
+    const QString wanted = QDir::toNativeSeparators(location);
+    for (const LeftoverItem& item : results) {
+        if (item.path.compare(wanted, Qt::CaseInsensitive) == 0) {
+            return item;
+        }
+    }
+    return {};
+}
+}  // namespace
+
+void LeftoverScannerTests::scan_installLocationTiedToProgram_isDeletable() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(QDir(tempDir.path()).mkdir(QStringLiteral("ZephyrLeftoverApp")));
+    const QString location = tempDir.path() + QStringLiteral("/ZephyrLeftoverApp");
+
+    // A directory that really is named after the program keeps the normal behaviour: it is
+    // a deletable, pre-selected Safe candidate.
+    ProgramInfo prog = makeTestProgram(QStringLiteral("ZephyrLeftoverApp"), {}, location);
+    LeftoverScanner scanner(prog, ScanLevel::Safe);
+    std::atomic<bool> stop{false};
+    const auto results = scanner.scan(stop);
+
+    const LeftoverItem item = installLocationItem(results, location);
+    QVERIFY2(!item.path.isEmpty(), "the install directory must still be reported");
+    QVERIFY(item.deletable);
+    QCOMPARE(item.risk, LeftoverItem::RiskLevel::Safe);
+    QCOMPARE(item.type, LeftoverItem::Type::Folder);
+    QCOMPARE(item.description, QStringLiteral("Program install directory still exists"));
+    QVERIFY(item.selected);
+}
+
+void LeftoverScannerTests::scan_installLocationNotTiedToProgram_isReportOnly() {
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QVERIFY(QDir(tempDir.path()).mkdir(QStringLiteral("BobPersonalArchive")));
+    const QString location = tempDir.path() + QStringLiteral("/BobPersonalArchive");
+
+    // THE FINDING: a non-admin HKCU Uninstall entry naming somebody else's folder. The
+    // directory exists and is not a protected path, so it used to be classified Safe and
+    // PRE-SELECTED for an admin-run recursive delete. It must now be report-only.
+    ProgramInfo prog = makeTestProgram(QStringLiteral("ZephyrLeftoverApp"), {}, location);
+    LeftoverScanner scanner(prog, ScanLevel::Safe);
+    std::atomic<bool> stop{false};
+    const auto results = scanner.scan(stop);
+
+    const LeftoverItem item = installLocationItem(results, location);
+    // installLocationItem matches CASE-INSENSITIVELY, so the lookup plus !isEmpty() proved
+    // nothing about the reported spelling -- or the type, which routes the removal path.
+    QCOMPARE(item.path, QDir::toNativeSeparators(location));
+    QCOMPARE(item.type, LeftoverItem::Type::Folder);
+    QVERIFY2(!item.deletable, "an unprovable install location must carry no deletion authority");
+    QVERIFY(!item.selected);
+    QCOMPARE(item.risk, LeftoverItem::RiskLevel::Risky);
+    QCOMPARE(item.description,
+             QStringLiteral("Registered install directory -- REVIEW ONLY, not deletable because "
+                            "it cannot be tied to this program by name"));
+}
+
+void LeftoverScannerTests::scan_installLocationUnpinnable_yieldsNoCandidate() {
+    // A value that cannot even be pinned to one literal local directory yields NO item at
+    // all -- not a candidate carrying a warning. It is never stat'ed either.
+    for (const QString& location : {QStringLiteral("\\\\server\\share\\ZephyrLeftoverApp"),
+                                    QStringLiteral("%ProgramFiles%\\ZephyrLeftoverApp"),
+                                    QStringLiteral("ZephyrLeftoverApp"),
+                                    QStringLiteral("C:\\")}) {
+        ProgramInfo prog = makeTestProgram(QStringLiteral("ZephyrLeftoverApp"), {}, location);
+        LeftoverScanner scanner(prog, ScanLevel::Safe);
+        std::atomic<bool> stop{false};
+        const auto results = scanner.scan(stop);
+        // The slot's own comment says "yields NO item at all", but the assertion only proved
+        // no item carried THIS path: delete both fail-closed guards and an item with an EMPTY
+        // path is emitted, which installLocationItem cannot match -- so it returns a
+        // default-constructed item, the assertion passes, and a nameless candidate reaches the
+        // technician's table.
+        QVERIFY2(results.isEmpty(),
+                 qPrintable(QStringLiteral("%1 -> %2 item(s), first=%3")
+                                .arg(location)
+                                .arg(results.size())
+                                .arg(results.isEmpty() ? QString() : results.first().path)));
+    }
+}
+
+void LeftoverScannerTests::isSharedContainerPath_isDriveAgnostic() {
+    // kProtectedPaths hard-codes C:, but this leaf check is the DRIVE-AGNOSTIC guard that keeps a
+    // shared OS/vendor container Risky on ANY drive -- the safety property the leftover cleaner
+    // relies on for a machine whose system drive is not C:.
+    // All ELEVEN leaf names, not three: deleting "syswow64" (or "windows", "winsxs", "common
+    // files", "microsoft", "microsoft shared", "windowsapps", "program files") from the set left
+    // every assertion here green while turning that shared OS/vendor container from Risky into
+    // an auto-selected recursive-delete target. The bare "windows" leaf had no assertion at all.
+    const QStringList kSharedLeaves = {QStringLiteral("Windows"),
+                                       QStringLiteral("System32"),
+                                       QStringLiteral("SysWOW64"),
+                                       QStringLiteral("WinSxS"),
+                                       QStringLiteral("Program Files"),
+                                       QStringLiteral("Program Files (x86)"),
+                                       QStringLiteral("ProgramData"),
+                                       QStringLiteral("Common Files"),
+                                       QStringLiteral("Microsoft"),
+                                       QStringLiteral("Microsoft Shared"),
+                                       QStringLiteral("WindowsApps")};
+    for (const QString& drive :
+         {QStringLiteral("C:/"), QStringLiteral("D:/"), QStringLiteral("Z:/")}) {
+        for (const QString& leaf : kSharedLeaves) {
+            const QString path = drive + QStringLiteral("Parent/") + leaf;
+            QVERIFY2(LeftoverScanner::isSharedContainerPath(path), qPrintable(path));
+        }
+    }
+    // Case-insensitive on both the drive letter and the leaf.
+    QVERIFY(LeftoverScanner::isSharedContainerPath(QStringLiteral("d:\\windows\\SYSTEM32")));
+    // A single product's own directory (any drive) is NOT a shared container.
+    QVERIFY(
+        !LeftoverScanner::isSharedContainerPath(QStringLiteral("D:/Users/Bob/AppData/Local/Acme")));
+    QVERIFY(!LeftoverScanner::isSharedContainerPath(QString()));
+}
+
+// The protected system folders were written for a C: install only. On a machine whose Windows,
+// ProgramData or Users live elsewhere, only the container NAME stayed protected (by the leaf check
+// above), so a leftover under D:\ProgramData\Microsoft was classified like any other folder. The
+// protected list is now rebased onto the machine's own folders.
+void LeftoverScannerTests::protectedPaths_followThisMachinesSystemFolders() {
+    const LeftoverScanner::SystemFolders d_install{
+        .windows = QStringLiteral("D:/Windows"),
+        .program_files = QStringLiteral("D:\\Program Files"),
+        .program_files_common = QStringLiteral("D:\\Program Files\\Common Files"),
+        .program_data = QStringLiteral("D:\\ProgramData"),
+        .user_profiles = QStringLiteral("E:\\Users"),
+        .public_profile = QStringLiteral("E:\\Users\\Public")};
+    const QStringList paths = LeftoverScanner::protectedPathsFor(d_install);
+    QCOMPARE(paths,
+             (QStringList{QStringLiteral("D:\\Windows"),
+                          QStringLiteral("D:\\Windows\\System32"),
+                          QStringLiteral("D:\\Windows\\SysWOW64"),
+                          QStringLiteral("D:\\Windows\\WinSxS"),
+                          QStringLiteral("D:\\Program Files\\Common Files\\Microsoft Shared"),
+                          QStringLiteral("D:\\Program Files\\Windows"),
+                          QStringLiteral("D:\\ProgramData\\Microsoft"),
+                          QStringLiteral("E:\\Users\\Default"),
+                          QStringLiteral("E:\\Users\\Public")}));
+    QVERIFY(LeftoverScanner::protectedPathsFor({}).isEmpty());
+
+    // The subtree, not only the container: what the C: list always protected on C:.
+    QVERIFY(LeftoverScanner::pathUnderProtectedRoot(
+        QStringLiteral("D:/ProgramData/Microsoft/EdgeUpdate"), paths, QString()));
+    QVERIFY(LeftoverScanner::pathUnderProtectedRoot(
+        QStringLiteral("e:\\users\\default\\AppData\\Local\\Acme"), paths, QString()));
+    QVERIFY(
+        LeftoverScanner::pathUnderProtectedRoot(QStringLiteral("D:\\Windows"), paths, QString()));
+    // A sibling that only shares a prefix is not inside it, and an unrelated folder is not.
+    QVERIFY(!LeftoverScanner::pathUnderProtectedRoot(
+        QStringLiteral("D:\\ProgramData\\MicrosoftEdgeLeftovers"), paths, QString()));
+    QVERIFY(!LeftoverScanner::pathUnderProtectedRoot(
+        QStringLiteral("D:\\ProgramData\\Acme"), paths, QString()));
+    // The program's own trusted install folder strictly below a protected root stays exempt.
+    QVERIFY(!LeftoverScanner::pathUnderProtectedRoot(
+        QStringLiteral("D:\\Program Files\\Windows\\Acme\\cache"),
+        paths,
+        QStringLiteral("D:\\Program Files\\Windows\\Acme")));
+}
+
+void LeftoverScannerTests::liveSystemFolders_comeFromTheKnownFolderApi() {
+    const LeftoverScanner::SystemFolders live = LeftoverScanner::liveSystemFolders();
+    for (const QString& folder : {live.windows,
+                                  live.program_files,
+                                  live.program_files_common,
+                                  live.program_data,
+                                  live.user_profiles,
+                                  live.public_profile}) {
+        QVERIFY2(!folder.isEmpty() && QDir::isAbsolutePath(folder) && QFileInfo(folder).isDir(),
+                 qPrintable(folder));
+    }
+    const QStringList paths = LeftoverScanner::protectedPathsFor(live);
+    QCOMPARE(paths.size(), 9);
+    QVERIFY(QFileInfo(paths.at(1)).isDir());  // <Windows>\System32 exists on any Windows
 }
 
 QTEST_GUILESS_MAIN(LeftoverScannerTests)

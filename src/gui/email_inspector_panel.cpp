@@ -13,16 +13,26 @@
 #include "sak/email_constants.h"
 #include "sak/email_contacts_dialog.h"
 #include "sak/email_file_scanner_dialog.h"
+#include "sak/email_folder_selection.h"
+#include "sak/email_html_sanitizer.h"
+#include "sak/email_safe_text_browser.h"
+#include "sak/email_view_ids.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/pst_recurrence.h"
+#include "sak/ribbon_tool_button.h"
 #include "sak/style_constants.h"
+#include "sak/view_empty_state.h"
+#include "sak/widget_helpers.h"
 
 #include <QApplication>
 #include <QBuffer>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
+#include <QDateEdit>
 #include <QDateTime>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -57,12 +67,18 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <array>
 #include <functional>
 #include <utility>
 
 namespace sak {
 
 namespace {
+
+// EmailSearchCriteria::folder_scope_id: search the whole store.
+constexpr uint64_t kSearchAllFolders = 0;
+
 
 constexpr int kEmailHeaderCheckRadiusPx = ui::kCssRadiusSmallPx;
 constexpr int kEmailHeaderCheckTickPenWidth = ui::kCssBorderWidthAccentPx;
@@ -98,7 +114,6 @@ constexpr int kDefaultNoteColorIndex = 3;
 constexpr int kInlineImageAttrPrefixCaptureGroup = 1;
 constexpr int kInlineImageAttrQuoteCaptureGroup = 2;
 constexpr int kInlineImageSrcCaptureGroup = 3;
-constexpr int kLargeByteDisplayPrecision = 2;
 
 class EmailSelectHeaderView : public QHeaderView {
 public:
@@ -120,24 +135,24 @@ public:
     }
 
 protected:
-    void paintSection(QPainter* painter, const QRect& rect, int logicalIndex) const override {
+    void paintSection(QPainter* painter, const QRect& rect, int logical_index) const override {
         Q_ASSERT(painter != nullptr);
-        QHeaderView::paintSection(painter, rect, logicalIndex);
-        if (logicalIndex != kEmailSelectHeaderColumn) {
+        QHeaderView::paintSection(painter, rect, logical_index);
+        if (logical_index != kEmailSelectHeaderColumn) {
             return;
         }
 
-        constexpr int side = ui::kUiIconSmall;
-        const int cx = rect.x() + (rect.width() - side) / 2;
-        const int cy = rect.y() + (rect.height() - side) / 2;
-        const QRect check_rect(cx, cy, side, side);
+        constexpr int kSide = ui::kUiIconSmall;
+        const int cx = rect.x() + ((rect.width() - kSide) / 2);
+        const int cy = rect.y() + ((rect.height() - kSide) / 2);
+        const QRect check_rect(cx, cy, kSide, kSide);
 
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing);
         if (m_state == Qt::Unchecked) {
-            painter->setBrush(QColor(QString::fromLatin1(ui::kColorBgSurface)));
-            painter->setPen(QPen(QColor(QString::fromLatin1(ui::kColorBorderMuted)),
-                                 ui::kCssBorderWidthDefaultPx));
+            painter->setBrush(ui::themedColor(ui::kColorBgSurface));
+            painter->setPen(
+                QPen(ui::themedColor(ui::kColorBorderMuted), ui::kCssBorderWidthDefaultPx));
             painter->drawRoundedRect(check_rect,
                                      kEmailHeaderCheckRadiusPx,
                                      kEmailHeaderCheckRadiusPx);
@@ -277,17 +292,11 @@ void EmailInspectorPanel::setupUi() {
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
     root_layout->setSpacing(ui::kSpacingSmall);
 
-    // Dynamic panel header
-    m_header_widgets =
-        createDynamicPanelHeader(this,
-                                 QStringLiteral(":/icons/icons/panel_email.svg"),
-                                 tr("Email Tools"),
-                                 tr("Browse and export emails, contacts, calendar "
-                                    "items, tasks, and notes from PST/OST/MBOX files"),
-                                 root_layout);
+    // No header of its own: Email Tools' header above the sub-tabs names this one.
 
     // Ribbon toolbar
     root_layout->addWidget(createRibbon());
+    root_layout->addWidget(createSearchFilterRow());
 
     // Main splitter: folder tree | content area
     m_main_splitter = new QSplitter(Qt::Horizontal, this);
@@ -310,6 +319,22 @@ void EmailInspectorPanel::setupUi() {
     m_progress_bar->setVisible(false);
     m_progress_bar->setAccessibleName(QStringLiteral("Email Operation Progress"));
     status_row->addWidget(m_progress_bar);
+
+    // Stop control for the in-flight operation. Starts hidden+disabled (matching the
+    // progress bar) and is driven purely through setOperationRunning, the single
+    // operation-lifecycle chokepoint, so it is never stranded enabled after an op ends.
+    m_cancel_operation_button = new QPushButton(tr("Stop"), this);
+    m_cancel_operation_button->setEnabled(false);
+    m_cancel_operation_button->setVisible(false);
+    m_cancel_operation_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    m_cancel_operation_button->setAccessibleName(tr("Stop Email Operation"));
+    m_cancel_operation_button->setToolTip(tr("Stop the running email operation"));
+    connect(m_cancel_operation_button,
+            &QAbstractButton::clicked,
+            m_controller.get(),
+            &EmailInspectorController::cancelOperation);
+    status_row->addWidget(m_cancel_operation_button);
+
     root_layout->addLayout(status_row);
 
     addPreviewControlRow(root_layout);
@@ -318,7 +343,6 @@ void EmailInspectorPanel::setupUi() {
 void EmailInspectorPanel::addPreviewControlRow(QVBoxLayout* root_layout) {
     Q_ASSERT(root_layout);
 
-    m_log_toggle = new LogToggleSwitch(tr("Log"), this);
     m_images_toggle_switch = new LogToggleSwitch(tr("Images"), this);
     m_images_toggle_switch->setToolTip(
         tr("Load images and remote content in the preview (off by default for security)"));
@@ -337,15 +361,17 @@ void EmailInspectorPanel::addPreviewControlRow(QVBoxLayout* root_layout) {
         displayItemDetail(m_current_detail);
     });
     auto* log_toggle_layout = new QHBoxLayout();
-    log_toggle_layout->addWidget(m_log_toggle);
     log_toggle_layout->addStretch();
     m_export_emails_button = new QPushButton(tr("Save Selected Email"), this);
     m_export_emails_button->setEnabled(false);
     m_export_emails_button->setAccessibleName(QStringLiteral("Save Selected Email"));
     m_export_emails_button->setToolTip(tr("Save checked emails as HTML, text, EML, or PDF"));
     m_export_emails_button->setStyleSheet(ui::kPrimaryButtonStyle);
-    connect(
-        m_export_emails_button, &QPushButton::clicked, this, &EmailInspectorPanel::onExportClicked);
+    connect(m_export_emails_button,
+            &QPushButton::clicked,
+            this,
+            &EmailInspectorPanel::onExportClicked,
+            Qt::QueuedConnection);
     log_toggle_layout->addWidget(m_export_emails_button);
     log_toggle_layout->addSpacing(sak::ui::kSpacingLarge);
     log_toggle_layout->addWidget(m_images_toggle_switch);
@@ -400,14 +426,13 @@ QToolButton* makeRibbonButton(const QString& text,
                               const QString& icon_path,
                               const QString& tooltip,
                               QWidget* parent) {
-    auto* button = new QToolButton(parent);
+    auto* button = new ui::RibbonToolButton(parent, QSize(kRibbonButtonWidth, kRibbonButtonHeight));
     button->setText(text);
     button->setIcon(QIcon(icon_path));
     button->setIconSize(QSize(kRibbonIconSize, kRibbonIconSize));
     button->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
     button->setToolTip(tooltip);
     button->setAccessibleName(text);
-    button->setFixedSize(kRibbonButtonWidth, kRibbonButtonHeight);
     button->setStyleSheet(ribbonButtonStyle());
     return button;
 }
@@ -430,14 +455,19 @@ void EmailInspectorPanel::addRibbonFileGroup(QHBoxLayout* layout, QWidget* ribbo
     connect(m_scan_files_button,
             &QToolButton::clicked,
             this,
-            &EmailInspectorPanel::onScanForFilesClicked);
+            &EmailInspectorPanel::onScanForFilesClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_scan_files_button);
 
     m_open_button = makeRibbonButton(tr("Open"),
                                      QStringLiteral(":/icons/icons/icons8-opened-folder.svg"),
-                                     tr("Open a PST, OST, or MBOX file"),
+                                     tr("Open a PST, OST, NST, or MBOX file"),
                                      ribbon);
-    connect(m_open_button, &QToolButton::clicked, this, &EmailInspectorPanel::onOpenFileClicked);
+    connect(m_open_button,
+            &QToolButton::clicked,
+            this,
+            &EmailInspectorPanel::onOpenFileClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_open_button);
 
     m_close_button = makeRibbonButton(tr("Close"),
@@ -474,7 +504,82 @@ void EmailInspectorPanel::addRibbonSearchGroup(QHBoxLayout* layout, QWidget* rib
     connect(m_search_edit, &QLineEdit::returnPressed, this, &EmailInspectorPanel::onSearchClicked);
     layout->addWidget(m_search_button);
 
+    m_filter_button = new QPushButton(tr("Filters"), ribbon);
+    m_filter_button->setCheckable(true);
+    m_filter_button->setEnabled(false);
+    m_filter_button->setToolTip(tr("Narrow a search by date, attachment, or type of item"));
+    m_filter_button->setAccessibleName(QStringLiteral("Email Search Filters"));
+    m_filter_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    layout->addWidget(m_filter_button);
+
     layout->addWidget(makeRibbonSeparator(ribbon));
+}
+
+QWidget* EmailInspectorPanel::createSearchFilterRow() {
+    m_filter_row = new QWidget(this);
+    auto* layout = new QHBoxLayout(m_filter_row);
+    layout->setContentsMargins(
+        ui::kMarginSmall, ui::kMarginNone, ui::kMarginSmall, ui::kMarginNone);
+    layout->setSpacing(ui::kSpacingSmall);
+
+    const auto add_date = [this,
+                           layout](const QString& label, QCheckBox*& check, QDateEdit*& edit) {
+        check = new QCheckBox(label, m_filter_row);
+        check->setAccessibleName(tr("Search %1 date").arg(label));
+        edit = new QDateEdit(QDate::currentDate(), m_filter_row);
+        edit->setCalendarPopup(true);
+        edit->setEnabled(false);
+        edit->setAccessibleName(tr("Search %1 date value").arg(label));
+        connect(check, &QCheckBox::toggled, edit, &QDateEdit::setEnabled);
+        connect(check, &QCheckBox::toggled, this, [this] { updateFilterButton(); });
+        layout->addWidget(check);
+        layout->addWidget(edit);
+    };
+    add_date(tr("From"), m_filter_from_check, m_filter_from_date);
+    add_date(tr("To"), m_filter_to_check, m_filter_to_date);
+
+    m_filter_attachment_check = new QCheckBox(tr("Has attachment"), m_filter_row);
+    m_filter_attachment_check->setAccessibleName(tr("Has attachment"));
+    connect(m_filter_attachment_check, &QCheckBox::toggled, this, [this] { updateFilterButton(); });
+    layout->addWidget(m_filter_attachment_check);
+
+    m_filter_type_combo = new QComboBox(m_filter_row);
+    m_filter_type_combo->setAccessibleName(tr("Search item type"));
+    struct TypeChoice {
+        QString label;
+        sak::EmailItemType type{};
+    };
+    const QVector<TypeChoice> types{{.label = tr("Any type"), .type = sak::EmailItemType::Unknown},
+                                    {.label = tr("Email"), .type = sak::EmailItemType::Email},
+                                    {.label = tr("Calendar"), .type = sak::EmailItemType::Calendar},
+                                    {.label = tr("Contact"), .type = sak::EmailItemType::Contact},
+                                    {.label = tr("Task"), .type = sak::EmailItemType::Task},
+                                    {.label = tr("Note"), .type = sak::EmailItemType::StickyNote},
+                                    {.label = tr("Journal"),
+                                     .type = sak::EmailItemType::JournalEntry}};
+    for (const TypeChoice& choice : types) {
+        m_filter_type_combo->addItem(choice.label, static_cast<int>(choice.type));
+    }
+    connect(m_filter_type_combo, &QComboBox::currentIndexChanged, this, [this] {
+        updateFilterButton();
+    });
+    layout->addWidget(m_filter_type_combo);
+
+    m_filter_mbox_note = new QLabel(tr("An MBOX holds only email."), m_filter_row);
+    m_filter_mbox_note->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
+    m_filter_mbox_note->setVisible(false);
+    layout->addWidget(m_filter_mbox_note);
+
+    m_filter_clear_button = new QPushButton(tr("Clear"), m_filter_row);
+    m_filter_clear_button->setAccessibleName(tr("Clear search filters"));
+    m_filter_clear_button->setStyleSheet(ui::kSecondaryButtonStyle);
+    connect(m_filter_clear_button, &QPushButton::clicked, this, [this] { clearSearchFilters(); });
+    layout->addWidget(m_filter_clear_button);
+    layout->addStretch();
+
+    m_filter_row->setVisible(false);
+    connect(m_filter_button, &QPushButton::toggled, m_filter_row, &QWidget::setVisible);
+    return m_filter_row;
 }
 
 void EmailInspectorPanel::addRibbonActionsGroup(QHBoxLayout* layout, QWidget* ribbon) {
@@ -482,11 +587,14 @@ void EmailInspectorPanel::addRibbonActionsGroup(QHBoxLayout* layout, QWidget* ri
                                             QStringLiteral(":/icons/icons/icons8-attachment.svg"),
                                             tr("Browse all attachments in this mailbox"),
                                             ribbon);
+    // The detail pane's Attachments tab has that name; a screen reader could not tell them apart.
+    m_attachments_button->setAccessibleName(QStringLiteral("Browse Attachments"));
     m_attachments_button->setEnabled(false);
     connect(m_attachments_button,
             &QToolButton::clicked,
             this,
-            &EmailInspectorPanel::onExportAttachmentsClicked);
+            &EmailInspectorPanel::onExportAttachmentsClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_attachments_button);
 
     layout->addWidget(makeRibbonSeparator(ribbon));
@@ -498,8 +606,11 @@ void EmailInspectorPanel::addRibbonPeopleGroup(QHBoxLayout* layout, QWidget* rib
                                          tr("Open the address book to view and export contacts"),
                                          ribbon);
     m_contacts_button->setEnabled(false);
-    connect(
-        m_contacts_button, &QToolButton::clicked, this, &EmailInspectorPanel::onContactsClicked);
+    connect(m_contacts_button,
+            &QToolButton::clicked,
+            this,
+            &EmailInspectorPanel::onContactsClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_contacts_button);
 
     m_calendar_button = makeRibbonButton(tr("Calendar"),
@@ -507,8 +618,11 @@ void EmailInspectorPanel::addRibbonPeopleGroup(QHBoxLayout* layout, QWidget* rib
                                          tr("Open calendar viewer to view and export events"),
                                          ribbon);
     m_calendar_button->setEnabled(false);
-    connect(
-        m_calendar_button, &QToolButton::clicked, this, &EmailInspectorPanel::onCalendarClicked);
+    connect(m_calendar_button,
+            &QToolButton::clicked,
+            this,
+            &EmailInspectorPanel::onCalendarClicked,
+            Qt::QueuedConnection);
     layout->addWidget(m_calendar_button);
 }
 
@@ -550,6 +664,8 @@ QWidget* EmailInspectorPanel::createFolderTreePanel() {
             this,
             &EmailInspectorPanel::onFolderTreeContextMenu);
     layout->addWidget(m_folder_tree, 1);
+    // Designed empty state before any mail store is opened (self-managed, parented to the tree).
+    new ui::ViewEmptyState(m_folder_tree, tr("Open a PST/OST/NST/MBOX file to browse folders"));
 
     return group;
 }
@@ -566,9 +682,13 @@ QWidget* EmailInspectorPanel::createContentArea() {
     return m_content_splitter;
 }
 
-QHBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
+QVBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
     m_item_count_label = new QLabel(group);
     m_item_count_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
+    // On a line of its own, wrapping: beside the paging controls its text set the Items pane's
+    // narrowest width, so "4 search result(s) (filtered)" pushed the Folders pane from 293 to
+    // 240 px and back again with "6 items" (UI review F46).
+    m_item_count_label->setWordWrap(true);
 
     m_page_size_combo = new QComboBox(group);
     m_page_size_combo->addItems(
@@ -595,7 +715,7 @@ QHBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
 
     m_page_label = new QLabel(group);
     m_page_label->setMinimumWidth(email::kPageIndicatorMinWidth);
-    m_page_label->setAlignment(Qt::AlignCenter);
+    m_page_label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
     m_next_page_button = new QToolButton(group);
     m_next_page_button->setIcon(ui::selectorChevronRightToolButtonIcon());
@@ -613,16 +733,29 @@ QHBoxLayout* EmailInspectorPanel::createItemPagingRow(QWidget* group) {
         }
     });
 
-    auto* filter_row = new QHBoxLayout();
-    filter_row->addWidget(m_item_count_label, 1);
-    filter_row->addWidget(m_prev_page_button);
-    filter_row->addWidget(m_page_label);
-    filter_row->addWidget(m_next_page_button);
-    filter_row->addSpacing(sak::ui::kSpacingMedium);
-    filter_row->addWidget(new QLabel(tr("Per page:"), group));
-    filter_row->addWidget(m_page_size_combo);
-    return filter_row;
+    // The two arrows side by side, the page after them: with the page between them ">" sat 120 px
+    // from "<" in the middle of the pane (review 5, Z20).
+    auto* paging_row = new QHBoxLayout();
+    paging_row->addWidget(m_prev_page_button);
+    paging_row->addWidget(m_next_page_button);
+    paging_row->addWidget(m_page_label);
+    paging_row->addStretch(1);
+    paging_row->addWidget(new QLabel(tr("Per page:"), group));
+    paging_row->addWidget(m_page_size_combo);
+
+    auto* rows = new QVBoxLayout();
+    rows->setSpacing(sak::ui::kSpacingTight);
+    rows->addWidget(m_item_count_label);
+    rows->addLayout(paging_row);
+    return rows;
 }
+
+namespace {
+
+/// No column sorted: the header's "none" section.
+constexpr int kNoSortSection = -1;
+
+}  // namespace
 
 void EmailInspectorPanel::configureItemListTable(QWidget* group) {
     m_item_list = new QTableWidget(group);
@@ -640,6 +773,9 @@ void EmailInspectorPanel::configureItemListTable(QWidget* group) {
     m_item_list->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_item_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_item_list->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    // In the order the file holds them until a column is clicked: sorting on, the header put its
+    // arrow over the check-box column (review 5, Z20).
+    m_item_list->horizontalHeader()->setSortIndicator(kNoSortSection, Qt::AscendingOrder);
     m_item_list->setSortingEnabled(true);
     m_item_list->setContextMenuPolicy(Qt::CustomContextMenu);
     m_item_list->horizontalHeader()->setStretchLastSection(true);
@@ -650,6 +786,8 @@ void EmailInspectorPanel::configureItemListTable(QWidget* group) {
     m_item_list->setColumnWidth(ColDate, email::kDateColumnWidth);
     m_item_list->setColumnWidth(ColSize, email::kSizeColumnWidth);
     m_item_list->setColumnWidth(ColType, email::kTypeColumnWidth);
+    // "From / Name" was cut to "From / N" (UI review S15).
+    fitHeaderLabels(m_item_list);
     m_item_list->verticalHeader()->setVisible(false);
 
     connect(
@@ -663,6 +801,11 @@ void EmailInspectorPanel::configureItemListTable(QWidget* group) {
             updateItemListHeaderCheckState();
         }
     });
+
+    // Built after the widget so the overlay binds to the live model. A loading
+    // message is driven over this list while a folder page is being fetched.
+    m_item_empty_state = new ui::ViewEmptyState(m_item_list,
+                                                tr("Select a folder to list its items"));
 }
 
 QWidget* EmailInspectorPanel::createItemListPanel() {
@@ -705,10 +848,12 @@ QWidget* EmailInspectorPanel::createContentTab() {
     layout->setSpacing(ui::kSpacingTight);
 
 
-    m_content_browser = new QTextBrowser(this);
-    m_content_browser->setOpenExternalLinks(false);
-    m_content_browser->setReadOnly(true);
+    // Renders attacker-authored message markup: EmailSafeTextBrowser denies every non-data:
+    // resource load (no file:/// disclosure, no remote tracking pixel) and refuses to navigate
+    // on a link activation. See sak/email_safe_text_browser.h.
+    m_content_browser = new EmailSafeTextBrowser(this);
     m_content_browser->setAccessibleName(QStringLiteral("Email Content"));
+    m_content_browser->setPlaceholderText(tr("Select an email to preview its contents"));
     m_content_browser->setStyleSheet(ui::emailContentBrowserStyle());
     layout->addWidget(m_content_browser, 1);
 
@@ -719,7 +864,8 @@ QWidget* EmailInspectorPanel::createHeadersTab() {
     m_headers_browser = new QTextBrowser(this);
     m_headers_browser->setReadOnly(true);
     m_headers_browser->setAccessibleName(QStringLiteral("Email Headers"));
-    QFont mono_font(QStringLiteral("Consolas"), ui::kFontSizeNote);
+    m_headers_browser->setPlaceholderText(tr("Select an email to view its transport headers"));
+    const QFont mono_font(QStringLiteral("Consolas"), ui::kFontSizeNote);
     m_headers_browser->setFont(mono_font);
     return m_headers_browser;
 }
@@ -734,6 +880,8 @@ QWidget* EmailInspectorPanel::createPropertiesTab() {
     m_properties_table->setSortingEnabled(true);
     m_properties_table->horizontalHeader()->setStretchLastSection(true);
     m_properties_table->verticalHeader()->setVisible(false);
+    // Empty-only overlay (self-managed, parented to the table): no scan drives this tab.
+    new ui::ViewEmptyState(m_properties_table, tr("Select an email to view its MAPI properties"));
     return m_properties_table;
 }
 
@@ -752,6 +900,9 @@ QWidget* EmailInspectorPanel::createAttachmentsTab() {
     m_attachments_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_attachments_table->horizontalHeader()->setStretchLastSection(true);
     m_attachments_table->verticalHeader()->setVisible(false);
+    // Empty-only overlay (self-managed, parented to the table): attachments arrive with
+    // the item detail, not via a separate scan.
+    new ui::ViewEmptyState(m_attachments_table, tr("This email has no attachments"));
     layout->addWidget(m_attachments_table, 1);
 
     auto* button_row = new QHBoxLayout();
@@ -762,7 +913,8 @@ QWidget* EmailInspectorPanel::createAttachmentsTab() {
     connect(m_save_attachment_button,
             &QPushButton::clicked,
             this,
-            &EmailInspectorPanel::onSaveAttachmentClicked);
+            &EmailInspectorPanel::onSaveAttachmentClicked,
+            Qt::QueuedConnection);
     button_row->addWidget(m_save_attachment_button);
 
     m_save_all_attachments_button = new QPushButton(tr("Save All"), container);
@@ -772,7 +924,8 @@ QWidget* EmailInspectorPanel::createAttachmentsTab() {
     connect(m_save_all_attachments_button,
             &QPushButton::clicked,
             this,
-            &EmailInspectorPanel::onSaveAllAttachmentsClicked);
+            &EmailInspectorPanel::onSaveAllAttachmentsClicked,
+            Qt::QueuedConnection);
     button_row->addWidget(m_save_all_attachments_button);
     button_row->addStretch();
     layout->addLayout(button_row);
@@ -802,6 +955,10 @@ void EmailInspectorPanel::disconnectDialogSignals() {
                this,
                &EmailInspectorPanel::onAttachmentContentReady);
     disconnect(m_controller.get(),
+               &EmailInspectorController::attachmentContentFailed,
+               this,
+               &EmailInspectorPanel::onAttachmentContentFailed);
+    disconnect(m_controller.get(),
                &EmailInspectorController::stateChanged,
                this,
                &EmailInspectorPanel::onStateChanged);
@@ -828,6 +985,10 @@ void EmailInspectorPanel::reconnectDialogSignals() {
             &EmailInspectorController::attachmentContentReady,
             this,
             &EmailInspectorPanel::onAttachmentContentReady);
+    connect(m_controller.get(),
+            &EmailInspectorController::attachmentContentFailed,
+            this,
+            &EmailInspectorPanel::onAttachmentContentFailed);
     connect(m_controller.get(),
             &EmailInspectorController::stateChanged,
             this,
@@ -890,6 +1051,10 @@ void EmailInspectorPanel::connectControllerNavigationSignals() {
             &EmailInspectorController::attachmentContentReady,
             this,
             &EmailInspectorPanel::onAttachmentContentReady);
+    connect(m_controller.get(),
+            &EmailInspectorController::attachmentContentFailed,
+            this,
+            &EmailInspectorPanel::onAttachmentContentFailed);
 }
 
 void EmailInspectorPanel::connectControllerSearchSignals() {
@@ -901,6 +1066,10 @@ void EmailInspectorPanel::connectControllerSearchSignals() {
             &EmailInspectorController::searchComplete,
             this,
             &EmailInspectorPanel::onSearchComplete);
+    connect(m_controller.get(),
+            &EmailInspectorController::searchCancelled,
+            this,
+            &EmailInspectorPanel::onSearchCancelled);
 }
 
 void EmailInspectorPanel::connectControllerExportSignals() {
@@ -959,13 +1128,14 @@ void EmailInspectorPanel::connectControllerMboxSignals() {
 // ============================================================================
 
 void EmailInspectorPanel::onOpenFileClicked() {
-    QString filter = tr(
-        "Email Data Files (*.pst *.ost *.mbox);;"
+    const QString filter = tr(
+        "Email Data Files (*.pst *.ost *.nst *.mbox);;"
         "PST Files (*.pst);;"
         "OST Files (*.ost);;"
+        "NST Files (*.nst);;"
         "MBOX Files (*.mbox);;"
         "All Files (*)");
-    QString path =
+    const QString path =
         QFileDialog::getOpenFileName(this, tr("Open Email Data File"), QString(), filter);
     if (path.isEmpty()) {
         return;
@@ -982,11 +1152,11 @@ void EmailInspectorPanel::onCloseFileClicked() {
 // ============================================================================
 
 void EmailInspectorPanel::onFolderTreeItemClicked(QTreeWidgetItem* item, int /*column*/) {
-    if (!item) {
+    if (item == nullptr) {
         return;
     }
     bool ok = false;
-    uint64_t folder_id = item->data(0, Qt::UserRole).toULongLong(&ok);
+    const uint64_t folder_id = item->data(0, Qt::UserRole).toULongLong(&ok);
     if (!ok) {
         return;
     }
@@ -1004,15 +1174,14 @@ void EmailInspectorPanel::onItemListCellClicked(int row, int column) {
         return;
     }
     auto* subject_item = m_item_list->item(row, ColSubject);
-    if (!subject_item) {
+    if (subject_item == nullptr) {
         return;
     }
     bool ok = false;
-    uint64_t item_id = subject_item->data(Qt::UserRole).toULongLong(&ok);
+    const uint64_t item_id = subject_item->data(Qt::UserRole).toULongLong(&ok);
     if (!ok) {
         return;
     }
-    m_pending_item_id = item_id;
     m_controller->loadItemDetail(item_id);
     m_controller->loadItemProperties(item_id);
 }
@@ -1020,14 +1189,11 @@ void EmailInspectorPanel::onItemListCellClicked(int row, int column) {
 void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
     QMenu menu(this);
     menu.addAction(tr("Open in Detail Panel"), this, [this] {
-        int row = m_item_list->currentRow();
-        if (row >= 0) {
-            auto* subject_item = m_item_list->item(row, ColSubject);
-            if (subject_item) {
-                uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
-                m_pending_item_id = nid;
-                m_controller->loadItemDetail(nid);
-            }
+        // itemIdForRow fails closed: a missing or wrong-typed role yields nullopt,
+        // so the action does nothing rather than acting on node id 0 (a VALID MBOX
+        // message index) that a defaulted toULongLong would have produced.
+        if (const auto nid = itemIdForRow(m_item_list->currentRow())) {
+            m_controller->loadItemDetail(*nid);
         }
     });
     menu.addSeparator();
@@ -1035,7 +1201,7 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
     menu.addAction(tr("Browse Attachments..."), this, [this] { onExportAttachmentsClicked(); });
     menu.addSeparator();
     menu.addAction(tr("Copy Subject"), this, [this] {
-        int row = m_item_list->currentRow();
+        const int row = m_item_list->currentRow();
         if (row >= 0) {
             auto* subject_item = m_item_list->item(row, ColSubject);
             if (subject_item) {
@@ -1044,35 +1210,88 @@ void EmailInspectorPanel::onItemListContextMenu(const QPoint& pos) {
         }
     });
     menu.addAction(tr("View MAPI Properties"), this, [this] {
-        int row = m_item_list->currentRow();
-        if (row >= 0) {
-            auto* subject_item = m_item_list->item(row, ColSubject);
-            if (subject_item) {
-                uint64_t nid = subject_item->data(Qt::UserRole).toULongLong();
-                m_controller->loadItemProperties(nid);
-                m_detail_tabs->setCurrentIndex(kPropertiesDetailTabIndex);
-            }
+        // Fail closed on a missing or wrong-typed role rather than defaulting to
+        // node id 0 (a VALID MBOX message index) as a bare toULongLong would.
+        if (const auto nid = itemIdForRow(m_item_list->currentRow())) {
+            m_controller->loadItemProperties(*nid);
+            m_detail_tabs->setCurrentIndex(kPropertiesDetailTabIndex);
         }
     });
     menu.exec(m_item_list->viewport()->mapToGlobal(pos));
 }
 
-void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
-    QTreeWidgetItem* item = m_folder_tree->itemAt(pos);
-    if (!item) {
+void EmailInspectorPanel::addFolderExportActions(QMenu& menu,
+                                                 const sak::PstFolder* folder,
+                                                 std::optional<uint64_t> folder_id) {
+    const QString container_class = (folder != nullptr) ? folder->container_class : QString();
+    if (container_class.startsWith(QLatin1String("IPF.Task"))) {
+        menu.addAction(tr("Export Tasks as CSV..."), this, [this, folder_id] {
+            exportFolderAs(sak::ExportFormat::CsvTasks, folder_id);
+        });
         return;
     }
+    if (container_class.startsWith(QLatin1String("IPF.StickyNote"))) {
+        menu.addAction(tr("Export Notes as Text..."), this, [this, folder_id] {
+            exportFolderAs(sak::ExportFormat::PlainTextNotes, folder_id);
+        });
+        return;
+    }
+    if (container_class.startsWith(QLatin1String("IPF.Journal"))) {
+        menu.addAction(tr("Export Journal as CSV..."), this, [this, folder_id] {
+            exportFolderAs(sak::ExportFormat::CsvJournal, folder_id);
+        });
+        return;
+    }
+    menu.addAction(tr("Export Folder as EML..."), this, [this, folder_id] {
+        exportFolderAs(sak::ExportFormat::Eml, folder_id);
+    });
+    menu.addAction(tr("Export Folder as CSV..."), this, [this, folder_id] {
+        exportFolderAs(sak::ExportFormat::CsvEmails, folder_id);
+    });
+}
+
+void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
+    QTreeWidgetItem* item = m_folder_tree->itemAt(pos);
+    if (item == nullptr) {
+        return;
+    }
+    // Resolve the RIGHT-CLICKED folder and export that id. A right-click does not
+    // emit itemClicked, so m_current_folder_id still names the last LEFT-clicked
+    // folder: exporting through it exported a folder the user never pointed at.
+    // Captured by value so the export actions do not have to reach back into the
+    // tree once the menu is open. An item with no usable id yields nullopt, and
+    // exportFolderAs refuses rather than falling back to the selection.
+    const std::optional<uint64_t> folder_id = sak::decodeEmailViewId(item->data(0, Qt::UserRole));
+
     QMenu menu(this);
-    menu.addAction(tr("Export Folder as EML..."), this, [this] {
-        exportCurrentFolderAs(sak::ExportFormat::Eml);
-    });
-    menu.addAction(tr("Export Folder as CSV..."), this, [this] {
-        exportCurrentFolderAs(sak::ExportFormat::CsvEmails);
-    });
+    addFolderExportActions(menu,
+                           sak::findFolderByNodeId(m_cached_folder_tree, folder_id),
+                           folder_id);
+    menu.addSeparator();
+    // Whole-store export. The OST Converter produces full mailbox files (MBOX); turning an
+    // entire store into per-message files belongs here, next to the per-folder exports.
+    QMenu* all_menu = menu.addMenu(tr("Export ALL Mail Folders as"));
+    struct AllExportChoice {
+        QString label;
+        sak::ExportFormat format{};
+    };
+    const QVector<AllExportChoice> all_choices{
+        {.label = tr("EML..."), .format = sak::ExportFormat::Eml},
+        {.label = tr("HTML..."), .format = sak::ExportFormat::Html},
+        {.label = tr("Text..."), .format = sak::ExportFormat::Text},
+        {.label = tr("PDF..."), .format = sak::ExportFormat::Pdf},
+        {.label = tr("CSV..."), .format = sak::ExportFormat::CsvEmails}};
+    for (const AllExportChoice& choice : all_choices) {
+        all_menu->addAction(choice.label, this, [this, format = choice.format] {
+            exportAllMailFoldersAs(format);
+        });
+    }
     menu.addSeparator();
     menu.addAction(tr("Browse Attachments..."), this, [this] { onExportAttachmentsClicked(); });
     menu.addSeparator();
-    menu.addAction(tr("Search in This Folder..."), this, [this] { m_search_edit->setFocus(); });
+    menu.addAction(tr("Search in This Folder..."), this, [this, folder_id, name = item->text(0)] {
+        searchInFolder(folder_id, name);
+    });
     menu.addSeparator();
     menu.addAction(tr("Expand All Subfolders"), this, [item] {
         item->setExpanded(true);
@@ -1089,33 +1308,146 @@ void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
 // ============================================================================
 
 void EmailInspectorPanel::onSearchClicked() {
-    QString query = m_search_edit->text().trimmed();
-    if (query.isEmpty()) {
+    const QString query = m_search_edit->text().trimmed();
+    // Filters alone say what to list. With neither there is nothing to search for.
+    if (query.isEmpty() && !searchFiltersActive()) {
         return;
     }
+    startSearch(query, kSearchAllFolders, QString());
+}
+
+void EmailInspectorPanel::applySearchFilters(sak::EmailSearchCriteria& criteria) const {
+    if (m_filter_from_check->isChecked()) {
+        criteria.date_from = m_filter_from_date->date().startOfDay();
+    }
+    if (m_filter_to_check->isChecked()) {
+        criteria.date_to = m_filter_to_date->date().endOfDay();
+    }
+    criteria.has_attachment_only = m_filter_attachment_check->isChecked();
+    criteria.item_type_filter =
+        static_cast<sak::EmailItemType>(m_filter_type_combo->currentData().toInt());
+}
+
+bool EmailInspectorPanel::searchFiltersActive() const {
+    sak::EmailSearchCriteria criteria;
+    applySearchFilters(criteria);
+    return criteria.hasFilter();
+}
+
+void EmailInspectorPanel::updateFilterButton() {
+    sak::EmailSearchCriteria criteria;
+    applySearchFilters(criteria);
+    const int active = (criteria.date_from.isValid() || criteria.date_to.isValid() ? 1 : 0) +
+                       (criteria.has_attachment_only ? 1 : 0) +
+                       (criteria.item_type_filter != sak::EmailItemType::Unknown ? 1 : 0);
+    m_filter_button->setText(active == 0 ? tr("Filters") : tr("Filters (%1)").arg(active));
+}
+
+void EmailInspectorPanel::clearSearchFilters() {
+    m_filter_from_check->setChecked(false);
+    m_filter_to_check->setChecked(false);
+    m_filter_attachment_check->setChecked(false);
+    m_filter_type_combo->setCurrentIndex(0);
+    updateFilterButton();
+}
+
+sak::EmailSearchCriteria EmailInspectorPanel::searchCriteria(const QString& query,
+                                                             uint64_t folder_scope) {
     sak::EmailSearchCriteria criteria;
     criteria.query_text = query;
     criteria.search_subject = true;
     criteria.search_body = true;
     criteria.search_sender = true;
+    criteria.search_recipients = true;
+    criteria.search_attachment_names = true;
+    criteria.folder_scope_id = folder_scope;
+    return criteria;
+}
+
+void EmailInspectorPanel::searchInFolder(std::optional<uint64_t> folder_id,
+                                         const QString& folder_name) {
+    if (!folder_id.has_value()) {
+        sak::logWarning("Search in This Folder: the folder row carries no id");
+        updateStatusBar(tr("This folder cannot be searched"));
+        return;
+    }
+    bool accepted = false;
+    const QString query = QInputDialog::getText(this,
+                                                tr("Search in %1").arg(folder_name),
+                                                tr("Search for:"),
+                                                QLineEdit::Normal,
+                                                m_search_edit->text().trimmed(),
+                                                &accepted)
+                              .trimmed();
+    if (!accepted || (query.isEmpty() && !searchFiltersActive())) {
+        return;
+    }
+    startSearch(query, *folder_id, folder_name);
+}
+
+void EmailInspectorPanel::startSearch(const QString& query,
+                                      uint64_t folder_scope,
+                                      const QString& scope_name) {
+    sak::EmailSearchCriteria criteria = searchCriteria(query, folder_scope);
+    applySearchFilters(criteria);
+    if (m_mbox_active && criteria.item_type_filter != sak::EmailItemType::Unknown &&
+        criteria.item_type_filter != sak::EmailItemType::Email) {
+        // Asking would only ever come back empty, and an empty list reads as "none matched".
+        updateStatusBar(tr("An MBOX holds only email, so it has no %1 items to find.")
+                            .arg(m_filter_type_combo->currentText().toLower()));
+        return;
+    }
     m_controller->startSearch(criteria);
+    // A refused search has already said why through errorOccurred; the list stays as it was.
+    if (m_controller->currentState() != EmailInspectorController::State::Searching) {
+        return;
+    }
+    m_showing_search_results = true;
+    m_search_scope_name = scope_name;
+    m_current_page = 0;
+    m_current_total = 0;
+    m_item_list->setSortingEnabled(false);
+    m_item_list->setRowCount(0);
+    m_item_empty_state->setEmptyText(tr("No matches"));
+    m_item_empty_state->setLoading(tr("Searching..."));
+    m_item_count_label->clear();
+    updatePageControls();
 }
 
-void EmailInspectorPanel::onSearchTextChanged() {
-    // Placeholder for debounced incremental search
+void EmailInspectorPanel::finishSearchResults(int total_hits) {
+    m_item_empty_state->clearLoading();
+    m_item_list->setSortingEnabled(true);
+    const QString results = countOf(total_hits, tr("search result"), tr("search results"));
+    QString label =
+        m_search_scope_name.isEmpty() ? results : tr("%1 in %2").arg(results, m_search_scope_name);
+    if (total_hits >= email::kMaxSearchResults) {
+        // The limit counts results, so a filter is the way to reach what it stopped short of.
+        label += tr(" (the limit: narrow the search or add a filter to see the rest)");
+    } else if (searchFiltersActive()) {
+        label += tr(" (filtered)");
+    }
+    m_item_count_label->setText(label);
+    updateItemListHeaderCheckState();
 }
 
-uint64_t EmailInspectorPanel::itemIdForRow(int row) const {
+std::optional<uint64_t> EmailInspectorPanel::itemIdForRow(int row) const {
+    // Returns nullopt for "this row carries no id", never 0. A PST node id is never 0, but
+    // an MBOX message_index legitimately IS 0 for the first message in the file, so using 0
+    // as the not-found sentinel silently dropped that message from every checkbox-driven
+    // export.
     if (m_item_list == nullptr || row < 0 || row >= m_item_list->rowCount()) {
-        return 0;
+        return std::nullopt;
     }
     auto* subject_item = m_item_list->item(row, ColSubject);
     if (subject_item == nullptr) {
-        return 0;
+        return std::nullopt;
     }
     bool ok = false;
     const uint64_t item_id = subject_item->data(Qt::UserRole).toULongLong(&ok);
-    return ok ? item_id : 0;
+    if (!ok) {
+        return std::nullopt;
+    }
+    return item_id;
 }
 
 void EmailInspectorPanel::setAllItemListChecks(bool checked) {
@@ -1175,9 +1507,8 @@ QVector<uint64_t> EmailInspectorPanel::checkedItemIds() const {
         if (select_item == nullptr || select_item->checkState() != Qt::Checked) {
             continue;
         }
-        const uint64_t item_id = itemIdForRow(row);
-        if (item_id != 0) {
-            ids.append(item_id);
+        if (const auto item_id = itemIdForRow(row)) {
+            ids.append(*item_id);
         }
     }
     return ids;
@@ -1216,7 +1547,7 @@ void EmailInspectorPanel::onExportClicked() {
         return;
     }
 
-    QString dir_path = QFileDialog::getExistingDirectory(this, tr("Select Export Directory"));
+    const QString dir_path = QFileDialog::getExistingDirectory(this, tr("Select Export Directory"));
     if (dir_path.isEmpty()) {
         return;
     }
@@ -1237,8 +1568,20 @@ void EmailInspectorPanel::onExportClicked() {
     m_controller->exportItems(config);
 }
 
-void EmailInspectorPanel::exportCurrentFolderAs(sak::ExportFormat format) {
+void EmailInspectorPanel::exportAllMailFoldersAs(sak::ExportFormat format) {
     if (!m_controller->isFileOpen()) {
+        return;
+    }
+    // The same function populateFolderTree filters with, so "all mail folders" is exactly
+    // the set the technician can see in the tree.
+    const QVector<uint64_t> folder_ids = sak::mailFolderNodeIds(m_cached_folder_tree);
+    if (folder_ids.isEmpty()) {
+        // Refuse rather than launch an export that can only produce an empty directory the
+        // technician would read as "this store has no mail".
+        sak::showWarningLogged(this,
+                               tr("No Mail Folders"),
+                               tr("This store has no mail folders to export. Contacts, calendar "
+                                  "and task folders are exported from their own windows."));
         return;
     }
     const QString dir_path = QFileDialog::getExistingDirectory(this, tr("Select Export Directory"));
@@ -1249,13 +1592,54 @@ void EmailInspectorPanel::exportCurrentFolderAs(sak::ExportFormat format) {
     sak::EmailExportConfig config;
     config.format = format;
     config.output_path = dir_path;
-    config.folder_id = m_current_folder_id;
+    // Every folder is listed explicitly rather than relying on recurse_subfolders, because
+    // the list is already filtered: recursing from the roots would pull the non-mail
+    // subfolders back in.
+    config.folder_ids = folder_ids;
+    config.only_real_email = true;
+    config.save_attachments_with_messages = true;
+    m_controller->exportItems(config);
+}
+
+void EmailInspectorPanel::exportFolderAs(sak::ExportFormat format,
+                                         std::optional<uint64_t> folder_id) {
+    if (!m_controller->isFileOpen()) {
+        return;
+    }
+    if (!folder_id.has_value()) {
+        // Fail visibly. Falling back to the selected folder here would export a
+        // folder other than the one the user asked for.
+        sak::showWarningLogged(this,
+                               tr("Folder Not Identified"),
+                               tr("This folder carries no identifier, so nothing was exported."));
+        return;
+    }
+    const QString dir_path = QFileDialog::getExistingDirectory(this, tr("Select Export Directory"));
+    if (dir_path.isEmpty()) {
+        return;
+    }
+
+    sak::EmailExportConfig config;
+    config.format = format;
+    config.output_path = dir_path;
+    config.folder_id = *folder_id;
+    config.has_folder = true;  // *folder_id may be 0 (MBOX root); mark the folder as set
     config.save_attachments_with_messages = true;
     m_controller->exportItems(config);
 }
 
 void EmailInspectorPanel::onExportAttachmentsClicked() {
     if (!m_controller->isFileOpen()) {
+        return;
+    }
+    if (m_batch_save.isActive()) {
+        // The dialog takes over the controller's attachment signals for as long as
+        // it is open, so a batch running here would never see its remaining
+        // arrivals and would never complete. Refuse rather than strand it.
+        sak::showWarningLogged(this,
+                               tr("Save In Progress"),
+                               tr("An attachment save is already running. Wait for it to "
+                                  "finish before browsing attachments."));
         return;
     }
     m_dialog_active = true;
@@ -1265,14 +1649,14 @@ void EmailInspectorPanel::onExportAttachmentsClicked() {
     reconnectDialogSignals();
     m_dialog_active = false;
     if (result == QDialog::Accepted) {
-        uint64_t folder_id = dialog.navigateFolderId();
-        uint64_t message_id = dialog.navigateMessageId();
-        if (folder_id != 0 && message_id != 0) {
+        const uint64_t folder_id = dialog.navigateFolderId();
+        const uint64_t message_id = dialog.navigateMessageId();
+        // In an MBOX both ids are legitimately 0: the one folder, and the first message.
+        if (m_mbox_active || (folder_id != 0 && message_id != 0)) {
             m_current_folder_id = folder_id;
             m_current_page = 0;
             m_current_total = 0;
             reloadCurrentPage();
-            m_pending_item_id = message_id;
             m_controller->loadItemDetail(message_id);
             m_controller->loadItemProperties(message_id);
         }
@@ -1283,35 +1667,90 @@ void EmailInspectorPanel::onExportAttachmentsClicked() {
 // Attachment Slots
 // ============================================================================
 
+std::optional<uint64_t> EmailInspectorPanel::attachmentSaveSource() {
+    if (m_batch_save.isActive()) {
+        sak::showWarningLogged(this,
+                               tr("Save In Progress"),
+                               tr("An attachment save is already running. Wait for it to "
+                                  "finish before starting another."));
+        return std::nullopt;
+    }
+    if (!m_current_item_id.has_value()) {
+        // Without a committed message identity the request cannot name the message
+        // the attachment belongs to, and would otherwise be issued against whatever
+        // id happened to be left in place.
+        sak::showWarningLogged(this,
+                               tr("No Email Open"),
+                               tr("Open an email before saving its attachments."));
+        return std::nullopt;
+    }
+    return m_current_item_id;
+}
+
+void EmailInspectorPanel::startAttachmentBatch(const QString& dir,
+                                               const QVector<sak::AttachmentRef>& refs) {
+    if (!m_batch_save.begin(dir, refs)) {
+        sak::showWarningLogged(this,
+                               tr("Cannot Save Attachments"),
+                               tr("The attachment save could not be started. "
+                                  "Nothing was written."));
+        return;
+    }
+    // Lock the controls for the duration: arrivals from a second batch begun now
+    // would interleave with this one's and land in each other's slots.
+    setAttachmentSaveControlsEnabled(false);
+    updateStatusBar(
+        tr("Saving %1...").arg(countOf(refs.size(), tr("attachment"), tr("attachments"))));
+    for (const auto& ref : refs) {
+        m_controller->loadAttachmentContent(ref.message_id, ref.index);
+    }
+}
+
+void EmailInspectorPanel::finishAttachmentBatchIfComplete() {
+    if (!m_batch_save.isComplete()) {
+        return;
+    }
+    updateStatusBar(m_batch_save.summaryText());
+    m_batch_save.reset();
+    setAttachmentSaveControlsEnabled(!m_current_detail.attachments.isEmpty());
+}
+
 void EmailInspectorPanel::onSaveAttachmentClicked() {
-    int row = m_attachments_table->currentRow();
+    const std::optional<uint64_t> source = attachmentSaveSource();
+    if (!source.has_value()) {
+        return;
+    }
+    const int row = m_attachments_table->currentRow();
     if (row < 0 || row >= m_current_detail.attachments.size()) {
         return;
     }
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Save Attachment"));
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Save Attachment"));
     if (dir.isEmpty()) {
         return;
     }
-    m_batch_save.begin(dir, 1);
-    const auto& attachment = m_current_detail.attachments.at(row);
-    updateStatusBar(tr("Saving attachment..."));
-    m_controller->loadAttachmentContent(m_current_item_id, attachment.index);
+    const QVector<sak::AttachmentRef> refs{sak::AttachmentRef{
+        .message_id = *source, .index = m_current_detail.attachments.at(row).index}};
+    startAttachmentBatch(dir, refs);
 }
 
 void EmailInspectorPanel::onSaveAllAttachmentsClicked() {
+    const std::optional<uint64_t> source = attachmentSaveSource();
+    if (!source.has_value()) {
+        return;
+    }
     if (m_current_detail.attachments.isEmpty()) {
         return;
     }
-    QString dir = QFileDialog::getExistingDirectory(this, tr("Save All Attachments"));
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("Save All Attachments"));
     if (dir.isEmpty()) {
         return;
     }
-    int count = m_current_detail.attachments.size();
-    m_batch_save.begin(dir, count);
+    QVector<sak::AttachmentRef> refs;
+    refs.reserve(m_current_detail.attachments.size());
     for (const auto& attachment : m_current_detail.attachments) {
-        m_controller->loadAttachmentContent(m_current_item_id, attachment.index);
+        refs.append(sak::AttachmentRef{.message_id = *source, .index = attachment.index});
     }
-    updateStatusBar(tr("Saving %1 attachments...").arg(count));
+    startAttachmentBatch(dir, refs);
 }
 
 // ============================================================================
@@ -1322,7 +1761,7 @@ void EmailInspectorPanel::onStateChanged(EmailInspectorController::State state) 
     if (m_dialog_active) {
         return;
     }
-    bool idle = (state == EmailInspectorController::State::Idle);
+    const bool idle = (state == EmailInspectorController::State::Idle);
     setOperationRunning(!idle);
 }
 
@@ -1331,9 +1770,12 @@ void EmailInspectorPanel::onFileOpened(sak::PstFileInfo info) {
     m_search_edit->setEnabled(true);
     m_search_button->setEnabled(true);
     m_export_emails_button->setEnabled(true);
-    m_contacts_button->setEnabled(true);
-    m_calendar_button->setEnabled(true);
+    // An MBOX holds only mail; its controller announces itself as MBOX just before this.
+    m_contacts_button->setEnabled(!m_mbox_active);
+    m_calendar_button->setEnabled(!m_mbox_active);
     m_attachments_button->setEnabled(true);
+    m_filter_button->setEnabled(true);
+    m_filter_mbox_note->setVisible(m_mbox_active);
     updateFileInfoBar(info);
 }
 
@@ -1345,6 +1787,9 @@ void EmailInspectorPanel::onFolderTreeLoaded(sak::PstFolderTree tree) {
 void EmailInspectorPanel::onFileClosed() {
     m_folder_tree->clear();
     m_item_list->setRowCount(0);
+    m_item_empty_state->clearLoading();
+    m_showing_search_results = false;
+    m_item_empty_state->setEmptyText(tr("Select a folder to list its items"));
     updateItemListHeaderCheckState();
     m_content_browser->clear();
     m_headers_browser->clear();
@@ -1354,12 +1799,15 @@ void EmailInspectorPanel::onFileClosed() {
     m_item_count_label->clear();
     m_current_items.clear();
     m_current_folder_id = 0;
-    m_current_item_id = 0;
+    m_current_item_id.reset();
+    m_properties_item_id.reset();
+    m_current_detail = {};
     m_current_page = 0;
     m_current_total = 0;
     m_contact_folder_ids.clear();
     m_calendar_folder_ids.clear();
     m_cached_folder_tree.clear();
+    m_mbox_active = false;
     m_batch_save.reset();
 
     m_close_button->setEnabled(false);
@@ -1371,6 +1819,10 @@ void EmailInspectorPanel::onFileClosed() {
     m_attachments_button->setEnabled(false);
     m_save_attachment_button->setEnabled(false);
     m_save_all_attachments_button->setEnabled(false);
+    clearSearchFilters();
+    m_filter_mbox_note->setVisible(false);
+    m_filter_button->setChecked(false);
+    m_filter_button->setEnabled(false);
 
     updateStatusBar(tr("Ready"));
 }
@@ -1378,7 +1830,10 @@ void EmailInspectorPanel::onFileClosed() {
 void EmailInspectorPanel::onFolderItemsLoaded(uint64_t /*folder_id*/,
                                               QVector<sak::PstItemSummary> items,
                                               int total) {
-    if (m_dialog_active) {
+    // Lift the loading overlay the moment the page arrives, before any early return, so a
+    // fetch can never leave the item list stranded under a loading message.
+    m_item_empty_state->clearLoading();
+    if (m_dialog_active || m_showing_search_results) {
         return;
     }
     m_current_items = items;
@@ -1386,8 +1841,8 @@ void EmailInspectorPanel::onFolderItemsLoaded(uint64_t /*folder_id*/,
     populateItemList(items);
 
     const int page_size = currentPageSize();
-    const int first = (items.isEmpty()) ? 0 : (m_current_page * page_size + 1);
-    const int last = m_current_page * page_size + static_cast<int>(items.size());
+    const int first = (items.isEmpty()) ? 0 : ((m_current_page * page_size) + 1);
+    const int last = (m_current_page * page_size) + static_cast<int>(items.size());
     if (total > items.size()) {
         m_item_count_label->setText(tr("Showing %1\u2013%2 of %3").arg(first).arg(last).arg(total));
     } else {
@@ -1400,17 +1855,28 @@ void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
     if (m_dialog_active) {
         return;
     }
-    // New item — the per-message inline-image cache is invalid.
+    // New item -- the per-message inline-image cache is invalid.
     m_inline_images.clear();
     m_remote_images.clear();
     m_redraw_timer->stop();
 
-    // Commit the pending item ID now that the load succeeded
-    m_current_item_id = m_pending_item_id;
+    // Commit the identity the response itself carries, not the most recently
+    // clicked row. Under rapid navigation an out-of-order response would otherwise
+    // pair message A's content with message B's identity, and every later action
+    // that reads the committed id -- attachment saves above all -- would address
+    // the wrong message.
+    m_current_item_id = detail.node_id;
     m_current_detail = detail;
     displayItemDetail(detail);
     displayAttachments(detail.attachments);
-    m_save_all_attachments_button->setEnabled(!detail.attachments.isEmpty());
+
+    // The properties tab is filled by a separate response. Until the one for THIS
+    // message arrives, whatever is on screen describes the previous message, so
+    // clear it rather than leave it captioned by the message now displayed.
+    if (m_properties_item_id != m_current_item_id) {
+        m_properties_item_id.reset();
+        displayProperties({});
+    }
 
     // Request inline image attachments so they can be rendered once data
     // arrives.  Always requested regardless of the HTML toggle: flipping the
@@ -1427,39 +1893,56 @@ void EmailInspectorPanel::onItemDetailLoaded(sak::PstItemDetail detail) {
     }
 }
 
-void EmailInspectorPanel::onItemPropertiesLoaded(uint64_t /*item_id*/,
+void EmailInspectorPanel::onItemPropertiesLoaded(uint64_t item_id,
                                                  QVector<sak::MapiProperty> properties) {
     if (m_dialog_active) {
         return;
     }
+    // Apply only the response that describes the message the detail view has
+    // committed. Responses arrive out of order under rapid navigation, and
+    // applying whichever one lands last would caption message A's properties with
+    // message B's identity.
+    if (m_current_item_id != item_id) {
+        return;
+    }
+    m_properties_item_id = item_id;
     displayProperties(properties);
 }
 
-void EmailInspectorPanel::onAttachmentContentReady(uint64_t /*message_id*/,
+void EmailInspectorPanel::onAttachmentContentReady(uint64_t message_id,
                                                    int index,
                                                    QByteArray attachment_data,
                                                    QString filename) {
     if (m_dialog_active) {
         return;
     }
+    const sak::AttachmentRef ref{.message_id = message_id, .index = index};
 
-    // Save operation — delegate entirely to shared batch saver
-    if (m_batch_save.isActive()) {
-        m_batch_save.recordOne(filename, attachment_data);
-        if (m_batch_save.isComplete()) {
-            updateStatusBar(m_batch_save.summaryText());
-            m_batch_save.reset();
+    // Save operation: record only what this batch actually asked for. A stray
+    // arrival -- an inline-image fetch, or a leftover from an earlier batch --
+    // would otherwise be written into one of the batch's slots, saving the wrong
+    // payload while the batch still reported a full count.
+    if (m_batch_save.expects(ref)) {
+        const auto result = m_batch_save.recordOne(ref, filename, attachment_data);
+        if (!result.success) {
+            Q_EMIT logOutput(tr("Attachment save failed: %1").arg(result.error_message));
         }
+        finishAttachmentBatchIfComplete();
         return;
     }
 
-    // Not a save — check for inline CID image
+    // Not part of a save: inline CID image for the message on screen. A late
+    // arrival for a previously opened message must not be cached under this
+    // message's Content-Ids.
+    if (m_current_item_id != message_id) {
+        return;
+    }
     for (const auto& att : m_current_detail.attachments) {
         if (att.index == index && !att.content_id.isEmpty()) {
             // Cache by Content-Id so the HTML builder can inline as data URI.
             m_inline_images.insert(att.content_id, attachment_data);
             // Coalesce: multiple inline images commonly arrive in rapid
-            // succession — debounce the full-HTML repaint so we only
+            // succession -- debounce the full-HTML repaint so we only
             // re-parse once per burst.
             m_redraw_timer->start();
             return;
@@ -1467,12 +1950,69 @@ void EmailInspectorPanel::onAttachmentContentReady(uint64_t /*message_id*/,
     }
 }
 
-void EmailInspectorPanel::onSearchHit(sak::EmailSearchHit /*hit*/) {
-    // Incrementally update result count in status bar
+void EmailInspectorPanel::onAttachmentContentFailed(uint64_t message_id,
+                                                    int index,
+                                                    const QString& error) {
+    if (m_dialog_active) {
+        return;
+    }
+    // Symmetric to the save branch of onAttachmentContentReady: count the failure only
+    // against the exact attachment this batch requested. recordError refuses any ref the
+    // batch is not waiting on, so an unrelated controller error can neither inflate the
+    // failed count nor complete the batch early. A non-save failure (e.g. an inline CID
+    // image that could not be fetched) simply is not outstanding and is ignored here.
+    const sak::AttachmentRef ref{.message_id = message_id, .index = index};
+    if (!m_batch_save.recordError(ref)) {
+        return;
+    }
+    Q_EMIT logOutput(tr("Attachment save error (message %1 index %2): %3")
+                         .arg(message_id)
+                         .arg(index)
+                         .arg(error));
+    finishAttachmentBatchIfComplete();
+}
+
+void EmailInspectorPanel::onSearchHit(sak::EmailSearchHit hit) {
+    if (!m_showing_search_results) {
+        return;
+    }
+    const QSignalBlocker blocker(m_item_list);
+    const int row = m_item_list->rowCount();
+    m_item_list->insertRow(row);
+    m_item_list->setItem(row,
+                         ColSelect,
+                         makeEmailSelectItem(hit.item_node_id, tr("Select email for export")));
+
+    auto* subject_cell = new QTableWidgetItem(hit.subject);
+    subject_cell->setData(Qt::UserRole, QVariant::fromValue(hit.item_node_id));
+    subject_cell->setToolTip(tr("Found in %1 (%2)").arg(hit.folder_path, hit.match_field));
+    m_item_list->setItem(row, ColSubject, subject_cell);
+
+    m_item_list->setItem(row, ColFrom, new QTableWidgetItem(hit.sender));
+    m_item_list->setItem(row, ColDate, new QTableWidgetItem(hit.date.toString(Qt::ISODate)));
+    m_item_list->setItem(row, ColSize, new QTableWidgetItem());
+
+    auto* type_cell = new QTableWidgetItem(itemTypeLabel(hit.item_type));
+    type_cell->setIcon(itemTypeQIcon(hit.item_type));
+    m_item_list->setItem(row, ColType, type_cell);
 }
 
 void EmailInspectorPanel::onSearchComplete(int total_hits) {
-    updateStatusBar(tr("Search complete: %1 hits").arg(total_hits));
+    finishSearchResults(total_hits);
+    // "results", as the item list's count says: "3 search results" stood beside "3 hits",
+    // and one result read "1 hits" (review 4, Y20).
+    updateStatusBar(
+        tr("Search complete: %1").arg(countOf(total_hits, tr("result"), tr("results"))));
+}
+
+void EmailInspectorPanel::onSearchCancelled(int partial_hits) {
+    finishSearchResults(partial_hits);
+    // A user-initiated cancel is not a failure, but the results ARE partial -- show it in the
+    // caution colour so it never reads as a clean "Search complete". The colour is applied
+    // AFTER updateStatusBar because that method resets the label style to muted on every call.
+    updateStatusBar(tr("Search cancelled: %1")
+                        .arg(countOf(partial_hits, tr("partial result"), tr("partial results"))));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorWarning));
 }
 
 void EmailInspectorPanel::onExportStarted(int total) {
@@ -1489,18 +2029,57 @@ void EmailInspectorPanel::onExportProgress(int done, int total, qint64 /*bytes*/
 
 void EmailInspectorPanel::onExportComplete(sak::EmailExportResult result) {
     m_progress_bar->setVisible(false);
-    updateStatusBar(
-        tr("Export complete: %1 items to %2").arg(result.items_exported).arg(result.export_path));
-    Q_EMIT logOutput(tr("Exported %1 items (%2 bytes)")
-                         .arg(result.items_exported)
-                         .arg(formatBytes(result.total_bytes)));
+    if (result.items_failed > 0 || !result.errors.isEmpty()) {
+        // A partial or failed export must not read as a clean success. Surface the failed
+        // count and every recorded error instead of the flat "Export complete". The error
+        // colour is applied AFTER updateStatusBar, which resets the label style to muted on
+        // every call -- setting it first (as this once did) was silently overwritten.
+        updateStatusBar(tr("Export INCOMPLETE: %1 exported, %2 failed (to %3)")
+                            .arg(result.items_exported)
+                            .arg(result.items_failed)
+                            .arg(result.export_path));
+        m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
+        Q_EMIT logOutput(tr("Export INCOMPLETE: %1 exported, %2 failed (%3 bytes)")
+                             .arg(result.items_exported)
+                             .arg(result.items_failed)
+                             .arg(formatBytes(result.total_bytes)));
+        for (const QString& err : result.errors) {
+            Q_EMIT logOutput(tr("  Export error: %1").arg(err));
+        }
+        return;
+    }
+    const QString exported = countOf(result.items_exported, tr("item"), tr("items"));
+    updateStatusBar(tr("Export complete: %1 to %2").arg(exported, result.export_path));
+    Q_EMIT logOutput(tr("Exported %1 (%2)").arg(exported, formatBytes(result.total_bytes)));
+    if (!result.notes.isEmpty()) {
+        // Everything was written, and not everything came across exactly. Say so where it shows.
+        updateStatusBar(tr("Export complete: %1 to %2, with %3 in the log")
+                            .arg(exported,
+                                 result.export_path,
+                                 countOf(result.notes.size(), tr("note"), tr("notes"))));
+        m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorWarning));
+        for (const QString& note : result.notes) {
+            Q_EMIT logOutput(tr("  Export note: %1").arg(note));
+        }
+    }
 }
 
 void EmailInspectorPanel::onErrorOccurred(QString message) {
-    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
+    // A folder fetch may have failed: clear any loading overlay so the item list is
+    // never left showing a loading message after the operation ended in error.
+    m_item_empty_state->clearLoading();
+    // Colour applied AFTER updateStatusBar: that method resets the label style to muted every
+    // call, so an error colour set beforehand was silently overwritten and never shown.
     updateStatusBar(tr("Error: %1").arg(message));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
     sak::logError("Email Tools: {}", message.toStdString());
     Q_EMIT logOutput(tr("Error: %1").arg(message));
+
+    // A save batch's per-attachment failures arrive on the identity-carrying
+    // attachmentContentFailed signal (onAttachmentContentFailed), not here. This generic
+    // error names no attachment, so charging it to the batch would count an unrelated
+    // failure as a save failure -- exactly the miscount this replaces. Every issued
+    // request still resolves (ready or failed), so the batch never latches.
 }
 
 // MBOX-specific handlers
@@ -1512,8 +2091,18 @@ void EmailInspectorPanel::onMboxOpened(int message_count) {
     m_contacts_button->setEnabled(false);
     m_calendar_button->setEnabled(false);
     m_attachments_button->setEnabled(true);
+    m_filter_button->setEnabled(true);
 
-    // For MBOX, create a single root folder item
+    // For MBOX, create a single root folder item. Its folder id is 0, which the PST
+    // paging path treats as "no folder selected"; m_mbox_active tells reloadCurrentPage
+    // that 0 is a real, loadable folder here so clicking the Inbox loads messages.
+    m_mbox_active = true;
+    // One folder holding everything, so the Attachments Browser and "Export ALL" see the same
+    // shape of mailbox whichever kind of file is open.
+    sak::PstFolder mailbox;
+    mailbox.display_name = tr("Inbox");
+    mailbox.content_count = message_count;
+    m_cached_folder_tree = {mailbox};
     m_folder_tree->clear();
     auto* root = new QTreeWidgetItem(m_folder_tree);
     root->setText(0, tr("Inbox (%1 messages)").arg(message_count));
@@ -1524,31 +2113,47 @@ void EmailInspectorPanel::onMboxOpened(int message_count) {
 }
 
 void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> messages, int total) {
+    // Terminal handler for the MBOX item-list fetch: lift the loading overlay.
+    m_item_empty_state->clearLoading();
+    if (m_dialog_active || m_showing_search_results) {
+        return;
+    }
     m_item_list->setSortingEnabled(false);
     m_item_list->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_item_list);
 
-    // Filter blank messages
+    m_current_total = total;
+
+    // Filter only messages with no subject, no sender AND no attachments -- empty MBOX
+    // delimiters. A message that carries attachments (or a subject/sender) is real
+    // forensic content and stays visible even when the remaining headers are blank.
     QVector<int> visible_indices;
     visible_indices.reserve(messages.size());
     for (int idx = 0; idx < messages.size(); ++idx) {
         const auto& msg = messages.at(idx);
-        if (!msg.subject.trimmed().isEmpty() || !msg.from.trimmed().isEmpty()) {
+        if (!msg.subject.trimmed().isEmpty() || !msg.from.trimmed().isEmpty() ||
+            msg.has_attachments) {
             visible_indices.append(idx);
         }
     }
 
-    const int count = visible_indices.size();
+    const int count = static_cast<int>(visible_indices.size());
     m_item_list->setRowCount(count);
     for (int row = 0; row < count; ++row) {
         const auto& msg = messages.at(visible_indices.at(row));
+        // Identify the row by the message's absolute index in the MBOX file, NOT by its
+        // position within this page's vector. visible_indices holds offsets into the
+        // current page after blank-message filtering, so on any page beyond the first --
+        // and on any page where a blank message was filtered out -- that offset addresses
+        // a different message than the user selected. Opening, exporting or saving
+        // attachments then acted on the wrong email.
+        const auto message_id = static_cast<uint64_t>(msg.message_index);
         m_item_list->setItem(row,
                              ColSelect,
-                             makeEmailSelectItem(static_cast<uint64_t>(visible_indices.at(row)),
-                                                 tr("Select email for export")));
+                             makeEmailSelectItem(message_id, tr("Select email for export")));
 
         auto* subject_cell = new QTableWidgetItem(msg.subject);
-        subject_cell->setData(Qt::UserRole, QVariant::fromValue<uint64_t>(visible_indices.at(row)));
+        subject_cell->setData(Qt::UserRole, QVariant::fromValue<uint64_t>(message_id));
         m_item_list->setItem(row, ColSubject, subject_cell);
 
         m_item_list->setItem(row, ColFrom, new QTableWidgetItem(msg.from));
@@ -1565,41 +2170,65 @@ void EmailInspectorPanel::onMboxMessagesLoaded(QVector<sak::MboxMessage> message
     m_item_list->setUpdatesEnabled(true);
     m_item_list->setSortingEnabled(true);
     updateItemListHeaderCheckState();
-    int filtered = total - count;
+    // Blanks removed from THIS page only. `total` counts the whole store across every
+    // page, so total-count would mislabel every other page's messages as "blank filtered".
+    const int filtered = static_cast<int>(messages.size()) - count;
     QString label = tr("%1 messages (showing %2)").arg(total).arg(count);
     if (filtered > 0) {
         label += tr("  [%1 blank filtered]").arg(filtered);
     }
     m_item_count_label->setText(label);
+    updatePageControls();
 }
 
 void EmailInspectorPanel::onMboxMessageDetailLoaded(sak::MboxMessageDetail detail) {
-    // Display in content tab respecting HTML/plain text toggle.
-    // No cross-format fallback: if the requested format is absent, the pane
-    // is cleared so the missing data is visible rather than hidden.
-    if (m_show_html) {
-        if (detail.body_html.isEmpty()) {
-            m_content_browser->clear();
-        } else {
-            QString wrapped = QString::fromLatin1(ui::kHtmlEmailPreviewDocument)
-                                  .arg(ui::kHtmlPreviewBodyFontPx)
-                                  .arg(ui::kHtmlPreviewBodyPaddingPx)
-                                  .arg(buildPreviewHtml(detail.body_html));
-            m_content_browser->setHtml(wrapped);
+    if (m_dialog_active) {
+        return;
+    }
+    // New message -- the per-message inline/remote image caches and any pending coalesced
+    // redraw belong to the PREVIOUS message. Without clearing them a matching Content-Id or
+    // URL would render bytes from the message just closed.
+    m_inline_images.clear();
+    m_remote_images.clear();
+    m_redraw_timer->stop();
+
+    // Commit the identity the response carries (attachment saves read it) and keep the full
+    // body + headers in m_current_detail so the HTML/Images toggles -- which re-render from
+    // m_current_detail -- do not lose the body, exactly as the PST path does. Without this
+    // the MBOX flow left m_current_detail at stale PST values, so Save Attachment(s) and the
+    // toggles acted on a previously-selected PST message.
+    m_current_item_id = static_cast<uint64_t>(detail.message_index);
+    sak::PstItemDetail normalized;
+    normalized.node_id = *m_current_item_id;
+    normalized.item_type = sak::EmailItemType::Email;
+    normalized.subject = detail.subject;
+    normalized.body_plain = detail.body_plain;
+    normalized.body_html = detail.body_html;
+    normalized.transport_headers = detail.raw_headers;
+    normalized.attachments = detail.attachments;
+    m_current_detail = normalized;
+
+    displayItemDetail(m_current_detail);
+    displayAttachments(detail.attachments);
+
+    // MBOX carries no MAPI properties. Clear the properties tab rather than leave it under a
+    // previously opened PST message's identity.
+    m_properties_item_id.reset();
+    displayProperties({});
+
+    // Request inline CID image attachments (mirrors the PST path) so cid: images render once
+    // their bytes arrive; always requested regardless of the HTML toggle so flipping it later
+    // needs no re-fetch.
+    if (!detail.body_html.isEmpty()) {
+        for (const auto& attachment : detail.attachments) {
+            if (!attachment.content_id.isEmpty()) {
+                m_controller->loadAttachmentContent(*m_current_item_id, attachment.index);
+            }
         }
-    } else {
-        if (detail.body_plain.isEmpty()) {
-            m_content_browser->clear();
-        } else {
-            m_content_browser->setPlainText(detail.body_plain);
+        if (m_show_images) {
+            fetchRemoteImages(detail.body_html);
         }
     }
-
-    // Display headers
-    m_headers_browser->setPlainText(detail.raw_headers);
-
-    // Attachments
-    displayAttachments(detail.attachments);
 }
 
 // ============================================================================
@@ -1609,12 +2238,54 @@ void EmailInspectorPanel::onMboxMessageDetailLoaded(sak::MboxMessageDetail detai
 void EmailInspectorPanel::setOperationRunning(bool running) {
     m_open_button->setEnabled(!running);
     m_progress_bar->setVisible(running);
+    // Show+enable the Stop control on the running edge; hide+disable it on EVERY terminal
+    // edge (success, error, or the cancel itself all reach here via onStateChanged(Idle)),
+    // so the cancel is never stranded enabled after the operation ends.
+    m_cancel_operation_button->setVisible(running);
+    m_cancel_operation_button->setEnabled(running);
     if (running) {
         m_progress_bar->setRange(0, 0);
     }
 }
 
+namespace {
+// Upper bound on folder-tree items built from an untrusted PST/OST hierarchy. A real
+// mailbox has at most a few hundred folders; the cap only trips on a hostile store
+// declaring an unbounded breadth/depth, and stops it from exhausting UI-thread memory.
+constexpr int kMaxFolderTreeNodes = 50'000;
+}  // namespace
+
+// static
+// The visible top-level folders in display order: hidden (non-mail) folders dropped, the
+// rest sorted by folder priority then case-insensitive name. Returned pointers alias into
+// `source`, which must outlive them.
+QVector<const sak::PstFolder*> EmailInspectorPanel::sortedVisibleFolders(
+    const QVector<sak::PstFolder>& source) {
+    QVector<const sak::PstFolder*> sorted;
+    sorted.reserve(source.size());
+    for (const auto& folder : source) {
+        if (showsInTree(folder)) {
+            sorted.append(&folder);
+        }
+    }
+    std::ranges::sort(
+        sorted,
+
+        [](const sak::PstFolder* lhs, const sak::PstFolder* rhs) {
+            const int order_lhs = folderSortOrder(lhs->display_name, lhs->container_class);
+            const int order_rhs = folderSortOrder(rhs->display_name, rhs->container_class);
+            if (order_lhs != order_rhs) {
+                return order_lhs < order_rhs;
+            }
+            return lhs->display_name.compare(rhs->display_name, Qt::CaseInsensitive) < 0;
+        });
+    return sorted;
+}
+
 void EmailInspectorPanel::populateFolderTree(const sak::PstFolderTree& tree) {
+    // A PST/OST folder tree is being built, so an MBOX is not open.
+    m_mbox_active = false;
+    m_folder_tree_budget = kMaxFolderTreeNodes;
     m_folder_tree->clear();
     m_contact_folder_ids.clear();
     m_calendar_folder_ids.clear();
@@ -1629,27 +2300,15 @@ void EmailInspectorPanel::populateFolderTree(const sak::PstFolderTree& tree) {
         collectSpecialFolderIds(folder);
     }
 
-    // Sort folders by display priority
-    QVector<const sak::PstFolder*> sorted;
-    sorted.reserve(source.size());
-    for (const auto& folder : source) {
-        if (!isHiddenFolder(folder.display_name, folder.container_class)) {
-            sorted.append(&folder);
-        }
-    }
-    std::sort(sorted.begin(),
-              sorted.end(),
-              [](const sak::PstFolder* lhs, const sak::PstFolder* rhs) {
-                  int order_lhs = folderSortOrder(lhs->display_name, lhs->container_class);
-                  int order_rhs = folderSortOrder(rhs->display_name, rhs->container_class);
-                  if (order_lhs != order_rhs) {
-                      return order_lhs < order_rhs;
-                  }
-                  return lhs->display_name.compare(rhs->display_name, Qt::CaseInsensitive) < 0;
-              });
+    // Folders to show at the top level, hidden ones dropped and the rest in display order.
+    const QVector<const sak::PstFolder*> sorted = sortedVisibleFolders(source);
 
     for (const auto* folder : sorted) {
+        if (m_folder_tree_budget <= 0) {
+            break;
+        }
         auto* item = new QTreeWidgetItem(m_folder_tree);
+        --m_folder_tree_budget;
         item->setIcon(0, folderIcon(folder->display_name));
         item->setText(
             0, QStringLiteral("%1 (%2)").arg(folder->display_name).arg(folder->content_count));
@@ -1658,14 +2317,45 @@ void EmailInspectorPanel::populateFolderTree(const sak::PstFolderTree& tree) {
             addFolderToTree(item, child);
         }
     }
+    addFoldersOutsideMailTree(tree);
+    if (m_folder_tree_budget <= 0) {
+        logMessage(tr("Folder tree truncated: too many folders in this store"));
+    }
     m_folder_tree->expandToDepth(0);
 }
 
+void EmailInspectorPanel::addFoldersOutsideMailTree(const sak::PstFolderTree& tree) {
+    const QVector<const sak::PstFolder*> outside = sak::foldersWithMailOutsideMailTree(tree);
+    if (outside.isEmpty() || m_folder_tree_budget <= 0) {
+        return;
+    }
+    auto* group = new QTreeWidgetItem(m_folder_tree);
+    --m_folder_tree_budget;
+    group->setIcon(0, folderIcon(QString()));
+    group->setText(0, tr("Other Folders"));
+    group->setToolTip(0, tr("Folders outside the mailbox's own folders that hold email"));
+    for (const sak::PstFolder* folder : outside) {
+        if (m_folder_tree_budget <= 0) {
+            return;
+        }
+        auto* item = new QTreeWidgetItem(group);
+        --m_folder_tree_budget;
+        item->setIcon(0, folderIcon(folder->display_name));
+        item->setText(
+            0, QStringLiteral("%1 (%2)").arg(folder->display_name).arg(folder->content_count));
+        item->setData(0, Qt::UserRole, QVariant::fromValue(folder->node_id));
+    }
+}
+
 void EmailInspectorPanel::addFolderToTree(QTreeWidgetItem* parent, const sak::PstFolder& folder) {
-    if (isHiddenFolder(folder.display_name, folder.container_class)) {
+    if (!showsInTree(folder)) {
+        return;
+    }
+    if (m_folder_tree_budget <= 0) {
         return;
     }
     auto* item = new QTreeWidgetItem(parent);
+    --m_folder_tree_budget;
     item->setIcon(0, folderIcon(folder.display_name));
     item->setText(0, QStringLiteral("%1 (%2)").arg(folder.display_name).arg(folder.content_count));
     item->setData(0, Qt::UserRole, QVariant::fromValue(folder.node_id));
@@ -1676,57 +2366,34 @@ void EmailInspectorPanel::addFolderToTree(QTreeWidgetItem* parent, const sak::Ps
 
 // static
 const sak::PstFolder* EmailInspectorPanel::findIpmSubtree(const QVector<sak::PstFolder>& folders) {
-    // OST files have two IPM_SUBTREE nodes — one under Root - Public
-    // (empty) and one under Root - Mailbox (with all user folders).
-    // We want the one that actually has children.
-    const sak::PstFolder* best = nullptr;
-
-    for (const auto& folder : folders) {
-        if (folder.display_name == QLatin1String("IPM_SUBTREE") ||
-            folder.display_name == QLatin1String("Top of Information Store")) {
-            if (!folder.children.isEmpty()) {
-                return &folder;
-            }
-            if (best == nullptr) {
-                best = &folder;
-            }
-        }
-        const sak::PstFolder* found = findIpmSubtree(folder.children);
-        if (found != nullptr && !found->children.isEmpty()) {
-            return found;
-        }
-        if (found != nullptr && best == nullptr) {
-            best = found;
-        }
-    }
-    return best;
+    return sak::findIpmSubtree(folders);
 }
 
 // static
 QIcon EmailInspectorPanel::folderIcon(const QString& name) {
     const QString lower = name.toLower();
     if (lower == QLatin1String("inbox")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-inbox.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-inbox.svg"));
     }
     if (lower == QLatin1String("sent items")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-sent.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-sent.svg"));
     }
     if (lower == QLatin1String("drafts")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-edit-file.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-edit-file.svg"));
     }
     if (lower == QLatin1String("deleted items")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-trash.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-trash.svg"));
     }
     if (lower == QLatin1String("junk email")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-spam.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-spam.svg"));
     }
     if (lower == QLatin1String("outbox")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-clock.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-clock.svg"));
     }
     if (lower == QLatin1String("archive")) {
-        return QIcon(QStringLiteral(":/icons/icons/icons8-folder.svg"));
+        return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-folder.svg"));
     }
-    return QIcon(QStringLiteral(":/icons/icons/icons8-folder.svg"));
+    return themedGlyphIcon(QStringLiteral(":/icons/icons/icons8-folder.svg"));
 }
 
 // static
@@ -1759,52 +2426,17 @@ int EmailInspectorPanel::folderSortOrder(const QString& name, const QString& /*c
 
 // static
 bool EmailInspectorPanel::isHiddenFolder(const QString& name, const QString& container_class) {
-    // Contact and calendar folders are shown in their own modals
-    if (container_class.startsWith(QLatin1String("IPF.Contact"))) {
-        return true;
-    }
-    if (container_class.startsWith(QLatin1String("IPF.Appointment"))) {
-        return true;
-    }
+    // Tasks, notes and journal entries are browsed here like mail, with their own preview.
+    // Everything else that is not mail stays out: contacts and calendars have their own windows,
+    // and the mail definition is shared with the "Export ALL Mail Folders" walk.
+    return !sak::isMailFolder(name, container_class) &&
+           !sak::isTaskNoteOrJournalFolder(name, container_class);
+}
 
-    // Task, Note, and Journal folders are not email — hide them
-    if (container_class.startsWith(QLatin1String("IPF.Task"))) {
-        return true;
-    }
-    if (container_class.startsWith(QLatin1String("IPF.StickyNote"))) {
-        return true;
-    }
-    if (container_class.startsWith(QLatin1String("IPF.Journal"))) {
-        return true;
-    }
-
-    // System/configuration folders that clutter the tree
-    if (container_class == QLatin1String("IPF.Configuration")) {
-        return true;
-    }
-
-    // Known system folder names to hide
-    static const QStringList kHiddenNames = {
-        QStringLiteral("PersonMetadata"),
-        QStringLiteral("MeContact"),
-        QStringLiteral("ExternalContacts"),
-        QStringLiteral("Quick Step Settings"),
-        QStringLiteral("Conversation Action Settings"),
-        QStringLiteral("Yammer Root"),
-        QStringLiteral("Social Activity Notifications"),
-        QStringLiteral("Conversation History"),
-        QStringLiteral("Files"),
-        QStringLiteral("Sync Issues"),
-        QStringLiteral("Conflicts"),
-        QStringLiteral("Local Failures"),
-        QStringLiteral("Server Failures"),
-    };
-    for (const auto& hidden : kHiddenNames) {
-        if (name.compare(hidden, Qt::CaseInsensitive) == 0) {
-            return true;
-        }
-    }
-    return false;
+// static
+bool EmailInspectorPanel::showsInTree(const sak::PstFolder& folder) {
+    return !isHiddenFolder(folder.display_name, folder.container_class) ||
+           sak::holdsSystemFolderEmails(folder);
 }
 
 void EmailInspectorPanel::collectSpecialFolderIds(const sak::PstFolder& folder) {
@@ -1822,7 +2454,7 @@ void EmailInspectorPanel::collectSpecialFolderIds(const sak::PstFolder& folder) 
 void EmailInspectorPanel::onScanForFilesClicked() {
     EmailFileScannerDialog dialog(this);
     if (dialog.exec() == QDialog::Accepted) {
-        QString path = dialog.selectedFilePath();
+        const QString path = dialog.selectedFilePath();
         if (!path.isEmpty()) {
             m_controller->openFile(path);
         }
@@ -1898,7 +2530,7 @@ void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
                        .arg(ui::kHtmlDetailPaddingPx)
                        .arg(ui::htmlColor(ui::kColorTextHeading))
                        .arg(detail.subject.toHtmlEscaped());
-    static const char* const kTaskStatus[] = {
+    static const std::array<const char*, kTaskStatusCount> kTaskStatus = {
         "Not Started", "In Progress", "Complete", "Waiting", "Deferred"};
     if (detail.task_status >= 0 && detail.task_status < kTaskStatusCount) {
         html += QStringLiteral("<p><b>Status:</b> %1 (%2%)</p>")
@@ -1917,7 +2549,10 @@ void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
                 .arg(ui::kCssBorderWidthDefaultPx)
                 .arg(ui::htmlColor(ui::kColorBorderDefault));
     if (!detail.body_html.isEmpty()) {
-        html += detail.body_html;
+        // A task body is untrusted markup exactly like a mail body; route it through the same
+        // choke point instead of splicing it in raw (this path previously skipped both the
+        // sanitizer and the inline/remote image neutralization).
+        html += buildPreviewHtml(detail.body_html);
     } else if (!detail.body_plain.isEmpty()) {
         html += QString::fromLatin1(ui::kHtmlPreWrap).arg(detail.body_plain.toHtmlEscaped());
     }
@@ -1930,31 +2565,87 @@ void EmailInspectorPanel::displayTaskDetail(const sak::PstItemDetail& detail) {
     }
 }
 
-void EmailInspectorPanel::displayNoteDetail(const sak::PstItemDetail& detail) {
-    static const char* const kNoteColors[] = {ui::kColorNoteBlue,
-                                              ui::kColorNoteGreen,
-                                              ui::kColorNotePink,
-                                              ui::kColorNoteYellow,
-                                              ui::kColorNoteGray};
-    constexpr int kNoteColorCount = 5;
-    int color_idx = (detail.note_color >= 0 && detail.note_color < kNoteColorCount)
-                        ? detail.note_color
-                        : kDefaultNoteColorIndex;
-    QString html = QString::fromLatin1(ui::kHtmlNoteDetailTemplate)
-                       .arg(ui::kHtmlDetailLargePaddingPx)
-                       .arg(ui::htmlColor(QLatin1String(kNoteColors[color_idx])))
-                       .arg(ui::kCssRadiusLargePx)
-                       .arg(ui::kHtmlNoteMinHeightPx)
+void EmailInspectorPanel::displayJournalDetail(const sak::PstItemDetail& detail) {
+    QString html = QString::fromLatin1(ui::kHtmlDetailHeading2Open)
+                       .arg(ui::kHtmlDetailPaddingPx)
                        .arg(ui::htmlColor(ui::kColorTextHeading))
-                       .arg(detail.subject.toHtmlEscaped())
-                       .arg(ui::htmlColor(ui::kColorTextBody))
-                       .arg(detail.body_plain.toHtmlEscaped());
+                       .arg(detail.subject.toHtmlEscaped());
+    if (!detail.journal_type.isEmpty()) {
+        html += QStringLiteral("<p><b>Type:</b> %1</p>").arg(detail.journal_type.toHtmlEscaped());
+    }
+    if (detail.is_all_day && detail.start_time.isValid()) {
+        html += QStringLiteral("<p><b>Date:</b> %1 (all day)</p>")
+                    .arg(sak::pst::allDayDate(detail.time_zone, detail.start_time)
+                             .toString(Qt::RFC2822Date));
+    } else {
+        if (detail.start_time.isValid()) {
+            html += QStringLiteral("<p><b>Start:</b> %1</p>")
+                        .arg(detail.start_time.toString(Qt::RFC2822Date));
+        }
+        if (detail.end_time.isValid()) {
+            html += QStringLiteral("<p><b>End:</b> %1</p>")
+                        .arg(detail.end_time.toString(Qt::RFC2822Date));
+        }
+    }
+    if (detail.journal_duration_minutes > 0) {
+        html += QStringLiteral("<p><b>Duration:</b> %1 minutes</p>")
+                    .arg(detail.journal_duration_minutes);
+    }
+    html += QString::fromLatin1(ui::kHtmlHorizontalRule)
+                .arg(ui::kCssBorderWidthDefaultPx)
+                .arg(ui::htmlColor(ui::kColorBorderDefault));
+    if (!detail.body_html.isEmpty()) {
+        html += buildPreviewHtml(detail.body_html);
+    } else if (!detail.body_plain.isEmpty()) {
+        html += QString::fromLatin1(ui::kHtmlPreWrap).arg(detail.body_plain.toHtmlEscaped());
+    }
+    html += QStringLiteral("</div>");
+    m_content_browser->setHtml(html);
+    m_headers_browser->setPlainText(tr("No transport headers available"));
+}
+
+void EmailInspectorPanel::displayNoteDetail(const sak::PstItemDetail& detail) {
+    static const std::array<const char*, 5> kNoteColors = {ui::kColorNoteBlue,
+                                                           ui::kColorNoteGreen,
+                                                           ui::kColorNotePink,
+                                                           ui::kColorNoteYellow,
+                                                           ui::kColorNoteGray};
+    constexpr int kNoteColorCount = 5;
+    const int color_idx = (detail.note_color >= 0 && detail.note_color < kNoteColorCount)
+                              ? detail.note_color
+                              : kDefaultNoteColorIndex;
+    const QString html = QString::fromLatin1(ui::kHtmlNoteDetailTemplate)
+                             .arg(ui::kHtmlDetailLargePaddingPx)
+                             .arg(ui::htmlColor(QLatin1String(kNoteColors[color_idx])))
+                             .arg(ui::kCssRadiusLargePx)
+                             .arg(ui::kHtmlNoteMinHeightPx)
+                             .arg(ui::htmlColor(ui::kColorTextHeading))
+                             .arg(detail.subject.toHtmlEscaped())
+                             .arg(ui::htmlColor(ui::kColorTextBody))
+                             .arg(detail.body_plain.toHtmlEscaped());
     m_content_browser->setHtml(html);
     m_headers_browser->setPlainText(tr("No transport headers available"));
 }
 
 QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
-    // Inline every image `src` we can resolve offline — both `cid:`
+    // Single choke point for every untrusted body this panel renders. Strip active content
+    // first, with the SAME sanitizer the HTML and PDF export writers use -- one authority, not a
+    // second dialect -- so script blocks, inline event handlers, javascript:/vbscript: URIs and
+    // framing/loading tags (iframe/object/embed/link/meta/...) never reach the document.
+    //
+    // Bound the untrusted body first: a pathologically large PST/MBOX body would otherwise
+    // drive several full-size allocations and a long global-regex pass on the UI thread.
+    // Truncate with a visible notice rather than process an unbounded blob (fail closed
+    // against UI-thread DoS).
+    constexpr int kMaxPreviewHtmlChars = 4 * 1024 * 1024;
+    QString bounded_body = body_html;
+    if (bounded_body.size() > kMaxPreviewHtmlChars) {
+        bounded_body.truncate(kMaxPreviewHtmlChars);
+        bounded_body += QStringLiteral("<p>[preview truncated]</p>");
+    }
+    const QString safe_html = sanitizeEmailBodyHtml(bounded_body);
+
+    // Then inline every image `src` we can resolve offline -- both `cid:`
     // attachment references and any already-downloaded http(s) URLs.  The
     // result is self-contained HTML that `QTextBrowser` can render without
     // a network stack.  Anything we cannot resolve gets blanked out so the
@@ -1963,19 +2654,19 @@ QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
                                             QRegularExpression::CaseInsensitiveOption);
 
     QString out;
-    out.reserve(body_html.size());
-    int pos = 0;
-    auto it = kImgSrc.globalMatch(body_html);
+    out.reserve(safe_html.size());
+    qsizetype pos = 0;
+    auto it = kImgSrc.globalMatch(safe_html);
     while (it.hasNext()) {
         const QRegularExpressionMatch m = it.next();
-        out.append(body_html.mid(pos, m.capturedStart() - pos));
+        out.append(safe_html.mid(pos, m.capturedStart() - pos));
         pos = m.capturedEnd();
 
         const QString src = m.captured(kInlineImageSrcCaptureGroup).trimmed();
         const QString lower = src.toLower();
 
         if (lower.startsWith(QStringLiteral("data:"))) {
-            // Already self-contained — pass through unchanged.
+            // Already self-contained -- pass through unchanged.
             out.append(m.captured(0));
             continue;
         }
@@ -1983,7 +2674,7 @@ QString EmailInspectorPanel::buildPreviewHtml(const QString& body_html) const {
         const QByteArray image_data = resolveInlineImageData(src, lower);
         appendInlineImageAttr(out, m, image_data);
     }
-    out.append(body_html.mid(pos));
+    out.append(safe_html.mid(pos));
 
     // Neutralise any lingering remote refs that are not `src=...` attributes
     // (CSS url(...), background/poster attributes) when images are off.
@@ -2036,8 +2727,58 @@ void EmailInspectorPanel::appendInlineImageAttr(QString& out,
     out.append(m.captured(kInlineImageAttrQuoteCaptureGroup));
 }
 
+namespace {
+
+// Remote-image fetch bounds: cap the requests dispatched per message and the
+// bytes read per reply so a hostile mail server cannot open unbounded
+// connections or exhaust memory with a giant response.
+constexpr int kMaxRemoteImageRequests = 64;
+constexpr qint64 kMaxRemoteImageBytes = 8LL * 1024 * 1024;
+
+// Normalize a raw img src to an http(s) URL, or empty when it is not an eligible
+// remote reference (data:, cid:, relative, unknown scheme).
+QString normalizeRemoteImageSrc(const QString& raw) {
+    const QString lower = raw.toLower();
+    if (lower.startsWith(QStringLiteral("//"))) {
+        return QStringLiteral("https:") + raw;
+    }
+    if (lower.startsWith(QStringLiteral("http://")) ||
+        lower.startsWith(QStringLiteral("https://"))) {
+        return raw;
+    }
+    return QString();
+}
+
+bool remoteImageOverBudget(const qint64 received, const qint64 total) {
+    return received > kMaxRemoteImageBytes || total > kMaxRemoteImageBytes;
+}
+
+// Store a finished reply's payload only when it is current, succeeded, non-empty,
+// and within the byte cap; otherwise release the reserved slot. Fail-closed: a
+// stale, failed, empty, or oversized fetch is dropped, never rendered.
+void applyRemoteImageReply(QNetworkReply* reply,
+                           const QString& src,
+                           const bool current,
+                           QHash<QString, QByteArray>& images,
+                           QTimer* redraw) {
+    reply->deleteLater();
+    if (!current || reply->error() != QNetworkReply::NoError) {
+        images.remove(src);
+        return;
+    }
+    const QByteArray payload = reply->readAll();
+    if (payload.isEmpty() || payload.size() > kMaxRemoteImageBytes) {
+        images.remove(src);
+        return;
+    }
+    images.insert(src, payload);
+    redraw->start();
+}
+
+}  // namespace
+
 void EmailInspectorPanel::fetchRemoteImages(const QString& body_html) {
-    if (!m_remote_image_nam) {
+    if (m_remote_image_nam == nullptr) {
         m_remote_image_nam = new QNetworkAccessManager(this);
     }
 
@@ -2047,16 +2788,14 @@ void EmailInspectorPanel::fetchRemoteImages(const QString& body_html) {
     auto it = kImgSrc.globalMatch(body_html);
     while (it.hasNext()) {
         const QRegularExpressionMatch m = it.next();
-        QString src = m.captured(kInlineImageSrcCaptureGroup).trimmed();
-        const QString lower = src.toLower();
-        if (lower.startsWith(QStringLiteral("//"))) {
-            src = QStringLiteral("https:") + src;
-        } else if (!lower.startsWith(QStringLiteral("http://")) &&
-                   !lower.startsWith(QStringLiteral("https://"))) {
+        const QString src =
+            normalizeRemoteImageSrc(m.captured(kInlineImageSrcCaptureGroup).trimmed());
+        if (src.isEmpty() || m_remote_images.contains(src)) {
             continue;
         }
-        if (m_remote_images.contains(src)) {
-            continue;
+        if (m_remote_images.size() >= kMaxRemoteImageRequests) {
+            // Per-message request cap: stop dispatching once the budget is spent.
+            break;
         }
         // Reserve the slot so duplicate `src` references in the body only
         // dispatch one request per URL.
@@ -2067,24 +2806,22 @@ void EmailInspectorPanel::fetchRemoteImages(const QString& body_html) {
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                              QNetworkRequest::NoLessSafeRedirectPolicy);
         QNetworkReply* reply = m_remote_image_nam->get(request);
+        // Bound in-flight buffering and abort a stream that blows the byte budget.
+        reply->setReadBufferSize(kMaxRemoteImageBytes + 1);
+        connect(reply,
+                &QNetworkReply::downloadProgress,
+                this,
+                [reply](const qint64 received, const qint64 total) {
+                    if (remoteImageOverBudget(received, total)) {
+                        reply->abort();
+                    }
+                });
         connect(reply, &QNetworkReply::finished, this, [this, reply, src, message_id]() {
-            reply->deleteLater();
-            // Drop stale results when the user has already moved on.
-            if (m_current_detail.node_id != message_id) {
-                m_remote_images.remove(src);
-                return;
-            }
-            if (reply->error() != QNetworkReply::NoError) {
-                m_remote_images.remove(src);
-                return;
-            }
-            const QByteArray payload = reply->readAll();
-            if (payload.isEmpty()) {
-                m_remote_images.remove(src);
-                return;
-            }
-            m_remote_images.insert(src, payload);
-            m_redraw_timer->start();
+            applyRemoteImageReply(reply,
+                                  src,
+                                  m_current_detail.node_id == message_id,
+                                  m_remote_images,
+                                  m_redraw_timer);
         });
     }
 }
@@ -2100,16 +2837,21 @@ void EmailInspectorPanel::displayItemDetail(const sak::PstItemDetail& detail) {
         return;
     }
 
-    // Default: email / journal / RSS / conversation history.
+    if (detail.item_type == sak::EmailItemType::JournalEntry) {
+        displayJournalDetail(detail);
+        return;
+    }
+
+    // Default: email / RSS / conversation history.
     // No cross-format fallback: the toggle is authoritative.
     if (m_show_html) {
         if (detail.body_html.isEmpty()) {
             m_content_browser->clear();
         } else {
-            QString wrapped = QString::fromLatin1(ui::kHtmlEmailPreviewDocument)
-                                  .arg(ui::kHtmlPreviewBodyFontPx)
-                                  .arg(ui::kHtmlPreviewBodyPaddingPx)
-                                  .arg(buildPreviewHtml(detail.body_html));
+            const QString wrapped = QString::fromLatin1(ui::kHtmlEmailPreviewDocument)
+                                        .arg(ui::kHtmlPreviewBodyFontPx)
+                                        .arg(ui::kHtmlPreviewBodyPaddingPx)
+                                        .arg(buildPreviewHtml(detail.body_html));
             m_content_browser->setHtml(wrapped);
         }
     } else {
@@ -2131,13 +2873,13 @@ void EmailInspectorPanel::displayProperties(const QVector<sak::MapiProperty>& pr
     m_properties_table->setSortingEnabled(false);
     m_properties_table->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_properties_table);
-    const int count = props.size();
+    const int count = static_cast<int>(props.size());
     m_properties_table->setRowCount(count);
     for (int row = 0; row < count; ++row) {
         const auto& prop = props.at(row);
         m_properties_table->setItem(row, 0, new QTableWidgetItem(prop.property_name));
-        QString display = prop.display_value.isEmpty() ? QStringLiteral("<empty>")
-                                                       : prop.display_value;
+        const QString display = prop.display_value.isEmpty() ? QStringLiteral("<empty>")
+                                                             : prop.display_value;
         m_properties_table->setItem(row, 1, new QTableWidgetItem(display));
     }
     m_properties_table->setUpdatesEnabled(true);
@@ -2148,13 +2890,17 @@ void EmailInspectorPanel::displayAttachments(const QVector<sak::PstAttachmentInf
     m_attachments_table->setSortingEnabled(false);
     m_attachments_table->setUpdatesEnabled(false);
     const QSignalBlocker blocker(m_attachments_table);
-    const int count = attachments.size();
+    const int count = static_cast<int>(attachments.size());
     m_attachments_table->setRowCount(count);
     for (int row = 0; row < count; ++row) {
         const auto& att = attachments.at(row);
-        QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
-        m_attachments_table->setItem(row, 0, new QTableWidgetItem(name));
-        m_attachments_table->setItem(row, 1, new QTableWidgetItem(formatBytes(att.size_bytes)));
+        const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
+        m_attachments_table->setItem(row,
+                                     kAttachmentTableColumnFilename,
+                                     new QTableWidgetItem(name));
+        m_attachments_table->setItem(row,
+                                     kAttachmentTableColumnSize,
+                                     new QTableWidgetItem(formatBytes(att.size_bytes)));
         m_attachments_table->setItem(row,
                                      kAttachmentTableColumnMimeType,
                                      new QTableWidgetItem(att.mime_type));
@@ -2164,12 +2910,24 @@ void EmailInspectorPanel::displayAttachments(const QVector<sak::PstAttachmentInf
     }
     m_attachments_table->setUpdatesEnabled(true);
     m_attachments_table->setSortingEnabled(true);
-    m_save_attachment_button->setEnabled(!attachments.isEmpty());
-    m_save_all_attachments_button->setEnabled(!attachments.isEmpty());
+    // Never unlock the save controls while a batch is still running: a second
+    // batch started now would interleave its arrivals with the first one's.
+    setAttachmentSaveControlsEnabled(!attachments.isEmpty() && !m_batch_save.isActive());
+}
+
+void EmailInspectorPanel::setAttachmentSaveControlsEnabled(bool enabled) {
+    m_save_attachment_button->setEnabled(enabled);
+    m_save_all_attachments_button->setEnabled(enabled);
 }
 
 void EmailInspectorPanel::updateFileInfoBar(const sak::PstFileInfo& info) {
-    updateStatusBar(QStringLiteral("%1 \u2014 %2 \u2014 %3 items")
+    if (info.total_items == 0) {
+        // A store can be whole and hold nothing, as a group-mail cache often does.
+        updateStatusBar(tr("%1: this file opened and holds no messages").arg(info.display_name));
+        m_item_empty_state->setEmptyText(tr("This file holds no messages"));
+        return;
+    }
+    updateStatusBar(QStringLiteral("%1 - %2 - %3 items")
                         .arg(info.display_name)
                         .arg(formatBytes(info.file_size_bytes))
                         .arg(info.total_items));
@@ -2240,7 +2998,8 @@ bool EmailInspectorPanel::isBlankItem(const sak::PstItemSummary& /*item*/) {
 }
 
 void EmailInspectorPanel::applyPageSize() {
-    if (m_current_folder_id == 0) {
+    // Folder id 0 is "nothing selected" in a PST or OST, but it is an MBOX's one real folder.
+    if (m_current_folder_id == 0 && !m_mbox_active) {
         return;
     }
     m_current_page = 0;
@@ -2248,9 +3007,21 @@ void EmailInspectorPanel::applyPageSize() {
 }
 
 void EmailInspectorPanel::reloadCurrentPage() {
-    if (m_current_folder_id == 0) {
+    // Folder id 0 means "no folder selected" for a PST/OST store, but it is the MBOX
+    // root's real id. Only bail on 0 when no MBOX is open, otherwise the MBOX message
+    // list can never load.
+    if (m_current_folder_id == 0 && !m_mbox_active) {
         return;
     }
+    // Leaving the results for a folder, unless the search is still running: the controller then
+    // refuses this load, and the hits still on their way belong in the list.
+    if (m_controller->currentState() != EmailInspectorController::State::Searching) {
+        m_showing_search_results = false;
+        m_item_empty_state->setEmptyText(m_controller->fileInfo().total_items == 0
+                                             ? tr("This file holds no messages")
+                                             : tr("This folder is empty"));
+    }
+    m_item_empty_state->setLoading(tr("Loading folder contents..."));
     const int page_size = currentPageSize();
     m_controller->loadFolderItems(m_current_folder_id, m_current_page * page_size, page_size);
 }
@@ -2274,17 +3045,9 @@ void EmailInspectorPanel::updatePageControls() {
 }
 
 QString EmailInspectorPanel::formatBytes(qint64 bytes) {
-    if (bytes < kBytesPerKB) {
-        return QStringLiteral("%1 B").arg(bytes);
-    }
-    if (bytes < kBytesPerMB) {
-        return QStringLiteral("%1 KB").arg(static_cast<double>(bytes) / kBytesPerKBf, 0, 'f', 1);
-    }
-    if (bytes < kBytesPerGB) {
-        return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / kBytesPerMBf, 0, 'f', 1);
-    }
-    return QStringLiteral("%1 GB").arg(
-        static_cast<double>(bytes) / kBytesPerGBf, 0, 'f', kLargeByteDisplayPrecision);
+    // The application's one byte style. This class carried its own copy; five existed across
+    // the tree, differing only in which unit got which precision.
+    return sak::formatBytes(bytes);
 }
 
 }  // namespace sak

@@ -11,8 +11,14 @@
 #include <QAbstractTableModel>
 #include <QDateTime>
 #include <QModelIndex>
+#include <QSet>
+#include <QStringList>
 #include <QVariant>
 #include <QVector>
+
+#include <functional>
+
+class QMimeData;
 
 namespace sak {
 
@@ -28,6 +34,7 @@ public:
         CreatedColumn,
         IdentifierColumn,
         AttributesColumn,
+        TagsColumn,
         PathColumn,
         ColumnCount,
     };
@@ -45,7 +52,29 @@ public:
         EntryAttributeSummaryRole,
         EntryModifiedTimeRole,
         EntryCreatedTimeRole,
+        EntryTagsRole,
+        EntryHiddenRole,
     };
+
+    /// Callback that returns the app-level tags for an entry path. Injected by the
+    /// panel so the model stays decoupled from the tag store; unset = no Tags column data.
+    using TagProvider = std::function<QStringList(const QString& path)>;
+
+    /// Callback that returns the row icon for an entry. Injected by the panel so
+    /// the model stays decoupled from the GUI icon registry; unset = no row icons.
+    using IconProvider = std::function<QVariant(const FileManagementEntry& entry)>;
+
+    /// Callback that builds the drag payload for a set of entry rows. Injected by
+    /// the panel so the model stays decoupled from the clipboard/transfer plumbing;
+    /// unset = rows are not draggable.
+    using DragPayloadProvider = std::function<QMimeData*(const QList<int>& rows)>;
+
+    /// Selection-checkbox callbacks (Files ShowCheckboxesWhenSelectingItems):
+    /// the provider reports whether an entry path is selected, the handler
+    /// toggles the selection when the user clicks the checkbox. Both unset
+    /// disables the checkbox column.
+    using CheckStateProvider = std::function<bool(const QString& path)>;
+    using CheckToggleHandler = std::function<void(const QString& path, bool checked)>;
 
     explicit FileExplorerItemModel(QObject* parent = nullptr);
 
@@ -57,11 +86,35 @@ public:
                                       Qt::Orientation orientation,
                                       int role = Qt::DisplayRole) const override;
     [[nodiscard]] Qt::ItemFlags flags(const QModelIndex& index) const override;
+    bool setData(const QModelIndex& index, const QVariant& value, int role = Qt::EditRole) override;
     void sort(int column, Qt::SortOrder order = Qt::AscendingOrder) override;
+    [[nodiscard]] QMimeData* mimeData(const QModelIndexList& indexes) const override;
+    [[nodiscard]] Qt::DropActions supportedDragActions() const override;
 
     void setEntries(QVector<FileManagementEntry> entries);
     void clear();
     void setShowFileExtensions(bool show);
+    /// Mark clipboard-cut items (Files dims them at 0.4 opacity until the
+    /// move-paste lands or a new transfer replaces the clipboard).
+    void setCutPaths(const QSet<QString>& paths);
+    [[nodiscard]] QSet<QString> cutPaths() const;
+    /// Set the tag lookup used by the Tags column; pass a null function to disable it.
+    void setTagProvider(TagProvider provider);
+    /// Set the icon lookup used for the Name column; pass a null function to disable it.
+    void setIconProvider(IconProvider provider);
+    /// Set the drag payload builder; pass a null function to disable dragging.
+    void setDragPayloadProvider(DragPayloadProvider provider);
+    /// Install the selection-checkbox callbacks (wired once per pane).
+    void setCheckboxProviders(CheckStateProvider provider, CheckToggleHandler handler);
+    /// Show/hide the selection checkboxes (the Files
+    /// ShowCheckboxesWhenSelectingItems setting); hidden also drops the
+    /// user-checkable flag.
+    void setCheckboxesVisible(bool visible);
+    [[nodiscard]] bool checkboxesVisible() const;
+    /// Notify views that the selection changed so the checkbox column repaints.
+    void refreshChecks();
+    /// Notify views that tag data changed (e.g. after editing tags) so the column repaints.
+    void refreshTags();
 
     [[nodiscard]] QVector<FileManagementEntry> entries() const;
     [[nodiscard]] FileManagementEntry entryAt(int row) const;
@@ -69,11 +122,43 @@ public:
     [[nodiscard]] bool showFileExtensions() const;
     [[nodiscard]] static QString attributeSummary(const FileManagementEntry& entry);
     [[nodiscard]] static QString sizeText(uint64_t bytes);
+    /// What the Type column says: "File folder" for a folder, a file's kind from its extension
+    /// ("PNG image", "CSV document", else "XYZ File"), and any other entry's own type ("Search
+    /// result", "Symlink").
+    [[nodiscard]] static QString typeText(const FileManagementEntry& entry);
     [[nodiscard]] static QString timeText(const QDateTime& time);
 
+Q_SIGNALS:
+    /// Inline rename commit: the model performs no mutation itself; the panel
+    /// routes the request through the file-system bridge and reloads.
+    void renameRequested(int row, const QString& new_name);
+
 private:
+    [[nodiscard]] QStringList tagsForEntry(const FileManagementEntry& entry) const;
+    [[nodiscard]] QVariant presentationData(const FileManagementEntry& entry,
+                                            int column,
+                                            int role) const;
+    [[nodiscard]] QVariant checkStateForEntry(const FileManagementEntry& entry, int column) const;
+    [[nodiscard]] QVariant displayForColumn(const FileManagementEntry& entry, int column) const;
+    [[nodiscard]] QVariant editForColumn(const FileManagementEntry& entry, int column) const;
+    [[nodiscard]] QVariant foregroundForEntry(const FileManagementEntry& entry) const;
+    [[nodiscard]] QVariant decorationForColumn(const FileManagementEntry& entry, int column) const;
+    [[nodiscard]] QString completedRenameName(const FileManagementEntry& entry,
+                                              const QString& edited) const;
+    // After sort() permutes m_entries, move each persistent index to the row its
+    // item (identified by @p held_paths, captured before the sort) now occupies.
+    void remapPersistentIndexesByPath(const QModelIndexList& old_indexes,
+                                      const QStringList& held_paths);
+
     QVector<FileManagementEntry> m_entries;
     bool m_show_file_extensions{true};
+    QSet<QString> m_cut_paths;
+    TagProvider m_tag_provider;
+    IconProvider m_icon_provider;
+    DragPayloadProvider m_drag_payload_provider;
+    CheckStateProvider m_check_state_provider;
+    CheckToggleHandler m_check_toggle_handler;
+    bool m_checkboxes_visible{false};
 };
 
 }  // namespace sak

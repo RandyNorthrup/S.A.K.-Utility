@@ -29,6 +29,12 @@ constexpr int kApiRetryDelayBaseMs = 2000;
 constexpr int kSearchMaxResults = 50;
 constexpr int kSearchResultsDefault = 30;
 
+// Hard cap on a dependency-feed (FindPackagesById) response before it is handed
+// to the DOM parser. The feed for one id is a small metadata document; 32 MiB is
+// generous while bounding a hostile/oversized endpoint (parity with the
+// package-internalization version fetch).
+constexpr int64_t kMaxFeedResponseBytes = 32LL * 1024 * 1024;
+
 // ============================================================================
 // Binary downloads
 // ============================================================================
@@ -46,9 +52,14 @@ constexpr int kDownloadProgressIntervalMs = 250;
 // ============================================================================
 
 constexpr int kMaxPackagesPerBuild = 200;
-constexpr int kPackTimeoutMs = 60'000;
 constexpr int kInstallTimeoutPerPackageMs = 600'000;
 constexpr int kMaxDependencyDepth = 10;
+
+/// @brief Hard cap on a deployment manifest.json read from disk on the install
+/// side. 200 packages of metadata is a few dozen KiB, so 8 MiB is generous while
+/// still bounding a hostile/corrupt manifest before it is read wholesale into
+/// memory (parity with the build side's 32 MiB feed-read cap).
+constexpr long long kMaxManifestBytes = 8LL * 1024 * 1024;
 
 // ============================================================================
 // Checksums
@@ -56,6 +67,17 @@ constexpr int kMaxDependencyDepth = 10;
 
 constexpr auto kDefaultChecksumAlgorithm = "sha256";
 constexpr int kChecksumBlockSize = 65'536;
+
+// ============================================================================
+// Install exit codes
+// ============================================================================
+
+// Chocolatey / MSI exit codes that all mean the install SUCCEEDED: 0 = success;
+// 1641 = reboot has been initiated; 3010 = a reboot is required to finish. A
+// bundle install must treat 1641/3010 as success (reboot pending), not failure.
+constexpr int kExitSuccess = 0;
+constexpr int kExitRebootInitiated = 1641;
+constexpr int kExitRebootRequired = 3010;
 
 // ============================================================================
 // Deployment manifest
@@ -67,6 +89,11 @@ constexpr auto kPackagesSubdir = "packages";
 constexpr auto kInstallersSubdir = "installers";
 constexpr auto kLogsSubdir = "logs";
 constexpr auto kReadmeFilename = "README.txt";
+
+// Ownership stamp dropped into a build's <output>/_work directory so a later
+// recursive cleanup only ever deletes a work tree this app created (a
+// pre-existing FOREIGN _work is refused, never wiped).
+constexpr auto kWorkDirOwnershipMarker = ".sak_offline_work";
 
 // ============================================================================
 // Package list presets
