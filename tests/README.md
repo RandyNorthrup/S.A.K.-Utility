@@ -267,7 +267,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | Test | Module Under Test | Coverage |
 |---|---|---|
 | test_windows_iso_downloader | `windows_iso_downloader` | Opt-in UUP API, download URL validation, HTTP-allow for Microsoft CDN; post-opt-in failures are hard failures |
-| test_linux_iso_downloader | `linux_iso_downloader` | Distro catalog, GitHub URL resolution, aria2c integration, and opt-in live GitHub/Ubuntu reachability that hard-fails after opt-in |
+| test_linux_iso_downloader | `linux_iso_downloader` | Distro catalog, GitHub URL resolution, aria2c integration, and opt-in live reachability of every fixed catalog download that hard-fails after opt-in (one logged retry only when no HTTP answer came; any HTTP status is final), with the retry rule itself checked offline |
 | test_linux_distro_catalog | `linux_distro_catalog` | Required distro metadata, URL patterns, version detection |
 | test_uup_dump_api | `uup_dump_api` | UUP Dump API parsing, edition/language selection |
 | test_uup_iso_builder | `uup_iso_builder` | UUP-to-ISO conversion, converter process management |

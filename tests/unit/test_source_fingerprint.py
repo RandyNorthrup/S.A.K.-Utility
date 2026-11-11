@@ -54,6 +54,21 @@ class SourceFingerprintFixture(unittest.TestCase):
     def assert_configured(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def date_after_configure(self, path):
+        """Give @p path a modification time one second past every file the configure wrote.
+
+        MSBuild's ZERO_CHECK runs CMake again only when an input is at least a millisecond newer
+        than CMakeFiles/generate.stamp: measured on Visual Studio 17 2022, an input dated 1 ms
+        before the stamp, equal to it or 100 ns after it was not noticed, and 1 ms after it was.
+        Windows dates a write by its clock tick (about 15.6 ms), so an edit written the instant
+        configure returns can tie the stamp, and the 77a92478 nightly saw the header edit go
+        unnoticed. A person's edit comes later than that; this one is dated later explicitly,
+        one second past the newest configure output, well clear of both granularities.
+        """
+        newest = max(entry.stat().st_mtime_ns for entry in self.build.rglob("*") if entry.is_file())
+        later = newest + 1_000_000_000
+        os.utime(path, ns=(later, later))
+
     def make_junction(self, link, destination):
         subprocess.run(["cmd.exe", "/d", "/c", "mklink", "/J", str(link), str(destination)],
                        capture_output=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
@@ -89,6 +104,7 @@ class SourceFingerprintTests(SourceFingerprintFixture):
         self.assert_configured(self.configure())
         original = self.stamp()
         self.source.joinpath("b.h").write_bytes(b"header changed\n")
+        self.date_after_configure(self.source / "b.h")
         result = subprocess.run(
             [self.cmake, "--build", str(self.build), "--config", "Release"],
             capture_output=True, text=True, check=False, timeout=30,

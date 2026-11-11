@@ -36,6 +36,49 @@
 #include <QtTest/QSignalSpy>
 #include <QtTest/QtTest>
 
+#include <functional>
+
+namespace {
+
+/// One answer to a catalog download check: the HTTP status, or none at all (a timeout, or a
+/// transport failure, which Qt reports as status 0).
+struct CatalogProbeAnswer {
+    int status{0};
+    bool timed_out{false};
+};
+
+/// Checks one catalog download through @p probe, and once more after @p pause when the first try
+/// got no HTTP answer at all. Two upstream outages in one day (Canonical's servers, then Fedora's
+/// redirector) failed the nightly for reasons that were not ours. An HTTP status is final on the
+/// first answer, so a dead address (404) or a refusal (403) still fails at once. Each retry is
+/// added to @p retries, so a flaky upstream stays visible. Returns the failure, or nothing.
+QString checkCatalogDownload(const QString& id,
+                             const QString& url,
+                             const std::function<CatalogProbeAnswer()>& probe,
+                             const std::function<void()>& pause,
+                             QStringList* retries) {
+    constexpr int kTries = 2;
+    for (int attempt = 1; attempt <= kTries; ++attempt) {
+        const CatalogProbeAnswer answer = probe();
+        if (!answer.timed_out && answer.status != 0) {
+            if (answer.status == 200 || answer.status == 206) {
+                return {};
+            }
+            return QStringLiteral("%1: HTTP %2 from %3").arg(id).arg(answer.status).arg(url);
+        }
+        const QString what = answer.timed_out ? QStringLiteral("no answer in 30 s")
+                                              : QStringLiteral("HTTP 0");
+        if (attempt == kTries) {
+            return QStringLiteral("%1: %2 from %3, on both tries").arg(id, what, url);
+        }
+        retries->append(QStringLiteral("%1: %2 from %3; retried once").arg(id, what, url));
+        pause();
+    }
+    return {};
+}
+
+}  // namespace
+
 class LinuxISODownloaderTests : public QObject {
     Q_OBJECT
 
@@ -138,6 +181,7 @@ private Q_SLOTS:
     // ========================================================================
     void testGitHubVersionCheck_Network();
     void testEveryCatalogDownloadAnswers_Network();
+    void catalogDownloadCheckRetriesOnlyTransportFailures();
     void testSourceForgeUrlStructure_AllDistros();
 
 private:
@@ -1045,8 +1089,11 @@ void LinuxISODownloaderTests::testEveryCatalogDownloadAnswers_Network() {
 
     QNetworkAccessManager nam;
     QStringList failures;
+    QStringList retries;
     QStringList not_checked;
     int checked = 0;
+    constexpr int kAnswerWaitMs = 30'000;
+    constexpr int kRetryPauseMs = 5000;
     for (const auto& d : m_catalog->allDistros()) {
         if (d.sourceType == LinuxDistroCatalog::SourceType::GitHubRelease ||
             !d.rollingFilenamePattern.isEmpty()) {
@@ -1054,30 +1101,83 @@ void LinuxISODownloaderTests::testEveryCatalogDownloadAnswers_Network() {
             continue;
         }
         const QString url = m_catalog->resolveDownloadUrl(d);
-        QNetworkRequest request{QUrl(url)};
-        request.setRawHeader("User-Agent", agent.toUtf8());
-        request.setRawHeader("Range", "bytes=0-0");
-        request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                             QNetworkRequest::NoLessSafeRedirectPolicy);
-        auto* reply = nam.get(request);
-        QSignalSpy finished(reply, &QNetworkReply::finished);
-        if (!QTest::qWaitFor([&finished]() { return finished.count() > 0; }, 30'000)) {
-            reply->abort();
-            failures.append(QStringLiteral("%1: no answer in 30 s from %2").arg(d.id, url));
+        const auto probe = [&nam, &agent, &url]() {
+            QNetworkRequest request{QUrl(url)};
+            request.setRawHeader("User-Agent", agent.toUtf8());
+            request.setRawHeader("Range", "bytes=0-0");
+            request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                                 QNetworkRequest::NoLessSafeRedirectPolicy);
+            auto* reply = nam.get(request);
+            QSignalSpy finished(reply, &QNetworkReply::finished);
+            CatalogProbeAnswer answer;
+            if (!QTest::qWaitFor([&finished]() { return finished.count() > 0; }, kAnswerWaitMs)) {
+                reply->abort();
+                answer.timed_out = true;
+            } else {
+                answer.status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            }
             reply->deleteLater();
-            continue;
+            return answer;
+        };
+        const QString failure =
+            checkCatalogDownload(d.id, url, probe, []() { QTest::qWait(kRetryPauseMs); }, &retries);
+        if (!failure.isEmpty()) {
+            failures.append(failure);
         }
-        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (status != 200 && status != 206) {
-            failures.append(QStringLiteral("%1: HTTP %2 from %3").arg(d.id).arg(status).arg(url));
-        }
-        reply->deleteLater();
         ++checked;
     }
     qInfo() << "checked" << checked << "catalog downloads; resolved at download time:"
             << not_checked.join(QStringLiteral(", "));
+    for (const QString& retry : std::as_const(retries)) {
+        qInfo().noquote() << "upstream retry:" << retry;
+    }
     QVERIFY2(checked >= 5, "too few fixed catalog downloads to say anything");
     QVERIFY2(failures.isEmpty(), qPrintable(failures.join(QLatin1Char('\n'))));
+}
+
+// The live check's retry, with scripted answers instead of the network: no answer then a 200
+// passes and is logged; a 404 or a 403 fails on the first answer, with no retry; no answer twice
+// fails; no answer then a 404 fails with the 404.
+void LinuxISODownloaderTests::catalogDownloadCheckRetriesOnlyTransportFailures() {
+    struct Case {
+        const char* name{""};
+        QList<CatalogProbeAnswer> answers;
+        bool passes{false};
+        int tries{0};
+        int retries{0};
+        const char* failure_contains{""};
+    };
+    const QList<Case> cases{
+        {"timeout then 200", {{0, true}, {200, false}}, true, 2, 1, ""},
+        {"HTTP 0 then 206", {{0, false}, {206, false}}, true, 2, 1, ""},
+        {"200 at once", {{200, false}}, true, 1, 0, ""},
+        {"404 at once", {{404, false}, {200, false}}, false, 1, 0, "HTTP 404"},
+        {"403 at once", {{403, false}, {200, false}}, false, 1, 0, "HTTP 403"},
+        {"timeout twice", {{0, true}, {0, true}}, false, 2, 1, "no answer in 30 s"},
+        {"HTTP 0 twice", {{0, false}, {0, false}}, false, 2, 1, "on both tries"},
+        {"timeout then 404", {{0, true}, {404, false}}, false, 2, 1, "HTTP 404"},
+    };
+    for (const Case& test : cases) {
+        int tries = 0;
+        int pauses = 0;
+        QStringList retries;
+        const QString failure = checkCatalogDownload(
+            QStringLiteral("distro"),
+            QStringLiteral("https://example.invalid/distro.iso"),
+            [&test, &tries]() { return test.answers.value(tries++); },
+            [&pauses]() { ++pauses; },
+            &retries);
+        const QString name = QString::fromLatin1(test.name);
+        QVERIFY2(failure.isEmpty() == test.passes,
+                 qPrintable(name + QStringLiteral(": ") + failure));
+        QVERIFY2(failure.contains(QString::fromLatin1(test.failure_contains)),
+                 qPrintable(name + QStringLiteral(": ") + failure));
+        QVERIFY2(tries == test.tries,
+                 qPrintable(name + QStringLiteral(": tries ") + QString::number(tries)));
+        QVERIFY2(retries.size() == test.retries && pauses == test.retries,
+                 qPrintable(name + QStringLiteral(": retries ") +
+                            retries.join(QStringLiteral("; "))));
+    }
 }
 
 void LinuxISODownloaderTests::testSourceForgeUrlStructure_AllDistros() {

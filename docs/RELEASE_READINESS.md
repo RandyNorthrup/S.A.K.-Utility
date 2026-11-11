@@ -2795,6 +2795,30 @@ The 317211fc dev nightly (43047447744) failed its T4 CTest labels job on two tes
   back-to-back runs of the full T2 label set at -j 6 (322 of 322 both times). The 317211fc nightly's ASan job
   passed, 297 of 297 with no crash dump.
 
+The 77a92478 dev nightly (43065407990) failed its T4 CTest labels job on
+`test_source_fingerprint::test_header_change_reconfigures_on_build` (the stamp did not change after a header edit and
+`cmake --build`), passed by the two nightlies before it. Measured with the same fixture: MSBuild's ZERO_CHECK runs
+CMake again only when an input is at least a millisecond newer than `CMakeFiles/generate.stamp`; an input dated 1 ms
+before it, equal to it or 100 ns after it went unnoticed (3 of 3 each), 1 ms to 2 s after it was noticed (3 of 3
+each). Windows dates a write by its clock tick, so the test's edit, written the instant configure returned, could
+tie the stamp. The test now dates the edit one second past the newest configure output (no sleep); drilled red 3 of
+3 with the edit dated to tie the stamp, green 3 of 3 with the fix.
+
+To stop finding one intermittent failure per nightly, a flush on a temporary branch (probe-flush, run 43072540193,
+77a92478 plus one workflow file, since deleted) ran the nightly's T4 CTest labels job as six parallel copies with
+each test repeated up to three times until it failed, the T4 static job once, and the eight T2 build + test shards
+with each test repeated up to twice. T4 static and all eight T2 shards passed. Two tests failed, nothing else:
+- the fingerprint case above, in four of the six copies (fixed above);
+- `test_linux_iso_catalog_live`, once in copy 6: Fedora's redirector gave no answer in 30 s; it passed in every
+  other copy. The second upstream outage in a day after Canonical's, so on the coordinator's ruling the live check
+  now asks a URL a second time, after 5 s, only when the first try got no HTTP answer at all (a timeout or status
+  0), and logs each retry in the test output ("upstream retry: ...") so a flaky upstream stays visible. Any HTTP
+  status is final on the first answer, so a dead address (404) or a refusal (403) still fails at once.
+  `catalogDownloadCheckRetriesOnlyTransportFailures` (T2, offline) scripts the answers: no answer then 200, and
+  HTTP 0 then 206, pass with one logged retry; 200 passes at once; 404 and 403 fail on the first answer; no answer
+  twice, HTTP 0 twice, and no answer then 404 fail. Drills: one try only, retrying every status, and a third try
+  each turned it red.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and
