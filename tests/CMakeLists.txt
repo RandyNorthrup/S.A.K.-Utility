@@ -5536,6 +5536,7 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_pipe.cpp")
 endif()
     add_executable(test_browser_bridge_pipe
         unit/test_browser_bridge_pipe.cpp
+        support/large_allocation_counter.h
     )
     set_target_properties(test_browser_bridge_pipe PROPERTIES
         AUTOMOC ON

@@ -32,6 +32,15 @@ constexpr DWORD kCancelDrainBudgetMs = 3000;
 // Native-messaging framing: a fixed 4-byte little-endian length prefix precedes every body.
 constexpr int kFrameHeaderBytes = 4;
 
+// The largest hello the handshake reads. A real one is {"type","token","protocol"} with a
+// 32-character token, well under 200 bytes; the cap is checked against the length prefix before
+// the body is allocated, so a peer cannot make the server buffer up to the 64 MiB frame limit
+// that replies (which may carry a screenshot) need.
+constexpr quint32 kMaxHelloFrameBytes = 4 * 1024;
+
+// A browser reply: the whole native-messaging frame limit, since a reply may carry a screenshot.
+constexpr auto kMaxBrowserReplyBytes = static_cast<quint32>(kMaxNativeMessageBytes);
+
 // Wide-char path buffer sized at twice MAX_PATH so a long module/image path is never truncated.
 constexpr DWORD kModulePathBufferChars = MAX_PATH * 2;
 
@@ -117,7 +126,9 @@ bool pipeWriteAll(HANDLE pipe, const char* buffer, DWORD size, IoDeadline deadli
     return true;
 }
 
-bool readFrame(HANDLE pipe, IoDeadline deadline, QJsonObject* out) {
+// Read one frame whose body is at most @p max_body_bytes, refusing a larger length prefix before
+// the body is allocated or read.
+bool readFrame(HANDLE pipe, IoDeadline deadline, quint32 max_body_bytes, QJsonObject* out) {
     char header[kFrameHeaderBytes];
     if (!pipeReadExact(pipe, header, kFrameHeaderBytes, deadline)) {
         return false;
@@ -126,6 +137,9 @@ bool readFrame(HANDLE pipe, IoDeadline deadline, QJsonObject* out) {
         return false;  // zero / over-cap length prefix
     }
     const DWORD length = qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(header));
+    if (length > max_body_bytes) {
+        return false;
+    }
     QByteArray frame(header, kFrameHeaderBytes);
     QByteArray body(static_cast<int>(length), Qt::Uninitialized);
     if (!pipeReadExact(pipe, body.data(), length, deadline)) {
@@ -431,8 +445,20 @@ bool BrowserBridgePipeServer::handshake() {
     // sole pipe instance open past the deadline by restarting a per-read timer.
     const IoDeadline deadline{.m_deadline_tick = GetTickCount64() + options_.io_timeout_ms,
                               .m_cancel_event = shutdown_event_};
+    // Who is connected comes first, before a byte from it is read: the peer's process is known
+    // the moment it connects. Checked after the hello, any process that could open the pipe held
+    // its only instance for the whole deadline and had the server read what it sent.
+    QString why;
+    if (!verifyPeer(&why)) {
+        writeFrame(pipe_,
+                   QJsonObject{{QStringLiteral("type"), QStringLiteral("error")},
+                               {QStringLiteral("error"),
+                                QStringLiteral("unauthorized: %1").arg(why)}},
+                   deadline);
+        return false;
+    }
     QJsonObject hello;
-    if (!readFrame(pipe_, deadline, &hello)) {
+    if (!readFrame(pipe_, deadline, kMaxHelloFrameBytes, &hello)) {
         return false;
     }
     if (hello.value(QStringLiteral("type")).toString() != QLatin1String("hello") ||
@@ -443,15 +469,6 @@ bool BrowserBridgePipeServer::handshake() {
         writeFrame(pipe_,
                    QJsonObject{{QStringLiteral("type"), QStringLiteral("error")},
                                {QStringLiteral("error"), QStringLiteral("protocol_mismatch")}},
-                   deadline);
-        return false;
-    }
-    QString why;
-    if (!verifyPeer(&why)) {
-        writeFrame(pipe_,
-                   QJsonObject{{QStringLiteral("type"), QStringLiteral("error")},
-                               {QStringLiteral("error"),
-                                QStringLiteral("unauthorized: %1").arg(why)}},
                    deadline);
         return false;
     }
@@ -500,7 +517,7 @@ void BrowserBridgePipeServer::serveConnected() {
         Exchange result;
         if (!writeFrame(pipe_, request, deadline)) {
             result.error = QStringLiteral("browser did not accept the command (timeout or reset)");
-        } else if (!readFrame(pipe_, deadline, &reply)) {
+        } else if (!readFrame(pipe_, deadline, kMaxBrowserReplyBytes, &reply)) {
             result.error = QStringLiteral("browser did not reply within %1 ms (connection reset)")
                                .arg(options_.io_timeout_ms);
             // Abandoning the exchange here does not stop the extension: a handler that POLLS
@@ -523,7 +540,7 @@ void BrowserBridgePipeServer::serveConnected() {
                                                                    kCancelDrainBudgetMs,
                                                 .m_cancel_event = shutdown_event_};
                 QJsonObject discarded;
-                readFrame(pipe_, drain_deadline, &discarded);
+                readFrame(pipe_, drain_deadline, kMaxBrowserReplyBytes, &discarded);
             }
         } else {
             result.ok = true;
