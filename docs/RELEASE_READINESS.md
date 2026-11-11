@@ -2643,13 +2643,94 @@ operation stays in the queue as pending, to be applied again or removed, and doe
   skips manifest-pinned files and `verify_authenticode_signatures.ps1` accepts an unsigned file whose hash matches
   its pin, so the shipped manifest stays the repository's. That is a `scripts/` change, which the certification
   digest covers.
-- `scripts/bundle_smartmontools.ps1`: on the release runner its check of an existing, correctly pinned smartctl.exe
-  failed while the same check passes on a workstation, and its catch prints no reason (`release.yml`'s diagnostic
-  step now prints what each part of the check sees). Its re-download path then rewrites the tracked README.txt
-  with `Set-Content -Encoding UTF8`, which under PowerShell 7 drops the byte-order mark the tracked file has. The
-  release workflow no longer bundles into the checkout. The script should name the check that failed, and a
-  re-bundle should leave a tracked file unchanged when its content is the same. A `scripts/` change, which the
-  certification digest covers.
+
+### Fix round N: the first nightly and the first release dry run (2026-11-10)
+
+The release workflow and the nightly had never run (they can be dispatched only from `main`). Their first runs on
+`main` 4f7daa47 found what follows; the owner ruled to fix all of it before release and certify the result again.
+Each fix that changes behaviour has a test that went red with the fix taken out, each drilled on its own and restored
+byte for byte; a deletion is proved by the build and both clang-tidy passes.
+
+**Release dry run 42913905285.** The readiness gate refused the certification evidence ("the evidence is for other
+code"): on the runner, `bundle_smartmontools.ps1` judged the tracked, correctly pinned smartctl.exe untrusted,
+downloaded smartmontools again and rewrote the tracked `tools/smartmontools/README.txt` without its byte-order mark,
+which moved the certification digest. The cause: it read `$LASTEXITCODE` after `& smartctl --version | ... |
+Select-Object -First 1`, and PowerShell 7 does not record the exit code of a native command whose pipeline
+Select-Object -First stops, so in a new session it is `$null` and `$null -ne 0` is true (measured: 40 of 40 fresh
+pwsh 7.6.9 sessions; Windows PowerShell 5.1 sets 0). The application runs smartctl through QProcess and its own
+scripts read `Process.ExitCode` under Windows PowerShell 5.1, so no customer path has it.
+- `bundle_smartmontools.ps1` captures the output first and then the exit code, says which check failed, and leaves a
+  file alone when its bytes or its text are already right (README in the tracked encoding). Test
+  `test_bundle_smartmontools` (T2, offline: a pinned bundle in a new pwsh 7 session is accepted, nothing downloaded,
+  no file rewritten) and `test_bundle_smartmontools_rebundle` (T4, downloads: `-Force` rewrites no file). Three
+  drills red: the old check, the old README write, a plain copy over an identical smartctl.exe.
+- `check_powershell_syntax.ps1` (T1 on changed scripts, T2 on the whole tree) now refuses `$LASTEXITCODE` read after
+  a native command's pipeline is cut short by Select-Object -First or -Index, with no other native command between.
+  Its only hits in the tree were the two in `bundle_smartmontools.ps1`. `test_powershell_syntax_gate` (pwsh and
+  Windows PowerShell) covers five refused shapes, five passed ones and the two-casings rule, which had no test; five
+  drills red.
+- `release.yml` bundles smartmontools and iPerf3 into the runner's temp folder and compares them with the tracked
+  binaries, and checks after bundling and before readiness that no step changed a tracked file (#3).
+
+**Nightly 42913851120.**
+- clang-tidy naming gate: clang's own diagnostics stopped it, and a local run of both passes the way the nightly runs
+  them found more than CI had reached (the gate stops at its first failing pass). Missing designated fields
+  (verify_system_files_action.cpp, process_runner.cpp, diagnostic_benchmark_panel.cpp, network_diagnostic_panel.cpp,
+  user_migration_panel.cpp) are named; unused constants (organizer_panel.cpp, windows11_theme.cpp,
+  network_reset_safeguard.cpp, pst_named_properties.cpp, uup_dump_api.cpp, uup_iso_builder.cpp,
+  windows_iso_downloader.cpp) are deleted; an unneeded lambda capture (partition_operation_requests.cpp) is gone;
+  `clonePreviewScaledBytes` and the one-floor `segmentSpans`, called only by the panel's test hooks, are deleted and
+  the hooks call what production calls; three names follow the naming rules (`kDefenderTasks`, `theme_options`,
+  `kInstance`; `theme_options` now takes its length from its entries, as the magic-number gate wants of a constant
+  without the k prefix), and so do two static regexes in `thermal_monitor.cpp` (`kSafeIdentity`, `kDiskStatus`), a file on
+  the core pass's must-stay-clean list that CI had never reached.
+- Mutation catalogs: five mutants whose text had moved are retargeted (restore-image payload target, the APFS resize
+  wording, SMART's warning boundary and NVMe media errors) or removed (`critical-threshold-boundary-ge-to-gt`: SMART no
+  longer has a critical raw threshold), and `clone-preview-scale-wraps-product` moved into `saturatingMultiplyDivide`
+  with the wrapper it named.
+- `test_false_green_command_propagation`: `(Get-Command git.exe).Source` is an array where PATH holds two git.exe, as
+  on the runner; reproduced locally with two on PATH and fixed with `-TotalCount 1`. The same lookup is hardened in
+  `generate_compile_commands.ps1`, `test_startup_budget.ps1` and the toolchain action.
+- `test_source_fingerprint`: the runner's TEMP is under an 8.3 short name (RUNNER~1), so the root arrived short while
+  CMake named each input long, and every input read as outside its root. `verify_source_fingerprint.py` expands short
+  names with GetLongPathNameW (names only; reparse points are still refused) before comparing. A new case checks both
+  spellings each way; drill red.
+- Debug + AddressSanitizer: no AddressSanitizer report. `test_network_reset_safeguard` called `error()` on a
+  `std::expected` holding a value, because Qt 6.12's QVERIFY2 evaluates its message even when the check passes; it now
+  uses the guard the other nine such calls use. The two MCP session suites each failed their built-in case with
+  "Built-in MCP app is missing": it starts sak_utility.exe from the test's own folder, and in Debug the tests and the
+  application build to different folders; `sak_stage_tools_for_debug_tests` now stages it (in Release they share
+  one, and on a workstation the hardware guard skips the case, which is why only CI saw it). Three suites crossed
+  limits set against Release: `SAK_TEST_TIMEOUT_SCALE` multiplies every TIMEOUT by 5 in the ASan job only (refused
+  at configure without ENABLE_ASAN), measured in `tests/CMakeLists.txt`. The job now keeps a crash dump of any test
+  that ends abnormally, prints a debugger stack for it, and uploads the QTest result files, none of which it kept
+  before; the first run's three failures carried no detail.
+- The explorer suite's Debug assert (in `openFolderInSecondPaneListsThatFolderInPaneB`, CI only, three runs of three)
+  was `QList::takeFirst` on an empty list in Qt's `QHeaderViewPrivate::resizeSections`. The header's layout pass
+  queues one width per column shown when it starts, then emits `sectionResized` as it goes, also for a column hidden
+  since the last pass, which still holds its width. `FileExplorerDetailsView` refitted from that signal and showed
+  columns it had dropped for room, so the pass met a shown column it had queued no width for: an assert in Debug,
+  undefined behaviour in Release. The refit now runs once, queued, after the pass has returned. Two Release tests
+  force the pass with the view's own calls (the splitter's narrow-then-wide resizes, and the header menu hiding a
+  column in a narrow pane) and check that no emission changes which columns show: both red on the old code, green
+  three runs of three on the fix. On CI, the nightly's ASan build of the explorer suite with the fix (temporary branch
+  probe-asan-explorer, run 42948322870) passed fifteen runs of fifteen, 124 cases each with no crash dump, where it
+  had asserted on every run before; the branch and its runs' artifacts are deleted. A sweep of the GUI found no
+  other slot on a header signal or on a view's resize that shows or hides a section or changes a resize mode.
+- `test_dedicated_threads` failed once on unchanged code under a -j 4 T2 shard: it times the shared thread pool while
+  its own spinners hold two cores. It now runs alone (RUN_SERIAL) and prints the latency it measured. With the jobs
+  put back on the shared pool the probe never started within its 3000 ms (three of three); on threads of their own
+  it started in 0-100 ms, so its bound is 2000 ms, not 1000: a busy machine gets twenty times that, still short of
+  "never". Thirty runs beside the full T2 label set at -j 6: 30 passed, 0-237 ms; again on the round's final tree,
+  30 passed, 0-989 ms.
+- Added by the owner: the selected main tab drew its icon as a flat white silhouette (`tabIcon`'s QIcon::On
+  pixmap, UI review S25), which lost every line inside the drawing. It now shows the icon's own drawing. Those colours
+  fail on the old blue fill (in the light theme 0-15% of an icon's pixels at 3:1), so the selected tab is filled like
+  the page under it (light #ffffff, dark #172033) with a 2 px accent outline; every tab has the 2 px border,
+  transparent until selected, so no tab moves. `selectedTabIconsKeepTheirDrawing` selects each tab in both themes and
+  fails on an icon reshaped or in fewer colours than its own drawing, and on the 3:1 rule read on the real fill: red on
+  all 22 before, green after (weakest: light Application Management 0.59 of its pixels, light Partition Manager's
+  weakest quarter 0.46).
 
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
@@ -3406,8 +3487,8 @@ deletions (`git show --numstat`; whitespace-insensitive where a block was only u
   evidence is for other code") because "Bundle smartmontools" rewrote the tracked `tools/smartmontools/README.txt`
   in the checkout, and the certification digest covers it. The release workflow now bundles smartmontools and iPerf3
   into the runner's temp folder and requires the tracked binaries to match those pinned copies byte for byte, checks
-  that no step has changed a tracked file (after bundling and before readiness), and prints what the
-  smartmontools existing-binary check sees on the runner.
+  that no step has changed a tracked file (after bundling and before readiness). The script's own fault is fixed in
+  "Fix round N" above.
 - Intermittent, cause unidentified: once in a `-j 8` full suite (2026-10-24)
   `test_advanced_uninstall_controller` failed because `ConfigManager::sync` got a settings access
   error on the shared `data/config/Utility.ini`, at the serial tail with no other CTest test

@@ -1782,10 +1782,10 @@ void MainWindow::createThemeSelector() {
     m_theme_button->setToolTip(tr("Light, Dark, or System to follow the Windows app theme"));
     auto* menu = new QMenu(m_theme_button);
     auto* choices = new QActionGroup(menu);
-    const std::array<std::pair<ui::ThemePreference, QString>, 3> theme_options{
-        {{ui::ThemePreference::System, tr("System")},
-         {ui::ThemePreference::Light, tr("Light")},
-         {ui::ThemePreference::Dark, tr("Dark")}}};
+    using ThemeOption = std::pair<ui::ThemePreference, QString>;
+    const std::array theme_options{ThemeOption{ui::ThemePreference::System, tr("System")},
+                                   ThemeOption{ui::ThemePreference::Light, tr("Light")},
+                                   ThemeOption{ui::ThemePreference::Dark, tr("Dark")}};
     for (const auto& [preference, label] : theme_options) {
         QAction* action = menu->addAction(label);
         action->setCheckable(true);

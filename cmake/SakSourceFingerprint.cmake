@@ -128,7 +128,7 @@ function(_sak_bind_fingerprint_target target fingerprint fingerprint_files heade
         endif()
         # The definition goes on the source as the target spells it. REAL_PATH (and
         # get_filename_component ABSOLUTE) expand 8.3 short names, so under a short TEMP (a CI
-        # runner's C:/Users/RUNNER~1) the resolved spelling is another source file to CMake, the
+        # runner's profile, RUNNER~1) the resolved spelling is another source file to CMake, the
         # definition never reached the compiled one, and a backdated edit was not recompiled
         # (first nightly, 2026-11-10). cmake_path is lexical: it keeps the target's spelling.
         cmake_path(ABSOLUTE_PATH input BASE_DIRECTORY "${target_source_dir}" NORMALIZE

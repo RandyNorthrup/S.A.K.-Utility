@@ -155,6 +155,9 @@ smaller download.
   bolder, and Network Management's outline is a whole pixel wide. In the dark theme, Partition Manager and Network
   Management are lighter, Backup and Restore's arrowhead is a lighter blue and Benchmark and Diagnostics'
   stethoscope tube is drawn in light grey. Panel headers follow the theme too.
+- **The selected tab shows its icon whole** - The selected tab drew its icon as a flat white silhouette, which lost
+  every line inside it. It now shows the icon's own drawing, in the colours every other tab shows it in, and is
+  filled like the page under it with a blue outline, so the icon reads on it in both themes.
 - **Readable download line** - The Windows and Linux ISO downloads' "Downloading..." line is the app's success
   green, readable in both themes.
 - **"Wi-Fi" and "network adapters"** - Wi-Fi is spelled one way everywhere (the Network Management tabs, the

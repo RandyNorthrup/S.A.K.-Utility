@@ -42,7 +42,7 @@ def ordinary_path(path: Path, *, directory: bool = False) -> Path:
 def long_path(path: Path) -> Path:
     """The same path with every 8.3 short name in it expanded, so one file is spelled one way.
 
-    Windows gives long names short aliases: a CI runner's TEMP is under C:/Users/RUNNER~1, and CMake
+    Windows gives long names short aliases: a CI runner's TEMP is in RUNNER~1, and CMake
     then names a file under the long spelling while the root arrives under the short one, so a file
     inside the root read as outside it (nightly 2026-11-10). GetLongPathNameW only expands names; it
     does not follow a junction or link, which ordinary_path still refuses. A tail that does not exist

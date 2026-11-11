@@ -162,7 +162,7 @@ class SourceFingerprintTests(SourceFingerprintFixture):
             capture_output=True, text=True, timeout=30)
 
     def test_short_and_long_spellings_of_one_path_agree(self):
-        # The first nightly (2026-11-10) failed 11 native cases: its TEMP was C:/Users/RUNNER~1, so
+        # The first nightly (2026-11-10) failed 11 native cases: its TEMP was in RUNNER~1, so
         # the root came in under the 8.3 short name while CMake named each input under the long one,
         # and every input read as outside its own root.
         long_root = self.root / "source-folder-with-a-long-name"
@@ -277,7 +277,7 @@ class NativeSourceFingerprintTests(SourceFingerprintFixture):
                 previous_value = expected
 
     def test_backdated_edits_recompile_under_a_short_name_root(self):
-        # A CI runner's TEMP is C:/Users/RUNNER~1: the fixture then lives under an 8.3 short name,
+        # A CI runner's TEMP is in RUNNER~1: the fixture then lives under an 8.3 short name,
         # and the per-source fingerprint definition landed on the long spelling CMake resolves, not
         # on the source it compiles, so a backdated edit was not recompiled (first nightly,
         # 2026-11-10). A workstation's TEMP has a long name, so this puts the fixture under one.
@@ -302,7 +302,7 @@ class NativeSourceFingerprintTests(SourceFingerprintFixture):
         headers = self.source / "headers"
         saved = self.source / "saved-headers"
         self.assertTrue(headers.resolve().is_relative_to(self.root.resolve()))
-        # Both sides resolved: under an 8.3 TEMP (C:/Users/RUNNER~1 on a CI runner) absolute() keeps
+        # Both sides resolved: under an 8.3 TEMP (RUNNER~1 on a CI runner) absolute() keeps
         # the short spelling while resolve() expands it, and the check read a path inside as outside.
         self.assertTrue(saved.resolve().is_relative_to(self.root.resolve()))
         headers.rename(saved)

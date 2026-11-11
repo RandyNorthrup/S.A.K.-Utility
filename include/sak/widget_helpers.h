@@ -156,10 +156,6 @@ inline QIcon themedGlyphIcon(const QString& path) {
     return tinted;
 }
 
-/// A selected tab's white drawing leaves out the light fills of the artwork, its holes: at 20 px
-/// a 1 px white stroke is blended with what is around it, and About's "i" came out near
-/// (197, 219, 248) on its (139, 183, 240) bubble.
-inline constexpr int kTabGlyphNearWhite = 185;
 /// A button's glyph leaves out only what is drawn white (Run Details' "i"): a pale fill is part of
 /// the drawing, and leaving out Rename Chat's pale blue field (#c2e8ff) left only its text
 /// cursor, an "!". The palest fill a button icon uses is Send's #e1ebf2.
@@ -349,28 +345,19 @@ inline QIcon themedIcon(const QString& path) {
     return QIcon(new ThemedIconEngine(path));
 }
 
-/// @brief A tab's icon when its tab is selected: the artwork in white on the blue gradient, where
-///        its colours lost. A part drawn in white (Help's question mark, About's "i") is left out,
-///        so it shows in the tab's blue; a plain white silhouette made those two blank discs.
-inline QPixmap selectedTabPixmap(const QPixmap& drawn) {
-    return toneGlyphPixmap(drawn,
-                           QColor(QString::fromLatin1(ui::kColorButtonTextOnTone)),
-                           kTabGlyphNearWhite);
-}
-
-/// @brief @p path as a tab icon: on unselected tabs the theme's drawing of it, and in white when
-/// its
-///        tab is selected (QIcon::On). The selected tab is the same blue in both themes, so its
-///        white drawing comes from the light-theme artwork, whose light fills are its holes.
+/// @brief @p path as a tab icon: the theme's drawing of it, the same whether its tab is selected
+///        (QIcon::On) or not. A white silhouette on the selected tab lost every line inside the
+///        drawing (the owner, 2026-11-10), so the selected tab is filled with what the drawings
+///        read on instead (themeTabAndButtonStyles).
 inline QIcon tabIcon(const QString& path, int size) {
     QIcon icon;
     const QIcon drawn(themedIconPath(path));
-    const QIcon light(path);
     constexpr int kTabIconScales[] = {1, 2};  // normal and high-DPI pixmaps
     for (const int scale : kTabIconScales) {
         const int side = size * scale;
-        icon.addPixmap(drawn.pixmap(side, side), QIcon::Normal, QIcon::Off);
-        icon.addPixmap(selectedTabPixmap(light.pixmap(side, side)), QIcon::Normal, QIcon::On);
+        const QPixmap pixmap = drawn.pixmap(side, side);
+        icon.addPixmap(pixmap, QIcon::Normal, QIcon::Off);
+        icon.addPixmap(pixmap, QIcon::Normal, QIcon::On);
     }
     return icon;
 }

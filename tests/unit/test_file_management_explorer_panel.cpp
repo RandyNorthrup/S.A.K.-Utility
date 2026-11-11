@@ -932,6 +932,55 @@ void verifyShellAccessibilityAndIcons(sak::FileManagementExplorerPanel& panel) {
     QVERIFY(!view->icon().isNull());
 }
 
+struct HeaderPassProbe {
+    sak::FileExplorerDetailsView* view{nullptr};
+    QList<bool> at_pass_start;
+    bool armed{false};
+    int zeroed_in_pass{0};
+    QStringList changed_inside_pass;
+
+    [[nodiscard]] QList<bool> hiddenColumns() const {
+        // isColumnHidden only: a width or length query would run Qt's pending pass itself.
+        QList<bool> hidden;
+        for (int column = 0; column < view->model()->columnCount(); ++column) {
+            hidden.append(view->isColumnHidden(column));
+        }
+        return hidden;
+    }
+    void arm() {
+        at_pass_start = hiddenColumns();
+        armed = true;
+    }
+    // Connected after the view's own handlers, so it sees what they left. Only the layout
+    // pass emits a new size of 0 for a column that was already hidden when it started.
+    void onSectionResized(int section, int new_size) {
+        if (!armed || new_size != 0 || !at_pass_start.value(section)) {
+            return;
+        }
+        ++zeroed_in_pass;
+        if (hiddenColumns() != at_pass_start) {
+            changed_inside_pass.append(QString::number(section));
+        }
+    }
+};
+
+void clearDetailsViewSettings() {
+    sak::PortableSettings settings;
+    settings.beginGroup(QStringLiteral("FileExplorerDetailsView"));
+    settings.remove(QString());
+    settings.endGroup();
+}
+
+void verifyNoColumnChangedInsideThePass(const HeaderPassProbe& probe) {
+    QVERIFY2(probe.zeroed_in_pass > 0,
+             "the header's layout pass never zeroed a hidden column: the sequence that "
+             "crashed was not reproduced");
+    QVERIFY2(probe.changed_inside_pass.isEmpty(),
+             qPrintable(QStringLiteral("columns shown or hidden inside the header's layout "
+                                       "pass, from sectionResized of section(s) %1")
+                            .arg(probe.changed_inside_pass.join(QStringLiteral(", ")))));
+}
+
 }  // namespace
 
 class FileManagementExplorerPanelTests : public QObject {
@@ -4449,6 +4498,135 @@ private Q_SLOTS:
         QCoreApplication::processEvents();
         QVERIFY(!restored.isColumnHidden(Model::TagsColumn));
         QVERIFY(!restored.isColumnHidden(Model::ModifiedColumn));
+    }
+
+    // The first nightly's ASan job: opening pane B asserted in QHeaderViewPrivate::resizeSections,
+    // QList::takeFirst on an empty list (undefined behaviour in Release). The header's layout pass
+    // queues a size for each column shown when it starts, then emits sectionResized as it goes. A
+    // column hidden since the last pass still holds its width, so the pass zeroes it and emits for
+    // it too. The view refitted from that signal and showed columns it had dropped for room, and
+    // the pass then met a shown column it had queued no size for. Both tests below force that pass
+    // with only the view's own calls. No sectionResized emission may change which columns show,
+    // and the refit must still land once events run.
+
+    // The splitter's sequence: it resizes a new pane several times with no event loop between.
+    // Narrowed until Name's width comes out unchanged, the fit's last hide is left to Qt's posted
+    // pass, and the next, wider resize runs that pass from FileExplorerDetailsView::resizeEvent.
+    void splitterResizesNeverChangeColumnsInsideTheHeaderPass() {
+        QCoreApplication::setOrganizationName(QStringLiteral("SAKUtilityTests"));
+        QCoreApplication::setApplicationName(QStringLiteral("FileExplorerPanelTests"));
+        clearDetailsViewSettings();
+        const auto cleanup = qScopeGuard(&clearDetailsViewSettings);
+        using Model = sak::FileExplorerItemModel;
+        Model source;
+        source.setEntries({testEntry(QStringLiteral("Docs"), true),
+                           testEntry(QStringLiteral("note.txt"), false)});
+        sak::FileExplorerSortFilterModel proxy;
+        proxy.setSourceModel(&source);
+
+        // A child view: its resizes are delivered at once, as the splitter's are.
+        QWidget host;
+        host.resize(1200, 500);
+        auto* view = new sak::FileExplorerDetailsView(&host);
+        view->setModel(&proxy);
+        view->setGeometry(0, 0, 1000, 400);
+        host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&host));
+        QCoreApplication::processEvents();
+        QVERIFY(view->columnsDroppedForRoom().isEmpty());
+
+        HeaderPassProbe probe;
+        probe.view = view;
+        const QMetaObject::Connection connection =
+            connect(view->horizontalHeader(),
+                    &QHeaderView::sectionResized,
+                    &host,
+                    [&probe](int section, int /*old_size*/, int new_size) {
+                        probe.onSectionResized(section, new_size);
+                    });
+        const auto disconnect = qScopeGuard([&connection]() { QObject::disconnect(connection); });
+
+        // Narrow: Tags, Modified and Size drop, and Name takes what Type leaves.
+        view->resize(320, 400);
+        QVERIFY(view->isColumnHidden(Model::TagsColumn));
+        QVERIFY(!view->isColumnHidden(Model::TypeColumn));
+        const int name_width = view->columnWidth(Model::NameColumn);
+        const int frame = view->width() - view->viewport()->width();
+        // Narrower, to exactly Name's width: Type drops too and Name keeps its width.
+        view->resize(name_width + frame, 400);
+        QVERIFY(view->isColumnHidden(Model::TypeColumn));
+        probe.arm();
+        view->resize(1000, 400);
+        probe.armed = false;
+        verifyNoColumnChangedInsideThePass(probe);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        QCoreApplication::processEvents();
+        for (const int column :
+             {Model::TypeColumn, Model::SizeColumn, Model::ModifiedColumn, Model::TagsColumn}) {
+            QVERIFY2(!view->isColumnHidden(column), qPrintable(QString::number(column)));
+            QVERIFY2(view->columnWidth(column) > 0, qPrintable(QString::number(column)));
+        }
+        QVERIFY(view->columnsDroppedForRoom().isEmpty());
+        QVERIFY(view->columnWidth(Model::NameColumn) >= 160);
+        QCOMPARE(view->horizontalHeader()->length(), view->viewport()->width());
+    }
+
+    // The header menu's sequence in a narrow pane: hiding a column frees room, and saving the
+    // layout queries the header, which runs Qt's pass for that hide at once.
+    void hidingAColumnInANarrowPaneNeverChangesColumnsInsideTheHeaderPass() {
+        QCoreApplication::setOrganizationName(QStringLiteral("SAKUtilityTests"));
+        QCoreApplication::setApplicationName(QStringLiteral("FileExplorerPanelTests"));
+        clearDetailsViewSettings();
+        const auto cleanup = qScopeGuard(&clearDetailsViewSettings);
+        using Model = sak::FileExplorerItemModel;
+        Model source;
+        source.setEntries({testEntry(QStringLiteral("Docs"), true),
+                           testEntry(QStringLiteral("note.txt"), false)});
+        sak::FileExplorerSortFilterModel proxy;
+        proxy.setSourceModel(&source);
+
+        QWidget host;
+        host.resize(1200, 500);
+        auto* view = new sak::FileExplorerDetailsView(&host);
+        view->setModel(&proxy);
+        view->setGeometry(0, 0, 320, 400);
+        host.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&host));
+        QCoreApplication::processEvents();
+        QVERIFY(view->isColumnHidden(Model::SizeColumn));
+        QVERIFY(!view->isColumnHidden(Model::TypeColumn));
+
+        HeaderPassProbe probe;
+        probe.view = view;
+        const QMetaObject::Connection connection =
+            connect(view->horizontalHeader(),
+                    &QHeaderView::sectionResized,
+                    &host,
+                    [&probe](int section, int /*old_size*/, int new_size) {
+                        probe.onSectionResized(section, new_size);
+                    });
+        const auto disconnect = qScopeGuard([&connection]() { QObject::disconnect(connection); });
+
+        // What the header menu's Type toggle does first: hide it, then save the layout.
+        view->setColumnHidden(Model::TypeColumn, true);
+        probe.arm();
+        view->saveColumnState();
+        probe.armed = false;
+        verifyNoColumnChangedInsideThePass(probe);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+
+        // Then it refits: Type's width is room again, so Size comes back.
+        view->fitNameColumn();
+        QCoreApplication::processEvents();
+        QVERIFY(view->isColumnHidden(Model::TypeColumn));
+        QVERIFY(!view->isColumnHidden(Model::SizeColumn));
+        QVERIFY(view->columnWidth(Model::SizeColumn) > 0);
+        QVERIFY(view->columnWidth(Model::NameColumn) >= 160);
     }
 
     void doubleClickDirectoryOpensFolderWhenAvailable() {

@@ -249,7 +249,7 @@ private Q_SLOTS:
     void everyLogRowSitsOnThePageColour();
     void everyPageHasAtMostOnePrimaryButton();
     void windowTextUsesOneDashStyle();
-    void selectedTabIconsAreWhite();
+    void selectedTabIconsKeepTheirDrawing();
     void dialogButtonsTakeTheToneOfTheirRole();
     void everyActionCardHasOneLayout();
     void tabIconsReadOnTheirTabsInBothThemes();
@@ -1093,36 +1093,6 @@ void AppThemeTests::aiWorkspaceLabelsTakeTheirPanesFill() {
     QVERIFY2(painted.isEmpty(), qPrintable(painted.join(QStringLiteral("\n"))));
 }
 
-// UI review S25: on the selected tab's blue gradient the coloured icon all but vanished; the
-// selected state (QIcon::On, which the tab bar draws for the current tab) is white.
-void AppThemeTests::selectedTabIconsAreWhite() {
-    QTabWidget* tabs = mainTabs(*m_window);
-    QVERIFY(tabs != nullptr);
-    for (int index = 0; index < tabs->count(); ++index) {
-        const QIcon icon = tabs->tabIcon(index);
-        if (icon.isNull()) {
-            continue;
-        }
-        const QImage on = icon.pixmap(tabs->iconSize(), QIcon::Normal, QIcon::On).toImage();
-        int ink = 0;
-        int white = 0;
-        for (int y = 0; y < on.height(); ++y) {
-            for (int x = 0; x < on.width(); ++x) {
-                const QColor pixel = on.pixelColor(x, y);
-                if (pixel.alpha() > 200) {
-                    ++ink;
-                    white += pixel.lightness() > 240 ? 1 : 0;
-                }
-            }
-        }
-        QVERIFY2(ink > 0 && white == ink,
-                 qPrintable(QStringLiteral("%1: %2 of %3 pixels white")
-                                .arg(tabs->tabText(index))
-                                .arg(white)
-                                .arg(ink)));
-    }
-}
-
 // UI review F27: Close was secondary in Contacts, Calendar and Metadata and primary in Run
 // Details, Installation Summary and Space Analyzer; Cancel was primary in the backup wizard and
 // secondary in the file scan. The theme made every push button primary, so a button box's Close
@@ -1276,17 +1246,6 @@ double weakestQuarterAtThreeToOne(const QImage& icon, const QColor& background) 
 
 namespace {
 
-int opaquePixels(const QImage& image) {
-    constexpr int kOpaque = 200;
-    int count = 0;
-    for (int y = 0; y < image.height(); ++y) {
-        for (int x = 0; x < image.width(); ++x) {
-            count += image.pixelColor(x, y).alpha() > kOpaque ? 1 : 0;
-        }
-    }
-    return count;
-}
-
 /// Every tab icon, in both themes, read as the reviewer reads it, every pixel it touches in full:
 /// most must stand 3:1 from its tab. Round 8 held only the four S25 redrew, on the light tab;
 /// review 4 found light Help and About at 0%, Partition Manager 36%, Email Tools 46% and Network
@@ -1315,7 +1274,6 @@ QStringList tabIconProblems(QTabWidget* tabs, bool dark, QStringList* report) {
     constexpr double kLegibleShare = 0.5;
     constexpr double kBarelyThere = 1.5;  // contrast under which a line is all but gone
     constexpr double kMostlyFaint = 0.2;
-    constexpr int kGlyphPixels = 10;
     tabs->setCurrentIndex(0);
     QCoreApplication::processEvents();
     QTabBar* bar = tabs->tabBar();
@@ -1360,16 +1318,84 @@ QStringList tabIconProblems(QTabWidget* tabs, bool dark, QStringList* report) {
             wrong << QStringLiteral("%1, %2 faint").arg(line).arg(faint, 0, 'f', 2);
         }
         wrong << mostPixelsUnderThreeToOne(pixel_share, weakest_quarter, line);
-        // Selected, Help's question mark and About's "i", drawn in white, are left out of the white
-        // drawing, so they show in the tab's blue.
-        const bool glyph_inside =
-            QSet<QString>{QStringLiteral("Help and Support"), QStringLiteral("About")}.contains(
-                name);
-        const QImage on = icon.pixmap(tabs->iconSize(), QIcon::Normal, QIcon::On).toImage();
-        if (glyph_inside && opaquePixels(drawn) - opaquePixels(on) < kGlyphPixels) {
-            wrong << QStringLiteral("%1 %2 selected: a blank disc").arg(theme, name);
+    }
+    return wrong;
+}
+
+/// The colours @p image draws in where it is opaque.
+int opaqueColours(const QImage& image) {
+    constexpr int kOpaque = 200;
+    QSet<QRgb> colours;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor pixel = image.pixelColor(x, y);
+            if (pixel.alpha() > kOpaque) {
+                colours.insert(pixel.rgb());
+            }
         }
     }
+    return static_cast<int>(colours.size());
+}
+
+/// The pixels where @p one and @p other differ in alpha: a line or a hole one has and the other
+/// has not.
+int alphaDifferences(const QImage& one, const QImage& other) {
+    if (one.size() != other.size()) {
+        return one.width() * one.height();
+    }
+    int differ = 0;
+    for (int y = 0; y < one.height(); ++y) {
+        for (int x = 0; x < one.width(); ++x) {
+            differ += one.pixelColor(x, y).alpha() != other.pixelColor(x, y).alpha() ? 1 : 0;
+        }
+    }
+    return differ;
+}
+
+/// What is wrong with the selected tab's icon, every tab selected in turn, in the theme showing
+/// now; each reading goes to @p report.
+QStringList selectedTabIconProblems(QTabWidget* tabs, bool dark, QStringList* report) {
+    const QString theme = dark ? QStringLiteral("dark") : QStringLiteral("light");
+    QStringList wrong;
+    for (int index = 0; index < tabs->count(); ++index) {
+        const QIcon icon = tabs->tabIcon(index);
+        if (icon.isNull()) {
+            continue;
+        }
+        tabs->setCurrentIndex(index);
+        QCoreApplication::processEvents();
+        QTabBar* bar = tabs->tabBar();
+        const QRect selected = bar->tabRect(index);
+        // The selected tab's fill at its right end, clear of its icon, its text and its edge.
+        constexpr int kInsideTheEdge = 4;
+        const QColor fill = bar->grab().toImage().pixelColor(selected.right() - kInsideTheEdge,
+                                                             selected.center().y());
+        const QImage normal = icon.pixmap(tabs->iconSize(), QIcon::Normal, QIcon::Off).toImage();
+        const QImage on = icon.pixmap(tabs->iconSize(), QIcon::Normal, QIcon::On).toImage();
+        const int normal_colours = opaqueColours(normal);
+        const int on_colours = opaqueColours(on);
+        const int reshaped = alphaDifferences(on, normal);
+        const double pixel_share = pixelsAtThreeToOne(on, fill);
+        const double weakest_quarter = weakestQuarterAtThreeToOne(on, fill);
+        const QString line =
+            QStringLiteral(
+                "%1 %2 selected: %3 colours (normal %4), %5 pixels reshaped, pixels "
+                "%6 and weakest quarter %7 at 3:1 on %8")
+                .arg(theme, tabs->tabText(index))
+                .arg(on_colours)
+                .arg(normal_colours)
+                .arg(reshaped)
+                .arg(pixel_share, 0, 'f', 2)
+                .arg(weakest_quarter, 0, 'f', 2)
+                .arg(fill.name());
+        *report << line;
+        if (on_colours < normal_colours || reshaped != 0) {
+            wrong << QStringLiteral("%1, not the icon's own drawing").arg(line);
+        }
+        wrong << mostPixelsUnderThreeToOne(pixel_share, weakest_quarter, line);
+    }
+    tabs->setCurrentIndex(0);
+    QCoreApplication::processEvents();
     return wrong;
 }
 
@@ -1392,6 +1418,39 @@ void AppThemeTests::tabIconsReadOnTheirTabsInBothThemes() {
         sak::ui::setThemePreference(*qApp, theme);
         QCoreApplication::processEvents();
         wrong << tabIconProblems(tabs, theme == ThemePreference::Dark, &report);
+    }
+    qInfo().noquote() << report.join(QStringLiteral("\n"));
+    QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("; "))));
+}
+
+// The owner, 2026-11-10: "the selected tab makes the icon all white and removes all of the detail
+// and ruins what the icon is". UI review S25 had drawn the selected tab's icon (QIcon::On, which
+// the tab bar draws for the current tab) as a white silhouette, because its colours were lost on
+// the blue gradient. Every tab is selected in turn, in both themes: its icon is its own drawing,
+// the same shape with as many colours, and it reads on the selected tab as every tab icon must
+// on its own tab: most pixels, and a third of each quarter's, at 3:1.
+void AppThemeTests::selectedTabIconsKeepTheirDrawing() {
+    QTabWidget* tabs = mainTabs(*m_window);
+    QVERIFY(tabs != nullptr && tabs->count() > 2);
+    const auto back_to_light = qScopeGuard([] {
+        sak::ui::setThemePreference(*qApp, ThemePreference::Light);
+        QCoreApplication::processEvents();
+    });
+    QStringList report;
+    QStringList wrong;
+    for (const ThemePreference theme : {ThemePreference::Light, ThemePreference::Dark}) {
+        sak::ui::setThemePreference(*qApp, theme);
+        QCoreApplication::processEvents();
+        const bool dark = theme == ThemePreference::Dark;
+        wrong << selectedTabIconProblems(tabs, dark, &report);
+        // With SAK_THEME_SCREENSHOT_DIR set, the tab bar with its first tab selected is saved for
+        // review (light-main-tab-bar-selected.png, dark-main-tab-bar-selected.png).
+        const QString shots = qEnvironmentVariable("SAK_THEME_SCREENSHOT_DIR");
+        if (!shots.isEmpty()) {
+            const QString name = QStringLiteral("%1-main-tab-bar-selected.png")
+                                     .arg(dark ? QStringLiteral("dark") : QStringLiteral("light"));
+            tabs->tabBar()->grab().save(QDir(shots).filePath(name));
+        }
     }
     qInfo().noquote() << report.join(QStringLiteral("\n"));
     QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QStringLiteral("; "))));
