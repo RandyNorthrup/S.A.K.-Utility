@@ -21,6 +21,7 @@
 #include "sak/wifi_analyzer.h"
 
 #include <QElapsedTimer>
+#include <QHostAddress>
 #include <QMetaObject>
 #include <QSemaphore>
 #include <QTcpServer>
@@ -28,7 +29,9 @@
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <utility>
 
 namespace sak {
@@ -829,8 +832,48 @@ void NetworkDiagnosticController::scanPorts(const PortScanParams& params) {
     runOnThread([this, config]() { m_portScanner->scan(config); }, State::ScanningPorts);
 }
 
-void NetworkDiagnosticController::startIperfServer(uint16_t port) {
-    m_bandwidthTester->startIperfServer(port);
+void NetworkDiagnosticController::startIperfServer(uint16_t port,
+                                                   const QHostAddress& bind_address) {
+    m_bandwidthTester->startIperfServer(port, bind_address);
+}
+
+QVector<NetworkDiagnosticController::ServerListenChoice>
+NetworkDiagnosticController::serverListenChoices(const QVector<NetworkAdapterInfo>& adapters) {
+    QVector<ServerListenChoice> choices;
+    for (const auto& adapter : adapters) {
+        if (!adapter.isConnected) {
+            continue;
+        }
+        const QString gateway = adapter.ipv4Gateway.trimmed();
+        const bool default_route = !gateway.isEmpty() && gateway != QStringLiteral("0.0.0.0");
+        for (const auto& address : adapter.ipv4Addresses) {
+            if (!BandwidthTester::isSpecificListenAddress(QHostAddress(address))) {
+                continue;
+            }
+            choices.append({.label = QStringLiteral("%1 - %2").arg(adapter.name, address),
+                            .address = address,
+                            .default_route = default_route});
+        }
+    }
+    return choices;
+}
+
+int NetworkDiagnosticController::preferredListenChoice(const QVector<ServerListenChoice>& choices,
+                                                       const QString& remembered) {
+    const auto by_address =
+        std::ranges::find_if(choices, [&remembered](const ServerListenChoice& choice) {
+            return !remembered.isEmpty() && choice.address == remembered;
+        });
+    if (by_address != choices.cend()) {
+        return static_cast<int>(std::distance(choices.cbegin(), by_address));
+    }
+    const auto by_route = std::ranges::find_if(choices, [](const ServerListenChoice& choice) {
+        return choice.default_route;
+    });
+    if (by_route != choices.cend()) {
+        return static_cast<int>(std::distance(choices.cbegin(), by_route));
+    }
+    return choices.isEmpty() ? -1 : 0;
 }
 
 void NetworkDiagnosticController::stopIperfServer() {
@@ -973,9 +1016,17 @@ void NetworkDiagnosticController::discoverShares(const QString& hostname) {
 
 // -- LAN File Transfer Speed Test --------------------------------------------
 
-void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
+void NetworkDiagnosticController::startLanTransferServer(uint16_t port,
+                                                         const QHostAddress& bind_address) {
     if (m_lanTransferServerRunning.load(std::memory_order_acquire)) {
         Q_EMIT errorOccurred(QStringLiteral("LAN transfer server is already running"));
+        return;
+    }
+    // One interface, never every address the PC has: it listened on all of them, so a laptop
+    // on a public network accepted connections there too.
+    if (!BandwidthTester::isSpecificListenAddress(bind_address)) {
+        Q_EMIT errorOccurred(QStringLiteral(
+            "Choose the network adapter address the LAN transfer server listens on"));
         return;
     }
 
@@ -984,7 +1035,7 @@ void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
     }
 
     m_lanTransferServer->setMaxPendingConnections(1);
-    if (!m_lanTransferServer->listen(QHostAddress::Any, port)) {
+    if (!m_lanTransferServer->listen(bind_address, port)) {
         Q_EMIT errorOccurred(QStringLiteral("Failed to start LAN transfer server "
                                             "on port %1: %2")
                                  .arg(port)
@@ -997,7 +1048,9 @@ void NetworkDiagnosticController::startLanTransferServer(uint16_t port) {
     // ephemeral port the OS chooses, and the peer must be told the real port to connect to.
     const uint16_t bound_port = m_lanTransferServer->serverPort();
     Q_EMIT lanTransferServerStarted(bound_port);
-    Q_EMIT logOutput(QStringLiteral("LAN transfer server listening on port %1").arg(bound_port));
+    Q_EMIT logOutput(QStringLiteral("LAN transfer server listening on %1 port %2")
+                         .arg(bind_address.toString())
+                         .arg(bound_port));
 
     connect(m_lanTransferServer, &QTcpServer::newConnection, this, [this]() {
         auto* socket = m_lanTransferServer->nextPendingConnection();

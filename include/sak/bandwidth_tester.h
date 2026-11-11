@@ -8,6 +8,7 @@
 
 #include "sak/network_diagnostic_types.h"
 
+#include <QHostAddress>
 #include <QObject>
 #include <QProcess>
 
@@ -19,6 +20,10 @@
 namespace sak {
 
 inline constexpr int kDefaultUdpBandwidthMbps = 100;
+
+/// A peer that connects to the iPerf3 server and then goes quiet is dropped after this long, and
+/// the server goes back to listening (iperf3 --idle-timeout).
+inline constexpr int kIperfServerIdleTimeoutSec = 30;
 
 /// @brief Bandwidth testing via bundled iPerf3 and HTTP download
 ///
@@ -49,8 +54,24 @@ public:
     BandwidthTester(BandwidthTester&&) = delete;
     BandwidthTester& operator=(BandwidthTester&&) = delete;
 
-    /// @brief Start iPerf3 server (other SAK instances test against this)
-    void startIperfServer(uint16_t port = netdiag::kDefaultIperfPort);
+    /// @brief Start the iPerf3 server (other SAK instances test against this), listening only on
+    ///        @p bind_address: one of this PC's adapter addresses, or loopback.
+    ///
+    /// A server other PCs can reach starts only once its inbound Windows Firewall rule (private
+    /// profile, local subnet, this iperf3.exe, this address and port) is in place. Adding the
+    /// rule needs administrator rights; without the rule the server is not started and
+    /// errorOccurred says why. A loopback server needs no rule: Windows Firewall does not filter
+    /// loopback. A peer that goes quiet is dropped after kIperfServerIdleTimeoutSec.
+    void startIperfServer(uint16_t port, const QHostAddress& bind_address);
+
+    /// @brief The iperf3 arguments for a server on @p port that listens only on
+    ///        @p bind_address and drops an idle peer. Pure; testable.
+    [[nodiscard]] static QStringList iperfServerArguments(uint16_t port,
+                                                          const QHostAddress& bind_address);
+
+    /// @brief True when @p address names one interface a server can listen on: not null, not
+    ///        a wildcard (any address), not broadcast or multicast. Pure; testable.
+    [[nodiscard]] static bool isSpecificListenAddress(const QHostAddress& address);
 
     /// @brief Stop iPerf3 server
     void stopIperfServer();
@@ -129,7 +150,23 @@ private:
     [[nodiscard]] std::optional<double> measureTransferMbps(
         int sample_count, const std::function<std::pair<double, double>()>& sampler);
     void connectServerProcessSignals(const QString& ruleName, uint16_t port);
-    void createFirewallRule(const QString& ruleName, uint16_t port);
+    /// True (errorOccurred emitted) when a server cannot start: no specific address, no
+    /// iperf3.exe, or a server already exists.
+    [[nodiscard]] bool serverStartRefused(const QHostAddress& bind_address);
+    /// The server's QProcess, prepared and installed in its own Job (m_serverProcess), or null
+    /// (errorOccurred emitted).
+    [[nodiscard]] QProcess* containedServerProcess(uint16_t port,
+                                                   const QHostAddress& bind_address,
+                                                   const QString& ruleName);
+    /// Start the prepared server process; its Job (held by a child of the process) contains it.
+    void launchServer(QProcess* server);
+    /// Called once the inbound rule for @p server is in place (@p added) or could not be added.
+    void onServerFirewallRule(QProcess* server, bool added, const QString& why);
+    using FirewallRuleDone = std::function<void(bool added, const QString& why)>;
+    void createFirewallRule(const QString& ruleName,
+                            uint16_t port,
+                            const QHostAddress& bind_address,
+                            FirewallRuleDone done);
     void removeFirewallRule(const QString& ruleName);
     void executeFirewallDelete(const QString& ruleName);
     /// Starts an asynchronous sweep that deletes rules a crashed earlier server left behind.

@@ -6,7 +6,10 @@
 
 #include "sak/network_diagnostic_controller.h"
 
+#include "../support/tcp_listeners.h"
+
 #include <QFile>
+#include <QHostAddress>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSignalSpy>
@@ -26,6 +29,8 @@ private Q_SLOTS:
     void cancel_doesNotCrash();
     void iperfServer_notRunningInitially();
     void lanTransferServer_notRunningInitially();
+    void lanTransferServer_listensOnlyOnTheChosenAddress();
+    void serverListenChoices_preferRememberedThenDefaultRoute();
     void generateReport_unknownFormat_failsClosed();
     void generateReport_includesAFinishedHttpSpeedTest();
     void generateReport_omitsAStoppedHttpSpeedTest();
@@ -73,6 +78,57 @@ void TestNetworkDiagnosticController::iperfServer_notRunningInitially() {
 void TestNetworkDiagnosticController::lanTransferServer_notRunningInitially() {
     NetworkDiagnosticController controller;
     QVERIFY(!controller.isLanTransferServerRunning());
+}
+
+// The LAN transfer server listened on QHostAddress::Any: every network the PC was on, public
+// ones included. It now listens on the one address it is given, and refuses a wildcard.
+void TestNetworkDiagnosticController::lanTransferServer_listensOnlyOnTheChosenAddress() {
+    NetworkDiagnosticController controller;
+    QSignalSpy errors(&controller, &NetworkDiagnosticController::errorOccurred);
+    controller.startLanTransferServer(0, QHostAddress(QHostAddress::Any));
+    QCOMPARE(errors.count(), 1);
+    QVERIFY(!controller.isLanTransferServerRunning());
+
+    QSignalSpy started(&controller, &NetworkDiagnosticController::lanTransferServerStarted);
+    controller.startLanTransferServer(0, QHostAddress(QHostAddress::LocalHost));
+    QCOMPARE(started.count(), 1);
+    const auto port = started.first().at(0).value<uint16_t>();
+    QVERIFY(port != 0);
+    const QStringList listeners = sak::test::tcpListenersOf(GetCurrentProcessId(), port);
+    controller.stopLanTransferServer();
+    QCOMPARE(listeners, QStringList{QStringLiteral("127.0.0.1:%1").arg(port)});
+}
+
+// The "Listen on" list: each connected adapter's IPv4 addresses, the default route's adapter
+// first in preference, and the address a server last used kept when it is still there.
+void TestNetworkDiagnosticController::serverListenChoices_preferRememberedThenDefaultRoute() {
+    NetworkAdapterInfo vpn;
+    vpn.name = QStringLiteral("VPN");
+    vpn.isConnected = true;
+    vpn.ipv4Addresses = {QStringLiteral("10.8.0.2")};
+    NetworkAdapterInfo ethernet;
+    ethernet.name = QStringLiteral("Ethernet");
+    ethernet.isConnected = true;
+    ethernet.ipv4Addresses = {QStringLiteral("192.168.1.20")};
+    ethernet.ipv4Gateway = QStringLiteral("192.168.1.1");
+    NetworkAdapterInfo unplugged;
+    unplugged.name = QStringLiteral("Wi-Fi");
+    unplugged.isConnected = false;
+    unplugged.ipv4Addresses = {QStringLiteral("192.168.50.9")};
+    unplugged.ipv4Gateway = QStringLiteral("192.168.50.1");
+
+    using Controller = NetworkDiagnosticController;
+    const auto choices = Controller::serverListenChoices({vpn, ethernet, unplugged});
+    QCOMPARE(choices.size(), 2);
+    QCOMPARE(choices.at(0).address, QStringLiteral("10.8.0.2"));
+    QCOMPARE(choices.at(1).label, QStringLiteral("Ethernet - 192.168.1.20"));
+    QVERIFY(!choices.at(0).default_route);
+    QVERIFY(choices.at(1).default_route);
+
+    QCOMPARE(Controller::preferredListenChoice(choices, QString()), 1);
+    QCOMPARE(Controller::preferredListenChoice(choices, QStringLiteral("10.8.0.2")), 0);
+    QCOMPARE(Controller::preferredListenChoice(choices, QStringLiteral("192.168.50.9")), 1);
+    QCOMPARE(Controller::preferredListenChoice({}, QStringLiteral("10.8.0.2")), -1);
 }
 
 void TestNetworkDiagnosticController::generateReport_unknownFormat_failsClosed() {

@@ -8,6 +8,10 @@
 #include "sak/network_diagnostic_types.h"
 #include "sak/network_transfer_runner.h"
 
+#include "../support/tcp_listeners.h"
+#include "../support/test_hardware_guard.h"
+
+#include <QNetworkInterface>
 #include <QProcess>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
@@ -33,6 +37,9 @@ private Q_SLOTS:
     void bandwidthTestResult_defaults();
     void staleFirewallRules_onlyThoseNoLiveSakOwns();
     void iperfServer_runsInsideAKillOnCloseJob();
+    void iperfServerArguments_bindOneAddressAndDropIdlePeers();
+    void iperfServer_listensOnlyOnTheChosenAddress();
+    void iperfServer_startsOnlyWithItsFirewallRule();
 
     // -- composeFirewallRuleName (per-instance uniqueness, B9-16) --
     void firewallRuleName_containsPortAndToken();
@@ -359,6 +366,122 @@ void TestBandwidthTester::staleFirewallRules_onlyThoseNoLiveSakOwns() {
              QStringList({names.at(2), names.at(3)}));
 }
 
+namespace {
+
+QProcess* iperfServerProcessOf(const BandwidthTester& tester) {
+    for (auto* child : tester.findChildren<QProcess*>()) {
+        if (child->program().endsWith(QStringLiteral("iperf3.exe"), Qt::CaseInsensitive)) {
+            return child;
+        }
+    }
+    return nullptr;
+}
+
+// A non-loopback IPv4 address of this PC, so a server there would need an inbound rule; when the
+// PC has none, a documentation address (TEST-NET-1) stands in: the rule is decided first.
+QHostAddress nonLoopbackAddress() {
+    for (const QHostAddress& address : QNetworkInterface::allAddresses()) {
+        if (address.protocol() == QAbstractSocket::IPv4Protocol && !address.isLoopback() &&
+            !address.isLinkLocal()) {
+            return address;
+        }
+    }
+    return QHostAddress(QStringLiteral("192.0.2.1"));
+}
+
+constexpr quint16 kBoundServerPort = 52'918;
+constexpr quint16 kRuleServerPort = 52'919;
+constexpr int kServerWaitMs = 10'000;
+
+}  // namespace
+
+// The server's command line names the one address it listens on and an idle limit, and nothing
+// it is given can widen that: a wildcard or empty address is not a listen address at all.
+void TestBandwidthTester::iperfServerArguments_bindOneAddressAndDropIdlePeers() {
+    const QStringList args =
+        BandwidthTester::iperfServerArguments(5201, QHostAddress(QStringLiteral("10.1.2.3")));
+    const auto bind = args.indexOf(QStringLiteral("-B"));
+    QVERIFY(bind >= 0 && bind + 1 < args.size());
+    QCOMPARE(args.at(bind + 1), QStringLiteral("10.1.2.3"));
+    const auto idle = args.indexOf(QStringLiteral("--idle-timeout"));
+    QVERIFY(idle >= 0 && idle + 1 < args.size());
+    QCOMPARE(args.at(idle + 1), QString::number(kIperfServerIdleTimeoutSec));
+    QVERIFY(args.contains(QStringLiteral("-s")));
+
+    QVERIFY(BandwidthTester::isSpecificListenAddress(QHostAddress(QStringLiteral("10.1.2.3"))));
+    QVERIFY(BandwidthTester::isSpecificListenAddress(QHostAddress(QHostAddress::LocalHost)));
+    QVERIFY(!BandwidthTester::isSpecificListenAddress(QHostAddress()));
+    QVERIFY(!BandwidthTester::isSpecificListenAddress(QHostAddress(QHostAddress::Any)));
+    QVERIFY(!BandwidthTester::isSpecificListenAddress(QHostAddress(QHostAddress::AnyIPv4)));
+    QVERIFY(!BandwidthTester::isSpecificListenAddress(QHostAddress(QHostAddress::AnyIPv6)));
+    QVERIFY(!BandwidthTester::isSpecificListenAddress(QHostAddress(QHostAddress::Broadcast)));
+
+    BandwidthTester tester;
+    QSignalSpy errors(&tester, &BandwidthTester::errorOccurred);
+    tester.startIperfServer(kBoundServerPort, QHostAddress(QHostAddress::Any));
+    QCOMPARE(errors.count(), 1);
+    QVERIFY(iperfServerProcessOf(tester) == nullptr);
+}
+
+// iperf3 listened on every address the PC has. Bound to loopback here (no inbound rule needed,
+// so the test hardware guard's refusal of firewall changes does not stop it), Windows must show
+// the server listening on 127.0.0.1 alone.
+void TestBandwidthTester::iperfServer_listensOnlyOnTheChosenAddress() {
+    BandwidthTester tester;
+    QVERIFY(tester.isIperf3Available());
+    QSignalSpy started(&tester, &BandwidthTester::serverStarted);
+    tester.startIperfServer(kBoundServerPort, QHostAddress(QHostAddress::LocalHost));
+    QTRY_COMPARE_WITH_TIMEOUT(started.count(), 1, kServerWaitMs);
+    QProcess* server = iperfServerProcessOf(tester);
+    QVERIFY(server != nullptr);
+    const auto pid = static_cast<DWORD>(server->processId());
+    QTRY_VERIFY_WITH_TIMEOUT(!sak::test::tcpListenersOf(pid, kBoundServerPort).isEmpty(),
+                             kServerWaitMs);
+    const QStringList listeners = sak::test::tcpListenersOf(pid);
+    tester.stopIperfServer();
+    QTRY_VERIFY_WITH_TIMEOUT(!tester.isServerRunning(), kServerWaitMs);
+    QCOMPARE(listeners, QStringList{QStringLiteral("127.0.0.1:%1").arg(kBoundServerPort)});
+}
+
+// A server other PCs can reach starts only once its inbound firewall rule is in place. Without
+// the rule it used to start anyway, so Windows asked the user whether to let iperf3.exe through
+// (on public networks too). Here the test hardware guard refuses the rule, as Windows refuses a
+// standard user: the server must not start, and the error must say why. Where a test may change
+// the firewall (CI) and the rule is added, the server starts bound to that address alone.
+void TestBandwidthTester::iperfServer_startsOnlyWithItsFirewallRule() {
+    BandwidthTester tester;
+    QVERIFY(tester.isIperf3Available());
+    QSignalSpy started(&tester, &BandwidthTester::serverStarted);
+    QSignalSpy errors(&tester, &BandwidthTester::errorOccurred);
+    const QHostAddress address = nonLoopbackAddress();
+    tester.startIperfServer(kRuleServerPort, address);
+    QTRY_VERIFY_WITH_TIMEOUT(started.count() > 0 || errors.count() > 0, kServerWaitMs);
+    const bool refused = !errors.isEmpty() &&
+                         errors.first().at(0).toString().contains(
+                             QStringLiteral("Windows Firewall did not add its inbound rule"));
+    if (!sak::test::realHardwareAllowed()) {
+        QVERIFY2(refused,
+                 errors.isEmpty() ? "no error" : qPrintable(errors.first().at(0).toString()));
+    }
+    if (refused) {
+        QTest::qWait(500);  // nothing may start late either
+        QCOMPARE(started.count(), 0);
+        QVERIFY(iperfServerProcessOf(tester) == nullptr);
+        QVERIFY(!tester.isServerRunning());
+        return;
+    }
+    QProcess* server = iperfServerProcessOf(tester);
+    QVERIFY(server != nullptr);
+    const auto pid = static_cast<DWORD>(server->processId());
+    QTRY_VERIFY_WITH_TIMEOUT(!sak::test::tcpListenersOf(pid, kRuleServerPort).isEmpty(),
+                             kServerWaitMs);
+    const QStringList listeners = sak::test::tcpListenersOf(pid);
+    tester.stopIperfServer();
+    QTRY_VERIFY_WITH_TIMEOUT(!tester.isServerRunning(), kServerWaitMs);
+    QCOMPARE(listeners,
+             QStringList{QStringLiteral("%1:%2").arg(address.toString()).arg(kRuleServerPort)});
+}
+
 // The server used to be a plain QProcess outside any Job, so a crash of this app left iperf3
 // listening. It now starts inside a kill-on-close Job.
 void TestBandwidthTester::iperfServer_runsInsideAKillOnCloseJob() {
@@ -366,13 +489,13 @@ void TestBandwidthTester::iperfServer_runsInsideAKillOnCloseJob() {
     if (!tester.isIperf3Available()) {
         // No bundled tool, no server to contain: starting must refuse out loud instead.
         QSignalSpy errors(&tester, &BandwidthTester::errorOccurred);
-        tester.startIperfServer(52'917);
+        tester.startIperfServer(52'917, QHostAddress(QHostAddress::LocalHost));
         QCOMPARE(errors.count(), 1);
         QVERIFY(!tester.isServerRunning());
         return;
     }
     QSignalSpy started(&tester, &BandwidthTester::serverStarted);
-    tester.startIperfServer(52'917);
+    tester.startIperfServer(52'917, QHostAddress(QHostAddress::LocalHost));
     QTRY_COMPARE_WITH_TIMEOUT(started.count(), 1, 10'000);
     QProcess* server = nullptr;  // netsh and the rule sweep are QProcess children too
     for (auto* child : tester.findChildren<QProcess*>()) {

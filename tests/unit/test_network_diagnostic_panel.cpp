@@ -7,6 +7,7 @@
 #include "sak/accessible_name_rule.h"
 #include "sak/network_diagnostic_controller.h"
 #include "sak/network_diagnostic_panel.h"
+#include "sak/portable_settings.h"
 #include "sak/process_runner.h"
 #include "sak/quick_action_controller.h"
 #include "sak/style_constants.h"
@@ -29,6 +30,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QStandardPaths>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -402,6 +404,7 @@ class NetworkDiagnosticPanelTests : public QObject {
 
 private Q_SLOTS:
     void cleanup();
+    void listenOnStartsOnTheDefaultRouteAndRemembersEachServer();
     // Review 5 (Z6): Reset Network, which resets the PC's whole network stack, was drawn as
     // neutral as Copy Config, beside three filled buttons. It takes the danger tone, and Backup
     // and Restore Settings are not filled.
@@ -1273,6 +1276,79 @@ void NetworkDiagnosticPanelTests::toolbarRestoreStartsOnTheBackedUpAdapter() {
              QStringList({QStringLiteral("Ethernet"), QStringLiteral("Wi-Fi")}));
     QCOMPARE(driver.adapter_chosen_first, expected);
     QVERIFY(commands.netshCalls().isEmpty());
+}
+
+namespace {
+
+// The two adapters the "Listen on" test scans: a VPN without a gateway, and the Ethernet adapter
+// holding the default route. Neither address belongs to the PC running the test, so a server
+// started on one fails without listening anywhere.
+QVector<sak::NetworkAdapterInfo> listenTestAdapters() {
+    sak::NetworkAdapterInfo vpn;
+    vpn.name = QStringLiteral("VPN");
+    vpn.isConnected = true;
+    vpn.ipv4Addresses = {QStringLiteral("10.8.0.2")};
+    sak::NetworkAdapterInfo ethernet;
+    ethernet.name = QStringLiteral("Ethernet");
+    ethernet.isConnected = true;
+    ethernet.ipv4Addresses = {QStringLiteral("192.168.1.20")};
+    ethernet.ipv4Gateway = QStringLiteral("192.168.1.1");
+    return {vpn, ethernet};
+}
+
+QComboBox* comboNamed(sak::NetworkDiagnosticPanel& panel, const QString& accessible_name) {
+    for (auto* combo : panel.findChildren<QComboBox*>()) {
+        if (combo->accessibleName() == accessible_name) {
+            return combo;
+        }
+    }
+    return nullptr;
+}
+
+const QStringList kListenAddressKeys{QStringLiteral("NetworkDiagnostics/iperfServerListenAddress"),
+                                     QStringLiteral("NetworkDiagnostics/lanServerListenAddress")};
+
+}  // namespace
+
+// The iPerf3 and LAN transfer servers each listen on one chosen adapter address. A server's list
+// starts on the adapter holding the default route; the address a server was started on is
+// remembered for that server alone and chosen again the next time the list is filled.
+void NetworkDiagnosticPanelTests::listenOnStartsOnTheDefaultRouteAndRemembersEachServer() {
+    for (const QString& key : kListenAddressKeys) {
+        sak::PortableSettings().remove(key);
+    }
+    const auto forget = qScopeGuard([]() {
+        for (const QString& key : kListenAddressKeys) {
+            sak::PortableSettings().remove(key);
+        }
+    });
+    const QString iperf_name = QStringLiteral("iPerf3 server listen address");
+    const QString lan_name = QStringLiteral("LAN transfer server listen address");
+    {
+        sak::QuickActionController quick_actions;
+        sak::NetworkDiagnosticPanel panel(quick_actions);
+        auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+        QVERIFY(controller != nullptr);
+        Q_EMIT controller->adaptersScanComplete(listenTestAdapters());
+        QComboBox* iperf = comboNamed(panel, iperf_name);
+        QComboBox* lan = comboNamed(panel, lan_name);
+        QVERIFY(iperf != nullptr && lan != nullptr);
+        QCOMPARE(iperf->count(), 2);
+        QCOMPARE(iperf->currentData().toString(), QStringLiteral("192.168.1.20"));
+        QCOMPARE(lan->currentData().toString(), QStringLiteral("192.168.1.20"));
+
+        iperf->setCurrentIndex(iperf->findData(QStringLiteral("10.8.0.2")));
+        QVERIFY(QMetaObject::invokeMethod(&panel, "onStartIperfServer", Qt::DirectConnection));
+        QVERIFY(
+            QMetaObject::invokeMethod(&panel, "onStartLanTransferServer", Qt::DirectConnection));
+    }
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    Q_EMIT controller->adaptersScanComplete(listenTestAdapters());
+    QCOMPARE(comboNamed(panel, iperf_name)->currentData().toString(), QStringLiteral("10.8.0.2"));
+    QCOMPARE(comboNamed(panel, lan_name)->currentData().toString(), QStringLiteral("192.168.1.20"));
 }
 
 QTEST_MAIN(NetworkDiagnosticPanelTests)

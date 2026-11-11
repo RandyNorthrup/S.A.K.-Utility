@@ -250,7 +250,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 |---|---|---|
 | test_network_diagnostic_types | `network_diagnostic_types` | Diagnostic result structures |
 | test_network_diagnostic_utils | `network_diagnostic_utils` | IP parsing, format helpers |
-| test_network_diagnostic_controller | `network_diagnostic_controller` | Tool orchestration, result aggregation |
+| test_network_diagnostic_controller | `network_diagnostic_controller` | Tool orchestration, result aggregation; the LAN transfer server listens on the one address it is given (Windows shows 127.0.0.1 alone) and refuses a wildcard; the "Listen on" choices and which one a server starts on |
 | test_network_diagnostic_report | `network_diagnostic_report` | HTML/JSON report generation |
 | test_network_adapter_inspector | `network_adapter_inspector` | Adapter enumeration, config parsing |
 | test_network_adapter_admin | `network_adapter_admin` | New-name validation, exact-match resolution against the system's adapter list, the IPv4/DNS/DHCP netsh argument vectors, and the strict dotted-IPv4 check |
@@ -259,7 +259,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_ethernet_config_manager | `ethernet_config_manager` | Ethernet backup/restore, JSON persistence, and injected friendly/system-name MAC lookup |
 | test_dns_diagnostic_tool | `dns_diagnostic_tool` | DNS queries, record type parsing |
 | test_port_scanner | `port_scanner` | TCP port scanning, banner grabbing |
-| test_bandwidth_tester | `bandwidth_tester` | iPerf3/HTTP speed testing; stale iPerf3 firewall-rule sweep (owner PID) and the server running inside its own Job |
+| test_bandwidth_tester | `bandwidth_tester` | iPerf3/HTTP speed testing; stale iPerf3 firewall-rule sweep (owner PID) and the server running inside its own Job; the server bound to one address (Windows shows its listener there alone) with an idle limit, and not started while its inbound firewall rule is refused; a transfer larger than the in-memory ceiling must stream |
 | test_active_connections_monitor | `active_connections_monitor` | TCP/UDP connection listing |
 | test_firewall_rule_auditor | `firewall_rule_auditor` | Firewall rule enumeration, conflict detection |
 | test_network_share_browser | `network_share_browser` | SMB share discovery |

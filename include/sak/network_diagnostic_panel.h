@@ -249,6 +249,16 @@ private:
     QWidget* createSharesTab();
     QWidget* createLanTransferTab();
     QGroupBox* createLanServerGroup(QWidget* parent);
+    /// A server's "Listen on" list: the connected adapters' addresses, filled by
+    /// refreshListenAddressChoices once the adapters are scanned.
+    [[nodiscard]] QComboBox* createListenAddressCombo(QWidget* parent,
+                                                      const QString& accessible_name);
+    /// Refill both servers' "Listen on" lists from m_adapters. Each starts on the address that
+    /// server last used when it is still offered, else on the adapter holding the default route.
+    void refreshListenAddressChoices();
+    /// The address chosen in @p combo, remembered under @p settings_key for the next run. Null
+    /// when nothing is chosen, which the controller refuses with a message.
+    [[nodiscard]] QString takeListenAddress(QComboBox* combo, QAnyStringView settings_key);
     QGroupBox* createLanClientGroup(QWidget* parent);
     void connectSignals();
     void connectUiSignals();
@@ -436,7 +446,8 @@ private:
     QCheckBox* m_bwBidirectional = nullptr;
     QLabel* m_bwResultLabel = nullptr;
     QPushButton* m_bwTestBtn = nullptr;
-    QPushButton* m_bwStopBtn = nullptr;  ///< Cancels the iPerf3 bandwidth test (R5-G20-2)
+    QPushButton* m_bwStopBtn = nullptr;      ///< Cancels the iPerf3 bandwidth test (R5-G20-2)
+    QComboBox* m_bwListenAddress = nullptr;  ///< the adapter address the iPerf3 server binds
     QPushButton* m_bwServerStartBtn = nullptr;
     QPushButton* m_bwServerStopBtn = nullptr;
     QLabel* m_bwServerStatus = nullptr;
@@ -487,6 +498,7 @@ private:
     // -- LAN Transfer UI --
     QLineEdit* m_lanTarget = nullptr;
     QSpinBox* m_lanPort = nullptr;
+    QComboBox* m_lanListenAddress = nullptr;  ///< the adapter address the LAN server binds
     QSpinBox* m_lanDuration = nullptr;
     QSpinBox* m_lanBlockSize = nullptr;
     QLabel* m_lanResultLabel = nullptr;

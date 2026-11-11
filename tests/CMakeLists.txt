@@ -5958,6 +5958,7 @@ message(STATUS "Added unit test: test_network_adapter_inspector")
 # Links the whole tool set the controller owns; none of the tests start a tool.
 add_executable(test_network_diagnostic_controller
     unit/test_network_diagnostic_controller.cpp
+    support/tcp_listeners.h
 )
 set_target_properties(test_network_diagnostic_controller PROPERTIES
     AUTOMOC ON
@@ -6045,6 +6046,7 @@ message(STATUS "Added unit test: test_wifi_analyzer")
 # per-instance firewall-rule-name seam (composeFirewallRuleName uniqueness).
 add_executable(test_bandwidth_tester
     unit/test_bandwidth_tester.cpp
+    support/tcp_listeners.h
 )
 set_target_properties(test_bandwidth_tester PROPERTIES
     AUTOMOC ON

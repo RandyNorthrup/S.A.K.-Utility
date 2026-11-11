@@ -19,6 +19,7 @@
 #include "sak/network_diagnostic_controller.h"
 #include "sak/network_reset_safeguard.h"
 #include "sak/port_scanner.h"
+#include "sak/portable_settings.h"
 #include "sak/process_runner.h"
 #include "sak/running_operations.h"
 #include "sak/style_constants.h"
@@ -40,6 +41,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QHostAddress>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -67,6 +69,10 @@ namespace {
 
 /// This panel's owner token on the application's shared quick-action controller.
 constexpr auto kQuickActionOwner = "network";
+
+/// Where each server's last-used "Listen on" address is remembered (data/config/ui_state.ini).
+constexpr QLatin1StringView kIperfListenAddressKey{"NetworkDiagnostics/iperfServerListenAddress"};
+constexpr QLatin1StringView kLanListenAddressKey{"NetworkDiagnostics/lanServerListenAddress"};
 
 constexpr int kNetworkDetailMinHeight = 50;
 constexpr int kFirewallAnalysisMaxHeight = 120;
@@ -1208,6 +1214,10 @@ void NetworkDiagnosticPanel::setupBandwidthIperfControls(QWidget* widget,
     setAccessible(m_bwStopBtn, tr("Stop iPerf3 bandwidth test"));
     iperf_btn_row->addWidget(m_bwStopBtn);
 
+    iperf_btn_row->addWidget(new QLabel(tr("Listen on:"), widget));
+    m_bwListenAddress = createListenAddressCombo(widget, tr("iPerf3 server listen address"));
+    iperf_btn_row->addWidget(m_bwListenAddress);
+
     m_bwServerStartBtn = new QPushButton(tr("Start Server"), widget);
     m_bwServerStartBtn->setStyleSheet(ui::kSecondaryButtonStyle);
     m_bwServerStartBtn->setToolTip(
@@ -1659,6 +1669,10 @@ QGroupBox* NetworkDiagnosticPanel::createLanServerGroup(QWidget* parent) {
     auto* group_layout = new QVBoxLayout(group);
     auto* row = new QHBoxLayout();
 
+    row->addWidget(new QLabel(tr("Listen on:"), parent));
+    m_lanListenAddress = createListenAddressCombo(parent, tr("LAN transfer server listen address"));
+    row->addWidget(m_lanListenAddress);
+
     row->addWidget(new QLabel(tr("Listen Port:"), parent));
     m_lanPort = new QSpinBox(parent);
     m_lanPort->setRange(kLanMinPort, kNetworkMaxTcpPort);
@@ -1689,6 +1703,42 @@ QGroupBox* NetworkDiagnosticPanel::createLanServerGroup(QWidget* parent) {
     group_layout->addLayout(row);
 
     return group;
+}
+
+QComboBox* NetworkDiagnosticPanel::createListenAddressCombo(QWidget* parent,
+                                                            const QString& accessible_name) {
+    auto* combo = new QComboBox(parent);
+    combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    combo->setToolTip(
+        tr("The network adapter the server listens on. Other devices reach it at this address "
+           "only; the server is not open on the PC's other networks."));
+    setAccessible(combo, accessible_name);
+    return combo;
+}
+
+void NetworkDiagnosticPanel::refreshListenAddressChoices() {
+    const auto choices = NetworkDiagnosticController::serverListenChoices(m_adapters);
+    PortableSettings settings;
+    for (const auto& [combo, key] : {std::pair{m_bwListenAddress, kIperfListenAddressKey},
+                                     std::pair{m_lanListenAddress, kLanListenAddressKey}}) {
+        // Keep what is chosen now across a rescan; on the first scan, what was used last time.
+        const QString current = combo->currentData().toString();
+        const QString wanted = current.isEmpty() ? settings.value(key).toString() : current;
+        combo->clear();
+        for (const auto& choice : choices) {
+            combo->addItem(choice.label, choice.address);
+        }
+        combo->setCurrentIndex(NetworkDiagnosticController::preferredListenChoice(choices, wanted));
+    }
+}
+
+QString NetworkDiagnosticPanel::takeListenAddress(QComboBox* combo, QAnyStringView settings_key) {
+    const QString address = combo->currentData().toString();
+    if (!address.isEmpty()) {
+        PortableSettings settings;
+        settings.setValue(settings_key, address);
+    }
+    return address;
 }
 
 QGroupBox* NetworkDiagnosticPanel::createLanClientGroup(QWidget* parent) {
@@ -2215,6 +2265,7 @@ void NetworkDiagnosticPanel::onAdaptersScanComplete(QVector<NetworkAdapterInfo> 
     }
 
     m_adapterTable->setSortingEnabled(true);
+    refreshListenAddressChoices();
     Q_EMIT statusMessage(QStringLiteral("%1 adapters found").arg(adapters.size()),
                          sak::kTimerStatusMessageMs);
 }
@@ -4128,7 +4179,9 @@ void NetworkDiagnosticPanel::onStopBandwidthTest() {
 }
 
 void NetworkDiagnosticPanel::onStartIperfServer() {
-    m_controller->startIperfServer(static_cast<uint16_t>(m_bwPort->value()));
+    m_controller->startIperfServer(static_cast<uint16_t>(m_bwPort->value()),
+                                   QHostAddress(takeListenAddress(m_bwListenAddress,
+                                                                  kIperfListenAddressKey)));
 }
 
 void NetworkDiagnosticPanel::onStopIperfServer() {
@@ -4586,7 +4639,9 @@ void NetworkDiagnosticPanel::onSharesDiscovered(QVector<NetworkShareInfo> shares
 
 void NetworkDiagnosticPanel::onStartLanTransferServer() {
     m_lanServerStartBtn->setEnabled(false);
-    m_controller->startLanTransferServer(static_cast<uint16_t>(m_lanPort->value()));
+    m_controller->startLanTransferServer(static_cast<uint16_t>(m_lanPort->value()),
+                                         QHostAddress(takeListenAddress(m_lanListenAddress,
+                                                                        kLanListenAddressKey)));
 }
 
 void NetworkDiagnosticPanel::onStopLanTransferServer() {
