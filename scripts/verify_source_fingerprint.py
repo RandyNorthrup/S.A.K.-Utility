@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import os
 from pathlib import Path
@@ -13,6 +14,8 @@ import sys
 
 MAX_MANIFEST_BYTES = 8 * 1024 * 1024
 HASH_READ_BYTES = 1024 * 1024
+# MAX_PATH; GetLongPathNameW says how much more a longer path needs.
+LONG_PATH_FIRST_BUFFER_CHARS = 260
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
@@ -36,13 +39,46 @@ def ordinary_path(path: Path, *, directory: bool = False) -> Path:
     return absolute
 
 
+def long_path(path: Path) -> Path:
+    """The same path with every 8.3 short name in it expanded, so one file is spelled one way.
+
+    Windows gives long names short aliases: a CI runner's TEMP is under C:/Users/RUNNER~1, and CMake
+    then names a file under the long spelling while the root arrives under the short one, so a file
+    inside the root read as outside it (nightly 2026-11-10). GetLongPathNameW only expands names; it
+    does not follow a junction or link, which ordinary_path still refuses. A tail that does not exist
+    yet is kept as given.
+    """
+    if os.name != "nt":
+        raise FingerprintError("Source fingerprint path verification requires Windows")
+    absolute = Path(os.path.abspath(path))
+    existing = absolute
+    missing: list[str] = []
+    while not os.path.lexists(existing):
+        if existing.parent == existing:
+            return absolute
+        missing.insert(0, existing.name)
+        existing = existing.parent
+    get_long_path_name = ctypes.windll.kernel32.GetLongPathNameW
+    get_long_path_name.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
+    get_long_path_name.restype = ctypes.c_uint32
+    size = LONG_PATH_FIRST_BUFFER_CHARS
+    while True:
+        buffer = ctypes.create_unicode_buffer(size)
+        needed = get_long_path_name(str(existing), buffer, size)
+        if needed == 0:
+            raise FingerprintError(f"Cannot read the long form of a source fingerprint path: {existing}")
+        if needed < size:
+            return Path(buffer.value, *missing)
+        size = needed + 1
+
+
 def source_input(root: Path, value: str) -> Path:
     candidate = Path(value)
     if not candidate.is_absolute():
         candidate = root / candidate
-    candidate = Path(os.path.abspath(candidate))
+    candidate = long_path(candidate)
     try:
-        candidate.relative_to(root)
+        candidate.relative_to(long_path(root))
     except ValueError as error:
         raise FingerprintError(f"Source fingerprint input escapes source root: {value}") from error
     return ordinary_path(candidate)

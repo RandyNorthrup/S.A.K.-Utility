@@ -1,5 +1,6 @@
 """Real CMake source-stamp generation and rebuild invalidation contracts."""
 
+import ctypes
 import hashlib
 import os
 import shutil
@@ -152,6 +153,38 @@ class SourceFingerprintTests(SourceFingerprintFixture):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(diagnostic, result.stdout + result.stderr)
 
+    def check_paths(self, source_root, values):
+        paths_file = self.root / "check-paths.txt"
+        paths_file.write_text("".join(f"{value}\n" for value in values), encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, str(VERIFIER), "check-paths", "--source-root", str(source_root),
+             "--paths-file", str(paths_file)],
+            capture_output=True, text=True, timeout=30)
+
+    def test_short_and_long_spellings_of_one_path_agree(self):
+        # The first nightly (2026-11-10) failed 11 native cases: its TEMP was C:/Users/RUNNER~1, so
+        # the root came in under the 8.3 short name while CMake named each input under the long one,
+        # and every input read as outside its own root.
+        long_root = self.root / "source-folder-with-a-long-name"
+        long_root.mkdir()
+        long_root.joinpath("main.cpp").write_bytes(b"inside\n")
+        buffer = ctypes.create_unicode_buffer(32768)
+        if not ctypes.windll.kernel32.GetShortPathNameW(str(long_root), buffer, len(buffer)):
+            self.fail(f"GetShortPathNameW failed for {long_root}")
+        short_root = Path(buffer.value)
+        if short_root.name.casefold() == long_root.name.casefold():
+            self.skipTest(f"no 8.3 short names on this volume: {long_root}")
+        for root, value in ((short_root, long_root / "main.cpp"), (long_root, short_root / "main.cpp"),
+                            (short_root, "main.cpp")):
+            with self.subTest(root=str(root), value=str(value)):
+                result = self.check_paths(root, (value,))
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        outside = self.root / "outside-file-with-a-long-name.h"
+        outside.write_bytes(b"outside\n")
+        result = self.check_paths(short_root, (outside,))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("escapes source root", result.stdout + result.stderr)
+
 
 class NativeSourceFingerprintTests(SourceFingerprintFixture):
     """Real C/C++ objects and an archive, without any shared project build or disk operation."""
@@ -243,6 +276,24 @@ class NativeSourceFingerprintTests(SourceFingerprintFixture):
                                  (self.build / "inputs.txt").read_bytes())
                 previous_value = expected
 
+    def test_backdated_edits_recompile_under_a_short_name_root(self):
+        # A CI runner's TEMP is C:/Users/RUNNER~1: the fixture then lives under an 8.3 short name,
+        # and the per-source fingerprint definition landed on the long spelling CMake resolves, not
+        # on the source it compiles, so a backdated edit was not recompiled (first nightly,
+        # 2026-11-10). A workstation's TEMP has a long name, so this puts the fixture under one.
+        long_root = self.root / "native-fixture-with-a-long-name"
+        long_root.mkdir()
+        buffer = ctypes.create_unicode_buffer(32768)
+        if not ctypes.windll.kernel32.GetShortPathNameW(str(long_root), buffer, len(buffer)):
+            self.fail(f"GetShortPathNameW failed for {long_root}")
+        short_root = Path(buffer.value)
+        if short_root.name.casefold() == long_root.name.casefold():
+            self.skipTest(f"no 8.3 short names on this volume: {long_root}")
+        (long_root / "source").mkdir()
+        self.source = short_root / "source"
+        self.build = short_root / "build"
+        self.test_backdated_edits_reject_then_recompile_real_sources_headers_and_archive()
+
     def test_post_configure_junction_insertion_and_retargeting_refuse_build(self):
         self.write_native_fixture()
         self.assert_configured(self.configure_native())
@@ -251,7 +302,9 @@ class NativeSourceFingerprintTests(SourceFingerprintFixture):
         headers = self.source / "headers"
         saved = self.source / "saved-headers"
         self.assertTrue(headers.resolve().is_relative_to(self.root.resolve()))
-        self.assertTrue(saved.absolute().is_relative_to(self.root.resolve()))
+        # Both sides resolved: under an 8.3 TEMP (C:/Users/RUNNER~1 on a CI runner) absolute() keeps
+        # the short spelling while resolve() expands it, and the check read a path inside as outside.
+        self.assertTrue(saved.resolve().is_relative_to(self.root.resolve()))
         headers.rename(saved)
         self.make_junction(headers, saved)
         rejected = self.build_native()

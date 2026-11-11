@@ -153,7 +153,8 @@ function Test-SecretScanTokenBoundaries([string]$FixtureParent) {
     New-Item -ItemType Directory -Path $scripts -ErrorAction Stop | Out-Null
     $scanner = Join-Path $scripts 'scan_secrets.ps1'
     Copy-Item -LiteralPath (Join-Path $ScriptRoot 'scan_secrets.ps1') -Destination $scanner
-    $git = (Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
+    # The first git.exe on PATH: a runner has more than one, and .Source on several is an array.
+    $git = (Get-Command git.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
     $initialized = Invoke-CapturedProcess -FilePath $git -Arguments @('init', '--quiet', $fixture) `
         -TimeoutSeconds 10
     Assert-True (-not $initialized.timed_out -and $initialized.exit_code -eq 0) (

@@ -508,7 +508,7 @@ target_compile_options(fatal_boundary_probe PRIVATE /W4 /WX /permissive- /utf-8 
 target_link_libraries(fatal_boundary_probe PRIVATE user32)
 '@
     [IO.File]::WriteAllText((Join-Path $root 'CMakeLists.txt'), $cmakeText, $utf8)
-    $cmake = (Get-Command cmake.exe -ErrorAction Stop).Source
+    $cmake = (Get-Command cmake.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
     $build = Join-Path $root 'build'
     $configure = Invoke-CapturedProcess -FilePath $cmake -WorkingDirectory $root -TimeoutSeconds 90 -Arguments @('-S',$root,'-B',$build,'-G','Visual Studio 17 2022','-A','x64')
     [IO.File]::WriteAllText((Join-Path $root 'configure.log'), $configure.stdout + $configure.stderr, $utf8)

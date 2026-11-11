@@ -217,6 +217,7 @@ jobs:
           -DVCPKG_APPLOCAL_DEPS=OFF `
           -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TRIPLET" `
           -DENABLE_ASAN=ON `
+          -DSAK_TEST_TIMEOUT_SCALE=5 `
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
           -DSAK_PYTHON_EXECUTABLE="$env:pythonLocation\python.exe"
         $configureExit = $LASTEXITCODE
@@ -239,6 +240,24 @@ jobs:
         $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         icacls $env:GITHUB_WORKSPACE /grant "*${sid}:(OI)(CI)F" /T /C /Q
         exit $LASTEXITCODE
+
+    # The first run (42913851120, 2026-11-10) lost a suite to 0xc0000409 with no message and two
+    # more with no detail: ctest's console shows the program's log, while QTest writes its verdicts
+    # to test_results/*.txt, and nothing kept either. Windows Error Reporting now writes a dump for
+    # any test process that ends abnormally (a fail-fast included), the next step prints a stack for
+    # each, and the result files and dumps are kept.
+    - name: Keep crash dumps of the test executables
+      shell: pwsh
+      run: |
+        $dumps = Join-Path $env:RUNNER_TEMP 'crash-dumps'
+        New-Item -ItemType Directory -Force -Path $dumps | Out-Null
+        icacls $dumps /grant '*S-1-1-0:(OI)(CI)F' /C /Q | Out-Null
+        $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+        New-Item -Path $key -Force | Out-Null
+        New-ItemProperty -Path $key -Name DumpFolder -Value $dumps -PropertyType ExpandString -Force | Out-Null
+        New-ItemProperty -Path $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path $key -Name DumpCount -Value 30 -PropertyType DWord -Force | Out-Null
+
     - name: Test (Debug, ASan, native suites)
       shell: pwsh
       run: |
@@ -247,6 +266,36 @@ jobs:
         $ctestExit = $LASTEXITCODE
         "CTEST EXIT: $ctestExit"
         exit $ctestExit
+
+    - name: Stacks from any crash dumps
+      if: ${{ always() }}
+      shell: pwsh
+      run: |
+        $dumps = Join-Path $env:RUNNER_TEMP 'crash-dumps'
+        $files = @(Get-ChildItem -LiteralPath $dumps -Filter *.dmp -ErrorAction SilentlyContinue)
+        "crash dumps: $($files.Count)"
+        $cdb = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
+        if ($files.Count -gt 0 -and -not (Test-Path -LiteralPath $cdb)) { 'cdb is not on this runner; the dumps are in the artifact' }
+        $symbols = "srv*$env:RUNNER_TEMP\symbols*https://msdl.microsoft.com/download/symbols;" +
+          "$env:GITHUB_WORKSPACE\build-debug\tests\Debug;$env:GITHUB_WORKSPACE\build-debug\Debug"
+        foreach ($file in $files) {
+          "===== $($file.Name)"
+          if (Test-Path -LiteralPath $cdb) {
+            & $cdb -z $file.FullName -y $symbols -c '.ecxr; kb 80; !analyze -v; q' 2>&1 | Select-Object -Last 250
+          }
+        }
+        exit 0
+
+    - name: Keep the QTest results and crash dumps
+      if: ${{ always() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      with:
+        name: asan-test-results
+        path: |
+          ${{ runner.temp }}/crash-dumps/
+          build-debug/test_results/*.txt
+        if-no-files-found: warn
+        retention-days: 14
 
   # ==========================================================================================
   # Line coverage (OpenCppCoverage) over the curated core set. RelWithDebInfo, because the

@@ -59,7 +59,7 @@ runs:
       python -m pip install --disable-pip-version-check -r requirements-gates.txt
       if ($LASTEXITCODE -ne 0) { throw "pip install exited $LASTEXITCODE" }
       $pin = (Select-String -LiteralPath requirements-gates.txt -Pattern '^clang-format==(.+)$').Matches[0].Groups[1].Value
-      $resolved = (Get-Command clang-format.exe -ErrorAction Stop).Source
+      $resolved = (Get-Command clang-format.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
       $version = (& $resolved --version) -join ' '
       Write-Host "clang-format: $resolved -> $version"
       if ($version -notmatch "version $([regex]::Escape($pin))(\s|$)") {

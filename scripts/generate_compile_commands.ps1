@@ -58,7 +58,7 @@ try {
     $vcvars = Join-Path $vsRoot "VC\Auxiliary\Build\vcvars64.bat"
     if (-not (Test-Path $vcvars)) { throw "vcvars64.bat not found under $vsRoot." }
 
-    $ninja = (Get-Command ninja -ErrorAction SilentlyContinue).Source
+    $ninja = (Get-Command ninja -CommandType Application -TotalCount 1 -ErrorAction SilentlyContinue).Source
     if (-not $ninja) {
         $venvNinja = Join-Path $Root ".venv\Scripts\ninja.exe"
         if (Test-Path $venvNinja) { $ninja = $venvNinja }

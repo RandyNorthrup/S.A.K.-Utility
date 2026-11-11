@@ -82,39 +82,6 @@ jobs:
         & (Join-Path $tools gitleaks.exe) version
         & (Join-Path $tools trufflehog.exe) --version
 
-    # Diagnostic only, never fails the run. On 2026-11-10 bundle_smartmontools.ps1 decided the
-    # tracked smartctl.exe "failed trust/version check" on this runner, though it matches the pin
-    # and the same check passes on a workstation; the script's catch hides why. This repeats the
-    # check's parts against the tracked binary and prints what each one saw
-    # (docs/RELEASE_READINESS.md, "For after 0.9.3").
-    - name: Diagnose the smartmontools existing-binary check
-      shell: pwsh
-      continue-on-error: true
-      run: |
-        $exe = (Resolve-Path -LiteralPath tools/smartmontools/smartctl.exe).Path
-        $source = Get-Content -LiteralPath scripts/bundle_smartmontools.ps1 -Raw
-        $pin = [regex]::Match($source, '\$PinnedSmartctlSha256\s*=\s*"([0-9A-Fa-f]{64})"').Groups[1].Value
-        $version = [regex]::Match($source, '(?m)^\$Version\s*=\s*"([^"]+)"').Groups[1].Value
-        $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
-        "PowerShell $($PSVersionTable.PSVersion); ErrorActionPreference $ErrorActionPreference; PSNativeCommandUseErrorActionPreference $PSNativeCommandUseErrorActionPreference"
-        "hash $hash; pin $pin; hash matches pin: $($hash -eq $pin)"
-        try {
-          $global:LASTEXITCODE = 0
-          $line = & $exe --version 2>&1 | Select-String "smartctl" | Select-Object -First 1
-          "as the script runs it: exit $LASTEXITCODE; first line '$line'; version $version matched: $("$line" -match [regex]::Escape($version))"
-        } catch {
-          "as the script runs it, it threw: $($_.Exception.GetType().FullName): $($_.Exception.Message)"
-        }
-        try {
-          $global:LASTEXITCODE = 0
-          $all = @(& $exe --version 2>&1)
-          "run on its own: exit $LASTEXITCODE; $($all.Count) line(s); stderr records: $(@($all | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count)"
-          $all | Select-Object -First 2 | ForEach-Object { "  $_" }
-        } catch {
-          "run on its own, it threw: $($_.Exception.GetType().FullName): $($_.Exception.Message)"
-        }
-        exit 0
-
     # The package ships these tools, and the tracked copies under tools/ are part of the tree the
     # Partition Manager certification is bound to. So the bundle scripts never write into the
     # checkout here: on 2026-11-10 a re-bundle in place rewrote tools/smartmontools/README.txt and

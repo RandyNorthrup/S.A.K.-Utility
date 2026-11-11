@@ -7182,6 +7182,30 @@ add_test(NAME test_run_folder_retention_windows_powershell
 set_tests_properties(test_run_folder_retention test_run_folder_retention_windows_powershell
                      PROPERTIES TIMEOUT 60)
 
+# check_powershell_syntax.ps1, the T1 and T2 gate, under both hosts the hook and CI call it from:
+# what it refuses (an exit code read after a native command's pipeline is cut short, one variable
+# under two casings) and what it passes.
+add_test(NAME test_powershell_syntax_gate
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_powershell_syntax_gate.ps1")
+add_test(NAME test_powershell_syntax_gate_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_powershell_syntax_gate.ps1")
+set_tests_properties(test_powershell_syntax_gate test_powershell_syntax_gate_windows_powershell
+                     PROPERTIES TIMEOUT 120)
+
+# bundle_smartmontools.ps1 accepts a pinned smartctl.exe in a fresh PowerShell 7 session and rewrites
+# no tracked file. The re-bundle downloads the pinned installer, so it runs in T4 only.
+add_test(NAME test_bundle_smartmontools
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_bundle_smartmontools.ps1")
+add_test(NAME test_bundle_smartmontools_rebundle
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_bundle_smartmontools.ps1" -Rebundle)
+set_tests_properties(test_bundle_smartmontools PROPERTIES TIMEOUT 60)
+set_tests_properties(test_bundle_smartmontools_rebundle PROPERTIES TIMEOUT 300)
+
 add_test(NAME test_verify_authenticode_signatures
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_verify_authenticode_signatures.ps1")
@@ -7363,7 +7387,9 @@ set(_sak_labels_tooling
     test_run_ctest_no_dialogs test_pinned_download test_run_lizard_js_baseline
     test_cppcheck_qt_slot_classifier
     test_dialog_buttons_deferred
-    test_run_folder_retention test_run_folder_retention_windows_powershell)
+    test_run_folder_retention test_run_folder_retention_windows_powershell
+    test_powershell_syntax_gate test_powershell_syntax_gate_windows_powershell
+    test_bundle_smartmontools)
 set(_sak_labels_cert test_apple_filesystem_capability_matrix
     test_partition_manager_code_digest test_partition_manager_row_evidence
     test_partition_manager_certification_status test_partition_manager_matrix_generated
@@ -7377,7 +7403,8 @@ set(_sak_labels_tooling_extended
     test_process_capture_stdin test_process_capture_stdin_windows_powershell
     test_process_capture_environment test_process_capture_environment_windows_powershell
     test_false_green_command_propagation test_false_green_command_propagation_windows_powershell
-    test_stage_portable_release test_release_archive_recovery test_linux_iso_catalog_live)
+    test_stage_portable_release test_release_archive_recovery test_linux_iso_catalog_live
+    test_bundle_smartmontools_rebundle)
 set(_sak_labels_mutation test_mutation_runner)
 set(_sak_labels_coverage test_coverage_runners test_coverage_runners_windows_powershell)
 set(_sak_labels_tidy test_clang_tidy_naming_gate)
@@ -7420,11 +7447,14 @@ set(_sak_lock_image_scratch test_partition_manager_core)
 # VS2022 configure/build fixtures and archive recovery zips and re-verifies the whole package.
 # Alone they take about 110 s and 76 s; started together with the other heavy tests by a
 # -j 8 run, both crossed their 180 s limits (2026-10-24). The limits stay; the overlap goes.
+# test_dedicated_threads times how soon Windows' shared thread pool starts a job while its own
+# spinners hold two cores; under a -j 4 T2 shard the neighbours' load made that time the test's,
+# and it failed once on unchanged code (PR #3, 2026-11-10).
 set(_sak_run_serial
     test_process_capture_deadline test_process_capture_deadline_windows_powershell
     test_startup_budget test_windows_process_job test_resource_soak
     test_ai_mcp_stdio_session test_ai_mcp_session_pool
-    test_source_fingerprint test_release_archive_recovery)
+    test_source_fingerprint test_release_archive_recovery test_dedicated_threads)
 
 # ============================================================================
 # Test hardware guard
@@ -7445,6 +7475,37 @@ foreach(_sak_guard_target IN LISTS _sak_guard_targets)
 endforeach()
 
 get_property(_sak_label_tests DIRECTORY PROPERTY TESTS)
+
+# Every TIMEOUT above was set against the Release build. Debug + AddressSanitizer runs the same
+# suites several times slower: the first nightly (42913851120, 2026-11-10), set against T2 on the
+# same code (42913774013), ran 51 suites of over 2 s 2-30 times slower (GUI suites 6-23 times, core
+# suites 5-7), and three crossed their Release limits: test_partition_manager_core (200 s in
+# Release, limit 600), test_partition_manager_panel (13 s, limit 120) and
+# test_ai_assistant_panel_tool_dispatch (57 s, limit 300). The ASan job sets this scale
+# (.github/workflows/nightly.yml); it is refused without ENABLE_ASAN, so every other build keeps
+# the limits as written. The scale is 5: measured alone on a workstation, Release against Debug +
+# ASan, test_partition_manager_panel went from 10.7 s to 174 s (16 times; limit 120),
+# test_ai_assistant_panel_tool_dispatch from 37 s to 227 s (6 times; limit 300) and
+# test_partition_manager_core from 128 s to 296 s (2.3 times; limit 600). The runner was 1.3-1.6
+# times slower than the workstation in Release and runs them under -j 4; five times each limit
+# leaves each at least about 1.8 times what it is estimated to need there.
+set(SAK_TEST_TIMEOUT_SCALE 1 CACHE STRING
+    "Multiplies every test TIMEOUT; only the Debug + AddressSanitizer build sets it")
+if(NOT SAK_TEST_TIMEOUT_SCALE MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "SAK_TEST_TIMEOUT_SCALE must be a positive whole number")
+endif()
+if(NOT SAK_TEST_TIMEOUT_SCALE EQUAL 1)
+    if(NOT ENABLE_ASAN)
+        message(FATAL_ERROR "SAK_TEST_TIMEOUT_SCALE is for the AddressSanitizer build only")
+    endif()
+    foreach(_sak_test IN LISTS _sak_label_tests)
+        get_test_property(${_sak_test} TIMEOUT _sak_timeout)
+        if(_sak_timeout)
+            math(EXPR _sak_timeout "${_sak_timeout} * ${SAK_TEST_TIMEOUT_SCALE}")
+            set_tests_properties(${_sak_test} PROPERTIES TIMEOUT ${_sak_timeout})
+        endif()
+    endforeach()
+endif()
 foreach(_sak_pair IN LISTS _sak_label_lists)
     string(REPLACE ":" ";" _sak_pair_parts "${_sak_pair}")
     list(GET _sak_pair_parts 1 _sak_list_var)
@@ -7525,16 +7586,23 @@ message(STATUS "Test labels: ${_sak_label_test_count} tests labelled; "
 # ============================================================================
 #
 # Debug test binaries run from tests/Debug, not beside sak_utility as Release's do, and the suites
-# that use a bundled tool look beside the executable.
+# that use a bundled tool look beside the executable. So do the suites that start the application
+# itself (the built-in MCP cases look for sak_utility.exe beside them): without it the first
+# Debug + ASan nightly failed them with "Built-in MCP app is missing" (2026-11-10).
 set(_sak_stage_tools_for_debug_tests
     "${CMAKE_COMMAND}"
     "-DSAK_TOOLS_SOURCE=${CMAKE_SOURCE_DIR}/tools"
     "-DSAK_TOOLS_DESTINATION=${CMAKE_CURRENT_BINARY_DIR}/Debug/tools"
     -P "${CMAKE_SOURCE_DIR}/cmake/copy_tools_bundle.cmake")
+set(_sak_stage_app_for_debug_tests
+    "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:sak_utility>"
+    "${CMAKE_CURRENT_BINARY_DIR}/Debug/")
 add_custom_target(sak_stage_tools_for_debug_tests ALL
     COMMAND "$<$<CONFIG:Debug>:${_sak_stage_tools_for_debug_tests}>"
+    COMMAND "$<$<CONFIG:Debug>:${_sak_stage_app_for_debug_tests}>"
     COMMAND_EXPAND_LISTS
     VERBATIM)
+add_dependencies(sak_stage_tools_for_debug_tests sak_utility)
 
 # Release test binaries find their Qt DLLs because the packaging step stages
 # them next to the executables. The Debug configuration has no such step, so a

@@ -126,6 +126,13 @@ function(_sak_bind_fingerprint_target target fingerprint fingerprint_files heade
         if(NOT resolved IN_LIST fingerprint_files)
             message(FATAL_ERROR "Target source is absent from fingerprint: ${input}")
         endif()
+        # The definition goes on the source as the target spells it. REAL_PATH (and
+        # get_filename_component ABSOLUTE) expand 8.3 short names, so under a short TEMP (a CI
+        # runner's C:/Users/RUNNER~1) the resolved spelling is another source file to CMake, the
+        # definition never reached the compiled one, and a backdated edit was not recompiled
+        # (first nightly, 2026-11-10). cmake_path is lexical: it keeps the target's spelling.
+        cmake_path(ABSOLUTE_PATH input BASE_DIRECTORY "${target_source_dir}" NORMALIZE
+            OUTPUT_VARIABLE target_spelling)
         string(TOLOWER "${resolved}" source_extension_path)
         if(source_extension_path MATCHES "\.(c|cc|cpp|cxx)$")
             string(SHA256 input_key "${resolved}")
@@ -133,7 +140,7 @@ function(_sak_bind_fingerprint_target target fingerprint fingerprint_files heade
             if(NOT content_hash)
                 message(FATAL_ERROR "Missing source fingerprint compile binding: ${resolved}")
             endif()
-            set_property(SOURCE "${resolved}" TARGET_DIRECTORY "${target}" APPEND PROPERTY
+            set_property(SOURCE "${target_spelling}" TARGET_DIRECTORY "${target}" APPEND PROPERTY
                 COMPILE_DEFINITIONS SAK_SOURCE_FINGERPRINT_INPUT_SHA256="${content_hash}")
         endif()
     endforeach()
