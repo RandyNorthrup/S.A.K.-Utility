@@ -21,7 +21,8 @@ name: Release (T3)
 #             creates the release. Not in the release environment, so its OIDC token is not one
 #             Azure accepts.
 # A pre-release tag (one with a hyphen, such as v0.9.3-rc.1) runs build, sign and verify and stops
-# there: that is the dry run of signing, since the release environment admits v* tags only.
+# there: that is the dry run of signing, since the release environment admits v* tags only. A
+# manual run from a branch builds and checks the unsigned package only.
 
 on:
   push:
@@ -394,6 +395,9 @@ jobs:
   sign:
     name: Sign the packaged binaries
     needs: build
+    # The release environment admits v* tags only, so a manual run from a branch builds and checks
+    # the unsigned package and stops here, rather than failing at the environment.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-2022
     timeout-minutes: 60
     environment: release

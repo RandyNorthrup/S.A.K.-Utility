@@ -3068,7 +3068,8 @@ From the security audit of a brief forwarded by the owner, who ruled that signin
   stays until OIDC has signed once. Azure must hold a federated credential for
   `repo:RandyNorthrup/S.A.K.-Utility:environment:release` on the signing app registration; nothing here can see it.
 - A pre-release tag (one with a hyphen, such as `v0.9.3-rc.1`) runs build, sign and verify and stops before
-  publish: that is the dry run of signing now that the environment refuses a manual run from a branch.
+  publish: that is the dry run of signing now that the environment refuses a manual run from a branch. A manual
+  run from a branch builds and checks the unsigned package and skips the signing job.
 - Elsewhere: `persist-credentials: false` on every checkout in ci, nightly and secret-scan; the TruffleHog action
   pinned to the 3.99.7 image by tag and digest (it ran `latest`); gitleaks in secret-scan checked against a pinned
   SHA-256 rather than the same release's checksums file; OpenCppCoverage installed as 0.9.9; Python as 3.14.10
