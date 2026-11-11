@@ -302,6 +302,10 @@ jobs:
         if (-not (Select-String -LiteralPath $log -Quiet -Pattern '^PASS\s+: ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe\(\)')) {
           throw 'test_elevated_helper_connection did not run: a skip exits 0 too'
         }
+        # Proof for the T2 result job, which requires it from the one shard whose plan holds the test.
+        New-Item -ItemType Directory -Force -Path build/elevated-proof | Out-Null
+        Select-String -LiteralPath $log -Pattern '^PASS\s+:' | ForEach-Object { $_.Line } |
+          Set-Content -LiteralPath build/elevated-proof/test_elevated_helper_connection.txt -Encoding ascii
 
     # test_fat_volumes makes and mounts small FAT32 and exFAT VHDX volumes, which needs
     # administrator: under the standard-user token above ctest skips it (tests/skip_baseline.txt),
@@ -328,6 +332,10 @@ jobs:
             }
           }
         }
+        # Proof for the T2 result job, which requires it from the one shard whose plan holds the test.
+        New-Item -ItemType Directory -Force -Path build/elevated-proof | Out-Null
+        Select-String -LiteralPath $log -Pattern '^PASS\s+:' | ForEach-Object { $_.Line } |
+          Set-Content -LiteralPath build/elevated-proof/test_fat_volumes.txt -Encoding ascii
 
     # The skip audit runs once over every shard's logs in the T2 result job. It needs each
     # shard's registration: a test's command resolves only where its executable was built.
@@ -350,6 +358,7 @@ jobs:
           build/ci-registration.json
           build/test_results/*.txt
           build/Testing/Temporary/LastTest.log
+          build/elevated-proof/*.txt
         retention-days: 14
         if-no-files-found: warn
 
@@ -406,6 +415,56 @@ jobs:
         $merged = [ordered]@{ kind = 'ctestInfo'; version = [ordered]@{ major = 1; minor = 0 }; tests = $tests }
         [IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE 'build/t2-registration.json'), ($merged | ConvertTo-Json -Depth 6))
         Write-Host "Plan $($digests[0]): $count shards, $($registered.Count) T2 tests"
+
+    # A test that can only run elevated is skipped by ctest under the standard-user token and run by
+    # an elevated step in its shard, and that step passes with nothing to do in every shard whose plan
+    # lacks the test. So a test moved off the T2 labels, or never planned, would pass every shard
+    # unrun. Each test listed here must be in exactly one shard's plan, and that shard must have
+    # uploaded its elevated step's proof: a PASS line for every case required here.
+    - name: Every must-run-elevated test ran elevated
+      if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
+      shell: pwsh
+      run: |
+        $fatCases = foreach ($case in 'heldFoldersAndStagedFiles', 'heldReadOnlyFileRefusesWriters',
+                                      'programFolderOnTheVolume', 'scriptSafeFilesWithTempOnTheVolume') {
+          foreach ($row in 'FAT32', 'exFAT') { "FatVolumeTests::$case($row)" }
+        }
+        $required = [ordered]@{
+          test_elevated_helper_connection = @('ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe()')
+          test_fat_volumes = @($fatCases)
+        }
+        $shards = @(Get-ChildItem -LiteralPath shards -Directory)
+        $problems = [System.Collections.Generic.List[string]]::new()
+        foreach ($test in $required.Keys) {
+          $holders = @($shards | Where-Object {
+            $planPath = Join-Path $_.FullName 'ci-plan.json'
+            (Test-Path -LiteralPath $planPath -PathType Leaf) -and
+              (@((Get-Content -Raw -LiteralPath $planPath | ConvertFrom-Json).tests) -contains $test)
+          })
+          if ($holders.Count -ne 1) {
+            $problems.Add("$test is in $($holders.Count) shard plans; it must be in exactly one")
+            continue
+          }
+          $shard = $holders[0].Name
+          $proof = Join-Path $holders[0].FullName "elevated-proof/$test.txt"
+          if (-not (Test-Path -LiteralPath $proof -PathType Leaf)) {
+            $problems.Add("${test}: $shard uploaded no proof that its elevated step passed")
+            continue
+          }
+          $lines = @(Get-Content -LiteralPath $proof)
+          $missing = @($required[$test] | Where-Object {
+            $pattern = '^PASS\s+: ' + [regex]::Escape($_) + '\s*$'
+            -not ($lines | Where-Object { $_ -match $pattern })
+          })
+          foreach ($case in $missing) { $problems.Add("${test}: no PASS for $case in $shard") }
+          if ($missing.Count -eq 0) {
+            Write-Host "OK  $test ran elevated in $shard; $($required[$test].Count) case(s) passed"
+          }
+        }
+        if ($problems.Count -gt 0) {
+          $problems | ForEach-Object { Write-Host "::error::$_" }
+          throw "$($problems.Count) must-run-elevated problem(s)"
+        }
 
     # ctest scores a binary Passed even when every function called QSKIP. This holds every skip
     # in the whole T2 run to tests/skip_baseline.txt and fails on an unreviewed skip, a stale
