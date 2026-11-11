@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
     },
-    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
-    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
+    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
     "code_dirty": false,
-    "completed_utc": "2026-11-10T16:04:02.784Z",
+    "completed_utc": "2026-11-11T08:48:27.215Z",
     "disk_before": {
         "bus_type": "NVMe",
         "disk_number": 0,
@@ -30,7 +30,7 @@
         "steps": [
             {
                 "error_message": "",
-                "operation_id": "2f0dc758-93f7-4546-9a0a-cf8f6a2d13f7",
+                "operation_id": "6635a2f8-124e-47a6-b92d-c5e6420df5c9",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Wipe Disk 0\r\nVERBOSE: Invoking retrim on SAKWIPE (T:)...\r\nVERBOSE: Retrim:  100% complete.  \nVERBOSE: \r\nPost Defragmentation Report:\nVERBOSE: \r\r\n Volume Information:\nVERBOSE:   Volume size                 = 1023.99 MB\nVERBOSE:   Cluster size                = 4 KB\nVERBOSE:   Used space                  = 41.48 MB\nVERBOSE:   Free space                  = 982.51 MB\nVERBOSE: \r\r\n Retrim:\nVERBOSE:   Backed allocations          = 0\nVERBOSE:   Allocations trimmed         = 0\nVERBOSE:   Total space trimmed         = 0 bytes\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining      Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------      ----\r\n            SAK_WIPE     NTFS           Fixed     Healthy      OK                    476.82 GB 476.92 GB\r\n\r\n\r\n",
@@ -53,7 +53,7 @@
     ],
     "queued_operations": [
         {
-            "id": "2f0dc758-93f7-4546-9a0a-cf8f6a2d13f7",
+            "id": "6635a2f8-124e-47a6-b92d-c5e6420df5c9",
             "payload": {
                 "ssd_secure_erase": true,
                 "target_wipe_confirmed": true
@@ -76,15 +76,15 @@
         }
     ],
     "review": {
-        "fingerprint": "9628f6c699e59d6a9e37d601105d52e28430b8ab516b919570e9393c634fd247",
-        "layout_hash": "97f2254d4d525e9c0fd879aee4219e124723f089b96410d6ee988e5eecd18175",
+        "fingerprint": "30ec6d908df6e376b9eb9be46ba90b3fd7cbe4a8bca77a5fe8a843736a62a92e",
+        "layout_hash": "66fdd588da561c2ba4dcdff9e86bca3ffe4f214f334ef0bddd3e7e1af89f434c",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "dbf4576c-b378-4960-bd27-2d144d5596de",
+    "run_id": "e4a42f54-637d-4c85-969a-9342554a966f",
     "scenario_id": "external.ssd-secure-erase",
     "schema_version": 1,
-    "started_utc": "2026-11-10T15:54:44.320Z",
+    "started_utc": "2026-11-11T08:38:52.024Z",
     "status": "Passed",
     "step": "erase",
     "tool": "partition-manager-scenario-step"

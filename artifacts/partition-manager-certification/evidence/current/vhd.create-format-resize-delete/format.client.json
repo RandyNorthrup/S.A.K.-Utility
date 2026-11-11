@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
     },
-    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
-    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
+    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
     "code_dirty": false,
-    "completed_utc": "2026-11-10T15:54:57.614Z",
+    "completed_utc": "2026-11-11T08:39:04.747Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -30,7 +30,7 @@
         "steps": [
             {
                 "error_message": "",
-                "operation_id": "f412780e-48c3-4fc2-a98f-7a7e2bdad95f",
+                "operation_id": "f27b129b-b0ee-424b-964d-dd4dd604f289",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Format Disk 1 Partition 2 as NTFS\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining      Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------      ----\r\nE           SAKFMT       NTFS           Fixed     Healthy      OK                    241.32 MB 255.99 MB\r\n\r\n\r\n",
@@ -53,7 +53,7 @@
     ],
     "queued_operations": [
         {
-            "id": "f412780e-48c3-4fc2-a98f-7a7e2bdad95f",
+            "id": "f27b129b-b0ee-424b-964d-dd4dd604f289",
             "payload": {
                 "allocation_unit_bytes": "8192",
                 "file_system": "NTFS",
@@ -64,7 +64,7 @@
             "summary": "Format Partition - Disk 1 Partition 2",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "6002248010491C97D9EF24756AD36D39",
+                "disk_unique_id": "60022480D3FF6AE2D13796A896AD9303",
                 "drive_letter": "E",
                 "kind": "Partition",
                 "offset_bytes": "16777216",
@@ -77,15 +77,15 @@
         }
     ],
     "review": {
-        "fingerprint": "c07356380a61c36facdd7e2b0f198ab73b531c475e27cf649ac340553ca3adad",
-        "layout_hash": "8f60a9fd13d1f87ad1112feafcee9aa05daaf7577d75f5da92359012f9e830d9",
+        "fingerprint": "353be77df3d85914caa091535684020ece0f6f605ca4f8e500dc834504208761",
+        "layout_hash": "621fd6beda6ce1ae2d94afb8d088554f62936172dbfdad485b3ff0af9818a2ee",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "run_id": "296069e7-d217-4b7d-b364-78ef16b1207c",
     "scenario_id": "vhd.create-format-resize-delete",
     "schema_version": 1,
-    "started_utc": "2026-11-10T15:54:13.107Z",
+    "started_utc": "2026-11-11T08:38:36.901Z",
     "status": "Passed",
     "step": "format",
     "tool": "partition-manager-scenario-step"

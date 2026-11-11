@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
     },
-    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
-    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
+    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
     "code_dirty": false,
-    "completed_utc": "2026-11-10T16:35:10.661Z",
+    "completed_utc": "2026-11-11T09:15:10.338Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -30,7 +30,7 @@
         "steps": [
             {
                 "error_message": "",
-                "operation_id": "838d46bc-72a8-4d31-8583-de4f597ca45c",
+                "operation_id": "7ff10c59-6528-473a-a6be-a670f1177edf",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: BitLocker Resume T:\r\nBitLocker Drive Encryption: Configuration Tool version 10.0.26100\r\nCopyright (C) 2013 Microsoft Corporation. All rights reserved.\r\n\r\nVolume T: [SAKBL]\r\n[Data Volume]\r\n\r\n    Size:                 0.50 GB\r\n    BitLocker Version:    2.0\r\n    Conversion Status:    Used Space Only Encrypted\r\n    Percentage Encrypted: 100.0%\r\n    Encryption Method:    AES 128\r\n    Protection Status:    Protection Off\r\n    Lock Status:          Unlocked\r\n    Identification Field: Unknown\r\n    Automatic Unlock:     Disabled\r\n    Key Protectors:\r\n        Password\r\n        Numerical Password\r\n\r\nBitLocker Drive Encryption: Configuration Tool version 10.0.26100\r\nCopyright (C) 2013 Microsoft Corporation. All rights reserved.\r\n\r\nKey protectors are enabled for volume T:.\r\n\r\n\r\nMountPoint       : T:\r\nVolumeStatus     : FullyEncrypted\r\nProtectionStatus : On\r\nLockStatus       : Unlocked\r\nEncryptionMethod : Aes128\r\n\r\n\r\n\r\n\r\n",
@@ -53,7 +53,7 @@
     ],
     "queued_operations": [
         {
-            "id": "838d46bc-72a8-4d31-8583-de4f597ca45c",
+            "id": "7ff10c59-6528-473a-a6be-a670f1177edf",
             "payload": {
                 "drive_letter": "T"
             },
@@ -61,7 +61,7 @@
             "summary": "BitLocker Resume - Disk 1 Partition 2",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "60022480A7B6F63CB83354B8D955FAD0",
+                "disk_unique_id": "600224806F913807CAF1607436110979",
                 "drive_letter": "T",
                 "kind": "Partition",
                 "offset_bytes": "16777216",
@@ -74,15 +74,15 @@
         }
     ],
     "review": {
-        "fingerprint": "0651570a6babb5f96c62c7469240c7f28b040d74e6e3cd7ec44b4303b1bc8368",
-        "layout_hash": "ff15bb597a870d5328473bd56655a8d67ca4535c9818ac808d607e67816e4a77",
+        "fingerprint": "93e00582c3ab11280c10dfd2ac36a3b287d74f7b8e3d023aa98a0c4f88e7d79e",
+        "layout_hash": "4a36298449be3be75a6bacd30bf1d624262d9ab894313b73efea3ff4ea9a6935",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "6dabd3e9-9548-4b37-b588-cd518f92232c",
+    "run_id": "51eb27c4-d4e4-4cb2-b5ed-1bb8a531f4d1",
     "scenario_id": "external.bitlocker-mutation",
     "schema_version": 1,
-    "started_utc": "2026-11-10T16:34:57.704Z",
+    "started_utc": "2026-11-11T09:14:51.104Z",
     "status": "Passed",
     "step": "resume",
     "tool": "partition-manager-scenario-step"

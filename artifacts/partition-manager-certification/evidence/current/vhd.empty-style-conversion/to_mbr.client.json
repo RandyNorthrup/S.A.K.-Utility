@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
     },
-    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
-    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
+    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
     "code_dirty": false,
-    "completed_utc": "2026-11-10T16:02:54.045Z",
+    "completed_utc": "2026-11-11T08:46:32.701Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -30,7 +30,7 @@
         "steps": [
             {
                 "error_message": "",
-                "operation_id": "0da38252-d9a1-4e47-82e8-3ab29e0e9860",
+                "operation_id": "040bbeca-dc33-4545-9999-d5112081fd4e",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Convert Disk 1 to MBR\r\n",
@@ -53,15 +53,15 @@
     ],
     "queued_operations": [
         {
-            "id": "0da38252-d9a1-4e47-82e8-3ab29e0e9860",
+            "id": "040bbeca-dc33-4545-9999-d5112081fd4e",
             "payload": {
                 "target_style": "MBR"
             },
-            "script_sha256": "be83040650c8b102628d04c95d3860042e675f310a3dc086ac945e7ba220616a",
+            "script_sha256": "d63fb7ead0a828587e459782d0954d4d47d63a1aa7511e34bf03ab8ae601ea55",
             "summary": "Convert MBR/GPT - Disk 1",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "600224807B511C980CC6F664DDC7957D",
+                "disk_unique_id": "600224804A24F7FFB56BD079D6E9A28C",
                 "drive_letter": "",
                 "kind": "Disk",
                 "offset_bytes": "0",
@@ -74,15 +74,15 @@
         }
     ],
     "review": {
-        "fingerprint": "cad49d89c90b7bd06e5b53ccfdff8972b34721a954f7f5b30069cef3509a1b0f",
-        "layout_hash": "018647966dd98c2c945088f3cc0ce2b1e3c1896763247fb76200acac929059ad",
+        "fingerprint": "81e8a64cef3d550b0697947431d88ff98daa26c9c3ae58ee783f1385c5be95f2",
+        "layout_hash": "83218a3fc928d39b7b8bc380bfd915f88bf74f2cbda0482ad515e0e08433e77b",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "run_id": "296069e7-d217-4b7d-b364-78ef16b1207c",
     "scenario_id": "vhd.empty-style-conversion",
     "schema_version": 1,
-    "started_utc": "2026-11-10T16:02:38.113Z",
+    "started_utc": "2026-11-11T08:46:06.393Z",
     "status": "Passed",
     "step": "to_mbr",
     "tool": "partition-manager-scenario-step"

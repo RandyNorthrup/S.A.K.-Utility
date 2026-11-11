@@ -4,13 +4,13 @@
         "elevated": true,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
     },
-    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
-    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
+    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
     "code_dirty": false,
-    "completed_utc": "2026-11-10T16:32:44.110Z",
+    "completed_utc": "2026-11-11T09:12:40.910Z",
     "execution_engine": "PartitionManagerController",
     "expect": "success",
     "expectation_met": true,
@@ -29,10 +29,10 @@
         ]
     },
     "route": "in-process",
-    "run_id": "6dabd3e9-9548-4b37-b588-cd518f92232c",
+    "run_id": "51eb27c4-d4e4-4cb2-b5ed-1bb8a531f4d1",
     "scenario_id": "external.file-level-data-recovery",
     "schema_version": 1,
-    "started_utc": "2026-11-10T16:32:35.075Z",
+    "started_utc": "2026-11-11T09:12:31.197Z",
     "status": "Passed",
     "step": "recover",
     "tool": "partition-manager-scenario-step"

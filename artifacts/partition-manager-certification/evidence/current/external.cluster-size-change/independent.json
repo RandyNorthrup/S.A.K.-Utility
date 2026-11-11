@@ -7,7 +7,7 @@
                           "free_bytes":  379867136,
                           "cluster_bytes":  4096,
                           "health":  "Healthy",
-                          "serial_number":  "12DB1A0D"
+                          "serial_number":  "46488F37"
                       },
     "volume_after":  {
                          "drive_letter":  "T",
@@ -17,7 +17,7 @@
                          "free_bytes":  379699200,
                          "cluster_bytes":  16384,
                          "health":  "Healthy",
-                         "serial_number":  "ECE4F30B"
+                         "serial_number":  "4A526496"
                      },
     "files_before":  {
                          "root":  "T:\\fixture",

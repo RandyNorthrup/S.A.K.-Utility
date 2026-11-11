@@ -4,18 +4,18 @@
     "scenario_id":  "vhd.quick-partition-custom",
     "status":  "Passed",
     "failure":  "",
-    "run_id":  "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
-    "started_utc":  "2026-11-10T15:57:59.0745738Z",
-    "completed_utc":  "2026-11-10T15:59:11.2450067Z",
+    "run_id":  "296069e7-d217-4b7d-b364-78ef16b1207c",
+    "started_utc":  "2026-11-11T08:41:54.8387511Z",
+    "completed_utc":  "2026-11-11T08:42:56.7025985Z",
     "code":  {
-                 "digest":  "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
-                 "commit":  "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+                 "digest":  "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
+                 "commit":  "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
                  "dirty":  false
              },
     "binaries":  {
-                     "client_sha256":  "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
-                     "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-                     "app_sha256":  "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+                     "client_sha256":  "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0",
+                     "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+                     "app_sha256":  "90c5e5d3ac84b7e29298aa4cdce915a4839be416fcadaadba2d9aa635985e3bf"
                  },
     "rig":  {
                 "machine_manufacturer":  "innotek GmbH",
@@ -42,11 +42,11 @@
                       "expect":  "success",
                       "report":  "layout.client.json",
                       "observed":  {
-                                       "client_pid":  4496,
+                                       "client_pid":  6460,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  8456,
-                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_pid":  5432,
+                                       "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -56,12 +56,12 @@
     "artifacts":  [
                       {
                           "path":  "independent.json",
-                          "sha256":  "e37ac7db8687f7b3d8bc75f460b7a46d83c71e33a3010cf4657e99fd23db4c00",
+                          "sha256":  "da7ce30e09ffe2d03f5bfe586f36e14fa8c19e83ff4215fd23a11714d6204437",
                           "bytes":  45079
                       },
                       {
                           "path":  "layout.client.json",
-                          "sha256":  "102074cd9be567128b0d23d3b9c9a50a8e3062bb7dd0625986c4a9e1772fd8da",
+                          "sha256":  "bd3b61da734c37fd5a737c231e1b4fff6f8722cb35793fb04b15d2ffc98be81d",
                           "bytes":  29973
                       }
                   ]

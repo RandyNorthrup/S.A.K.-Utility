@@ -1,7 +1,7 @@
 {
     "snapshots":  {
                       "after":  {
-                                    "taken_utc":  "2026-11-10T15:59:59.7989405Z",
+                                    "taken_utc":  "2026-11-11T08:43:52.6814931Z",
                                     "disk_number":  1,
                                     "model":  "Msft Virtual Disk",
                                     "bus_type":  "File Backed Virtual",
@@ -10,7 +10,7 @@
                                     "partition_style_reported":  "MBR",
                                     "is_offline":  false,
                                     "raw":  {
-                                                "lba0_hex":  "33C08ED0BC007C8EC08ED8BE007CBF0006B90002FCF3A450681C06CBFBB90400BDBE07807E00007C0B0F850E0183C510E2F1CD1888560055C6461105C6461000B441BBAA55CD135D720F81FB55AA7509F7C101007403FE46106660807E1000742666680000000066FF760868000068007C680100681000B4428A56008BF4CD139F83C4109EEB14B80102BB007C8A56008A76018A4E028A6E03CD136661731CFE4E11750C807E00800F848A00B280EB845532E48A5600CD135DEB9E813EFE7D55AA756EFF7600E88D007517FAB0D1E664E88300B0DFE660E87C00B0FFE664E87500FBB800BBCD1A6623C0753B6681FB54435041753281F90201722C666807BB00006668000200006668080000006653665366556668000000006668007C0000666168000007CD1A5A32F6EA007C0000CD18A0B707EB08A0B607EB03A0B50732E40500078BF0AC3C007409BB0700B40ECD10EBF2F4EBFD2BC9E464EB002402E0F82402C3496E76616C696420706172746974696F6E207461626C65004572726F72206C6F6164696E67206F7065726174696E672073797374656D004D697373696E67206F7065726174696E672073797374656D000000637B9A816B436B000000202100079C3D1F0008000000B80700009C3E1F071A1B3F00C0070000B80700001A1C3F0796385E00780F0000B807000096395E05FE3F810030170000C8080055AA",
+                                                "lba0_hex":  "33C08ED0BC007C8EC08ED8BE007CBF0006B90002FCF3A450681C06CBFBB90400BDBE07807E00007C0B0F850E0183C510E2F1CD1888560055C6461105C6461000B441BBAA55CD135D720F81FB55AA7509F7C101007403FE46106660807E1000742666680000000066FF760868000068007C680100681000B4428A56008BF4CD139F83C4109EEB14B80102BB007C8A56008A76018A4E028A6E03CD136661731CFE4E11750C807E00800F848A00B280EB845532E48A5600CD135DEB9E813EFE7D55AA756EFF7600E88D007517FAB0D1E664E88300B0DFE660E87C00B0FFE664E87500FBB800BBCD1A6623C0753B6681FB54435041753281F90201722C666807BB00006668000200006668080000006653665366556668000000006668007C0000666168000007CD1A5A32F6EA007C0000CD18A0B707EB08A0B607EB03A0B50732E40500078BF0AC3C007409BB0700B40ECD10EBF2F4EBFD2BC9E464EB002402E0F82402C3496E76616C696420706172746974696F6E207461626C65004572726F72206C6F6164696E67206F7065726174696E672073797374656D004D697373696E67206F7065726174696E672073797374656D000000637B9ABC4D0980000000202100079C3D1F0008000000B80700009C3E1F071A1B3F00C0070000B80700001A1C3F0796385E00780F0000B807000096395E05FE3F810030170000C8080055AA",
                                                 "ebr":  [
                                                             {
                                                                 "lba":  1519616,
@@ -20,7 +20,7 @@
                                             },
                                     "table":  {
                                                   "style":  "MBR",
-                                                  "disk_id":  "6B436B81",
+                                                  "disk_id":  "80094DBC",
                                                   "partitions":  [
                                                                      {
                                                                          "layout":  "primary",
@@ -74,7 +74,7 @@
                                                                           "free_bytes":  243716096,
                                                                           "cluster_bytes":  4096,
                                                                           "health":  "Healthy",
-                                                                          "serial_number":  "4E79A66A"
+                                                                          "serial_number":  "78B53C29"
                                                                       }
                                                        },
                                                        {
@@ -91,7 +91,7 @@
                                                                           "free_bytes":  243716096,
                                                                           "cluster_bytes":  4096,
                                                                           "health":  "Healthy",
-                                                                          "serial_number":  "767C2D49"
+                                                                          "serial_number":  "A8B87EFC"
                                                                       }
                                                        },
                                                        {
@@ -108,7 +108,7 @@
                                                                           "free_bytes":  243716096,
                                                                           "cluster_bytes":  4096,
                                                                           "health":  "Healthy",
-                                                                          "serial_number":  "EA7E9DB3"
+                                                                          "serial_number":  "D8BBF8CE"
                                                                       }
                                                        },
                                                        {
@@ -133,7 +133,7 @@
                                                                           "free_bytes":  246845440,
                                                                           "cluster_bytes":  4096,
                                                                           "health":  "Healthy",
-                                                                          "serial_number":  "7C81771E"
+                                                                          "serial_number":  "B8BF0D4C"
                                                                       }
                                                        }
                                                    ],

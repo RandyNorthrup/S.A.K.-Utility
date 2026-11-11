@@ -4,18 +4,18 @@
   "scenario_id": "external.system-mbr2gpt",
   "status": "Passed",
   "failure": "",
-  "run_id": "99f157fa-3318-43c5-b92f-b1d6e8aa5e56",
-  "started_utc": "2026-11-10T18:35:12.6812213Z",
-  "completed_utc": "2026-11-10T18:38:44.8060855Z",
+  "run_id": "db9b9d99-1426-4c8e-bfd9-09781be4615c",
+  "started_utc": "2026-11-11T11:22:45.8526228Z",
+  "completed_utc": "2026-11-11T11:26:20.2746531Z",
   "code": {
-    "digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
-    "commit": "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+    "digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
+    "commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
     "dirty": false
   },
   "binaries": {
-    "client_sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
-    "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-    "app_sha256": "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+    "client_sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0",
+    "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+    "app_sha256": "90c5e5d3ac84b7e29298aa4cdce915a4839be416fcadaadba2d9aa635985e3bf"
   },
   "rig": {
     "machine_manufacturer": "innotek GmbH",
@@ -33,7 +33,7 @@
     "media_type": "Unspecified",
     "rotation_rate_rpm": 0,
     "size_bytes": "107374182400",
-    "serial_sha256": "15e3499a31001812a7dd7a2130f6d0d5d45500448419dc0b8a67d506ca9cb274"
+    "serial_sha256": "0f0bb8de237e6b329fd8358ac6e780e1fabb3e668129b8be7bb572470763a15d"
   },
   "steps": [
     {
@@ -42,11 +42,11 @@
       "expect": "success",
       "report": "convert.client.json",
       "observed": {
-        "client_pid": 9028,
+        "client_pid": 2856,
         "exit_code": 0,
         "client_token_elevated": false,
-        "helper_pid": 7960,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+        "helper_pid": 8432,
+        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
         "helper_path": "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
         "helper_token_elevated": true
       }
@@ -61,12 +61,12 @@
     },
     {
       "path": "convert.client.json",
-      "sha256": "f31acdfd1a3909793a563825d80dea9d78771c038f56d89f8cf452d2a0b9ce78",
+      "sha256": "7d721c2bdb472083686f57b2a101e276997826a8dee802c2dd97a5ef588606fe",
       "bytes": 4079
     },
     {
       "path": "independent.json",
-      "sha256": "2fc56794dd72ba3de0ce9bb27bd3fa212b801768d98a96c80196a695fa87e5f6",
+      "sha256": "882e0ea63fba5e756b2d64c6ab48d013c6462ae6dc12a8af4fff20049736a522",
       "bytes": 41162
     }
   ]

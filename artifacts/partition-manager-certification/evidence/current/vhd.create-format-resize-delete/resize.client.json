@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
     },
-    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
-    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
+    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
     "code_dirty": false,
-    "completed_utc": "2026-11-10T15:55:39.436Z",
+    "completed_utc": "2026-11-11T08:39:34.564Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -30,7 +30,7 @@
         "steps": [
             {
                 "error_message": "",
-                "operation_id": "665535e6-c40a-44fe-b335-fbcd591ea93c",
+                "operation_id": "5a394a06-1a2e-4875-bdea-661e4f6dea38",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Resize Disk 1 Partition 2 to 384.0 MB\r\n",
@@ -53,16 +53,16 @@
     ],
     "queued_operations": [
         {
-            "id": "665535e6-c40a-44fe-b335-fbcd591ea93c",
+            "id": "5a394a06-1a2e-4875-bdea-661e4f6dea38",
             "payload": {
                 "adjacent_free_bytes": "788529152",
                 "target_size_bytes": "402653184"
             },
-            "script_sha256": "b94f2d1af1dbba225a04c5093ab11dd8d808ebb1c3027c86410ae4ffad5b60ce",
+            "script_sha256": "c421bb48b9d270f323d41bf2223cef3632eebb39d2c0ea28558617332d25a4bd",
             "summary": "Resize Partition - Disk 1 Partition 2",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "6002248010491C97D9EF24756AD36D39",
+                "disk_unique_id": "60022480D3FF6AE2D13796A896AD9303",
                 "drive_letter": "E",
                 "kind": "Partition",
                 "offset_bytes": "16777216",
@@ -75,15 +75,15 @@
         }
     ],
     "review": {
-        "fingerprint": "ab5b47822e7565457b6ddef4dde9387025e6943f29672eb46b98bf705752843a",
-        "layout_hash": "8f60a9fd13d1f87ad1112feafcee9aa05daaf7577d75f5da92359012f9e830d9",
+        "fingerprint": "efb5cfe1aebf5fa50f7e08c7431175456fce98d2ba72bb846469772ea7f65897",
+        "layout_hash": "621fd6beda6ce1ae2d94afb8d088554f62936172dbfdad485b3ff0af9818a2ee",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "run_id": "296069e7-d217-4b7d-b364-78ef16b1207c",
     "scenario_id": "vhd.create-format-resize-delete",
     "schema_version": 1,
-    "started_utc": "2026-11-10T15:55:10.494Z",
+    "started_utc": "2026-11-11T08:39:14.252Z",
     "status": "Passed",
     "step": "resize",
     "tool": "partition-manager-scenario-step"

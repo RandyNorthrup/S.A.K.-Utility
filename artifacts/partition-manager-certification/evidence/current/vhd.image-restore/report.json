@@ -4,18 +4,18 @@
     "scenario_id":  "vhd.image-restore",
     "status":  "Passed",
     "failure":  "",
-    "run_id":  "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
-    "started_utc":  "2026-11-10T16:10:39.5615428Z",
-    "completed_utc":  "2026-11-10T16:21:17.0326134Z",
+    "run_id":  "296069e7-d217-4b7d-b364-78ef16b1207c",
+    "started_utc":  "2026-11-11T08:51:26.8158406Z",
+    "completed_utc":  "2026-11-11T08:57:13.6570701Z",
     "code":  {
-                 "digest":  "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
-                 "commit":  "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+                 "digest":  "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
+                 "commit":  "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
                  "dirty":  false
              },
     "binaries":  {
-                     "client_sha256":  "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
-                     "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-                     "app_sha256":  "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+                     "client_sha256":  "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0",
+                     "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+                     "app_sha256":  "90c5e5d3ac84b7e29298aa4cdce915a4839be416fcadaadba2d9aa635985e3bf"
                  },
     "rig":  {
                 "machine_manufacturer":  "innotek GmbH",
@@ -42,11 +42,11 @@
                       "expect":  "success",
                       "report":  "create_image.client.json",
                       "observed":  {
-                                       "client_pid":  8880,
+                                       "client_pid":  5508,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  8156,
-                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_pid":  8772,
+                                       "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -57,11 +57,11 @@
                       "expect":  "success",
                       "report":  "restore_image.client.json",
                       "observed":  {
-                                       "client_pid":  1232,
+                                       "client_pid":  2836,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  7524,
-                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_pid":  1864,
+                                       "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -71,17 +71,17 @@
     "artifacts":  [
                       {
                           "path":  "independent.json",
-                          "sha256":  "5e25dae947e5c33cd204d3291706dc083ebe55a01e89764e2063e8f793a86497",
+                          "sha256":  "02a5abf31a4c3cb9668cdfb84d6edd5920b4e30c09d96cf870d67215c5165c7b",
                           "bytes":  1720
                       },
                       {
                           "path":  "create_image.client.json",
-                          "sha256":  "adbd0c9fdd2b3fbed9b5f5ea805f6c73dab26df42e4c7d0a664cca5410c40085",
+                          "sha256":  "c151bc434c292ea3361ba68e6e44454bec320a1de6727f1fbbdd500eabe004da",
                           "bytes":  3531
                       },
                       {
                           "path":  "restore_image.client.json",
-                          "sha256":  "4d81b6c97b8c5512f95e217f574bad6b053b07912399d7cc60adfe2b4987932a",
+                          "sha256":  "c468fbfdd61f705e1ff433984ea844e379fc9e7ddf1d6f290ef23e1c17178ca8",
                           "bytes":  3744
                       }
                   ]
