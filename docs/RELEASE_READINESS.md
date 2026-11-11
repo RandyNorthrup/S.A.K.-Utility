@@ -2748,10 +2748,35 @@ the block, the test fails until the About line follows it.
 A sweep of every user-visible string in `src`, `include` and `resources` (the About, Help, licence and credits
 HTML, tooltips and status text, the wiki link, the AI assistant's instructions, skills, workflows and tool
 descriptions) for "not yet tested", "real hardware", "certif", "uncertified", "HardwareCertified", "VM-only",
-"tested", "experimental" and the like found no other stale testing or certification claim. "certification" is left
-only as an internal sidebar key (shown as "Writable Mac Disks") and in code and comments; the APFS safety note's
-"validated with Apple's own tools" says what the block says; XFS's blocked format and repair ("until the bundled
-tools have been tested") is not a claim about the certification and is unchanged.
+"tested", "experimental" and the like found no other stale certification claim. "certification" is left only as an
+internal sidebar key (shown as "Writable Mac Disks") and in code and comments, and the APFS safety note's "validated
+with Apple's own tools" says what the block says.
+
+Partition Manager's file-system registry (`src/core/partition_file_system_registry.cpp`), shown in Properties and
+Inspect as "Blocked filesystem actions" and "Required bundled tools", was checked entry by entry against what ships
+(`tools/filesystem/manifest.json`: e2fsck, mke2fs and resize2fs for ext2/3/4, newfs_hfs and fsck_hfs for HFS+/HFSX;
+`scripts/stage_portable_release.ps1`: sak_apfs_writer_cli and sak_hfs_writer_cli). On the owner's ruling:
+- XFS read "Format and repair remain blocked until the bundled tools have been tested" and listed xfs_repair as a
+  required bundled tool; Btrfs read "Deep btrfs check requires manifest-approved btrfs" and "Repair remains disabled
+  until destructive VM and lab testing proves safe scenarios" and listed btrfs. Neither tool ships. Each now reads
+  "<XFS|Btrfs> format, repair and the deep check (<tool>) are not available because S.A.K. Utility includes no
+  <XFS|Btrfs> tools", with no required tool.
+- HFS+/HFSX: "... remain blocked pending testing of each operation" and "... remain blocked in this milestone" now
+  say the same operations "are not available".
+- Linux swap: "resize remains partition-only until operation-specific proof exists" now reads "resize changes only
+  the partition, not the swap area inside it".
+- ext2/3/4 named other file systems' writes ("XFS/Btrfs/APFS write workflows and HFS+ file writes are not enabled by
+  ext tool approval", two of which exist now); it now says what is blocked for ext: "Writing files inside an ext
+  volume is not available: S.A.K. Utility reads and copies out ext files only".
+- Unchanged, as true and promising nothing: NTFS, FAT12/16/32, exFAT (none blocked, no tools), ReFS (no entry: the
+  generic "no registered filesystem workflow"), APFS (its size, Fusion, sealed, case-sensitive and locked-volume
+  limits; sak_apfs_writer_cli ships) and the unidentified entry.
+`fileSystemRegistry_requiresOnlyToolsThatShip` (test_partition_manager_core) reads the manifest and the staging
+script at test time and fails when an entry names a tool that does not ship for it, when a manifest tool is missing
+from an entry it serves, or when a blocked action promises a future ("until ... tested", "pending testing",
+"milestone", "yet") or an approval. The registry pins and the XFS Properties/Inspect rows in test_partition_manager_panel
+are updated. Drills: the whole old registry, xfs_repair alone put back, and the swap promise alone put back each
+turned the tests red.
 
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 

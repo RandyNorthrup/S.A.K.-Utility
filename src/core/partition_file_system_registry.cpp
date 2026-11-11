@@ -50,8 +50,8 @@ PartitionFileSystemCapability extCapability(const QString& id) {
              QStringLiteral("Confirmed ext format and repair through Pending Operations"),
              QStringLiteral("Confirmed ext grow through Pending Operations and resize2fs"),
              QStringLiteral("Confirmed ext shrink with e2fsck, resize2fs, and partition shrink")},
-        .blocked_actions = {QStringLiteral("XFS/Btrfs/APFS write workflows and HFS+ file writes "
-                                           "are not enabled by ext tool approval")},
+        .blocked_actions = {QStringLiteral("Writing files inside an ext volume is not available: "
+                                           "S.A.K. Utility reads and copies out ext files only")},
         .required_tools = {QStringLiteral("e2fsck"),
                            QStringLiteral("mke2fs"),
                            QStringLiteral("resize2fs")},
@@ -67,11 +67,13 @@ PartitionFileSystemCapability xfsCapability() {
                                   QStringLiteral("Read-only superblock metadata inspection"),
                                   QStringLiteral(
                                       "Original read-only superblock metadata consistency check")},
-            .blocked_actions =
-                {QStringLiteral("Deep xfs_repair check requires manifest-approved xfs_repair"),
-                 QStringLiteral(
-                     "Format and repair remain blocked until the bundled tools have been tested")},
-            .required_tools = {QStringLiteral("xfs_repair")},
+            // No XFS tool ships (tools/filesystem/manifest.json holds e2fsprogs and hfsprogs
+            // only), so none is listed as a required bundled tool, and the blocked entry says
+            // why plainly: it read as though tools were bundled and awaiting tests.
+            .blocked_actions = {QStringLiteral(
+                "XFS format, repair and the deep check (xfs_repair) are not available because "
+                "S.A.K. Utility includes no XFS tools")},
+            .required_tools = {},
             .non_native = true};
 }
 
@@ -84,11 +86,11 @@ PartitionFileSystemCapability btrfsCapability() {
                                   QStringLiteral("Read-only superblock metadata inspection"),
                                   QStringLiteral(
                                       "Original read-only superblock metadata consistency check")},
-            .blocked_actions = {QStringLiteral("Deep btrfs check requires manifest-approved btrfs"),
-                                QStringLiteral(
-                                    "Repair remains disabled until destructive VM and lab testing "
-                                    "proves safe scenarios")},
-            .required_tools = {QStringLiteral("btrfs")},
+            // No Btrfs tool ships either; see xfsCapability.
+            .blocked_actions = {QStringLiteral(
+                "Btrfs format, repair and the deep check (btrfs check) are not available because "
+                "S.A.K. Utility includes no Btrfs tools")},
+            .required_tools = {},
             .non_native = true};
 }
 
@@ -139,12 +141,10 @@ PartitionFileSystemCapability hfsCapability(const QString& id, const QString& di
              QStringLiteral("Confirmed sparse-staged HFS+/HFSX format through bundled newfs_hfs"),
              QStringLiteral("Confirmed sparse-staged HFS+/HFSX repair through bundled fsck_hfs")},
         .blocked_actions =
-            {QStringLiteral("Raw-partition HFS+ complex file delete, unbounded folder-tree delete, "
-                            "and broad allocation growth remain blocked "
-                            "pending testing of each operation"),
-             QStringLiteral(
-                 "Inline/broad attribute growth and recursive extents-overflow-file overflow "
-                 "remain blocked in this milestone")},
+            {QStringLiteral("Raw-partition HFS+ complex file delete, unbounded folder-tree delete "
+                            "and broad allocation growth are not available"),
+             QStringLiteral("Inline or broad attribute growth and recursive extents-overflow-file "
+                            "overflow are not available")},
         .required_tools = {QStringLiteral("newfs_hfs"),
                            QStringLiteral("fsck_hfs"),
                            QStringLiteral("sak_hfs_writer_cli")},
@@ -202,8 +202,8 @@ PartitionFileSystemCapability linuxSwapCapability() {
                                   QStringLiteral(
                                       "Confirmed Linux swap format through Pending Operations")},
             .blocked_actions = {QStringLiteral(
-                "Repair is not applicable to Linux swap; resize remains partition-only until "
-                "operation-specific proof exists")},
+                "Repair does not apply to Linux swap, and resize changes only the partition, not "
+                "the swap area inside it")},
             .required_tools = {},
             .non_native = true};
 }

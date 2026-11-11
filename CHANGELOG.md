@@ -162,6 +162,11 @@ smaller download.
   hardware. It now says what the certification of this version found, in its words: what ran on virtual machines and
   virtual disks, the two real disks some operations were tested on, and the limits (internal SATA drives were not
   tested; SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize). Back up before changing a disk.
+- **File system support says plainly what is not available** - Partition Manager's Properties said XFS format and
+  repair "remain blocked until the bundled tools have been tested" and listed xfs_repair as a required bundled tool,
+  and Btrfs listed btrfs; neither ships. They now say these are not available because S.A.K. Utility includes no XFS
+  or Btrfs tools. HFS+ and Linux swap limits no longer promise later testing, and ext says that writing files inside
+  an ext volume is not available.
 - **Readable download line** - The Windows and Linux ISO downloads' "Downloading..." line is the app's success
   green, readable in both themes.
 - **"Wi-Fi" and "network adapters"** - Wi-Fi is spelled one way everywhere (the Network Management tabs, the

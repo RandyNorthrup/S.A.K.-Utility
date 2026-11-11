@@ -1231,6 +1231,13 @@ void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
         QCOMPARE(metadata,
                  QStringLiteral("Block size: 4096\nData blocks: 32768\nMetadata sanity: XFS "
                                 "superblock geometry is internally consistent"));
+        // No XFS tool ships, and the dialog says so plainly, with no "Required bundled tools"
+        // row (it read "Format and repair remain blocked until the bundled tools have been
+        // tested" beside "Required bundled tools: xfs_repair").
+        QCOMPARE(propertyTableValue(properties, QStringLiteral("Blocked filesystem actions")),
+                 QStringLiteral("XFS format, repair and the deep check (xfs_repair) are not "
+                                "available because S.A.K. Utility includes no XFS tools"));
+        QVERIFY(propertyTableValue(properties, QStringLiteral("Required bundled tools")).isEmpty());
         propertiesInspected = true;
         dialog->reject();
     });
@@ -1253,6 +1260,13 @@ void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
         QCOMPARE(metadata,
                  QStringLiteral("Block size: 4096\nData blocks: 32768\nMetadata sanity: XFS "
                                 "superblock geometry is internally consistent"));
+        // No XFS tool ships, and the dialog says so plainly, with no "Required bundled tools"
+        // row (it read "Format and repair remain blocked until the bundled tools have been
+        // tested" beside "Required bundled tools: xfs_repair").
+        QCOMPARE(propertyTableValue(properties, QStringLiteral("Blocked filesystem actions")),
+                 QStringLiteral("XFS format, repair and the deep check (xfs_repair) are not "
+                                "available because S.A.K. Utility includes no XFS tools"));
+        QVERIFY(propertyTableValue(properties, QStringLiteral("Required bundled tools")).isEmpty());
         inspectInspected = true;
         dialog->reject();
     });

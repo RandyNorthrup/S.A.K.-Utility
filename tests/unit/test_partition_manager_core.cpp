@@ -1787,6 +1787,7 @@ private Q_SLOTS:
     void apfsWriter_crashBeforeCheckpointDurableRollsBack();
     void apfsWriter_crashDuringReplaceKeepsTheOldFile();  // M-A4-6
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
+    void fileSystemRegistry_requiresOnlyToolsThatShip();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
     void fileSystemToolRunner_buildsReadOnlyCheckCommands();
@@ -2717,7 +2718,7 @@ void verifyExtRegistryCapability() {
                           QStringLiteral("Confirmed ext shrink with e2fsck, resize2fs, and "
                                          "partition shrink")}));
     QVERIFY(PartitionFileSystemRegistry::actionSummary(ext4.blocked_actions)
-                .contains(QStringLiteral("XFS/Btrfs/APFS write workflows")));
+                .contains(QStringLiteral("Writing files inside an ext volume is not available")));
 }
 
 void verifyMetadataOnlyRegistryCapabilities() {
@@ -2728,11 +2729,13 @@ void verifyMetadataOnlyRegistryCapabilities() {
                 .contains(QStringLiteral("metadata consistency check")));
     // Only the FIRST of the two blocked entries was probed; deleting the second -- the one
     // that actually keeps format/repair off the table -- failed nothing.
+    // No XFS tool ships: the entry says so plainly and names no required bundled tool (it read
+    // as though bundled tools awaited testing, and listed xfs_repair as one).
     QCOMPARE(xfs.blocked_actions,
-             QStringList({QStringLiteral("Deep xfs_repair check requires manifest-approved "
-                                         "xfs_repair"),
-                          QStringLiteral("Format and repair remain blocked until the bundled "
-                                         "tools have been tested")}));
+             QStringList({QStringLiteral("XFS format, repair and the deep check (xfs_repair) are "
+                                         "not available because S.A.K. Utility includes no XFS "
+                                         "tools")}));
+    QVERIFY(xfs.required_tools.isEmpty());
 
     const auto btrfs = PartitionFileSystemRegistry::capabilityFor(QStringLiteral("Btrfs"));
     QCOMPARE(btrfs.id, QStringLiteral("btrfs"));
@@ -2740,9 +2743,10 @@ void verifyMetadataOnlyRegistryCapabilities() {
     QVERIFY(PartitionFileSystemRegistry::actionSummary(btrfs.available_actions)
                 .contains(QStringLiteral("metadata consistency check")));
     QCOMPARE(btrfs.blocked_actions,
-             QStringList({QStringLiteral("Deep btrfs check requires manifest-approved btrfs"),
-                          QStringLiteral("Repair remains disabled until destructive VM and lab "
-                                         "testing proves safe scenarios")}));
+             QStringList({QStringLiteral("Btrfs format, repair and the deep check (btrfs check) "
+                                         "are not available because S.A.K. Utility includes no "
+                                         "Btrfs tools")}));
+    QVERIFY(btrfs.required_tools.isEmpty());
 }
 
 void verifyApfsRegistryCapability() {
@@ -2819,11 +2823,10 @@ void verifyHfsRegistryCapability() {
     // exact list now states by its absence rather than by a !contains() probe.
     QCOMPARE(hfs.blocked_actions,
              QStringList({QStringLiteral("Raw-partition HFS+ complex file delete, unbounded "
-                                         "folder-tree delete, and broad allocation growth remain "
-                                         "blocked pending testing of each operation"),
-                          QStringLiteral("Inline/broad attribute growth and recursive "
-                                         "extents-overflow-file overflow remain blocked in this "
-                                         "milestone")}));
+                                         "folder-tree delete and broad allocation growth are not "
+                                         "available"),
+                          QStringLiteral("Inline or broad attribute growth and recursive "
+                                         "extents-overflow-file overflow are not available")}));
     // Flattening the tools to one string meant a fourth approved binary, a reorder, or a
     // collapse into a single mangled entry all still satisfied the three contains() probes.
     QCOMPARE(hfs.required_tools,
@@ -2845,8 +2848,8 @@ void verifySwapAndUnknownRegistryCapability() {
     // The operative resize clause could be dropped while "Repair is not applicable" still
     // matched -- swap resize could quietly unblock with this test green.
     QCOMPARE(swap.blocked_actions,
-             QStringList{QStringLiteral("Repair is not applicable to Linux swap; resize remains "
-                                        "partition-only until operation-specific proof exists")});
+             QStringList{QStringLiteral("Repair does not apply to Linux swap, and resize changes "
+                                        "only the partition, not the swap area inside it")});
 
     const auto unknown = PartitionFileSystemRegistry::capabilityFor(QString());
     QCOMPARE(unknown.id, QStringLiteral("unknown"));
@@ -2859,6 +2862,152 @@ void verifySwapAndUnknownRegistryCapability() {
     QCOMPARE(unknown.blocked_actions,
              QStringList{
                  QStringLiteral("Filesystem must be identified before S.A.K. can offer actions")});
+}
+
+namespace {
+
+/// Every label the registry is asked about, the file systems Windows reports and the ones
+/// S.A.K. detects itself; ReFS and an empty label take the generic and unidentified entries.
+const QStringList& registryLabels() {
+    static const QStringList kLabels{QStringLiteral("NTFS"),
+                                     QStringLiteral("FAT"),
+                                     QStringLiteral("FAT12"),
+                                     QStringLiteral("FAT16"),
+                                     QStringLiteral("FAT32"),
+                                     QStringLiteral("exFAT"),
+                                     QStringLiteral("ReFS"),
+                                     QStringLiteral("ext2"),
+                                     QStringLiteral("ext3"),
+                                     QStringLiteral("ext4"),
+                                     QStringLiteral("XFS"),
+                                     QStringLiteral("Btrfs"),
+                                     QStringLiteral("HFS+"),
+                                     QStringLiteral("hfsplus"),
+                                     QStringLiteral("HFSX"),
+                                     QStringLiteral("APFS"),
+                                     QStringLiteral("Linux swap"),
+                                     QStringLiteral("swap"),
+                                     QString()};
+    return kLabels;
+}
+
+/// What ships beside the app: the third-party tools tools/filesystem/manifest.json pins, each
+/// with the file systems it serves, and the S.A.K.-built tools scripts/stage_portable_release.ps1
+/// copies into the package.
+struct ShippedTools {
+    QHash<QString, QStringList> manifest;  // tool id -> file systems
+    QSet<QString> staged;                  // S.A.K.-built executables, without ".exe"
+};
+
+ShippedTools shippedTools(QString* error) {
+    const QDir repo(
+        QDir(QString::fromUtf8(SAK_TEST_FIXTURE_DIR)).filePath(QStringLiteral("../..")));
+    ShippedTools shipped;
+    QFile manifest(repo.filePath(QStringLiteral("tools/filesystem/manifest.json")));
+    if (!manifest.open(QIODevice::ReadOnly)) {
+        *error = QStringLiteral("cannot read %1").arg(manifest.fileName());
+        return shipped;
+    }
+    const auto tools = QJsonDocument::fromJson(manifest.readAll())
+                           .object()
+                           .value(QStringLiteral("tools"))
+                           .toArray();
+    for (const auto& value : tools) {
+        const QJsonObject tool = value.toObject();
+        QStringList file_systems;
+        for (const auto& file_system : tool.value(QStringLiteral("file_systems")).toArray()) {
+            file_systems << file_system.toString().toLower();
+        }
+        shipped.manifest.insert(tool.value(QStringLiteral("id")).toString(), file_systems);
+    }
+    QFile stage(repo.filePath(QStringLiteral("scripts/stage_portable_release.ps1")));
+    if (!stage.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        *error = QStringLiteral("cannot read %1").arg(stage.fileName());
+        return shipped;
+    }
+    static const QRegularExpression kStaged(QStringLiteral(
+        R"re(Copy-RequiredFile \(Join-Path \$buildRoot "([A-Za-z0-9_]+)\.exe"\))re"));
+    auto matches = kStaged.globalMatch(QString::fromUtf8(stage.readAll()));
+    while (matches.hasNext()) {
+        shipped.staged.insert(matches.next().captured(1));
+    }
+    if (shipped.manifest.isEmpty() || shipped.staged.isEmpty()) {
+        *error = QStringLiteral("no tools read from the manifest or the staging script");
+    }
+    return shipped;
+}
+
+/// The names a capability answers to, lower case, as the manifest spells file systems.
+QSet<QString> capabilityNames(const PartitionFileSystemCapability& capability) {
+    QSet<QString> names{capability.id.toLower()};
+    for (const QString& alias : capability.aliases) {
+        names.insert(alias.toLower());
+    }
+    return names;
+}
+
+/// What is wrong with the entry for @p label: a required tool that does not ship for it, or a
+/// blocked action that promises a future ("until ... tested", "pending testing", "milestone",
+/// "yet") or an approval.
+QStringList registryEntryProblems(const QString& label, const ShippedTools& shipped) {
+    static const QRegularExpression kPromise(
+        QStringLiteral(R"((until|pending)\b.*\b(test|tested|testing|proof|proves)\b|)"
+                       R"(\bmilestone\b|\bnot yet\b|\byet\b|manifest-approved)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto capability = PartitionFileSystemRegistry::capabilityFor(label);
+    const QSet<QString> names = capabilityNames(capability);
+    const auto serves_this = [&names](const QString& file_system) {
+        return names.contains(file_system);
+    };
+    QStringList wrong;
+    for (const QString& tool : capability.required_tools) {
+        const bool in_manifest = std::ranges::any_of(shipped.manifest.value(tool), serves_this);
+        if (!in_manifest && !shipped.staged.contains(tool)) {
+            wrong << QStringLiteral("%1 requires %2, which does not ship for it").arg(label, tool);
+        }
+    }
+    for (const QString& blocked : capability.blocked_actions) {
+        if (blocked.contains(kPromise)) {
+            wrong << QStringLiteral("%1 blocked action promises a future or an approval: %2")
+                         .arg(label, blocked);
+        }
+    }
+    return wrong;
+}
+
+/// Each manifest tool that the entry of a file system it serves does not name.
+QStringList unnamedManifestTools(const ShippedTools& shipped) {
+    QStringList wrong;
+    for (auto tool = shipped.manifest.cbegin(); tool != shipped.manifest.cend(); ++tool) {
+        for (const QString& file_system : tool.value()) {
+            const auto capability = PartitionFileSystemRegistry::capabilityFor(file_system);
+            if (!capability.required_tools.contains(tool.key())) {
+                wrong << QStringLiteral("%1 ships for %2, but its entry does not name it")
+                             .arg(tool.key(), file_system);
+            }
+        }
+    }
+    return wrong;
+}
+
+}  // namespace
+
+// The owner, 2026-11-11: the XFS entry read "Format and repair remain blocked until the bundled
+// tools have been tested" and listed xfs_repair as a required bundled tool, and Btrfs listed
+// btrfs; neither ships. Every entry's "Required bundled tools" is pinned to what ships, both
+// ways: each tool it names is in the manifest for that file system or is a S.A.K.-built tool the
+// package stages, and each manifest tool is named by every file system it serves. And no blocked
+// action promises a future ("until ... tested", "pending testing", "milestone", "not yet") or
+// names a tool as needing approval: what is not available says so plainly.
+void PartitionManagerCoreTests::fileSystemRegistry_requiresOnlyToolsThatShip() {
+    QString error;
+    const ShippedTools shipped = shippedTools(&error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QStringList wrong = unnamedManifestTools(shipped);
+    for (const QString& label : registryLabels()) {
+        wrong << registryEntryProblems(label, shipped);
+    }
+    QVERIFY2(wrong.isEmpty(), qPrintable(wrong.join(QLatin1Char('\n'))));
 }
 
 QString sha256Hex(const QByteArray& bytes) {
