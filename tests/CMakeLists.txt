@@ -1687,6 +1687,11 @@ target_link_libraries(test_main_window_help PRIVATE
 target_include_directories(test_main_window_help PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+# The About tab's testing line is checked against the certification document's generated "What
+# the site may say" block, read at test time.
+target_compile_definitions(test_main_window_help PRIVATE
+    SAK_CERTIFICATION_DOC="${CMAKE_CURRENT_SOURCE_DIR}/../docs/PARTITION_MANAGER_CERTIFICATION.md"
+)
 add_test(NAME test_main_window_help COMMAND test_main_window_help
          -o "${TEST_OUTPUT_DIR}/test_main_window_help.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")

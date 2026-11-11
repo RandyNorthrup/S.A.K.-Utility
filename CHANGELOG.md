@@ -158,6 +158,10 @@ smaller download.
 - **The selected tab shows its icon whole** - The selected tab drew its icon as a flat white silhouette, which lost
   every line inside it. It now shows the icon's own drawing, in the colours every other tab shows it in, and is
   filled like the page under it with a blue outline, so the icon reads on it in both themes.
+- **The About tab says what was tested** - It said Partition Manager had not been tested through the app on real
+  hardware. It now says what the certification of this version found, in its words: what ran on virtual machines and
+  virtual disks, the two real disks some operations were tested on, and the limits (internal SATA drives were not
+  tested; SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize). Back up before changing a disk.
 - **Readable download line** - The Windows and Linux ISO downloads' "Downloading..." line is the app's success
   green, readable in both themes.
 - **"Wi-Fi" and "network adapters"** - Wi-Fi is spelled one way everywhere (the Network Management tabs, the

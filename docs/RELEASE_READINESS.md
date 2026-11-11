@@ -2732,6 +2732,27 @@ scripts read `Process.ExitCode` under Windows PowerShell 5.1, so no customer pat
   all 22 before, green after (weakest: light Application Management 0.59 of its pixels, light Partition Manager's
   weakest quarter 0.46).
 
+### The About tab's testing line (2026-11-11)
+
+The screenshot recapture after 18614fca found the About tab still saying "Partition Manager has not yet been tested
+through the app on real hardware. Back up first." (`src/gui/main_window.cpp`), false since the certification tested
+it on two real disks. On the owner's ruling its Testing line now quotes the generated "What the site may say" block of
+`docs/PARTITION_MANAGER_CERTIFICATION.md`: all six sentences, so the limits (internal SATA drives were not tested;
+SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize) and "Back up before changing a disk." are in it.
+`aboutTestingTextQuotesTheCertification` (test_main_window_help) reads that block from the document at test time
+(`SAK_CERTIFICATION_DOC`) and fails when an About sentence is not one of the block's in its order, when a limit (a
+sentence with "not") or the "Back up" sentence is left out, or when "Apple-certified" appears. Red on the old line,
+red with the sanitize limit dropped and with "Back up" reworded, green on the new line. When new evidence changes
+the block, the test fails until the About line follows it.
+
+A sweep of every user-visible string in `src`, `include` and `resources` (the About, Help, licence and credits
+HTML, tooltips and status text, the wiki link, the AI assistant's instructions, skills, workflows and tool
+descriptions) for "not yet tested", "real hardware", "certif", "uncertified", "HardwareCertified", "VM-only",
+"tested", "experimental" and the like found no other stale testing or certification claim. "certification" is left
+only as an internal sidebar key (shown as "Writable Mac Disks") and in code and comments; the APFS safety note's
+"validated with Apple's own tools" says what the block says; XFS's blocked format and repair ("until the bundled
+tools have been tested") is not a claim about the certification and is unchanged.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and
