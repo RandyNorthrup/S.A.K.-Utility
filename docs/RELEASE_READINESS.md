@@ -3044,6 +3044,37 @@ Residual risks (stated):
 - The TSan row now runs the logger through an in-memory sink (`test_logger_concurrency`); the Windows file sink
   itself is covered by `test_logger` under the normal suite.
 
+### Release signing isolation and workflow pinning (2026-11-11)
+
+From the security audit of a brief forwarded by the owner, who ruled that signing moves to OIDC.
+
+- `release.yml` is four jobs. **build** (read-only token, no secrets, no environment, `persist-credentials: false`)
+  does everything up to the signing catalog, including the filesystem tool check before signing, with no GitHub
+  Actions cache: the toolchain action's new `cache: 'false'` turns off the pip, Qt, vcpkg and pinned-download caches,
+  so nothing another workflow wrote reaches what ships. It hands on the unsigned package (one zip, which keeps its
+  empty and dot-named folders, such as `tools/chocolatey/.chocolatey`, that a folder artifact drops) and the release
+  check tools, for one day. **sign** runs in the `release` environment with `id-token: write` only and no checkout:
+  download-artifact, an unpack with .NET's own ZipFile, azure/login (OIDC, `allow-no-subscriptions`), the signing
+  action with `cache-dependencies: false` and `exclude-environment-credential: true`, an inline check that every
+  catalog file is Valid, signed by CN=Randy Northrup and timestamped, and the signed zip handed on for one day. The
+  pins of azure/login and the signing action are win-app-migrator's. **verify** (read-only, no environment) re-pins
+  the packaged filesystem tools between the application's own check before and after, verifies Authenticode, runs
+  the signed readiness gate from a build/Release laid out from the signed package, and builds the archive and
+  SHA256SUMS. **publish** (tags only, `contents: write`, not in the environment) re-checks the uploaded zips, the
+  binaries' signatures and every SHA256SUMS line, then creates the release. The repository does not attest, so
+  neither does this. A tag that disagrees with VERSION is refused before anything is built.
+- The `release` environment exists and admits `v*` tags only. AZURE_CLIENT_ID and AZURE_TENANT_ID stay repository
+  secrets (they are IDs, and secrets cannot be read to copy them). AZURE_CLIENT_SECRET is no longer referenced and
+  stays until OIDC has signed once. Azure must hold a federated credential for
+  `repo:RandyNorthrup/S.A.K.-Utility:environment:release` on the signing app registration; nothing here can see it.
+- A pre-release tag (one with a hyphen, such as `v0.9.3-rc.1`) runs build, sign and verify and stops before
+  publish: that is the dry run of signing now that the environment refuses a manual run from a branch.
+- Elsewhere: `persist-credentials: false` on every checkout in ci, nightly and secret-scan; the TruffleHog action
+  pinned to the 3.99.7 image by tag and digest (it ran `latest`); gitleaks in secret-scan checked against a pinned
+  SHA-256 rather than the same release's checksums file; OpenCppCoverage installed as 0.9.9; Python as 3.14.10
+  rather than "3.14"; and expressions moved out of `run:` blocks into `env:` (the version in release, the shard
+  numbers and job results in ci). The old single job's unused `id-token: write` is gone with it.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

@@ -48,6 +48,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
@@ -182,6 +184,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
@@ -204,9 +208,12 @@ jobs:
     - name: Plan this shard
       id: plan
       shell: pwsh
+      env:
+        SHARD_COUNT: ${{ strategy.job-total }}
+        SHARD_INDEX: ${{ strategy.job-index }}
       run: |
         & scripts/plan_ci_build_shards.ps1 -BuildDir build `
-          -ShardCount ${{ strategy.job-total }} -ShardIndex ${{ strategy.job-index }} `
+          -ShardCount $env:SHARD_COUNT -ShardIndex $env:SHARD_INDEX `
           -LabelRegex $env:T2_LABELS -OutFile build/ci-plan.json
         $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
         Write-Host "Targets: $($plan.build_targets -join ' ')"
@@ -336,6 +343,8 @@ jobs:
     - name: Checkout code
       if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Download shard logs
       if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
@@ -383,9 +392,12 @@ jobs:
     - name: Every T2 job passed
       if: ${{ always() }}
       shell: pwsh
+      env:
+        STATIC_GATES_RESULT: ${{ needs.static-gates.result }}
+        BUILD_TEST_RESULT: ${{ needs.build-test.result }}
       run: |
-        Write-Host "static-gates: ${{ needs.static-gates.result }}"
-        Write-Host "build-test:   ${{ needs.build-test.result }}"
-        if ('${{ needs.static-gates.result }}' -ne 'success' -or '${{ needs.build-test.result }}' -ne 'success') {
+        Write-Host "static-gates: $env:STATIC_GATES_RESULT"
+        Write-Host "build-test:   $env:BUILD_TEST_RESULT"
+        if ($env:STATIC_GATES_RESULT -ne 'success' -or $env:BUILD_TEST_RESULT -ne 'success') {
           exit 1
         }
