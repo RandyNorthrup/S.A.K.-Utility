@@ -8,6 +8,7 @@
 #include "sak/error_codes.h"
 #include "sak/pst_parser.h"
 
+#include "../support/large_allocation_counter.h"
 #include "../support/pst_fixture.h"
 
 #include <QByteArray>
@@ -235,6 +236,7 @@ private Q_SLOTS:
     void unicode4kZeroDeclaredSizeStoresUncompressed();
     void unicode4kBadZlibFailsClosed();
     void unicode4kDecompressSizeMismatchFailsClosed();
+    void unicode4kZlibBombStopsAtTheDeclaredSize();
     void compressibleEncryptedPstDecodesRootPropertyContext();
     void reusableOpenableFixtureReachesRootFolder();
     void reusableFolderedFixtureReachesChildViaHierarchyTable();
@@ -782,6 +784,39 @@ void TestPstParser::unicode4kDecompressSizeMismatchFailsClosed() {
     QCOMPARE(error_spy.count(), 1);
     QCOMPARE(error_spy.takeFirst().at(0).toString(),
              QStringLiteral("Failed to build folder hierarchy: Block decompression failed"));
+}
+
+void TestPstParser::unicode4kZlibBombStopsAtTheDeclaredSize() {
+    // A 4K block of 32 KiB that the footer says inflates to 4 KiB, holding a stream that inflates
+    // to 32 MiB. qUncompress grew its buffer to the stream's real size before the declared size
+    // was compared, so one crafted block cost tens of MiB; decoding now stops one byte past the
+    // declared size. Built before counting: compressing the bomb is the test's allocation.
+    constexpr qsizetype kBombBytes = 32LL * 1024 * 1024;
+    constexpr uint16_t kDeclaredBytes = 4096;
+    const QByteArray bomb = qCompress(QByteArray(kBombBytes, '\0'), 9).mid(4);
+    QVERIFY(bomb.size() < std::numeric_limits<uint16_t>::max());
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(buildUnicode4kBlockStore(bomb, kDeclaredBytes));
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    int large_allocations = 0;
+    {
+        const sak::test::LargeAllocationCounter counter;
+        parser.open(temp_file.fileName());
+        large_allocations = sak::test::LargeAllocationCounter::count();
+    }
+    QVERIFY(!parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(error_spy.takeFirst().at(0).toString(),
+             QStringLiteral("Failed to build folder hierarchy: Block decompression failed"));
+    QVERIFY2(large_allocations == 0,
+             qPrintable(QStringLiteral("%1 allocations of 1 MiB or more decoding a block that "
+                                       "declares %2 bytes")
+                            .arg(large_allocations)
+                            .arg(kDeclaredBytes)));
 }
 
 void TestPstParser::compressibleEncryptedPstDecodesRootPropertyContext() {

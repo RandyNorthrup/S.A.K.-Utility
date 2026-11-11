@@ -318,6 +318,7 @@ set(SAK_PARTITION_CORE_RUNTIME_SOURCES
     ../src/core/file_recovery_engine.cpp
     ../src/core/apfs_crypto.cpp
     ../src/core/apfs_keybag.cpp
+    ../src/core/bounded_inflate.cpp
     ../src/core/partition_apfs_file_system_reader.cpp
     ../src/core/partition_apfs_writer.cpp
     ../src/core/partition_ext_file_system_reader.cpp
@@ -670,6 +671,7 @@ add_executable(partition_filesystem_probe_certifier
     certification/partition_filesystem_probe_certifier.cpp
     ../src/core/apfs_crypto.cpp
     ../src/core/apfs_keybag.cpp
+    ../src/core/bounded_inflate.cpp
     ../src/core/partition_apfs_file_system_reader.cpp
     ../src/core/partition_apfs_writer.cpp
     ../src/core/partition_file_system_detector.cpp
@@ -687,7 +689,7 @@ set_target_properties(partition_filesystem_probe_certifier PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(partition_filesystem_probe_certifier PRIVATE
-    Qt6::Core sak_lzfse
+    Qt6::Core ZLIB::ZLIB sak_lzfse
 )
 target_include_directories(partition_filesystem_probe_certifier PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -724,6 +726,7 @@ add_executable(file_management_live_certifier
     ../src/core/no_follow_fs.cpp
     ../src/core/apfs_crypto.cpp
     ../src/core/apfs_keybag.cpp
+    ../src/core/bounded_inflate.cpp
     ../src/core/partition_apfs_file_system_reader.cpp
     ../src/core/partition_apfs_writer.cpp
     ../src/core/partition_ext_file_system_reader.cpp
@@ -2504,6 +2507,29 @@ add_test(NAME test_fuzz_hfs_reader COMMAND test_fuzz_hfs_reader
          -o "${TEST_OUTPUT_DIR}/test_fuzz_hfs_reader.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_hfs_reader")
+
+# test_bounded_inflate - inflateZlibExactly, the one zlib decode the APFS and HFS+ decmpfs readers
+# and the PST 4K block reader share: exact size, refusal past it, and a 64 MiB bomb that declares
+# 4 KiB decoded without one allocation of 1 MiB or more.
+add_executable(test_bounded_inflate
+    unit/test_bounded_inflate.cpp
+    support/large_allocation_counter.h
+)
+set_target_properties(test_bounded_inflate PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_bounded_inflate PRIVATE
+    sak_partition_fs
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_bounded_inflate PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_bounded_inflate COMMAND test_bounded_inflate
+         -o "${TEST_OUTPUT_DIR}/test_bounded_inflate.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_bounded_inflate")
 
 # test_fuzz_apfs_reader - deterministic mutation-fuzz of the read-only APFS container reader
 # (G14-7). An APFS container has a 64 MiB floor, so instead of whole-buffer mutation the harness

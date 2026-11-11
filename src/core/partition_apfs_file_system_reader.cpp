@@ -1567,7 +1567,9 @@ private:
                 result->blockers.append(QStringLiteral("APFS file-system record limit exceeded"));
                 return false;
             }
-            parseFileSystemRecord(node, entry);
+            if (!parseFileSystemRecord(node, entry, result)) {
+                return false;
+            }
         }
         return true;
     }
@@ -1609,9 +1611,12 @@ private:
             childMapping->physical_address, childMapping->encrypted, depth + 1, state, result);
     }
 
-    void parseFileSystemRecord(const QByteArray& node, const BtreeEntryView& entry) {
+    // False (blocker appended) when the record makes the volume unreadable as a whole.
+    [[nodiscard]] bool parseFileSystemRecord(const QByteArray& node,
+                                             const BtreeEntryView& entry,
+                                             PartitionApfsFileReadResult* result) {
         if (entry.key_length < kApfsFsKeyBytes) {
-            return;
+            return true;
         }
         const uint64_t key = le64(node, entry.key_offset);
         const uint64_t objectId = key & kApfsObjIdMask;
@@ -1623,10 +1628,29 @@ private:
         } else if (recordType == kApfsRecordFileExtent) {
             parseFileExtentRecord(node, entry, objectId);
         } else if (recordType == kApfsRecordXattr) {
-            parseXattrRecord(node, entry, objectId);
+            return parseXattrRecord(node, entry, objectId, result);
         } else if (recordType == kApfsRecordCryptoState) {
             parseCryptoStateRecord(node, entry, objectId);
         }
+        return true;
+    }
+
+    // An object holds one extended attribute per name; its key is the B-tree key. A second record
+    // with the same key is corruption or a crafted volume, and which value the reader would keep
+    // -- for com.apple.decmpfs, the file's content -- would depend on scan order. Refuse it.
+    [[nodiscard]] bool claimXattrName(uint64_t objectId,
+                                      const QString& name,
+                                      PartitionApfsFileReadResult* result) {
+        const auto key = std::pair<uint64_t, QString>(objectId, name);
+        if (xattrNames_.contains(key)) {
+            result->blockers.append(
+                QStringLiteral("APFS object %1 has two extended attributes named %2")
+                    .arg(objectId)
+                    .arg(name));
+            return false;
+        }
+        xattrNames_.insert(key);
+        return true;
     }
 
     // A6 per-file encryption: capture a j_crypto_state record's wrapped per-file key,
@@ -1693,30 +1717,36 @@ private:
         }
     }
 
-    void parseXattrRecord(const QByteArray& node, const BtreeEntryView& entry, uint64_t objectId) {
+    [[nodiscard]] bool parseXattrRecord(const QByteArray& node,
+                                        const BtreeEntryView& entry,
+                                        uint64_t objectId,
+                                        PartitionApfsFileReadResult* result) {
         if (entry.key_length < kApfsXattrKeyNameOffset ||
             entry.value_length < kApfsXattrValueXdataOffset) {
-            return;
+            return true;
         }
         const uint16_t nameLen = le16(node, entry.key_offset + kApfsXattrKeyNameLenOffset);
         if (nameLen == 0 || entry.key_offset + kApfsXattrKeyNameOffset + nameLen >
                                 entry.key_offset + entry.key_length) {
-            return;
+            return true;
         }
         const qsizetype payloadLen = std::max<qsizetype>(0, nameLen - 1);
         const QString name = QString::fromUtf8(
             node.mid(entry.key_offset + kApfsXattrKeyNameOffset,
                      std::min<qsizetype>(
                          payloadLen, node.size() - (entry.key_offset + kApfsXattrKeyNameOffset))));
+        if (!claimXattrName(objectId, name, result)) {
+            return false;
+        }
         const uint16_t flags = le16(node, entry.value_offset + kApfsXattrValueFlagsOffset);
         const uint16_t xdataLen = le16(node, entry.value_offset + kApfsXattrValueXdataLenOffset);
         if ((flags & kApfsXattrDataEmbedded) == 0) {
             captureStreamXattr(node, entry, objectId, name, flags);
-            return;
+            return true;
         }
         if (entry.value_offset + kApfsXattrValueXdataOffset + xdataLen >
             entry.value_offset + entry.value_length) {
-            return;
+            return true;
         }
         const QByteArray xdata = node.mid(entry.value_offset + kApfsXattrValueXdataOffset,
                                           xdataLen);
@@ -1726,6 +1756,7 @@ private:
         if (name == QLatin1StringView(kApfsXattrNameCompressed)) {
             decmpfsByInode_.insert(objectId, xdata);
         }
+        return true;
     }
 
     void parseDirectoryRecord(const QByteArray& node,
@@ -2143,7 +2174,32 @@ private:
             }
             entries.append(*entry);
         }
+        if (!btreeEntriesDisjoint(entries)) {
+            *wellFormed = false;
+            return {};
+        }
         return entries;
+    }
+
+    // Each table entry owns its key bytes and its value bytes. Two entries pointing into the same
+    // bytes alias one record: a crafted 1 MiB leaf of 100,000 entries naming one 64 KiB attribute
+    // value had the scan copy that value 100,000 times. A node whose entries overlap is invalid.
+    [[nodiscard]] static bool btreeEntriesDisjoint(const QVector<BtreeEntryView>& entries) {
+        QVector<std::pair<qsizetype, qsizetype>> ranges;
+        ranges.reserve(entries.size() * 2);
+        for (const auto& entry : entries) {
+            ranges.append({entry.key_offset, entry.key_offset + entry.key_length});
+            if (entry.value_length > 0) {
+                ranges.append({entry.value_offset, entry.value_offset + entry.value_length});
+            }
+        }
+        std::sort(ranges.begin(), ranges.end());
+        for (qsizetype index = 1; index < ranges.size(); ++index) {
+            if (ranges.at(index).first < ranges.at(index - 1).second) {
+                return false;
+            }
+        }
+        return true;
     }
 
     [[nodiscard]] static bool btreeTableInBounds(const QByteArray& node,
@@ -2334,6 +2390,9 @@ private:
     // A7 (A-h): every embedded named attribute (ACL, Finder info, user xattrs)
     // keyed by inode object id, surfaced on a file read result.
     QMultiHash<uint64_t, QPair<QString, QByteArray>> xattrsByInode_;
+    // Every (object id, attribute name) seen in the scan, embedded or data-stream, so a second
+    // record for one attribute is refused instead of shadowing or repeating the first.
+    QSet<std::pair<uint64_t, QString>> xattrNames_;
 };
 
 struct ApfsExportFrame {

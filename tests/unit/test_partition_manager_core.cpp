@@ -39,6 +39,7 @@
 #include "../support/byte_writer.h"
 #include "../support/ext_fixture.h"
 #include "../support/hfs_fixture.h"
+#include "../support/large_allocation_counter.h"
 
 #include <QBuffer>
 #include <QCryptographicHash>
@@ -923,6 +924,8 @@ QByteArray testDecmpfsChunk(const QByteArray& chunk) {
     return compressed;
 }
 
+QByteArray testDecmpfsResourceForkFromChunks(const QVector<QByteArray>& chunks);
+
 QByteArray testDecmpfsResourceFork(const QByteArray& content) {
     const int chunkCount = std::max<int>(1, static_cast<int>((content.size() + 65'535) / 65'536));
     QVector<QByteArray> chunks;
@@ -930,6 +933,13 @@ QByteArray testDecmpfsResourceFork(const QByteArray& content) {
         chunks.append(
             testDecmpfsChunk(content.mid(static_cast<qsizetype>(index) * 65'536, 65'536)));
     }
+    return testDecmpfsResourceForkFromChunks(chunks);
+}
+
+// A type-4 (zlib) resource fork holding @p chunks exactly as given, so a test can store a chunk
+// no encoder would write.
+QByteArray testDecmpfsResourceForkFromChunks(const QVector<QByteArray>& chunks) {
+    const auto chunkCount = static_cast<int>(chunks.size());
     const qsizetype tableBytes = 4 + static_cast<qsizetype>(chunkCount) * 8;
     qsizetype chunkBytes = 0;
     for (const auto& chunk : chunks) {
@@ -1050,10 +1060,7 @@ void writeHfsCompressedCatalog(QByteArray* image, const HfsFileRecordFixture& pa
     writeBe32(image, kTestHfsHeaderOffset + kTestHfsFileCountOffset, 3);
 }
 
-QByteArray hfsCompressedDecmpfsRecord(uint32_t type,
-                                      const QByteArray& content,
-                                      int inlineSpareBytes) {
-    const QByteArray attrPayload = testCompressedAttrPayload(type, content);
+QByteArray hfsCompressedDecmpfsRecord(const QByteArray& attrPayload, int inlineSpareBytes) {
     QByteArray paddedPayload = attrPayload;
     paddedPayload.append(QByteArray(inlineSpareBytes, '\0'));
     QByteArray decmpfsRecord = hfsAttributeRecord(kTestHfsCompressedFileId,
@@ -1118,14 +1125,15 @@ void writeHfsCompressedResourceFork(QByteArray* image, const QByteArray& resourc
                   static_cast<qsizetype>(kTestHfsCompressedResourceStartBlock * kTestHfsBlockSize));
 }
 
-QByteArray hfsCompressedFixture(uint32_t type,
-                                const QByteArray& content,
-                                int inlineSpareBytes = 0) {
+// The compressed-file image from its two stored parts: the com.apple.decmpfs attribute value
+// (header plus any inline payload) and the resource fork (empty for an inline type).
+QByteArray hfsCompressedFixtureFromParts(const QByteArray& attrPayload,
+                                         const QByteArray& resourceForkBytes,
+                                         int inlineSpareBytes) {
     QByteArray image = hfsReaderAttributeFixture();
 
     HfsFileRecordFixture packed;
     packed.file_id = kTestHfsCompressedFileId;
-    const QByteArray resourceForkBytes = testCompressedResourceForkBytes(type, content);
     if (!resourceForkBytes.isEmpty()) {
         packed.resource_fork =
             HfsForkFixture{.logical_size = static_cast<uint64_t>(resourceForkBytes.size()),
@@ -1134,10 +1142,18 @@ QByteArray hfsCompressedFixture(uint32_t type,
                            .first_block_count = kTestHfsCompressedResourceBlocks};
     }
     writeHfsCompressedCatalog(&image, packed);
-    const QByteArray decmpfsRecord = hfsCompressedDecmpfsRecord(type, content, inlineSpareBytes);
-    writeHfsCompressedAttributeNode(&image, decmpfsRecord);
+    writeHfsCompressedAttributeNode(&image,
+                                    hfsCompressedDecmpfsRecord(attrPayload, inlineSpareBytes));
     writeHfsCompressedResourceFork(&image, resourceForkBytes);
     return image;
+}
+
+QByteArray hfsCompressedFixture(uint32_t type,
+                                const QByteArray& content,
+                                int inlineSpareBytes = 0) {
+    return hfsCompressedFixtureFromParts(testCompressedAttrPayload(type, content),
+                                         testCompressedResourceForkBytes(type, content),
+                                         inlineSpareBytes);
 }
 
 QByteArray hfsEmptyFileRecordFixture(uint32_t fileId) {
@@ -1625,6 +1641,7 @@ private Q_SLOTS:
     void hfsFileSystemReader_rejectsVolumeGeometryPastDeviceEnd();
     void hfsFileSystemReader_exportsDirectoriesAndResourceForks();
     void hfsFileSystemReader_checksCatalogConsistency();
+    void hfsFileSystemReader_refusesLeafChainLoops();
     void hfsFileSystemReader_scansAttributeKeys();
     void hfsFileSystemReader_usesOverflowExtentsForCatalogAndFiles();
     void hfsFileSystemReader_readsResourceForksWithOverflowExtents();
@@ -1635,6 +1652,7 @@ private Q_SLOTS:
     void hfsFileSystemWriter_replacesResourceForkWithinAllocatedBlocks();
     void hfsFileSystemWriter_growsForksWithAllocationBitmapUpdates();
     void hfsFileSystemReader_readsDecmpfsCompressedFiles();
+    void hfsFileSystemReader_stopsADecmpfsZlibBombAtItsDeclaredSize();
     void hfsFileSystemWriter_replacesDecmpfsCompressedContent();
     void hfsFileSystemWriter_splitsCatalogRootLeafOnCreate();
     void hfsFileSystemWriter_mutatesDepthTwoCatalogs();
@@ -1691,6 +1709,7 @@ private Q_SLOTS:
     void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
     void apfsWriter_streamedWriteFailsClosedOnShortPayloadSource();
     void apfsCompression_decmpfsHeaderRequiresCmpfSignature();
+    void apfsCompression_zlibBombStopsAtItsDeclaredSize();
     void apfsWriter_createOrReplaceWriteHonorsCompression();
     void apfsWriter_multiChunkStreamedWriteSpansDataChunks();
     void apfsWriter_fileCommitSucceedsAfterMultiChunkSpill();
@@ -1738,6 +1757,7 @@ private Q_SLOTS:
     void apfsWriter_formatsMultiVolumeContainer();
     void apfsWriter_insertsInlineCompressedFile();
     void apfsWriter_insertsSparseAndXattrFile();
+    void apfsFileSystemReader_refusesAliasedOrRepeatedXattrs();
     void apfsWriter_unalignedSparsePreserveAndDelete();
     void apfsWriter_clonesFileSharingPhysicalExtents();
     void apfsWriter_addsHardLinkToFile();
@@ -5540,6 +5560,79 @@ void PartitionManagerCoreTests::hfsFileSystemReader_exportsDirectoriesAndResourc
              expectedResource);
 }
 
+// Each HFS+ B-tree walk follows the leaves' forward links. A leaf linking back into the chain made
+// a walk read the same records again until its 200,000-node cap: a listing repeated its entries,
+// a consistency scan counted them again, and the extents-overflow load kept appending them to
+// every fork's extent list. A node reached twice now stops the walk, in each of the four walks.
+void PartitionManagerCoreTests::hfsFileSystemReader_refusesLeafChainLoops() {
+    const auto loopLeafOne = [](QByteArray image, qsizetype leafOffset) {
+        writeBe32(&image, leafOffset, 1);  // node 1's forward link: node 1
+        return image;
+    };
+    const auto loops = [](const QStringList& blockers, const QString& tree) {
+        return blockers.join(' ').contains(
+            QStringLiteral("HFS+ %1 leaf chain loops back to node 1").arg(tree));
+    };
+
+    QByteArray catalogLoop =
+        loopLeafOne(hfsReaderFixture(),
+                    static_cast<qsizetype>((kTestHfsCatalogStartBlock + 1) * kTestHfsBlockSize));
+    QBuffer listingBuffer(&catalogLoop);
+    QVERIFY(listingBuffer.open(QIODevice::ReadOnly));
+    const auto listing =
+        PartitionHfsFileSystemReader::listDirectory(&listingBuffer, QStringLiteral("/"), 256);
+    QVERIFY(!listing.ok);
+    QVERIFY2(loops(listing.blockers, QStringLiteral("catalog")),
+             qPrintable(listing.blockers.join(QStringLiteral("; "))));
+
+    QBuffer scanBuffer(&catalogLoop);
+    QVERIFY(scanBuffer.open(QIODevice::ReadOnly));
+    const auto catalogScan = PartitionHfsFileSystemReader::checkConsistency(&scanBuffer, 1000);
+    QVERIFY(!catalogScan.ok);
+    QVERIFY2(loops(catalogScan.blockers, QStringLiteral("catalog")),
+             qPrintable(catalogScan.blockers.join(QStringLiteral("; "))));
+
+    QByteArray attributesLoop =
+        loopLeafOne(hfsReaderAttributeFixture(),
+                    static_cast<qsizetype>((kTestHfsAttributesStartBlock + 1) * kTestHfsBlockSize));
+    QBuffer attributesBuffer(&attributesLoop);
+    QVERIFY(attributesBuffer.open(QIODevice::ReadOnly));
+    const auto attributeScan = PartitionHfsFileSystemReader::checkConsistency(&attributesBuffer,
+                                                                              1000);
+    QVERIFY(!attributeScan.ok);
+    QVERIFY2(loops(attributeScan.blockers, QStringLiteral("attributes")),
+             qPrintable(attributeScan.blockers.join(QStringLiteral("; "))));
+
+    QByteArray extentsLoop =
+        loopLeafOne(hfsReaderOverflowFixture(nullptr),
+                    static_cast<qsizetype>(kTestHfsExtentsStartBlock * kTestHfsBlockSize +
+                                           kTestHfsExtentsNodeSize));
+    QBuffer extentsBuffer(&extentsLoop);
+    QVERIFY(extentsBuffer.open(QIODevice::ReadOnly));
+    const auto extentsListing =
+        PartitionHfsFileSystemReader::listDirectory(&extentsBuffer, QStringLiteral("/"), 256);
+    QVERIFY(!extentsListing.ok);
+    QVERIFY2(loops(extentsListing.blockers, QStringLiteral("extents overflow")),
+             qPrintable(extentsListing.blockers.join(QStringLiteral("; "))));
+
+    // Control: the same four fixtures without the loop open cleanly, so each refusal above is the
+    // loop and not something else wrong with the image.
+    QByteArray plain = hfsReaderFixture();
+    QBuffer plainBuffer(&plain);
+    QVERIFY(plainBuffer.open(QIODevice::ReadOnly));
+    QVERIFY(PartitionHfsFileSystemReader::listDirectory(&plainBuffer, QStringLiteral("/"), 256).ok);
+    QByteArray plainAttributes = hfsReaderAttributeFixture();
+    QBuffer plainAttributesBuffer(&plainAttributes);
+    QVERIFY(plainAttributesBuffer.open(QIODevice::ReadOnly));
+    QVERIFY(PartitionHfsFileSystemReader::checkConsistency(&plainAttributesBuffer, 1000).ok);
+    QByteArray plainOverflow = hfsReaderOverflowFixture(nullptr);
+    QBuffer plainOverflowBuffer(&plainOverflow);
+    QVERIFY(plainOverflowBuffer.open(QIODevice::ReadOnly));
+    QVERIFY(
+        PartitionHfsFileSystemReader::listDirectory(&plainOverflowBuffer, QStringLiteral("/"), 256)
+            .ok);
+}
+
 void PartitionManagerCoreTests::hfsFileSystemReader_checksCatalogConsistency() {
     QByteArray image = hfsReaderFixture();
     QBuffer buffer(&image);
@@ -6086,6 +6179,55 @@ void PartitionManagerCoreTests::hfsFileSystemReader_readsDecmpfsCompressedFiles(
     QVERIFY(!unsupportedRead.ok);
     QVERIFY(unsupportedRead.blockers.join(' ').contains(
         QStringLiteral("compression type 9 is not supported")));
+}
+
+// A type-4 resource fork whose one chunk declares a 64 KiB block and inflates to 32 MiB. The
+// chunk decoder used qUncompress, which grows its buffer to whatever the stream holds before the
+// size is compared; it now stops one byte past the declared size.
+void PartitionManagerCoreTests::hfsFileSystemReader_stopsADecmpfsZlibBombAtItsDeclaredSize() {
+    constexpr qsizetype kChunkBytes = 65'536;
+    constexpr qsizetype kBombBytes = 32LL * 1024 * 1024;
+    constexpr uint64_t kReadCap = 1024 * 1024;
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const auto imageWithChunk = [&](const QString& name, const QByteArray& chunk) {
+        const QString path = temp.filePath(name);
+        const bool written = writeBytes(
+            path,
+            hfsCompressedFixtureFromParts(testDecmpfsHeader(4, static_cast<uint64_t>(kChunkBytes)),
+                                          testDecmpfsResourceForkFromChunks({chunk}),
+                                          0));
+        return written ? path : QString();
+    };
+
+    // Control: the same layout with an honest chunk reads back, so the fork is well formed.
+    const QByteArray honest(kChunkBytes, 'R');
+    const QString honestPath = imageWithChunk(QStringLiteral("hfs-decmpfs-honest.img"),
+                                              testDecmpfsChunk(honest));
+    QVERIFY(!honestPath.isEmpty());
+    const auto honestRead = PartitionHfsFileSystemReader::readFileFromImage(
+        honestPath, QStringLiteral("/packed.bin"), kReadCap);
+    QVERIFY2(honestRead.ok, qPrintable(honestRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(honestRead.data, honest);
+
+    const QString bombPath = imageWithChunk(QStringLiteral("hfs-decmpfs-bomb.img"),
+                                            qCompress(QByteArray(kBombBytes, '\0'), 9).mid(4));
+    QVERIFY(!bombPath.isEmpty());
+    int large_allocations = 0;
+    bool refused = false;
+    {
+        const sak::test::LargeAllocationCounter counter;
+        const auto bombRead = PartitionHfsFileSystemReader::readFileFromImage(
+            bombPath, QStringLiteral("/packed.bin"), kReadCap);
+        refused = !bombRead.ok && !bombRead.blockers.isEmpty();
+        large_allocations = sak::test::LargeAllocationCounter::count();
+    }
+    QVERIFY(refused);
+    QVERIFY2(large_allocations == 0,
+             qPrintable(QStringLiteral("%1 allocations of 1 MiB or more reading a chunk that "
+                                       "declares %2 bytes")
+                            .arg(large_allocations)
+                            .arg(kChunkBytes)));
 }
 
 namespace {
@@ -10561,6 +10703,40 @@ void PartitionManagerCoreTests::apfsCompression_decmpfsHeaderRequiresCmpfSignatu
     QVERIFY(!apfsParseDecmpfsHeader(bad).has_value());
 }
 
+// An inline decmpfs payload or a ZLIB_RSRC chunk is a zlib stream next to a declared size. The
+// decoder used qUncompress, which grows its buffer to whatever the stream holds, and compared
+// sizes only afterwards: 32 KiB of crafted bytes declaring 4 KiB allocated their way to 32 MiB.
+// Decoding now stops one byte past the declared size.
+void PartitionManagerCoreTests::apfsCompression_zlibBombStopsAtItsDeclaredSize() {
+    constexpr qsizetype kBombBytes = 32LL * 1024 * 1024;
+    constexpr uint64_t kDeclaredBytes = 4096;
+    const QByteArray bomb = qCompress(QByteArray(kBombBytes, '\0'), 9).mid(4);
+    int large_allocations = 0;
+    bool inline_refused = false;
+    bool chunk_refused = false;
+    {
+        const sak::test::LargeAllocationCounter counter;
+        inline_refused = !apfsDecodeInlineZlibPayload(bomb, kDeclaredBytes).has_value();
+        chunk_refused =
+            !apfsDecodeResourceChunk(bomb, kDeclaredBytes, kApfsCompressZlibRsrc).has_value();
+        large_allocations = sak::test::LargeAllocationCounter::count();
+    }
+    QVERIFY(inline_refused);
+    QVERIFY(chunk_refused);
+    QVERIFY2(large_allocations == 0,
+             qPrintable(QStringLiteral("%1 allocations of 1 MiB or more decoding a bomb that "
+                                       "declares %2 bytes")
+                            .arg(large_allocations)
+                            .arg(kDeclaredBytes)));
+
+    // Control: an honest stream of the same content decodes, so the refusal is the size bound.
+    const QByteArray honest(static_cast<qsizetype>(kDeclaredBytes), '\0');
+    const auto decoded = apfsDecodeInlineZlibPayload(apfsEncodeInlineZlibPayload(honest),
+                                                     kDeclaredBytes);
+    QVERIFY(decoded.has_value());
+    QCOMPARE(*decoded, honest);
+}
+
 // The streamed+compress fail-closed leg of the create-or-replace compression
 // test. A free function (not a slot) so QtTest does not run it standalone.
 static void verifyStreamedCompressedWriteFailsClosed(const QString& img,
@@ -14298,6 +14474,137 @@ void PartitionManagerCoreTests::apfsWriter_insertsSparseAndXattrFile() {
 
     // The container superblock stays self-consistent (object checksum + xid).
     verifyApfsContainerSuperblockChecksum(out);
+}
+
+namespace {
+
+// True for a checksum-valid file-system-tree leaf (layout as in locateApfsSingleFileExtentPaddr).
+bool isApfsFsTreeLeaf(const QByteArray& node) {
+    return PartitionApfsWriter::verifyObjectChecksum(node) &&
+           apfsLe32(node, 0x1C) == 0x00'00'00'0EU && apfsLe16(node, 0x22) == 0;
+}
+
+// The table-of-contents offsets of the xattr records named @p first and @p second in fs-tree leaf
+// @p node, -1 for one not there. A j_xattr_key is obj_id_and_type (type 4 in its top nibble), a
+// le16 name_len counting the NUL, then the name.
+std::pair<int, int> apfsXattrTocSlots(const QByteArray& node,
+                                      const QByteArray& first,
+                                      const QByteArray& second) {
+    const int keyAreaStart = 0x38 + apfsLe16(node, 0x2A);
+    std::pair<int, int> slots{-1, -1};
+    for (quint32 index = 0; index < apfsLe32(node, 0x24); ++index) {
+        const int toc = 0x38 + (static_cast<int>(index) * 8);
+        const int key = keyAreaStart + apfsLe16(node, toc);
+        if ((apfsLe64(node, key) >> 60) != 4ULL) {
+            continue;  // not an xattr record
+        }
+        const QByteArray name = node.mid(key + 10, apfsLe16(node, key + 8) - 1);
+        slots.first = name == first ? toc : slots.first;
+        slots.second = name == second ? toc : slots.second;
+    }
+    return slots;
+}
+
+// Every fs-tree leaf in @p image holding xattr records named @p first and @p second is handed to
+// @p patch with its key area start and the two records' table-of-contents offsets, then
+// restamped. Returns how many leaves were patched, -1 if a restamp failed.
+template <class PatchFn>
+int patchApfsXattrLeaves(QByteArray* image,
+                         const QByteArray& first,
+                         const QByteArray& second,
+                         PatchFn patch) {
+    int patched = 0;
+    for (qsizetype base = 0; base + 4096 <= image->size(); base += 4096) {
+        QByteArray node = image->mid(base, 4096);
+        if (!isApfsFsTreeLeaf(node)) {
+            continue;
+        }
+        const auto [firstToc, secondToc] = apfsXattrTocSlots(node, first, second);
+        if (firstToc < 0 || secondToc < 0) {
+            continue;
+        }
+        patch(&node, 0x38 + apfsLe16(node, 0x2A), firstToc, secondToc);
+        if (!PartitionApfsWriter::stampObjectChecksum(&node)) {
+            return -1;
+        }
+        std::copy(node.cbegin(), node.cend(), image->begin() + base);
+        ++patched;
+    }
+    return patched;
+}
+
+}  // namespace
+
+// Two ways one extended attribute can be answered twice. Aliased: two table entries in a leaf
+// point at the same record bytes, so a crafted 1 MiB leaf of 100,000 entries naming one 64 KiB
+// value made the scan hold 100,000 copies of it. Repeated: two records with the same key, where
+// the value the reader kept (for com.apple.decmpfs, the file's content) was whichever came last.
+void PartitionManagerCoreTests::apfsFileSystemReader_refusesAliasedOrRepeatedXattrs() {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString base = dir.filePath(QStringLiteral("xattr-base.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = base,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("SAKXA"),
+                 .options = options})
+                .ok);
+    const QByteArray first = QByteArrayLiteral("user.alpha");
+    const QByteArray second = QByteArrayLiteral("user.omega");  // same length: renamable in place
+    const QString out = dir.filePath(QStringLiteral("xattr-out.apfs"));
+    const auto commit = PartitionApfsWriter::commitImageOnlyFileInsert(
+        {.source_image_path = base,
+         .written_image_path = out,
+         .file_name = QStringLiteral("tagged.bin"),
+         .file_data = QByteArrayLiteral("tagged\n"),
+         .xattrs = {{first, QByteArrayLiteral("first value")},
+                    {second, QByteArrayLiteral("second value")}},
+         .options = options});
+    QVERIFY2(commit.ok, qPrintable(commit.blockers.join(QStringLiteral("; "))));
+    const auto readTagged = [](const QString& path) {
+        return PartitionApfsFileSystemReader::readFileFromImage(path,
+                                                                QStringLiteral("/tagged.bin"),
+                                                                64);
+    };
+
+    // Control: each attribute reads back once.
+    const auto clean = readTagged(out);
+    QVERIFY2(clean.ok, qPrintable(clean.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(clean.xattrs.size(), 2);
+
+    QByteArray aliased = readBytes(out);
+    QVERIFY(patchApfsXattrLeaves(
+                &aliased, first, second, [](QByteArray* node, int, int firstToc, int secondToc) {
+                    std::copy(node->cbegin() + firstToc,
+                              node->cbegin() + firstToc + 8,
+                              node->begin() + secondToc);
+                }) > 0);
+    const QString aliasedPath = dir.filePath(QStringLiteral("xattr-aliased.apfs"));
+    QVERIFY(writeBytes(aliasedPath, aliased));
+    const auto aliasedRead = readTagged(aliasedPath);
+    QVERIFY(!aliasedRead.ok);
+    QVERIFY2(aliasedRead.blockers.join(' ').contains(QStringLiteral("is structurally invalid")),
+             qPrintable(aliasedRead.blockers.join(QStringLiteral("; "))));
+
+    QByteArray repeated = readBytes(out);
+    QVERIFY(
+        patchApfsXattrLeaves(&repeated,
+                             first,
+                             second,
+                             [&first](QByteArray* node, int keyAreaStart, int, int secondToc) {
+                                 const int key = keyAreaStart + apfsLe16(*node, secondToc);
+                                 std::copy(first.cbegin(), first.cend(), node->begin() + key + 10);
+                             }) > 0);
+    const QString repeatedPath = dir.filePath(QStringLiteral("xattr-repeated.apfs"));
+    QVERIFY(writeBytes(repeatedPath, repeated));
+    const auto repeatedRead = readTagged(repeatedPath);
+    QVERIFY(!repeatedRead.ok);
+    QVERIFY2(repeatedRead.blockers.join(' ').contains(
+                 QStringLiteral("has two extended attributes named user.alpha")),
+             qPrintable(repeatedRead.blockers.join(QStringLiteral("; "))));
 }
 
 void PartitionManagerCoreTests::apfsWriter_unalignedSparsePreserveAndDelete() {

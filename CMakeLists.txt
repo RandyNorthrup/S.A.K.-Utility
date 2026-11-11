@@ -413,6 +413,7 @@ set(SAK_FOUNDATION_SOURCES
 set(SAK_PARTITION_FS_SOURCES
     src/core/apfs_crypto.cpp
     src/core/apfs_keybag.cpp
+    src/core/bounded_inflate.cpp
     src/core/partition_apfs_file_system_reader.cpp
     src/core/partition_apfs_writer.cpp
     src/core/partition_ext_file_system_reader.cpp
@@ -427,6 +428,7 @@ set(SAK_PARTITION_FS_SOURCES
     src/core/decompressor_factory.cpp
     include/sak/apfs_crypto.h
     include/sak/apfs_keybag.h
+    include/sak/bounded_inflate.h
     include/sak/partition_apfs_file_system_reader.h
     include/sak/partition_apfs_writer.h
     include/sak/partition_ext_file_system_reader.h
