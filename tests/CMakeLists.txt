@@ -6801,6 +6801,8 @@ message(STATUS "Added unit test: test_email_report_generator")
 # app's zip engine (QZipWriter builds the hostile fixtures). No network at runtime.
 add_executable(test_package_internalization_engine
     unit/test_package_internalization_engine.cpp
+    support/large_allocation_counter.h
+    support/loopback_http_server.h
 )
 set_target_properties(test_package_internalization_engine PROPERTIES
     AUTOMOC ON

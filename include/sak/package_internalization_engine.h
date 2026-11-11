@@ -17,6 +17,7 @@
 #include "sak/script_rewriter.h"
 
 #include <QByteArray>
+#include <QCryptographicHash>
 #include <QHash>
 #include <QObject>
 #include <QPair>
@@ -26,6 +27,7 @@
 #include <QVector>
 
 #include <atomic>
+#include <functional>
 #include <optional>
 namespace sak {
 
@@ -211,6 +213,50 @@ public:
                                                const QString& expected_base64,
                                                const QString& algorithm);
 
+    // --- Verified downloads, streamed to disk --------------------------------------------------
+
+    /// @brief What a download's bytes must hash to: the algorithm, and the test its digest must
+    ///        pass (a hex checksum from an install script, a base64 PackageHash from the feed).
+    struct DownloadDigest {
+        QCryptographicHash::Algorithm algorithm{QCryptographicHash::Sha256};
+        std::function<bool(const QByteArray& digest)> matches;
+    };
+
+    /// @brief The digest an installer's declared checksum names, compared as hex without regard
+    ///        to case; the algorithm comes from @p checksum_type, or the checksum's hex length when
+    ///        the type is empty. Nullopt when nothing was declared or the algorithm cannot be
+    ///        resolved: such an installer cannot be verified (see installerVerified). Pure.
+    [[nodiscard]] static std::optional<DownloadDigest> installerDigest(
+        const QString& expected_checksum, const QString& checksum_type);
+
+    /// @brief The digest a feed PackageHash names, compared as exact base64. Nullopt when the
+    ///        hash is empty or the algorithm unknown (see nupkgHashMatches). Pure.
+    [[nodiscard]] static std::optional<DownloadDigest> nupkgDigest(const QString& expected_base64,
+                                                                   const QString& algorithm);
+
+    /// @brief Outcome of downloadVerifiedFile.
+    struct VerifiedDownload {
+        bool ok{false};         ///< downloaded, verified and in place
+        bool cancelled{false};  ///< a Stop was observed
+        bool mismatch{false};   ///< downloaded whole, but the bytes do not match the digest
+        int http_status{0};
+        QString error;          ///< why it failed, when none of the above
+    };
+
+    /// @brief Download @p url and put it at @p output_path only when its bytes match @p digest.
+    ///
+    /// Memory stays bounded at any size up to offline::kMaxBinarySizeBytes: the body streams to a
+    /// file in the process's temp folder (QDir::tempPath, the per-run folder the app points TEMP
+    /// at), and is then copied into place through a QSaveFile while being hashed, so the bytes
+    /// that land are exactly the bytes that were checked and nothing is committed on a mismatch.
+    /// Callers decide which URLs are acceptable (isAllowedInstallerUrl) before calling.
+    [[nodiscard]] static VerifiedDownload downloadVerifiedFile(
+        const QUrl& url,
+        const QString& output_path,
+        const DownloadDigest& digest,
+        const NetworkCancelCheck& cancel,
+        const NetworkProgressCallback& progress = {});
+
     // --- The app's one NuGet feed client (FindPackagesById) -----------------------------------
 
     /// @brief Why a feed listing is, or is not, the authoritative version list.
@@ -280,8 +326,8 @@ public:
 
     /// @brief Download @p package_id @p version's .nupkg to @p output_path, authenticated
     ///        against the PackageHash the feed publishes for that version. The hash is looked
-    ///        up FIRST (no trusted hash, no download), the bytes are verified before anything
-    ///        reaches disk, and the file is written with QSaveFile.
+    ///        up FIRST (no trusted hash, no download), and the file goes through
+    ///        downloadVerifiedFile, so nothing reaches @p output_path unless it matches.
     [[nodiscard]] static NupkgDownload downloadVerifiedNupkg(const QString& package_id,
                                                              const QString& version,
                                                              const QString& output_path,
@@ -340,19 +386,13 @@ private:
                                            const QString& tools_dir,
                                            InternalizationResult& result);
 
-    /// @brief Fetch one binary to @p output_path (with progress + fail-closed
-    ///        write). Returns the bytes on success; std::nullopt on cancellation
-    ///        (silent) or a real failure (which emits the error via the result).
-    [[nodiscard]] std::optional<QByteArray> fetchBinary(const QString& url,
-                                                        const QString& output_path,
-                                                        InternalizationResult& result);
-
-    /// @brief True iff @p body passes its declared checksum (fail-closed on a
-    ///        missing checksum). Emits the error via @p result on failure.
-    [[nodiscard]] bool binaryChecksumOk(const QByteArray& body,
-                                        const QString& url,
-                                        const QHash<QString, QPair<QString, QString>>& checksums,
-                                        InternalizationResult& result);
+    /// @brief Download one binary to @p output_path, verified against its declared checksum
+    ///        (no usable checksum, no download) and streamed to disk. False on cancellation
+    ///        (silent; the caller's gate reports it) or a failure, emitted via @p result.
+    [[nodiscard]] bool fetchVerifiedBinary(const QString& url,
+                                           const QString& output_path,
+                                           const QHash<QString, QPair<QString, QString>>& checksums,
+                                           InternalizationResult& result);
 
     /// @brief Map each primary URL that declares a checksum to its (checksum,
     ///        type) so a downloaded binary can be verified before repack.

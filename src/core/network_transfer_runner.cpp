@@ -25,6 +25,11 @@ namespace {
 
 constexpr int kCancellationPollIntervalMs = sak::kTimerPollingFastMs;
 
+// A streamed body passes through QNetworkReply's read buffer, which this bounds so the socket
+// is throttled instead of the buffer growing, and on to the sink in chunks of this size.
+constexpr qint64 kStreamReadBufferBytes = 256LL * 1024;
+constexpr qsizetype kStreamChunkBytes = 64 * 1024;
+
 // A response with no caller-supplied cap (max_response_bytes <= 0) would let QNetworkReply
 // buffer an arbitrarily large body into memory. Clamp any such request to this bound so no
 // caller can trigger unbounded growth; callers that legitimately need more must opt in.
@@ -212,9 +217,18 @@ public:
         // Bound QNetworkReply's internal read buffer to the response cap so a hostile or
         // oversized body applies backpressure at the socket instead of buffering without limit.
         // max_response_bytes is always positive here (runNetworkTransfer clamps a missing cap).
+        // A streamed body is drained as it arrives, so its buffer is a small fixed window.
         const qint64 buffer_cap = m_request.max_response_bytes;
-        reply->setReadBufferSize(buffer_cap < std::numeric_limits<qint64>::max() ? buffer_cap + 1
-                                                                                 : buffer_cap);
+        if (m_request.body_sink) {
+            m_chunk.resize(kStreamChunkBytes);
+            reply->setReadBufferSize(kStreamReadBufferBytes);
+            QObject::connect(reply, &QNetworkReply::readyRead, this, [this, reply]() {
+                drainToSink(reply);
+            });
+        } else {
+            reply->setReadBufferSize(
+                buffer_cap < std::numeric_limits<qint64>::max() ? buffer_cap + 1 : buffer_cap);
+        }
         auto* timeout_timer = createTimeoutTimer(reply);
         auto* cancel_timer = createCancelTimer(reply);
         connectProgress(reply);
@@ -306,25 +320,62 @@ private:
         m_sinks.result->elapsed_ms = m_elapsed.elapsed();
         m_sinks.result->http_status =
             reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (transferSucceeded(reply)) {
-            QByteArray body = reply->readAll();
-            const qint64 limit = m_request.max_response_bytes;
-            if (limit > 0 && body.size() > limit) {
-                // A small-but-over-cap body delivered in one shot never tripped the
-                // progress guard; reject it here rather than returning oversized data.
-                m_sinks.result->error_message =
-                    QStringLiteral("Response exceeded the maximum allowed size");
-            } else {
-                m_sinks.result->success = true;
-                m_sinks.result->bytes_received = body.size();
-                m_sinks.result->body = std::move(body);
+        if (!transferSucceeded(reply)) {
+            if (m_sinks.result->error_message.isEmpty()) {
+                m_sinks.result->error_message = reply->errorString();
             }
-        } else if (m_sinks.result->error_message.isEmpty()) {
-            m_sinks.result->error_message = reply->errorString();
+        } else if (m_request.body_sink) {
+            // Whatever arrived after the last readyRead goes to the sink too.
+            if (drainToSink(reply)) {
+                m_sinks.result->success = true;
+                m_sinks.result->bytes_received = m_streamed;
+            }
+        } else {
+            takeWholeBody(reply);
         }
         reply->deleteLater();
         m_sinks.owner_thread->quit();
         m_sinks.finished->release();
+    }
+
+    void takeWholeBody(QNetworkReply* reply) {
+        QByteArray body = reply->readAll();
+        const qint64 limit = m_request.max_response_bytes;
+        if (limit > 0 && body.size() > limit) {
+            // A small-but-over-cap body delivered in one shot never tripped the
+            // progress guard; reject it here rather than returning oversized data.
+            m_sinks.result->error_message =
+                QStringLiteral("Response exceeded the maximum allowed size");
+            return;
+        }
+        m_sinks.result->success = true;
+        m_sinks.result->bytes_received = body.size();
+        m_sinks.result->body = std::move(body);
+    }
+
+    // Hand what the reply holds to the body sink, a bounded chunk at a time. False once the
+    // transfer is aborted: the total passed the cap, or the sink could not take a chunk.
+    bool drainToSink(QNetworkReply* reply) {
+        while (reply->bytesAvailable() > 0) {
+            const qint64 got = reply->read(m_chunk.data(), m_chunk.size());
+            if (got <= 0) {
+                break;
+            }
+            m_streamed += got;
+            if (m_streamed > m_request.max_response_bytes) {
+                m_sinks.result->error_message =
+                    QStringLiteral("Response exceeded the maximum allowed size");
+                reply->abort();
+                return false;
+            }
+            if (!m_request.body_sink(m_chunk.constData(), got)) {
+                m_sinks.result->error_message =
+                    QStringLiteral("The response could not be written where it was going");
+                reply->abort();
+                return false;
+            }
+        }
+        return true;
     }
 
     bool transferSucceeded(QNetworkReply* reply) const {
@@ -346,6 +397,8 @@ private:
     NetworkProgressCallback m_progress;
     NetworkTransferSinks m_sinks;
     QElapsedTimer m_elapsed;
+    QByteArray m_chunk;    // the one buffer a streamed body passes through
+    qint64 m_streamed{0};  // bytes handed to the body sink
 };
 
 }  // namespace
@@ -435,13 +488,12 @@ NetworkTransferResult takeNetworkMetadataResult(QNetworkReply* reply) {
     return result;
 }
 
-NetworkTransferResult runNetworkTransfer(const NetworkTransferRequest& request,
-                                         const NetworkCancelCheck& should_cancel,
-                                         const NetworkProgressCallback& progress) {
-    NetworkTransferResult result;
+namespace {
+
+// Why @p request is refused before anything is sent, or empty when it may go.
+QString transferRequestRefusal(const NetworkTransferRequest& request) {
     if (!request.url.isValid() || request.url.isEmpty()) {
-        result.error_message = QStringLiteral("Invalid URL");
-        return result;
+        return QStringLiteral("Invalid URL");
     }
 
     // Restrict to http/https. QNetworkAccessManager also serves file:, qrc:, ftp: and data:
@@ -451,10 +503,9 @@ NetworkTransferResult runNetworkTransfer(const NetworkTransferRequest& request,
     // deliberately NOT enforced here: LAN callers rely on it and QUrl cannot resolve intent.
     const QString scheme = request.url.scheme();
     if (scheme != QStringLiteral("http") && scheme != QStringLiteral("https")) {
-        result.error_message = QStringLiteral(
+        return QStringLiteral(
             "Unsupported URL scheme: only http and https are "
             "allowed");
-        return result;
     }
 
     // A non-positive timeout DISABLES Qt's transfer timeout and leaves the deadline timer
@@ -462,7 +513,26 @@ NetworkTransferResult runNetworkTransfer(const NetworkTransferRequest& request,
     // no should_cancel callback is supplied. Reject it instead of substituting a default: the
     // caller's deadline is a real requirement, and silently inventing one hides the bad input.
     if (request.timeout_ms <= 0) {
-        result.error_message = QStringLiteral("Invalid timeout_ms: must be positive");
+        return QStringLiteral("Invalid timeout_ms: must be positive");
+    }
+
+    // A body held in memory is held whole. Past the in-memory ceiling the caller must stream it:
+    // an installer of up to 4 GiB was once read into RAM before it was hashed and written.
+    if (!request.body_sink && request.max_response_bytes > kMaxInMemoryResponseBytes) {
+        return QStringLiteral("A response of up to %1 bytes must be streamed, not held in memory")
+            .arg(request.max_response_bytes);
+    }
+    return {};
+}
+
+}  // namespace
+
+NetworkTransferResult runNetworkTransfer(const NetworkTransferRequest& request,
+                                         const NetworkCancelCheck& should_cancel,
+                                         const NetworkProgressCallback& progress) {
+    NetworkTransferResult result;
+    result.error_message = transferRequestRefusal(request);
+    if (!result.error_message.isEmpty()) {
         return result;
     }
 

@@ -10,7 +10,6 @@
 #include "sak/bundled_tools_manager.h"
 #include "sak/format_utils.h"
 #include "sak/logger.h"
-#include "sak/network_transfer_runner.h"
 #include "sak/offline_deployment_constants.h"
 #include "sak/process_runner.h"
 #include "sak/windows_reserved_names.h"
@@ -152,26 +151,6 @@ QString installOutcomeText(const ProcessResult& process, bool success) {
     }
     return (process.std_out.isEmpty() ? process.std_err : process.std_out)
         .left(kInstallErrorPreviewChars);
-}
-
-/// @brief Commit @p body to @p output_path via QSaveFile. Fails CLOSED on a short write
-/// or a failed commit -- the temp file is discarded -- so a truncated artifact is never
-/// counted as a downloaded package.
-bool writeDownloadedBody(const QString& output_path, const QByteArray& body) {
-    QSaveFile file(output_path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        sak::logError("[DirectDownload] Cannot write {}", output_path.toStdString());
-        return false;
-    }
-    const qint64 written = file.write(body);
-    if (written != body.size() || !file.commit()) {
-        sak::logError("[DirectDownload] Short write for {}: {} of {} bytes",
-                      output_path.toStdString(),
-                      written,
-                      static_cast<qint64>(body.size()));
-        return false;
-    }
-    return true;
 }
 
 /// @brief True if @p base (already reduced to a single path segment) is hazardous as
@@ -1726,39 +1705,30 @@ bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url,
         return false;
     }
 
-    NetworkTransferRequest request;
-    request.url = QUrl(url);
-    request.timeout_ms = offline::kDownloadTimeoutMs;
-    // Cap the buffered body so a hostile URL returning an unbounded response cannot
-    // exhaust memory before the bytes are checksummed and written.
-    request.max_response_bytes = offline::kMaxBinarySizeBytes;
-    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
-                                                             QByteArrayLiteral("SAK-Utility/1.0")});
-
-    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
-    if (!transfer.success || transfer.body.isEmpty()) {
+    // Integrity-gate: a declared checksum that is empty or unresolvable fails closed before
+    // anything is fetched, and one that does not match fails closed before anything reaches
+    // output_path, so a tampered or corrupt installer is never written or counted. The body
+    // streams to disk (downloadVerifiedFile): an installer was once held whole in RAM, up to
+    // 4 GiB, to be hashed.
+    const auto digest = PackageInternalizationEngine::installerDigest(expected_checksum,
+                                                                      checksum_type);
+    if (!digest) {
+        sak::logError("[DirectDownload] No usable checksum declared for {}", url.toStdString());
+        return false;
+    }
+    const auto download = PackageInternalizationEngine::downloadVerifiedFile(
+        QUrl(url), output_path, *digest, [this]() { return m_cancelled.load(); });
+    if (download.mismatch) {
+        sak::logError("[DirectDownload] Checksum mismatch for {}", url.toStdString());
+        return false;
+    }
+    if (!download.ok && !download.cancelled) {
         sak::logError("[DirectDownload] HTTP {} for {}: {}",
-                      transfer.http_status,
+                      download.http_status,
                       url.toStdString(),
-                      transfer.error_message.toStdString());
-        return false;
+                      download.error.toStdString());
     }
-
-    // Integrity-gate BEFORE anything is committed to disk: a declared checksum that
-    // does not match (or is declared but unresolvable) fails closed, so a tampered
-    // or corrupt installer is never written or counted. An empty declared checksum now
-    // FAILS CLOSED too (installerVerified rejects an unverifiable installer) rather than
-    // shipping an unauthenticated direct download.
-    if (!PackageInternalizationEngine::installerVerified(
-            transfer.body, expected_checksum, checksum_type)) {
-        sak::logError("[DirectDownload] Unverifiable or mismatched checksum for {}",
-                      url.toStdString());
-        return false;
-    }
-
-    // QSaveFile: fail closed on a short write / flush failure so a truncated installer is never
-    // counted as a downloaded package; the temp file is discarded on any failure.
-    return writeDownloadedBody(output_path, transfer.body);
+    return download.ok;
 }
 
 // ============================================================================

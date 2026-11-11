@@ -52,6 +52,7 @@ private Q_SLOTS:
     // -- runNetworkTransfer (R5-P9-34: a non-positive timeout is refused) --
     void networkTransfer_rejectsZeroTimeoutBeforeAnyRequest();
     void networkTransfer_rejectsNegativeTimeout();
+    void networkTransfer_refusesToHoldAnInstallerSizedBodyInMemory();
 };
 
 void TestBandwidthTester::construction_default() {
@@ -314,6 +315,30 @@ void TestBandwidthTester::networkTransfer_rejectsNegativeTimeout() {
     QVERIFY(!result.success);
     QCOMPARE(result.error_message, QStringLiteral("Invalid timeout_ms: must be positive"));
     QCOMPARE(result.elapsed_ms, 0LL);
+}
+
+// An installer of up to 4 GiB was once read whole into memory to be hashed. A transfer that may be
+// larger than the in-memory ceiling must now stream to a sink: without one it is refused before
+// any request is sent.
+void TestBandwidthTester::networkTransfer_refusesToHoldAnInstallerSizedBodyInMemory() {
+    NetworkTransferRequest request;
+    request.url = QUrl(QStringLiteral("http://127.0.0.1:9/never-contacted"));
+    request.timeout_ms = 1000;
+    request.max_response_bytes = sak::kMaxInMemoryResponseBytes + 1;
+    const NetworkTransferResult held = runNetworkTransfer(request);
+    QVERIFY(!held.success);
+    QVERIFY2(held.error_message.contains(QStringLiteral("must be streamed")),
+             qPrintable(held.error_message));
+    QCOMPARE(held.elapsed_ms, 0LL);
+
+    // The same cap with a sink is allowed to try; it fails only on the closed port.
+    request.body_sink = [](const char*, qint64) {
+        return true;
+    };
+    const NetworkTransferResult streamed = runNetworkTransfer(request);
+    QVERIFY(!streamed.success);
+    QVERIFY2(!streamed.error_message.contains(QStringLiteral("must be streamed")),
+             qPrintable(streamed.error_message));
 }
 
 // A crash left the iPerf3 server's inbound allow rule behind for good. Rule names now carry the

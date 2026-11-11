@@ -27,6 +27,14 @@ enum class NetworkTransferMethod {
     Head
 };
 
+/// Receives a streamed response body one chunk at a time. Return false to abort the transfer
+/// (the chunk could not be written); the caller keeps its own record of why.
+using NetworkBodySink = std::function<bool(const char* data, qint64 size)>;
+
+/// The most of a response runNetworkTransfer holds in memory. A larger max_response_bytes needs a
+/// body_sink: an installer of up to 4 GiB was once read whole into RAM before it was hashed.
+inline constexpr qint64 kMaxInMemoryResponseBytes = 512LL * 1024 * 1024;
+
 struct NetworkTransferRequest {
     QUrl url;
     NetworkTransferMethod method{NetworkTransferMethod::Get};
@@ -39,8 +47,14 @@ struct NetworkTransferRequest {
     /// Abort once the response body exceeds this many bytes, bounding the in-memory
     /// buffer so a hostile/oversized remote response cannot exhaust memory. A value <= 0
     /// is NOT unlimited: runNetworkTransfer clamps it to a 512 MiB safety cap so an
-    /// omitted limit can never permit unbounded buffering.
+    /// omitted limit can never permit unbounded buffering. Above kMaxInMemoryResponseBytes
+    /// it is refused unless body_sink is set.
     qint64 max_response_bytes{0};
+    /// When set, the body is handed to this sink as it arrives and never held whole: result.body
+    /// stays empty and result.bytes_received counts what was handed over. It runs on the
+    /// transfer's own thread while runNetworkTransfer's caller waits, and max_response_bytes
+    /// still caps the total.
+    NetworkBodySink body_sink{};
 };
 
 struct NetworkTransferResult {

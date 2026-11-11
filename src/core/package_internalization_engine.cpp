@@ -20,6 +20,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
+#include <QTemporaryFile>
 #include <QThread>
 #include <QUrl>
 #include <QUrlQuery>
@@ -138,9 +139,9 @@ NetworkTransferRequest makeBinaryDownloadRequest(const QUrl& url) {
     NetworkTransferRequest request;
     request.url = url;
     request.timeout_ms = offline::kDownloadTimeoutMs;
-    // Cap the buffered body: an installer response is hashed whole in memory, so a
-    // hostile URL returning an unbounded body would otherwise exhaust memory (B9-19
-    // parity for binary downloads).
+    // Cap the body (B9-19 parity for binary downloads). It streams to disk -- the caller sets a
+    // body sink -- so the cap bounds the file, not memory: an installer was once read whole into
+    // RAM, up to this 4 GiB, before it was hashed.
     request.max_response_bytes = offline::kMaxBinarySizeBytes;
     request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
                                                              QByteArrayLiteral("SAK-Utility/1.0")});
@@ -210,19 +211,38 @@ bool scriptForcesNetwork(const QString& script_path) {
     return !text || PackageInternalizationEngine::scriptHasNetworkDownload(*text);
 }
 
-bool writeBinaryBody(const QString& output_path, const QByteArray& body, QString& error) {
-    // QSaveFile: verify the full byte count and atomically commit, so a partial write (disk full)
-    // leaves no truncated installer that would be repacked as a "successfully internalized" file.
-    QSaveFile file(output_path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        error = "Cannot write file: " + output_path;
-        return false;
+// Copy the staged download into @p output_path through a QSaveFile, hashing exactly the bytes it
+// writes, and commit only when they pass the digest: what lands is what was checked, and a
+// mismatch or a short write (disk full) leaves nothing there to be repacked as an installer.
+void commitVerifiedCopy(QFile& staged,
+                        const QString& output_path,
+                        const PackageInternalizationEngine::DownloadDigest& digest,
+                        PackageInternalizationEngine::VerifiedDownload& outcome) {
+    QSaveFile target(output_path);
+    if (!staged.seek(0) || !target.open(QIODevice::WriteOnly)) {
+        outcome.error = "Cannot write file: " + output_path;
+        return;
     }
-    if (file.write(body) != body.size() || !file.commit()) {
-        error = "Failed to write file: " + output_path;
-        return false;
+    QCryptographicHash hasher(digest.algorithm);
+    QByteArray block(offline::kDownloadBufferSize, Qt::Uninitialized);
+    for (qint64 got = staged.read(block.data(), block.size()); got != 0;
+         got = staged.read(block.data(), block.size())) {
+        if (got < 0 || target.write(block.constData(), got) != got) {
+            outcome.error = "Failed to write file: " + output_path;
+            return;  // the QSaveFile is discarded uncommitted
+        }
+        hasher.addData(QByteArrayView(block.constData(), got));
     }
-    return true;
+    if (!digest.matches(hasher.result())) {
+        target.cancelWriting();
+        outcome.mismatch = true;
+        return;
+    }
+    if (!target.commit()) {
+        outcome.error = "Failed to write file: " + output_path;
+        return;
+    }
+    outcome.ok = true;
 }
 
 // --- scriptHasNetworkDownload line predicates (kept small for CCN) -----------
@@ -800,32 +820,24 @@ PackageInternalizationEngine::NupkgDownload PackageInternalizationEngine::downlo
         outcome.error = "Refusing non-https package URL: " + nupkg_url;
         return outcome;
     }
-    const auto transfer = runNetworkTransfer(makeBinaryDownloadRequest(QUrl(nupkg_url)), cancel);
-    if (transfer.cancelled) {
-        outcome.cancelled = true;
-        return outcome;
-    }
-    if (!transfer.success || transfer.body.isEmpty()) {
-        outcome.error = "Nupkg download failed: " +
-                        (transfer.error_message.isEmpty()
-                             ? QStringLiteral("HTTP %1").arg(transfer.http_status)
-                             : transfer.error_message);
-        return outcome;
-    }
-    // Authenticate BEFORE anything reaches disk: a tampered .nupkg would otherwise have its
-    // install script parsed and its embedded binaries harvested into the bundle.
-    if (!nupkgHashMatches(transfer.body, entry->package_hash, entry->package_hash_algorithm)) {
+    // Authenticated BEFORE it reaches output_path: a tampered .nupkg would otherwise have its
+    // install script parsed and its embedded binaries harvested into the bundle. An unusable hash
+    // is the same refusal as a mismatch, decided before anything is downloaded.
+    const auto digest = nupkgDigest(entry->package_hash, entry->package_hash_algorithm);
+    if (!digest) {
         outcome.error = "Package integrity verification failed for " + package_id;
         return outcome;
     }
-    // QSaveFile + full-size + commit, so a disk-full partial write never leaves a truncated
-    // .nupkg that would then be extracted and shipped.
-    QString write_error;
-    if (!writeBinaryBody(output_path, transfer.body, write_error)) {
-        outcome.error = "Nupkg download failed: " + write_error;
-        return outcome;
+    const VerifiedDownload download =
+        downloadVerifiedFile(QUrl(nupkg_url), output_path, *digest, cancel);
+    if (download.cancelled) {
+        outcome.cancelled = true;
+    } else if (download.mismatch) {
+        outcome.error = "Package integrity verification failed for " + package_id;
+    } else if (!download.ok) {
+        outcome.error = "Nupkg download failed: " + download.error;
     }
-    outcome.ok = true;
+    outcome.ok = download.ok;
     return outcome;
 }
 
@@ -923,16 +935,87 @@ void PackageInternalizationEngine::finishWithError(InternalizationResult& result
 bool PackageInternalizationEngine::binaryChecksumMatches(const QByteArray& data,
                                                          const QString& expected_checksum,
                                                          const QString& checksum_type) {
+    if (expected_checksum.trimmed().isEmpty()) {
+        return true;  // no checksum was declared in the script -> nothing to verify
+    }
+    // A declared checksum whose algorithm cannot be resolved has no digest: fail closed.
+    const auto digest = installerDigest(expected_checksum, checksum_type);
+    return digest && digest->matches(QCryptographicHash::hash(data, digest->algorithm));
+}
+
+std::optional<PackageInternalizationEngine::DownloadDigest>
+PackageInternalizationEngine::installerDigest(const QString& expected_checksum,
+                                              const QString& checksum_type) {
     const QString expected = expected_checksum.trimmed();
     if (expected.isEmpty()) {
-        return true;  // no checksum was declared in the script -> nothing to verify
+        return std::nullopt;
     }
     const auto algo = resolveChecksumAlgorithm(checksum_type, static_cast<int>(expected.size()));
     if (!algo) {
-        return false;  // a checksum was declared but we cannot resolve its algorithm
+        return std::nullopt;
     }
-    const QString actual = QString::fromLatin1(QCryptographicHash::hash(data, *algo).toHex());
-    return actual.compare(expected, Qt::CaseInsensitive) == 0;
+    return DownloadDigest{
+        .algorithm = *algo, .matches = [expected](const QByteArray& digest) {
+            return QString::fromLatin1(digest.toHex()).compare(expected, Qt::CaseInsensitive) == 0;
+        }};
+}
+
+std::optional<PackageInternalizationEngine::DownloadDigest>
+PackageInternalizationEngine::nupkgDigest(const QString& expected_base64,
+                                          const QString& algorithm) {
+    const QString expected = expected_base64.trimmed();
+    if (expected.isEmpty()) {
+        return std::nullopt;  // no trusted hash available -> cannot verify -> fail closed
+    }
+    const auto algo = hashAlgorithmByName(algorithm.trimmed().toLower());
+    if (!algo) {
+        return std::nullopt;  // unknown algorithm -> fail closed
+    }
+    return DownloadDigest{.algorithm = *algo, .matches = [expected](const QByteArray& digest) {
+                              return QString::fromLatin1(digest.toBase64()) == expected;
+                          }};
+}
+
+PackageInternalizationEngine::VerifiedDownload PackageInternalizationEngine::downloadVerifiedFile(
+    const QUrl& url,
+    const QString& output_path,
+    const DownloadDigest& digest,
+    const NetworkCancelCheck& cancel,
+    const NetworkProgressCallback& progress) {
+    VerifiedDownload outcome;
+    // The partial download lives in the process's own temp folder (QDir::tempPath, the folder
+    // the app sets TEMP to for this run), never beside the user's files.
+    const QString staging_dir = QDir::tempPath();
+    QTemporaryFile staged(QDir(staging_dir).filePath(QStringLiteral("sak-download-XXXXXX.part")));
+    if (!staged.open()) {
+        outcome.error = "Cannot create the download file in " + staging_dir + ": " +
+                        staged.errorString();
+        return outcome;
+    }
+    NetworkTransferRequest request = makeBinaryDownloadRequest(url);
+    request.body_sink = [&staged](const char* data, qint64 size) {
+        return staged.write(data, size) == size;
+    };
+    const NetworkTransferResult transfer = runNetworkTransfer(request, cancel, progress);
+    outcome.http_status = transfer.http_status;
+    if (transfer.cancelled) {
+        outcome.cancelled = true;
+        return outcome;
+    }
+    if (staged.error() != QFileDevice::NoError) {
+        outcome.error = "Cannot write the download to " + staged.fileName() + ": " +
+                        staged.errorString();
+        return outcome;
+    }
+    if (!transfer.success || transfer.bytes_received == 0) {
+        outcome.error =
+            !transfer.error_message.isEmpty()
+                ? transfer.error_message
+                : QStringLiteral("HTTP %1 with an empty body").arg(transfer.http_status);
+        return outcome;
+    }
+    commitVerifiedCopy(staged, output_path, digest, outcome);
+    return outcome;
 }
 
 QString PackageInternalizationEngine::installerRefusalMessage(const QString& url,
@@ -990,16 +1073,9 @@ bool PackageInternalizationEngine::isAllowedInstallerUrl(const QString& url) {
 bool PackageInternalizationEngine::nupkgHashMatches(const QByteArray& data,
                                                     const QString& expected_base64,
                                                     const QString& algorithm) {
-    const QString expected = expected_base64.trimmed();
-    if (expected.isEmpty()) {
-        return false;  // no trusted hash available -> cannot verify -> fail closed
-    }
-    const auto algo = hashAlgorithmByName(algorithm.trimmed().toLower());
-    if (!algo) {
-        return false;  // unknown algorithm -> fail closed
-    }
-    const QString actual = QString::fromLatin1(QCryptographicHash::hash(data, *algo).toBase64());
-    return actual == expected;
+    // No trusted hash, or an unknown algorithm, has no digest: fail closed.
+    const auto digest = nupkgDigest(expected_base64, algorithm);
+    return digest && digest->matches(QCryptographicHash::hash(data, digest->algorithm));
 }
 
 QHash<QString, QPair<QString, QString>> PackageInternalizationEngine::binaryChecksumMap(
@@ -1052,8 +1128,7 @@ bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript
         const QString filename = uniqueBinaryFilename(QUrl(url), idx, used_names);
         const QString output_path = tools_dir + "/" + filename;
 
-        const auto body = fetchBinary(url, output_path, result);
-        if (!body || !binaryChecksumOk(*body, url, checksums, result)) {
+        if (!fetchVerifiedBinary(url, output_path, checksums, result)) {
             return false;
         }
         result.internalized_files.append(filename);
@@ -1062,54 +1137,48 @@ bool PackageInternalizationEngine::downloadAllBinaries(const ParsedInstallScript
     return !m_cancelled;
 }
 
-std::optional<QByteArray> PackageInternalizationEngine::fetchBinary(const QString& url,
-                                                                    const QString& output_path,
-                                                                    InternalizationResult& result) {
-    const NetworkTransferRequest request = makeBinaryDownloadRequest(QUrl(url));
-    const auto transfer = runNetworkTransfer(
-        request,
+bool PackageInternalizationEngine::fetchVerifiedBinary(
+    const QString& url,
+    const QString& output_path,
+    const QHash<QString, QPair<QString, QString>>& checksums,
+    InternalizationResult& result) {
+    // The installer is verified against its script-declared checksum before it can reach the
+    // offline nupkg, and fails CLOSED when the script declared none: an unverifiable installer is
+    // refused, not shipped as "verified" -- and so it is not downloaded either.
+    const auto expected = checksums.constFind(url);
+    const QString cs = expected == checksums.constEnd() ? QString() : expected->first;
+    const QString cs_type = expected == checksums.constEnd() ? QString() : expected->second;
+    const auto digest = installerDigest(cs, cs_type);
+    if (!digest) {
+        sak::logError("[InternalizationEngine] Unverifiable installer (no usable checksum): {}",
+                      url.toStdString());
+        finishWithError(result, installerRefusalMessage(url, cs));
+        return false;
+    }
+    const VerifiedDownload download = downloadVerifiedFile(
+        QUrl(url),
+        output_path,
+        *digest,
         [this]() { return m_cancelled.load(); },
         [this](qint64 received, qint64 total) {
             m_current_progress.bytes_downloaded = received;
             m_current_progress.bytes_total = total;
             Q_EMIT progressChanged(m_current_progress);
         });
-    if (transfer.cancelled) {
-        return std::nullopt;  // cancellation is reported by the caller's own gate
+    if (download.cancelled) {
+        return false;  // cancellation is reported by the caller's own gate
     }
-
-    QString error = transfer.error_message;
-    bool ok = transfer.success && !transfer.body.isEmpty();
-    if (ok) {
-        ok = writeBinaryBody(output_path, transfer.body, error);
+    if (download.mismatch) {
+        sak::logError("[InternalizationEngine] Installer does not match its checksum: {}",
+                      url.toStdString());
+        finishWithError(result, installerRefusalMessage(url, cs));
+        return false;
     }
-    if (!ok) {
+    if (!download.ok) {
         sak::logWarning("[InternalizationEngine] Binary download failed: {} - {}",
                         url.toStdString(),
-                        error.toStdString());
-        finishWithError(result, "Binary download failed: " + error);
-        return std::nullopt;
-    }
-    return transfer.body;
-}
-
-bool PackageInternalizationEngine::binaryChecksumOk(
-    const QByteArray& body,
-    const QString& url,
-    const QHash<QString, QPair<QString, QString>>& checksums,
-    InternalizationResult& result) {
-    // Verify the downloaded bytes against the script-declared checksum BEFORE this
-    // file is repacked into the offline nupkg. Fails CLOSED when the script declared
-    // no checksum: an unverifiable installer is refused, not shipped as "verified".
-    const auto expected = checksums.constFind(url);
-    const QString cs = expected == checksums.constEnd() ? QString() : expected->first;
-    const QString cs_type = expected == checksums.constEnd() ? QString() : expected->second;
-    if (!installerVerified(body, cs, cs_type)) {
-        sak::logError(
-            "[InternalizationEngine] Unverified installer (missing/mismatched "
-            "checksum): {}",
-            url.toStdString());
-        finishWithError(result, installerRefusalMessage(url, cs));
+                        download.error.toStdString());
+        finishWithError(result, "Binary download failed: " + download.error);
         return false;
     }
     return true;

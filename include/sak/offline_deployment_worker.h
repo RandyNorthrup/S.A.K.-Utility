@@ -489,8 +489,9 @@ private:
     ///        @p expected_checksum (under @p checksum_type, or inferred from length)
     ///        or the download fails closed and nothing is committed. An empty
     ///        checksum is itself a refusal (PackageInternalizationEngine::
-    ///        installerVerified fails closed on an unverifiable installer), so both
-    ///        arguments are REQUIRED -- there is no unchecksummed installer path.
+    ///        installerDigest has none to offer), so both arguments are REQUIRED --
+    ///        there is no unchecksummed installer path. The body streams to disk
+    ///        (PackageInternalizationEngine::downloadVerifiedFile), never held whole.
     ///        A feed .nupkg is fetched through downloadVerifiedNupkg instead, which
     ///        supplies the feed's own published PackageHash.
     [[nodiscard]] bool downloadFileFromUrl(const QString& url,
