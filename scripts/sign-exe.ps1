@@ -22,6 +22,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Who signed the dlib signtool runs, and who signed the exe it produced: Get-AuthenticodeSignerRefusal,
+# Get-SignedExeRefusal, $MicrosoftSignerSubjects and $SakPublisherSubject.
+. (Join-Path $PSScriptRoot "authenticode_signer.ps1")
+
 # -- Local config (not tracked by git) ---------------------------
 # Copy scripts/sign-config.template.ps1 to scripts/sign-config.ps1
 # and fill in your subscription ID.
@@ -158,11 +162,15 @@ if (-not (Test-Path $dlibDll)) {
     Write-Host "Dlib installed: $dlibDll"
 }
 
-# signtool runs this DLL with signing rights: refuse it unless its Authenticode signature holds.
-$dlibSignature = Get-AuthenticodeSignature -LiteralPath $dlibDll
-if ($dlibSignature.Status -ne "Valid") {
-    Write-Error "Artifact Signing dlib signature is not valid ($($dlibSignature.Status)): $dlibDll"
-    exit 1
+# signtool runs this DLL with signing rights, and it loads the DLLs beside it: refuse them unless
+# each is signed by Microsoft. A valid signature only says that someone signed the file, so a dlib
+# swapped for another signer's would have run with signing rights.
+foreach ($dlibFile in @(Get-ChildItem -LiteralPath (Split-Path -Parent $dlibDll) -Filter *.dll -File -Force)) {
+    $refusal = Get-AuthenticodeSignerRefusal -LiteralPath $dlibFile.FullName -AllowedSubjects $MicrosoftSignerSubjects
+    if ($refusal) {
+        Write-Error "Refusing the Artifact Signing client: $refusal"
+        exit 1
+    }
 }
 
 # -- Create metadata JSON for Trusted Signing --------------------
@@ -201,16 +209,11 @@ Write-Host "Signer:    $($sig.SignerCertificate.Subject)"
 Write-Host "Issuer:    $($sig.SignerCertificate.Issuer)"
 Write-Host "Timestamp: $($sig.TimeStamperCertificate.Subject)"
 
-if ($sig.Status -ne 'Valid') {
-    Write-Warning "Signature status is '$($sig.Status)' -- check Trusted Signing configuration."
-    exit 1
-}
-if (-not $sig.SignerCertificate) {
-    Write-Error "Signature reports Valid but carries no signer certificate; refusing to treat as signed."
-    exit 1
-}
-if (-not $sig.TimeStamperCertificate) {
-    Write-Error "Signature is not timestamped (a trusted timestamp was requested with /tr); refusing to treat as signed."
+# Valid, by the publisher the project signs as, and timestamped: a valid signature from any other
+# certificate the profile could hand out is not this project's.
+$refusal = Get-SignedExeRefusal -LiteralPath $ExePath -Publisher $SakPublisherSubject
+if ($refusal) {
+    Write-Error "Refusing to treat the exe as signed: $refusal -- check the Trusted Signing configuration."
     exit 1
 }
 Write-Host ""

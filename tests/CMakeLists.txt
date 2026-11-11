@@ -7403,6 +7403,14 @@ add_test(NAME test_verify_authenticode_signatures
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_verify_authenticode_signatures.ps1")
 set_tests_properties(test_verify_authenticode_signatures PROPERTIES TIMEOUT 120)
 
+# sign-exe.ps1 pins who signed the Artifact Signing dlib (Microsoft) and the exe it signed (the
+# project publisher): the checks against real signed files, and sign-exe.ps1 run in a sandbox up
+# to its dlib check with a stand-in az. Needs a Windows SDK signtool, as sign-exe.ps1 does.
+add_test(NAME test_sign_exe_signers
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sign_exe_signers.ps1")
+set_tests_properties(test_sign_exe_signers PROPERTIES TIMEOUT 120)
+
 add_test(NAME test_stage_portable_release
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
@@ -7583,7 +7591,7 @@ set(_sak_labels_product
     test_partition_image_volume_lock_offline_whole_disk
     test_partition_image_volume_lock_offline_selected_partition)
 set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_dependencies
-    test_verify_authenticode_signatures)
+    test_verify_authenticode_signatures test_sign_exe_signers)
 set(_sak_labels_tooling
     test_process_capture test_process_capture_windows_powershell test_assert_built_target
     test_run_ctest_no_dialogs test_pinned_download test_run_lizard_js_baseline

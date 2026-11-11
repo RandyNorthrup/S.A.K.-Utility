@@ -291,6 +291,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_screenshot_settings_action | `ScreenshotSettingsAction` | Report seams; only a Settings window this run opened is closed, found by EnumWindows, with no taskkill/tasklist/fixed sleeps |
 | test_backup_bitlocker_keys_action | `BackupBitlockerKeysAction` | Key-gate, backup-location screening, and refusal of a destination on a BitLocker volume whose key is in the backup |
 | test_verify_authenticode_signatures | `scripts/verify_authenticode_signatures.ps1` | The publisher pin on real signed binaries; bundled tools keep their vendor's signature |
+| test_sign_exe_signers | `scripts/sign-exe.ps1`, `scripts/authenticode_signer.ps1` | Who signed the Artifact Signing dlib (Microsoft) and the exe it produced (the project publisher, timestamped), on real signed files; sign-exe.ps1 run in a sandbox stops at a dlib another publisher signed |
 | test_stage_portable_release | `scripts/stage_portable_release.ps1` | Portable staging contract, including that the package ships no portable.ini |
 | test_drive_unmounter | `drive_unmounter` | Volume unmount, lock/unlock |
 | test_flash_types | `flash_types` | Flash operation data structures |
