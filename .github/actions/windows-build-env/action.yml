@@ -12,8 +12,14 @@ inputs:
     description: Qt version (msvc2022_64)
     default: '6.12.0'
   python-version:
-    description: Python version for the gate tools and the Python CTests
-    default: '3.14'
+    description: Python version for the gate tools and the Python CTests (exact, not a range)
+    default: '3.14.10'
+  cache:
+    description: >
+      'false' for a run whose outputs ship: no GitHub Actions cache is restored or saved (pip, Qt,
+      vcpkg's binaries and the pinned downloads), so nothing another workflow wrote can reach the
+      release build. Every other workflow keeps the default.
+    default: 'true'
   vcpkg-triplet:
     description: >
       vcpkg triplet. x64-windows builds against the DYNAMIC CRT, which Qt's msvc2022_64 binaries
@@ -48,7 +54,7 @@ runs:
     uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
     with:
       python-version: ${{ inputs.python-version }}
-      cache: pip
+      cache: ${{ inputs.cache == 'true' && 'pip' || '' }}
       cache-dependency-path: requirements-gates.txt
 
   # The image ships its own LLVM (a different clang-format) on PATH. The pinned wheel must be
@@ -73,6 +79,7 @@ runs:
   # refuses a wrong file. On 2026-11-08 GitHub's release downloads answered 504 for a while and
   # every T2 shard failed here before building.
   - name: Cache ripgrep download
+    if: ${{ inputs.cache == 'true' }}
     uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
     with:
       path: ${{ runner.temp }}/pinned-downloads/ripgrep
@@ -93,7 +100,7 @@ runs:
       & (Join-Path $dir rg.exe) --version
 
   - name: Cache CMake download
-    if: ${{ inputs.build-tools == 'true' }}
+    if: ${{ inputs.build-tools == 'true' && inputs.cache == 'true' }}
     uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
     with:
       path: ${{ runner.temp }}/pinned-downloads/cmake
@@ -118,7 +125,7 @@ runs:
       if ($version -ne "cmake version $env:CMAKE_PIN_VERSION") { throw "CMake is not $env:CMAKE_PIN_VERSION" }
 
   - name: Cache cppcheck download
-    if: ${{ inputs.cppcheck == 'true' }}
+    if: ${{ inputs.cppcheck == 'true' && inputs.cache == 'true' }}
     uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
     with:
       path: ${{ runner.temp }}/pinned-downloads/cppcheck
@@ -156,7 +163,7 @@ runs:
       host: 'windows'
       target: 'desktop'
       arch: 'win64_msvc2022_64'
-      cache: true
+      cache: ${{ inputs.cache == 'true' }}
 
   - name: Set up MSBuild
     if: ${{ inputs.build-tools == 'true' }}
@@ -201,7 +208,7 @@ runs:
       Write-Host "vcpkg $root; baseline $baseline; vcpkg.json $manifestHash"
 
   - name: Cache vcpkg binaries
-    if: ${{ inputs.build-tools == 'true' }}
+    if: ${{ inputs.build-tools == 'true' && inputs.cache == 'true' }}
     uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
     with:
       path: ${{ steps.vcpkg.outputs.dir }}
