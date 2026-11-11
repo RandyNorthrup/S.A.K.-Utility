@@ -303,6 +303,32 @@ jobs:
           throw 'test_elevated_helper_connection did not run: a skip exits 0 too'
         }
 
+    # test_fat_volumes makes and mounts small FAT32 and exFAT VHDX volumes, which needs
+    # administrator: under the standard-user token above ctest skips it (tests/skip_baseline.txt),
+    # and this step, which keeps the runner's elevated token, runs it. A skip exits 0 too, so the
+    # step reads every case's PASS line on both volumes. The test carries the product label, so the
+    # shard plan places it in exactly one shard; in every other shard this step has nothing to run.
+    - name: FAT32 and exFAT volumes (elevated)
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        if (@($plan.tests) -notcontains 'test_fat_volumes') {
+          'test_fat_volumes is not in this shard'
+          exit 0
+        }
+        $log = Join-Path $env:RUNNER_TEMP 'test_fat_volumes.txt'
+        $test = Start-Process -FilePath build/Release/test_fat_volumes.exe -ArgumentList '-o', "$log,txt" -NoNewWindow -Wait -PassThru
+        Get-Content -LiteralPath $log
+        if ($test.ExitCode -ne 0) { exit $test.ExitCode }
+        foreach ($case in 'heldFoldersAndStagedFiles', 'heldReadOnlyFileRefusesWriters', 'programFolderOnTheVolume', 'scriptSafeFilesWithTempOnTheVolume') {
+          foreach ($row in 'FAT32', 'exFAT') {
+            if (-not (Select-String -LiteralPath $log -Quiet -Pattern "^PASS\s+: FatVolumeTests::$case\($row\)")) {
+              throw "test_fat_volumes did not pass $case($row): a skip exits 0 too"
+            }
+          }
+        }
+
     # The skip audit runs once over every shard's logs in the T2 result job. It needs each
     # shard's registration: a test's command resolves only where its executable was built.
     - name: Record this shard's test registration
