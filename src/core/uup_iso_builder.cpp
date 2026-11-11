@@ -34,7 +34,6 @@ constexpr int kProgressCreateWorkDir = 1;
 constexpr int kProgressDownloadManifest = 2;
 constexpr int kPercentComplete = 100;
 constexpr int kPercentAlmostComplete = 99;
-constexpr int kGbDisplayPrecision = 2;
 constexpr double kMinimumDisplaySpeedMbps = 0.01;
 constexpr int kSecondsPerMinute = 60;
 constexpr int kEtaSecondsFieldWidth = 2;

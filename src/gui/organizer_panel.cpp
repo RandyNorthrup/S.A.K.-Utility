@@ -49,7 +49,6 @@ namespace sak {
 namespace {
 
 constexpr int kCategoryTableMinHeight = 200;
-constexpr int kOrganizerWorkerStopTimeoutMs = sak::kTimeoutThreadShutdownMs;
 constexpr int kCategoryTableColumnCount = 2;
 constexpr int kProgressMaximum = 100;
 constexpr int kDedupMinSizeMaxKb = 1'000'000;

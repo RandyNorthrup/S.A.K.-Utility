@@ -862,7 +862,7 @@ void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
 void registerDefenderTasks(sak::ElevatedTaskDispatcher& dispatcher) {
     // Microsoft Defender runs MpCmdRun.exe, which must run elevated. The operation is fixed by
     // the task id; the payload carries nothing the action reads.
-    constexpr std::array defender_tasks{
+    constexpr std::array kDefenderTasks{
         std::pair{sak::quick_action_elevation::kDefenderQuickScanTaskId,
                   sak::DefenderOperation::QuickScan},
         std::pair{sak::quick_action_elevation::kDefenderFullScanTaskId,
@@ -870,7 +870,7 @@ void registerDefenderTasks(sak::ElevatedTaskDispatcher& dispatcher) {
         std::pair{sak::quick_action_elevation::kDefenderSignatureUpdateTaskId,
                   sak::DefenderOperation::SignatureUpdate},
     };
-    for (const auto& [task_id, operation] : defender_tasks) {
+    for (const auto& [task_id, operation] : kDefenderTasks) {
         dispatcher.registerHandler(
             QString::fromLatin1(task_id),
             [operation](const QJsonObject& payload,

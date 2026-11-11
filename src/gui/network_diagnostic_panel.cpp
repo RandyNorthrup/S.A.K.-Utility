@@ -4848,6 +4848,7 @@ void NetworkDiagnosticPanel::createResetNetworkAction() {
              },
          .started =
              [this](const QuickActionRun&) { m_resetNetworkBtn->setText(tr("Resetting...")); },
+         .progress = {},
          .log = [this](const QuickActionRun&, const QString& line) { Q_EMIT logOutput(line); },
          .finished = [this](const QuickActionRun&,
                             const QuickAction::ExecutionResult& result,

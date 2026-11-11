@@ -607,6 +607,8 @@ ProcessResult runPowerShell(const QString& script,
                                .args = std::move(invocation.args),
                                .timeout_ms = timeout_ms,
                                .should_cancel = should_cancel,
+                               .on_output = {},
+                               .on_started = {},
                                .std_in = std::move(invocation.std_in)});
 }
 

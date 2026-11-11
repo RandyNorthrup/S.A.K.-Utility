@@ -31,8 +31,6 @@ constexpr auto kCaptureMarkerKey = "sak_network_capture";
 constexpr int kCaptureMarkerValue = 1;
 constexpr int kIpv4MaxPrefix = 32;
 constexpr int kIpv6MaxPrefix = 128;
-/// The preference position netsh gives the primary DNS server; secondaries follow it.
-constexpr int kFirstAdditionalDnsIndex = 2;
 
 constexpr auto kStatusUp = "Up";
 constexpr auto kStatusDisabled = "Disabled";

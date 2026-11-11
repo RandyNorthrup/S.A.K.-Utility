@@ -127,10 +127,10 @@
     {
       "id": "restore-image-reverts-to-live-selection-target",
       "file": "src/gui/partition_manager_panel.cpp",
-      "find": "queueOperation(PartitionOperationType::RestoreImage, *selected, expected_layout_hash, payload);",
-      "replace": "queueOperation(PartitionOperationType::RestoreImage, *selectedTarget(), expected_layout_hash, payload);",
+      "find": "restoreImagePayload(*selected, path, image_size, source_sha256)",
+      "replace": "restoreImagePayload(*selectedTarget(), path, image_size, source_sha256)",
       "expect": "killed",
-      "why": "restoreImageQueuesConfirmedTarget requires the queued destructive restore to retain the disk target captured before hashing and approval instead of re-reading a mutable table selection."
+      "why": "restoreImageQueuesConfirmedTarget requires the queued destructive restore's payload to name the disk target captured before hashing and approval instead of re-reading a mutable table selection."
     },
     {
       "id": "refreshing-inventory-reopens-panel-actions",
@@ -231,10 +231,10 @@
     {
       "id": "clone-preview-scale-wraps-product",
       "file": "src/gui/partition_manager_panel.cpp",
-      "find": "return saturatingMultiplyDivide(bytes, target_bytes, source_bytes);",
-      "replace": "return source_bytes == 0 ? std::numeric_limits<uint64_t>::max() : (bytes * target_bytes) / source_bytes;",
+      "find": "    if (high >= divisor) {\n        return std::numeric_limits<uint64_t>::max();\n    }",
+      "replace": "    if (high != 0) {\n        return (value * multiplier) / divisor;\n    }",
       "expect": "killed",
-      "why": "cloneAndUsedScalingDoNotOverflow proves proportional clone preview scaling at UINT64_MAX without a wrapped intermediate product; the mutant retains zero-divisor saturation so it fails an assertion rather than crashing."
+      "why": "cloneAndUsedScalingDoNotOverflow proves proportional scaling at UINT64_MAX without a wrapped intermediate product: saturatingMultiplyDivide(max, max, max) is max and (max, 100, max) is 100. The mutant returns the wrapped 64-bit product whenever the 128-bit product has a high word, so both read 0."
     },
     {
       "id": "used-percent-wraps-product",
@@ -391,7 +391,7 @@
     {
       "id": "apfs-resize-preview-reverts-to-generated-only-claim",
       "file": "src/gui/partition_manager_panel.cpp",
-      "find": "Requires a certified writable COW container that does not already fill it.",
+      "find": "Requires a writable copy-on-write container that does not already fill it.",
       "replace": "Requires a generated container that does not already fill it.",
       "expect": "killed",
       "why": "apfsUnknownModeIsRefused pins the resize preview to truthful certified-COW scope because the panel intentionally supports foreign Apple containers."

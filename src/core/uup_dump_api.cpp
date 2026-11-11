@@ -34,7 +34,6 @@
 #include <limits>
 #include <utility>
 
-constexpr int kGbDisplayPrecision = 2;
 // The UUP dump JSON endpoints return small documents; a peer that streams past this
 // ceiling is aborted rather than buffered into memory by readAll().
 constexpr qint64 kMaxApiResponseBytes = 32LL * 1024 * 1024;

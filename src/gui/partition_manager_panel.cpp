@@ -353,12 +353,6 @@ constexpr int kFileRecoveryDialogMinHeight = 420;
     return quotient;
 }
 
-[[nodiscard]] uint64_t clonePreviewScaledBytes(uint64_t bytes,
-                                               uint64_t target_bytes,
-                                               uint64_t source_bytes) noexcept {
-    return saturatingMultiplyDivide(bytes, target_bytes, source_bytes);
-}
-
 /// The narrowest a disk segment is drawn in a before/after bar, so a 2 or 3 GB partition on a
 /// 256 GB disk is still seen (review 3: on testpc1 the 3 GB E: and 2 GB F: were not, and a queued
 /// delete of F: did not show).
@@ -427,11 +421,6 @@ QVector<QPair<int, int>> segmentSpans(const QVector<uint64_t>& sizes,
         spans.append({left, std::max(1, static_cast<int>(std::lround(x)) - left)});
     }
     return spans;
-}
-
-/// segmentSpans with one floor, @p min_px, for every segment.
-QVector<QPair<int, int>> segmentSpans(const QVector<uint64_t>& sizes, int width, int min_px) {
-    return segmentSpans(sizes, width, QVector<int>(sizes.size(), min_px));
 }
 
 /// segmentSpans for segments drawn on a bar that stands for @p total_bytes: what the segments do
@@ -9162,7 +9151,7 @@ PartitionManagerPanel::PartitionManagerPanel(QWidget* parent)
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
 QVector<QPair<int, int>> partitionSegmentSpansForTest(const QVector<uint64_t>& sizes, int width) {
-    return segmentSpans(sizes, width, kMinimumSegmentPixels);
+    return segmentSpans(sizes, width, QVector<int>(sizes.size(), kMinimumSegmentPixels));
 }
 
 QStringList partitionCopyTargetLabelsForTest(const PartitionDiskInfo& source,
@@ -9288,7 +9277,7 @@ QJsonArray partitionConsumeFreeSpanForTest(uint64_t segment_offset,
 }
 
 uint64_t partitionScaledBytesForTest(uint64_t bytes, uint64_t multiplier, uint64_t divisor) {
-    return clonePreviewScaledBytes(bytes, multiplier, divisor);
+    return saturatingMultiplyDivide(bytes, multiplier, divisor);
 }
 
 int partitionUsedPercentForTest(uint64_t used_bytes, uint64_t total_bytes) {

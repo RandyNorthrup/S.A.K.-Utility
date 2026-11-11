@@ -328,12 +328,12 @@ uint64_t quickPartitionTotalBytes(const QVector<uint64_t>& sizes) {
 }
 
 bool quickPartitionSizesAreValid(const QVector<uint64_t>& sizes, uint64_t usable_bytes) {
-    const uint64_t minimum_bytes = static_cast<uint64_t>(kQuickPartitionMinimumSizeMb) * kMegabyte;
+    constexpr uint64_t minimum_bytes = static_cast<uint64_t>(kQuickPartitionMinimumSizeMb) *
+                                       kMegabyte;
     if (sizes.isEmpty() || quickPartitionTotalBytes(sizes) > usable_bytes) {
         return false;
     }
-    return std::ranges::all_of(sizes,
-                               [minimum_bytes](uint64_t size) { return size >= minimum_bytes; });
+    return std::ranges::all_of(sizes, [](uint64_t size) { return size >= minimum_bytes; });
 }
 
 bool diskNeedsInitializeForQuickPartition(const PartitionDiskInfo& disk) {

@@ -1218,6 +1218,7 @@ void DiagnosticBenchmarkPanel::createQuickActions() {
                            logMessage(text);
                            Q_EMIT statusMessage(text, sak::kTimerStatusDefaultMs);
                        },
+                   .started = {},
                    .progress =
                        [this](const QuickActionRun&, const QString& message, int percent) {
                            Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
