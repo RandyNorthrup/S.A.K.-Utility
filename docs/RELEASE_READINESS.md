@@ -2778,6 +2778,23 @@ from an entry it serves, or when a blocked action promises a future ("until ... 
 are updated. Drills: the whole old registry, xfs_repair alone put back, and the swap promise alone put back each
 turned the tests red.
 
+The 317211fc dev nightly (43047447744) failed its T4 CTest labels job on two tests:
+- `test_linux_iso_catalog_live`: "HTTP 0" from releases.ubuntu.com for the Ubuntu 26.04 desktop and server ISOs.
+  That was Canonical's outage, not ours: from the workstation the same hour, two of the host's three addresses
+  (185.125.190.37 and .40) did not answer on 443, while 91.189.91.108 answered 200 for both ISOs. Left as it is.
+- `test_process_capture_output_windows_powershell`, case stdout-exact: "Exact-boundary output child failed (expected
+  '0', got '1')". The Python fixture (`tests/support/process_capture_deadline_fixture.py`) waited 2 s for the outer
+  test's acknowledgement, while the outer side (`scripts/test_process_capture.ps1`) gives itself 10 s to produce it,
+  so a slow Windows PowerShell 5.1 outer side under T4's load lost the race and the fixture exited 1. Each fixture
+  wait now outlasts its outer window by 5 s: 15 s for the output acknowledgements (outer 10 s), 35 s for the
+  deadline cases' bound.ack (outer 30 s watchdog), and the self-expiry watchdog 45 s (the largest receipt delay, two
+  output acknowledgements and a margin), reasoned at the constants. Drill: with the old 2 s wait and the outer side
+  held 3 s before output-ready.ack, stdout-exact failed with the nightly's exact message (and minimum-exact on the
+  fixture's traceback); with the fix, both passed, as they do without the delay. All twelve process-capture tests
+  pass in both shells, and the Windows PowerShell output test passed 20 runs of 20 (17-27 s each) beside two
+  back-to-back runs of the full T2 label set at -j 6 (322 of 322 both times). The 317211fc nightly's ASan job
+  passed, 297 of 297 with no crash dump.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and
