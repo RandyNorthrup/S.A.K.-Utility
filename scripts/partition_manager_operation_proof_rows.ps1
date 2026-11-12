@@ -995,63 +995,93 @@ Add-OpsRow 'ops.wipe-partition-physical' {
     }
 }
 
-Add-OpsRow 'ops.drill-volume-churn-physical' {
-    # The no-detach drill (coordinator, 2026-11-12): does S.A.K.'s own work on a real USB disk that
-    # stays plugged in reach the kernel-timer fault of the testpc2 and testpc1 bugchecks, with no
-    # virtual disk anywhere in the stack? Each round goes through the app: Create NTFS, Check File
-    # System (Repair-Volume -Scan) and chkdsk /scan, Hide and Unhide, Format to ext4 (its type
-    # changes and Windows removes the volume), Format back to NTFS, Delete. Rounds repeat for
-    # $minutes; every round's times go to the runner's log and the row's evidence. The drive is the
-    # destructive one machine.json names, pinned again before every step and before the cleanup.
-    $minutes = 150
+function Invoke-OpsVolumeChurnDrill {
+    <#
+    .SYNOPSIS
+        The volsnap drill (coordinator, 2026-11-12): does S.A.K.'s own work on a real USB disk that
+        stays plugged in, with Driver Verifier off, reach the kernel-timer fault of the bugchecks?
+        Crash 3's freed object was volsnap's volume device, with a timer queued in it, freed when
+        its volume was removed seconds after an online scan.
+    .DESCRIPTION
+        Each round, through the app: Create NTFS, write files, Check File System (Repair-Volume
+        -Scan), then -PauseSeconds, then Hide (the first volume removal), Unhide, Format ext4,
+        Format NTFS, write files, and with -WithMove the VSS-backed Move (a snapshot, then the volume
+        removed and made again), then Delete. Every step's time goes to the runner's log and the
+        row's evidence; a step that fails is noted and the round goes on. The drive is the
+        destructive one machine.json names, pinned before every step and before the cleanup.
+    #>
+    param([int]$Minutes, [int]$PauseSeconds, [switch]$WithMove)
     $disk = Get-OpsDestructiveDisk
-    $made = @()
-    $rounds = [System.Collections.Generic.List[string]]::new()
-    $failure = ''
+    $log = [System.Collections.Generic.List[string]]::new()
+    $failed = [System.Collections.Generic.List[string]]::new()
+    $stopped = ''
+    $media = $null
+    $kept = ''
+    $round = 0
+    $write = { param([string]$Text) $line = "$((Get-Date).ToString('HH:mm:ss')) $Text"; $log.Add($line); Write-Host "  drill $line" }
+    $run = {
+        param([string]$StepName, [string]$OperationName, [hashtable]$Where, [hashtable]$With)
+        & $write "$StepName start"
+        $report = Invoke-OpsStep -Disk $disk -Step $StepName -Operation $OperationName -Select $Where -Choices $With -TimeoutSeconds 3600 -ReadBackOnFailure
+        if ($null -eq $report) { $failed.Add($StepName); & $write "$StepName FAILED" } else { & $write "$StepName done" }
+    }
     try {
         $media = Get-CertMedia -DiskNumber $disk -Class 'physical_disk' -Kind 'destructive-test drive'
         $kept = @(Get-Partition -DiskNumber $disk -ErrorAction SilentlyContinue | Sort-Object Offset | ForEach-Object { "$($_.Offset):$($_.Size)" }) -join ' '
         if (@(Get-Partition -DiskNumber $disk -ErrorAction SilentlyContinue | Where-Object { $_.Type -eq 'Basic' }).Count -gt 0) { throw 'The destructive drive already holds a data partition; the drill makes and deletes its own and touches nothing else' }
-        $deadline = (Get-Date).AddMinutes($minutes)
-        $round = 0
+        $base = Get-CertFirstFreeOffset -DiskNumber $disk
+        $deadline = (Get-Date).AddMinutes($Minutes)
         while ((Get-Date) -lt $deadline) {
             $round++
-            $started = Get-Date
-            Invoke-OpsStep -Disk $disk -Step "create-$round" -Operation 'Create' -Choices @{
-                size_mib = 2048; free_before_mib = 0; file_system = 'NTFS'; allocation_unit_bytes = 4096
-                partition_type = $Script:GptBasicData; label = 'OPSCHURN'; full_format = $false
-            } | Out-Null
+            & $write "round $round"
+            & $run "create-$round" 'Create' @{} @{ size_mib = 2048; free_before_mib = 0; file_system = 'NTFS'; allocation_unit_bytes = 4096; partition_type = $Script:GptBasicData; label = 'OPSCHURN'; full_format = $false }
             $part = @(Get-Partition -DiskNumber $disk | Where-Object { $_.Type -eq 'Basic' })
             if ($part.Count -ne 1) { throw "round ${round}: the drive holds $($part.Count) data partitions after Create" }
-            $made += [int]$part[0].PartitionNumber
             $select = @{ partition_number = [int]$part[0].PartitionNumber }
-            Invoke-OpsStep -Disk $disk -Step "check-$round" -Operation 'CheckFileSystem' -Select $select | Out-Null
             $letter = Wait-OpsLetter -DiskNumber $disk -Offset ([uint64]$part[0].Offset)
-            $chkdsk = if ($letter) { (Get-OpsChkdsk -Letter $letter -FileSystem 'NTFS').exit_code } else { 'no letter' }
-            Invoke-OpsStep -Disk $disk -Step "hide-$round" -Operation 'SetPartitionHidden' -Select $select -Choices @{ hidden = $true } | Out-Null
-            Invoke-OpsStep -Disk $disk -Step "unhide-$round" -Operation 'SetPartitionHidden' -Select $select -Choices @{ hidden = $false } | Out-Null
-            Invoke-OpsStep -Disk $disk -Step "ext4-$round" -Operation 'Format' -Select $select -Choices @{ file_system = 'ext4'; allocation_unit_bytes = 0; label = 'OPSCHURN'; full_format = $false } | Out-Null
-            Invoke-OpsStep -Disk $disk -Step "ntfs-$round" -Operation 'Format' -Select $select -Choices @{ file_system = 'NTFS'; allocation_unit_bytes = 4096; label = 'OPSCHURN'; full_format = $false; administrator_scan = $true } | Out-Null
-            Invoke-OpsStep -Disk $disk -Step "delete-$round" -Operation 'Delete' -Select $select | Out-Null
-            $made = @($made | Where-Object { $_ -ne [int]$part[0].PartitionNumber })
-            $line = 'round {0}: {1}-{2}, chkdsk /scan exit {3}' -f $round, $started.ToString('HH:mm:ss'), (Get-Date).ToString('HH:mm:ss'), $chkdsk
-            $rounds.Add($line)
-            Write-Host "  drill $line"
+            if ($letter) { Write-RbFixtureTree -Root "${letter}:\fixture" -FileCount 12 -MaxKilobytes 2048 | Out-Null; Write-VolumeCache -DriveLetter $letter }
+            & $run "scan-$round" 'CheckFileSystem' $select @{}
+            if ($PauseSeconds -gt 0) { & $write "pause $PauseSeconds s"; Start-Sleep -Seconds $PauseSeconds }
+            & $run "hide-$round" 'SetPartitionHidden' $select @{ hidden = $true }
+            & $run "unhide-$round" 'SetPartitionHidden' $select @{ hidden = $false }
+            & $run "ext4-$round" 'Format' $select @{ file_system = 'ext4'; allocation_unit_bytes = 0; label = 'OPSCHURN'; full_format = $false }
+            & $run "ntfs-$round" 'Format' $select @{ file_system = 'NTFS'; allocation_unit_bytes = 4096; label = 'OPSCHURN'; full_format = $false; administrator_scan = $true }
+            if ($WithMove) {
+                $now = Get-Partition -DiskNumber $disk -PartitionNumber $select.partition_number
+                if (-not ($now.DriveLetter -and [char]::IsLetter([char]$now.DriveLetter))) { Add-PartitionAccessPath -DiskNumber $disk -PartitionNumber $now.PartitionNumber -AssignDriveLetter -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2 }
+                $letter = Wait-OpsLetter -DiskNumber $disk -Offset ([uint64]$now.Offset)
+                if ($letter) { Write-RbFixtureTree -Root "${letter}:\fixture" -FileCount 12 -MaxKilobytes 2048 | Out-Null; Write-VolumeCache -DriveLetter $letter }
+                & $run "move-$round" 'MovePartition' $select @{ target_offset_mib = [int](($base / $Script:OpsMiB) + 4096); backup_directory = (New-CertBackupFolder); confirmed = $true }
+                $part = @(Get-Partition -DiskNumber $disk | Where-Object { $_.Type -eq 'Basic' })
+                if ($part.Count -eq 1) { $select = @{ partition_number = [int]$part[0].PartitionNumber } }
+            }
+            & $run "delete-$round" 'Delete' $select @{}
+            foreach ($left in @(Get-Partition -DiskNumber $disk -ErrorAction SilentlyContinue | Where-Object { $_.Type -eq 'Basic' -or $_.Type -eq 'Unknown' })) {
+                Assert-OpsDevicePin -DiskNumber $disk
+                Remove-Partition -DiskNumber $disk -PartitionNumber $left.PartitionNumber -Confirm:$false -ErrorAction SilentlyContinue
+                & $write "round ${round}: removed a partition the round left ($($left.Type))"
+            }
         }
     } catch {
-        $failure = $_.Exception.Message
+        $stopped = $_.Exception.Message
+        & $write "stopped: $stopped"
     } finally {
-        foreach ($left in @(Get-Partition -DiskNumber $disk -ErrorAction SilentlyContinue | Where-Object { $_.Type -ne 'Reserved' -and $_.Type -ne 'System' -and ([uint64]$_.Offset -lt 4GB) })) {
-            Assert-OpsDevicePin -DiskNumber $disk
-            Remove-Partition -DiskNumber $disk -PartitionNumber $left.PartitionNumber -Confirm:$false -ErrorAction SilentlyContinue
+        if ($null -ne $Script:RowDevice) {
+            foreach ($left in @(Get-Partition -DiskNumber $disk -ErrorAction SilentlyContinue | Where-Object { $_.Type -ne 'Reserved' -and $_.Type -ne 'System' -and ([uint64]$_.Offset -lt 8GB) })) {
+                Assert-OpsDevicePin -DiskNumber $disk
+                Remove-Partition -DiskNumber $disk -PartitionNumber $left.PartitionNumber -Confirm:$false -ErrorAction SilentlyContinue
+            }
         }
         Clear-OpsDestructiveDisk
     }
-    $checks = @(New-OpsCheck -Name 'every round ran to its end' -Passed (-not $failure -and $rounds.Count -ge 1) -Detail $(if ($failure) { $failure } else { "$($rounds.Count) rounds" }))
+    $checks = @(New-OpsCheck -Name 'the drill ran its time without stopping' -Passed (-not $stopped) -Detail $(if ($stopped) { $stopped } else { "$round rounds" }))
     $after = @(Get-Partition -DiskNumber $disk -ErrorAction SilentlyContinue | Sort-Object Offset | ForEach-Object { "$($_.Offset):$($_.Size)" }) -join ' '
     $checks += New-OpsCheck -Name "the drive's own partitions are as they were" -Passed ($after -eq $kept) -Detail "$kept / $after"
-    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ rounds = @($rounds); minutes = $minutes })
+    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ minutes = $Minutes; pause_seconds = $PauseSeconds; with_move = [bool]$WithMove; rounds = $round; failed_steps = @($failed); log = @($log) })
 }
+
+Add-OpsRow 'ops.drill-a-scan-then-remove' { Invoke-OpsVolumeChurnDrill -Minutes 120 -PauseSeconds 0 -WithMove }
+Add-OpsRow 'ops.drill-b-pause-before-remove' { Invoke-OpsVolumeChurnDrill -Minutes 120 -PauseSeconds 180 }
 
 # --- Rebuilds kept in a backup folder: current generated text, and the FAT/exFAT live-copy branch ---
 
