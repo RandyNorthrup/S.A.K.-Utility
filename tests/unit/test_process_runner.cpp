@@ -618,6 +618,10 @@ void ProcessRunnerTests::powerShellInvocation_longScriptReadsItselfFromStandardI
     QCOMPARE(QString::fromUtf8(large.std_in), long_script);
     QVERIFY(!large.args.contains(long_script));
     QVERIFY(large.args.join(u' ').size() < sak::kMaxPowerShellCommandLineScriptChars);
+    // Dot-sourced: run as a child scriptblock, a long script's $ErrorActionPreference never
+    // reached the Storage cmdlets (operation proof, 2026-11-12).
+    QVERIFY(
+        large.args.join(u' ').contains(QStringLiteral(". ([scriptblock]::Create($sakScript))")));
 }
 
 void ProcessRunnerTests::runProcessStreaming_standardInputReachesTheChild() {
@@ -649,6 +653,14 @@ void ProcessRunnerTests::runPowerShell_longScriptRunsAndKeepsItsExitCode() {
     QVERIFY(thrown.exit_code != 0);
     QVERIFY2(thrown.std_err.contains(QStringLiteral("refused on purpose")),
              qPrintable(thrown.std_err));
+    // A Storage cmdlet's error stops a long script as it stops a short one. As a child scriptblock
+    // the script went on to its next line and exited 0 (operation proof, 2026-11-12, testpc2).
+    const auto storage = sak::runPowerShell(
+        padding + QStringLiteral("$ErrorActionPreference = 'Stop'\nGet-Partition -DiskNumber "
+                                 "99999\nWrite-Output 'went on'\n"),
+        60'000);
+    QVERIFY(storage.exit_code != 0);
+    QVERIFY2(!storage.std_out.contains(QStringLiteral("went on")), qPrintable(storage.std_out));
 }
 
 // Windows PowerShell 5.1 started with PowerShell 7's module path (S.A.K. started from a PowerShell
