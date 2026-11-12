@@ -495,6 +495,18 @@ function Invoke-OpsShrinkWindows {
     $volume = New-CertVolume -DiskNumber $disk -SizeBytes (512 * $Script:OpsMiB) -FileSystem $FileSystem -Label 'OPSSHRINK' -ClusterBytes 4096
     $offset = [uint64](Get-Partition -DiskNumber $disk -PartitionNumber $volume.partition_number).Offset
     $before = Write-RbFixtureTree -Root "$($volume.letter):\fixture" -FileCount 12 -MaxKilobytes 1024
+    if ($FileSystem -in 'FAT32', 'exFAT') {
+        # Windows cannot shrink FAT32 or exFAT; since opsfix f5e55dfd7 (F6) the app says so at Add to
+        # Queue, in its validator, script and dialog, and changes nothing.
+        Invoke-OpsStep -Disk $disk -Step 'shrink' -Operation 'Resize' -Select @{ partition_number = $volume.partition_number } -Choices @{ target_size_mib = 256 } -Expect 'refused' -RefusalContains 'Windows cannot shrink FAT32 or exFAT partitions' -ReadBackOnFailure | Out-Null
+        $checks = @(Test-OpsExtent -Name 'the raw table still holds it at 512 MiB' -DiskNumber $disk -Offset $offset -SizeBytes (512 * $Script:OpsMiB))
+        $letter = Wait-OpsLetter -DiskNumber $disk -Offset $offset
+        if ($letter) {
+            $checks += Test-OpsFilesSame -Name 'every file is still there, byte for byte' -Before $before -After (Get-RbFileManifest -Root "${letter}:\fixture")
+            $checks += Test-OpsWindowsVolume -Prefix 'the untouched volume:' -Letter $letter -FileSystem $FileSystem -Label 'OPSSHRINK'
+        } else { $checks += New-OpsCheck -Name 'the volume is still mounted' -Passed $false -Detail '' }
+        return Complete-OpsRow -Media $media -Checks $checks
+    }
     Invoke-OpsStep -Disk $disk -Step 'shrink' -Operation 'Resize' -Select @{ partition_number = $volume.partition_number } -Choices @{ target_size_mib = 256 } | Out-Null
     $checks = @(Test-OpsExtent -Name 'the raw table holds it at 256 MiB' -DiskNumber $disk -Offset $offset -SizeBytes (256 * $Script:OpsMiB))
     $letter = Wait-OpsLetter -DiskNumber $disk -Offset $offset
