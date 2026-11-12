@@ -1348,7 +1348,7 @@ function Invoke-OpsVhdDetachDrill {
         down with mountvol /P, the disk taken offline, the file detached and deleted. Every step's
         time goes to the runner's log and the row's evidence.
     #>
-    param([int]$Minutes, [switch]$WithLoad)
+    param([int]$Minutes, [switch]$WithLoad, [int]$SettleSeconds = 0)
     $drillStarted = Get-Date
     $log = [System.Collections.Generic.List[string]]::new()
     $failed = [System.Collections.Generic.List[string]]::new()
@@ -1400,6 +1400,8 @@ function Invoke-OpsVhdDetachDrill {
                 foreach ($check in $read) { if (-not $check.passed) { $dirty.Add("$($check.name): $($check.detail)") } }
                 & $write "readback-$round done"
             } else { & $write "round ${round}: no letter, so no readback" }
+            # Drill E: a settle after the last online scan of the round, before the disk goes.
+            if ($SettleSeconds -gt 0) { & $write "settle $SettleSeconds s"; Start-Sleep -Seconds $SettleSeconds }
             & $write "detach-$round start"
             Close-OpsRowVolumes
             Remove-CertVhds
@@ -1420,7 +1422,7 @@ function Invoke-OpsVhdDetachDrill {
     $checks += New-OpsCheck -Name "every readback found the volume as made, and chkdsk's scan clean" -Passed ($readbacks -gt 0 -and $dirty.Count -eq 0) -Detail "$readbacks readbacks; $(@($dirty) -join ' | ')"
     $left = @(Get-ChildItem -LiteralPath $WorkRoot -Filter "$($Script:RowId.Replace('ops.', ''))-round*.vhdx" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
     $checks += New-OpsCheck -Name 'no virtual disk file was left behind' -Passed ($left.Count -eq 0) -Detail $left
-    $extra = [ordered]@{ minutes = $Minutes; with_load = [bool]$WithLoad; rounds = $round; skipped_rounds = $skipped; failed_steps = @($failed); log = @($log); load_samples = @($loadLog) }
+    $extra = [ordered]@{ minutes = $Minutes; with_load = [bool]$WithLoad; settle_seconds = $SettleSeconds; rounds = $round; skipped_rounds = $skipped; failed_steps = @($failed); log = @($log); load_samples = @($loadLog) }
     $events = Get-OpsDrillEvents -Since $drillStarted
     foreach ($key in $events.Keys) { $extra[$key] = $events[$key] }
     return Complete-OpsRow -Media $media -Checks $checks -Extra $extra
@@ -1550,6 +1552,8 @@ function Stop-OpsSyntheticLoad {
 
 Add-OpsRow 'ops.drill-d-scan-then-detach-vhd' { Invoke-OpsVhdDetachDrill -Minutes 150 -WithLoad }
 Add-OpsRow 'ops.drill-d-idle' { Invoke-OpsVhdDetachDrill -Minutes 150 }
+Add-OpsRow 'ops.drill-e-settle-10s' { Invoke-OpsVhdDetachDrill -Minutes 60 -WithLoad -SettleSeconds 10 }
+Add-OpsRow 'ops.drill-e-settle-30s' { Invoke-OpsVhdDetachDrill -Minutes 60 -WithLoad -SettleSeconds 30 }
 
 function Invoke-OpsLockAndDismount {
     # FSCTL_LOCK_VOLUME, then FSCTL_DISMOUNT_VOLUME, on the volume's own device, then the handle is
@@ -2006,6 +2010,9 @@ Add-OpsRow 'ops.migrate-image-route' {
     }
     $plan = @($step.queued_operations)[0].payload.migration_plan
     $checks = @(New-OpsCheck -Name 'the plan took the Image route' -Passed ("$($plan.route)" -eq 'Image') -Detail "$($plan.route)")
+    # F23's preflight: before writing, the script says how much shadow-copy storage C: has.
+    $said = (@($step.execution.steps) | ForEach-Object { "$($_.stdout)" }) -join "`n"
+    $checks += New-OpsCheck -Name "before writing, the script reported C:'s shadow-copy storage" -Passed ($said -match 'Shadow-copy storage for C: ') -Detail @($said -split "`r?`n" | Where-Object { $_ -match 'Shadow-copy storage|^WARNING: that leaves' })
     $after = Get-CertSnapshot -DiskNumber $found.number
     $checks += New-OpsCheck -Name 'the target holds a partition table with a Windows-sized data partition' -Passed (@($after.data_partitions).Count -ge 1) -Detail @($after.data_partitions | ForEach-Object { "$($_.type) $($_.size_bytes)" })
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ source_marker = $Script:RunId; after = $after })

@@ -469,6 +469,25 @@ switch ($Group) {
                         Invoke-Rig -Action 'On'
                     }
                 }
+                'ops.migrate-image-shadow-full' {
+                    # F23: the Image route's capture loses its snapshot (the row fills C:'s shadow
+                    # storage) and must stop with S.A.K.'s account. The target is not started: it is
+                    # not meant to hold a Windows.
+                    $disk = 'ops-image-shadow'
+                    Invoke-Rig -Action 'NewDisk' -More @{ Disk = $disk; SizeMiB = $MigrateTargetMiB }
+                    Invoke-Rig -Action 'Off'
+                    Invoke-Rig -Action 'AttachDisk' -More @{ Disk = $disk; Port = 2 }
+                    Invoke-Rig -Action 'On'
+                    try {
+                        Invoke-GuestRows -Ids @($id) -More @{ DataDiskBytes = [uint64]$MigrateTargetMiB * $Script:MiB }
+                        Assert-RowPassed -Id $id
+                    } finally {
+                        Invoke-Rig -Action 'Off'
+                        Invoke-Rig -Action 'DetachDisk' -More @{ Port = 2 }
+                        Invoke-Rig -Action 'DeleteDisk' -More @{ Disk = $disk }
+                        Invoke-Rig -Action 'On'
+                    }
+                }
                 'ops.repair-boot-attached-bios-no-active' {
                     Invoke-OpsBiosDisk
                     Invoke-Rig -Action 'Off'
