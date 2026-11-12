@@ -242,6 +242,14 @@ function Complete-OpsRow {
     return @{ media = $Media; independent = $independent }
 }
 
+function Get-OpsVolumeMiB {
+    # FAT32 needs at least 65,525 clusters, so with 4 KiB clusters a volume under about 260 MiB is
+    # one Windows refuses to format. A FAT32 fixture is made larger; the rest keep the row's size.
+    param([string]$FileSystem, [int]$MiB)
+    if ($FileSystem -eq 'FAT32' -and $MiB -lt 384) { return 384 }
+    return $MiB
+}
+
 function Add-OpsRow {
     param([Parameter(Mandatory = $true)] [string]$Id, [Parameter(Mandatory = $true)] [scriptblock]$Body)
     if ($Id -notlike 'ops.*') { throw "An operation-proof row is named ops.*: $Id" }
@@ -254,15 +262,16 @@ function Invoke-OpsCreateWindows {
     param([string]$FileSystem, [string]$Label, [uint64]$ClusterBytes, [string]$Route = '')
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk
+    $mib = Get-OpsVolumeMiB -FileSystem $FileSystem -MiB 256
     Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route $Route -Choices @{
-        size_mib = 256; free_before_mib = 0; file_system = $FileSystem; allocation_unit_bytes = $ClusterBytes
+        size_mib = $mib; free_before_mib = 0; file_system = $FileSystem; allocation_unit_bytes = $ClusterBytes
         partition_type = $Script:GptBasicData; label = $Label; full_format = $false
     } | Out-Null
     $snapshot = Get-CertSnapshot -DiskNumber $disk
     $data = @($snapshot.data_partitions)
     $checks = @(New-OpsCheck -Name 'the raw table holds one data partition' -Passed ($data.Count -eq 1) -Detail $data.Count)
     if ($data.Count -eq 1) {
-        $checks += New-OpsCheck -Name 'it is 256 MiB' -Passed ([uint64]$data[0].size_bytes -eq 256 * $Script:OpsMiB) -Detail "$($data[0].size_bytes)"
+        $checks += New-OpsCheck -Name "it is $mib MiB" -Passed ([uint64]$data[0].size_bytes -eq [uint64]$mib * $Script:OpsMiB) -Detail "$($data[0].size_bytes)"
         $checks += New-OpsCheck -Name 'its type is basic data' -Passed ("$($data[0].type)" -eq $Script:OpsGptBasicData) -Detail "$($data[0].type)"
         $letter = Wait-OpsLetter -DiskNumber $disk -Offset ([uint64]$data[0].offset_bytes)
         $checks += New-OpsCheck -Name 'Windows mounted it with a letter' -Passed ([bool]$letter) -Detail $letter
@@ -313,13 +322,14 @@ function Invoke-OpsFormat {
     param([string]$FileSystem, [object]$Label, [uint64]$ClusterBytes = 0)
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk
-    $old = New-CertVolume -DiskNumber $disk -SizeBytes (256 * $Script:OpsMiB) -Label 'OPSOLD'
+    $mib = Get-OpsVolumeMiB -FileSystem $FileSystem -MiB 256
+    $old = New-CertVolume -DiskNumber $disk -SizeBytes ([uint64]$mib * $Script:OpsMiB) -Label 'OPSOLD'
     Write-CertMarkerFile -Letter $old.letter
     $offset = [uint64](Get-Partition -DiskNumber $disk -PartitionNumber $old.partition_number).Offset
     $choices = @{ file_system = $FileSystem; allocation_unit_bytes = $ClusterBytes; label = "$Label"; full_format = $false }
     if ($FileSystem -eq 'Linux swap') { $choices.linux_swap_page_size_bytes = '4096' }
     Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select @{ partition_number = $old.partition_number } -Choices $choices | Out-Null
-    $checks = @(Test-OpsExtent -Name 'the partition kept its place and size' -DiskNumber $disk -Offset $offset -SizeBytes (256 * $Script:OpsMiB))
+    $checks = @(Test-OpsExtent -Name 'the partition kept its place and size' -DiskNumber $disk -Offset $offset -SizeBytes ([uint64]$mib * $Script:OpsMiB))
     $images = @()
     if ($FileSystem -in 'NTFS', 'exFAT', 'FAT32') {
         $letter = Wait-OpsLetter -DiskNumber $disk -Offset $offset
@@ -428,7 +438,7 @@ function Invoke-OpsCheckWindows {
     param([string]$FileSystem)
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk
-    $volume = New-CertVolume -DiskNumber $disk -SizeBytes (256 * $Script:OpsMiB) -FileSystem $FileSystem -Label 'OPSCHECK' -ClusterBytes 4096
+    $volume = New-CertVolume -DiskNumber $disk -SizeBytes ([uint64](Get-OpsVolumeMiB -FileSystem $FileSystem -MiB 256) * $Script:OpsMiB) -FileSystem $FileSystem -Label 'OPSCHECK' -ClusterBytes 4096
     $before = Write-RbFixtureTree -Root "$($volume.letter):\fixture" -FileCount 8
     $tableBefore = Get-CertSnapshot -DiskNumber $disk
     $step = Invoke-OpsStep -Disk $disk -Step 'check' -Operation 'CheckFileSystem' -Select @{ partition_number = $volume.partition_number }
@@ -474,7 +484,7 @@ Add-OpsRow 'ops.scan-file-systems' {
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk
     $one = New-CertVolume -DiskNumber $disk -SizeBytes (192 * $Script:OpsMiB) -Label 'OPSSCAN1'
-    $two = New-CertVolume -DiskNumber $disk -SizeBytes (192 * $Script:OpsMiB) -FileSystem 'FAT32' -Label 'OPSSCAN2'
+    $two = New-CertVolume -DiskNumber $disk -SizeBytes (384 * $Script:OpsMiB) -FileSystem 'FAT32' -Label 'OPSSCAN2'
     $filesOne = Write-RbFixtureTree -Root "$($one.letter):\fixture" -FileCount 6
     $filesTwo = Write-RbFixtureTree -Root "$($two.letter):\fixture" -FileCount 6
     $tableBefore = Get-CertSnapshot -DiskNumber $disk
@@ -729,19 +739,22 @@ function Invoke-OpsClusterOrSerial {
     param([ValidateSet('ChangeClusterSize', 'ChangeVolumeSerialNumber')] [string]$Operation, [string]$FileSystem)
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk
-    $volume = New-CertVolume -DiskNumber $disk -SizeBytes (384 * $Script:OpsMiB) -FileSystem $FileSystem -Label 'OPSREBUILD' -ClusterBytes 4096
+    $mib = if ($FileSystem -eq 'FAT32') { 640 } else { 384 }
+    $volume = New-CertVolume -DiskNumber $disk -SizeBytes ([uint64]$mib * $Script:OpsMiB) -FileSystem $FileSystem -Label 'OPSREBUILD' -ClusterBytes 4096
     $offset = [uint64](Get-Partition -DiskNumber $disk -PartitionNumber $volume.partition_number).Offset
     $files = Write-RbFixtureTree -Root "$($volume.letter):\fixture" -FileCount 8
     $before = Get-RbVolumeFacts -Letter $volume.letter
     $choices = @{ backup_directory = (New-CertBackupFolder); confirmed = $true }
-    if ($Operation -eq 'ChangeClusterSize') { $choices += @{ file_system = $FileSystem; allocation_unit_bytes = 16384; label = 'OPSREBUILD' } }
+    # FAT32 at 640 MiB holds 81,920 clusters of 8 KiB; 16 KiB would be too few.
+    $newCluster = if ($FileSystem -eq 'FAT32') { 8192 } else { 16384 }
+    if ($Operation -eq 'ChangeClusterSize') { $choices += @{ file_system = $FileSystem; allocation_unit_bytes = $newCluster; label = 'OPSREBUILD' } }
     Invoke-OpsStep -Disk $disk -Step 'rebuild' -Operation $Operation -Select @{ partition_number = $volume.partition_number } -Choices $choices -TimeoutSeconds 3600 | Out-Null
     $letter = Wait-OpsLetter -DiskNumber $disk -Offset $offset
     $checks = @(New-OpsCheck -Name 'the volume is mounted afterwards' -Passed ([bool]$letter) -Detail $letter)
     if ($letter) {
         $after = Get-RbVolumeFacts -Letter $letter
         if ($Operation -eq 'ChangeClusterSize') {
-            $checks += New-OpsCheck -Name 'the cluster is now 16 KiB' -Passed ([uint64]$after.cluster_bytes -eq 16384) -Detail "$($before.cluster_bytes) -> $($after.cluster_bytes)"
+            $checks += New-OpsCheck -Name "the cluster is now $newCluster bytes" -Passed ([uint64]$after.cluster_bytes -eq $newCluster) -Detail "$($before.cluster_bytes) -> $($after.cluster_bytes)"
         } else {
             $checks += New-OpsCheck -Name 'the serial number changed' -Passed ($after.serial_number -ne $before.serial_number) -Detail "$($before.serial_number) -> $($after.serial_number)"
         }
@@ -765,7 +778,8 @@ function Invoke-OpsMove {
     $media = Get-OpsMedia -DiskNumber $disk
     $base = Get-CertFirstFreeOffset -DiskNumber $disk
     $requested = $base + (64 * $Script:OpsMiB)
-    $volume = New-CertVolume -DiskNumber $disk -SizeBytes (192 * $Script:OpsMiB) -FileSystem $FileSystem -Label 'OPSMOVE' -Offset ($base + (256 * $Script:OpsMiB))
+    $mib = Get-OpsVolumeMiB -FileSystem $FileSystem -MiB 192
+    $volume = New-CertVolume -DiskNumber $disk -SizeBytes ([uint64]$mib * $Script:OpsMiB) -FileSystem $FileSystem -Label 'OPSMOVE' -Offset ($base + (256 * $Script:OpsMiB))
     $offset = [uint64](Get-Partition -DiskNumber $disk -PartitionNumber $volume.partition_number).Offset
     $files = Write-RbFixtureTree -Root "$($volume.letter):\fixture" -FileCount 24 -MaxKilobytes 4096
     $shadowsBefore = @(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction SilentlyContinue).Count
@@ -777,7 +791,7 @@ function Invoke-OpsMove {
     $snapshot = Get-CertSnapshot -DiskNumber $disk
     $checks = @()
     if ($CancelAfterSeconds -eq 0) {
-        $checks += Test-OpsExtent -Name 'it starts where asked, same size' -DiskNumber $disk -Offset $requested -SizeBytes (192 * $Script:OpsMiB)
+        $checks += Test-OpsExtent -Name 'it starts where asked, same size' -DiskNumber $disk -Offset $requested -SizeBytes ([uint64]$mib * $Script:OpsMiB)
         $letter = Wait-OpsLetter -DiskNumber $disk -Offset $requested
     } else {
         $last = @($step.execution.steps)[-1]
@@ -851,10 +865,15 @@ Add-OpsRow 'ops.allocate-after-fat32' { Invoke-OpsAllocate -DonorFileSystem 'FAT
 function Invoke-OpsQuickPartition {
     # Quick Partition with a FAT file system: the certification rows ran it with NTFS only.
     param([string]$FileSystem, [string]$Prefix)
-    $run = Invoke-CertQuickPartition -Style 'GPT' -Name "qp-$($FileSystem.ToLowerInvariant())" -Options @{
+    $disk = New-OpsDisk -Name 'disk' -SizeMB 2048
+    $media = Get-OpsMedia -DiskNumber $disk
+    $old = New-CertVolume -DiskNumber $disk -SizeBytes (128 * $Script:OpsMiB) -Label 'SAKOLD'
+    Write-CertMarkerFile -Letter $old.letter
+    Invoke-OpsStep -Disk $disk -Step 'layout' -Operation 'QuickPartition' -Choices @{
         partition_count = 3; partition_scheme = 'GPT'; size_mode = 'equal'; file_system = $FileSystem
         allocation_unit_bytes = '4096'; label_prefix = $Prefix; full_format = $false
-    }
+    } -TimeoutSeconds 3600 | Out-Null
+    $run = [pscustomobject]@{ media = $media; after = (Get-CertSnapshot -DiskNumber $disk) }
     $data = @($run.after.data_partitions)
     $checks = @(New-OpsCheck -Name 'three data partitions' -Passed ($data.Count -eq 3) -Detail $data.Count)
     foreach ($partition in @($run.after.partitions | Where-Object { $_.volume })) {
