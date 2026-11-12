@@ -2018,22 +2018,6 @@ QString filesystemToolCallScript(const QString& name,
              acceptedExitCodes.join(QStringLiteral(", ")));
 }
 
-QString filesystemToolCallScriptWithArgsExpression(
-    const QString& name,
-    const PartitionFileSystemToolResolution& resolution,
-    const QString& argumentsExpression,
-    const QStringList& acceptedExitCodes) {
-    return QStringLiteral(
-               "Invoke-SakFilesystemTool -Name %1 -ToolPath %2 -ExpectedHash %3 "
-               "-ToolArgs %4 -AcceptedExitCodes @(%5)\n")
-        .arg(PartitionScriptBuilder::quotePowerShell(name),
-             PartitionScriptBuilder::quotePowerShell(
-                 QDir::toNativeSeparators(resolution.tool_path)),
-             PartitionScriptBuilder::quotePowerShell(resolution.tool.binary_sha256.toLower()),
-             argumentsExpression,
-             acceptedExitCodes.join(QStringLiteral(", ")));
-}
-
 // Before a bundled tool or the APFS writer opens the selected partition itself, S.A.K. takes it
 // (Sak.RawPartitionWrite: refused, with a plain message, while anything else has it open) and
 // Windows lets go of its file system; for a format, the old file system's first and last MiB are
@@ -2054,14 +2038,14 @@ QString takeSelectedPartitionScript(bool clearFileSystem) {
 // What Format-Volume would refuse (PartitionFileSystemRegistry::windowsFormatBlocker), found
 // before the script is made: the file system, the cluster size for the partition's size, and
 // the label. The edition (ReFS) is the script's to check, on the PC that runs it.
-QString windowsFormatChoiceBlocker(const QString& fileSystem,
-                                   uint64_t partitionBytes,
-                                   uint64_t allocationUnit,
+QString windowsFormatChoiceBlocker(const QString& file_system,
+                                   uint64_t partition_bytes,
+                                   uint64_t allocation_unit,
                                    const QString& label) {
     return PartitionFileSystemRegistry::windowsFormatBlocker(
-        {.file_system = fileSystem,
-         .partition_bytes = partitionBytes,
-         .allocation_unit_bytes = allocationUnit,
+        {.file_system = file_system,
+         .partition_bytes = partition_bytes,
+         .allocation_unit_bytes = allocation_unit,
          .label = label,
          .refs_available = true});
 }
@@ -2069,15 +2053,15 @@ QString windowsFormatChoiceBlocker(const QString& fileSystem,
 // The script's own check, just before it writes: the same rules on the partition as it is then,
 // with this PC's edition and the disk's physical sector size.
 QString windowsFormatCheckScript(const QString& disk,
-                                 const QString& sizeExpression,
-                                 const QString& fileSystem,
-                                 uint64_t allocationUnit) {
+                                 const QString& size_expression,
+                                 const QString& file_system,
+                                 uint64_t allocation_unit) {
     return PartitionFileSystemRegistry::windowsFormatCheckFunctionScript() +
            QStringLiteral("Assert-SakWindowsFormatChoice %1 %2 %3 %4\n")
                .arg(disk,
-                    sizeExpression,
-                    PartitionScriptBuilder::quotePowerShell(fileSystem.trimmed()),
-                    uintArg(allocationUnit));
+                    size_expression,
+                    PartitionScriptBuilder::quotePowerShell(file_system.trimmed()),
+                    uintArg(allocation_unit));
 }
 
 // Create is all or nothing: when Windows cannot format the partition it has just made, the
@@ -3705,7 +3689,7 @@ struct ExternalFileSystemToolScriptRequest {
 // in half (operation proof, 2026-11-11); the queue refuses that now, and this is the check that
 // does not depend on any scan.
 static QString windowsFileSystemCheckScript(const PartitionOperation& operation,
-                                            const QString& queuedFileSystem) {
+                                            const QString& queued_file_system) {
     return QStringLiteral(R"PS(
 function Assert-SakWindowsFileSystem([uint32]$Disk, [uint32]$Number, [string]$Queued) {
   $found = ''
@@ -3726,13 +3710,13 @@ Assert-SakWindowsFileSystem %1 %2 %3
 )PS")
         .arg(uintArg(operation.target.disk_number.value()),
              uintArg(operation.target.partition_number.value()),
-             PartitionScriptBuilder::quotePowerShell(queuedFileSystem));
+             PartitionScriptBuilder::quotePowerShell(queued_file_system));
 }
 
 // The same check for an ext resize: the ext superblock's magic, read through the partition taken
 // as the tools take it (Sak.RawPartitionWrite), since Windows has no volume on a Linux partition.
-static QString extFileSystemCheckScript(const QString& targetPath,
-                                        const QString& queuedFileSystem) {
+static QString extFileSystemCheckScript(const QString& target_path,
+                                        const QString& queued_file_system) {
     return PartitionScriptBuilder::scriptTypesLoaderScript() +
            QStringLiteral(R"PS(
 function Assert-SakExtFileSystem([string]$Path, [string]$Queued) {
@@ -3757,8 +3741,8 @@ function Assert-SakExtFileSystem([string]$Path, [string]$Queued) {
 }
 Assert-SakExtFileSystem %1 %2
 )PS")
-               .arg(PartitionScriptBuilder::quotePowerShell(targetPath),
-                    PartitionScriptBuilder::quotePowerShell(queuedFileSystem));
+               .arg(PartitionScriptBuilder::quotePowerShell(target_path),
+                    PartitionScriptBuilder::quotePowerShell(queued_file_system));
 }
 
 // Windows' Resize-Partition takes a data partition only ("This operation is only supported on data
@@ -3896,23 +3880,23 @@ static PartitionScript buildApfsGrowScript(const PartitionOperation& operation,
 }
 
 static PartitionScript buildNativeResizeScript(const PartitionOperation& operation,
-                                               uint64_t targetSize,
-                                               const QString& queuedFileSystem) {
+                                               uint64_t target_size,
+                                               const QString& queued_file_system) {
     PartitionScript out;
     out.preview = QStringLiteral("Resize Disk %1 Partition %2 to %3")
                       .arg(operation.target.disk_number.value())
                       .arg(operation.target.partition_number.value())
-                      .arg(formatPartitionBytes(targetSize));
+                      .arg(formatPartitionBytes(target_size));
     const QString resize =
         QStringLiteral("Invoke-SakResizeAsDataPartition -Disk %1 -Number %2 -Size %3")
             .arg(operation.target.disk_number.value())
             .arg(operation.target.partition_number.value())
-            .arg(uintArg(targetSize));
+            .arg(uintArg(target_size));
     // A shrink hands the data move to defragsvc, which finishes it even if this script is killed.
     // An extend ends at once.
-    const bool shrinks = targetSize < operation.target.size_bytes;
+    const bool shrinks = target_size < operation.target.size_bytes;
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 windowsFileSystemCheckScript(operation, queuedFileSystem) +
+                 windowsFileSystemCheckScript(operation, queued_file_system) +
                  resizeAsDataPartitionFunctionScript() +
                  QStringLiteral(
                      "$s = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %2\n"
@@ -3920,7 +3904,7 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
                      "{ throw 'Target size outside supported range' }\n")
                      .arg(operation.target.disk_number.value())
                      .arg(operation.target.partition_number.value())
-                     .arg(uintArg(targetSize)) +
+                     .arg(uintArg(target_size)) +
                  (shrinks ? windowsContinuedLine(WindowsContinuedWork::PartitionShrink,
                                                  uintArg(operation.target.size_bytes),
                                                  resize)
@@ -3931,9 +3915,9 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
 
 static QString growExtResizePreToolScript(const PartitionOperation& operation,
                                           const QString& fs,
-                                          const QString& targetPath,
+                                          const QString& target_path,
                                           uint64_t targetSize) {
-    return extFileSystemCheckScript(targetPath, fs) + resizeAsDataPartitionFunctionScript() +
+    return extFileSystemCheckScript(target_path, fs) + resizeAsDataPartitionFunctionScript() +
            QStringLiteral(
                "$targetSizeBytes = [uint64]%1\n"
                "Invoke-SakResizeAsDataPartition -Disk %2 -Number %3 -Size $targetSizeBytes\n"
@@ -5231,10 +5215,10 @@ PartitionScript PartitionScriptBuilder::buildCreateScript(
 
     // What Format-Volume would refuse is refused here, before anything is created (the edition
     // and the disk's sector size are checked by the script).
-    if (const QString formatBlocker = windowsFormatChoiceBlocker(
+    if (const QString format_blocker = windowsFormatChoiceBlocker(
             spec.file_system, spec.size, spec.allocation_unit, spec.label);
-        !formatBlocker.isEmpty()) {
-        return invalidScript(formatBlocker);
+        !format_blocker.isEmpty()) {
+        return invalidScript(format_blocker);
     }
 
     const QString driveArg = isValidDriveLetter(spec.drive_letter)
@@ -5332,11 +5316,11 @@ PartitionScript buildWindowsFormatScript(const PartitionOperation& operation,
                  allocationUnitArg(operation));
     // A full format is a storage job Windows finishes even if this script is killed; a quick one
     // ends at once.
-    const QString formatLine = fullArg.isEmpty()
-                                   ? format + QLatin1Char('\n')
-                                   : windowsContinuedLine(WindowsContinuedWork::FullFormat,
-                                                          uintArg(operation.target.size_bytes),
-                                                          format);
+    const QString format_line = fullArg.isEmpty()
+                                    ? format + QLatin1Char('\n')
+                                    : windowsContinuedLine(WindowsContinuedWork::FullFormat,
+                                                           uintArg(operation.target.size_bytes),
+                                                           format);
     // A partition S.A.K. gave a Linux or Apple type (or a Linux or Mac disk brought in) has no
     // Windows volume until its type is a Windows data partition again. Then the choices are
     // checked on the partition as it is, and the partition is taken before Format-Volume.
@@ -5353,7 +5337,7 @@ PartitionScript buildWindowsFormatScript(const PartitionOperation& operation,
         (fullArg.isEmpty() ? QString()
                            : fullFormatAllowedScript(operation.target.disk_number.value(),
                                                      QStringLiteral("This format"))) +
-        takeSelectedPartitionScript(false) + windowsFormatOrReportScript(formatLine);
+        takeSelectedPartitionScript(false) + windowsFormatOrReportScript(format_line);
     out.timeout_seconds = fullArg.isEmpty() ? kPartitionFormatTaskTimeoutSeconds
                                             : kPartitionLongTaskTimeoutSeconds;
     return out;
@@ -5443,10 +5427,10 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionLabelScript(
 // 2026-11-12, F25). It changes nothing: e2fsck -n, fsck_hfs -n, xfs_repair -n, btrfs check
 // --readonly, and only exit code 0 passes.
 static ExternalFileSystemToolScriptRequest readOnlyToolCheckRequest(
-    const PartitionOperation& operation, const QString& fs, const QString& targetPath) {
+    const PartitionOperation& operation, const QString& fs, const QString& target_path) {
     ExternalFileSystemToolScriptRequest request;
     request.operation_name = PartitionFileSystemToolRunner::readOnlyCheckOperation();
-    request.command = PartitionFileSystemToolRunner::buildReadOnlyCheckCommand(fs, targetPath);
+    request.command = PartitionFileSystemToolRunner::buildReadOnlyCheckCommand(fs, target_path);
     request.preview = QStringLiteral(
                           "Check Disk %1 Partition %2 %3 file system (read-only) with "
                           "bundled %4")
@@ -5466,17 +5450,17 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
         }
         const QString fs =
             payloadString(operation, QStringLiteral("file_system"), QStringLiteral("ext4"));
-        const QString targetPath = rawPartitionTargetPath(operation);
+        const QString target_path = rawPartitionTargetPath(operation);
         if (payloadBool(operation, QStringLiteral("read_only_check"))) {
             return buildExternalFileSystemToolScript(
-                operation, readOnlyToolCheckRequest(operation, fs, targetPath));
+                operation, readOnlyToolCheckRequest(operation, fs, target_path));
         }
         if (isApfsFileSystemToken(fs)) {
             return buildApfsRawRepairScript(operation, fs);
         }
         const auto command = PartitionFileSystemToolRunner::buildRepairCommand(
             fs,
-            targetPath,
+            target_path,
             payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload)));
         ExternalFileSystemToolScriptRequest request;
         request.operation_name = PartitionFileSystemToolRunner::repairOperation();
@@ -5940,34 +5924,34 @@ struct RecoveredPartitionType {
 // What Restore Recovered Partition needs before it writes: where, how large, and a type the
 // disk's table holds (PartitionSafetyValidator::partitionTypeBlocker).
 QString recoveredPartitionBlocker(const PartitionOperation& operation) {
-    const QString typeId = payloadString(operation, QStringLiteral("type_id")).trimmed();
+    const QString type_id = payloadString(operation, QStringLiteral("type_id")).trimmed();
     if (operation.target.kind != PartitionTargetKind::Disk ||
         payloadUInt64(operation, QStringLiteral("offset_bytes")) == 0 ||
-        payloadUInt64(operation, QStringLiteral("size_bytes")) == 0 || typeId.isEmpty()) {
+        payloadUInt64(operation, QStringLiteral("size_bytes")) == 0 || type_id.isEmpty()) {
         return QStringLiteral(
             "Recovered partition restore requires disk, offset, size, and type_id");
     }
     return PartitionSafetyValidator::partitionTypeBlocker(
-        payloadString(operation, QStringLiteral("partition_style")), typeId);
+        payloadString(operation, QStringLiteral("partition_style")), type_id);
 }
 
 // New-Partition's -MbrType is an enum of six named types: it read "0x07" as none of them and has
 // no Linux byte at all. So an MBR partition is made, then given its byte by Set-Partition, which
 // takes any; a GPT partition is made with its type.
 RecoveredPartitionType recoveredPartitionType(const PartitionOperation& operation,
-                                              const QString& typeId,
+                                              const QString& type_id,
                                               bool gpt) {
     if (gpt) {
         return {
             .new_partition_argument =
-                QStringLiteral("-GptType %1").arg(PartitionScriptBuilder::quotePowerShell(typeId)),
+                QStringLiteral("-GptType %1").arg(PartitionScriptBuilder::quotePowerShell(type_id)),
             .set_mbr_type = {}};
     }
     return {.new_partition_argument = {},
             .set_mbr_type =
                 QStringLiteral("Set-Partition -DiskNumber %1 -PartitionNumber "
                                "$sakNew.PartitionNumber -MbrType %2 -ErrorAction Stop\n")
-                    .arg(uintArg(operation.target.disk_number.value()), mbrTypeLiteral(typeId))};
+                    .arg(uintArg(operation.target.disk_number.value()), mbrTypeLiteral(type_id))};
 }
 
 QString mbrTypeLiteral(const QString& typed) {
@@ -5992,7 +5976,7 @@ PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
     const QString typeId = payloadString(operation, QStringLiteral("type_id")).trimmed();
     const bool gpt = payloadString(operation, QStringLiteral("partition_style"))
                          .compare(QStringLiteral("GPT"), Qt::CaseInsensitive) == 0;
-    const auto [typeArg, setMbrType] = recoveredPartitionType(operation, typeId, gpt);
+    const auto [type_arg, set_mbr_type] = recoveredPartitionType(operation, typeId, gpt);
     PartitionScript out;
     out.preview = QStringLiteral("Restore recovered partition on Disk %1 at %2")
                       .arg(operation.target.disk_number.value())
@@ -6044,9 +6028,9 @@ PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
             .arg(operation.target.disk_number.value())
             .arg(uintArg(offset),
                  uintArg(size),
-                 typeArg,
+                 type_arg,
                  uintArg(kRecoveredPartitionHeadBytes),
-                 setMbrType);
+                 set_mbr_type);
     out.timeout_seconds = kPartitionMediumTaskTimeoutSeconds;
     return out;
 }
@@ -6088,11 +6072,11 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionTypeIdScript(
     }
     // The disk's style is read when the script runs, so text that is no type for it (a GPT GUID
     // on an MBR disk, a byte on a GPT one) stops it there, before Set-Partition.
-    const QString mbrType = mbrTypeLiteral(typeId);
-    const QString mbrRefusal = PartitionSafetyValidator::partitionTypeBlocker(QStringLiteral("MBR"),
-                                                                              typeId);
-    const QString gptRefusal = PartitionSafetyValidator::partitionTypeBlocker(QStringLiteral("GPT"),
-                                                                              typeId);
+    const QString mbr_type = mbrTypeLiteral(typeId);
+    const QString mbr_refusal =
+        PartitionSafetyValidator::partitionTypeBlocker(QStringLiteral("MBR"), typeId);
+    const QString gpt_refusal =
+        PartitionSafetyValidator::partitionTypeBlocker(QStringLiteral("GPT"), typeId);
 
     PartitionScript out;
     out.preview = QStringLiteral("Change Disk %1 Partition %2 type ID to %3")
@@ -6115,9 +6099,9 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionTypeIdScript(
                      .arg(QString::number(operation.target.disk_number.value()),
                           quotePowerShell(typeId),
                           QString::number(operation.target.partition_number.value()),
-                          mbrType.isEmpty() ? QStringLiteral("$null") : mbrType,
-                          quotePowerShell(mbrRefusal),
-                          quotePowerShell(gptRefusal));
+                          mbr_type.isEmpty() ? QStringLiteral("$null") : mbr_type,
+                          quotePowerShell(mbr_refusal),
+                          quotePowerShell(gpt_refusal));
     return out;
 }
 

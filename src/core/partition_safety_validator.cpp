@@ -2038,8 +2038,8 @@ void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
 void validateResizeContentBlockers(const PartitionInfoEx& partition,
                                    const PartitionOperation& operation,
                                    PartitionValidationResult* result) {
-    const QString fileSystemBlocker = resizeFileSystemBlocker(partition, operation);
-    addBlockerIf(result, !fileSystemBlocker.isEmpty(), fileSystemBlocker);
+    const QString file_system_blocker = resizeFileSystemBlocker(partition, operation);
+    addBlockerIf(result, !file_system_blocker.isEmpty(), file_system_blocker);
     addBlockerIf(result,
                  resizeTargetMissing(operation),
                  QStringLiteral("Resize target size is required"));
