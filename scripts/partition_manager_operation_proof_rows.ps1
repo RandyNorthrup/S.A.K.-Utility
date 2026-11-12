@@ -985,15 +985,22 @@ Add-OpsRow 'ops.hide-unhide-gpt' {
 }
 
 Add-OpsRow 'ops.hide-unhide-mbr' {
+    # Two partitions: on MBR, Windows' hidden and no-default-letter attributes are the whole disk's,
+    # and Set-Partition -IsHidden on one hid both (testpc2, merged build 9170b149, F30). Only the
+    # one the person chose may go, by its type byte; the other keeps its letter.
     $disk = New-OpsDisk -Name 'disk' -Style 'MBR'
     $media = Get-OpsMedia -DiskNumber $disk
     $volume = New-CertVolume -DiskNumber $disk -SizeBytes (256 * $Script:OpsMiB) -Label 'OPSHIDE'
+    $other = New-CertVolume -DiskNumber $disk -SizeBytes (128 * $Script:OpsMiB) -Label 'OPSSTAY'
     $offset = [uint64](Get-Partition -DiskNumber $disk -PartitionNumber $volume.partition_number).Offset
     $select = @{ partition_number = $volume.partition_number }
     $before = Get-OpsMbrEntry -DiskNumber $disk -OffsetBytes $offset
     Invoke-OpsStep -Disk $disk -Step 'hide' -Operation 'SetPartitionHidden' -Select $select -Choices @{ hidden = $true } | Out-Null
     $hidden = Get-OpsMbrEntry -DiskNumber $disk -OffsetBytes $offset
     $checks = @(New-OpsCheck -Name 'hide: the MBR type byte became hidden NTFS (17)' -Passed ($hidden.type -eq '17') -Detail "$($before.type) -> $($hidden.type)")
+    Update-HostStorageCache
+    $stay = Get-Partition -DiskNumber $disk -PartitionNumber $other.partition_number
+    $checks += New-OpsCheck -Name 'hide: the other partition on the disk is not hidden and keeps its letter' -Passed (-not $stay.IsHidden -and "$($stay.DriveLetter)" -eq "$($other.letter)") -Detail "hidden $($stay.IsHidden), letter '$($stay.DriveLetter)', was '$($other.letter)'"
     Invoke-OpsStep -Disk $disk -Step 'unhide' -Operation 'SetPartitionHidden' -Select $select -Choices @{ hidden = $false } | Out-Null
     $shown = Get-OpsMbrEntry -DiskNumber $disk -OffsetBytes $offset
     $checks += New-OpsCheck -Name 'unhide: the MBR type byte is NTFS (07) again' -Passed ($shown.type -eq '07') -Detail $shown.type
@@ -1139,7 +1146,7 @@ Add-OpsRow 'ops.wipe-partition' {
     # A wipe is a full format, which Windows refuses on a thin-provisioned disk, and a virtual
     # disk file is one: the app says so and changes nothing (seen on testpc2, 2026-11-12). The
     # wipe itself needs a real disk: external.wipe-partition-physical.
-    Invoke-OpsStep -Disk $disk -Step 'wipe' -Operation 'WipePartition' -Select @{ partition_number = $volume.partition_number } -TimeoutSeconds 3600 -Expect 'failed' -RefusalContains 'thin-provisioned' -ReadBackOnFailure | Out-Null
+    Invoke-OpsStep -Disk $disk -Step 'wipe' -Operation 'WipePartition' -Select @{ partition_number = $volume.partition_number } -TimeoutSeconds 3600 -Expect 'refused' -RefusalContains 'thin-provisioned' -ReadBackOnFailure | Out-Null
     $after = Find-OpsMarkerInRange -DiskNumber $disk -Offset ([uint64]$partition.Offset) -Length ([uint64]$partition.Size)
     $checks = @(New-OpsCheck -Name 'the marker was on the partition before' -Passed ($before.marker_hits -gt 0) -Detail $before)
     $checks += New-OpsCheck -Name 'the refused wipe left the marker where it was' -Passed ($after.marker_hits -eq $before.marker_hits) -Detail $after
@@ -1177,7 +1184,7 @@ Add-OpsRow 'ops.wipe-disk' {
     $tableBefore = Get-CertSnapshot -DiskNumber $disk
     # Refused on a virtual disk file, as Wipe Partition is (above); the wipe itself is
     # external.wipe-disk-physical.
-    Invoke-OpsStep -Disk $disk -Step 'wipe' -Operation 'WipeDisk' -TimeoutSeconds 3600 -Expect 'failed' -RefusalContains 'thin-provisioned' -ReadBackOnFailure | Out-Null
+    Invoke-OpsStep -Disk $disk -Step 'wipe' -Operation 'WipeDisk' -TimeoutSeconds 3600 -Expect 'refused' -RefusalContains 'thin-provisioned' -ReadBackOnFailure | Out-Null
     $after = Find-RbMarkerAnywhere -DiskNumber $disk -Marker $Script:Marker
     $checks = @(New-OpsCheck -Name 'the marker was on the disk before' -Passed ($before.marker_hits -gt 0) -Detail $before)
     $checks += New-OpsCheck -Name 'the refused wipe left the marker where it was' -Passed ($after.marker_hits -eq $before.marker_hits) -Detail $after
