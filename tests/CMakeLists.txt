@@ -344,6 +344,8 @@ set(SAK_PARTITION_CORE_RUNTIME_SOURCES
     ../src/core/partition_operation_queue.cpp
     ${SAK_PROCESS_RUNNER_SOURCES}
     ../src/core/logger.cpp
+    ../src/core/log_file_sink.cpp
+    ../src/core/no_follow_fs.cpp
     ../include/sak/partition_executor.h
     ../include/sak/partition_manager_types.h
     ../include/sak/partition_file_system_detector.h
@@ -391,6 +393,8 @@ target_compile_definitions(test_partition_manager_core PRIVATE
 add_test(NAME test_partition_manager_core COMMAND test_partition_manager_core
          -o "${TEST_OUTPUT_DIR}/test_partition_manager_core.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# It loads sak_script_types.dll, which sak_utility's post-build step puts beside the program.
+add_dependencies(test_partition_manager_core sak_utility)
 # About 3x the measured 201 s (Wave 69 serial run). COST makes a parallel run start the
 # longest test first instead of leaving it as the tail.
 set_tests_properties(test_partition_manager_core PROPERTIES TIMEOUT 600 COST 201)
@@ -553,7 +557,9 @@ set(SAK_PARTITION_LIVE_CERTIFIER_SOURCES
     certification/partition_manager_scenario_step.h
     ${SAK_PARTITION_CORE_RUNTIME_SOURCES}
     ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
+    ../src/core/app_paths.cpp
     ../src/core/elevation_manager.cpp
+    ../src/core/program_integrity.cpp
     ../src/core/file_hash.cpp
     ../src/core/partition_manager_controller.cpp
     ../src/core/partition_report_generator.cpp
@@ -565,6 +571,8 @@ set(SAK_PARTITION_LIVE_CERTIFIER_SOURCES
     ../include/sak/restore_point_manager.h
 )
 add_executable(partition_manager_live_certifier ${SAK_PARTITION_LIVE_CERTIFIER_SOURCES})
+# It compiles program_integrity.cpp itself, which includes the script-types pin.
+add_dependencies(partition_manager_live_certifier sak_script_types)
 set_target_properties(partition_manager_live_certifier PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
@@ -712,6 +720,8 @@ add_executable(file_management_live_certifier
     ../src/core/file_hash.cpp
     ../src/core/file_management_file_system.cpp
     ../src/core/logger.cpp
+    ../src/core/log_file_sink.cpp
+    ../src/core/no_follow_fs.cpp
     ../src/core/apfs_crypto.cpp
     ../src/core/apfs_keybag.cpp
     ../src/core/partition_apfs_file_system_reader.cpp
@@ -770,6 +780,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/flash_live_certifier.cpp")
         ../src/core/file_hash.cpp
         ../src/core/keep_awake.cpp
         ../src/core/logger.cpp
+        ../src/core/log_file_sink.cpp
+        ../src/core/no_follow_fs.cpp
         ../include/sak/flash_worker.h
         ../include/sak/image_source.h
         ../include/sak/worker_base.h
@@ -3841,6 +3853,7 @@ message(STATUS "Added unit test: test_streaming_decompressor")
 # test_logger - initialization, level filtering, file output, thread safety
 add_executable(test_logger
     unit/test_logger.cpp
+    support/junction_fixture.h
 )
 set_target_properties(test_logger PROPERTIES
     AUTOMOC ON
@@ -3857,6 +3870,143 @@ add_test(NAME test_logger COMMAND test_logger
          -o "${TEST_OUTPUT_DIR}/test_logger.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_logger")
+
+# test_logger_concurrency - the logger's lock, through an in-memory sink (also the WSL TSan row)
+add_executable(test_logger_concurrency
+    unit/test_logger_concurrency.cpp
+)
+set_target_properties(test_logger_concurrency PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_logger_concurrency PRIVATE
+    sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_logger_concurrency PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_logger_concurrency COMMAND test_logger_concurrency
+         -o "${TEST_OUTPUT_DIR}/test_logger_concurrency.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_logger_concurrency")
+
+# test_no_follow_fs - junctions never redirect a held directory, a staged write or a tree delete
+add_executable(test_no_follow_fs
+    unit/test_no_follow_fs.cpp
+    support/junction_fixture.h
+)
+set_target_properties(test_no_follow_fs PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_no_follow_fs PRIVATE
+    sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_no_follow_fs PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_no_follow_fs COMMAND test_no_follow_fs
+         -o "${TEST_OUTPUT_DIR}/test_no_follow_fs.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_no_follow_fs")
+
+# test_program_integrity - what an elevation accepts from the program folder (security brief 4c/4d)
+add_executable(test_program_integrity
+    unit/test_program_integrity.cpp
+    support/junction_fixture.h
+)
+set_target_properties(test_program_integrity PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_program_integrity PRIVATE
+    sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_program_integrity PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+# It reads the built programs' load configuration (/DEPENDENTLOADFLAG), so they are built first.
+add_dependencies(test_program_integrity
+    sak_utility sak_elevated_helper sak_apfs_writer_cli sak_hfs_writer_cli)
+add_test(NAME test_program_integrity COMMAND test_program_integrity
+         -o "${TEST_OUTPUT_DIR}/test_program_integrity.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_program_integrity")
+
+# test_script_types - sak_script_types.dll in Windows PowerShell 5.1 (security brief 4a/4b)
+add_executable(test_script_types
+    unit/test_script_types.cpp
+    support/junction_fixture.h
+)
+set_target_properties(test_script_types PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_script_types PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_script_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+# The DLL it loads is copied beside the program by sak_utility's post-build step.
+add_dependencies(test_script_types sak_utility)
+add_test(NAME test_script_types COMMAND test_script_types
+         -o "${TEST_OUTPUT_DIR}/test_script_types.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_script_types")
+
+# test_fat_volumes - the no-follow primitive, the program-file check and the scripts' SafeFiles on
+# real FAT32 and exFAT volumes (two small VHDX files it makes and mounts). Needs administrator and
+# SAK_TEST_ALLOW_REAL_HARDWARE=1: CI's elevated step runs it, and it skips everywhere else.
+add_executable(test_fat_volumes
+    unit/test_fat_volumes.cpp
+)
+set_target_properties(test_fat_volumes PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fat_volumes PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_fat_volumes PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+# It copies sak_script_types.dll, which sak_utility's post-build step puts beside the program.
+add_dependencies(test_fat_volumes sak_utility)
+add_test(NAME test_fat_volumes COMMAND test_fat_volumes
+         -o "${TEST_OUTPUT_DIR}/test_fat_volumes.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fat_volumes")
+
+# test_raw_partition_write - the C++ and the scripts' partition writers on real NTFS, FAT32 and
+# exFAT partitions (three small VHDX files it makes and mounts): the last sectors are reached and
+# a partition in use is refused. Needs administrator and SAK_TEST_ALLOW_REAL_HARDWARE=1: CI's
+# elevated step runs it, and it skips everywhere else.
+add_executable(test_raw_partition_write
+    unit/test_raw_partition_write.cpp
+)
+set_target_properties(test_raw_partition_write PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_raw_partition_write PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_raw_partition_write PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+# It loads sak_script_types.dll, which sak_utility's post-build step puts beside the program.
+add_dependencies(test_raw_partition_write sak_utility)
+add_test(NAME test_raw_partition_write COMMAND test_raw_partition_write
+         -o "${TEST_OUTPUT_DIR}/test_raw_partition_write.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_raw_partition_write")
 
 # ============================================================================
 # Unit Tests - Offline Deployment
@@ -4713,6 +4863,7 @@ message(STATUS "Added unit test: test_app_installation_busy")
 # test_user_profile_restore_worker - Restore flow, conflict resolution, signals (TST-06)
 add_executable(test_user_profile_restore_worker
     unit/test_user_profile_restore_worker.cpp
+    support/junction_fixture.h
 )
 set_target_properties(test_user_profile_restore_worker PROPERTIES
     AUTOMOC ON
@@ -6460,6 +6611,8 @@ message(STATUS "Added unit test: test_email_search_worker")
 # test_email_export_worker - config, result, format coverage
 add_executable(test_email_export_worker
     unit/test_email_export_worker.cpp
+    support/pst_store_builder.h
+    support/junction_fixture.h
 )
 set_target_properties(test_email_export_worker PROPERTIES
     AUTOMOC ON

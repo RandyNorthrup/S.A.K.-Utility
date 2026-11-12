@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/color_constants.h"
+#include "sak/partition_apfs_writer.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_manager_panel.h"
@@ -1459,17 +1460,56 @@ void queueHfsRepairAndVerify() {
     verifySingleQueuedOperation(&panel, QStringLiteral("Check File System - Disk 0 Partition 1"));
 }
 
+/// What the disk scan reads from a container S.A.K.'s writer really formatted (256 MiB, the size
+/// the VM proof used), so the APFS repair gate is tested against the writer's own output, not a
+/// fixed text: the fixed layout it used to look for was one the writer no longer produced.
+/// The scan details of a container the app's writer formatted, @p container_bytes long, read by
+/// the production detector. The generated repair handles up to 128 MiB (one space-manager chunk);
+/// 64 MiB is inside that, 256 MiB (the VM's partition) is not.
+constexpr uint64_t kRepairableApfsBytes = 64ULL * 1024ULL * 1024ULL;
+constexpr uint64_t kLargeApfsBytes = 256ULL * 1024ULL * 1024ULL;
+
+QStringList formattedApfsScanDetails(uint64_t container_bytes = kLargeApfsBytes) {
+    QTemporaryDir dir;
+    if (!dir.isValid()) {
+        return {};
+    }
+    const uint64_t kContainerBytes = container_bytes;
+    const QString image = QDir(dir.path()).filePath(QStringLiteral("generated-apfs.img"));
+    // What the app's Format to APFS asks of the writer (its evidence ID), on an image file.
+    sak::PartitionApfsWriteOptions options;
+    options.writable = true;
+    options.evidence_id = QStringLiteral("ui.apfs-generated-raw-format");
+    const auto build = sak::PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = image,
+         .target_container_bytes = kContainerBytes,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("APFSPROOF"),
+         .options = options});
+    if (!build.ok) {
+        return {QStringLiteral("format failed: ") + build.blockers.join(QStringLiteral("; "))};
+    }
+    QFile file(image);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {QStringLiteral("cannot open the image")};
+    }
+    const auto detection =
+        sak::PartitionFileSystemDetector::detectFromDevice(&file, 0, kContainerBytes);
+    if (!detection) {
+        return {QStringLiteral("no file system detected")};
+    }
+    QStringList details = detection->details;
+    details.prepend(
+        QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"));
+    return details;
+}
+
 void queueGeneratedApfsRepairAndVerify() {
     sak::PartitionManagerPanel panel;
     auto inventory = applyReviewInventoryFixture();
-    setRawFileSystem(
-        &inventory.disks[0].partitions[0].volume.value(),
-        QStringLiteral("APFS"),
-        {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"),
-         QStringLiteral("APFS space manager block: 10"),
-         QStringLiteral("APFS volume candidate block 6 index 0 name SAK APFS volume object map OID "
-                        "103 root tree OID 104"),
-         QStringLiteral("Volume OIDs: 102")});
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
+                     QStringLiteral("APFS"),
+                     formattedApfsScanDetails(kRepairableApfsBytes));
     panel.setTestInventoryForReview(inventory);
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");
@@ -1510,16 +1550,90 @@ void queueGeneratedApfsRepairAndVerify() {
     verifySingleQueuedOperation(&panel, QStringLiteral("Check File System - Disk 0 Partition 1"));
 }
 
+/// Opens Check Non-Windows File System on Disk 0 partition 1 scanned as APFS with @p details,
+/// and returns the title of the dialog that opened and its "Repair" row (empty when it has none).
+/// Fails the test if the repair-mode dialog opened instead.
+QPair<QString, QString> apfsCheckDialogTitleAndRepairRow(const QStringList& details) {
+    sak::PartitionManagerPanel panel;
+    auto inventory = applyReviewInventoryFixture();
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
+                     QStringLiteral("APFS"),
+                     details);
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    if (table == nullptr) {
+        return {};
+    }
+    table->selectRow(1);
+    QString title;
+    QString repair_row;
+    bool repair_mode_offered = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        if (dialog == nullptr) {
+            return;
+        }
+        title = dialog->windowTitle();
+        repair_mode_offered = findAccessibleWidget<QComboBox>(
+                                  dialog, QStringLiteral("Non-Windows filesystem check mode")) !=
+                              nullptr;
+        if (auto* properties =
+                dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"))) {
+            repair_row = propertyTableValue(properties, QStringLiteral("Repair"));
+        }
+        dialog->reject();
+    });
+    auto* check = findToolButtonByName(&panel, QStringLiteral("Check Non-Windows File System"));
+    if (check == nullptr) {
+        return {};
+    }
+    pressAction(check);
+    return {repair_mode_offered ? QStringLiteral("(repair mode offered)") : title, repair_row};
+}
+
+// A container another program formatted gets no repair: the Check opens the read-only metadata
+// dialog, as it did for every container before 2026-11-11, and says why in plain words.
+void foreignApfsOffersOnlyTheMetadataCheck() {
+    QStringList details = formattedApfsScanDetails(kRepairableApfsBytes);
+    const QString sak_line = QStringLiteral("APFS volume formatted by: %1")
+                                 .arg(sak::PartitionApfsWriter::sakFormatterName());
+    QVERIFY2(details.contains(sak_line), qPrintable(details.join(QStringLiteral(" | "))));
+    details.replaceInStrings(sak_line,
+                             QStringLiteral("APFS volume formatted by: newfs_apfs (2142.1.1)"));
+    const auto [title, repair_row] = apfsCheckDialogTitleAndRepairRow(details);
+    QCOMPARE(title, QStringLiteral("APFS Metadata (Last Disk Scan)"));
+    QCOMPARE(repair_row,
+             QStringLiteral("S.A.K. can repair only APFS containers it formatted itself, up to "
+                            "128.0 MB. This container was formatted by something else (a Mac, "
+                            "for example), so only the read-only metadata check is offered."));
+}
+
+// A container the app formatted but larger than the writer's repair handles (one space-manager
+// chunk, 128 MiB) gets no repair either: offering it made Apply fail with "APFS writer helper
+// failed with exit code 1" on the VM (2026-11-11, a 256 MiB container). The window says why.
+void largeGeneratedApfsSaysWhyNoRepair() {
+    const QStringList details = formattedApfsScanDetails(kLargeApfsBytes);
+    QVERIFY2(details.contains(QStringLiteral("APFS volume formatted by: %1")
+                                  .arg(sak::PartitionApfsWriter::sakFormatterName())),
+             qPrintable(details.join(QStringLiteral(" | "))));
+    QVERIFY(
+        !sak::PartitionApfsWriter::repairGeometryBlocker(4096, kLargeApfsBytes / 4096).isEmpty());
+    QVERIFY(sak::PartitionApfsWriter::repairGeometryBlocker(4096, kRepairableApfsBytes / 4096)
+                .isEmpty());
+    const auto [title, repair_row] = apfsCheckDialogTitleAndRepairRow(details);
+    QCOMPARE(title, QStringLiteral("APFS Metadata (Last Disk Scan)"));
+    QCOMPARE(repair_row,
+             QStringLiteral("S.A.K. can repair only APFS containers it formatted itself, up to "
+                            "128.0 MB. This container is 256.0 MB, so only the read-only metadata "
+                            "check is offered."));
+}
+
 sak::PartitionInventory generatedApfsInventoryFixture() {
     auto inventory = applyReviewInventoryFixture();
-    setRawFileSystem(
-        &inventory.disks[0].partitions[0].volume.value(),
-        QStringLiteral("APFS"),
-        {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"),
-         QStringLiteral("APFS space manager block: 10"),
-         QStringLiteral("APFS volume candidate block 6 index 0 name SAK APFS volume object map OID "
-                        "103 root tree OID 104"),
-         QStringLiteral("Volume OIDs: 102")});
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
+                     QStringLiteral("APFS"),
+                     formattedApfsScanDetails());
     return inventory;
 }
 
@@ -5500,6 +5614,8 @@ void PartitionManagerPanelTests::extFilesystemWriteActionsQueueWithConfirmation(
     queueExtRepairAndVerify();
     queueHfsRepairAndVerify();
     queueGeneratedApfsRepairAndVerify();
+    foreignApfsOffersOnlyTheMetadataCheck();
+    largeGeneratedApfsSaysWhyNoRepair();
     queueExtResizeAndVerify(true);
     queueExtResizeAndVerify(false);
 }

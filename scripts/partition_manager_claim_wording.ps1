@@ -5,8 +5,8 @@
 .DESCRIPTION
     A function of the computed status and of nothing else, so the words cannot say more than the
     evidence. A device is named only from what a row that ran on it reported. Public text does not
-    say "certified", and of Apple's file systems it says only that writes were validated with Apple's
-    own tools.
+    say "certified", and of Apple's file systems it says only that, on earlier code, S.A.K.'s write
+    engine was validated with Apple's own tools.
 #>
 
 Set-StrictMode -Version 2.0
@@ -72,12 +72,35 @@ function Get-PmDeviceSentences {
     return $sentences
 }
 
+function Format-PmMonthRange {
+    # "June to August 2026", "June 2026", "December 2025 to January 2026", from yyyy-MM-dd dates.
+    param([Parameter(Mandatory = $true)] [string[]]$Dates)
+    $culture = [Globalization.CultureInfo]::InvariantCulture
+    $parsed = @($Dates | ForEach-Object { [datetime]::ParseExact($_, 'yyyy-MM-dd', $culture) } | Sort-Object)
+    $first = $parsed[0]
+    $last = $parsed[-1]
+    if ($first.Year -eq $last.Year -and $first.Month -eq $last.Month) { return $first.ToString('MMMM yyyy', $culture) }
+    if ($first.Year -eq $last.Year) { return "$($first.ToString('MMMM', $culture)) to $($last.ToString('MMMM yyyy', $culture))" }
+    return "$($first.ToString('MMMM yyyy', $culture)) to $($last.ToString('MMMM yyyy', $culture))"
+}
+
 function Get-PmAppleSentence {
+    # What the Apple capability matrix supports, and no more (2026-11-11): its evidence was the write
+    # engine on earlier code, run by certifiers and the writer tools, not the app's own HFS+ and APFS
+    # operations on the code these words are about. The months and the file systems come from the
+    # matrix; a certified capability with no date stops the wording rather than guess one.
     param([AllowNull()] [object]$AppleMatrix)
     if ($null -eq $AppleMatrix) { return @() }
     $done = @($AppleMatrix.capabilities | Where-Object { "$($_.status)" -ceq 'certified' })
     if ($done.Count -eq 0) { return @() }
-    return @("Writes to Apple file systems were validated with Apple's own tools.")
+    $dates = @($done | ForEach-Object { $date = $_.PSObject.Properties['certified_on']; if ($date) { "$($date.Value)" } else { '' } })
+    if (@($dates | Where-Object { $_ -notmatch '^\d{4}-\d{2}-\d{2}$' }).Count -gt 0) {
+        throw 'A certified Apple file system capability has no certified_on date; there are no words for it.'
+    }
+    $named = @($done | ForEach-Object { $fs = $_.PSObject.Properties['filesystem']; if ($fs) { "$($fs.Value)" } })
+    $systems = @('HFS+', 'APFS' | Where-Object { $named -ccontains $_ })
+    if ($systems.Count -eq 0) { throw 'The certified Apple file system capabilities name no file system this wording knows.' }
+    return @("Separately, on earlier code ($(Format-PmMonthRange -Dates $dates)), S.A.K.'s $($systems -join ' and ') write engine was validated with Apple's own tools.")
 }
 
 function Get-PmSiteWording {

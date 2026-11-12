@@ -394,6 +394,8 @@ function New-RigStage {
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
     Copy-Item (Join-Path $release 'partition_manager_live_certifier.exe') (Join-Path $stage 'sak_utility.exe')
     Copy-Item (Join-Path $release 'sak_elevated_helper.exe') $stage
+    # The elevated scripts' native types: the step client's scripts load them from beside it.
+    Copy-Item (Join-Path $release 'sak_script_types.dll') $stage
     foreach ($dll in 'Qt6Core', 'Qt6Gui', 'Qt6Network', 'Qt6Concurrent', 'Qt6Widgets', 'Qt6Xml', 'Qt6Svg', 'msvcp140', 'msvcp140_1', 'msvcp140_2', 'msvcp140_atomic_wait', 'vcruntime140', 'vcruntime140_1', 'concrt140', 'z', 'zlib1', 'bz2', 'liblzma', 'pcre2-16', 'double-conversion', 'icudt', 'icuin', 'icuuc', 'b2-1') {
         $source = Join-Path $release "$dll.dll"
         if (Test-Path -LiteralPath $source) { Copy-Item $source $stage }

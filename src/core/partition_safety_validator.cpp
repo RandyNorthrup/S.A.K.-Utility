@@ -6,6 +6,7 @@
 
 #include "sak/partition_safety_validator.h"
 
+#include "sak/partition_file_system_registry.h"
 #include "sak/partition_os_migration.h"
 #include "sak/partition_raw_device_io.h"
 
@@ -312,9 +313,13 @@ bool hasUnlockedBitLockerVolume(const PartitionInfoEx& partition) {
 
 bool hasUnknownBitLockerState(const PartitionInfoEx& partition) {
     // Pending means Apply reads it in the helper and comes back here before anything is written.
+    // A volume the scan identified as ext, HFS+, APFS or swap has no BitLocker to read (a
+    // BitLocker volume reads as BitLocker); refusing it stopped every operation on a lettered
+    // Linux or Mac volume, ext repair included (VM proof, 2026-11-11).
     return partition.volume && !partition.volume->bitlocker_state_known &&
            !partition.volume->administrator_state_pending &&
-           !partition.volume->bitlocker_state_error.trimmed().isEmpty();
+           !partition.volume->bitlocker_state_error.trimmed().isEmpty() &&
+           !PartitionFileSystemRegistry::identifiedNonWindowsVolume(*partition.volume);
 }
 
 bool hasDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType type) {
@@ -325,7 +330,8 @@ bool hasDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType typ
 bool hasUnknownDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType type) {
     return partition.volume && partition.volume->hasDriveLetter() &&
            !partition.volume->dirty_bit_known && !partition.volume->administrator_state_pending &&
-           !partition.volume->bitlocker_locked && type != PartitionOperationType::RepairBoot;
+           !partition.volume->bitlocker_locked && type != PartitionOperationType::RepairBoot &&
+           !PartitionFileSystemRegistry::identifiedNonWindowsVolume(*partition.volume);
 }
 
 QString unknownDirtyVolumeWarning(const PartitionInfoEx& partition) {

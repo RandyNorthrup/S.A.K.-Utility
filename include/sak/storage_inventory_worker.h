@@ -154,6 +154,10 @@ public:
     ///        skips the BitLocker, dirty-bit and reliability reads Windows refuses it anyway. Each
     ///        refused BitLocker read took five seconds, so five drive letters ran out the time.
     [[nodiscard]] static QString inventoryPowerShellScript(bool read_administrator_state = true);
+    /// The warnings for volumes whose dirty bit or BitLocker state the scan could not read. A
+    /// scan adds them after its raw probe, which is what tells a volume Windows shows as RAW
+    /// because it holds ext, HFS+, APFS or swap (nothing to ask fsutil) from an unreadable one.
+    static void appendVolumeStateWarnings(PartitionInventory* inventory);
 
 Q_SIGNALS:
     void inventoryReady(const sak::PartitionInventory& inventory);
@@ -168,8 +172,14 @@ private:
                                                                ReadLevel level,
                                                                bool allow_elevation,
                                                                const CancelCheck& should_cancel);
-    [[nodiscard]] static PartitionInventory parseInventory(const QByteArray& json_data,
-                                                           ReadLevel level);
+    enum class VolumeStateWarnings {
+        Now,
+        Later
+    };
+    [[nodiscard]] static PartitionInventory parseInventory(
+        const QByteArray& json_data,
+        ReadLevel level,
+        VolumeStateWarnings warnings = VolumeStateWarnings::Now);
 
     std::atomic_bool m_cancelled{false};
 };

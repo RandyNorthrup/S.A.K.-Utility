@@ -3,13 +3,17 @@
 
 #pragma once
 
+#include "sak/no_follow_fs.h"
 #include "sak/worker_base.h"
 
 #include <QMap>
 #include <QString>
 #include <QStringList>
 
+#include <expected>
 #include <filesystem>
+#include <map>
+#include <optional>
 #include <vector>
 
 /**
@@ -158,6 +162,11 @@ private:
      */
     auto executeMove(const MoveOperation& operation) -> std::expected<void, sak::error_code>;
 
+    /// @brief The category folder below the target, opened and held without following a link
+    ///        (created when create_subdirectories is set); cached for the run.
+    auto categoryFolder(const QString& category)
+        -> std::expected<const sak::no_follow::HeldDirectory*, QString>;
+
     /// @brief Execute all planned file move operations
     auto executePlannedMoves() -> std::expected<void, sak::error_code>;
 
@@ -178,6 +187,8 @@ private:
     std::vector<MoveOperation> m_planned_operations;
     int m_moved_count{0};  ///< Files actually relocated by the current run
     QStringList m_failed_moves;
+    std::optional<sak::no_follow::HeldDirectory> m_target_folder;         ///< held for an apply run
+    std::map<QString, sak::no_follow::HeldDirectory> m_category_folders;  ///< held for the run
     bool m_plan_truncated{
         false};  ///< Preview hit max_preview_files (reported count is a lower bound)
 };

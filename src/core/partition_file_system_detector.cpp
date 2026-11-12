@@ -186,6 +186,9 @@ constexpr qsizetype kApfsVolumeSnapshotMetadataTreeOidOffset = 0x98;
 constexpr qsizetype kApfsVolumeUuidOffset = 0xF0;
 constexpr qsizetype kApfsVolumeNameOffset = 0x2C0;
 constexpr qsizetype kApfsVolumeNameSize = 256;
+// apfs_formatted_by.id: the program that made the volume (S.A.K.'s writer records its name).
+constexpr qsizetype kApfsVolumeFormattedByOffset = 0x110;
+constexpr qsizetype kApfsVolumeFormattedBySize = 32;
 constexpr qsizetype kApfsVolumeRoleOffset = 0x3C4;
 constexpr qsizetype kApfsVolumeRoleSize = 2;
 constexpr qsizetype kApfsVolumeMinimumBytes = kApfsVolumeRoleOffset + kApfsVolumeRoleSize;
@@ -1939,6 +1942,27 @@ QString apfsVolumeCandidateSummary(const QByteArray& bytes,
     return parts.join(QStringLiteral(", "));
 }
 
+/// The program that made the volume at @p blockOffset (apfs_formatted_by), added to
+/// @p formatters once.
+void appendApfsVolumeFormatter(const QByteArray& bytes,
+                               qsizetype blockOffset,
+                               QStringList* formatters) {
+    const QString formatter = fixedUtf8Field(bytes,
+                                             blockOffset + kApfsVolumeFormattedByOffset,
+                                             kApfsVolumeFormattedBySize);
+    if (!formatter.isEmpty() && !formatters->contains(formatter)) {
+        formatters->append(formatter);
+    }
+}
+
+/// One "APFS volume formatted by: <name>" detail for each program that made a volume.
+void appendApfsFormatterDetails(PartitionFileSystemDetection* detection,
+                                const QStringList& formatters) {
+    for (const QString& formatter : formatters) {
+        detection->details.append(QStringLiteral("APFS volume formatted by: %1").arg(formatter));
+    }
+}
+
 void appendApfsVolumeCandidateDetails(PartitionFileSystemDetection* detection,
                                       const QByteArray& bytes,
                                       uint32_t blockSize) {
@@ -1950,6 +1974,7 @@ void appendApfsVolumeCandidateDetails(PartitionFileSystemDetection* detection,
     const qsizetype step = static_cast<qsizetype>(blockSize);
     int candidateCount = 0;
     QStringList candidateSummaries;
+    QStringList formatters;
     for (qsizetype blockOffset = step; blockOffset + kApfsVolumeMinimumBytes <= bytes.size();
          blockOffset += step) {
         if (!matchesBytes(
@@ -1960,6 +1985,7 @@ void appendApfsVolumeCandidateDetails(PartitionFileSystemDetection* detection,
         if (candidateSummaries.size() < kMaxApfsVolumeCandidates) {
             candidateSummaries.append(apfsVolumeCandidateSummary(bytes, blockOffset, blockSize));
         }
+        appendApfsVolumeFormatter(bytes, blockOffset, &formatters);
     }
     if (candidateCount == 0) {
         return;
@@ -1969,6 +1995,7 @@ void appendApfsVolumeCandidateDetails(PartitionFileSystemDetection* detection,
         QStringLiteral("APFS volume superblock candidates in probe window: %1")
             .arg(candidateCount));
     detection->details.append(candidateSummaries);
+    appendApfsFormatterDetails(detection, formatters);
     if (candidateCount > candidateSummaries.size()) {
         detection->details.append(
             QStringLiteral("APFS volume candidate output truncated after %1 entries")

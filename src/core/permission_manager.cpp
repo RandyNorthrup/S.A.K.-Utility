@@ -9,6 +9,7 @@
 #include "sak/elevation_manager.h"
 #include "sak/error_codes.h"
 #include "sak/logger.h"
+#include "sak/no_follow_fs.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -24,8 +25,6 @@ namespace {
 // The standard-user DACL grants three trustees: the destination user, SYSTEM, and
 // the local Administrators group.
 constexpr int kAclTrusteeCount = 3;
-// Number of leading characters in the Win32 extended-length path prefix "\\?\".
-constexpr int kExtendedPathPrefixLength = 4;
 
 // Builds a DACL granting full control to the destination user PLUS SYSTEM and
 // the local Administrators group. Without SYSTEM/Administrators a "standard
@@ -93,63 +92,14 @@ struct SecurityChange {
     PACL dacl;
 };
 
-// Fully-resolved DOS path of an open handle (all reparse points collapsed, 8.3
-// short names and casing canonicalized), with the "\\?\" prefix stripped. Empty
-// on any failure so the caller fails closed.
-QString resolvedHandlePath(HANDLE h) {
-    const DWORD flags = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
-    const DWORD need = GetFinalPathNameByHandleW(h, nullptr, 0, flags);
-    if (need == 0) {
-        return QString();
-    }
-    std::wstring buf(need, L'\0');
-    const DWORD got = GetFinalPathNameByHandleW(h, buf.data(), need, flags);
-    if (got == 0 || got >= need) {
-        return QString();
-    }
-    buf.resize(got);
-    QString path = QString::fromStdWString(buf);
-    if (path.startsWith(QLatin1String("\\\\?\\"))) {
-        path = path.mid(kExtendedPathPrefixLength);
-    }
-    return path;
-}
-
-// The caller's intended path made absolute and long-name/casing canonicalized
-// (GetLongPathNameW does NOT collapse junctions, so this differs from
-// resolvedHandlePath exactly when an ancestor was redirected). Empty on failure.
-QString canonicalRequestedPath(const QString& requested) {
-    const std::wstring w = requested.toStdWString();
-    const DWORD need = GetFullPathNameW(w.c_str(), 0, nullptr, nullptr);
-    if (need == 0) {
-        return QString();
-    }
-    std::wstring full(need, L'\0');
-    const DWORD got = GetFullPathNameW(w.c_str(), need, full.data(), nullptr);
-    if (got == 0 || got >= need) {
-        return QString();
-    }
-    full.resize(got);
-    const DWORD longNeed = GetLongPathNameW(full.c_str(), nullptr, 0);
-    if (longNeed == 0) {
-        return QString();
-    }
-    std::wstring longBuf(longNeed, L'\0');
-    const DWORD longGot = GetLongPathNameW(full.c_str(), longBuf.data(), longNeed);
-    if (longGot == 0 || longGot >= longNeed) {
-        return QString();
-    }
-    longBuf.resize(longGot);
-    return QString::fromStdWString(longBuf);
-}
-
-// True when the no-follow handle really resolves to the path the caller named.
-// A mismatch means an ancestor junction/symlink redirected the open elsewhere.
+// True when the no-follow handle really resolves to the path the caller named. A mismatch means an
+// ancestor junction/symlink redirected the open elsewhere. The same comparison every no-follow open
+// makes (sak::no_follow): the handle's final path (all links collapsed, a share as \\server\share)
+// against the requested path made absolute with long names. Empty on either side fails closed.
 bool handleMatchesRequestedPath(HANDLE h, const QString& path) {
-    const QString resolved = resolvedHandlePath(h);
-    const QString wanted = canonicalRequestedPath(path);
-    return !resolved.isEmpty() && !wanted.isEmpty() &&
-           resolved.compare(wanted, Qt::CaseInsensitive) == 0;
+    const QString resolved = sak::no_follow::finalPathOfHandle(h);
+    const QString wanted = sak::no_follow::comparablePath(path);
+    return !resolved.isEmpty() && !wanted.isEmpty() && sak::no_follow::samePath(resolved, wanted);
 }
 
 // Applies the requested owner/group/dacl to PATH through a no-follow handle and

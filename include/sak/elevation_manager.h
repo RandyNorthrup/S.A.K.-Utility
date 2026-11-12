@@ -58,8 +58,14 @@ public:
     ///        prompt (ERROR_CANCELLED -> elevation_denied) is the user's answer, not a
     ///        failure: it used to raise "Elevation Failed".
     [[nodiscard]] static bool restartFailureNeedsNotice(sak::error_code error) noexcept {
-        return error != sak::error_code::elevation_denied;
+        // A refused program file was already shown, naming the file (program_integrity).
+        return error != sak::error_code::elevation_denied &&
+               error != sak::error_code::untrusted_program_file;
     }
+
+    /// The argument that names the event an elevated relaunch sets once it holds its own program
+    /// files, so the instance that launched it can let go of its hold (security brief 4c).
+    static constexpr const char* kElevatedReadyArgument = "--elevated-ready=";
 
     /**
      * @brief Get elevation error message

@@ -439,20 +439,27 @@ void PartitionOsMigrationTests::scriptRefusesEverythingBeforeTheFirstWrite() {
 
 void PartitionOsMigrationTests::scriptReleasesSnapshotsAndNeverTouchesFirmware() {
     const QString text = migrationScript(gptWindowsDisk(), 512ULL * kGiB).script;
+    // The script's native types are sak_script_types.dll, built from os_migration_native.cs and
+    // loaded from its bytes (security brief 4a: no Add-Type); their text is checked there.
+    QFile native_file(QFINDTESTDATA("../../src/core/partition_scripts/os_migration_native.cs"));
+    QVERIFY(native_file.open(QIODevice::ReadOnly));
+    const QString native = QString::fromUtf8(native_file.readAll());
+    QVERIFY(text.contains(QStringLiteral("[System.Reflection.Assembly]::Load(")));
+    QVERIFY(!text.contains(QStringLiteral("Add-Type")));
     QVERIFY(text.contains(QStringLiteral("finally { Close-SakMigration }")));
     QVERIFY(text.contains(QStringLiteral("$script:sakSnapshotSet.Release()")));
     // Not persistent: Windows drops the set when this process ends, which is what Cancel does.
-    QVERIFY(text.contains(QStringLiteral("ContextBackup = 0")));
+    QVERIFY(native.contains(QStringLiteral("ContextBackup = 0")));
     QVERIFY(!text.contains(QStringLiteral("Win32_ShadowCopy")));
     // Left running, this writer deletes Outlook's OST files from the snapshot, so from the new
     // drive.
-    QVERIFY(text.contains(QStringLiteral("4dc3bdd4-ab48-4d07-adb0-3bee2926fd7f")));
+    QVERIFY(native.contains(QStringLiteral("4dc3bdd4-ab48-4d07-adb0-3bee2926fd7f")));
     // What is checked is what the copy read: a free cluster or the page file reads as the running
     // volume does, so asking the snapshot again would report Windows' own writes as a bad copy.
     QVERIFY(text.contains(
         QStringLiteral("[SakMigration.Copy]::Verify($target, $p.TargetOffset, $ranges, $check)")));
     QVERIFY(text.contains(QStringLiteral("$ranges, \"$($p.Kind) partition\", $check)")));
-    QVERIFY(text.contains(QStringLiteral("check.Note(block, buffer, take);")));
+    QVERIFY(native.contains(QStringLiteral("check.Note(block, buffer, take);")));
     QVERIFY2(text.contains(QStringLiteral(
                  "if ($help -match 'nofirmwaresync') { '/nofirmwaresync' } else { '/addlast' }")),
              "a bcdboot on another disk must not move this PC's boot order");

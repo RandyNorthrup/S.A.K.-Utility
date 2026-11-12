@@ -6,8 +6,10 @@
 
 #include "sak/windows_usb_creator.h"
 
+#include "sak/app_paths.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/no_follow_fs.h"
 #include "sak/process_runner.h"
 
 #include <QCoreApplication>
@@ -20,7 +22,6 @@
 #include <QRegularExpression>
 #include <QStorageInfo>
 #include <QStringList>
-#include <QTemporaryFile>
 #include <QThread>
 
 #include <algorithm>
@@ -576,27 +577,25 @@ bool WindowsUSBCreator::runDiskpartScript(const QString& script,
         sak::logError(lastError().toStdString());
         return false;
     }
-    QTemporaryFile scriptFile;
-    if (!scriptFile.open()) {
-        setError("Failed to create diskpart script");
+    // Security brief 4a: the script lives in this run's own temporary folder on the program's
+    // drive, held read-only from the moment it is written until diskpart is done, so nobody else
+    // can change it before diskpart runs it as administrator, even on a drive with no ACLs.
+    // diskpart /s stops at the first failed command; fed over stdin it would go on.
+    auto held = sak::app_paths::writeHeldSessionTempFile(
+        QStringLiteral("sak-diskpart-%1.txt").arg(sak::no_follow::randomToken()),
+        script.toLocal8Bit());
+    if (!held) {
+        setError(QString("Failed to write the diskpart script: %1").arg(held.error()));
         sak::logError(lastError().toStdString());
         return false;
     }
-    const QByteArray bytes = script.toLocal8Bit();
-    if (scriptFile.write(bytes) != bytes.size()) {
-        setError("Failed to write diskpart script");
-        sak::logError(lastError().toStdString());
-        return false;
-    }
-    if (!scriptFile.flush()) {
-        setError("Failed to flush diskpart script to disk");
-        sak::logError(lastError().toStdString());
-        return false;
-    }
-    const auto result = sak::runProcess(diskpartExe,
-                                        {QStringLiteral("/s"), scriptFile.fileName()},
-                                        timeoutMs,
-                                        [this]() { return m_cancelled.load(); });
+    const auto result =
+        sak::runProcess(diskpartExe,
+                        {QStringLiteral("/s"), QDir::toNativeSeparators(held->second)},
+                        timeoutMs,
+                        [this]() { return m_cancelled.load(); });
+    held->first.reset();
+    QFile::remove(held->second);
     outputOut = result.std_out;
     return checkDiskpartResult(result);
 }

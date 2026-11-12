@@ -15,6 +15,7 @@
 #include "sak/partition_raw_device_io.h"
 #include "sak/partition_safety_validator.h"
 #include "sak/partition_script_builder.h"
+#include "sak/program_integrity.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/windows_path_policy.h"
 
@@ -38,6 +39,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStorageInfo>
+#include <QTemporaryDir>
 #include <QTextStream>
 #include <QTimer>
 #include <QUuid>
@@ -2532,6 +2534,15 @@ int selfTest() {
     selfTestOfflineInventoryMsr(&checks);
     selfTestExecutionFlagSerialization(&checks);
     certification::selfTestScenarioStep(&checks);
+    // Every elevation checks the program folder against the program that is running, and a
+    // program that never captured itself at start vouches for nothing: the step client could
+    // not start the helper at all (operation proof, 2026-11-11).
+    const QTemporaryDir empty_folder;
+    addSelfTestCheck(
+        &checks,
+        "step-client-vouches-for-itself",
+        empty_folder.isValid() &&
+            sak::program_integrity::ProgramHold::verify(empty_folder.path()).has_value());
     const auto open_options = attachmentOpenOptions();
     addSelfTestCheck(&checks,
                      "permanent-attachment-access",
@@ -2559,6 +2570,9 @@ int selfTest() {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    // As the app's own start does (hardenProcessStart in src/main.cpp): the elevation check
+    // compares every program file with the program that is running, captured here, at start.
+    sak::program_integrity::captureRunningImageIdentity();
     QCoreApplication app(argc, argv);
     const QStringList arguments = app.arguments();
     if (arguments.size() == 2 && arguments.at(1) == "--self-test") {

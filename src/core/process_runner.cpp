@@ -300,6 +300,24 @@ private:
     ContainedProcessRun m_run;
 };
 
+/// Whether this process runs with an elevated token (TokenElevation), asked once.
+bool elevatedProcess() {
+    static const bool kElevated = [] {
+        HANDLE token = nullptr;
+        if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token) == 0) {
+            return false;
+        }
+        TOKEN_ELEVATION elevation{};
+        DWORD size = 0;
+        const bool is_elevated =
+            GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) != 0 &&
+            elevation.TokenIsElevated != 0;
+        CloseHandle(token);
+        return is_elevated;
+    }();
+    return kElevated;
+}
+
 void retainUnprovenRun(ContainedProcessRun& run, const QString& error) {
     // QProcess::moveToThread must run on the QProcess's own thread, which is this one.
     const QCoreApplication* const application = QCoreApplication::instance();
@@ -312,11 +330,32 @@ void retainUnprovenRun(ContainedProcessRun& run, const QString& error) {
     run = {};
 }
 
+// Windows PowerShell 5.1 started with PowerShell 7's module path (S.A.K. started from a
+// PowerShell 7 window, or CI's) finds 7's Microsoft.PowerShell.Utility first and cannot load
+// Get-FileHash from it (measured), which the partition scripts' tool hash checks call. A Windows
+// PowerShell child gets no PSModulePath and builds its own.
+bool isWindowsPowerShell(const QString& program) {
+    const QString system = systemPowerShellPath();
+    return !system.isEmpty() &&
+           QFileInfo(program).absoluteFilePath().compare(QFileInfo(system).absoluteFilePath(),
+                                                         Qt::CaseInsensitive) == 0;
+}
+
 std::expected<void, QString> startProcess(const ProcessRunRequest& request,
                                           QProcess* proc,
                                           WindowsProcessJob& job) {
-    if (request.environment != nullptr) {
-        proc->setProcessEnvironment(*request.environment);
+    const QProcessEnvironment* environment = request.environment;
+    std::optional<QProcessEnvironment> powerShellEnvironment;
+    if (isWindowsPowerShell(request.program)) {
+        powerShellEnvironment = environment != nullptr ? *environment
+                                                       : QProcessEnvironment::systemEnvironment();
+        powerShellEnvironment->remove(QStringLiteral("PSModulePath"));
+        environment = &*powerShellEnvironment;
+    }
+    if (elevatedProcess()) {
+        applyElevatedChildDefaults(*proc, environment);
+    } else if (environment != nullptr) {
+        proc->setProcessEnvironment(*environment);
     }
     const auto installed = job.installOn(*proc);
     if (!installed) {
@@ -632,6 +671,17 @@ QString system32Path(const QString& relativeExe) {
     }
     return QDir::cleanPath(QString::fromWCharArray(buffer, static_cast<int>(len)) +
                            QLatin1Char('/') + relativeExe);
+}
+
+void applyElevatedChildDefaults(QProcess& process, const QProcessEnvironment* environment) {
+    QProcessEnvironment child = environment != nullptr ? *environment
+                                                       : QProcessEnvironment::systemEnvironment();
+    child.insert(QStringLiteral("NoDefaultCurrentDirectoryInExePath"), QStringLiteral("1"));
+    process.setProcessEnvironment(child);
+    const QString cmd = system32Path(QStringLiteral("cmd.exe"));
+    if (!cmd.isEmpty()) {
+        process.setWorkingDirectory(QFileInfo(cmd).absolutePath());
+    }
 }
 
 QString resolveBareExecutable(const QString& name) {

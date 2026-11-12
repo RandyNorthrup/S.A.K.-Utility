@@ -8,16 +8,23 @@
 #include "sak/config_manager.h"
 #include "sak/portable_settings.h"
 
+#include "../support/junction_fixture.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 #include <QVariant>
+
+#include <windows.h>
+
+#include <aclapi.h>
 
 class ConfigManagerTests : public QObject {
     Q_OBJECT
@@ -27,7 +34,8 @@ private Q_SLOTS:
     void portableSettingsLiveInTheDataFolder();
     void noSourceWritesSettingsToTheRegistry();
     void dataRootHasNoSilentFallback();
-    void childTempIsPerSessionAndNotProcessWide();
+    void runTempIsProcessWideAndProtected();
+    void staleRunFoldersNeverFollowAJunction();
     void cleanup();
 
     // Singleton
@@ -477,39 +485,105 @@ void ConfigManagerTests::dataRootHasNoSilentFallback() {
     QCOMPARE(sak::app_paths::dataRoot(), sak::app_paths::dataRoot());
 }
 
-// TMP/TEMP were pointed at data/temp for the whole process. Now only the children that need a
-// portable temp get one, in this session's own folder, and leftovers of dead sessions are found.
-void ConfigManagerTests::childTempIsPerSessionAndNotProcessWide() {
+// TMP and TEMP point at this run's own folder under data\temp for the whole process (owner,
+// 2026-11-11), so QDir::tempPath() and every child land in the program's folder.
+void ConfigManagerTests::runTempIsProcessWideAndProtected() {
+    // The cases after this one make their own temporary folders, so the variables go back after.
+    const QByteArray original_tmp = qgetenv("TMP");
+    const QByteArray original_temp = qgetenv("TEMP");
+    const auto restore = qScopeGuard([&] {
+        qputenv("TMP", original_tmp);
+        qputenv("TEMP", original_temp);
+    });
+    const auto established = sak::app_paths::establishSessionTempDirectory();
+    QVERIFY2(established, qPrintable(established ? QString() : established.error()));
+    const QString run = QDir::cleanPath(QDir::fromNativeSeparators(*established));
+    QVERIFY(QRegularExpression(
+                QStringLiteral("^run-%1-[0-9a-f]{32}$").arg(QCoreApplication::applicationPid()))
+                .match(QFileInfo(run).fileName())
+                .hasMatch());
+    QVERIFY(run.startsWith(QDir::cleanPath(sak::app_paths::tempDirectory()) + QLatin1Char('/'),
+                           Qt::CaseInsensitive));
+    QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(qEnvironmentVariable("TEMP"))), run);
+    QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(qEnvironmentVariable("TMP"))), run);
+    QCOMPARE(QDir::cleanPath(QDir::tempPath()), run);
     const QProcessEnvironment child =
         sak::app_paths::withSessionTemp(QProcessEnvironment::systemEnvironment());
-    const QString session = QDir::cleanPath(sak::app_paths::sessionTempDirectory());
-    QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(child.value(QStringLiteral("TEMP")))),
-             session);
-    QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(child.value(QStringLiteral("TMP")))),
-             session);
-    QVERIFY(
-        session.startsWith(QDir::cleanPath(sak::app_paths::tempDirectory()) + QLatin1Char('/')));
-    QVERIFY(QDir::cleanPath(qEnvironmentVariable("TEMP")) != session);
+    QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(child.value(QStringLiteral("TEMP")))), run);
+    // A second call keeps the same folder.
+    QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(
+                 sak::app_paths::establishSessionTempDirectory().value_or(QString()))),
+             run);
+
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    PACL dacl = nullptr;
+    QCOMPARE(GetNamedSecurityInfoW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(run).utf16()),
+                                   SE_FILE_OBJECT,
+                                   DACL_SECURITY_INFORMATION,
+                                   nullptr,
+                                   nullptr,
+                                   &dacl,
+                                   nullptr,
+                                   &descriptor),
+             static_cast<DWORD>(ERROR_SUCCESS));
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    QVERIFY(GetSecurityDescriptorControl(descriptor, &control, &revision) != 0);
+    LocalFree(descriptor);
+    QVERIFY2((control & SE_DACL_PROTECTED) != 0, "the run folder inherits other accounts' access");
+
+    QFile scratch(QDir(run).filePath(QStringLiteral("scratch.txt")));
+    QVERIFY(scratch.open(QIODevice::WriteOnly));
+    scratch.close();
     sak::app_paths::removeSessionTempDirectory();
-    QVERIFY(!QDir(session).exists());
+    QVERIFY(!QDir(run).exists());
 
     const auto alive = [](qint64 pid) {
         return pid == 200;
     };
+    const QString hex(32, QLatin1Char('a'));
     QCOMPARE(sak::app_paths::staleSessionTempDirectories({QStringLiteral("session-100"),
                                                           QStringLiteral("session-200"),
                                                           QStringLiteral("session-300"),
+                                                          QStringLiteral("run-300-") + hex,
+                                                          QStringLiteral("run-200-") + hex,
+                                                          QStringLiteral("run-300-short"),
                                                           QStringLiteral("uup-build"),
                                                           QStringLiteral("session-x")},
                                                          100,
                                                          alive),
-             QStringList{QStringLiteral("session-300")});
+             (QStringList{QStringLiteral("session-300"), QStringLiteral("run-300-") + hex}));
+}
 
-    QFile main_source(QStringLiteral(SAK_REPO_ROOT "/src/main.cpp"));
-    QVERIFY(main_source.open(QIODevice::ReadOnly));
-    const QString text = QString::fromUtf8(main_source.readAll());
-    QVERIFY2(!text.contains(QStringLiteral("qputenv(\"TMP\"")), "main must not redirect TMP");
-    QVERIFY2(!text.contains(QStringLiteral("qputenv(\"TEMP\"")), "main must not redirect TEMP");
+// A run folder left by a process that is gone is removed at the next start. One that is a junction
+// (or holds one) is removed as the junction itself: what it points at is never touched, even when
+// this runs as administrator (security brief 4a.1).
+void ConfigManagerTests::staleRunFoldersNeverFollowAJunction() {
+    QTemporaryDir outside;
+    QVERIFY(outside.isValid());
+    const QString canary = outside.filePath(QStringLiteral("canary"));
+    const QByteArray canary_bytes = QByteArrayLiteral("must survive the cleanup");
+    QVERIFY(sak::test::createCanary(canary, QStringLiteral("keep.txt"), canary_bytes));
+
+    const QString temp = sak::app_paths::tempDirectory();
+    QVERIFY(QDir().mkpath(temp));
+    // Process ids are multiples of four, so these never name a running process.
+    const QString hex(32, QLatin1Char('b'));
+    const QString junction_session = QDir(temp).filePath(QStringLiteral("session-999999"));
+    const QString junction_run = QDir(temp).filePath(QStringLiteral("run-999998-") + hex);
+    const QString real_session = QDir(temp).filePath(QStringLiteral("session-999997"));
+    QVERIFY(sak::test::createJunction(junction_session, canary));
+    QVERIFY(sak::test::createJunction(junction_run, canary));
+    QVERIFY(QDir().mkpath(real_session));
+    QVERIFY(
+        sak::test::createJunction(QDir(real_session).filePath(QStringLiteral("inner")), canary));
+
+    QVERIFY(sak::app_paths::removeStaleSessionTempDirectories() >= 3);
+
+    QVERIFY(sak::test::canaryIntact(canary, QStringLiteral("keep.txt"), canary_bytes));
+    QVERIFY(!QFileInfo::exists(junction_session) && !QFileInfo(junction_session).isJunction());
+    QVERIFY(!QFileInfo(junction_run).isJunction());
+    QVERIFY(!QFileInfo::exists(real_session));
 }
 
 QTEST_GUILESS_MAIN(ConfigManagerTests)

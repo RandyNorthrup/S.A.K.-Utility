@@ -8,7 +8,9 @@
 #include "sak/elevation_manager.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/media_read_back.h"
+#include "sak/no_follow_fs.h"
 #include "sak/thread_custody.h"
 
 #include <QCryptographicHash>
@@ -910,9 +912,17 @@ bool UserProfileBackupWorker::storeFile(const QString& sourcePath,
                                         const QString& destPath,
                                         QByteArray& plainSha256) {
     if (m_codec.isPassThrough()) {
-        if (QFile::copy(sourcePath, destPath)) {
+        // Into the held destination folder under a fresh name, then renamed into place (security
+        // brief 4b B3): QFile::copy followed a link, even a dangling one, planted at destPath.
+        const auto copied =
+            no_follow::copyFileTo(sourcePath, destPath, no_follow::Publish::NoReplace);
+        if (copied) {
             return true;
         }
+        sak::logError("Backup: cannot copy {} to {}: {}",
+                      sourcePath.toStdString(),
+                      destPath.toStdString(),
+                      copied.error().toStdString());
         Q_EMIT logMessage(isLockedByAnotherProgram(sourcePath)
                               ? tr("In use by another program, not backed up: %1").arg(sourcePath)
                               : tr("Error copying file: %1").arg(sourcePath),

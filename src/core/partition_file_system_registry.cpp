@@ -6,6 +6,9 @@
 
 #include "sak/partition_file_system_registry.h"
 
+#include "sak/partition_file_system_detector.h"
+#include "sak/partition_manager_types.h"
+
 #include <optional>
 
 namespace sak {
@@ -310,6 +313,15 @@ QString PartitionFileSystemRegistry::actionSummary(const QStringList& actions) {
         return QStringLiteral("None");
     }
     return actions.join(QStringLiteral("; "));
+}
+
+bool PartitionFileSystemRegistry::identifiedNonWindowsVolume(const PartitionVolumeInfo& volume) {
+    const QString& source = volume.file_system_source;
+    const bool found_by_raw_probe = source != PartitionFileSystemDetector::windowsVolumeSource() &&
+                                    source !=
+                                        PartitionFileSystemDetector::inferredProtectedSource();
+    return found_by_raw_probe && !volume.file_system.trimmed().isEmpty() &&
+           capabilityFor(volume.file_system).non_native;
 }
 
 }  // namespace sak

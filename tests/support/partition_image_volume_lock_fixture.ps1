@@ -30,15 +30,32 @@ function Get-ImageScriptAst([string]$Text) {
     return $ast
 }
 
+# The image script loads its native types from sak_script_types.dll (security brief 4a: no Add-Type
+# compiling into the temporary folder). The fixture compiles the same C# source the DLL is built
+# from, one class and what it uses at a time, as the Add-Type the script used to carry.
+function Get-CSharpClassText([string]$Source, [string]$Name) {
+    $start = [regex]::Match($Source, '(?m)^public (?:static |sealed )*class ' + $Name + '\b')
+    Assert-ImageFixture $start.Success "The C# source has no class $Name"
+    $depth = 0
+    for ($i = $Source.IndexOf('{', $start.Index); $i -lt $Source.Length; $i++) {
+        if ($Source[$i] -eq '{') { $depth++ }
+        elseif ($Source[$i] -eq '}') {
+            $depth--
+            if ($depth -eq 0) { return $Source.Substring($start.Index, $i - $start.Index + 1) }
+        }
+    }
+    throw "The C# class $Name is not closed"
+}
+
 function Get-ImageNativeCommand([string]$Text, [string]$ClassName = 'ImageVolumeLock') {
-    $ast = Get-ImageScriptAst $Text
-    $commands = @($ast.FindAll({ param($node)
-        $node -is [Management.Automation.Language.CommandAst] -and
-        $node.GetCommandName() -ceq 'Add-Type' -and
-        $node.Extent.Text.Contains('class ' + $ClassName)
-    }, $true))
-    Assert-ImageFixture ($commands.Count -eq 1) "Expected one emitted native type: $ClassName"
-    return $commands[0].Extent.Text
+    Assert-ImageFixture ($Text.Contains('[System.Reflection.Assembly]::Load(')) 'The image script does not load its native types'
+    Assert-ImageFixture (-not $Text.Contains('Add-Type')) 'The image script still compiles C# with Add-Type'
+    $source = [IO.File]::ReadAllText((Join-Path $projectRoot 'src\core\partition_scripts\sak_script_types.cs'))
+    $classes = if ($ClassName -ceq 'CloneByteComparer') { @('MediaReadStream', 'CloneByteComparer') } else { @($ClassName) }
+    $bodies = foreach ($name in $classes) { Get-CSharpClassText $source $name }
+    return "Add-Type -TypeDefinition @'`nusing System;`nusing System.ComponentModel;`nusing System.IO;`n" +
+        "using System.Runtime.InteropServices;`nusing Microsoft.Win32.SafeHandles;`nnamespace Sak {`n" +
+        ($bodies -join "`n") + "`n}`n'@"
 }
 
 function Assert-ImageReadBufferContract {

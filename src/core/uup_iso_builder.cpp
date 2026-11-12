@@ -10,6 +10,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_constants.h"
+#include "sak/no_follow_fs.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -70,14 +71,6 @@ static double convertHrSpeedToMBps(double value, const QString& unit) {
     return value;  // MiB
 }
 
-/// True if @p path exists and is a reparse point (junction/symlink). Used to
-/// refuse recursive deletes / reuse through an attacker-planted redirection of a
-/// predictable, elevated conversion workspace.
-static bool isReparsePoint(const QString& path) {
-    const QFileInfo info(path);
-    return info.exists() && (info.isSymLink() || info.isJunction());
-}
-
 // aria2 control-file fields are attacker-influenced (uupdump API). A newline in
 // url/sha1/fileName injects arbitrary aria2 directives; an absolute, drive-qualified,
 // or ".."-bearing out= value escapes the UUPs download directory. Reject fail-closed.
@@ -85,53 +78,6 @@ static bool isSafeAria2Field(const QString& value) {
     return !value.contains(QLatin1Char('\n')) && !value.contains(QLatin1Char('\r'));
 }
 
-// Recursively delete @p dirPath WITHOUT following reparse points. A junction/symlink encountered
-// anywhere in the tree is UNLINKED (the link removed, its target left untouched) rather than
-// recursed into. QDir::removeRecursively() re-resolves the path STRING for the whole subtree and
-// therefore follows such a link, so an attacker who plants a junction inside this predictable,
-// elevated workspace could redirect the delete out of it (e.g. into System32) -- this replaces
-// those calls. The callers already verify the ROOT is not a reparse point; this closes the
-// child/descendant gap. Returns false (fail closed) if any component could not be removed.
-static bool removeTreeRefusingReparse(const QString& dirPath);
-
-/// Remove one directory entry. A reparse point (symlink or junction) is UNLINKED, never
-/// followed: descending into one would delete whatever it happens to point at, which for a
-/// junction planted under a work directory is an arbitrary location on the machine.
-static bool removeOneEntryRefusingReparse(const QFileInfo& entry) {
-    const QString childPath = entry.absoluteFilePath();
-    if (entry.isSymLink() || entry.isJunction()) {
-        return QDir().rmdir(childPath) || QFile::remove(childPath);
-    }
-    if (entry.isDir()) {
-        return removeTreeRefusingReparse(childPath);
-    }
-    return QFile::remove(childPath);
-}
-
-static bool removeTreeRefusingReparse(const QString& dirPath) {
-    const QFileInfo rootInfo(dirPath);
-    if (rootInfo.isSymLink() || rootInfo.isJunction()) {
-        return QDir().rmdir(dirPath) || QFile::remove(dirPath);  // unlink the link only
-    }
-    if (!rootInfo.exists()) {
-        return true;
-    }
-    const QDir dir(dirPath);
-    bool ok = true;
-    const QFileInfoList entries =
-        dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
-    for (const QFileInfo& entry : entries) {
-        // Keep going after a failure rather than returning early: a partially-removed work
-        // directory should be as empty as it can be, and the caller still learns it failed.
-        if (!removeOneEntryRefusingReparse(entry)) {
-            ok = false;
-        }
-    }
-    if (!dir.rmdir(dirPath)) {
-        ok = false;
-    }
-    return ok;
-}
 
 static bool isSafeAria2OutName(const QString& name) {
     // The name is a JSON object key from the API, so it can legitimately arrive empty;
@@ -350,6 +296,29 @@ void UupIsoBuilder::executePreparation() {
     executeDownload();
 }
 
+std::expected<sak::no_follow::HeldDirectory, QString> UupIsoBuilder::openUupWorkspace(
+    const sak::no_follow::HeldDirectory& temp_root, const QString& name) {
+    // Elevated (the conversion needs it): SYSTEM and Administrators only.
+    const QString sddl = QStringLiteral("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)");
+    auto existing = temp_root.child(name, false);
+    if (existing) {
+        // FAT and exFAT keep no ACLs and hold no links: reuse it, and every downloaded file is
+        // hashed again against the UUP hashes before it counts (isFileAlreadyDownloaded).
+        if (!sak::no_follow::volumeKeepsAcls(existing->handle()) ||
+            sak::no_follow::isProtectedForAdministrators(existing->handle())) {
+            return existing;
+        }
+        sak::logWarning("UUP workspace {} is not one S.A.K. made for itself; starting fresh",
+                        existing->path().toStdString());
+    }
+    // Not ours, a link, or missing: remove what is there (a link as itself) and make it new.
+    existing = std::unexpected(QString());
+    if (auto removed = sak::no_follow::removeTree(temp_root.filePath(name)); !removed) {
+        return std::unexpected(removed.error());
+    }
+    return temp_root.createChild(name, sddl);
+}
+
 void UupIsoBuilder::prepareWorkspace() {
     // ---- Validate required tools ----
     const QString aria2Path = findAria2Path();
@@ -365,12 +334,14 @@ void UupIsoBuilder::prepareWorkspace() {
     // ---- Create work directory (deterministic name for resume support) ----
     Q_EMIT progressUpdated(kProgressCreateWorkDir, "Creating work directory...");
 
-    const QString tempBase = sak::app_paths::tempDirectory();
-    if (!sak::app_paths::ensureDirectory(tempBase)) {
+    auto temp_root = sak::app_paths::openDataSubdirectory(QStringLiteral("temp"));
+    if (!temp_root) {
         m_phase = Phase::Failed;
-        Q_EMIT buildError(QString("Failed to create temp directory: %1").arg(tempBase));
+        Q_EMIT buildError(
+            QString("Failed to open the temporary folder: %1").arg(temp_root.error()));
         return;
     }
+    const QString tempBase = temp_root->path();
     if (!m_updateId.isEmpty()) {
         const QString resumeKey = m_updateId + "|" + m_lang + "|" + m_edition.toLower();
         const QString shortHash = QString::fromLatin1(
@@ -381,40 +352,21 @@ void UupIsoBuilder::prepareWorkspace() {
         m_workDir = QDir(tempBase).filePath(QString("sak_uup_%1").arg(timestamp));
     }
 
-    // The workspace path is deterministic (%TEMP%\sak_uup_<hash>), so an attacker could pre-plant
-    // a junction there and have our elevated create/removeRecursively follow it out of TEMP.
-    // Refuse to reuse a reparse-point workspace outright.
-    if (isReparsePoint(m_workDir)) {
+    // Security brief 4a: the workspace keeps its deterministic name so a download can resume, but
+    // it is reused only when it is ours (openUupWorkspace) and is held for the whole build.
+    auto workspace = openUupWorkspace(*temp_root, QFileInfo(m_workDir).fileName());
+    if (!workspace) {
         m_phase = Phase::Failed;
-        Q_EMIT buildError(QString("Work directory path is a reparse point; refusing to reuse: %1")
-                              .arg(m_workDir));
+        Q_EMIT buildError(QString("Failed to create work directory: %1").arg(workspace.error()));
         return;
     }
-
-    const QDir workDir(m_workDir);
-    if (!workDir.mkpath(".")) {
+    if (auto uups = workspace->child(QStringLiteral("UUPs"), true); !uups) {
         m_phase = Phase::Failed;
-        Q_EMIT buildError(QString("Failed to create work directory: %1").arg(m_workDir));
+        Q_EMIT buildError(QString("Failed to create the UUPs folder: %1").arg(uups.error()));
         return;
     }
-
-    if (!workDir.mkpath("UUPs")) {
-        m_phase = Phase::Failed;
-        Q_EMIT buildError("Failed to create UUPs subdirectory in work directory");
-        return;
-    }
-
-    // mkpath() succeeds against an EXISTING junction (it resolves as a directory), so the
-    // check above is re-run on the settled paths: a redirection planted between the check
-    // and the create would otherwise aim the elevated download/cleanup out of TEMP.
-    if (isReparsePoint(m_workDir) || isReparsePoint(workDir.filePath("UUPs"))) {
-        m_phase = Phase::Failed;
-        Q_EMIT buildError(
-            QString("Work directory became a reparse point while being created; refusing to "
-                    "use it: %1")
-                .arg(m_workDir));
-        return;
-    }
+    m_workspace = std::make_unique<sak::no_follow::HeldDirectory>(std::move(*workspace));
+    m_workDir = m_workspace->path();
 
     checkResumedDownloads();
 
@@ -952,34 +904,18 @@ bool UupIsoBuilder::prepareConversionEnvironment(QString& uupsDir,
 }
 
 bool UupIsoBuilder::ensureCleanConversionTempDir(const QString& conversionTempDir) {
-    // The workspace is predictable and written under elevation; refuse to recurse
-    // a delete through a planted junction/symlink, and surface any failed cleanup.
-    if (isReparsePoint(conversionTempDir)) {
+    // Inside the held workspace, never through a link: a stale one is removed without following
+    // anything in it, and the new one is opened strictly.
+    Q_ASSERT(m_workspace);
+    const QString name = QFileInfo(conversionTempDir).fileName();
+    if (auto removed = sak::no_follow::removeTree(m_workspace->filePath(name)); !removed) {
         m_phase = Phase::Failed;
-        Q_EMIT buildError("Conversion temp directory is a reparse point; refusing to reuse: " +
-                          conversionTempDir);
+        Q_EMIT buildError("Failed to remove stale conversion temp directory: " + removed.error());
         return false;
     }
-    const QDir conversionDir(conversionTempDir);
-    if (conversionDir.exists() && !removeTreeRefusingReparse(conversionTempDir)) {
+    if (auto created = m_workspace->child(name, true); !created) {
         m_phase = Phase::Failed;
-        Q_EMIT buildError("Failed to remove stale conversion temp directory: " + conversionTempDir);
-        return false;
-    }
-    if (!QDir().mkpath(conversionTempDir)) {
-        m_phase = Phase::Failed;
-        Q_EMIT buildError("Failed to create conversion temp directory: " + conversionTempDir);
-        return false;
-    }
-    // mkpath() accepts an existing junction as "already a directory", so re-check after
-    // the create: a redirection planted between the check above and this line would send
-    // the elevated converter's temp writes outside the workspace.
-    if (isReparsePoint(conversionTempDir)) {
-        m_phase = Phase::Failed;
-        Q_EMIT buildError(
-            "Conversion temp directory became a reparse point while being "
-            "created; refusing to use it: " +
-            conversionTempDir);
+        Q_EMIT buildError("Failed to create conversion temp directory: " + created.error());
         return false;
     }
     return true;
@@ -988,7 +924,7 @@ bool UupIsoBuilder::ensureCleanConversionTempDir(const QString& conversionTempDi
 bool UupIsoBuilder::clearStalePartialIso(const QString& partialIso) {
     // Discard our own stale partial from a prior run, but never through a reparse
     // point and never silently: a failed removal must not be reused as output.
-    if (isReparsePoint(partialIso)) {
+    if (sak::no_follow::entryKind(partialIso) == sak::no_follow::EntryKind::Link) {
         m_phase = Phase::Failed;
         Q_EMIT buildError("Stale partial ISO is a reparse point; refusing to reuse: " + partialIso);
         return false;
@@ -1578,22 +1514,13 @@ void UupIsoBuilder::cleanupWorkDir() {
         return;
     }
 
-    if (isReparsePoint(m_workDir)) {
-        sak::logError("Refusing to recursively delete a reparse-point work directory: " +
-                      m_workDir.toStdString());
-        m_workDir.clear();
-        return;
-    }
-
-    const QDir workDir(m_workDir);
-    if (workDir.exists()) {
-        sak::logInfo("Cleaning up work directory: " + m_workDir.toStdString());
-        if (!removeTreeRefusingReparse(m_workDir)) {
-            sak::logWarning(
-                "Could not fully remove work directory "
-                "(files may be in use): " +
-                m_workDir.toStdString());
-        }
+    // Let go of the workspace, then remove it without following any link in it. data\temp
+    // stays held by app_paths for the whole run, so the name still lands inside it.
+    m_workspace.reset();
+    sak::logInfo("Cleaning up work directory: " + m_workDir.toStdString());
+    if (auto removed = sak::no_follow::removeTree(m_workDir); !removed) {
+        sak::logWarning("Could not fully remove work directory (files may be in use): " +
+                        removed.error().toStdString());
     }
     m_workDir.clear();
 }

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/email_types.h"
+#include "sak/no_follow_fs.h"
 
 #include <QByteArray>
 #include <QObject>
@@ -15,6 +16,8 @@
 #include <QVector>
 
 #include <atomic>
+#include <expected>
+#include <optional>
 
 class PstParser;
 class MboxParser;
@@ -88,6 +91,17 @@ private:
     };
 
     std::atomic<bool> m_cancelled{false};
+    /// The folder the person picked, held without following a link for the current export.
+    std::optional<sak::no_follow::HeldDirectory> m_output_folder;
+
+    /// Create @p output_path, open it without following a link, and hold it in m_output_folder.
+    /// The error is the message the export reports.
+    [[nodiscard]] std::expected<QString, QString> openOutputFolder(const QString& output_path);
+    /// Write @p data as the new file @p name in @p folder_path (opened without following a link),
+    /// through a staged file that is renamed into place without replacing anything.
+    [[nodiscard]] static bool writeNewFile(const QString& folder_path,
+                                           const QString& name,
+                                           const QByteArray& data);
 
     // Format writers
     [[nodiscard]] bool writeEml(sak::EmlWriter& writer,

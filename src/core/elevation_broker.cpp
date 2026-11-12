@@ -11,6 +11,7 @@
 #include "sak/logger.h"
 
 #include <QCoreApplication>
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QThread>
@@ -323,6 +324,18 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
         return std::unexpected(helper_path.error());
     }
 
+    // Security brief 4c/4d: before anything runs as administrator, every program file in the
+    // folder (the helper among them) passes program_integrity's policy and is held until the
+    // helper is gone, so a file planted or swapped on the stick never runs elevated.
+    auto hold = program_integrity::ProgramHold::verify(QCoreApplication::applicationDirPath());
+    if (!hold) {
+        program_integrity::reportRefusal(hold.error());
+        return std::unexpected(hold.error().file.isEmpty()
+                                   ? sak::error_code::program_check_failed
+                                   : sak::error_code::untrusted_program_file);
+    }
+    m_program_hold = std::move(*hold);
+
     // Generate unique pipe name for this session
     m_pipe_name = generatePipeName();
 
@@ -340,6 +353,7 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
     const auto launched =
         ElevationManager::launchElevated(helper_path->toStdWString(), args.toStdWString(), SW_HIDE);
     if (!launched) {
+        m_program_hold = program_integrity::ProgramHold();  // nothing started: let go now
         return std::unexpected(launched.error());
     }
 
@@ -492,8 +506,14 @@ bool ElevationBroker::sendRaw(const QByteArray& data) {
 
 auto ElevationBroker::readMessage() -> std::expected<PipeMessage, sak::error_code> {
     // Read header: 4 bytes length + 1 byte type
+    // The first byte may take the read limit; once a frame has started, all of it must arrive
+    // within one kPipeIoTimeoutMs (security brief item 5).
     char header[kPipeHeaderSize];
-    if (!readExact(header, kPipeHeaderSize, kPipeIoTimeoutMs)) {
+    if (!readExact(header, 1, QDeadlineTimer(kPipeIoTimeoutMs))) {
+        return std::unexpected(sak::error_code::helper_connection_failed);
+    }
+    const QDeadlineTimer frame_deadline(kPipeIoTimeoutMs);
+    if (!readExact(header + 1, kPipeHeaderSize - 1, frame_deadline)) {
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
 
@@ -519,7 +539,7 @@ auto ElevationBroker::readMessage() -> std::expected<PipeMessage, sak::error_cod
     QByteArray payload;
     if (payload_len > 0) {
         payload.resize(static_cast<int>(payload_len));
-        if (!readExact(payload.data(), static_cast<int>(payload_len), kPipeIoTimeoutMs)) {
+        if (!readExact(payload.data(), static_cast<int>(payload_len), frame_deadline)) {
             return std::unexpected(sak::error_code::helper_connection_failed);
         }
     }
@@ -528,46 +548,30 @@ auto ElevationBroker::readMessage() -> std::expected<PipeMessage, sak::error_cod
     return parsePayload(type, payload);
 }
 
-bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
+bool ElevationBroker::readExact(char* buffer, int size, const QDeadlineTimer& deadline) {
     if (m_pipe_handle.load(std::memory_order_acquire) == INVALID_HANDLE_VALUE) {
         return false;
     }
-
-    int total_read = 0;
-    int elapsed = 0;
-    constexpr int kPollIntervalMs = 50;
-
-    while (total_read < size && elapsed < timeout_ms) {
-        DWORD const available = peekAvailable();
-        if (available == 0) {
-            if (!isHelperAlive()) {
-                return false;
+    return readPipeBytesBefore(
+        buffer, size, deadline, [this](char* into, int wanted, int /*remaining_ms*/) {
+            const DWORD available = peekAvailable();
+            if (available == 0) {
+                return isHelperAlive() ? 0 : -1;
             }
-            QThread::msleep(kPollIntervalMs);
-            elapsed += kPollIntervalMs;
-            continue;
-        }
-
-        DWORD const to_read = qMin(static_cast<DWORD>(size - total_read), available);
-        DWORD bytes_read = 0;
-        {
-            // Pin the handle across the ReadFile under m_send_mutex: cleanup() stores
-            // INVALID and CloseHandle under the same lock, so the close cannot land
-            // between this load and the ReadFile. peekAvailable() already reported
-            // available>0, so this read does not block long enough to starve a
-            // concurrent cancel (which only sends between polls, outside the lock).
+            const DWORD to_read = std::min(static_cast<DWORD>(wanted), available);
+            DWORD bytes_read = 0;
+            // Pin the handle across the ReadFile under m_send_mutex: cleanup() stores INVALID
+            // and CloseHandle under the same lock, so the close cannot land between this load
+            // and the ReadFile. peekAvailable() already reported data, so this read does not
+            // block long enough to starve a concurrent cancel (which sends between polls).
             const std::lock_guard<std::mutex> lock(m_send_mutex);
             const HANDLE handle = m_pipe_handle.load(std::memory_order_acquire);
             if (handle == INVALID_HANDLE_VALUE ||
-                (ReadFile(handle, buffer + total_read, to_read, &bytes_read, nullptr) == 0)) {
-                return false;
+                ReadFile(handle, into, to_read, &bytes_read, nullptr) == 0) {
+                return -1;
             }
-        }
-        total_read += static_cast<int>(bytes_read);
-        elapsed = 0;  // Reset timeout on successful read
-    }
-
-    return total_read == size;
+            return static_cast<int>(bytes_read);
+        });
 }
 
 DWORD ElevationBroker::peekAvailable() const {
@@ -631,6 +635,8 @@ void ElevationBroker::cleanup() {
         WaitForSingleObject(proc_to_close, kHelperExitWaitMs);
         CloseHandle(proc_to_close);
     }
+    // The helper is gone (or was never started): its program files may be let go.
+    m_program_hold = program_integrity::ProgramHold();
     m_pipe_name.clear();
     setCurrentTaskId(QString());
     Q_EMIT helperDisconnected();

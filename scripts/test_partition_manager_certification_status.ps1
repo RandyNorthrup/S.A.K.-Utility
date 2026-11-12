@@ -104,7 +104,8 @@ $internalHdd = @{ class = 'physical'; kind = 'SATA inside a physical PC'; model 
 New-Item -ItemType Directory -Force -Path $Script:Root | Out-Null
 [IO.File]::WriteAllText($Script:MatrixPath, ($Script:Specs | ConvertTo-Json -Depth 12))
 $version = (Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'VERSION') -Raw).Trim()
-$apple = "Writes to Apple file systems were validated with Apple's own tools."
+# The repository's Apple matrix: HFS+ and APFS capabilities certified 2026-06-14 to 2026-08-31.
+$apple = "Separately, on earlier code (June to August 2026), S.A.K.'s HFS+ and APFS write engine was validated with Apple's own tools."
 try {
     # No evidence at all, which is what a clean clone has before the final run.
     $none = Join-Path $Script:Root 'none'
@@ -213,6 +214,24 @@ try {
     $status = Get-Status -RunDir $bothInside
     Assert-That ($status.site_wording -cnotmatch 'were not tested') 'With both tested, it does not say either was not' $status.site_wording
     Assert-That ($status.site_wording -cmatch 'Results on other devices may differ\.') 'It still says other devices may differ' $status.site_wording
+
+    # The Apple sentence: its months and file systems come from the matrix, and a certified
+    # capability with no date stops the wording rather than guess one (2026-11-11).
+    $hfsJune = [pscustomobject]@{ capabilities = @(
+            [pscustomobject]@{ id = 'H-a'; filesystem = 'HFS+'; status = 'certified'; certified_on = '2026-06-14' },
+            [pscustomobject]@{ id = 'H-b'; filesystem = 'HFS+'; status = 'certified'; certified_on = '2026-06-27' },
+            [pscustomobject]@{ id = 'A-a'; filesystem = 'APFS'; status = 'design_decision' }) }
+    $words = Get-PmAppleSentence -AppleMatrix $hfsJune
+    Assert-That ($words -ceq "Separately, on earlier code (June 2026), S.A.K.'s HFS+ write engine was validated with Apple's own tools.") 'One month, one file system' $words
+    $acrossYears = [pscustomobject]@{ capabilities = @(
+            [pscustomobject]@{ id = 'A-a'; filesystem = 'APFS'; status = 'certified'; certified_on = '2026-01-05' },
+            [pscustomobject]@{ id = 'H-a'; filesystem = 'HFS+'; status = 'certified'; certified_on = '2025-12-30' }) }
+    $words = Get-PmAppleSentence -AppleMatrix $acrossYears
+    Assert-That ($words -ceq "Separately, on earlier code (December 2025 to January 2026), S.A.K.'s HFS+ and APFS write engine was validated with Apple's own tools.") 'Across a year' $words
+    Assert-That (@(Get-PmAppleSentence -AppleMatrix ([pscustomobject]@{ capabilities = @($hfsJune.capabilities[2]) })).Count -eq 0) 'Nothing certified says nothing'
+    $threw = $false
+    try { Get-PmAppleSentence -AppleMatrix ([pscustomobject]@{ capabilities = @([pscustomobject]@{ id = 'H-a'; filesystem = 'HFS+'; status = 'certified' }) }) | Out-Null } catch { $threw = "$($_.Exception.Message)" -match 'no certified_on date' }
+    Assert-That $threw 'A certified capability with no date stops the wording'
 
     # A claim level with no words stops, rather than saying something.
     $threw = $false

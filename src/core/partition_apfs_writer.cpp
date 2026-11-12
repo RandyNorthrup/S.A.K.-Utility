@@ -20352,17 +20352,28 @@ QString generatedApfsContainerFormatBlocker(QLatin1StringView purpose,
              apfsCountOf(geometry.cab_count, QStringLiteral("CAB"), QStringLiteral("CABs")));
 }
 
-bool appendGeneratedGeometryBlocker(const GeneratedApfsLayoutContext& context) {
-    if (context.geometry.blockSize != kSupportedApfsBlockSizeBytes ||
-        context.geometry.blockCount < kApfsFormatSeedFileDataBlock) {
-        context.blockers->append(
-            QStringLiteral("APFS %1 requires a S.A.K.-generated/minimal 4096-byte block layout")
-                .arg(context.purpose));
-        return false;
+// The geometry the generated-layout guard accepts (4096-byte blocks, one space-manager chunk);
+// empty when it does. Shared with the panel (PartitionApfsWriter::repairGeometryBlocker), so the
+// window offers the repair exactly when this guard lets it run.
+QString generatedGeometryBlocker(QLatin1StringView purpose,
+                                 uint64_t blockSize,
+                                 uint64_t blockCount) {
+    if (blockSize != kSupportedApfsBlockSizeBytes || blockCount < kApfsFormatSeedFileDataBlock) {
+        return QStringLiteral("APFS %1 requires a S.A.K.-generated/minimal 4096-byte block layout")
+            .arg(purpose);
     }
-    if (context.geometry.blockCount > kGeneratedApfsSingleChunkMaxBlocks) {
-        context.blockers->append(
-            generatedApfsSingleChunkLimitBlocker(context.purpose, context.geometry.blockCount));
+    if (blockCount > kGeneratedApfsSingleChunkMaxBlocks) {
+        return generatedApfsSingleChunkLimitBlocker(purpose, blockCount);
+    }
+    return {};
+}
+
+bool appendGeneratedGeometryBlocker(const GeneratedApfsLayoutContext& context) {
+    const QString blocker = generatedGeometryBlocker(context.purpose,
+                                                     context.geometry.blockSize,
+                                                     context.geometry.blockCount);
+    if (!blocker.isEmpty()) {
+        context.blockers->append(blocker);
         return false;
     }
     return true;
@@ -25027,6 +25038,18 @@ void PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
 }
 
 #endif  // SAK_PARTITION_FS_TEST_HOOKS
+
+QString PartitionApfsWriter::sakFormatterName() {
+    return QString::fromLatin1(kApfsSakFormatterName);
+}
+
+QString PartitionApfsWriter::repairGeometryBlocker(uint64_t block_size, uint64_t block_count) {
+    return generatedGeometryBlocker(QLatin1StringView("repair"), block_size, block_count);
+}
+
+uint64_t PartitionApfsWriter::repairMaxContainerBytes() {
+    return kGeneratedApfsSingleChunkMaxBytes;
+}
 
 bool PartitionApfsWriter::acceptsRawDeviceTargetPath(const QString& path) {
     return rawTargetPathAccepted(path);

@@ -7,7 +7,15 @@
 #include "sak/elevation_manager.h"
 
 #include "sak/logger.h"
+#include "sak/no_follow_fs.h"
+#include "sak/process_runner.h"
+#include "sak/program_integrity.h"
 
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
+
+#include <array>
 #include <string_view>
 
 #include <windows.h>
@@ -25,6 +33,10 @@ namespace sak {
 
 namespace {
 constexpr BYTE kAdministratorsSidSubAuthorityCount = 2;
+// How long Run as Admin keeps the program files held for the elevated copy: it verifies every one
+// of them itself before it reports them held, which reads the whole program folder (a USB 2 stick
+// reads about 30 MB/s).
+constexpr DWORD kElevatedReadyWaitMs = 180'000;
 
 // Append one argument using the exact quoting rules CommandLineToArgvW reverses, so the
 // elevated relaunch receives byte-identical arguments. Backslashes that precede a quote (or
@@ -158,32 +170,44 @@ auto ElevationManager::restartElevated() -> std::expected<void, sak::error_code>
     if (!args_result) {
         return std::unexpected(args_result.error());
     }
+    // Security brief 4c/4d: every program file passes program_integrity's policy and stays held
+    // until the elevated copy holds them itself, so nothing planted or swapped on the stick in
+    // between runs as administrator.
+    auto hold = program_integrity::ProgramHold::verify(QCoreApplication::applicationDirPath());
+    if (!hold) {
+        program_integrity::reportRefusal(hold.error());
+        return std::unexpected(hold.error().file.isEmpty()
+                                   ? sak::error_code::program_check_failed
+                                   : sak::error_code::untrusted_program_file);
+    }
+    const std::wstring ready_name =
+        (QStringLiteral("Local\\SAK-ElevatedReady-") + no_follow::randomToken()).toStdWString();
+    const no_follow::UniqueHandle ready(CreateEventW(nullptr, TRUE, FALSE, ready_name.c_str()));
+    if (!ready.valid()) {
+        sak::logError("Failed to create the elevated handshake event: {}", GetLastError());
+        return std::unexpected(sak::error_code::elevation_failed);
+    }
+
     // The relaunch is told it is one: it waits for this instance to exit instead of bringing
     // it forward as a second launch would (SingleInstanceGuard, owner request 2026-10-31).
-    const std::wstring args = relaunchArguments(args_result.value());
+    const std::string_view ready_flag(kElevatedReadyArgument);
+    const std::wstring args = relaunchArguments(args_result.value()) + L' ' +
+                              std::wstring(ready_flag.begin(), ready_flag.end()) + ready_name;
 
-    // Log using narrow-string conversion for log output
-    const int logLen = WideCharToMultiByte(
-        CP_UTF8, 0, exe_path_result.value().c_str(), -1, nullptr, 0, nullptr, nullptr);
-    std::string logPath(logLen > 0 ? static_cast<size_t>(logLen - 1) : 0, '\0');
-    if (logLen > 0) {
-        WideCharToMultiByte(CP_UTF8,
-                            0,
-                            exe_path_result.value().c_str(),
-                            -1,
-                            logPath.data(),
-                            logLen,
-                            nullptr,
-                            nullptr);
-    }
-    sak::logInfo("Restarting with elevation: {}", logPath);
+    sak::logInfo("Restarting with elevation: {}",
+                 QString::fromStdWString(exe_path_result.value()).toStdString());
 
     const auto launched = launchElevated(exe_path_result.value(), args, SW_NORMAL);
     if (!launched) {
         return std::unexpected(launched.error());
     }
-    if (*launched != nullptr) {
-        CloseHandle(static_cast<HANDLE>(*launched));
+    const no_follow::UniqueHandle process(*launched);
+    // Hold the program files until the elevated copy holds them too (it sets the event), or it
+    // has exited, or the bound runs out; then this instance quits and lets go.
+    const std::array<HANDLE, 2> waits = {ready.get(), process.get()};
+    const DWORD count = process.valid() ? 2 : 1;
+    if (WaitForMultipleObjects(count, waits.data(), FALSE, kElevatedReadyWaitMs) == WAIT_TIMEOUT) {
+        sak::logWarning("The elevated copy did not report its program files held in time");
     }
     return {};
 }
@@ -203,6 +227,13 @@ auto ElevationManager::launchElevated(const std::wstring& executable,
     sei.lpParameters = arguments.empty() ? nullptr : arguments.c_str();
     sei.nShow = show_command;
     sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    // Security brief 4c: an elevated process starts in System32, never in a folder another
+    // account may write to (the stick, Downloads): its current directory is searched for DLLs
+    // and, by cmd.exe and CreateProcess, for programs.
+    const QString cmd = system32Path(QStringLiteral("cmd.exe"));
+    const std::wstring directory =
+        QDir::toNativeSeparators(QFileInfo(cmd).absolutePath()).toStdWString();
+    sei.lpDirectory = cmd.isEmpty() ? nullptr : directory.c_str();
 
     if (ShellExecuteExW(&sei) == 0) {
         DWORD const error = GetLastError();

@@ -16,7 +16,10 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QtTest/QtTest>
 
 #include <atomic>
@@ -29,6 +32,7 @@ class ProcessRunnerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void elevatedChildStartsInSystem32WithoutCurrentDirectorySearch();
     // runProcess
     void runProcess_echoCommand();
     void runProcess_exitCode();
@@ -55,6 +59,7 @@ private Q_SLOTS:
     void powerShellInvocation_longScriptReadsItselfFromStandardInput();
     void runProcessStreaming_standardInputReachesTheChild();
     void runPowerShell_longScriptRunsAndKeepsItsExitCode();
+    void runPowerShell_childBuildsItsOwnModulePath();
 
     // B5-07: bounded output accumulation
     void appendCappedOutput_boundsAccumulation();
@@ -646,6 +651,36 @@ void ProcessRunnerTests::runPowerShell_longScriptRunsAndKeepsItsExitCode() {
              qPrintable(thrown.std_err));
 }
 
+// Windows PowerShell 5.1 started with PowerShell 7's module path (S.A.K. started from a PowerShell
+// 7 window, or CI's) cannot load Get-FileHash, which the partition scripts' tool hash checks call.
+// A Windows PowerShell child gets no PSModulePath and builds its own; any other child keeps it.
+void ProcessRunnerTests::runPowerShell_childBuildsItsOwnModulePath() {
+    const bool had = qEnvironmentVariableIsSet("PSModulePath");
+    const QByteArray saved = qgetenv("PSModulePath");
+    const auto restore = qScopeGuard([had, saved] {
+        if (had) {
+            qputenv("PSModulePath", saved);
+        } else {
+            qunsetenv("PSModulePath");
+        }
+    });
+    const QString planted = QStringLiteral("C:\\sak-powershell7-like-module-path");
+    qputenv("PSModulePath", planted.toLocal8Bit());
+    const auto powershell = sak::runPowerShell(
+        QStringLiteral("'PATH=' + $env:PSModulePath; 'HASH=' + [bool](Get-Command Get-FileHash "
+                       "-ErrorAction SilentlyContinue)"),
+        60'000);
+    QVERIFY2(powershell.std_out.contains(QStringLiteral("PATH=")), qPrintable(powershell.std_err));
+    QVERIFY2(!powershell.std_out.contains(planted), qPrintable(powershell.std_out));
+    QVERIFY2(powershell.std_out.contains(QStringLiteral("HASH=True")),
+             qPrintable(powershell.std_out));
+    const auto other =
+        sak::runProcess(sak::system32Path(QStringLiteral("cmd.exe")),
+                        {QStringLiteral("/c"), QStringLiteral("echo %PSModulePath%")},
+                        30'000);
+    QVERIFY2(other.std_out.contains(planted), qPrintable(other.std_out));
+}
+
 // B5-07: output accumulation must be bounded so a runaway child cannot exhaust
 // memory. The retained buffer stops growing exactly at the cap, reporting the
 // drop, while a chunk that fits is appended in full.
@@ -1069,6 +1104,29 @@ void ProcessRunnerTests::installersAndUninstallersWaitForTheirFamily() {
     const QString offline =
         readRepoSource(QStringLiteral("src/core/offline_deployment_worker.cpp"));
     QVERIFY(offline.contains(QStringLiteral("request.options = packageFamilyOptions()")));
+}
+
+// Security brief 4c: a child of an elevated S.A.K. must not start in (or search for programs in)
+// whatever directory S.A.K. was started from, which can be a folder another account writes to.
+void ProcessRunnerTests::elevatedChildStartsInSystem32WithoutCurrentDirectorySearch() {
+    QProcessEnvironment caller;
+    caller.insert(QStringLiteral("SAK_CALLER_VALUE"), QStringLiteral("kept"));
+    QProcess process;
+    sak::applyElevatedChildDefaults(process, &caller);
+    const QString system32 = QFileInfo(sak::system32Path(QStringLiteral("cmd.exe"))).absolutePath();
+    QVERIFY(!system32.isEmpty());
+    QCOMPARE(QDir::cleanPath(process.workingDirectory()), QDir::cleanPath(system32));
+    const QProcessEnvironment child = process.processEnvironment();
+    QCOMPARE(child.value(QStringLiteral("NoDefaultCurrentDirectoryInExePath")),
+             QStringLiteral("1"));
+    QCOMPARE(child.value(QStringLiteral("SAK_CALLER_VALUE")), QStringLiteral("kept"));
+
+    QProcess inherited;
+    sak::applyElevatedChildDefaults(inherited, nullptr);
+    QCOMPARE(inherited.processEnvironment().value(
+                 QStringLiteral("NoDefaultCurrentDirectoryInExePath")),
+             QStringLiteral("1"));
+    QVERIFY(inherited.processEnvironment().contains(QStringLiteral("PATH")));
 }
 
 QTEST_GUILESS_MAIN(ProcessRunnerTests)

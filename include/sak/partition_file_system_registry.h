@@ -11,6 +11,8 @@
 
 namespace sak {
 
+struct PartitionVolumeInfo;
+
 struct PartitionFileSystemCapability {
     QString id;
     QString display_name;
@@ -26,6 +28,12 @@ class PartitionFileSystemRegistry {
 public:
     [[nodiscard]] static PartitionFileSystemCapability capabilityFor(const QString& file_system);
     [[nodiscard]] static QString actionSummary(const QStringList& actions);
+    /// A volume whose file system the disk scan's raw probe identified as one Windows does not
+    /// mount (ext, HFS+, APFS, Linux swap). Windows shows such a volume RAW, so fsutil and
+    /// BitLocker have nothing to answer about it, and their failure says nothing about the scan
+    /// or the volume. A RAW volume nothing identified is not one: that is what an unreadable
+    /// volume looks like.
+    [[nodiscard]] static bool identifiedNonWindowsVolume(const PartitionVolumeInfo& volume);
 };
 
 }  // namespace sak

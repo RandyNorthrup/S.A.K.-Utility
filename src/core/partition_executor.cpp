@@ -6,16 +6,18 @@
 
 #include "sak/partition_executor.h"
 
+#include "sak/app_paths.h"
 #include "sak/elevation_broker.h"
 #include "sak/layout_constants.h"
+#include "sak/no_follow_fs.h"
 #include "sak/process_runner.h"
 
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QScopeGuard>
-#include <QTemporaryFile>
 #include <QUuid>
 
 #include <algorithm>
@@ -142,80 +144,59 @@ std::expected<QString, QString> runElevatedStopCleanup(ElevationBroker* broker,
     return result->data.value(QStringLiteral("stdout")).toString();
 }
 
-
-// Materializes a script's PartitionScriptCredential secrets into locked temp files for the
-// lifetime of one execution, substituting each placeholder in the script with its temp path.
-// On destruction it overwrites each file with zeros and removes it, so a credential (e.g. a
-// FileVault format password) never persists on disk and never appears in the script text or
-// any child-process command line. A no-op (the script is returned verbatim) when the script
-// carries no credentials, so every existing operation is byte-for-byte unaffected.
-class StagedScriptCredentials {
-public:
-    explicit StagedScriptCredentials(const PartitionScript& script) : m_script(script.script) {
-        for (const auto& credential : script.credential_files) {
-            auto file = std::make_unique<QTemporaryFile>(
-                QDir::tempPath() + QStringLiteral("/sak-apfs-cred-XXXXXX.tmp"));
-            file->setAutoRemove(true);
-            if (!file->open()) {
-                m_ok = false;
-                m_error = QStringLiteral("Unable to stage encryption credential file");
-                return;
-            }
-            // Best-effort owner-only permissions; %TEMP% is already user-scoped on Windows.
-            file->setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-            const QByteArray secret = credential.secret.toUtf8();
-            // Fail closed on a short write / flush failure (e.g. a full TEMP): a 0-byte or
-            // partial credential file would otherwise silently change the encryption password
-            // (e.g. to empty) instead of aborting the operation.
-            if (file->write(secret) != secret.size() || !file->flush()) {
-                m_ok = false;
-                m_error = QStringLiteral(
-                    "Unable to write encryption credential file (disk full or "
-                    "I/O error)");
-                return;
-            }
-            // Release the parent handle so the writer child can open the file; the
-            // QTemporaryFile object keeps the path alive until this guard is destroyed.
-            file->close();
-            // The placeholder is embedded inside a single-quoted PowerShell literal
-            // (e.g. -VolumePasswordFile '<placeholder>'). Only the apostrophe is
-            // special there, so double it: a temp path under a username such as
-            // O'Brien, or an attacker-crafted TEMP directory, would otherwise close
-            // the literal and inject into the elevated RunPowerShell command.
-            const QString stagedPath = QString(QDir::toNativeSeparators(file->fileName()))
-                                           .replace(QLatin1Char('\''), QStringLiteral("''"));
-            m_script.replace(credential.placeholder, stagedPath);
-            m_secret_sizes.push_back(static_cast<int>(secret.size()));
-            m_files.push_back(std::move(file));
-        }
-    }
-
-    StagedScriptCredentials(const StagedScriptCredentials&) = delete;
-    StagedScriptCredentials& operator=(const StagedScriptCredentials&) = delete;
-
-    ~StagedScriptCredentials() {
-        for (std::size_t i = 0; i < m_files.size(); ++i) {
-            if (m_files[i]->open()) {
-                m_files[i]->write(QByteArray(m_secret_sizes[i], '\0'));
-                m_files[i]->flush();
-                m_files[i]->close();
-            }
-        }
-        // QTemporaryFile destructors remove the files.
-    }
-
-    [[nodiscard]] bool ok() const noexcept { return m_ok; }
-    [[nodiscard]] const QString& error() const noexcept { return m_error; }
-    [[nodiscard]] const QString& script() const noexcept { return m_script; }
-
-private:
-    QString m_script;
-    std::vector<std::unique_ptr<QTemporaryFile>> m_files;
-    std::vector<int> m_secret_sizes;
-    bool m_ok{true};
-    QString m_error;
-};
 }  // namespace
+
+// Security brief 4a (owner ruling 2026-11-11): each secret is written CREATE_NEW into this run's
+// own temporary folder under the program's data folder, never anywhere else on the PC, and held
+// read-only (no writer, no delete) until the operation is over, so nothing can change the password
+// between this write and the writer reading it, on NTFS or FAT. The path, not the secret, goes into
+// the script and so onto no command line. Afterwards each file is overwritten with zeros and
+// removed. A no-op (the script is returned verbatim) when the script carries no credentials.
+StagedScriptCredentials::StagedScriptCredentials(const PartitionScript& script)
+    : m_script(script.script) {
+    for (const auto& credential : script.credential_files) {
+        const QByteArray secret = credential.secret.toUtf8();
+        auto staged = app_paths::writeHeldSessionTempFile(
+            QStringLiteral("sak-apfs-cred-%1.tmp").arg(no_follow::randomToken()), secret);
+        if (!staged) {
+            m_ok = false;
+            m_error = QStringLiteral("Unable to stage encryption credential file: %1")
+                          .arg(staged.error());
+            return;
+        }
+        // The placeholder is embedded inside a single-quoted PowerShell literal
+        // (e.g. -VolumePasswordFile '<placeholder>'). Only the apostrophe is special there, so
+        // double it: a data folder under a name such as O'Brien would otherwise close the literal
+        // and inject into the elevated RunPowerShell command.
+        const QString staged_path = QDir::toNativeSeparators(staged->second)
+                                        .replace(QLatin1Char('\''), QStringLiteral("''"));
+        m_script.replace(credential.placeholder, staged_path);
+        m_files.push_back(
+            StagedFile{std::move(staged->first), staged->second, static_cast<int>(secret.size())});
+    }
+}
+
+StagedScriptCredentials::~StagedScriptCredentials() {
+    for (auto& file : m_files) {
+        file.hold.reset();
+        QFile overwrite(file.path);
+        if (overwrite.open(QIODevice::ReadWrite | QIODevice::ExistingOnly)) {
+            overwrite.write(QByteArray(file.size, '\0'));
+            overwrite.flush();
+            overwrite.close();
+        }
+        QFile::remove(file.path);
+    }
+}
+
+std::vector<QString> StagedScriptCredentials::stagedPaths() const {
+    std::vector<QString> paths;
+    paths.reserve(m_files.size());
+    for (const auto& file : m_files) {
+        paths.push_back(file.path);
+    }
+    return paths;
+}
 
 PartitionExecutor::PartitionExecutor(QObject* parent) : QObject(parent) {}
 

@@ -10,9 +10,11 @@
 #include "sak/format_utils.h"
 #include "sak/input_validator.h"
 #include "sak/logger.h"
+#include "sak/no_follow_fs.h"
 #include "sak/path_utils.h"
 
 #include <QFile>
+#include <QScopeGuard>
 #include <QtGlobal>
 #include <QVector>
 
@@ -95,6 +97,8 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
     m_moved_count = 0;
     m_failed_moves.clear();
     m_plan_truncated = false;
+    m_category_folders.clear();
+    m_target_folder.reset();
 
     // Refuse a malformed configuration before touching the filesystem (see
     // validateOrganizerConfig): every field it screens used to fall back to a working default.
@@ -154,6 +158,11 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
 }
 
 auto OrganizerWorker::executePlannedMoves() -> std::expected<void, sak::error_code> {
+    // The folders held for the moves are let go when the run ends, however it ends.
+    const auto release_folders = qScopeGuard([this] {
+        m_category_folders.clear();
+        m_target_folder.reset();
+    });
     const size_t op_count = m_planned_operations.size();
     for (size_t i = 0; i < op_count; ++i) {
         if (checkStop()) {
@@ -268,44 +277,66 @@ auto OrganizerWorker::planMove(const std::filesystem::path& file_path, const QSt
     return op;
 }
 
+auto OrganizerWorker::categoryFolder(const QString& category)
+    -> std::expected<const sak::no_follow::HeldDirectory*, QString> {
+    if (const auto found = m_category_folders.find(category); found != m_category_folders.end()) {
+        return &found->second;
+    }
+    // The folder the person picked, opened without following a link, and every category folder
+    // below it the same way: a junction planted as (or above) a category folder by another
+    // account is refused, never followed. Both stay held for the run, so neither can be swapped.
+    if (!m_target_folder) {
+        auto target = sak::no_follow::HeldDirectory::open(m_config.target_directory);
+        if (!target) {
+            return std::unexpected(target.error());
+        }
+        m_target_folder.emplace(std::move(*target));
+    }
+    auto folder = m_target_folder->descend(category, m_config.create_subdirectories);
+    if (!folder) {
+        return std::unexpected(folder.error());
+    }
+    const auto inserted = m_category_folders.emplace(category, std::move(*folder));
+    return &inserted.first->second;
+}
+
 auto OrganizerWorker::executeMove(const MoveOperation& operation)
     -> std::expected<void, sak::error_code> {
-    try {
-        // Create category directory if needed (create_directories is a no-op if it exists)
-        if (m_config.create_subdirectories) {
-            std::filesystem::create_directories(operation.destination.parent_path());
-        }
-
-        // Handle collision. Re-check existence at EXECUTE time, not just the plan-time
-        // would_overwrite flag: a file may have appeared at the destination between
-        // planning and this move, and a plain std::filesystem::rename silently REPLACES
-        // an existing destination (on Windows, MOVEFILE_REPLACE_EXISTING). Re-checking
-        // here closes that TOCTOU so a "rename"/"skip" run can never clobber a file.
-        std::filesystem::path final_dest = operation.destination;
-        std::error_code exists_ec;
-        if (std::filesystem::exists(operation.destination, exists_ec)) {
-            final_dest = handleCollision(operation);
-        }
-
-        // Move file. A "skip" collision resolves final_dest back to the source, which
-        // is a rename-to-self (no relocation) -- do not count it as moved.
-        std::filesystem::rename(operation.source, final_dest);
-        if (final_dest != operation.source) {
-            ++m_moved_count;
-        }
-        sak::logInfo("Moved: {} -> {}",
-                     sak::pathAsUtf8(operation.source),
-                     sak::pathAsUtf8(final_dest));
-
-        return {};
-
-    } catch (const std::filesystem::filesystem_error& e) {
-        sak::logError("Failed to move file: {}", e.what());
-        m_failed_moves.append(
-            QStringLiteral("%1: %2").arg(QString::fromStdWString(operation.source.wstring()),
-                                         QString::fromStdString(e.code().message())));
-        return std::unexpected(sak::error_code::write_error);
+    // Handle collision. Re-check existence at EXECUTE time, not just the plan-time would_overwrite
+    // flag: a file may have appeared at the destination between planning and this move. Only
+    // "overwrite" may replace what is there; the rename below refuses otherwise.
+    std::filesystem::path final_dest = operation.destination;
+    std::error_code exists_ec;
+    if (std::filesystem::exists(operation.destination, exists_ec)) {
+        final_dest = handleCollision(operation);
     }
+    // A "skip" collision resolves back to the source: nothing moves, and it is not counted.
+    if (final_dest == operation.source) {
+        return {};
+    }
+    const QString source = QString::fromStdWString(operation.source.wstring());
+    const auto failed = [this, &source](const QString& why) {
+        sak::logError("Failed to move file {}: {}", source.toStdString(), why.toStdString());
+        m_failed_moves.append(QStringLiteral("%1: %2").arg(source, why));
+        return std::unexpected(sak::error_code::write_error);
+    };
+    const auto folder = categoryFolder(operation.category);
+    if (!folder) {
+        return failed(folder.error());
+    }
+    // The move is a rename relative to the held category folder's handle (no_follow::moveInto):
+    // the file lands in that folder or nowhere. A link at the source moves as a link.
+    const auto mode = m_config.collision_strategy == QLatin1String("overwrite")
+                          ? sak::no_follow::Publish::ReplaceName
+                          : sak::no_follow::Publish::NoReplace;
+    const auto moved = sak::no_follow::moveInto(
+        source, **folder, QString::fromStdWString(final_dest.filename().wstring()), mode);
+    if (!moved) {
+        return failed(moved.error());
+    }
+    ++m_moved_count;
+    sak::logInfo("Moved: {} -> {}", sak::pathAsUtf8(operation.source), sak::pathAsUtf8(final_dest));
+    return {};
 }
 
 auto OrganizerWorker::handleCollision(const MoveOperation& operation) -> std::filesystem::path {

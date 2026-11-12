@@ -172,6 +172,15 @@ private:
 ///        MUST fail closed) if the system directory cannot be resolved.
 [[nodiscard]] QString system32Path(const QString& relativeExe);
 
+/// @brief Security brief 4c: what a child of an elevated S.A.K. starts with. It starts in
+///        System32, never in the directory this process was started from (a folder another account
+///        may write to), and with NoDefaultCurrentDirectoryInExePath=1, so neither cmd.exe nor
+///        CreateProcess looks in its current directory for a program named without a path.
+///        @p environment is the caller's (null: this process's). The runner applies this to every
+///        child when this process is elevated; every program it starts is named by a full path, so
+///        no caller needs another working directory.
+void applyElevatedChildDefaults(QProcess& process, const QProcessEnvironment* environment);
+
 /// @brief Absolute path to the Windows-shipped powershell.exe
 ///        (System32\\WindowsPowerShell\\v1.0). Launching the unqualified
 ///        "powershell.exe" resolves through the CreateProcess search order -- which

@@ -10,11 +10,14 @@
 
 #include "sak/wifi_setup_script.h"
 
+#include "sak/app_paths.h"
 #include "sak/logger.h"
+#include "sak/no_follow_fs.h"
 #include "sak/process_runner.h"
 
 #include <QDir>
-#include <QTemporaryFile>
+#include <QFile>
+#include <QScopeGuard>
 
 #include <algorithm>
 #include <optional>
@@ -309,15 +312,6 @@ static std::optional<WlanAuthConfig> validateConnectInputs(const QString& ssid,
 
 // Write the profile XML into the open temp file, failing closed on a short write or flush error --
 // otherwise netsh would be handed a truncated profile (or none). Returns false with @p error set.
-static bool writeProfileXmlTempFile(QTemporaryFile& file, const QString& xml, QString& error) {
-    const QByteArray bytes = xml.toUtf8();
-    if (file.write(bytes) != bytes.size() || !file.flush()) {
-        error = QStringLiteral("Could not fully write the temporary WLAN profile file");
-        return false;
-    }
-    return true;
-}
-
 WifiConnectResult addWifiProfileWindows(const QString& ssid,
                                         const QString& password,
                                         const QString& security,
@@ -329,17 +323,21 @@ WifiConnectResult addWifiProfileWindows(const QString& ssid,
     }
     const QString xml = buildWlanXmlContent(ssid, password, *auth, hidden);
 
-    // Write the profile XML to a private, auto-removed temp file for `netsh wlan add profile`.
-    QTemporaryFile xml_file(QDir::tempPath() + QStringLiteral("/sak_wifi_XXXXXX.xml"));
-    xml_file.setAutoRemove(true);
-    if (!xml_file.open()) {
-        result.error = QStringLiteral("Could not create a temporary WLAN profile file");
+    // Security brief 4a: the profile (it carries the network's password) is written CREATE_NEW
+    // into this run's own temporary folder in the program's data folder, read back whole, and held
+    // read-only until netsh has read it, so nothing can rewrite it in between. netsh reads through
+    // the hold (measured on testpc1, 2026-11-11; an exclusive lock makes it fail).
+    auto staged = sak::app_paths::writeHeldSessionTempFile(
+        QStringLiteral("sak_wifi_%1.xml").arg(sak::no_follow::randomToken()), xml.toUtf8());
+    if (!staged) {
+        result.error = QStringLiteral("Could not create a temporary WLAN profile file: %1")
+                           .arg(staged.error());
         return result;
     }
-    // Fail closed on a partial write: never hand netsh a truncated profile file.
-    if (!writeProfileXmlTempFile(xml_file, xml, result.error)) {
-        return result;
-    }
+    const auto remove_staged = qScopeGuard([&staged] {
+        staged->first.reset();
+        QFile::remove(staged->second);
+    });
 
     // netsh runs shell-free via an argv vector (no shell, no interpolation). Both calls need
     // administrator rights, so a non-elevated run fails HONESTLY here rather than silently.
@@ -355,13 +353,14 @@ WifiConnectResult addWifiProfileWindows(const QString& ssid,
         const QString err = r.std_err.trimmed();
         return err.isEmpty() ? r.std_out.trimmed() : err;
     };
-    const ProcessResult add = runProcess(netsh_exe,
-                                         {QStringLiteral("wlan"),
-                                          QStringLiteral("add"),
-                                          QStringLiteral("profile"),
-                                          QStringLiteral("filename=") + xml_file.fileName(),
-                                          QStringLiteral("user=all")},
-                                         kNetshTimeoutMs);
+    const ProcessResult add =
+        runProcess(netsh_exe,
+                   {QStringLiteral("wlan"),
+                    QStringLiteral("add"),
+                    QStringLiteral("profile"),
+                    QStringLiteral("filename=") + QDir::toNativeSeparators(staged->second),
+                    QStringLiteral("user=all")},
+                   kNetshTimeoutMs);
     if (!add.succeeded()) {
         result.error =
             add.timed_out

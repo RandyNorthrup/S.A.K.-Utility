@@ -18,7 +18,7 @@ namespace sak {
 /// behind: a cancel or a close kills the script's whole process tree, and its finally never runs.
 enum class StopLeftoverKind {
     ShadowCopy,    ///< A VSS shadow copy the backup helper made, by its ID ("{GUID}").
-    ShadowLink,    ///< The directory link through which robocopy reads that copy, by its path.
+    ShadowLink,    ///< The drive letter robocopy reads that copy through, as letter=device.
     CipherFolder,  ///< cipher.exe /w's EFSTMPWP folder, by the letter of the volume it is on.
 };
 
@@ -89,6 +89,14 @@ struct StopCleanupReport {
 /// Whether @p line is one a script writes for the application rather than for a person: a
 /// Windows-continued phase marker, a cleanup marker or a cleanup result, well formed or not.
 [[nodiscard]] bool isScriptMarkerLine(const QString& line);
+
+/// Remove the drive letters still mapped to a shadow copy in this logon session (a backup's
+/// mapping, DefineDosDevice, that a killed run left behind). The elevated helper calls it at start.
+/// Returns how many it removed.
+int removeStaleShadowMappings();
+
+/// Pure: whether @p target, a letter's QueryDosDevice answer, is a shadow copy device.
+[[nodiscard]] bool isShadowCopyDevice(const QString& target);
 
 /// @p output as a person reads it -- in the Log window, a result, a report or a saved log --
 /// without the lines isScriptMarkerLine picks out. They are read before this, never after.

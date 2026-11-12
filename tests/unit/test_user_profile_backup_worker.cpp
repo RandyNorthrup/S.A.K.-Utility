@@ -48,6 +48,7 @@ private Q_SLOTS:
     // -- B7-20: incomplete backups must not report a clean success --
     void backupMissingSelectedFolderReportsFailure();
     void backupExistingFolderReportsSuccess();
+    void backupNeverWritesThroughAJunction();  // security brief 4b B3
     void windowsCompatibilityLinkIsSkippedNotCounted();
     void anyOtherLinkStillCountsAsAnError();
 
@@ -307,6 +308,37 @@ void TestUserProfileBackupWorker::backupExistingFolderReportsSuccess() {
     QFile copiedFile(copied);
     QVERIFY(copiedFile.open(QIODevice::ReadOnly));
     QCOMPARE(copiedFile.readAll(), QByteArray("hello"));
+}
+
+// Security brief 4b B3: a junction planted where the backup's folder goes (<dest>/<user>/Documents,
+// pointing at another folder) is refused, never written through. QFile::copy followed it, and as
+// administrator the backup would have written into whatever folder it named.
+void TestUserProfileBackupWorker::backupNeverWritesThroughAJunction() {
+    QTemporaryDir srcDir;
+    QVERIFY(srcDir.isValid());
+    QVERIFY(QDir(srcDir.path()).mkpath(QStringLiteral("Documents")));
+    {
+        QFile f(srcDir.filePath(QStringLiteral("Documents/hello.txt")));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("hello");
+    }
+    QTemporaryDir destParent;
+    QTemporaryDir outside;
+    QVERIFY(destParent.isValid() && outside.isValid());
+    QVERIFY(QDir(destParent.path()).mkpath(QStringLiteral("dest/tester")));
+    QVERIFY(
+        makeJunction(destParent.filePath(QStringLiteral("dest/tester/Documents")), outside.path()));
+
+    UserProfileBackupWorker worker;
+    const BackupRun run = runBackup(
+        worker, srcDir.path(), documentsFolder(), destParent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY2(!QFileInfo::exists(QDir(outside.path()).filePath(QStringLiteral("hello.txt"))),
+             "the backup wrote through the junction");
+    QVERIFY2(QDir(outside.path())
+                 .isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System),
+             "the backup left something in the folder the junction points at");
+    QVERIFY2(!run.success, "a backup that could not store its file reported success");
 }
 
 // ============================================================================

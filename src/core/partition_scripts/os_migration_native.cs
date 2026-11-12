@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Compiled by Add-Type inside the elevated PowerShell that runs Migrate OS. It has to live in that
+// Built into sak_script_types.dll and loaded into the elevated PowerShell that runs Migrate OS (it was
+// compiled there by Add-Type until security brief 4a). It has to live in that
 // process for one reason above the others: a snapshot taken through IVssBackupComponents belongs to
 // the process that asked for it, so Windows releases it when that process ends, however it ends.
 // Cancel stops the process through its kill-on-close Job, and a finally block never runs.

@@ -10,6 +10,7 @@
 #include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/partition_file_system_detector.h"
+#include "sak/partition_file_system_registry.h"
 #include "sak/partition_safety_validator.h"
 #include "sak/partition_script_builder.h"
 #include "sak/process_runner.h"
@@ -639,16 +640,30 @@ void markAdministratorStatePending(PartitionInventory* inventory) {
     }
 }
 
+/// A lettered volume the raw probe identified as ext, HFS+, APFS or Linux swap: fsutil and
+/// BitLocker have nothing to answer about it (PartitionFileSystemRegistry::
+/// identifiedNonWindowsVolume). A RAW volume that nothing identified still warns.
+bool windowsCannotProbe(const PartitionVolumeInfo& volume) {
+    return PartitionFileSystemRegistry::identifiedNonWindowsVolume(volume);
+}
+
+/// Whether a lettered volume's unread dirty bit says the scan cannot be trusted. A locked volume
+/// has no readable file system, so fsutil cannot answer, and that says nothing about whether this
+/// scan can be trusted. Saying it did would stop every Apply on the PC, including the one that
+/// unlocks it. The same for a volume Windows cannot probe at all (windowsCannotProbe).
+bool dirtyBitUnknownMatters(const PartitionInfoEx& partition) {
+    if (!partition.volume || !partition.volume->hasDriveLetter() ||
+        partition.volume->dirty_bit_known || partition.volume->administrator_state_pending) {
+        return false;
+    }
+    return !windowsCannotProbe(*partition.volume) &&
+           !(partition.volume->bitlocker_state_known && partition.volume->bitlocker_locked);
+}
+
 void appendVolumeProbeWarnings(PartitionInventory* inventory) {
     for (const auto& disk : inventory->disks) {
         for (const auto& partition : disk.partitions) {
-            // A locked volume has no readable file system, so fsutil cannot answer, and that says
-            // nothing about whether this scan can be trusted. Saying it did would stop every Apply
-            // on the PC, including the one that unlocks it.
-            if (!partition.volume || !partition.volume->hasDriveLetter() ||
-                partition.volume->dirty_bit_known ||
-                partition.volume->administrator_state_pending ||
-                (partition.volume->bitlocker_state_known && partition.volume->bitlocker_locked)) {
+            if (!dirtyBitUnknownMatters(partition)) {
                 continue;
             }
             const QString reason = partition.volume->dirty_bit_error.trimmed().isEmpty()
@@ -677,7 +692,7 @@ void appendPartitionMetadataWarnings(const PartitionDiskInfo& disk,
                 .arg(reason));
     }
     if (partition.volume && !partition.volume->bitlocker_state_known &&
-        !partition.volume->administrator_state_pending &&
+        !partition.volume->administrator_state_pending && !windowsCannotProbe(*partition.volume) &&
         !partition.volume->bitlocker_state_error.trimmed().isEmpty()) {
         inventory->warnings.append(QStringLiteral("BitLocker query failed for volume %1: %2; "
                                                   "protection and lock state are unknown")
@@ -1019,9 +1034,10 @@ StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResul
                 .cancelled = result.cancelled || cancellationRequested(should_cancel)};
     }
 
-    auto inventory = parseInventory(result.std_out.toUtf8(), level);
+    auto inventory = parseInventory(result.std_out.toUtf8(), level, VolumeStateWarnings::Later);
     applyRawFileSystemDetection(
         &inventory, allow_elevation, should_cancel, level == ReadLevel::WhatAStandardUserCanRead);
+    appendVolumeStateWarnings(&inventory);
     if (cancellationRequested(should_cancel) &&
         !inventory.warnings.contains(QStringLiteral("Inventory scan cancelled"))) {
         inventory.warnings.append(QStringLiteral("Inventory scan cancelled"));
@@ -1043,8 +1059,14 @@ PartitionInventory StorageInventoryWorker::parseStandardUserInventoryJson(
     return parseInventory(json_data, ReadLevel::WhatAStandardUserCanRead);
 }
 
+void StorageInventoryWorker::appendVolumeStateWarnings(PartitionInventory* inventory) {
+    appendVolumeProbeWarnings(inventory);
+    appendInventoryMetadataWarnings(inventory);
+}
+
 PartitionInventory StorageInventoryWorker::parseInventory(const QByteArray& json_data,
-                                                          ReadLevel level) {
+                                                          ReadLevel level,
+                                                          VolumeStateWarnings warnings) {
     PartitionInventory inventory;
     inventory.captured_at = QDateTime::currentDateTime();
     QJsonParseError error{};
@@ -1070,8 +1092,9 @@ PartitionInventory StorageInventoryWorker::parseInventory(const QByteArray& json
         markAdministratorStatePending(&inventory);
     }
     appendPartitionEnumerationWarnings(&inventory);
-    appendVolumeProbeWarnings(&inventory);
-    appendInventoryMetadataWarnings(&inventory);
+    if (warnings == VolumeStateWarnings::Now) {
+        appendVolumeStateWarnings(&inventory);
+    }
     inventory.layout_hash = buildLayoutHash(inventory);
     return inventory;
 }
@@ -1440,11 +1463,7 @@ function Stop-SakScanProcess {
   param([int]$ExitCode)
   [Console]::Out.Flush()
   [Console]::Error.Flush()
-  if (-not ('Sak.ScanProcess' -as [type])) {
-    Add-Type -Namespace Sak -Name ScanProcess -MemberDefinition (
-      '[DllImport("kernel32.dll")] public static extern System.IntPtr GetCurrentProcess();' +
-      '[DllImport("kernel32.dll")] public static extern bool TerminateProcess(System.IntPtr process, uint exitCode);')
-  }
+  # Sak.ScanProcess comes from sak_script_types.dll, loaded at the top of the scan.
   [void][Sak.ScanProcess]::TerminateProcess([Sak.ScanProcess]::GetCurrentProcess(), [uint32]$ExitCode)
 }
 # A step the scan cannot go on without, that did not answer within its limit: the scan says it did
@@ -1570,7 +1589,8 @@ function Invoke-SakBoundedQuery {
                .arg(kInventoryQueryCapSeconds)
                .arg(kInventoryHeartbeatSeconds)
                .arg(kInventoryScanDidNotFinishExitCode) +
-           boundedScanStopScript() + boundedCallFunctionScript();
+           PartitionScriptBuilder::scriptTypesLoaderScript() + boundedScanStopScript() +
+           boundedCallFunctionScript();
 }
 
 QString StorageInventoryWorker::inventoryPowerShellScript(bool read_administrator_state) {

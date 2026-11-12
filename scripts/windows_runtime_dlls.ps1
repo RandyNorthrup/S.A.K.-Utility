@@ -49,6 +49,9 @@ function Test-IsSystemDll {
         # MSI product put its files. System32 only.
         "msi.dll",
         "msimg32.dll",
+        # The .NET Framework's runtime shim (System32): every managed assembly imports it.
+        # sak_script_types.dll, the scripts' types, is one; only Windows PowerShell loads it.
+        "mscoree.dll",
         # Windows Color System (ICM) API, imported by Qt's Windows platform plugin (qwindows.dll)
         # for monitor color profiles. System32 only.
         "mscms.dll",

@@ -13,8 +13,12 @@
 #include "sak/elevated_pipe_server.h"
 #include "sak/partition_manager_types.h"
 
+#include <QDeadlineTimer>
+#include <QElapsedTimer>
 #include <QTest>
+#include <QThread>
 
+#include <algorithm>
 #include <array>
 
 class TestElevatedPipeProtocol : public QObject {
@@ -38,6 +42,46 @@ private Q_SLOTS:
     // ======================================================================
     // Frame Encoding
     // ======================================================================
+
+    // Security brief item 5: one deadline per frame. A peer that hands over one byte at a time,
+    // each well inside the limit, used to keep the reader waiting forever because the timer
+    // restarted on every read. 40 bytes at 25 ms each take a second; the frame's 200 ms ends it.
+    void dribbledFrameStopsAtItsOneDeadline() {
+        QByteArray buffer(40, '\0');
+        QElapsedTimer clock;
+        clock.start();
+        const bool read =
+            sak::readPipeBytesBefore(buffer.data(),
+                                     static_cast<int>(buffer.size()),
+                                     QDeadlineTimer(200),
+                                     [](char* into, int /*wanted*/, int /*remaining_ms*/) {
+                                         QThread::msleep(25);
+                                         *into = 'x';
+                                         return 1;
+                                     });
+        QVERIFY2(!read, "a dribbling peer held the frame open past its deadline");
+        QVERIFY2(clock.elapsed() < 800, qPrintable(QString::number(clock.elapsed())));
+    }
+
+    void wholeFrameInTimeIsRead() {
+        QByteArray buffer(8, '\0');
+        int calls = 0;
+        QVERIFY(sak::readPipeBytesBefore(buffer.data(),
+                                         static_cast<int>(buffer.size()),
+                                         QDeadlineTimer(5000),
+                                         [&calls](char* into, int wanted, int /*remaining_ms*/) {
+                                             if (++calls == 1) {
+                                                 return 0;  // nothing waiting yet: poll again
+                                             }
+                                             std::fill_n(into, wanted, 'y');
+                                             return wanted;
+                                         }));
+        QCOMPARE(buffer, QByteArray(8, 'y'));
+        QVERIFY(!sak::readPipeBytesBefore(buffer.data(),
+                                          static_cast<int>(buffer.size()),
+                                          QDeadlineTimer(5000),
+                                          [](char*, int, int) { return -1; }));
+    }
 
     void testFrameEmpty() {
         QByteArray frame = sak::frameMessage(sak::PipeMessageType::Shutdown);

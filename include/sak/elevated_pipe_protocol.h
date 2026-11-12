@@ -13,14 +13,19 @@
 
 #include <QByteArray>
 #include <QCoreApplication>
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRandomGenerator>
 #include <QString>
+#include <QThread>
 
+#include <algorithm>
 #include <climits>
 #include <cstdint>
+#include <functional>
+#include <limits>
 
 namespace sak {
 
@@ -75,6 +80,44 @@ inline constexpr int kPipeIoTimeoutMs = 30'000;
 inline constexpr int kTaskHeartbeatIntervalMs = 10'000;
 static_assert(kTaskHeartbeatIntervalMs * 2 < kPipeIoTimeoutMs,
               "a running task must send at least two heartbeats inside the client's read timeout");
+
+/// @brief How often a frame read looks again while nothing is waiting in the pipe.
+inline constexpr int kPipeReadPollMs = 50;
+
+/// @brief One attempt to read part of a frame: copy up to @p wanted bytes into @p buffer, waiting
+///        at most @p remaining_ms. Returns the bytes read (> 0), 0 when nothing is waiting yet, or
+///        -1 when the pipe is broken or the peer is gone.
+using PipeReadSome = std::function<int(char* buffer, int wanted, int remaining_ms)>;
+
+/// @brief Read exactly @p size bytes through @p read_some before @p deadline.
+///
+/// ONE deadline covers the whole span (security brief item 5): each end used to restart its timer
+/// after every successful read, so a peer that sent a byte just inside each timeout could hold a
+/// frame open, and the reader with it, without limit. A caller reads a frame's first byte against
+/// its idle limit and everything after it against one frame deadline.
+[[nodiscard]] inline bool readPipeBytesBefore(char* buffer,
+                                              int size,
+                                              const QDeadlineTimer& deadline,
+                                              const PipeReadSome& read_some) {
+    int total = 0;
+    while (total < size) {
+        if (deadline.hasExpired()) {
+            return false;
+        }
+        const auto remaining = static_cast<int>(
+            std::clamp<qint64>(deadline.remainingTime(), 1, std::numeric_limits<int>::max()));
+        const int got = read_some(buffer + total, size - total, remaining);
+        if (got < 0) {
+            return false;
+        }
+        if (got == 0) {
+            QThread::msleep(static_cast<unsigned long>(std::min(kPipeReadPollMs, remaining)));
+            continue;
+        }
+        total += got;
+    }
+    return true;
+}
 
 /// @brief Whether two paths name the same executable: the check each end of the pipe makes on the
 ///        other's image.

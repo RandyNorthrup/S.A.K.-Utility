@@ -6,14 +6,17 @@
 
 #include "sak/partition_raw_device_io.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
 #include <QFileDevice>
 #include <QFileInfo>
 #include <QIODevice>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -59,7 +62,8 @@ QString win32ErrorMessage(DWORD errorCode) {
 
 class WindowsRawDevice final : public QIODevice {
 public:
-    WindowsRawDevice(QString path, bool writable) : path_(std::move(path)), writable_(writable) {}
+    WindowsRawDevice(QString path, bool writable, bool takesVolume = false)
+        : path_(std::move(path)), writable_(writable), takesVolume_(writable && takesVolume) {}
 
     ~WindowsRawDevice() override { close(); }
 
@@ -69,22 +73,16 @@ public:
             setErrorString(QStringLiteral("Raw device helper is read-only"));
             return false;
         }
-        const DWORD desiredAccess = writable_ ? (GENERIC_READ | GENERIC_WRITE) : GENERIC_READ;
-        // A writable commit takes the device with write access UNshared so a concurrent
-        // third-party writer cannot open it for writing and corrupt an APFS/HFS commit
-        // mid-flight; readers are still permitted. A read-only opener shares fully. The
-        // app's own post-commit read-back opens only after the write handle is closed, so
-        // the tighter share mode never blocks it.
-        const DWORD shareMode = writable_ ? FILE_SHARE_READ : (FILE_SHARE_READ | FILE_SHARE_WRITE);
-        handle_ = CreateFileW(reinterpret_cast<LPCWSTR>(path_.utf16()),
-                              desiredAccess,
-                              shareMode,
-                              nullptr,
-                              OPEN_EXISTING,
-                              FILE_ATTRIBUTE_NORMAL,
-                              nullptr);
+        const DWORD openError = openHandle();
         if (handle_ == INVALID_HANDLE_VALUE) {
-            setErrorString(win32ErrorMessage(GetLastError()));
+            setErrorString(takesVolume_ && openError == ERROR_SHARING_VIOLATION
+                               ? partitionInUseMessage(openError)
+                               : win32ErrorMessage(openError));
+            return false;
+        }
+        if (takesVolume_ && !takeVolume()) {
+            CloseHandle(handle_);
+            handle_ = INVALID_HANDLE_VALUE;
             return false;
         }
         position_ = 0;
@@ -114,9 +112,19 @@ public:
             return true;
         }
         if (FlushFileBuffers(handle_) == 0) {
-            setErrorString(win32ErrorMessage(GetLastError()));
+            const DWORD error = GetLastError();
+            // Once this handle has dismounted it, a FAT or exFAT partition answers a flush with
+            // "The device is not ready" (ERROR_NOT_READY). That one answer, only on a partition
+            // this handle took and dismounted, is accepted only when every block written since
+            // the last flush reads back exactly as written: a write that did not reach the
+            // device fails here instead of passing as a tolerated flush. Any other error fails.
+            if (takesVolume_ && error == ERROR_NOT_READY) {
+                return verifyWrittenBlocks();
+            }
+            setErrorString(win32ErrorMessage(error));
             return false;
         }
+        writtenBlocks_.clear();
         return true;
     }
 
@@ -292,12 +300,101 @@ private:
     [[nodiscard]] qint64 writeAligned(const char* data, qint64 maxSize) {
         const DWORD bytesRequested = clampedDword(maxSize);
         DWORD bytesWritten = 0;
+        recordWrittenBlocks(position_, data, bytesRequested);
         if (WriteFile(handle_, data, bytesRequested, &bytesWritten, nullptr) == 0) {
             setErrorString(win32ErrorMessage(GetLastError()));
             return -1;
         }
+        if (bytesWritten != bytesRequested) {
+            // Windows reports success for a write that runs past the end of what the handle
+            // reaches; say so instead of leaving the caller an empty error ("Unknown error").
+            setErrorString(QStringLiteral("Windows wrote only %1 of %2 bytes at offset %3: the "
+                                          "rest is past the end of the partition as this handle "
+                                          "sees it")
+                               .arg(bytesWritten)
+                               .arg(bytesRequested)
+                               .arg(position_));
+        }
         position_ += static_cast<qint64>(bytesWritten);
         return static_cast<qint64>(bytesWritten);
+    }
+
+    // Windows mounts the file system it recognizes (NTFS, FAT32, exFAT) on a partition as soon
+    // as it is opened, drive letter or not. Through that file system's handle the partition's
+    // last sectors are out of reach (a write there comes back short), and the file system can
+    // still write its own metadata over what this handle writes. So a writable partition handle
+    // takes the volume first: whole-partition (extended DASD) access, the lock, which Windows
+    // refuses while anything else has the partition open, and a dismount, so the file system
+    // lets go now and Windows mounts whatever is there afresh once the handle closes. A volume
+    // with no file system Windows knows (RAW: HFS+, APFS, ext4) takes the same lock.
+    [[nodiscard]] static QString partitionInUseMessage(DWORD error) {
+        return QStringLiteral(
+                   "The partition is in use, so Windows will not hand it over: close "
+                   "File Explorer windows and programs using it, then try again (%1)")
+            .arg(win32ErrorMessage(error));
+    }
+
+    /// Opens handle_ for path_; returns the error when it could not.
+    [[nodiscard]] DWORD openHandle() {
+        const DWORD desiredAccess = writable_ ? (GENERIC_READ | GENERIC_WRITE) : GENERIC_READ;
+        // A writable commit takes the device with write access UNshared so a concurrent
+        // third-party writer cannot open it for writing and corrupt an APFS/HFS commit
+        // mid-flight; readers are still permitted. A read-only opener shares fully. The
+        // app's own post-commit read-back opens only after the write handle is closed, so
+        // the tighter share mode never blocks it.
+        const DWORD shareMode = writable_ ? FILE_SHARE_READ : (FILE_SHARE_READ | FILE_SHARE_WRITE);
+        // A partition taken for writing is written through to the device. Windows or the
+        // antivirus often holds a partition it has just mounted or formatted for a moment, so a
+        // sharing violation there is tried again, as the lock is.
+        const DWORD flags = takesVolume_ ? FILE_FLAG_WRITE_THROUGH : FILE_ATTRIBUTE_NORMAL;
+        DWORD openError = ERROR_SUCCESS;
+        for (int attempt = 0; attempt < kVolumeLockAttempts; ++attempt) {
+            if (attempt > 0) {
+                Sleep(kVolumeLockRetryMs);
+            }
+            handle_ = CreateFileW(reinterpret_cast<LPCWSTR>(path_.utf16()),
+                                  desiredAccess,
+                                  shareMode,
+                                  nullptr,
+                                  OPEN_EXISTING,
+                                  flags,
+                                  nullptr);
+            openError = handle_ == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+            if (!takesVolume_ || openError != ERROR_SHARING_VIOLATION) {
+                break;
+            }
+        }
+        return openError;
+    }
+
+    [[nodiscard]] bool takeVolume() {
+        DWORD returned = 0;
+        // Best effort: RAW may decline it, and needs no extension. A short write still fails.
+        (void)DeviceIoControl(
+            handle_, FSCTL_ALLOW_EXTENDED_DASD_IO, nullptr, 0, nullptr, 0, &returned, nullptr);
+        bool locked = false;
+        DWORD lockError = ERROR_SUCCESS;
+        for (int attempt = 0; attempt < kVolumeLockAttempts && !locked; ++attempt) {
+            if (attempt > 0) {
+                Sleep(kVolumeLockRetryMs);
+            }
+            locked = DeviceIoControl(
+                         handle_, FSCTL_LOCK_VOLUME, nullptr, 0, nullptr, 0, &returned, nullptr) !=
+                     0;
+            lockError = locked ? ERROR_SUCCESS : GetLastError();
+        }
+        if (!locked) {
+            setErrorString(partitionInUseMessage(lockError));
+            return false;
+        }
+        if (DeviceIoControl(
+                handle_, FSCTL_DISMOUNT_VOLUME, nullptr, 0, nullptr, 0, &returned, nullptr) == 0) {
+            setErrorString(QStringLiteral("Windows would not let go of the partition's file "
+                                          "system: %1")
+                               .arg(win32ErrorMessage(GetLastError())));
+            return false;
+        }
+        return true;
     }
 
     [[nodiscard]] qint64 writeUnaligned(const char* data, qint64 maxSize) {
@@ -336,6 +433,7 @@ private:
         }
 
         DWORD bytesWritten = 0;
+        recordWrittenBlocks(start, scratch.data(), bytesRequested);
         if (WriteFile(handle_, scratch.data(), bytesRequested, &bytesWritten, nullptr) == 0) {
             setErrorString(win32ErrorMessage(GetLastError()));
             return -1;
@@ -348,8 +446,52 @@ private:
         return payload;
     }
 
+    // What each whole block written since the last flush should hold (SHA-256), for the
+    // read-back a tolerated flush needs. Writes reach here block-aligned (the unaligned path
+    // writes the whole blocks it read and patched); a later write of a block replaces its entry.
+    void recordWrittenBlocks(qint64 offset, const char* data, DWORD bytes) {
+        if (!takesVolume_ || (offset % kRawAlignment) != 0) {
+            return;
+        }
+        constexpr auto kBlockBytes = static_cast<DWORD>(kRawAlignment);
+        for (DWORD done = 0; done + kBlockBytes <= bytes; done += kBlockBytes) {
+            writtenBlocks_[(offset + done) / kRawAlignment] = QCryptographicHash::hash(
+                QByteArrayView(data + done, kRawAlignment), QCryptographicHash::Sha256);
+        }
+    }
+
+    [[nodiscard]] bool verifyWrittenBlocks() {
+        std::vector<char> block(static_cast<size_t>(kRawAlignment));
+        for (const auto& [index, expected] : writtenBlocks_) {
+            DWORD bytesRead = 0;
+            if (!seekHandle(index * kRawAlignment) ||
+                ReadFile(handle_,
+                         block.data(),
+                         static_cast<DWORD>(kRawAlignment),
+                         &bytesRead,
+                         nullptr) == 0 ||
+                bytesRead != static_cast<DWORD>(kRawAlignment) ||
+                QCryptographicHash::hash(QByteArrayView(block.data(), kRawAlignment),
+                                         QCryptographicHash::Sha256) != expected) {
+                setErrorString(QStringLiteral("The partition did not flush, and the block at "
+                                              "offset %1 does not read back as written")
+                                   .arg(index * kRawAlignment));
+                return false;
+            }
+        }
+        writtenBlocks_.clear();
+        return seekHandle(position_);
+    }
+
+    // Ten seconds in all: a FAT32 volume refused the lock for about three seconds after a file
+    // on it was closed (testpc1, 2026-11-11), longer than the two seconds tried before.
+    static constexpr int kVolumeLockAttempts = 50;
+    static constexpr DWORD kVolumeLockRetryMs = 200;
+    std::map<qint64, QByteArray> writtenBlocks_;
+
     QString path_;
     bool writable_{false};
+    bool takesVolume_{false};
     HANDLE handle_{INVALID_HANDLE_VALUE};
     qint64 position_{0};
 };
@@ -636,6 +778,19 @@ QString canonicalRawDevicePath(const QString& path) {
     return {};
 }
 
+bool rawDevicePathIsPartition(const QString& path) {
+    const QString canonical = canonicalRawDevicePath(path);
+    if (canonical.isEmpty() ||
+        canonical.startsWith(QStringLiteral("\\\\.\\PhysicalDrive"), Qt::CaseInsensitive)) {
+        return false;
+    }
+    // \Device\HarddiskN\Partition0 and \Device\HarddiskN\DRn are the whole disk.
+    static const QRegularExpression wholeDisk(
+        QStringLiteral(R"(^\\\\\.\\GLOBALROOT\\Device\\Harddisk\d+\\(Partition0|DR\d+)$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    return !wholeDisk.match(canonical).hasMatch();
+}
+
 std::optional<uint32_t> rawDevicePhysicalDriveNumber(const QString& path) {
     const QString canonical = canonicalRawDevicePath(path);
     const QString prefix = QStringLiteral("\\\\.\\PhysicalDrive");
@@ -733,7 +888,8 @@ std::unique_ptr<QIODevice> openFileOrRawDeviceReadWrite(const QString& path,
         if (!requireCanonicalRawOpenPath(path, errorMessage)) {
             return {};
         }
-        auto device = std::make_unique<WindowsRawDevice>(path, true);
+        auto device =
+            std::make_unique<WindowsRawDevice>(path, true, rawDevicePathIsPartition(path));
         if (!device->open(QIODevice::ReadWrite)) {
             setError(errorMessage, device->errorString());
             return {};

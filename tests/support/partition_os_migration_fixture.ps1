@@ -38,11 +38,14 @@ foreach ($name in 'Invoke-SakTargetBootFiles', 'Set-SakTargetDriveLetters', 'Fin
     Assert-Fixture ($null -ne (Get-ScriptFunctionTextOrNull $repairAst $name)) "The repair script has no $name"
 }
 
-# The C# in the script, compiled by the compiler Windows PowerShell 5.1 has (C# 5).
+# The migration script loads its native types from sak_script_types.dll (security brief 4a: no
+# Add-Type compiling into the temporary folder). The fixture compiles the same C# source the DLL is
+# built from, with the compiler Windows PowerShell 5.1 has (C# 5).
 $text = [IO.File]::ReadAllText($MigrationScript)
-$match = [regex]::Match($text, "Add-Type -TypeDefinition @'\r?\n(.*?)\r?\n'@", 'Singleline')
-Assert-Fixture $match.Success 'The migration script has no C# block'
-Add-Type -TypeDefinition $match.Groups[1].Value
+Assert-Fixture ($text.Contains('[System.Reflection.Assembly]::Load(')) 'The migration script does not load its native types'
+Assert-Fixture (-not $text.Contains('Add-Type')) 'The migration script still compiles C# with Add-Type'
+$nativeSource = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'src\core\partition_scripts\os_migration_native.cs'
+Add-Type -TypeDefinition ([IO.File]::ReadAllText($nativeSource))
 
 function Get-ScriptFunctionText($Ast, [string]$Name) {
     $found = @($Ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $Name }, $true))

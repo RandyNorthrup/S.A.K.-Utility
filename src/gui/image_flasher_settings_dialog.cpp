@@ -10,6 +10,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/no_follow_fs.h"
 #include "sak/style_constants.h"
 
 #include <QDialogButtonBox>
@@ -447,8 +448,8 @@ void ImageFlasherSettingsDialog::onClearDownloadCaches() {
     int removed_count = 0;
     int failed_count = 0;
     for (const auto& dir_path : dirs) {
-        QDir dir(dir_path);
-        if (dir.removeRecursively()) {
+        // Never through a link: a junction among the cached folders is removed as itself.
+        if (sak::no_follow::removeTree(dir_path)) {
             removed_count++;
             sak::logInfo("Cleared download cache: " + dir_path.toStdString());
         } else {

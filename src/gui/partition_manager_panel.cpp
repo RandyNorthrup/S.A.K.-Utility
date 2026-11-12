@@ -13,6 +13,7 @@
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
 #include "sak/partition_apfs_file_system_reader.h"
+#include "sak/partition_apfs_writer.h"
 #include "sak/partition_ext_file_system_reader.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_registry.h"
@@ -904,7 +905,7 @@ bool partitionAllowsNonNativeRepair(const PartitionInfoEx& partition) {
     return !partitionHasProtectedRole(partition) && !partition.is_read_only;
 }
 
-bool hasGeneratedApfsRepairEvidence(const QStringList& details);
+QString generatedApfsRepairRefusal(const QStringList& details);
 
 void applyNonNativeRepairState(NonNativeFilesystemCheckState* state,
                                const PartitionInfoEx& partition) {
@@ -912,12 +913,12 @@ void applyNonNativeRepairState(NonNativeFilesystemCheckState* state,
         return;
     }
 
-    if (isApfsFilesystem(state->file_system) &&
-        !hasGeneratedApfsRepairEvidence(state->metadata_details)) {
-        state->repair_reason = QObject::tr(
-            "APFS repair is available only for APFS containers created by this tool; repairing "
-            "other APFS containers is not supported.");
-        return;
+    if (isApfsFilesystem(state->file_system)) {
+        const QString refusal = generatedApfsRepairRefusal(state->metadata_details);
+        if (!refusal.isEmpty()) {
+            state->repair_reason = refusal;
+            return;
+        }
     }
 
     state->repair_available = partitionAllowsNonNativeRepair(partition);
@@ -929,13 +930,52 @@ void applyNonNativeRepairState(NonNativeFilesystemCheckState* state,
         "Repair is disabled for system, boot, EFI, MSR, recovery, or read-only partitions.");
 }
 
-bool hasGeneratedApfsRepairEvidence(const QStringList& details) {
-    const QString joined = details.join(QLatin1Char('\n'));
-    return joined.contains(QStringLiteral("APFS space manager block: 10")) &&
-           joined.contains(QStringLiteral("APFS volume candidate block 6")) &&
-           joined.contains(QStringLiteral("volume object map OID 103")) &&
-           joined.contains(QStringLiteral("root tree OID 104")) &&
-           joined.contains(QStringLiteral("Volume OIDs: 102"));
+/// The value of the scan detail "<name>: <number>", or nullopt when the scan did not report it.
+std::optional<uint64_t> scanDetailNumber(const QStringList& details, const QString& name) {
+    const QString prefix = name + QStringLiteral(": ");
+    for (const QString& detail : details) {
+        if (detail.startsWith(prefix)) {
+            bool ok = false;
+            const uint64_t value = detail.mid(prefix.size()).trimmed().toULongLong(&ok);
+            return ok ? std::optional<uint64_t>(value) : std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
+// The generated repair is offered for a container whose volume S.A.K.'s writer formatted, as the
+// scan reads it from the volume itself (apfs_formatted_by), and whose geometry the writer's own
+// repair guard accepts (PartitionApfsWriter::repairGeometryBlocker: one space-manager chunk, 128
+// MiB). It used to need one fixed layout the writer no longer produces, so it was never offered;
+// then, offered for any container the writer formatted, a 256 MiB one failed at Apply because the
+// guard refuses it (both found on the VM, 2026-11-11). Empty when the repair can be offered;
+// otherwise the reason, in the words the window shows.
+QString generatedApfsRepairRefusal(const QStringList& details) {
+    const QString limit =
+        QObject::tr("S.A.K. can repair only APFS containers it formatted itself, up to %1.")
+            .arg(formatPartitionBytes(sak::PartitionApfsWriter::repairMaxContainerBytes()));
+    if (!details.contains(QStringLiteral("APFS volume formatted by: %1")
+                              .arg(sak::PartitionApfsWriter::sakFormatterName()))) {
+        return limit + QLatin1Char(' ') +
+               QObject::tr(
+                   "This container was formatted by something else (a Mac, for "
+                   "example), so only the read-only metadata check is offered.");
+    }
+    const auto block_size = scanDetailNumber(details, QStringLiteral("Block size"));
+    const auto block_count = scanDetailNumber(details, QStringLiteral("Block count"));
+    if (!block_size || !block_count ||
+        !sak::PartitionApfsWriter::repairGeometryBlocker(*block_size, *block_count).isEmpty()) {
+        const bool sized = block_size && block_count && *block_size != 0 &&
+                           *block_count <= std::numeric_limits<uint64_t>::max() / *block_size;
+        const uint64_t bytes = sized ? *block_size * *block_count : 0;
+        return limit + QLatin1Char(' ') +
+               (bytes > 0 ? QObject::tr("This container is %1, so only the read-only metadata "
+                                        "check is offered.")
+                                .arg(formatPartitionBytes(bytes))
+                          : QObject::tr("The scan could not read this container's size, so only "
+                                        "the read-only metadata check is offered."));
+    }
+    return {};
 }
 
 bool hasInternalMetadataCheck(const QString& file_system) {
@@ -6448,6 +6488,10 @@ void showMetadataConsistencyDialog(QWidget* parent, const NonNativeFilesystemChe
                 QObject::tr("Result"),
                 warning ? QObject::tr("Warnings found") : QObject::tr("No sanity warnings"));
     addProperty(&rows, QObject::tr("Findings"), findings.join('\n'));
+    // Why no repair is offered here, so a technician is not left guessing.
+    if (!state.repair_available && !state.repair_reason.isEmpty()) {
+        addProperty(&rows, QObject::tr("Repair"), state.repair_reason);
+    }
     addProperty(&rows, QObject::tr("Read-only metadata"), state.metadata_details.join('\n'));
     showPropertiesDialog(parent,
                          QObject::tr("%1 Metadata (Last Disk Scan)").arg(state.file_system),

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "sak/no_follow_fs.h"
 #include "sak/partition_manager_types.h"
 #include "sak/partition_script_builder.h"
 #include "sak/partition_stop_cleanup.h"
@@ -20,12 +21,42 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <vector>
 
 class PartitionManagerCoreTests;
 
 namespace sak {
 
 class ElevationBroker;
+
+/// A script's PartitionScriptCredential secrets, each written to a new file in this run's
+/// temporary folder and held read-only for this object's life; the script with each placeholder
+/// replaced by its file's path. Destruction overwrites each file with zeros and removes it.
+class StagedScriptCredentials {
+public:
+    explicit StagedScriptCredentials(const PartitionScript& script);
+    ~StagedScriptCredentials();
+    StagedScriptCredentials(const StagedScriptCredentials&) = delete;
+    StagedScriptCredentials& operator=(const StagedScriptCredentials&) = delete;
+    StagedScriptCredentials(StagedScriptCredentials&&) = delete;
+    StagedScriptCredentials& operator=(StagedScriptCredentials&&) = delete;
+
+    [[nodiscard]] bool ok() const noexcept { return m_ok; }
+    [[nodiscard]] const QString& error() const noexcept { return m_error; }
+    [[nodiscard]] const QString& script() const noexcept { return m_script; }
+    [[nodiscard]] std::vector<QString> stagedPaths() const;
+
+private:
+    struct StagedFile {
+        no_follow::UniqueHandle hold;
+        QString path;
+        int size{0};
+    };
+    QString m_script;
+    std::vector<StagedFile> m_files;
+    bool m_ok{true};
+    QString m_error;
+};
 
 class PartitionExecutor : public QObject {
     Q_OBJECT

@@ -19,9 +19,13 @@
 #include "sak/elevated_task_dispatcher.h"
 #include "sak/error_codes.h"
 #include "sak/layout_constants.h"
+#include "sak/log_file_sink.h"
 #include "sak/logger.h"
+#include "sak/no_follow_fs.h"
+#include "sak/partition_stop_cleanup.h"
 #include "sak/permission_manager.h"
 #include "sak/process_runner.h"
+#include "sak/program_integrity.h"
 
 #include <QByteArray>
 #include <QCoreApplication>
@@ -128,30 +132,37 @@ std::optional<HelperArgs> parseArgs(int argc, char* argv[]) {
     return args;
 }
 
-// Redirect TMP/TEMP into a controlled runtime directory. Returns false if that directory
-// cannot be created so the caller can fail closed: an elevated helper must not fall back to
-// the inherited (potentially attacker-influenced) TMP/TEMP for its child processes.
+// TMP and TEMP point at this run's own folder under data\temp (app_paths::
+// establishSessionTempDirectory): a fresh random name, held without following a link, and on a
+// volume that keeps ACLs readable and writable by SYSTEM and Administrators only. The elevated
+// PowerShell, diskpart and the bundled tools put their working files there, on the program's own
+// drive (owner, 2026-11-11). Returns false if it cannot be made, so the caller fails closed: an
+// elevated helper must not fall back to an inherited TMP/TEMP.
 bool configurePortableRuntimeDirs() {
-    const QString temp_dir = sak::app_paths::tempDirectory();
-    if (!sak::app_paths::ensureDirectory(temp_dir)) {
-        sak::logError("ElevatedHelper: failed to create controlled temp dir '{}'",
-                      temp_dir.toStdString());
+    const auto run_temp = sak::app_paths::establishSessionTempDirectory();
+    if (!run_temp) {
+        sak::logError("ElevatedHelper: cannot create its temporary folder: {}",
+                      run_temp.error().toStdString());
         return false;
     }
-    const QByteArray native_temp = QDir::toNativeSeparators(temp_dir).toLocal8Bit();
-    // Both writes must land: a half-applied redirect leaves elevated children resolving their
-    // temp directory from the inherited (potentially attacker-influenced) variable.
-    const bool tmp_set = qputenv("TMP", native_temp);
-    const bool temp_set = qputenv("TEMP", native_temp);
-    if (!tmp_set || !temp_set) {
-        sak::logError("ElevatedHelper: failed to redirect TMP/TEMP to '{}' (TMP={}, TEMP={})",
-                      temp_dir.toStdString(),
-                      tmp_set ? 1 : 0,
-                      temp_set ? 1 : 0);
-        return false;
+    sak::app_paths::removeStaleSessionTempDirectories();
+    // A backup reads its shadow copy through a drive letter mapped in this logon session; one a
+    // killed run left behind is removed here (security brief 4a, owner ruling 2026-11-11).
+    if (const int mappings = sak::removeStaleShadowMappings(); mappings > 0) {
+        sak::logInfo("ElevatedHelper: stale shadow copy mappings removed: {}", mappings);
     }
     return true;
 }
+
+/// Removes this run's temporary folder when main returns.
+struct RunTempFolderRemoval {
+    RunTempFolderRemoval() = default;
+    RunTempFolderRemoval(const RunTempFolderRemoval&) = delete;
+    RunTempFolderRemoval& operator=(const RunTempFolderRemoval&) = delete;
+    RunTempFolderRemoval(RunTempFolderRemoval&&) = delete;
+    RunTempFolderRemoval& operator=(RunTempFolderRemoval&&) = delete;
+    ~RunTempFolderRemoval() { sak::app_paths::removeSessionTempDirectory(); }
+};
 
 // ======================================================================
 // Quick Action Task Handler
@@ -1045,10 +1056,16 @@ void registerFileTasks(sak::ElevatedTaskDispatcher& dispatcher) {
                         .error_message = "Task cancelled before it started"};
             }
             progress(0, QStringLiteral("Copying: ") + source);
-            if (!QFile::copy(source, destination)) {
+            // As administrator, never through a link at or above the destination (security brief
+            // 4b): a fresh name in the held destination folder, renamed into place, never
+            // replacing what is there (QFile::copy refused an existing destination too).
+            if (const auto copied = sak::no_follow::copyFileTo(
+                    source, destination, sak::no_follow::Publish::NoReplace);
+                !copied) {
                 return {.success = false,
                         .data = {},
-                        .error_message = QStringLiteral("Failed to copy: ") + source};
+                        .error_message = QStringLiteral("Failed to copy: ") + source +
+                                         QStringLiteral(" (") + copied.error() + QLatin1Char(')')};
             }
             progress(sak::kPercentMax, QStringLiteral("File copied"));
             return {.success = true, .data = {}, .error_message = {}};
@@ -1295,17 +1312,66 @@ int runHelper(sak::ElevatedPipeServer& server, sak::ElevatedTaskDispatcher& disp
     return 0;
 }
 
+/// Security brief 4c, before anything else: DLLs only from this program's folder and System32
+/// (never the current directory or PATH), and the current directory is System32. The broker
+/// verified and holds every program file for this helper's life.
+bool hardenHelperProcessStart() {
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    SetDllDirectoryW(L"");
+    sak::program_integrity::captureRunningImageIdentity();
+    wchar_t system32[MAX_PATH] = {};
+    const UINT length = GetSystemDirectoryW(system32, MAX_PATH);
+    return length != 0 && length < MAX_PATH && SetCurrentDirectoryW(system32) != 0;
+}
+
+/// data/logs, held without following a link (security brief 4a.3): the program's folder may be on
+/// a drive other accounts can write to, and this process is elevated. Independent of TMP/TEMP.
+bool startHelperLogging() {
+    auto log_dir = sak::app_paths::openDataSubdirectory(QStringLiteral("logs"));
+    return log_dir && sak::startFileLogging(std::move(*log_dir)).has_value();
+}
+
+/// Security brief 4c: every module loaded so far from the program folder passes the program-file
+/// policy, and every other one comes from Windows or Program Files.
+bool loadedModulesPassTheAudit() {
+    const auto audit =
+        sak::program_integrity::auditLoadedModules(QCoreApplication::applicationDirPath());
+    if (!audit) {
+        sak::logError("ElevatedHelper: refusing to run: {} is loaded and is not part of S.A.K.",
+                      audit.error().toStdString());
+    }
+    return audit.has_value();
+}
+
+/// The command line, with the pipe name and the parent's process ID it must carry.
+std::optional<HelperArgs> requiredHelperArgs(int argc, char* argv[]) {
+    const auto parsed_args = parseArgs(argc, argv);
+    if (!parsed_args.has_value()) {
+        sak::logError("ElevatedHelper: refusing to run with a malformed command line");
+        return std::nullopt;
+    }
+    if (parsed_args->m_pipe_name.isEmpty()) {
+        sak::logError("ElevatedHelper: --pipe argument required");
+        return std::nullopt;
+    }
+    if (parsed_args->m_parent_pid <= 0) {
+        sak::logError("ElevatedHelper: --parent-pid argument required");
+        return std::nullopt;
+    }
+    return parsed_args;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
+    if (!hardenHelperProcessStart()) {
+        return kHelperStartupFailureExitCode;
+    }
     const QCoreApplication app(argc, argv);
     app.setApplicationName("SAK Elevated Helper");
 
-    // Initialize logger (logs directory is independent of TMP/TEMP)
-    const QString log_path = sak::app_paths::logsDirectory();
-    auto log_dir = std::filesystem::path(log_path.toStdWString());
-    auto& logger = sak::logger::instance();
-    if (auto result = logger.initialize(log_dir); !result) {
+    const auto& logger = sak::logger::instance();
+    if (!startHelperLogging()) {
         return 1;
     }
 
@@ -1315,25 +1381,22 @@ int main(int argc, char* argv[]) {
         sak::logError("ElevatedHelper: cannot establish controlled runtime dirs; aborting");
         return kHelperStartupFailureExitCode;
     }
+    // Every return below removes this run's temporary folder, without following any link in it.
+    const RunTempFolderRemoval remove_run_temp_at_exit;
+
+    if (!loadedModulesPassTheAudit()) {
+        return kHelperStartupFailureExitCode;
+    }
 
     sak::logInfo("========================================");
     sak::logInfo("SAK Elevated Helper starting");
     sak::logInfo("========================================");
 
-    const auto parsed_args = parseArgs(argc, argv);
-    if (!parsed_args.has_value()) {
-        sak::logError("ElevatedHelper: refusing to run with a malformed command line");
+    const auto required_args = requiredHelperArgs(argc, argv);
+    if (!required_args) {
         return 1;
     }
-    const HelperArgs args = *parsed_args;
-    if (args.m_pipe_name.isEmpty()) {
-        sak::logError("ElevatedHelper: --pipe argument required");
-        return 1;
-    }
-    if (args.m_parent_pid <= 0) {
-        sak::logError("ElevatedHelper: --parent-pid argument required");
-        return 1;
-    }
+    const HelperArgs args = *required_args;
 
     sak::logInfo("ElevatedHelper: pipe='{}', parent_pid={}",
                  args.m_pipe_name.toStdString(),

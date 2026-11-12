@@ -21,6 +21,7 @@
 
 #include "sak/elevation_broker.h"
 #include "sak/elevation_manager.h"
+#include "sak/program_integrity.h"
 
 #include "../support/test_hardware_guard.h"
 
@@ -87,9 +88,13 @@ void ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe() {
     const QString client = stage.filePath(QStringLiteral("sak_utility.exe"));
     QVERIFY(QFile::copy(QCoreApplication::applicationFilePath(), client));
     QVERIFY(QFile::copy(helper, stage.filePath(QStringLiteral("sak_elevated_helper.exe"))));
-    // An elevated process does not get this one's PATH, so what the two need goes beside them.
+    // An elevated process does not get this one's PATH, so what the two need goes beside them:
+    // the DLLs the program-file manifest knows (security brief 4c). The build folder also holds the
+    // Windows SDK's shader compilers, which the package leaves out and the helper would refuse.
     for (const auto& library : build.entryList({QStringLiteral("*.dll")}, QDir::Files)) {
-        QVERIFY(QFile::copy(build.filePath(library), stage.filePath(library)));
+        if (sak::program_integrity::pinnedSha256(library)) {
+            QVERIFY(QFile::copy(build.filePath(library), stage.filePath(library)));
+        }
     }
 
     QProcess process;
@@ -109,6 +114,9 @@ void ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe() {
 }
 
 int main(int argc, char** argv) {
+    // Every program that can ask for elevation records its own file first, as the app does
+    // (test_program_integrity checks every such program).
+    sak::program_integrity::captureRunningImageIdentity();
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], kClientSwitch) == 0) {
             const QCoreApplication app(argc, argv);

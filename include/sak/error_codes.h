@@ -72,6 +72,8 @@ enum class error_code {
     helper_crashed = 412,
     task_not_allowed = 413,
     privilege_failed = 414,
+    untrusted_program_file = 415,
+    program_check_failed = 416,
 
     // Threading errors (500-599)
     thread_creation_failed = 500,
@@ -190,6 +192,10 @@ inline constexpr ErrorCodeMessage kErrorCodeMessages[] = {
     {error_code::elevation_denied, "User cancelled elevation request"},
     {error_code::elevation_timeout, "Elevated helper did not respond in time"},
     {error_code::helper_connection_failed, "Could not connect to elevated helper"},
+    {error_code::untrusted_program_file,
+     "A file in S.A.K.'s folder is not part of S.A.K., so it will not run as administrator"},
+    {error_code::program_check_failed,
+     "S.A.K. could not check its own program files, so it will not run as administrator"},
     {error_code::helper_crashed, "Elevated helper exited unexpectedly"},
     {error_code::task_not_allowed, "Task not in elevated helper allowlist"},
     {error_code::privilege_failed, "Failed to enable required privilege"},

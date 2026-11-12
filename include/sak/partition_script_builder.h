@@ -60,6 +60,11 @@ class PartitionScriptBuilder {
 public:
     [[nodiscard]] PartitionScript buildScript(const PartitionOperation& operation) const;
     [[nodiscard]] static QString quotePowerShell(const QString& value);
+
+    /// The line an elevated script starts its native types with (security brief 4a):
+    /// sak_script_types.dll beside the program, verified and held with every program file before
+    /// the helper started, loaded from its bytes. Nothing is compiled into the temporary folder.
+    [[nodiscard]] static QString scriptTypesLoaderScript();
     [[nodiscard]] static bool isValidDriveLetter(const QString& value);
     [[nodiscard]] static bool isSupportedFileSystem(const QString& value);
     /// PowerShell function: which file system a 512-byte sector is the boot sector of, or $null.
@@ -73,6 +78,22 @@ public:
     [[nodiscard]] static QString recoveredPartitionFitFunctionScript();
     /// PowerShell function: a drive letter nothing holds, the preferred one if it is free.
     [[nodiscard]] static QString freeBootLetterFunctionScript();
+    /// PowerShell run after S.A.K. formats or creates a partition with a file system Windows does
+    /// not mount (ext2/3/4, Linux swap, HFS+, APFS): removes the partition's drive letters and
+    /// folder paths, then sets that file system's own partition type (GPT: Linux file system,
+    /// Linux swap, Apple HFS+, APFS; MBR: 0x83, 0x82, 0xAF), so Windows never offers to format
+    /// it. Empty for any other file system. @p disk and @p partition are PowerShell expressions.
+    /// Public so a test can run it.
+    [[nodiscard]] static QString nonWindowsPartitionTypeScript(const QString& file_system,
+                                                               const QString& disk,
+                                                               const QString& partition);
+    /// PowerShell run before Windows formats a partition (Format-Volume): a partition with one of
+    /// the types above has no Windows volume to format, so its type is set back to a Windows data
+    /// partition (GPT basic data; MBR 0x07, or 0x0C for FAT32) and the volume waited for. Any
+    /// other type is left as it is. Public so a test can run it.
+    [[nodiscard]] static QString windowsDataPartitionTypeScript(const QString& file_system,
+                                                                const QString& disk,
+                                                                const QString& partition);
 
 private:
     using Builder = PartitionScript (PartitionScriptBuilder::*)(const PartitionOperation&) const;

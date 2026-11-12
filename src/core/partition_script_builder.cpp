@@ -327,6 +327,62 @@ bool isSupportedNonNativeCreateFormatFileSystem(const QString& fileSystem) {
            isLinuxSwapFileSystemToken(fileSystem) || isApfsFileSystemToken(fileSystem);
 }
 
+// The partition type a file system S.A.K. formats but Windows does not mount takes: what Linux
+// and macOS give it. On a GPT basic-data or MBR 0x07/0x0C partition Windows mounts a volume and,
+// finding a file system it does not know there, offers "You need to format the disk in drive T:";
+// with one of these types it makes no volume and gives no letter (measured on testpc1 for each of
+// them, GPT and MBR, 2026-11-11).
+struct NonWindowsPartitionType {
+    QString gpt;
+    int mbr{0};
+};
+
+constexpr int kMbrTypeLinux = 0x83;
+constexpr int kMbrTypeLinuxSwap = 0x82;
+constexpr int kMbrTypeApple = 0xAF;
+constexpr int kMbrTypeWindowsData = 0x07;  // NTFS, exFAT and ReFS
+constexpr int kMbrTypeFat32Lba = 0x0C;
+constexpr int kVolumeAppearAttempts = 25;
+constexpr int kVolumeAppearDelayMs = 200;
+
+constexpr auto kGptLinuxFileSystem = "{0fc63daf-8483-4772-8e79-3d69d8477de4}";
+constexpr auto kGptLinuxSwap = "{0657fd6d-a4ab-43c4-84e5-0933c84b4f4f}";
+constexpr auto kGptAppleHfs = "{48465300-0000-11aa-aa11-00306543ecac}";
+constexpr auto kGptApfs = "{7c3457ef-0000-11aa-aa11-00306543ecac}";
+
+const QStringList& nonWindowsGptTypes() {
+    static const QStringList types = {QString::fromLatin1(kGptLinuxFileSystem),
+                                      QString::fromLatin1(kGptLinuxSwap),
+                                      QString::fromLatin1(kGptAppleHfs),
+                                      QString::fromLatin1(kGptApfs)};
+    return types;
+}
+
+std::optional<NonWindowsPartitionType> nonWindowsPartitionType(const QString& fileSystem) {
+    if (isExtFileSystemToken(fileSystem)) {
+        return NonWindowsPartitionType{QString::fromLatin1(kGptLinuxFileSystem), kMbrTypeLinux};
+    }
+    if (isLinuxSwapFileSystemToken(fileSystem)) {
+        return NonWindowsPartitionType{QString::fromLatin1(kGptLinuxSwap), kMbrTypeLinuxSwap};
+    }
+    if (isHfsFileSystemToken(fileSystem)) {
+        return NonWindowsPartitionType{QString::fromLatin1(kGptAppleHfs), kMbrTypeApple};
+    }
+    if (isApfsFileSystemToken(fileSystem)) {
+        return NonWindowsPartitionType{QString::fromLatin1(kGptApfs), kMbrTypeApple};
+    }
+    return std::nullopt;
+}
+
+/// The type step (PartitionScriptBuilder::nonWindowsPartitionTypeScript) for the partition a
+/// Format targets.
+QString nonWindowsTypeForTarget(const PartitionOperation& operation, const QString& fileSystem) {
+    return PartitionScriptBuilder::nonWindowsPartitionTypeScript(
+        fileSystem,
+        uintArg(operation.target.disk_number.value()),
+        uintArg(operation.target.partition_number.value()));
+}
+
 bool isSupportedLinuxSwapPageSize(uint64_t value) {
     for (const uint64_t pageSize : kLinuxSwapSupportedPageSizes) {
         if (value == pageSize) {
@@ -390,7 +446,9 @@ QString linuxSwapFormatBodyScript(const QString& targetPathExpression,
                                   QString label,
                                   uint64_t pageSize) {
     label = label.trimmed().left(kLinuxSwapLabelMaxChars);
-    return optionalPartitionVolumeFunctionScript() +
+    // The header goes through the partition taken (lock, dismount): Windows PowerShell 5.1 has
+    // no Dismount-Volume, which every lettered target stopped at until 2026-11-11.
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
            QStringLiteral(
                "$targetPath = %1\n"
                "$label = %2\n"
@@ -400,10 +458,6 @@ QString linuxSwapFormatBodyScript(const QString& targetPathExpression,
                "if ($pageCount -lt 2) { throw 'Linux swap partition is too small' }\n"
                "if ($pageCount -gt [uint64]4294967295) { throw 'Linux swap page count exceeds v1 "
                "header limit' }\n"
-               "$volume = Get-SakOptionalPartitionVolume $p\n"
-               "if ($volume -and $volume.DriveLetter) {\n"
-               "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
-               "}\n"
                "function Write-UInt32Le([byte[]]$Buffer, [int]$Offset, [uint32]$Value) {\n"
                "  $bytes = [BitConverter]::GetBytes($Value)\n"
                "  [Array]::Copy($bytes, 0, $Buffer, $Offset, 4)\n"
@@ -422,8 +476,7 @@ QString linuxSwapFormatBodyScript(const QString& targetPathExpression,
                "$labelLength) }\n"
                "$signatureBytes = [System.Text.Encoding]::ASCII.GetBytes('SWAPSPACE2')\n"
                "[Array]::Copy($signatureBytes, 0, $header, $pageSize - 10, 10)\n"
-               "$stream = [System.IO.File]::Open($targetPath, [System.IO.FileMode]::Open, "
-               "[System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::ReadWrite)\n"
+               "$stream = [Sak.RawPartitionWrite]::Open($targetPath)\n"
                "try {\n"
                "  [void]$stream.Seek(0, [System.IO.SeekOrigin]::Begin)\n"
                "  $stream.Write($header, 0, $header.Length)\n"
@@ -514,7 +567,8 @@ PartitionScript buildLinuxSwapFormatScript(const PartitionOperation& operation, 
                  linuxSwapFormatBodyScript(PartitionScriptBuilder::quotePowerShell(targetPath),
                                            QStringLiteral("[uint64]$p.Size"),
                                            label,
-                                           pageSize);
+                                           pageSize) +
+                 nonWindowsTypeForTarget(operation, QStringLiteral("Linux swap"));
     out.dry_run_script = out.preview + QStringLiteral("\nWrite SWAPSPACE2 v1 header to ") +
                          PartitionScriptBuilder::quotePowerShell(targetPath);
     out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
@@ -522,7 +576,7 @@ PartitionScript buildLinuxSwapFormatScript(const PartitionOperation& operation, 
 }
 
 QString apfsWriterCliFunctionScript();
-QString dismountSelectedPartitionVolumeScript();
+QString takeSelectedPartitionScript(bool clearFileSystem);
 
 struct ApfsAdditionalVolumesArg {
     QString blocker;          // non-empty => the format is invalid (e.g. container too small)
@@ -641,7 +695,7 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
                                : QStringLiteral("FileVault-encrypted"));
     out.credential_files = encryption.credentials;
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 takeSelectedPartitionScript(false) + apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
                      "$targetSizeBytes = [uint64]$p.Size\n"
@@ -652,7 +706,8 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
                      .arg(PartitionScriptBuilder::quotePowerShell(targetPath),
                           PartitionScriptBuilder::quotePowerShell(label),
                           extraVolumes.powershell_list,
-                          encryption.powershell_args);
+                          encryption.powershell_args) +
+                 nonWindowsTypeForTarget(operation, QStringLiteral("APFS"));
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe format-raw ") +
                          PartitionScriptBuilder::quotePowerShell(targetPath);
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
@@ -685,7 +740,7 @@ PartitionScript buildApfsRawRepairScript(const PartitionOperation& operation,
             .arg(operation.target.partition_number.value())
             .arg(fileSystem.toUpper());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 takeSelectedPartitionScript(false) + apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
                      "$targetSizeBytes = [uint64]$p.Size\n"
@@ -1105,36 +1160,38 @@ QString apfsRootFilePayloadScript(const QString& payloadBase64) {
     if (payloadBase64.isEmpty()) {
         return {};
     }
-    return QStringLiteral(
+    // The hold is a type from the program's DLL, loaded first.
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
+           QStringLiteral(
                "$payloadPath = Join-Path ([System.IO.Path]::GetTempPath()) "
                "('sak-apfs-root-file-' + [guid]::NewGuid().ToString('N') + '.bin')\n"
                "$payloadOwned = $false\n"
+               "$payloadHold = $null\n"
                "$payloadBytes = [Convert]::FromBase64String(%1)\n"
-               "$payloadStream = [System.IO.File]::Open($payloadPath, "
-               "[System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, "
-               "[System.IO.FileShare]::None)\n"
-               "$payloadOwned = $true\n"
-               "try { $payloadStream.Write($payloadBytes, 0, $payloadBytes.Length); "
-               "$payloadStream.Flush($true) } finally { $payloadStream.Dispose() }\n")
-        .arg(PartitionScriptBuilder::quotePowerShell(payloadBase64));
+               // Security brief 4a: written new, then held read-only until the writer has read it,
+               // so nobody can change it in between, even on a drive with no ACLs.
+               "$payloadHold = [Sak.SafeFiles]::WriteHeldReadOnly($payloadPath, $payloadBytes)\n"
+               "$payloadOwned = $true\n")
+               .arg(PartitionScriptBuilder::quotePowerShell(payloadBase64));
 }
 
 QString hfsPayloadScript(const QString& payloadBase64) {
     if (payloadBase64.isEmpty()) {
         return {};
     }
-    return QStringLiteral(
+    // The hold is a type from the program's DLL, loaded first.
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
+           QStringLiteral(
                "$payloadPath = Join-Path ([System.IO.Path]::GetTempPath()) "
                "('sak-hfs-payload-' + [guid]::NewGuid().ToString('N') + '.bin')\n"
                "$payloadOwned = $false\n"
+               "$payloadHold = $null\n"
                "$payloadBytes = [Convert]::FromBase64String(%1)\n"
-               "$payloadStream = [System.IO.File]::Open($payloadPath, "
-               "[System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, "
-               "[System.IO.FileShare]::None)\n"
-               "$payloadOwned = $true\n"
-               "try { $payloadStream.Write($payloadBytes, 0, $payloadBytes.Length); "
-               "$payloadStream.Flush($true) } finally { $payloadStream.Dispose() }\n")
-        .arg(PartitionScriptBuilder::quotePowerShell(payloadBase64));
+               // Security brief 4a: written new, then held read-only until the writer has read it,
+               // so nobody can change it in between, even on a drive with no ACLs.
+               "$payloadHold = [Sak.SafeFiles]::WriteHeldReadOnly($payloadPath, $payloadBytes)\n"
+               "$payloadOwned = $true\n")
+               .arg(PartitionScriptBuilder::quotePowerShell(payloadBase64));
 }
 
 QString apfsRootFileCleanupScript(const QString& payloadBase64) {
@@ -1143,6 +1200,7 @@ QString apfsRootFileCleanupScript(const QString& payloadBase64) {
     }
     return QStringLiteral(
         "} finally {\n"
+        "  if ($payloadHold) { $payloadHold.Dispose() }\n"
         "  if ($payloadOwned) { Remove-SakTemporaryPath $payloadPath }\n"
         "}\n");
 }
@@ -1151,7 +1209,9 @@ QString hfsPayloadCleanupScript(const QString& payloadBase64) {
     if (payloadBase64.isEmpty()) {
         return {};
     }
-    return QStringLiteral("  if ($payloadOwned) { Remove-SakTemporaryPath $payloadPath }\n");
+    return QStringLiteral(
+        "  if ($payloadHold) { $payloadHold.Dispose() }\n"
+        "  if ($payloadOwned) { Remove-SakTemporaryPath $payloadPath }\n");
 }
 
 struct ApfsRootFileMutationScriptInput {
@@ -1666,17 +1726,17 @@ QString runtimeHfsWriterCliPath() {
 QString apfsWriterCliArgConditionals() {
     return QStringLiteral(
         "  if ($Command -eq 'format-raw') {\n"
-        "    $args += @('--volume-name', $VolumeName)\n"
+        "    $cliArgs += @('--volume-name', $VolumeName)\n"
         "    foreach ($extraVolume in $AdditionalVolumeNames) {\n"
         "      if (-not [string]::IsNullOrWhiteSpace($extraVolume)) {\n"
-        "        $args += @('--additional-volume-name', $extraVolume)\n"
+        "        $cliArgs += @('--additional-volume-name', $extraVolume)\n"
         "      }\n"
         "    }\n"
         "    if (-not [string]::IsNullOrWhiteSpace($VolumePasswordFile)) {\n"
-        "      $args += @('--volume-password-file', $VolumePasswordFile)\n"
+        "      $cliArgs += @('--volume-password-file', $VolumePasswordFile)\n"
         "    }\n"
         "    if (-not [string]::IsNullOrWhiteSpace($RecoveryKeyFile)) {\n"
-        "      $args += @('--recovery-key-file', $RecoveryKeyFile)\n"
+        "      $cliArgs += @('--recovery-key-file', $RecoveryKeyFile)\n"
         "    }\n"
         "  }\n"
         "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
@@ -1688,16 +1748,16 @@ QString apfsWriterCliArgConditionals() {
         "'commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
         "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
         "required' }\n"
-        "    $args += @('--file-name', $FileName)\n"
+        "    $cliArgs += @('--file-name', $FileName)\n"
         "  }\n"
         "  if ($Command -in @('commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
         "    if ([string]::IsNullOrWhiteSpace($NewFileName)) { throw 'APFS clone/hard link new "
         "name is required' }\n"
-        "    $args += @('--new-file-name', $NewFileName)\n"
+        "    $cliArgs += @('--new-file-name', $NewFileName)\n"
         "  }\n"
         "  if ($Command -eq 'commit-raw-file-patch' -and "
         "-not [string]::IsNullOrWhiteSpace($DirectoryName)) {\n"
-        "    $args += @('--directory-name', $DirectoryName)\n"
+        "    $cliArgs += @('--directory-name', $DirectoryName)\n"
         "  }\n"
         "  if ($Command -in @('create-raw-root-directory', 'delete-raw-root-directory', "
         "'write-raw-root-directory-file', 'patch-raw-root-directory-file', "
@@ -1707,7 +1767,7 @@ QString apfsWriterCliArgConditionals() {
         "    if ([string]::IsNullOrWhiteSpace($DirectoryName)) { throw 'APFS root directory "
         "name is "
         "required' }\n"
-        "    $args += @('--directory-name', $DirectoryName)\n"
+        "    $cliArgs += @('--directory-name', $DirectoryName)\n"
         "  }\n"
         "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
         "'patch-raw-root-directory-file', 'write-raw-root-directory-file', "
@@ -1716,21 +1776,21 @@ QString apfsWriterCliArgConditionals() {
         "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'APFS root file "
         "payload "
         "is required' }\n"
-        "    $args += @('--payload-file', $PayloadFile)\n"
+        "    $cliArgs += @('--payload-file', $PayloadFile)\n"
         "  }\n"
         "  if ($CompressZlib -and $Command -in @('commit-raw-file-write', "
         "'commit-raw-directory-child-write')) {\n"
-        "    $args += '--compress-zlib'\n"
+        "    $cliArgs += '--compress-zlib'\n"
         "  }\n"
         "  if ($Command -in @('commit-raw-snapshot-create', 'commit-raw-snapshot-delete', "
         "'commit-raw-snapshot-revert')) {\n"
         "    if ([string]::IsNullOrWhiteSpace($SnapshotName)) { throw 'APFS snapshot name is "
         "required' }\n"
-        "    $args += @('--snapshot-name', $SnapshotName)\n"
+        "    $cliArgs += @('--snapshot-name', $SnapshotName)\n"
         "  }\n"
         "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file', "
         "'commit-raw-file-patch')) {\n"
-        "    $args += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
+        "    $cliArgs += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
         "  }\n");
 }
 
@@ -1749,7 +1809,7 @@ QString apfsWriterCliFunctionScript() {
                "$cliPath -PathType Leaf)) {\n"
                "    throw ('APFS writer helper missing or unresolved: {0}' -f $cliPath)\n"
                "  }\n"
-               "  $args = @($Command, '--target', $TargetPath, '--size-bytes', "
+               "  $cliArgs = @($Command, '--target', $TargetPath, '--size-bytes', "
                "([string]$SizeBytes), '--block-size-bytes', '4096', '--evidence-id', "
                "$EvidenceId, '--confirm-target', '--allow-raw-target')\n")
                .arg(PartitionScriptBuilder::quotePowerShell(
@@ -1757,10 +1817,14 @@ QString apfsWriterCliFunctionScript() {
            apfsWriterCliArgConditionals() +
            QStringLiteral(
                "  Write-Output ('Running S.A.K. APFS writer helper: {0} {1}' -f $cliPath, "
-               "($args -join ' '))\n"
-               "  $output = & $cliPath @args 2>&1\n"
-               "  $exitCode = [int]$LASTEXITCODE\n"
-               "  $output | ForEach-Object { Write-Output $_ }\n"
+               "($cliArgs -join ' '))\n"
+               // Stop turns the helper's first stderr line into NativeCommandError, so its
+               // output and exit code never reached the log (audit e5): relaxed here only.
+               "  $oldPreference = $ErrorActionPreference\n"
+               "  $ErrorActionPreference = 'Continue'\n"
+               "  try { $output = & $cliPath @cliArgs 2>&1; $exitCode = [int]$LASTEXITCODE } "
+               "finally { $ErrorActionPreference = $oldPreference }\n"
+               "  $output | ForEach-Object { Write-Output ([string]$_) }\n"
                "  if ($exitCode -ne 0) { throw ('APFS writer helper failed with exit code {0}' "
                "-f $exitCode) }\n"
                "}\n");
@@ -1779,23 +1843,23 @@ QString hfsWriterCliFunctionScript() {
                "$cliPath -PathType Leaf)) {\n"
                "    throw ('HFS writer helper missing or unresolved: {0}' -f $cliPath)\n"
                "  }\n"
-               "  $args = @($Command, '--target', $ImagePath, '--evidence-id', $EvidenceId, "
+               "  $cliArgs = @($Command, '--target', $ImagePath, '--evidence-id', $EvidenceId, "
                "'--confirm-target')\n"
                "  if ($Command -in @('replace-inline-attribute-image', "
                "'replace-fork-attribute-image', 'grow-fork-attribute-image')) {\n"
                "    if ($FileId -eq 0 -or [string]::IsNullOrWhiteSpace($AttributeName)) { "
                "throw 'HFS attribute identity is required' }\n"
-               "    $args += @('--file-id', ([string]$FileId), '--attribute-name', "
+               "    $cliArgs += @('--file-id', ([string]$FileId), '--attribute-name', "
                "$AttributeName)\n"
                "  } else {\n"
                "    if ([string]::IsNullOrWhiteSpace($HfsPath)) { throw 'HFS path is required' }\n"
-               "    $args += @('--hfs-path', $HfsPath)\n"
+               "    $cliArgs += @('--hfs-path', $HfsPath)\n"
                "  }\n"
                "  if ($Command -in @('rename-catalog-entry-image', 'create-symlink-image', "
                "'create-hardlink-image')) {\n"
                "    if ([string]::IsNullOrWhiteSpace($DestinationHfsPath)) { "
                "throw 'HFS destination path is required' }\n"
-               "    $args += @('--destination-hfs-path', $DestinationHfsPath)\n"
+               "    $cliArgs += @('--destination-hfs-path', $DestinationHfsPath)\n"
                "  }\n"
                "  if ($Command -notin @('truncate-image', 'truncate-resource-fork-image', "
                "'create-empty-file-image', 'delete-empty-file-image', "
@@ -1805,16 +1869,20 @@ QString hfsWriterCliFunctionScript() {
                "'create-symlink-image', 'create-hardlink-image', 'delete-hardlink-image')) {\n"
                "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'HFS payload file is "
                "required' }\n"
-               "    $args += @('--payload-file', $PayloadFile)\n"
+               "    $cliArgs += @('--payload-file', $PayloadFile)\n"
                "  }\n"
-               "  if ($AllowJournaled) { $args += '--allow-journaled-volume' }\n"
-               "  if ($AllowWrapped) { $args += '--allow-wrapped-volume' }\n"
-               "  if ($SecureWipeReleasedBlocks) { $args += '--secure-wipe-released-blocks' }\n"
+               "  if ($AllowJournaled) { $cliArgs += '--allow-journaled-volume' }\n"
+               "  if ($AllowWrapped) { $cliArgs += '--allow-wrapped-volume' }\n"
+               "  if ($SecureWipeReleasedBlocks) { $cliArgs += '--secure-wipe-released-blocks' }\n"
                "  Write-Output ('Running S.A.K. HFS writer helper: {0} {1}' -f $cliPath, "
-               "($args -join ' '))\n"
-               "  $output = & $cliPath @args 2>&1\n"
-               "  $exitCode = [int]$LASTEXITCODE\n"
-               "  $output | ForEach-Object { Write-Output $_ }\n"
+               "($cliArgs -join ' '))\n"
+               // Stop turns the helper's first stderr line into NativeCommandError, so its
+               // output and exit code never reached the log (audit e5): relaxed here only.
+               "  $oldPreference = $ErrorActionPreference\n"
+               "  $ErrorActionPreference = 'Continue'\n"
+               "  try { $output = & $cliPath @cliArgs 2>&1; $exitCode = [int]$LASTEXITCODE } "
+               "finally { $ErrorActionPreference = $oldPreference }\n"
+               "  $output | ForEach-Object { Write-Output ([string]$_) }\n"
                "  if ($exitCode -ne 0) { throw ('HFS writer helper failed with exit code {0}' "
                "-f $exitCode) }\n"
                "}\n")
@@ -1852,8 +1920,14 @@ QString filesystemToolFunctionScript() {
         "  if ($actualHash -ne $ExpectedHash) { throw \"Filesystem tool hash mismatch: $Name\" }\n"
         "  Write-Output ('Running approved filesystem tool: {0} {1}' -f $ToolPath, "
         "($ToolArgs -join ' '))\n"
-        "  & $ToolPath @ToolArgs 2>&1 | ForEach-Object { Write-Output $_ }\n"
-        "  $toolExitCode = $LASTEXITCODE\n"
+        // e2fsprogs print their version banner to stderr (resize2fs always, e2fsck and mke2fs
+        // mostly); under Stop that first line threw NativeCommandError and ext format, grow,
+        // shrink and repair stopped there (audit e1). Stop is relaxed for the call only.
+        "  $oldPreference = $ErrorActionPreference\n"
+        "  $ErrorActionPreference = 'Continue'\n"
+        "  try { $toolOutput = & $ToolPath @ToolArgs 2>&1; $toolExitCode = [int]$LASTEXITCODE "
+        "} finally { $ErrorActionPreference = $oldPreference }\n"
+        "  $toolOutput | ForEach-Object { Write-Output ([string]$_) }\n"
         "  Write-Output ('Filesystem tool exit code: {0}' -f $toolExitCode)\n"
         "  if ($AcceptedExitCodes -notcontains $toolExitCode) { exit $toolExitCode }\n"
         "}\n");
@@ -1890,15 +1964,21 @@ QString filesystemToolCallScriptWithArgsExpression(
              acceptedExitCodes.join(QStringLiteral(", ")));
 }
 
-QString dismountSelectedPartitionVolumeScript() {
-    // Foreign/RAW partitions legitimately have no Windows volume. Permit only that exact
-    // cmdlet not-found result; access, CIM, and provider failures must stop the raw write.
-    return optionalPartitionVolumeFunctionScript() +
+// Before a bundled tool or the APFS writer opens the selected partition itself, S.A.K. takes it
+// (Sak.RawPartitionWrite: refused, with a plain message, while anything else has it open) and
+// Windows lets go of its file system; for a format, the old file system's first and last MiB are
+// cleared too, so Windows does not mount it again under the tool. This replaces Dismount-Volume,
+// which Windows PowerShell 5.1 does not have: every lettered target stopped there until
+// 2026-11-11, and an unlettered one was written with its file system still mounted.
+QString takeSelectedPartitionScript(bool clearFileSystem) {
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
            QStringLiteral(
-               "$volume = Get-SakOptionalPartitionVolume $p\n"
-               "if ($volume -and $volume.DriveLetter) {\n"
-               "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
-               "}\n");
+               "$sakTakenPartition = '\\\\?\\GLOBALROOT\\Device\\Harddisk{0}\\Partition{1}' -f "
+               "$p.DiskNumber, $p.PartitionNumber\n") +
+           (clearFileSystem
+                ? QStringLiteral("[Sak.RawPartitionWrite]::ClearFileSystem("
+                                 "$sakTakenPartition, [int64]$p.Size)\n")
+                : QStringLiteral("[Sak.RawPartitionWrite]::Release($sakTakenPartition)\n"));
 }
 
 QString diskPartLabel(QString label) {
@@ -1938,26 +2018,20 @@ QString sakVolumeGuidFunctionScript() {
     // directory symlink, folder mount, or volume-GUID path on an affected volume text-differs
     // from the source root and slips past a StartsWith prefix test -- letting the backup land on
     // the very volume about to be reformatted. Both APIs are unprivileged.
-    return QStringLiteral(
-        "function Get-SakVolumeGuid([string]$path) {\n"
-        "  if (-not ([System.Management.Automation.PSTypeName]'Sak.VolApi').Type) { Add-Type "
-        "-Namespace Sak -Name VolApi -MemberDefinition "
-        "'[System.Runtime.InteropServices.DllImport(\"kernel32.dll\", "
-        "CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)] public static "
-        "extern bool GetVolumePathName(string f, System.Text.StringBuilder v, uint c); "
-        "[System.Runtime.InteropServices.DllImport(\"kernel32.dll\", "
-        "CharSet=System.Runtime.InteropServices.CharSet.Unicode, SetLastError=true)] public static "
-        "extern bool GetVolumeNameForVolumeMountPoint(string m, System.Text.StringBuilder v, uint "
-        "c);' }\n"
-        "  $full = [System.IO.Path]::GetFullPath($path)\n"
-        "  $mount = New-Object System.Text.StringBuilder 260\n"
-        "  if (-not [Sak.VolApi]::GetVolumePathName($full, $mount, 260)) { throw ('Cannot resolve "
-        "volume for {0}' -f $path) }\n"
-        "  $guid = New-Object System.Text.StringBuilder 260\n"
-        "  if (-not [Sak.VolApi]::GetVolumeNameForVolumeMountPoint($mount.ToString(), $guid, 260)) "
-        "{ throw ('Cannot resolve volume GUID for {0}' -f $path) }\n"
-        "  return $guid.ToString()\n"
-        "}\n");
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
+           QStringLiteral(
+               "function Get-SakVolumeGuid([string]$path) {\n"
+               "  $full = [System.IO.Path]::GetFullPath($path)\n"
+               "  $mount = New-Object System.Text.StringBuilder 260\n"
+               "  if (-not [Sak.VolApi]::GetVolumePathName($full, $mount, 260)) { throw ('Cannot "
+               "resolve "
+               "volume for {0}' -f $path) }\n"
+               "  $guid = New-Object System.Text.StringBuilder 260\n"
+               "  if (-not [Sak.VolApi]::GetVolumeNameForVolumeMountPoint($mount.ToString(), "
+               "$guid, 260)) "
+               "{ throw ('Cannot resolve volume GUID for {0}' -f $path) }\n"
+               "  return $guid.ToString()\n"
+               "}\n");
 }
 
 // Makes the shadow copy. Its ID is written as a marker the moment Create returns it, before
@@ -1987,26 +2061,26 @@ QString sakShadowCreateScript() {
                "  } catch { $shadowFailure = $_.Exception.Message; $shadow = $null }\n");
 }
 
-// Copies through a link to the shadow copy, then removes the link and the copy. The link's path
-// is written before the link exists, and each is released only once it is gone.
+// Copies through a drive letter mapped to the shadow copy, then removes the mapping and the copy.
+// Security brief 4a (owner, 2026-11-11): the mapping is DefineDosDevice's, in this logon session
+// only, instead of a directory link in the temporary folder. It is written as a marker the moment
+// it exists, and each is released only once it is gone; a mapping a killed run left is removed by
+// the stop cleanup, or at the helper's next start.
 QString sakShadowLinkedCopyScript() {
     return QStringLiteral(
                "  if ($shadow -and $shadow.DeviceObject) {\n"
-               "    $shadowLink = Join-Path ([System.IO.Path]::GetTempPath()) ('sak-shadow-' + "
-               "[guid]::NewGuid().ToString('N'))\n"
+               "    $shadowLetter = [Sak.ShadowMapping]::Map($shadow.DeviceObject)\n"
+               "    $shadowLink = ('{0}={1}' -f $shadowLetter.TrimEnd(':'), "
+               "[Sak.ShadowMapping]::NtDevice($shadow.DeviceObject))\n"
                "    ") +
            stopLeftoverCreatedStatement(StopLeftoverKind::ShadowLink,
                                         QStringLiteral("$shadowLink")) +
            QStringLiteral(
                "\n"
                "    try {\n"
-               "      $null = & cmd.exe /c mklink /D $shadowLink ($shadow.DeviceObject + '\\')\n"
-               "      if ($LASTEXITCODE -ne 0) { throw ('Could not link to the shadow copy of {0}' "
-               "-f $volume) }\n"
-               "      Invoke-SakRobocopy ($shadowLink + '\\') $backupPath\n"
+               "      Invoke-SakRobocopy ($shadowLetter + '\\') $backupPath\n"
                "    } finally {\n"
-               "      if ([System.IO.Directory]::Exists($shadowLink)) { "
-               "[System.IO.Directory]::Delete($shadowLink) }\n"
+               "      [void][Sak.ShadowMapping]::Unmap($shadowLetter, $shadow.DeviceObject)\n"
                "      ") +
            stopLeftoverReleasedStatement(StopLeftoverKind::ShadowLink,
                                          QStringLiteral("$shadowLink")) +
@@ -2030,14 +2104,15 @@ QString sakShadowBackupFunctionScript() {
     // (genuinely no VSS support) fall back to a warned live copy.
     //
     // robocopy cannot open a \\?\GLOBALROOT device path: it stops with error 67, "the network name
-    // cannot be found". So it reads the snapshot through a directory link, kept on the system
-    // volume because the backup volume may not hold links. The link goes before the snapshot does.
+    // cannot be found". So it reads the snapshot through a drive letter mapped to it in this logon
+    // session (DefineDosDevice). The mapping goes before the snapshot does.
     //
     // A cancel or a close kills this script's process tree, and the finally that removes the link
     // and the snapshot never runs. So the shadow copy's ID and the link's path are written as
     // markers the moment each exists, and again once each is removed: the application removes, by
     // ID, exactly what is left (partition_stop_cleanup.h).
-    return QStringLiteral(
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
+           QStringLiteral(
                "function Invoke-SakBackupViaShadow([string]$sourceRoot, [string]$backupPath) {\n"
                "  $volume = "
                "[System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($sourceRoot))\n") +
@@ -2090,20 +2165,33 @@ QString fileManifestFunctionScript() {
         "}\n");
 }
 
+// New-SakBackupFolder and Invoke-SakRobocopy: what every backup that copies a volume's files uses.
+QString backupCopyFunctionsScript() {
+    return QStringLiteral(
+        // Security brief 4b B4: the backup folder under the chosen root is made new
+        // (New-Item without -Force refuses a name already there, a planted link included)
+        // and held, so it cannot be swapped for a link while robocopy fills it.
+        "function New-SakBackupFolder([string]$path) {\n"
+        "  New-Item -ItemType Directory -Path $path -ErrorAction Stop | Out-Null\n"
+        "  if ($null -eq $script:sakBackupFolderHolds) { $script:sakBackupFolderHolds = "
+        "@() }\n"
+        "  $script:sakBackupFolderHolds += ,([Sak.SafeFiles]::HoldDirectory($path))\n"
+        "}\n"
+        "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
+        "  robocopy.exe $from $to /E /COPYALL /DCOPY:DAT /XJ /R:1 /W:1\n"
+        "  $code = $LASTEXITCODE\n"
+        // Robocopy exit is a bitmask: 1=copied, 2=extra, 4=MISMATCH, 8=some files
+        // could not be copied, 16=fatal. A clean mirror to a fresh target is only
+        // ever 0-3; any code >= 4 is a mismatch or copy failure and MUST fail closed
+        // before the source is destroyed. The old `> 7` gate accepted codes 4-7.
+        "  if ($code -ge 4) { Write-Output ('robocopy reported mismatch/failure exit "
+        "code {0}' -f $code); exit $code }\n"
+        "}\n");
+}
+
 QString backupRestoreHelpersScript() {
     return sakVolumeGuidFunctionScript() + sakShadowBackupFunctionScript() +
-           QStringLiteral(
-               "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
-               "  robocopy.exe $from $to /MIR /COPYALL /DCOPY:DAT /XJ /R:1 /W:1\n"
-               "  $code = $LASTEXITCODE\n"
-               // Robocopy exit is a bitmask: 1=copied, 2=extra, 4=MISMATCH, 8=some files
-               // could not be copied, 16=fatal. A clean mirror to a fresh target is only
-               // ever 0-3; any code >= 4 is a mismatch or copy failure and MUST fail closed
-               // before the source is destroyed. The old `> 7` gate accepted codes 4-7.
-               "  if ($code -ge 4) { Write-Output ('robocopy reported mismatch/failure exit "
-               "code {0}' -f $code); exit $code }\n"
-               "}\n") +
-           fileManifestFunctionScript() +
+           backupCopyFunctionsScript() + fileManifestFunctionScript() +
            QStringLiteral(
                "function Assert-SakBackupRoot([string]$backupRoot, [string[]]$blockedRoots) {\n"
                "  $full = [System.IO.Path]::GetFullPath($backupRoot)\n"
@@ -2128,6 +2216,47 @@ QString backupRestoreHelpersScript() {
                "}\n");
 }
 
+// Invoke-SakDiskPart: runs diskpart /s on a script written new and held read-only (security brief
+// 4a), and fails on a failure marker in its output as well as on its exit code.
+QString diskPartInvokeFunctionScript() {
+    return QStringLiteral(
+        "function Invoke-SakDiskPart([string[]]$lines) {\n"
+        "  $scriptPath = Join-Path $env:TEMP ('sak-diskpart-{0}.txt' -f "
+        "[guid]::NewGuid().ToString('N'))\n"
+        // Security brief 4a: written new and held read-only until diskpart is done (it
+        // reads with _wfopen, which shares writing, so it opens through the hold), so
+        // nobody can change it before diskpart runs it. /s, not stdin: /s stops at the
+        // first failed command, interactive input does not.
+        "  $scriptHold = $null\n"
+        "  try {\n"
+        "    $scriptHold = [Sak.SafeFiles]::WriteHeldReadOnly($scriptPath, "
+        "[System.Text.Encoding]::ASCII.GetBytes((($lines | ForEach-Object { $_ }) -join "
+        "\"`r`n\") + \"`r`n\"))\n"
+        // 2>&1 under $ErrorActionPreference='Stop' would turn any stderr line into a
+        // terminating error before the markers below can be inspected, so the preference is
+        // relaxed for the capture only and restored immediately.
+        "    $oldPreference = $ErrorActionPreference\n"
+        "    $ErrorActionPreference = 'Continue'\n"
+        "    try { $output = (& diskpart.exe /s $scriptPath 2>&1 | Out-String); $code = "
+        "[int]$LASTEXITCODE } finally { $ErrorActionPreference = $oldPreference }\n"
+        "    Write-Output $output\n"
+        "    if ($code -ne 0) { exit $code }\n"
+        "    if ([string]::IsNullOrWhiteSpace($output)) { throw 'DiskPart produced no "
+        "output; the "
+        "script was not executed' }\n"
+        "    if ($output -match 'DiskPart has encountered an error|Virtual Disk Service "
+        "error|"
+        "Access is denied|There is no (disk|volume|partition) selected|is not valid|"
+        "DiskPart failed|could not complete the operation|write protected|not convertible|"
+        "not enough usable space|The operation is not supported') { throw ('DiskPart "
+        "reported a "
+        "failure despite exit code 0: {0}' -f $output.Trim()) }\n"
+        "  }\n"
+        "  finally { if ($scriptHold) { $scriptHold.Dispose() }; Remove-SakTemporaryPath "
+        "$scriptPath }\n"
+        "}\n");
+}
+
 // diskpart.exe commonly exits 0 even when an individual script command failed, printing a
 // hard-failure marker to stdout instead. The exit code alone is therefore not proof of success:
 // the output is captured, echoed for the operation log, and scanned for failure markers, and an
@@ -2145,34 +2274,9 @@ QString diskPartRunnerScript() {
                "    }\n"
                "    throw\n"
                "  }\n"
-               "}\n"
-               "function Invoke-SakDiskPart([string[]]$lines) {\n"
-               "  $scriptPath = Join-Path $env:TEMP ('sak-diskpart-{0}.txt' -f "
-               "[guid]::NewGuid().ToString('N'))\n"
-               "  try {\n"
-               "    $lines | Set-Content -LiteralPath $scriptPath -Encoding ASCII\n"
-               // 2>&1 under $ErrorActionPreference='Stop' would turn any stderr line into a
-               // terminating error before the markers below can be inspected, so the preference is
-               // relaxed for the capture only and restored immediately.
-               "    $oldPreference = $ErrorActionPreference\n"
-               "    $ErrorActionPreference = 'Continue'\n"
-               "    try { $output = (& diskpart.exe /s $scriptPath 2>&1 | Out-String); $code = "
-               "[int]$LASTEXITCODE } finally { $ErrorActionPreference = $oldPreference }\n"
-               "    Write-Output $output\n"
-               "    if ($code -ne 0) { exit $code }\n"
-               "    if ([string]::IsNullOrWhiteSpace($output)) { throw 'DiskPart produced no "
-               "output; the "
-               "script was not executed' }\n"
-               "    if ($output -match 'DiskPart has encountered an error|Virtual Disk Service "
-               "error|"
-               "Access is denied|There is no (disk|volume|partition) selected|is not valid|"
-               "DiskPart failed|could not complete the operation|write protected|not convertible|"
-               "not enough usable space|The operation is not supported') { throw ('DiskPart "
-               "reported a "
-               "failure despite exit code 0: {0}' -f $output.Trim()) }\n"
-               "  }\n"
-               "  finally { Remove-SakTemporaryPath $scriptPath }\n"
-               "}\n"
+               "}\n") +
+           diskPartInvokeFunctionScript() +
+           QStringLiteral(
                "function Get-SakManifestBytes($manifest) {\n"
                "  $sum = ($manifest | Measure-Object -Property Length -Sum).Sum\n"
                "  if ($null -eq $sum) { return [uint64]0 }\n"
@@ -2662,9 +2766,12 @@ QString cloneTransferOpenFunctionsScript() {
         "-ArgumentList $p, $p.StartsWith('\\\\.\\') }\n"
         "function Open-SakWrite([string]$p) { if ($p.StartsWith('\\\\.\\')) { return "
         "[System.IO.File]::Open($p, [System.IO.FileMode]::Open, "
-        "[System.IO.FileAccess]::Write, [System.IO.FileShare]::None) }; return "
-        "[System.IO.File]::Open($p, [System.IO.FileMode]::Create, "
-        "[System.IO.FileAccess]::Write, [System.IO.FileShare]::None) }\n"
+        "[System.IO.FileAccess]::Write, [System.IO.FileShare]::None) }; "
+        // Security brief 4b B6: the chosen folder is held without following a link, an ordinary
+        // file already at the name is replaced by name, and a link there refuses.
+        "$script:sakImageTargetFolder = [Sak.SafeFiles]::HoldDirectory("
+        "[System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($p))); return "
+        "[Sak.SafeFiles]::CreateReplacing($p) }\n"
         "function Read-SakExact($stream, [int]$count) { $buf = New-Object byte[] $count; "
         "$off = 0; while ($off -lt $count) { $read = $stream.Read($buf, $off, $count - "
         "$off); if ($read -le 0) { throw 'Unexpected end of stream during verification' }; "
@@ -2678,143 +2785,12 @@ QString cloneTransferOpenFunctionsScript() {
         "$to.Write($buf, 0, $read); $left -= [uint64]$read } }\n");
 }
 
-// MediaReadStream is what the clone and image verification reads the target through. A FileStream
-// on an image file the copy has just written is answered from Windows' file cache, which proves
-// what was written and not what the drive holds; this one opens the target with
-// FILE_FLAG_NO_BUFFERING. Such reads start on a sector boundary, run a whole number of sectors and
-// land in a sector-aligned buffer, so it reads whole 4 MiB chunks from a chunk boundary into a
-// VirtualAlloc buffer: a file asks for the whole chunk (the read past its end comes back short), a
-// disk only as far as its end, which is a whole number of its sectors. Its fields, the open and the
-// size come first.
-QString mediaReadStreamOpenSource() {
-    return QStringLiteral(R"CS(public sealed class MediaReadStream : Stream {
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool ReadFile(SafeFileHandle h, IntPtr buffer, int count, out int read, IntPtr overlapped);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool SetFilePointerEx(SafeFileHandle h, long distance, out long position, uint method);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool GetFileSizeEx(SafeFileHandle h, out long size);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool DeviceIoControl(SafeFileHandle h, uint code, IntPtr input, int inputLength, out long output, int outputLength, out int returned, IntPtr overlapped);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern IntPtr VirtualAlloc(IntPtr address, UIntPtr size, uint type, uint protect);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool VirtualFree(IntPtr address, UIntPtr size, uint type);
-    const uint GenericRead = 0x80000000, ShareRead = 1, OpenExisting = 3;
-    public const uint NoBuffering = 0x20000000;
-    const uint SequentialScan = 0x08000000, DiskGetLengthInfo = 0x7405C;
-    const uint MemCommitReserve = 0x3000, PageReadWrite = 0x04, MemRelease = 0x8000;
-    public const int ChunkBytes = 4 * 1024 * 1024;
-    readonly SafeFileHandle handle;
-    readonly long length;
-    readonly bool disk;
-    IntPtr chunk;
-    long chunkStart = -1;
-    int chunkFill;
-    long position;
-    public MediaReadStream(string path, bool isDisk) {
-        disk = isDisk;
-        handle = CreateFileW(path, GenericRead, ShareRead, IntPtr.Zero, OpenExisting, NoBuffering | SequentialScan, IntPtr.Zero);
-        if (handle.IsInvalid) throw new IOException("Could not open " + path + " to verify it: Windows error " + Marshal.GetLastWin32Error());
-        long size;
-        int returned;
-        if (!(disk ? DeviceIoControl(handle, DiskGetLengthInfo, IntPtr.Zero, 0, out size, 8, out returned, IntPtr.Zero) : GetFileSizeEx(handle, out size))) {
-            int error = Marshal.GetLastWin32Error();
-            handle.Dispose();
-            throw new IOException("Could not read the size of " + path + " to verify it: Windows error " + error);
-        }
-        length = size;
-        chunk = VirtualAlloc(IntPtr.Zero, (UIntPtr)ChunkBytes, MemCommitReserve, PageReadWrite);
-        if (chunk == IntPtr.Zero) {
-            handle.Dispose();
-            throw new IOException("No memory to verify " + path);
-        }
-    }
-)CS");
-}
-
-// The rest of MediaReadStream: the Stream members the verification calls, and the chunked read.
-QString mediaReadStreamReadSource() {
-    return QStringLiteral(R"CS(    public override bool CanRead { get { return true; } }
-    public override bool CanSeek { get { return true; } }
-    public override bool CanWrite { get { return false; } }
-    public override long Length { get { return length; } }
-    public override long Position {
-        get { return position; }
-        set { if (value < 0) throw new ArgumentOutOfRangeException("value"); position = value; }
-    }
-    public override void Flush() { }
-    public override long Seek(long offset, SeekOrigin origin) {
-        long start = origin == SeekOrigin.Begin ? 0 : origin == SeekOrigin.Current ? position : length;
-        Position = start + offset;
-        return position;
-    }
-    public override void SetLength(long value) { throw new NotSupportedException(); }
-    public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
-    public override int Read(byte[] buffer, int offset, int count) {
-        if (position >= length || count <= 0) return 0;
-        long start = position - position % ChunkBytes;
-        if (start != chunkStart) Load(start);
-        int at = (int)(position - chunkStart);
-        int take = Math.Min(count, chunkFill - at);
-        if (take <= 0) return 0;
-        Marshal.Copy(new IntPtr(chunk.ToInt64() + at), buffer, offset, take);
-        position += take;
-        return take;
-    }
-    void Load(long start) {
-        chunkStart = -1;
-        long moved;
-        if (!SetFilePointerEx(handle, start, out moved, 0)) throw new IOException("Verification could not reach byte " + start + ": Windows error " + Marshal.GetLastWin32Error());
-        int want = disk ? (int)Math.Min((long)ChunkBytes, length - start) : ChunkBytes;
-        int read;
-        if (!ReadFile(handle, chunk, want, out read, IntPtr.Zero)) throw new IOException("Verification could not read byte " + start + ": Windows error " + Marshal.GetLastWin32Error());
-        chunkFill = (int)Math.Min((long)read, length - start);
-        chunkStart = start;
-    }
-    protected override void Dispose(bool disposing) {
-        if (chunk != IntPtr.Zero) { VirtualFree(chunk, UIntPtr.Zero, MemRelease); chunk = IntPtr.Zero; }
-        if (disposing) handle.Dispose();
-        base.Dispose(disposing);
-    }
-}
-)CS");
-}
-
-QString cloneByteComparerScript() {
-    // Keep exact first-mismatch reporting without enumerating hundreds of millions of
-    // individual bytes through PowerShell. The buffer remains one byte[] pipeline value. One
-    // Add-Type carries it and MediaReadStream, which the same verification uses.
-    return QStringLiteral(R"PS(if (-not ('Sak.CloneByteComparer' -as [type])) {
-Add-Type -TypeDefinition @'
-using System;
-using System.IO;
-using System.Runtime.InteropServices;
-using Microsoft.Win32.SafeHandles;
-namespace Sak {
-)PS") + mediaReadStreamOpenSource() +
-           mediaReadStreamReadSource() +
-           QStringLiteral(R"PS(public static class CloneByteComparer {
-    public static int FirstMismatch(byte[] left, byte[] right, int count) {
-        if (left == null || right == null || count < 0 ||
-            count > left.Length || count > right.Length) {
-            throw new ArgumentException("Clone comparison requires complete bounded buffers");
-        }
-        for (int index = 0; index < count; ++index) {
-            if (left[index] != right[index]) return index;
-        }
-        return -1;
-    }
-}
-}
-'@
-}
-)PS");
-}
+// Sak.MediaReadStream (sak_script_types.dll) is what the clone and image verification reads the
+// target through. A FileStream on an image file the copy has just written is answered from
+// Windows' file cache, which proves what was written and not what the drive holds; this one opens
+// the target with FILE_FLAG_NO_BUFFERING. Sak.CloneByteComparer reports the first mismatch exactly.
 QString cloneTransferVerificationFunctionsScript() {
-    return cloneByteComparerScript() +
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
            QStringLiteral(
                "function Assert-SakFullCopy($from, $to, [uint64]$bytes, [uint64]$sourceStart, "
                "[uint64]$targetStart) { $left = $bytes; $pos = [uint64]0; $from.Position = "
@@ -3000,14 +2976,6 @@ QString restoreImageContentPinScript(const QString& source, const QString& expec
                "fingerprint; refusing to restore without verifying the approved image' }\n"
                "$in = [System.IO.File]::Open($imgPin, [System.IO.FileMode]::Open, "
                "[System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)\n"
-               "if (-not ('SakLockedFilePath' -as [type])) { Add-Type -TypeDefinition @'\n"
-               "using System; using System.Runtime.InteropServices; using System.Text;\n"
-               "public static class SakLockedFilePath {\n"
-               "  [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)]\n"
-               "  public static extern uint GetFinalPathNameByHandle(IntPtr handle, "
-               "StringBuilder path, uint length, uint flags);\n"
-               "}\n"
-               "'@ }\n"
                "$sakLockedPathBuffer = New-Object System.Text.StringBuilder 32768\n"
                "$sakLockedPathLength = [SakLockedFilePath]::GetFinalPathNameByHandle("
                "$in.SafeFileHandle.DangerousGetHandle(), $sakLockedPathBuffer, 32768, 0)\n"
@@ -3066,115 +3034,11 @@ QString restoreImageSourceGuardScript(uint32_t target_disk_number) {
                .arg(target_disk_number);
 }
 
-QString imageVolumeLockNativeDeclarationsScript() {
-    // FSCTL_LOCK_VOLUME flushes cached data and holds the filesystem quiescent until its
-    // handle closes. A read-sharing physical-disk handle alone does not stop NTFS writes.
-    return QStringLiteral(R"PS(if (-not ('Sak.ImageVolumeLock' -as [type])) {
-Add-Type -TypeDefinition @'
-using System;
-using System.ComponentModel;
-using System.Runtime.InteropServices;
-using Microsoft.Win32.SafeHandles;
-namespace Sak {
-public static class ImageVolumeLock {
-    private const uint GenericRead = 0x80000000;
-    private const uint ShareReadWrite = 3;
-    private const uint OpenExisting = 3;
-    private const uint LockVolume = 0x00090018;
-    private const uint AllowExtendedDASD = 0x00090083;
-    private const uint StorageDeviceNumber = 0x002D1080;
-    private const uint GetDiskAttributes = 0x000700F0;
-    private const uint DiskDeviceType = 7;
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DeviceNumber { public uint Type; public uint Disk; public uint Partition; }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DiskAttributes { public uint Version; public uint Reserved; public ulong Flags; }
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern SafeFileHandle CreateFile(string path, uint access, uint share,
-        IntPtr security, uint disposition, uint flags, IntPtr template);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool DeviceIoControl(SafeFileHandle handle, uint code,
-        IntPtr input, uint inputSize, IntPtr output, uint outputSize,
-        out uint returned, IntPtr overlapped);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool DeviceIoControl(SafeFileHandle handle, uint code,
-        IntPtr input, uint inputSize, out DeviceNumber output, uint outputSize,
-        out uint returned, IntPtr overlapped);
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool DeviceIoControl(SafeFileHandle handle, uint code,
-        IntPtr input, uint inputSize, out DiskAttributes output, uint outputSize,
-        out uint returned, IntPtr overlapped);
-)PS");
-}
-
-QString imageSourceAttributesNativeScript() {
-    return QStringLiteral(R"PS(
-    public static SafeFileHandle OpenDiskControl(string path, uint disk) {
-        SafeFileHandle handle = CreateFile(path, 0, ShareReadWrite,
-            IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
-        try {
-            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(),
-                "Create Image cannot open its source disk identity handle: " + path);
-            Verify(handle, disk, 0, false);
-            return handle;
-        } catch { handle.Dispose(); throw; }
-    }
-    public static ulong ReadDiskAttributes(SafeFileHandle handle) {
-        DiskAttributes actual;
-        uint returned;
-        uint required = (uint)Marshal.SizeOf(typeof(DiskAttributes));
-        if (!DeviceIoControl(handle, GetDiskAttributes, IntPtr.Zero, 0, out actual,
-            required, out returned, IntPtr.Zero)) throw new Win32Exception(
-                Marshal.GetLastWin32Error(), "Create Image cannot query source disk attributes");
-        if (returned != required || actual.Version != required) throw new InvalidOperationException(
-            "Create Image source disk attributes reply is invalid");
-        return actual.Flags;
-    }
-)PS");
-}
-
 QString imageVolumeLockNativeScript() {
-    return imageVolumeLockNativeDeclarationsScript() + imageSourceAttributesNativeScript() +
-           QStringLiteral(R"PS(
-    public static SafeFileHandle Acquire(string path) {
-        SafeFileHandle handle = CreateFile(path, GenericRead, ShareReadWrite,
-            IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
-        try {
-            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(),
-                "Create Image cannot open the source volume for exclusive capture: " + path);
-            uint returned;
-            if (!DeviceIoControl(handle, LockVolume, IntPtr.Zero, 0, IntPtr.Zero, 0,
-                out returned, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error(),
-                "Create Image cannot lock the source volume. Close its open files; running " +
-                "system/pagefile volumes require an offline capture. No live-copy fallback: " + path);
-            return handle;
-        } catch { handle.Dispose(); throw; }
-    }
-    public static void Verify(SafeFileHandle handle, uint disk, uint partition, bool checkPartition) {
-        DeviceNumber actual;
-        uint returned;
-        uint required = (uint)Marshal.SizeOf(typeof(DeviceNumber));
-        if (!DeviceIoControl(handle, StorageDeviceNumber, IntPtr.Zero, 0, out actual,
-            required, out returned, IntPtr.Zero)) throw new Win32Exception(
-                Marshal.GetLastWin32Error(), "Create Image cannot identify the opened source");
-        if (returned != required || actual.Type != DiskDeviceType || actual.Disk != disk ||
-            (checkPartition && actual.Partition != partition)) throw new InvalidOperationException(
-                "Create Image opened source device identity mismatch");
-    }
-    public static void AllowExtendedRead(SafeFileHandle handle) {
-        // The caller reads exactly the pinned partition size, including its final sectors.
-        uint returned;
-        if (!DeviceIoControl(handle, AllowExtendedDASD, IntPtr.Zero, 0, IntPtr.Zero, 0,
-            out returned, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error(),
-                "Create Image cannot enable complete source partition reads");
-    }
-}
-}
-'@
-}
+    // Sak.ImageVolumeLock (sak_script_types.dll): FSCTL_LOCK_VOLUME flushes cached data and holds
+    // the filesystem quiescent until its handle closes. A read-sharing physical-disk handle alone
+    // does not stop NTFS writes.
+    return PartitionScriptBuilder::scriptTypesLoaderScript() + QStringLiteral(R"PS(
 function Open-SakImageVolumeLock([string]$Path) { return [Sak.ImageVolumeLock]::Acquire($Path) }
 function Assert-SakImageDevice($Handle, [uint32]$PartitionNumber, [bool]$CheckPartition) {
     [Sak.ImageVolumeLock]::Verify($Handle, $sakImageSourceDisk, $PartitionNumber, $CheckPartition)
@@ -3436,10 +3300,9 @@ bool isVolumeDevicePath(const QString& path) {
 // volume still and reads it whole. This is that same lock, under its own type and words, so a copy
 // that cannot have it stops rather than copying a volume that is changing.
 QString partitionCopySourceScript() {
+    // Sak.CopyVolumeLock (sak_script_types.dll) is ImageVolumeLock in Copy Partition's words.
     return imageVolumeLockNativeScript()
                .replace(QStringLiteral("Sak.ImageVolumeLock"), QStringLiteral("Sak.CopyVolumeLock"))
-               .replace(QStringLiteral("class ImageVolumeLock"),
-                        QStringLiteral("class CopyVolumeLock"))
                .replace(QStringLiteral("Create Image"), QStringLiteral("Copy Partition")) +
            QStringLiteral(
                "$sakCopyLock = Open-SakImageVolumeLock $src\n"
@@ -3714,14 +3577,7 @@ static ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionO
 }
 
 static QString extShrinkPreToolScript(uint64_t targetSize) {
-    return optionalPartitionVolumeFunctionScript() +
-           QStringLiteral(
-               "$targetSizeBytes = [uint64]%1\n"
-               "$volume = Get-SakOptionalPartitionVolume $p\n"
-               "if ($volume -and $volume.DriveLetter) {\n"
-               "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
-               "}\n")
-               .arg(uintArg(targetSize));
+    return QStringLiteral("$targetSizeBytes = [uint64]%1\n").arg(uintArg(targetSize));
 }
 
 static QString extShrinkPartitionScript(const PartitionOperation& operation) {
@@ -3777,6 +3633,7 @@ static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& oper
             .arg(fs.toLower());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  filesystemToolFunctionScript() + extShrinkPreToolScript(targetSize) +
+                 takeSelectedPartitionScript(false) +
                  filesystemToolCallScript(QStringLiteral("e2fsck pre-shrink repair"),
                                           e2fsck,
                                           {QStringLiteral("-p"), QStringLiteral("-f"), targetPath},
@@ -3801,18 +3658,7 @@ static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& oper
 }
 
 static QString robocopyManifestFunctionsScript() {
-    return sakShadowBackupFunctionScript() +
-           QStringLiteral(
-               "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
-               "  robocopy.exe $from $to /MIR /COPYALL /DCOPY:DAT /XJ /R:1 /W:1\n"
-               "  $code = $LASTEXITCODE\n"
-               // Robocopy exit is a bitmask: 1=copied, 2=extra, 4=MISMATCH, 8=some files
-               // could not be copied, 16=fatal. A clean mirror to a fresh target is only
-               // ever 0-3; any code >= 4 is a mismatch or copy failure and MUST fail closed
-               // before the source is destroyed. The old `> 7` gate accepted codes 4-7.
-               "  if ($code -ge 4) { Write-Output ('robocopy reported mismatch/failure exit "
-               "code {0}' -f $code); exit $code }\n"
-               "}\n") +
+    return sakShadowBackupFunctionScript() + backupCopyFunctionsScript() +
            fileManifestFunctionScript();
 }
 
@@ -3910,7 +3756,7 @@ static QString allocateSetupScript(const PartitionOperation& operation,
                "'Backup directory must not be on the target volume' }\n"
                "$backupPath = Join-Path $backupRootFull ('sak-allocate-backup-{0}' -f "
                "[guid]::NewGuid().ToString('N'))\n"
-               "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n")
+               "New-SakBackupFolder $backupPath\n")
         .arg(operation.target.disk_number.value())
         .arg(payload.source_partition)
         .arg(uintArg(payload.source_size))
@@ -4026,7 +3872,7 @@ static QString clusterSetupScript(const ClusterSizePayload& payload) {
                "must not be on the target volume' }\n"
                "$backupPath = Join-Path $backupRootFull ('sak-cluster-backup-{0}' -f "
                "[guid]::NewGuid().ToString('N'))\n"
-               "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n")
+               "New-SakBackupFolder $backupPath\n")
         .arg(PartitionScriptBuilder::quotePowerShell(payload.drive.toUpper()),
              PartitionScriptBuilder::quotePowerShell(payload.file_system),
              uintArg(payload.allocation_unit),
@@ -4074,8 +3920,12 @@ static QString hfsCheckedToolFunctionScript() {
         "  $actualHash = (Get-FileHash -LiteralPath $FilePath -Algorithm "
         "SHA256).Hash.ToLowerInvariant()\n"
         "  if ($actualHash -ne $ExpectedHash) { throw \"Filesystem tool hash mismatch: $Name\" }\n"
-        "  Write-Output ('Running approved filesystem tool: {0} {1}' -f $FilePath, "
-        "($Arguments -join ' '))\n"
+        // What the tool says goes straight to the log (stdout), so that the one thing this
+        // function returns is its exit code. Written to the pipeline, the lines came back with it
+        // as an array, and Invoke-SakHfsRepairUntilClean's [int] of that array threw: every HFS+
+        // format and repair through the app stopped there (found on the VM, 2026-11-11).
+        "  [Console]::Out.WriteLine(('Running approved filesystem tool: {0} {1}' -f $FilePath, "
+        "($Arguments -join ' ')))\n"
         "  $oldPreference = $ErrorActionPreference\n"
         "  $ErrorActionPreference = 'Continue'\n"
         "  try {\n"
@@ -4084,8 +3934,8 @@ static QString hfsCheckedToolFunctionScript() {
         "  } finally {\n"
         "    $ErrorActionPreference = $oldPreference\n"
         "  }\n"
-        "  $output | ForEach-Object { Write-Output $_ }\n"
-        "  Write-Output ('Filesystem tool exit code: {0}' -f $toolExitCode)\n"
+        "  $output | ForEach-Object { [Console]::Out.WriteLine([string]$_) }\n"
+        "  [Console]::Out.WriteLine(('Filesystem tool exit code: {0}' -f $toolExitCode))\n"
         "  if ($AcceptedExitCodes -notcontains $toolExitCode) { exit $toolExitCode }\n"
         "  return $toolExitCode\n"
         "}\n");
@@ -4093,31 +3943,55 @@ static QString hfsCheckedToolFunctionScript() {
 
 static QString hfsSparseFileFunctionsScript() {
     return QStringLiteral(
+        // The image lives in the program's own data folder (owner ruling 2026-11-11: nothing on
+        // the PC), and only NTFS and ReFS hold a sparse file: on a FAT32 or exFAT program drive,
+        // or one without room for the partition's data, the operation stops here, before the
+        // target is read or written. There is no fallback to %TEMP% or the Windows folder.
+        "function Assert-SakStagingVolume {\n"
+        "  param([string]$Path, [uint64]$RequiredBytes)\n"
+        "  $root = [System.IO.Path]::GetPathRoot($Path)\n"
+        "  $drive = $null\n"
+        "  try { $drive = New-Object System.IO.DriveInfo $root } catch { $drive = $null }\n"
+        "  $format = if ($null -ne $drive) { [string]$drive.DriveFormat } else { 'unknown' }\n"
+        "  if (@('NTFS', 'ReFS') -notcontains $format) {\n"
+        "    $cap = if ($format -eq 'FAT32') { ', and FAT32 caps a file at 4 GiB' } else { '' }\n"
+        "    throw ('S.A.K. stages HFS+ format, repair and file changes as an image of the "
+        "partition in its own data folder, and the drive it runs from ({0}, {1}) cannot hold "
+        "that image: {1} has no sparse files{2}. Run S.A.K. from an NTFS-formatted drive for "
+        "HFS+ format, repair and file changes.' -f $root.TrimEnd('\\'), $format, $cap)\n"
+        "  }\n"
+        "  if ([uint64]$drive.AvailableFreeSpace -lt $RequiredBytes) {\n"
+        "    throw ('Staging this HFS+ partition needs about {0:N0} MiB on the drive S.A.K. runs "
+        "from ({1}), and it has {2:N0} MiB free. Free space there, or run S.A.K. from an "
+        "NTFS-formatted drive with more room.' -f [math]::Ceiling($RequiredBytes / 1MB), "
+        "$root.TrimEnd('\\'), [math]::Floor($drive.AvailableFreeSpace / 1MB))\n"
+        "  }\n"
+        "}\n"
         "function New-SakSparseImageFile {\n"
-        "  param([string]$Path, [uint64]$SizeBytes, [ref]$Owned)\n"
+        // No caller ever passed the [ref]$Owned this had (2026-08-31 to 2026-11-11): assigning
+        // through it threw, and a [ref] parameter with a $null default fails to bind instead
+        // (measured in Windows PowerShell 5.1). Each caller's finally removes the image.
+        "  param([string]$Path, [uint64]$SizeBytes, [uint64]$RequiredBytes = 0)\n"
+        "  Assert-SakStagingVolume -Path $Path -RequiredBytes $RequiredBytes\n"
         "  if (Test-Path -LiteralPath $Path -ErrorAction Stop) {\n"
         "    throw 'Staged HFS image path already exists; refusing to overwrite'\n"
         "  }\n"
         "  New-Item -ItemType File -Path $Path -ErrorAction Stop | Out-Null\n"
-        "  $Owned.Value = $true\n"
-        "  $sparseOutput = fsutil sparse setflag $Path 2>&1\n"
-        "  if ($LASTEXITCODE -ne 0) { throw ('Failed to mark staged HFS image sparse: {0}' "
-        "-f (($sparseOutput | Out-String).Trim())) }\n"
+        // The file system itself, not fsutil (audit e5, e7).
+        "  [Sak.SparseFiles]::SetSparse($Path)\n"
         "  $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, "
         "[System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)\n"
         "  try { $stream.SetLength([int64]$SizeBytes) } finally { $stream.Dispose() }\n"
         "}\n"
+        // FSCTL_QUERY_ALLOCATED_RANGES through the DLL: fsutil printed the ranges with labels
+        // Windows translates, so a non-English Windows could not be read (audit e7).
         "function Get-SakSparseAllocatedRanges {\n"
         "  param([string]$Path)\n"
-        "  $output = fsutil sparse queryrange $Path 2>&1\n"
-        "  if ($LASTEXITCODE -ne 0) { throw ('Failed to query staged HFS sparse ranges: {0}' "
-        "-f (($output | Out-String).Trim())) }\n"
+        "  $flat = [Sak.SparseFiles]::AllocatedRanges($Path)\n"
         "  $ranges = @()\n"
-        "  foreach ($line in $output) {\n"
-        "    if ($line -match 'Offset:\\s*(0x[0-9a-fA-F]+)\\s+Length:\\s*(0x[0-9a-fA-F]+)') {\n"
-        "      $ranges += [pscustomobject]@{ offset = [Convert]::ToUInt64($Matches[1]."
-        "Substring(2), 16); length = [Convert]::ToUInt64($Matches[2].Substring(2), 16) }\n"
-        "    }\n"
+        "  for ($i = 0; $i + 1 -lt $flat.Length; $i += 2) {\n"
+        "    $ranges += [pscustomobject]@{ offset = [uint64]$flat[$i]; length = [uint64]$flat[$i + "
+        "1] }\n"
         "  }\n"
         "  if ($ranges.Count -eq 0) { throw 'No allocated sparse ranges found after staged HFS "
         "operation.' }\n"
@@ -4161,6 +4035,7 @@ static QString hfsVolumeHeaderStagingFunctionScript() {
         "  if ($signature -ne 'H+' -and $signature -ne 'HX') { return $null }\n"
         "  $blockSize = Read-SakBigEndianUInt32 -Buffer $header -Offset 40\n"
         "  $totalBlocks = Read-SakBigEndianUInt32 -Buffer $header -Offset 44\n"
+        "  $freeBlocks = Read-SakBigEndianUInt32 -Buffer $header -Offset 48\n"
         "  if ($blockSize -lt 512 -or $blockSize -gt 1048576 -or "
         "-not (Test-SakPowerOfTwoUInt32 -Value $blockSize) -or $totalBlocks -eq 0) { "
         "throw 'Invalid HFS volume geometry in volume header.' }\n"
@@ -4173,15 +4048,39 @@ static QString hfsVolumeHeaderStagingFunctionScript() {
         "  if ($stagingBytes -lt 2048 -or $stagingBytes -gt $PartitionSizeBytes) { "
         "throw ('HFS logical staging size {0} is outside partition size {1}.' -f "
         "$stagingBytes, $PartitionSizeBytes) }\n"
+        "  $usedBlocks = if ($freeBlocks -lt $totalBlocks) { [uint64]($totalBlocks - "
+        "$freeBlocks) } else { [uint64]0 }\n"
         "  return [pscustomobject]@{ size = [uint64]$stagingBytes; signature = "
         "$signature; block_size = [uint64]$blockSize; total_blocks = "
-        "[uint64]$totalBlocks; volume_offset = [uint64]$VolumeOffset }\n"
+        "[uint64]$totalBlocks; volume_offset = [uint64]$VolumeOffset; allocated = "
+        "[uint64]($VolumeOffset + $usedBlocks * [uint64]$blockSize) }\n"
         "}\n");
 }
 
 static QString hfsVolumeStagingResolverFunctionScript() {
     return QStringLiteral(
         "function Get-SakHfsVolumeStagingSizeBytes {\n"
+        "  param([string]$RawTarget, [uint64]$PartitionSizeBytes)\n"
+        "  return [uint64](Get-SakHfsVolumeGeometry -RawTarget $RawTarget "
+        "-PartitionSizeBytes $PartitionSizeBytes).size\n"
+        "}\n"
+        // What the staging image will hold: the volume's allocated blocks (the copy also keeps any
+        // free block that is not zero, so this is a floor). 0 when the header cannot be read: a
+        // repair target may be damaged, and running out of room still stops before the write-back.
+        "function Get-SakHfsAllocatedBytes {\n"
+        "  param([string]$RawTarget, [uint64]$PartitionSizeBytes)\n"
+        "  try {\n"
+        "    return [uint64](Get-SakHfsVolumeGeometry -RawTarget $RawTarget "
+        "-PartitionSizeBytes $PartitionSizeBytes).allocated\n"
+        "  } catch {\n"
+        // A header it cannot read (a damaged volume is what a repair is for) asks for room for
+        // the whole partition, never for none: 0 turned the free-space check off (audit e6).
+        "    [Console]::Out.WriteLine(('HFS+ volume size unreadable ({0}); asking for room for the "
+        "whole partition' -f $_.Exception.Message))\n"
+        "    return [uint64]$PartitionSizeBytes\n"
+        "  }\n"
+        "}\n"
+        "function Get-SakHfsVolumeGeometry {\n"
         "  param([string]$RawTarget, [uint64]$PartitionSizeBytes)\n"
         "  if ($PartitionSizeBytes -lt 2048) { throw 'HFS partition is too small.' }\n"
         "  $stream = [System.IO.File]::Open($RawTarget, [System.IO.FileMode]::Open, "
@@ -4190,7 +4089,7 @@ static QString hfsVolumeStagingResolverFunctionScript() {
         "    $direct = Get-SakHfsStagingSizeFromHeader -Stream $stream -HeaderOffset "
         "1024 -VolumeOffset 0 -PartitionSizeBytes $PartitionSizeBytes\n"
         "    if ($null -ne $direct) {\n"
-        "      return [uint64]$direct.size\n"
+        "      return $direct\n"
         "    }\n"
         "    [void]$stream.Seek(1024, [System.IO.SeekOrigin]::Begin)\n"
         "    $mdb = New-Object byte[] 512\n"
@@ -4214,7 +4113,7 @@ static QString hfsVolumeStagingResolverFunctionScript() {
         "-PartitionSizeBytes $PartitionSizeBytes\n"
         "      if ($null -eq $wrapped) { throw 'HFS wrapper points to missing HFS+ "
         "volume header.' }\n"
-        "      return [uint64]$wrapped.size\n"
+        "      return $wrapped\n"
         "    }\n"
         "    throw 'Unable to locate a direct or wrapped HFS+/HFSX volume header on "
         "selected raw target.'\n"
@@ -4305,8 +4204,11 @@ static QString hfsSparseImageWritebackFunctionScript() {
                "  $ranges = @(Get-SakSparseAllocatedRanges -Path $ImagePath)\n"
                "  $source = [System.IO.File]::Open($ImagePath, [System.IO.FileMode]::Open, "
                "[System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)\n"
-               "  $target = [System.IO.File]::Open($RawTarget, [System.IO.FileMode]::Open, "
-               "[System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::ReadWrite)\n"
+               // The partition is taken (locked, its file system dismounted) before the copy:
+               // through the file system Windows mounts when a partition is opened, the last
+               // sectors are out of reach and that file system could write over the copy.
+               "  try { $target = [Sak.RawPartitionWrite]::Open($RawTarget) } "
+               "catch { $source.Dispose(); throw }\n"
                "  $copiedBytes = [uint64]0\n"
                "  try {\n"
                "    $edgeBytes = [uint64][Math]::Min([uint64]%1, $TargetSizeBytes)\n"
@@ -4421,7 +4323,9 @@ static QString hfsRepairFunctionScript() {
 }
 
 static QString hfsStagedFunctionsScript() {
-    return temporaryPathCleanupFunctionScript() + hfsCheckedToolFunctionScript() +
+    // The write-back opens the partition with [Sak.RawPartitionWrite], from the program's DLL.
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
+           temporaryPathCleanupFunctionScript() + hfsCheckedToolFunctionScript() +
            hfsSparseFileFunctionsScript() + hfsVolumeStagingSizeFunctionScript() +
            hfsRangeCopyFunctionsScript() + hfsSparseImageWritebackFunctionScript() +
            hfsRawTargetStagingFunctionScript() + hfsRepairFunctionScript();
@@ -4475,7 +4379,8 @@ static PartitionScript buildStagedHfsFormatScript(
                               QDir::toNativeSeparators(fsckResolution.tool_path)),
                           PartitionScriptBuilder::quotePowerShell(
                               fsckResolution.tool.binary_sha256.toLower()),
-                          PartitionScriptBuilder::quotePowerShell(request.command.file_system));
+                          PartitionScriptBuilder::quotePowerShell(request.command.file_system)) +
+                 nonWindowsTypeForTarget(operation, request.command.file_system);
     out.dry_run_script = out.preview + QStringLiteral("\nStage HFS image with ") +
                          PartitionScriptBuilder::quotePowerShell(formatResolution.tool_path) +
                          QStringLiteral("; copy sparse ranges to ") +
@@ -4500,8 +4405,11 @@ static PartitionScript buildStagedHfsRepairScript(
             .arg(PartitionScriptBuilder::quotePowerShell(rawTargetPath)) +
         hfsStagedImagePathScript(QStringLiteral("sak-hfs-repair")) +
         QStringLiteral(
+            "$stagingRequiredBytes = Get-SakHfsAllocatedBytes -RawTarget $targetPath "
+            "-PartitionSizeBytes $targetSizeBytes\n"
             "try {\n"
-            "  New-SakSparseImageFile -Path $stagedImagePath -SizeBytes $targetSizeBytes\n"
+            "  New-SakSparseImageFile -Path $stagedImagePath -SizeBytes $targetSizeBytes "
+            "-RequiredBytes $stagingRequiredBytes\n"
             "  Copy-SakRawTargetToImage -RawTarget $targetPath -ImagePath $stagedImagePath "
             "-SizeBytes $targetSizeBytes\n"
             "  Invoke-SakHfsRepairUntilClean -FsckPath %1 -ExpectedHash %2 "
@@ -4614,8 +4522,12 @@ static ExternalToolPostScript hfsPostFormatRepairScript(
                 "$postToolArgs = %3\n"
                 "Write-Output ('Running approved post-format filesystem tool: {0} {1}' -f "
                 "$postToolPath, ($postToolArgs -join ' '))\n"
-                "& $postToolPath @postToolArgs 2>&1 | ForEach-Object { Write-Output $_ }\n"
-                "$postToolExitCode = $LASTEXITCODE\n"
+                // Stop relaxed for the native call only, as in Invoke-SakFilesystemTool.
+                "$oldPreference = $ErrorActionPreference\n"
+                "$ErrorActionPreference = 'Continue'\n"
+                "try { $postOutput = & $postToolPath @postToolArgs 2>&1; $postToolExitCode = "
+                "[int]$LASTEXITCODE } finally { $ErrorActionPreference = $oldPreference }\n"
+                "$postOutput | ForEach-Object { Write-Output ([string]$_) }\n"
                 "Write-Output ('Post-format filesystem tool exit code: {0}' -f $postToolExitCode)\n"
                 "if ($postToolExitCode -ne 0) { exit $postToolExitCode }\n")
                 .arg(PartitionScriptBuilder::quotePowerShell(
@@ -4687,7 +4599,7 @@ static PartitionScript buildCreateApfsScript(const PartitionOperation& operation
                            QString::number(operation.target.disk_number.value()));
     out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
                  refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 takeSelectedPartitionScript(false) + apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "Invoke-SakApfsWriterCli -Command 'format-raw' -TargetPath $rawTargetPath "
                      "-SizeBytes ([uint64]$p.Size) -VolumeName %1 -EvidenceId "
@@ -4714,12 +4626,7 @@ static PartitionScript buildCreateExtScript(const PartitionOperation& operation,
                            command.tool_id);
     out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
                  refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-                 filesystemToolFunctionScript() + optionalPartitionVolumeFunctionScript() +
-                 QStringLiteral(
-                     "$volume = Get-SakOptionalPartitionVolume $p\n"
-                     "if ($volume -and $volume.DriveLetter) {\n"
-                     "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
-                     "}\n") +
+                 filesystemToolFunctionScript() + takeSelectedPartitionScript(true) +
                  filesystemToolCallScriptWithArgsExpression(
                      QStringLiteral("mke2fs create format"),
                      resolution,
@@ -4978,6 +4885,106 @@ PartitionScript PartitionScriptBuilder::buildScript(const PartitionOperation& op
     return addDiskIdentityGuards(std::move(script), operation);
 }
 
+QString PartitionScriptBuilder::scriptTypesLoaderScript() {
+    const QString dll =
+        QDir::toNativeSeparators(QDir(QCoreApplication::applicationDirPath())
+                                     .filePath(QStringLiteral("sak_script_types.dll")));
+    return QStringLiteral(
+               "if (-not ('Sak.SafeFiles' -as [type])) { "
+               "[void][System.Reflection.Assembly]::Load("
+               "[System.IO.File]::ReadAllBytes(%1)) }\n")
+        .arg(quotePowerShell(dll));
+}
+
+QString PartitionScriptBuilder::nonWindowsPartitionTypeScript(const QString& file_system,
+                                                              const QString& disk,
+                                                              const QString& partition) {
+    const auto type = nonWindowsPartitionType(file_system);
+    if (!type) {
+        return {};
+    }
+    // Letters and folder paths first, while Windows still has the volume they name; the type
+    // change then takes the volume away (Windows would otherwise keep the letter for it).
+    return QStringLiteral(
+               "$sakTypeDisk = [uint32](%1)\n"
+               "$sakTypeNumber = [uint32](%2)\n"
+               "$sakTyped = Get-Partition -DiskNumber $sakTypeDisk -PartitionNumber "
+               "$sakTypeNumber -ErrorAction Stop\n"
+               "foreach ($sakAccessPath in @($sakTyped.AccessPaths)) {\n"
+               "  if (-not [string]::IsNullOrWhiteSpace($sakAccessPath) -and "
+               "-not ([string]$sakAccessPath).StartsWith('\\\\?\\Volume{')) {\n"
+               "    Remove-PartitionAccessPath -DiskNumber $sakTypeDisk -PartitionNumber "
+               "$sakTypeNumber -AccessPath $sakAccessPath -ErrorAction Stop\n"
+               "    Write-Output ('Removed the partition''s access path {0}' -f $sakAccessPath)\n"
+               "  }\n"
+               "}\n"
+               "$sakPartitionTable = [string](Get-Disk -Number $sakTypeDisk -ErrorAction "
+               "Stop).PartitionStyle\n"
+               "if ($sakPartitionTable -eq 'GPT') {\n"
+               "  Set-Partition -DiskNumber $sakTypeDisk -PartitionNumber $sakTypeNumber -GptType "
+               "%3 -ErrorAction Stop\n"
+               "} elseif ($sakPartitionTable -eq 'MBR') {\n"
+               "  Set-Partition -DiskNumber $sakTypeDisk -PartitionNumber $sakTypeNumber -MbrType "
+               "%4 -ErrorAction Stop\n"
+               "} else {\n"
+               "  throw ('Disk {0} has no partition table ({1}), so the partition type could not "
+               "be set' -f $sakTypeDisk, $sakPartitionTable)\n"
+               "}\n"
+               "Write-Output ('Partition type set for %5 ({0} {1}), so Windows does not offer to "
+               "format it' -f $sakPartitionTable, $(if ($sakPartitionTable -eq 'GPT') { %3 } else "
+               "{ %4 }))\n")
+        .arg(disk, partition, quotePowerShell(type->gpt))
+        .arg(type->mbr)
+        .arg(QString(file_system).replace(QLatin1Char('\''), QStringLiteral("''")));
+}
+
+QString PartitionScriptBuilder::windowsDataPartitionTypeScript(const QString& file_system,
+                                                               const QString& disk,
+                                                               const QString& partition) {
+    QStringList gptTypes;
+    for (const QString& type : nonWindowsGptTypes()) {
+        gptTypes.append(quotePowerShell(type));
+    }
+    const bool fat32 = file_system.trimmed().compare(QStringLiteral("FAT32"),
+                                                     Qt::CaseInsensitive) == 0;
+    return QStringLiteral(
+               "$sakTypeDisk = [uint32](%1)\n"
+               "$sakTypeNumber = [uint32](%2)\n"
+               "$sakTyped = Get-Partition -DiskNumber $sakTypeDisk -PartitionNumber "
+               "$sakTypeNumber -ErrorAction Stop\n"
+               "$sakTypeSet = $false\n"
+               "if (@(%3) -contains ([string]$sakTyped.GptType).ToLowerInvariant()) {\n"
+               "  Set-Partition -DiskNumber $sakTypeDisk -PartitionNumber $sakTypeNumber -GptType "
+               "'{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}' -ErrorAction Stop\n"
+               "  $sakTypeSet = $true\n"
+               "} elseif (@(%4, %5, %6) -contains [int]$sakTyped.MbrType) {\n"
+               "  Set-Partition -DiskNumber $sakTypeDisk -PartitionNumber $sakTypeNumber -MbrType "
+               "%7 -ErrorAction Stop\n"
+               "  $sakTypeSet = $true\n"
+               "}\n"
+               "if ($sakTypeSet) {\n"
+               "  Write-Output 'The partition had a Linux or Apple partition type, so Windows had "
+               "no volume to format on it: set it back to a Windows data partition'\n"
+               "  $sakTypeVolume = $null\n"
+               "  for ($sakTry = 0; $sakTry -lt %8 -and -not $sakTypeVolume; $sakTry++) {\n"
+               "    if ($sakTry -gt 0) { Start-Sleep -Milliseconds %9 }\n"
+               "    Update-HostStorageCache -ErrorAction Stop\n"
+               "    try { $sakTypeVolume = Get-Partition -DiskNumber $sakTypeDisk -PartitionNumber "
+               "$sakTypeNumber -ErrorAction Stop | Get-Volume -ErrorAction Stop } catch { "
+               "$sakTypeVolume = $null }\n"
+               "  }\n"
+               "  if (-not $sakTypeVolume) { throw 'Windows made no volume on the partition after "
+               "its type was set back to a Windows data partition, so it cannot format it' }\n"
+               "}\n")
+        .arg(disk, partition, gptTypes.join(QStringLiteral(", ")))
+        .arg(kMbrTypeLinux)
+        .arg(kMbrTypeLinuxSwap)
+        .arg(kMbrTypeApple)
+        .arg(fat32 ? kMbrTypeFat32Lba : kMbrTypeWindowsData)
+        .arg(kVolumeAppearAttempts)
+        .arg(kVolumeAppearDelayMs);
+}
+
 QString PartitionScriptBuilder::quotePowerShell(const QString& value) {
     return QStringLiteral("'") + QString(value).replace(QStringLiteral("'"), QStringLiteral("''")) +
            QStringLiteral("'");
@@ -5097,8 +5104,16 @@ PartitionScript buildWindowsFormatScript(const PartitionOperation& operation,
                  fullArg,
                  allocationUnitArg(operation));
     // A full format is a storage job Windows finishes even if this script is killed; a quick one
-    // ends at once.
+    // ends at once. A partition S.A.K. gave a Linux or Apple type (or a Linux or Mac disk brought
+    // in) has no Windows volume until its type is a Windows data partition again.
+    const QString disk = uintArg(operation.target.disk_number.value());
+    const QString number = uintArg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+                 PartitionScriptBuilder::windowsDataPartitionTypeScript(fs, disk, number) +
+                 QStringLiteral(
+                     "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 "
+                     "-ErrorAction Stop\n")
+                     .arg(disk, number) +
                  (fullArg.isEmpty() ? QString()
                                     : fullFormatAllowedScript(operation.target.disk_number.value(),
                                                               QStringLiteral("This format"))) +
@@ -5259,7 +5274,7 @@ PartitionScript PartitionScriptBuilder::buildApfsRootFileMutationScript(
                            QString::number(operation.target.disk_number.value()),
                            QString::number(operation.target.partition_number.value()));
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 takeSelectedPartitionScript(false) + apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
                      "$targetSizeBytes = [uint64]$p.Size\n")
@@ -5294,7 +5309,7 @@ PartitionScript PartitionScriptBuilder::buildApfsSnapshotScript(
                            QString::number(operation.target.disk_number.value()),
                            QString::number(operation.target.partition_number.value()));
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 takeSelectedPartitionScript(false) + apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
                      "$targetSizeBytes = [uint64]$p.Size\n"
@@ -5336,7 +5351,7 @@ PartitionScript PartitionScriptBuilder::buildApfsCloneHardlinkResizeScript(
                            QString::number(operation.target.disk_number.value()),
                            QString::number(operation.target.partition_number.value()));
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 dismountSelectedPartitionVolumeScript() + apfsWriterCliFunctionScript() +
+                 takeSelectedPartitionScript(false) + apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
                      "$targetSizeBytes = [uint64]$p.Size\n"
@@ -5382,12 +5397,15 @@ PartitionScript PartitionScriptBuilder::buildHfsFileMutationScript(
             "$targetSizeBytes = Get-SakHfsVolumeStagingSizeBytes -RawTarget $targetPath "
             "-PartitionSizeBytes $targetPartitionSizeBytes\n"
             "Write-Output ('HFS file mutation staging bytes: {0}; partition bytes: {1}' "
-            "-f $targetSizeBytes, $targetPartitionSizeBytes)\n")
+            "-f $targetSizeBytes, $targetPartitionSizeBytes)\n"
+            "$stagingRequiredBytes = Get-SakHfsAllocatedBytes -RawTarget $targetPath "
+            "-PartitionSizeBytes $targetPartitionSizeBytes\n")
             .arg(quotePowerShell(rawPartitionTargetPath(operation))) +
         hfsStagedImagePathScript(QStringLiteral("sak-hfs-file-mutation")) +
         QStringLiteral("try {\n") + payloadScript +
         QStringLiteral(
-            "  New-SakSparseImageFile -Path $stagedImagePath -SizeBytes $targetSizeBytes\n"
+            "  New-SakSparseImageFile -Path $stagedImagePath -SizeBytes $targetSizeBytes "
+            "-RequiredBytes $stagingRequiredBytes\n"
             "  Copy-SakRawTargetToImage -RawTarget $targetPath -ImagePath $stagedImagePath "
             "-SizeBytes $targetSizeBytes\n") +
         hfsFileMutationInvoke(operation, input) +
@@ -5455,12 +5473,16 @@ PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
     out.preview = request.preview;
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  request.pre_tool_script + filesystemToolFunctionScript() +
-                 dismountSelectedPartitionVolumeScript() +
+                 // A format clears the old file system first; a check or resize only takes it.
+                 takeSelectedPartitionScript(operation.type == PartitionOperationType::Format) +
                  filesystemToolCallScript(request.command.tool_id,
                                           resolution,
                                           request.command.arguments,
                                           request.accepted_exit_codes) +
-                 postTool.script + QStringLiteral("Update-HostStorageCache -ErrorAction Stop\n");
+                 postTool.script + QStringLiteral("Update-HostStorageCache -ErrorAction Stop\n") +
+                 (operation.type == PartitionOperationType::Format
+                      ? nonWindowsTypeForTarget(operation, request.command.file_system)
+                      : QString());
     out.dry_run_script = out.preview + QStringLiteral("\n") +
                          quotePowerShell(resolution.tool_path) + QStringLiteral(" ") +
                          request.command.arguments.join(QLatin1Char(' '));
@@ -5979,6 +6001,7 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
                       .arg(source_partition)
                       .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+                 PartitionScriptBuilder::scriptTypesLoaderScript() + backupCopyFunctionsScript() +
                  QStringLiteral(
                      "$target = $p\n"
                      "$source = Get-Partition -DiskNumber %1 -PartitionNumber %2 "
@@ -5993,24 +6016,12 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
                      "$mergeFolder = %3\n"
                      "$destination = ('{0}:\\{1}' -f $targetVolume.DriveLetter, $mergeFolder)\n"
                      // The destination name is predictable, so an unprivileged user can pre-plant
-                     // it as a junction/symlink; New-Item -Force follows it and robocopy /COPYALL
-                     // then mirrors the source THROUGH it (a local elevation of privilege). Refuse
-                     // a reparse point at the destination both before and after creating it.
-                     "if ((Test-Path -LiteralPath $destination) -and ((Get-Item -LiteralPath "
-                     "$destination -Force).Attributes -band "
-                     "[System.IO.FileAttributes]::ReparsePoint)) { throw 'Merge destination exists "
-                     "as a reparse point (junction/symlink); refusing to write through it' }\n"
-                     "New-Item -ItemType Directory -Force -Path $destination | Out-Null\n"
-                     "if ((Get-Item -LiteralPath $destination -Force).Attributes -band "
-                     "[System.IO.FileAttributes]::ReparsePoint) { throw 'Merge destination is a "
-                     "reparse point; refusing to mirror the source through it' }\n"
-                     "robocopy.exe ('{0}:\\' -f $sourceVolume.DriveLetter) $destination /E "
-                     "/COPYALL /DCOPY:DAT /R:1 /W:1\n"
-                     // robocopy exit codes are bit flags: 1=copied, 2=extra, 4=MISMATCH,
-                     // 8=some files/dirs could not be copied, 16=fatal. Only 0-3 mean a
-                     // complete, consistent copy. Anything >=4 (mismatch or failure) must
-                     // abort BEFORE the source partition is deleted, or data is lost.
-                     "if ($LASTEXITCODE -ge 4) { exit $LASTEXITCODE }\n"
+                     // it as a junction. Security brief 4b (audit e9): it is made new (refusing a
+                     // name already there, a planted link included) and held while robocopy fills
+                     // it, as Partition Manager's backups are; robocopy exits on a code >= 4
+                     // before the source is deleted.
+                     "New-SakBackupFolder $destination\n"
+                     "Invoke-SakRobocopy ('{0}:\\' -f $sourceVolume.DriveLetter) $destination\n"
                      "Remove-Partition -DiskNumber %1 -PartitionNumber %2 -Confirm:$false\n"
                      "$supported = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %4\n"
                      "Resize-Partition -DiskNumber %1 -PartitionNumber %4 -Size "
@@ -6543,7 +6554,7 @@ PartitionScript PartitionScriptBuilder::buildMovePartitionScript(
                         "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
                         "$backupPath = Join-Path $backupRootFull ('sak-move-backup-{0}' -f "
                         "[guid]::NewGuid().ToString('N'))\n"
-                        "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
+                        "New-SakBackupFolder $backupPath\n"
                         "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
                         "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
                         "Remove-Partition -DiskNumber %7 -PartitionNumber %8 -Confirm:$false\n"
@@ -6605,7 +6616,7 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
              "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
              "$backupPath = Join-Path $backupRootFull ('sak-primary-logical-backup-{0}' -f "
              "[guid]::NewGuid().ToString('N'))\n"
-             "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
+             "New-SakBackupFolder $backupPath\n"
              "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
              "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
              "$lines = @('select disk %7','clean','convert mbr')\n"
@@ -6678,7 +6689,7 @@ PartitionScript PartitionScriptBuilder::buildChangeVolumeSerialNumberScript(
              "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
              "$backupPath = Join-Path $backupRootFull ('sak-serial-backup-{0}' -f "
              "[guid]::NewGuid().ToString('N'))\n"
-             "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
+             "New-SakBackupFolder $backupPath\n"
              "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
              "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
              "Format-Volume -DriveLetter $drive -FileSystem $fileSystem -NewFileSystemLabel $label "
@@ -6768,7 +6779,7 @@ PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
              "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
              "$backupPath = Join-Path $backupRootFull ('sak-dynamic-basic-backup-{0}' -f "
              "[guid]::NewGuid().ToString('N'))\n"
-             "New-Item -ItemType Directory -Force -Path $backupPath | Out-Null\n"
+             "New-SakBackupFolder $backupPath\n"
              "Invoke-SakBackupViaShadow $sourceRoot $backupPath\n"
              "$backupManifest = @(Get-SakFileManifest $backupPath)\n"
              "$lines = @(('select volume ' + $drive),'delete volume override','select disk "

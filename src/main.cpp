@@ -10,9 +10,12 @@
 #include "sak/elevation_manager.h"
 #include "sak/error_codes.h"
 #include "sak/layout_constants.h"
+#include "sak/log_file_sink.h"
 #include "sak/logger.h"
 #include "sak/main_window.h"
 #include "sak/message_box_helpers.h"
+#include "sak/process_runner.h"
+#include "sak/program_integrity.h"
 #include "sak/single_instance_guard.h"
 #include "sak/splash_screen.h"
 #include "sak/version.h"
@@ -48,6 +51,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <print>
 #include <stdexcept>
 #include <thread>
@@ -317,11 +321,17 @@ void initializeApp(QApplication& app, const RuntimeOptions& options) {
 /// @brief Initialize the logger subsystem.
 /// @return true on success, false on failure (with user-visible error shown).
 bool initializeLogger() {
-    const QString log_path = sak::app_paths::logsDirectory();
-    auto log_dir = std::filesystem::path(log_path.toStdWString());
-    auto& logger = sak::logger::instance();
+    // data/logs, held without following a link (security brief 4a.3): the program's folder may
+    // be on a drive other accounts can write to, and this process may be elevated.
+    auto log_dir = sak::app_paths::openDataSubdirectory(QStringLiteral("logs"));
+    if (!log_dir) {
+        sak::showCriticalLogged(nullptr,
+                                "Initialization Error",
+                                QString("Failed to initialize logger: %1").arg(log_dir.error()));
+        return false;
+    }
 
-    if (auto result = logger.initialize(log_dir); !result) {
+    if (auto result = sak::startFileLogging(std::move(*log_dir)); !result) {
         sak::showCriticalLogged(
             nullptr,
             "Initialization Error",
@@ -331,6 +341,95 @@ bool initializeLogger() {
     }
 
     return true;
+}
+
+/// The program files an elevated run verified at its start and holds until it exits (security
+/// brief 4c), so nothing it loads or runs from its folder later can be changed meanwhile.
+std::optional<sak::program_integrity::ProgramHold>& elevatedProgramHold() {
+    static std::optional<sak::program_integrity::ProgramHold> hold;
+    return hold;
+}
+
+QString programDirectoryFromModule() {
+    std::wstring path(MAX_PATH, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+    if (length == 0 || length >= path.size()) {
+        return {};
+    }
+    path.resize(length);
+    return QFileInfo(QString::fromStdWString(path)).absolutePath();
+}
+
+/// Tell the instance that launched this elevated copy that the program files are now held here,
+/// so it can let go of its own hold and quit (ElevationManager::restartElevated).
+void signalElevatedReady(int argc, char* argv[]) {
+    const QString name =
+        rawArgumentValue(argc, argv, sak::ElevationManager::kElevatedReadyArgument);
+    if (name.isEmpty()) {
+        return;
+    }
+    HANDLE ready = OpenEventW(EVENT_MODIFY_STATE, FALSE, reinterpret_cast<LPCWSTR>(name.utf16()));
+    if (ready != nullptr) {
+        SetEvent(ready);
+        CloseHandle(ready);
+    }
+}
+
+/// Security brief 4c, before Qt loads anything: no DLL from the current directory, ever; and when
+/// elevated, no DLL from PATH either, the current directory is System32, Qt looks for plugins only
+/// in the program's own folder, and every program file is verified and held for the whole run. A
+/// refused file is named and the run ends before Qt loads a plugin.
+bool hardenProcessStart(int argc, char* argv[], const RuntimeOptions& options) {
+    SetDllDirectoryW(L"");
+    sak::program_integrity::captureRunningImageIdentity();
+    if (!sak::ElevationManager::isElevated()) {
+        return true;
+    }
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    const QString system32 = sak::system32Path(QStringLiteral("cmd.exe"));
+    SetCurrentDirectoryW(reinterpret_cast<LPCWSTR>(
+        QDir::toNativeSeparators(QFileInfo(system32).absolutePath()).utf16()));
+    qunsetenv("QT_PLUGIN_PATH");
+    qunsetenv("QT_QPA_PLATFORM_PLUGIN_PATH");
+    const QString program_dir = programDirectoryFromModule();
+    QCoreApplication::setLibraryPaths({program_dir});
+    auto hold = sak::program_integrity::ProgramHold::verify(program_dir);
+    if (!hold) {
+        const QString message = sak::program_integrity::refusalMessage(hold.error());
+        std::cerr << "Fatal: " << message.toStdString() << " (" << hold.error().reason.toStdString()
+                  << ")\n";
+        if (!options.startup_smoke_test && !options.accessibility_audit) {
+            MessageBoxW(nullptr,
+                        reinterpret_cast<LPCWSTR>(message.utf16()),
+                        L"S.A.K. Utility",
+                        MB_OK | MB_ICONERROR);
+        }
+        return false;
+    }
+    elevatedProgramHold() = std::move(*hold);
+    signalElevatedReady(argc, argv);
+    return true;
+}
+
+/// After startup, an elevated run checks every module it has loaded (security brief 4c): one
+/// from the program folder must pass the program-file policy, any other must come from Windows or
+/// Program Files. One that does not has already run its DllMain; the run logs it and ends.
+void scheduleElevatedModuleAudit(QApplication& app) {
+    if (!sak::ElevationManager::isElevated()) {
+        return;
+    }
+    QTimer::singleShot(0, &app, [] {
+        const auto audit = sak::program_integrity::auditLoadedModules(programDirectoryFromModule());
+        if (audit) {
+            return;
+        }
+        sak::showCriticalLogged(nullptr,
+                                QStringLiteral("S.A.K. Utility"),
+                                QStringLiteral("S.A.K. stopped running as administrator: it found "
+                                               "%1 loaded, and that file isn't part of S.A.K.")
+                                    .arg(QDir::toNativeSeparators(audit.error())));
+        QCoreApplication::exit(1);
+    });
 }
 
 /// Tells the user why this launch cannot start -- on stderr always, and in a dialog unless the
@@ -352,9 +451,19 @@ bool configurePortableRuntimeDirs(const RuntimeOptions& options) {
                              data_root.error());
         return false;
     }
-    // TMP/TEMP are no longer redirected for the whole process: children that need a portable
-    // temp (the bundled Chocolatey) get data/temp/session-<pid> through app_paths::withSessionTemp,
-    // which is removed at exit; folders a crashed run left behind are removed here.
+    // TMP and TEMP point at this run's own folder under data\temp for the whole process, so Qt's
+    // temporary files and every child process stay in the program's folder (owner, 2026-11-11:
+    // nothing of ours on the PC outside it, not even temporarily). It is removed at exit; folders
+    // a crashed run left behind are removed here, without following any link.
+    const auto run_temp = sak::app_paths::establishSessionTempDirectory();
+    if (!run_temp) {
+        reportStartupRefusal(options,
+                             QStringLiteral("S.A.K. Utility: data folder"),
+                             QStringLiteral("S.A.K. Utility could not create its temporary folder "
+                                            "in its data folder:\n%1")
+                                 .arg(run_temp.error()));
+        return false;
+    }
     sak::app_paths::removeStaleSessionTempDirectories();
     QObject::connect(qApp, &QCoreApplication::aboutToQuit, []() {
         sak::app_paths::removeSessionTempDirectory();
@@ -555,8 +664,35 @@ int showMainWindow(QApplication& app,
     return runMainEventLoop(app, startup_smoke_test);
 }
 
+/// The logger, then the crash reporter right after it, so an unhandled SEH fault at any point in
+/// the main run writes a minidump + summary instead of the process vanishing silently; then the
+/// startup banner.
+bool startLoggingAndCrashReporting(const RuntimeOptions& options) {
+    configureLoggingForMode(options);
+    if (!initializeLogger()) {
+        return false;
+    }
+    if (!sak::CrashReporter::install(
+            std::filesystem::path(sak::app_paths::crashesDirectory().toStdWString()))) {
+        sak::logWarning("Crash reporter not installed (crash directory unavailable)");
+    }
+    if (options.accessibility_audit) {
+        writeAccessibilityAuditStatus(QStringLiteral("logger-initialized"));
+        writeAccessibilityAuditStatus(QStringLiteral("startup-banner-skipped"));
+    } else {
+        logStartupBanner();
+    }
+    if (options.startup_smoke_test) {
+        sak::logger::instance().flush();
+    }
+    return true;
+}
+
 int runApplication(int argc, char* argv[]) {
     const RuntimeOptions options = runtimeOptionsFromArgs(argc, argv);
+    if (!hardenProcessStart(argc, argv, options)) {
+        return 1;
+    }
     writeStartupSmokePhase(options.startup_smoke_test, "before-qt-app");
     if (options.accessibility_audit) {
         writeAccessibilityAuditStatusTo(options.accessibility_audit_output,
@@ -584,28 +720,13 @@ int runApplication(int argc, char* argv[]) {
         return instance.error();
     }
 
-    configureLoggingForMode(options);
-    if (!initializeLogger()) {
+    if (!startLoggingAndCrashReporting(options)) {
         return 1;
-    }
-    // Install the crash reporter right after the logger, so an unhandled SEH fault at any point
-    // in the main run writes a minidump + summary instead of the process vanishing silently.
-    if (!sak::CrashReporter::install(
-            std::filesystem::path(sak::app_paths::crashesDirectory().toStdWString()))) {
-        sak::logWarning("Crash reporter not installed (crash directory unavailable)");
-    }
-    if (options.accessibility_audit) {
-        writeAccessibilityAuditStatus(QStringLiteral("logger-initialized"));
-        writeAccessibilityAuditStatus(QStringLiteral("startup-banner-skipped"));
-    } else {
-        logStartupBanner();
-    }
-    if (options.startup_smoke_test) {
-        sak::logger::instance().flush();
     }
     // The saved theme (Light / Dark / System, from the portable config) once the data folder is
     // decided; System keeps following Windows. Surfaces are flat with 1px borders.
     sak::ui::initializeAppTheme(app);
+    scheduleElevatedModuleAudit(app);
     return showMainWindow(app,
                           **instance,
                           options.startup_smoke_test,

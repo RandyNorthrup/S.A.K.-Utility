@@ -8,6 +8,7 @@
 
 #include "sak/logger.h"
 
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QThread>
@@ -236,8 +237,14 @@ void ElevatedPipeServer::sendHeartbeat() {
 }
 
 auto ElevatedPipeServer::readMessage() -> std::expected<PipeMessage, sak::error_code> {
+    // The first byte may take the whole idle limit; once a frame has started, all of it must
+    // arrive within one kPipeIoTimeoutMs (security brief item 5).
     char header[kPipeHeaderSize];
-    if (!readExact(header, kPipeHeaderSize, kHelperTimeoutMs)) {
+    if (!readExact(header, 1, QDeadlineTimer(kHelperTimeoutMs))) {
+        return std::unexpected(sak::error_code::helper_connection_failed);
+    }
+    const QDeadlineTimer frame_deadline(kPipeIoTimeoutMs);
+    if (!readExact(header + 1, kPipeHeaderSize - 1, frame_deadline)) {
         return std::unexpected(sak::error_code::helper_connection_failed);
     }
 
@@ -252,7 +259,7 @@ auto ElevatedPipeServer::readMessage() -> std::expected<PipeMessage, sak::error_
     QByteArray payload;
     if (payload_len > 0) {
         payload.resize(static_cast<int>(payload_len));
-        if (!readExact(payload.data(), static_cast<int>(payload_len), kPipeIoTimeoutMs)) {
+        if (!readExact(payload.data(), static_cast<int>(payload_len), frame_deadline)) {
             return std::unexpected(sak::error_code::helper_connection_failed);
         }
     }
@@ -337,38 +344,23 @@ bool ElevatedPipeServer::sendRaw(const QByteArray& data) {
     return true;
 }
 
-bool ElevatedPipeServer::readExact(char* buffer, int size, int timeout_ms) {
+bool ElevatedPipeServer::readExact(char* buffer, int size, const QDeadlineTimer& deadline) {
     if (m_pipe_handle == INVALID_HANDLE_VALUE) {
         return false;
     }
-
-    int total_read = 0;
-    int elapsed = 0;
-    constexpr int kPollMs = 50;
-
-    while (total_read < size && elapsed < timeout_ms) {
-        DWORD available = 0;
-        if (PeekNamedPipe(m_pipe_handle, nullptr, 0, nullptr, &available, nullptr) == 0) {
-            return false;
-        }
-
-        if (available == 0) {
-            QThread::msleep(kPollMs);
-            elapsed += kPollMs;
-            continue;
-        }
-
-        DWORD const to_read = qMin(static_cast<DWORD>(size - total_read), available);
-        const int bytes_read = overlappedPipeIo(
-            m_pipe_handle, false, buffer + total_read, to_read, static_cast<DWORD>(timeout_ms));
-        if (bytes_read < 0) {
-            return false;
-        }
-        total_read += bytes_read;
-        elapsed = 0;
-    }
-
-    return total_read == size;
+    return readPipeBytesBefore(
+        buffer, size, deadline, [this](char* into, int wanted, int remaining_ms) {
+            DWORD available = 0;
+            if (PeekNamedPipe(m_pipe_handle, nullptr, 0, nullptr, &available, nullptr) == 0) {
+                return -1;
+            }
+            if (available == 0) {
+                return 0;
+            }
+            const DWORD to_read = std::min(static_cast<DWORD>(wanted), available);
+            return overlappedPipeIo(
+                m_pipe_handle, false, into, to_read, static_cast<DWORD>(remaining_ms));
+        });
 }
 
 bool ElevatedPipeServer::validateClient() const {
