@@ -27,6 +27,7 @@
       Claim     Writes this run's lines to the PC's claim file, after reading every other claim.
       Release   Removes this run's lines from the PC's claim file.
       Report    Rebuilds the results table from evidence already fetched.
+      HostChecks  Reads the image copies of the run in -EvidenceDir with Linux's tools again, then Report.
 
 .PARAMETER Machine
     testpc2 (virtual disk files on its spare NVMe) or vm (the VirtualBox guest; not yet driven here).
@@ -51,7 +52,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Run', 'Claim', 'Release', 'Report')] [string]$Action = 'Run',
+    [ValidateSet('Run', 'Claim', 'Release', 'Report', 'HostChecks')] [string]$Action = 'Run',
     [ValidateSet('testpc2', 'vm')] [string]$Machine = 'testpc2',
     [string[]]$Rows = @(),
     [string]$PackageZip = '',
@@ -66,6 +67,8 @@ param(
     [string]$BuildLabel = '',
     [string]$EvidenceDir = '',
     [string]$ResultsPath = 'E:\SAK-Utility-Test-Scratch\opsproof\results.md',
+    # Findings already reported, as [{ "id", "title", "match" (regex), "rows" (optional regex) }].
+    [string]$KnownFile = 'E:\SAK-Utility-Test-Scratch\opsproof\known-findings.json',
     [string]$SshHost = 'testpc2',
     [string]$RemoteRoot = 'W:\opsproof',
     [int]$JobMinutes = 600,
@@ -87,6 +90,8 @@ $Plan = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot 'partiti
 if (-not [IO.Path]::IsPathRooted($VmCredFile)) { $VmCredFile = Join-Path $ProjectRoot $VmCredFile }
 $Script:Pc = $null
 $Script:ClaimTag = 'opsproof'
+# The same project's fixer, building on the same PC (coordinator, 2026-11-11): its lines are not a conflict.
+$Script:SameProjectTag = 'opsfix'
 $Script:RunnerTask = 'SAKOpsProofRunner'
 
 function Get-OpsPlanRows {
@@ -241,7 +246,7 @@ if (`$session -notmatch '(?i)technician\s+console') { throw "Technician is not s
 `$conflicts = @()
 foreach (`$file in @(Get-ChildItem -LiteralPath 'C:\TESTLAB_CLAIMS' -Filter '*.txt' -ErrorAction SilentlyContinue)) {
     foreach (`$line in @(Get-Content -LiteralPath `$file.FullName)) {
-        if (-not `$line.Trim() -or `$line -match ' $Script:ClaimTag ') { continue }
+        if (-not `$line.Trim() -or `$line -match ' ($Script:ClaimTag|$Script:SameProjectTag) ') { continue }
         if (`$line -match '^(drive\s+$($Script:Pc.SpareSerial)|console|reboot)') { `$conflicts += "`$(`$file.Name): `$line" }
     }
 }
@@ -476,7 +481,7 @@ function Invoke-OpsHostChecks {
         $independentPath = Join-Path $rowDir.FullName 'independent.json'
         if (-not (Test-Path -LiteralPath $independentPath)) { continue }
         $independent = Get-Content -LiteralPath $independentPath -Raw | ConvertFrom-Json
-        $images = @(if ($independent.PSObject.Properties['images']) { $independent.images } else { @() })
+        $images = @(if ($null -ne $independent -and $independent.PSObject.Properties['images']) { $independent.images } else { @() })
         if ($images.Count -eq 0) { continue }
         $checks = @()
         foreach ($image in $images) {
@@ -522,13 +527,32 @@ function Get-OpsCertVerdict {
     return @($reasons | Where-Object { $_ -notmatch 'uncommitted changes|names no real commit|is for other code|outside this release' })
 }
 
+function Get-OpsKnownFindings {
+    <#
+    .SYNOPSIS
+        The findings already reported that account for every one of a row's failures, from
+        -KnownFile (beside the results, outside the repository: it is about one build). Empty
+        when any failure is new.
+    #>
+    param([string[]]$Failures, [string]$RowId)
+    if ($Failures.Count -eq 0 -or -not (Test-Path -LiteralPath $KnownFile -PathType Leaf)) { return @() }
+    $known = @(Get-Content -LiteralPath $KnownFile -Raw | ConvertFrom-Json)
+    $ids = @()
+    foreach ($failure in $Failures) {
+        $match = @($known | Where-Object { $failure -match $_.match -and (-not $_.PSObject.Properties['rows'] -or $RowId -match $_.rows) } | Select-Object -First 1)
+        if ($match.Count -eq 0) { return @() }
+        $ids += "$($match[0].id)"
+    }
+    return @($ids | Sort-Object -Unique)
+}
+
 function Get-OpsRowSummary {
     param([string]$RowDir, [object]$PlanRow)
     $report = Get-Content -LiteralPath (Join-Path $RowDir 'report.json') -Raw | ConvertFrom-Json
     $scripts = @(); $helper = @(); $build = ''
     foreach ($step in @($report.steps)) {
         $path = Join-Path $RowDir "$($step.report)"
-        if (-not (Test-Path -LiteralPath $path)) { $helper += "$($step.id): no report"; continue }
+        if (-not "$($step.report)" -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { $helper += "$($step.id): no report"; continue }
         $client = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
         if (-not $build) { $build = "$($client.code_commit) $(if ($client.code_dirty) { '+dirty ' })digest $("$($client.code_digest)".Substring(0, [Math]::Min(12, "$($client.code_digest)".Length)))" }
         foreach ($op in @($client.queued_operations)) { if ($op.script_sha256) { $scripts += "$($step.id):$("$($op.script_sha256)".Substring(0, 12))" } }
@@ -541,7 +565,7 @@ function Get-OpsRowSummary {
     $independentPath = Join-Path $RowDir 'independent.json'
     if (Test-Path -LiteralPath $independentPath) {
         $independent = Get-Content -LiteralPath $independentPath -Raw | ConvertFrom-Json
-        if ($independent.PSObject.Properties['checks']) { $checks += @($independent.checks) }
+        if ($null -ne $independent -and $independent.PSObject.Properties['checks']) { $checks += @($independent.checks) }
     }
     $hostPath = Join-Path $RowDir 'host-checks.json'
     if (Test-Path -LiteralPath $hostPath) { $checks += @(Get-Content -LiteralPath $hostPath -Raw | ConvertFrom-Json) }
@@ -549,6 +573,13 @@ function Get-OpsRowSummary {
     $certReasons = @()
     if ($PlanRow.Id -notlike 'ops.*' -and $report.status -eq 'Passed') { $certReasons = @(Get-OpsCertVerdict -RowDir $RowDir -Id $PlanRow.Id) }
     $verdict = if ($report.status -ne 'Passed') { 'FAIL' } elseif ($failed.Count -gt 0 -or $certReasons.Count -gt 0) { 'FAIL' } elseif ($checks.Count -eq 0 -and $PlanRow.Id -like 'ops.*') { 'FAIL' } else { 'PASS' }
+    if ($verdict -eq 'FAIL') {
+        # A row whose every failure is one already reported says KNOWN and which, not FAIL again.
+        $failures = @($checks | Where-Object { -not $_.passed } | ForEach-Object { "$($_.name): $(if ($_.detail -is [string]) { $_.detail } else { ConvertTo-Json -InputObject $_.detail -Depth 4 -Compress })" })
+        if ($report.status -ne 'Passed') { $failures += "$($report.failure)" }
+        $known = @(Get-OpsKnownFindings -Failures $failures -RowId $PlanRow.Id)
+        if ($known.Count -gt 0) { $verdict = "KNOWN $($known -join ',')" }
+    }
     $verifier = if ($PlanRow.Id -like 'ops.*') { "$($checks.Count - $failed.Count)/$($checks.Count) checks" } else { "matrix: $(if ($certReasons.Count) { $certReasons -join '; ' } else { 'all checks hold' })" }
     if ($failed.Count) { $verifier += "; failed: $($failed -join '; ')" }
     if ($report.status -ne 'Passed') { $verifier += "; row stopped: $("$($report.failure)".Replace('|', '/'))" }
@@ -563,7 +594,7 @@ function Get-OpsRowDetails {
     if ($report.status -ne 'Passed') { $lines += "- row stopped: $("$($report.failure)".Trim())" }
     foreach ($step in @($report.steps)) {
         $path = Join-Path $RowDir "$($step.report)"
-        if (-not (Test-Path -LiteralPath $path)) { continue }
+        if (-not "$($step.report)" -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
         $client = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
         $said = if ($client.status -eq 'Passed') { 'did what the row expected' } else { "FAILED: $("$($client.error)".Trim())" }
         $lines += "- step $($step.id) ($($step.operation)): $said"
@@ -572,10 +603,14 @@ function Get-OpsRowDetails {
     $independentPath = Join-Path $RowDir 'independent.json'
     if (Test-Path -LiteralPath $independentPath) {
         $independent = Get-Content -LiteralPath $independentPath -Raw | ConvertFrom-Json
-        if ($independent.PSObject.Properties['checks']) { $checks += @($independent.checks) }
+        if ($null -ne $independent -and $independent.PSObject.Properties['checks']) { $checks += @($independent.checks) }
     }
     $hostPath = Join-Path $RowDir 'host-checks.json'
     if (Test-Path -LiteralPath $hostPath) { $checks += @(Get-Content -LiteralPath $hostPath -Raw | ConvertFrom-Json) }
+    $eventsPath = Join-Path $RowDir 'windows-events.json'
+    if (Test-Path -LiteralPath $eventsPath -PathType Leaf) {
+        foreach ($logged in @(Get-Content -LiteralPath $eventsPath -Raw | ConvertFrom-Json)) { if ($logged) { $lines += "- storage event $($logged.time) $($logged.provider) $($logged.id): $($logged.message)" } }
+    }
     foreach ($check in $checks) {
         $detail = if ($check.detail -is [string]) { $check.detail } else { ConvertTo-Json -InputObject $check.detail -Depth 4 -Compress }
         if ($detail.Length -gt 300) { $detail = $detail.Substring(0, 300) + '...' }
@@ -596,13 +631,13 @@ function Write-OpsResults {
         'Each row is the newest run that has evidence for it. PASS means every step did what the row expected and every check a separate tool made held.',
         '', '| Row | Operation | Variant | Machine | Build | Script SHA-256 (step:first 12) | Helper result | Verifier | Verdict | Run |', '|---|---|---|---|---|---|---|---|---|---|')
     $details = @()
-    $tally = @{ PASS = 0; FAIL = 0; 'NOT RUN' = 0 }
+    $tally = @{ PASS = 0; FAIL = 0; KNOWN = 0; 'NOT RUN' = 0 }
     foreach ($row in $Plan.Rows) {
         $found = $null
         foreach ($run in $runs) { $dir = Join-Path $run.FullName $row.Id; if (Test-Path -LiteralPath (Join-Path $dir 'report.json')) { $found = $dir; break } }
         if ($found) {
             $s = Get-OpsRowSummary -RowDir $found -PlanRow $row
-            $tally[$s.verdict]++
+            $tally[($s.verdict -split ' ')[0]]++
             $lines += "| $($s.id) | $($s.operation) | $($s.variant) | $($row.Machine) | $($s.build) | $($s.scripts) | $($s.helper) | $($s.verifier) | **$($s.verdict)** | $($s.run) |"
             $details += Get-OpsRowDetails -RowDir $found -Id $row.Id -Verdict $s.verdict
         } else {
@@ -611,7 +646,7 @@ function Write-OpsResults {
             $lines += "| $($row.Id) | $($row.Operation) | $($row.Variant) | $($row.Machine) | | | | | $why | |"
         }
     }
-    $lines = $lines[0..3] + @('', "Rows: $($Plan.Rows.Count). PASS $($tally.PASS), FAIL $($tally.FAIL), NOT RUN $($tally['NOT RUN']).") + $lines[4..($lines.Count - 1)]
+    $lines = $lines[0..3] + @('', "Rows: $($Plan.Rows.Count). PASS $($tally.PASS), FAIL $($tally.FAIL), KNOWN $($tally.KNOWN) (only repeats a reported finding), NOT RUN $($tally['NOT RUN']).") + $lines[4..($lines.Count - 1)]
     $lines += '', '## Not runnable', ''
     foreach ($item in $Plan.NotRunnable) { $lines += "- $($item.Operation): $($item.Reason)" }
     $lines += @('', '## Every check, per row', '') + $details
@@ -626,6 +661,7 @@ try {
         'Claim' { Invoke-OpsPreflight | Write-Host; Set-OpsClaim | Write-Host }
         'Release' { Set-OpsClaim -Remove | Write-Host }
         'Report' { Write-OpsResults }
+        'HostChecks' { if (-not $EvidenceDir) { throw 'HostChecks needs -EvidenceDir' }; Invoke-OpsHostChecks -LocalDir $EvidenceDir; Write-OpsResults }
         'Run' {
             $wanted = if ($Rows.Count) { $Rows } else { @(Get-OpsPlanRows -For $Machine | Where-Object { -not $_.Pending } | ForEach-Object { $_.Id }) }
             foreach ($id in $wanted) {

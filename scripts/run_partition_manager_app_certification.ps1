@@ -494,8 +494,12 @@ function Invoke-CertRow {
         $failure = "$($_.Exception.Message) at $($_.InvocationInfo.ScriptName):$($_.InvocationInfo.ScriptLineNumber)"
         Write-Host "FAILED $Id : $failure"
     } finally {
+        # Operation proof takes its virtual disks' volumes down before they are detached, and keeps
+        # the storage events the row raised, so the harness's own traces are told from the app's.
+        if ($OperationProof) { Close-OpsRowVolumes }
         Remove-CertVhds
         try { Remove-CertDevicePartitions } catch { Write-Host "Could not tidy the device: $($_.Exception.Message)" }
+        if ($OperationProof) { Save-OpsRowEvents -SinceUtc $started }
     }
     $report = New-PmRowReport -RowId $Id -RowDir $Script:RowDir -RunId $Script:RunId -Status $status -Failure $failure `
         -StartedUtc $started -Receipt $Script:Receipt -Rig (Get-CertRig) -Media $media -Steps @($Script:RowSteps) -Independent $independent

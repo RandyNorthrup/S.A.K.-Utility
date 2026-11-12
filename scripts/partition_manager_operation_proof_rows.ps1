@@ -110,6 +110,50 @@ function Assert-OpsStepPins {
     }
 }
 
+function Close-OpsRowVolumes {
+    <#
+    .SYNOPSIS
+        Before the row's virtual disks are detached: every volume on them flushed, then each disk
+        taken offline, so no volume is still mounted (and no paging I/O in flight) when its disk
+        goes. The readers here close every handle they open, in their own finally blocks.
+    #>
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+    foreach ($path in @($Script:RowVhds)) {
+        try {
+            $image = Get-DiskImage -ImagePath $path -ErrorAction Stop
+            if (-not $image.Attached) { continue }
+            $number = [int]$image.Number
+            foreach ($partition in @(Get-Partition -DiskNumber $number -ErrorAction SilentlyContinue)) {
+                if ($partition.DriveLetter -and [char]::IsLetter([char]$partition.DriveLetter)) {
+                    Write-VolumeCache -DriveLetter $partition.DriveLetter -ErrorAction SilentlyContinue
+                }
+            }
+            $disk = Get-Disk -Number $number -ErrorAction SilentlyContinue
+            if ($disk -and -not $disk.IsOffline) { Set-Disk -Number $number -IsOffline $true -ErrorAction Stop }
+        } catch { Write-Host "Could not take the volumes of $path down before detaching it: $($_.Exception.Message)" }
+    }
+    Start-Sleep -Seconds 2
+}
+
+function Save-OpsRowEvents {
+    <#
+    .SYNOPSIS
+        The storage events Windows logged while the row ran, detach included, into the row's
+        folder: disk 51 (paging error), Ntfs 50 and 55 (lost write, corruption), 140, 153, 157.
+    #>
+    param([string]$SinceUtc)
+    try {
+        $since = [DateTime]::Parse($SinceUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToLocalTime()
+        $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; StartTime = $since; Id = 50, 51, 55, 129, 140, 153, 157 } -ErrorAction SilentlyContinue |
+                Sort-Object TimeCreated | ForEach-Object {
+                    [ordered]@{ time = $_.TimeCreated.ToString('o'); id = $_.Id; provider = $_.ProviderName; message = (($_.Message -split "`r?`n")[0]) }
+                })
+        [IO.File]::WriteAllText((Join-Path $Script:RowDir 'windows-events.json'), (ConvertTo-Json -InputObject @($events) -Depth 4))
+        if ($events.Count -gt 0) { Write-Host "$($Script:RowId): $($events.Count) storage event(s) logged during the row (windows-events.json)" }
+    } catch { Write-Host "Could not read the row's storage events: $($_.Exception.Message)" }
+}
+
 function New-OpsDisk {
     param([Parameter(Mandatory = $true)] [string]$Name, [int]$SizeMB = 1024, [ValidateSet('GPT', 'MBR', 'RAW')] [string]$Style = 'GPT')
     Assert-OpsWorkRootOnSpare
