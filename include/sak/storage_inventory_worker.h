@@ -24,8 +24,13 @@ struct StorageInventoryScanResult {
     bool cancelled{false};
 };
 
-/// A scan with no progress line for this long has stopped answering.
-inline constexpr int kInventoryScanIdleLimitMs = 30'000;
+/// A scan with no progress line for this long has stopped answering. 90 s, as long as the longest
+/// single call may wait (kInventoryQueryCapSeconds): on a PC under heavy disk load, Windows'
+/// storage service took long enough that 30 s stopped four scans in a row, and one of them failed
+/// the verification of a Move that had finished (operation proof, 2026-11-12, F26).
+inline constexpr int kInventoryScanIdleLimitMs = 90'000;
+/// While a scan is quiet, the log says so this often: how long, and at which step.
+inline constexpr int kInventoryScanQuietLogMs = 15'000;
 /// However much progress it makes, a scan ends here.
 inline constexpr int kInventoryScanCeilingMs = 300'000;
 /// The longest one call in a scan may wait. Right after a clone's raw write took a disk offline and
@@ -47,6 +52,7 @@ using InventoryScanProgressCallback = std::function<void(const InventoryScanProg
 struct InventoryScanLimits {
     int idle_ms{kInventoryScanIdleLimitMs};
     int ceiling_ms{kInventoryScanCeilingMs};
+    int quiet_log_ms{kInventoryScanQuietLogMs};
 };
 
 /// Watches the progress lines a scan script writes to standard error ("SAK-SCAN-PROGRESS step").
@@ -62,6 +68,9 @@ public:
     void arm();
     void feed(const QString& stderr_chunk);
     [[nodiscard]] bool idleExpired() const;
+    /// Every quiet_log_ms of quiet, a line in the log: how long the scan has been quiet, at which
+    /// step, and when it will be stopped. Called as often as idleExpired. The line, or empty.
+    QString reportQuiet();
     /// This watcher stopped the run.
     void markStopped();
     /// What the run's result means for a scan. Stopped for going quiet, or past its ceiling, it did
@@ -78,6 +87,7 @@ private:
     QString m_last_step;
     bool m_armed{false};
     bool m_stopped{false};
+    qint64 m_quiet_reported_ms{0};
 };
 
 /// How the inventory script runs for a scan that needs administrator rights.

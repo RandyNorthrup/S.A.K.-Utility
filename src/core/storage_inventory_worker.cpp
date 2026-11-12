@@ -9,6 +9,7 @@
 #include "sak/elevation_broker.h"
 #include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_registry.h"
 #include "sak/partition_safety_validator.h"
@@ -28,9 +29,27 @@
 #include <optional>
 #include <thread>
 
+#include <windows.h>
+
 namespace sak {
 
 namespace {
+
+// Windows' own name for its edition ("Professional", "Enterprise", "ServerStandard", ...), which
+// decides whether it formats ReFS. Empty when it cannot be read: then ReFS is not offered.
+QString windowsEditionId() {
+    constexpr DWORD kEditionIdChars = 128;
+    wchar_t value[kEditionIdChars] = {};
+    DWORD bytes = sizeof(value);
+    const LSTATUS status = RegGetValueW(HKEY_LOCAL_MACHINE,
+                                        L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+                                        L"EditionID",
+                                        RRF_RT_REG_SZ,
+                                        nullptr,
+                                        value,
+                                        &bytes);
+    return status == ERROR_SUCCESS ? QString::fromWCharArray(value) : QString();
+}
 
 constexpr auto kHelperScanCancelPoll = std::chrono::milliseconds(200);
 constexpr int kMsPerSecond = 1000;
@@ -131,6 +150,11 @@ PartitionVolumeInfo parseVolume(const QJsonObject& object) {
     volume.dirty_bit_set = volume.dirty_bit_known &&
                            jsonBool(object, QStringLiteral("DirtyBitSet"));
     volume.dirty_bit_error = object.value(QStringLiteral("DirtyBitError")).toString().trimmed();
+    volume.shadow_storage_known = jsonBool(object, QStringLiteral("ShadowStorageKnown"));
+    if (volume.shadow_storage_known) {
+        volume.shadow_storage_max_bytes = jsonUInt64(object, QStringLiteral("ShadowStorageMax"));
+        volume.shadow_storage_used_bytes = jsonUInt64(object, QStringLiteral("ShadowStorageUsed"));
+    }
     return volume;
 }
 
@@ -549,6 +573,7 @@ PartitionDiskInfo parseDisk(const QJsonObject& object) {
     disk.serial_number = object.value(QStringLiteral("SerialNumber")).toString();
     disk.bus_type = object.value(QStringLiteral("BusType")).toString();
     disk.media_type = object.value(QStringLiteral("MediaType")).toString();
+    disk.provisioning_type = object.value(QStringLiteral("ProvisioningType")).toString().trimmed();
     disk.rotation_rate_rpm = std::max(0, object.value(QStringLiteral("RotationRateRpm")).toInt(0));
     QString partitionStyleText = object.value(QStringLiteral("PartitionStyle")).toString();
     if (partitionStyleText.isEmpty()) {
@@ -749,6 +774,7 @@ void InventoryScanLiveness::feed(const QString& stderr_chunk) {
             m_last_step = stepOfProgressLine(line.mid(kScanProgressPrefix.size()).trimmed());
             m_armed = true;
             m_since_progress.start();
+            m_quiet_reported_ms = 0;
             const auto match = disk_of.match(m_last_step);
             if (match.hasMatch()) {
                 reached = InventoryScanProgress{.disk = match.captured(kDiskGroup).toInt(),
@@ -767,6 +793,29 @@ void InventoryScanLiveness::feed(const QString& stderr_chunk) {
 bool InventoryScanLiveness::idleExpired() const {
     std::lock_guard lock(m_mutex);
     return m_armed && m_since_progress.elapsed() >= m_limits.idle_ms;
+}
+
+QString InventoryScanLiveness::reportQuiet() {
+    QString line;
+    {
+        std::lock_guard lock(m_mutex);
+        if (!m_armed || m_stopped || m_limits.quiet_log_ms <= 0) {
+            return {};
+        }
+        const qint64 quiet_ms = m_since_progress.elapsed();
+        if (quiet_ms < m_quiet_reported_ms + m_limits.quiet_log_ms) {
+            return {};
+        }
+        m_quiet_reported_ms = quiet_ms - (quiet_ms % m_limits.quiet_log_ms);
+        line = QStringLiteral(
+                   "Disk scan: no progress for %1 s (last step: %2); it is stopped at "
+                   "%3 s")
+                   .arg(quiet_ms / kMsPerSecond)
+                   .arg(m_last_step.isEmpty() ? QStringLiteral("none") : m_last_step)
+                   .arg(m_limits.idle_ms / kMsPerSecond);
+    }
+    logInfo("{}", line.toStdString());
+    return line;
 }
 
 void InventoryScanLiveness::markStopped() {
@@ -874,6 +923,7 @@ std::expected<ProcessResult, QString> runInventoryScriptInHelper(
                 broker->cancelCurrentTask();
                 return;
             }
+            (void)liveness.reportQuiet();
             if (liveness.idleExpired()) {
                 liveness.markStopped();
                 broker->cancelCurrentTask();
@@ -940,6 +990,7 @@ ProcessResult StorageInventoryWorker::runInventoryScript(
         if (cancellationRequested(should_cancel)) {
             return true;
         }
+        (void)liveness.reportQuiet();
         if (liveness.idleExpired()) {
             liveness.markStopped();
             return true;
@@ -1035,6 +1086,8 @@ StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResul
     }
 
     auto inventory = parseInventory(result.std_out.toUtf8(), level, VolumeStateWarnings::Later);
+    inventory.refs_format_available =
+        PartitionFileSystemRegistry::editionFormatsRefs(windowsEditionId());
     applyRawFileSystemDetection(
         &inventory, allow_elevation, should_cancel, level == ReadLevel::WhatAStandardUserCanRead);
     appendVolumeStateWarnings(&inventory);
@@ -1144,6 +1197,16 @@ if (-not $answer.Finished) {
   $physicalDiskQueryError = $answer.Error
 } else {
   $physicalDisks = @($answer.Items)
+}
+# Shadow-copy storage, which Migrate OS's image route depends on. Windows answers an administrator
+# only ("Initialization failure" otherwise); the sizes go out as text, since no limit is UINT64_MAX.
+$sakShadowStorage = @()
+if ($sakReadAdministratorState) {
+  Write-SakScanProgress 'shadow-copy storage'
+  $answer = Invoke-SakBoundedCall -Step 'shadow-copy storage' -Script {
+    Get-CimInstance -ClassName Win32_ShadowStorage -ErrorAction Stop | ForEach-Object {
+      [pscustomobject]@{ Volume = "$($_.Volume.DeviceID)"; Max = "$([uint64]$_.MaxSpace)"; Used = "$([uint64]$_.UsedSpace)" } } }
+  if ($answer.Finished -and -not ($answer.ErrorId -or $answer.Error)) { $sakShadowStorage = @($answer.Items) }
 }
 )PS");
 }
@@ -1274,6 +1337,7 @@ static QString inventoryPowerShellDiskQueriesScript() {
     HealthStatus = "$($disk.HealthStatus)"
     OperationalStatus = @($disk.OperationalStatus) -join ', '
     BusType = "$($disk.BusType)"
+    ProvisioningType = "$($disk.ProvisioningType)"
     # Get-Disk has no media type. Only the physical disk says HDD, SSD or Unspecified.
     MediaType = if ($physical) { "$($physical.MediaType)" } else { '' }
     RotationRateRpm = $rotationRateRpm
@@ -1339,14 +1403,17 @@ static QString inventoryPowerShellPartitionProbeScript() {
           }
         }
       }
+      $shadowStorage = if ($volume) {
+        @($sakShadowStorage | Where-Object { $_.Volume -and ($_.Volume -eq "$($volume.UniqueId)" -or $_.Volume -eq "$($volume.Path)") }) | Select-Object -First 1
+      } else { $null }
+      $dirty = $false
+      $dirtyKnown = $false
+      $dirtyError = ''
 )PS");
 }
 
 static QString inventoryPowerShellPartitionResultScript() {
     return QStringLiteral(R"PS(
-      $dirty = $false
-      $dirtyKnown = $false
-      $dirtyError = ''
       if ($volume -and $volume.DriveLetter -and $sakReadAdministratorState) {
         $dirtyStep = "dirty bit of partition $($partition.PartitionNumber) of disk $sakDiskIndex"
         Write-SakScanProgress $dirtyStep
@@ -1406,6 +1473,9 @@ static QString inventoryPowerShellPartitionResultScript() {
             DirtyBitKnown = [bool]$dirtyKnown
             DirtyBitSet = [bool]$dirty
             DirtyBitError = "$dirtyError"
+            ShadowStorageKnown = [bool]$shadowStorage
+            ShadowStorageMax = if ($shadowStorage) { $shadowStorage.Max } else { '0' }
+            ShadowStorageUsed = if ($shadowStorage) { $shadowStorage.Used } else { '0' }
           }
         } else { $null }
       }

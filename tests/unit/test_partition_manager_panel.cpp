@@ -189,6 +189,8 @@ private Q_SLOTS:
     void propertiesDialogShowsRawFilesystemMetadata();
     void propertiesAndInspectShowRawFilesystemSanityNotes();
     void extFilesystemWriteActionsQueueWithConfirmation() const;
+    void resizeSaysWindowsCannotResizeFat32() const;
+    void resizeGrowsAnApfsPartitionOnly() const;
     void apfsContainerActionAllowsWritableApfsVolumes();
     void manageBitLockerShowsStatusDialog();
     void theTableHeaderReachesTheRightEdge();
@@ -1116,8 +1118,9 @@ void verifyRawHfsSidebarControls(sak::PartitionManagerPanel* panel) {
     QVERIFY(check->toolTip().contains(QStringLiteral("fsck_hfs")));
     QVERIFY(!resize->isEnabled());
     QCOMPARE(resize->toolTip(),
-             QStringLiteral("HFS+ resize is not supported yet. Non-Windows resize currently "
-                            "supports ext2/ext3/ext4 only."));
+             QStringLiteral("S.A.K. cannot resize HFS+ partitions. Windows resizes NTFS and ReFS "
+                            "partitions, S.A.K. resizes ext2, ext3 and ext4 with its bundled "
+                            "tools, and grows APFS partitions in place."));
     QVERIFY(!nativeCheck->isEnabled());
     QCOMPARE(nativeCheck->toolTip(), nativeDisabledReason);
     QVERIFY(!changeCluster->isEnabled());
@@ -5610,6 +5613,101 @@ void PartitionManagerPanelTests::propertiesAndInspectShowRawFilesystemSanityNote
     verifyMetadataCheckDialog(apfsCheck,
                               QStringLiteral("Metadata sanity: APFS container block geometry is "
                                              "internally consistent"));
+}
+
+// F4 (operation proof, 2026-11-11): Resize offered shrinking a FAT32 or exFAT partition, and Apply
+// refused it ("Target size outside supported range"). Windows neither shrinks nor grows them
+// (testpc1, 2026-11-12), so the dialog says why and does not offer Add to Queue.
+void PartitionManagerPanelTests::resizeSaysWindowsCannotResizeFat32() const {
+    for (const QString& file_system : {QStringLiteral("FAT32"), QStringLiteral("exFAT")}) {
+        for (const bool grow : {false, true}) {
+            sak::PartitionManagerPanel panel;
+            auto inventory = unallocatedAllocateInventoryFixture();
+            inventory.disks[0].partitions[0].volume->file_system = file_system;
+            panel.setTestInventoryForReview(inventory);
+            auto* table = panel.findChild<QTableWidget*>();
+            QVERIFY2(table != nullptr, "Partition table should exist");
+            table->selectRow(1);
+            bool inspected = false;
+            QString status;
+            bool accept_enabled = true;
+            const ScopedModalInspection inspection([&]() {
+                auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                const auto reject_on_return = rejectDialogOnReturn(dialog);
+                QVERIFY2(dialog != nullptr, "Resize dialog should open");
+                auto* size =
+                    findAccessibleWidget<QSpinBox>(dialog, QStringLiteral("Target partition size"));
+                QVERIFY(size != nullptr);
+                size->setValue(size->value() + (grow ? 64 : -64));
+                auto* label = findAccessibleWidget<QLabel>(
+                    dialog, QStringLiteral("Move resize support status"));
+                QVERIFY(label != nullptr);
+                status = label->text();
+                auto* buttons = dialog->findChild<QDialogButtonBox*>();
+                QVERIFY(buttons != nullptr && buttons->button(QDialogButtonBox::Ok) != nullptr);
+                accept_enabled = buttons->button(QDialogButtonBox::Ok)->isEnabled();
+                inspected = true;
+                dialog->reject();
+            });
+            auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+            QVERIFY2(resize != nullptr, "Resize action should exist");
+            pressAction(resize);
+            QVERIFY(inspected);
+            QVERIFY2(status ==
+                         QStringLiteral("Windows cannot %1 FAT32 or exFAT partitions. Back up "
+                                        "the files, then delete and recreate the partition "
+                                        "at the size you want.")
+                             .arg(grow ? QStringLiteral("grow") : QStringLiteral("shrink")),
+                     qPrintable(file_system + QStringLiteral(": ") + status));
+            QVERIFY2(!accept_enabled, qPrintable(file_system));
+        }
+    }
+}
+
+// An APFS partition grows in place only (coordinator, 2026-11-12): the dialog accepts a grow and
+// says the container is grown afterwards, and refuses a shrink with the reason.
+void PartitionManagerPanelTests::resizeGrowsAnApfsPartitionOnly() const {
+    for (const bool grow : {true, false}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = unallocatedAllocateInventoryFixture();
+        inventory.disks[0].partitions[0].volume->file_system = QStringLiteral("APFS");
+        panel.setTestInventoryForReview(inventory);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        bool inspected = false;
+        QString status;
+        bool accept_enabled = !grow;
+        const ScopedModalInspection inspection([&]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(dialog);
+            QVERIFY2(dialog != nullptr, "Resize dialog should open");
+            auto* size = findAccessibleWidget<QSpinBox>(dialog,
+                                                        QStringLiteral("Target partition size"));
+            QVERIFY(size != nullptr);
+            size->setValue(size->value() + (grow ? 64 : -64));
+            auto* label =
+                findAccessibleWidget<QLabel>(dialog, QStringLiteral("Move resize support status"));
+            QVERIFY(label != nullptr);
+            status = label->text();
+            auto* buttons = dialog->findChild<QDialogButtonBox*>();
+            QVERIFY(buttons != nullptr && buttons->button(QDialogButtonBox::Ok) != nullptr);
+            accept_enabled = buttons->button(QDialogButtonBox::Ok)->isEnabled();
+            inspected = true;
+            dialog->reject();
+        });
+        auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+        QVERIFY2(resize != nullptr && resize->isEnabled(), "Resize is offered for APFS");
+        pressAction(resize);
+        QVERIFY(inspected);
+        QCOMPARE(status,
+                 grow ? QStringLiteral("This grows the partition only. Then use APFS container "
+                                       "actions > Resize container to fill partition.")
+                      : QStringLiteral("S.A.K. cannot shrink APFS partitions. It grows one in "
+                                       "place; then use APFS container actions > Resize container "
+                                       "to fill partition."));
+        QCOMPARE(accept_enabled, grow);
+    }
 }
 
 void PartitionManagerPanelTests::extFilesystemWriteActionsQueueWithConfirmation() const {

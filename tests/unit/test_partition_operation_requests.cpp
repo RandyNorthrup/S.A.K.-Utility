@@ -8,8 +8,13 @@
 #include "sak/partition_operation_requests.h"
 #include "sak/partition_script_builder.h"
 
+#include "../support/junction_fixture.h"
+
 #include <QJsonArray>
+#include <QTemporaryDir>
 #include <QtTest>
+
+#include <limits>
 
 using namespace sak;
 
@@ -57,6 +62,9 @@ private Q_SLOTS:
     void moveCarriesWhereTheStartGoesAndTheBackup();
     void freeSpaceBeforeAPartitionMovesItsStart();
     void freeSpaceAfterAPartitionGrowsIt();
+    void resizeTakesTheFileSystemTheScanFound();
+    void assistantRequestStatesIntentOnly();
+    void backupFolderMustBeARealFolderWithRoom();
     void allocateNamesTheDonorAndTheAmount();
     void primaryLogicalNamesTheNewLayoutAndTheBackup();
     void serialAndClusterReformatWithTheVolumesOwnFacts();
@@ -165,6 +173,152 @@ void PartitionOperationRequestsTests::freeSpaceAfterAPartitionGrowsIt() {
     QCOMPARE(payload.value("target_size_bytes").toString(), QString::number(576 * kMiB));
     QCOMPARE(payload.value("adjacent_free_bytes").toString(), QString::number(128 * kMiB));
     QVERIFY(!payload.contains("target_offset_bytes"));
+}
+
+// F7: a Resize carries the file system the scan it is queued from found, which the script checks
+// again before it resizes. One the payload names is kept, for the safety validator to compare.
+void PartitionOperationRequestsTests::resizeTakesTheFileSystemTheScanFound() {
+    PartitionInventory inventory;
+    PartitionDiskInfo disk = dataDisk(QStringLiteral("GPT"));
+    disk.partitions.append(dataPartition());
+    inventory.disks.append(disk);
+    const auto selected = partitionSelectionTarget(dataPartition());
+    auto resize = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Resize, selected, resizePartitionPayload(600 * kMiB, 200 * kMiB));
+    bindResizeFileSystem(inventory, &resize);
+    QCOMPARE(resize.payload.value("file_system").toString(), QStringLiteral("NTFS"));
+
+    auto named = PartitionOperationPlanner::makeOperation(PartitionOperationType::Resize,
+                                                          selected,
+                                                          QJsonObject{{"file_system", "ext4"}});
+    bindResizeFileSystem(inventory, &named);
+    QCOMPARE(named.payload.value("file_system").toString(), QStringLiteral("ext4"));
+
+    auto format = PartitionOperationPlanner::makeOperation(PartitionOperationType::Format,
+                                                           selected,
+                                                           QJsonObject{});
+    bindResizeFileSystem(inventory, &format);
+    QVERIFY(!format.payload.contains("file_system"));
+
+    // Nothing found, nothing bound: the validator then refuses, and the builder too.
+    inventory.disks.first().partitions.first().volume.reset();
+    auto unknown = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Resize, selected, resizePartitionPayload(600 * kMiB, 200 * kMiB));
+    bindResizeFileSystem(inventory, &unknown);
+    QVERIFY(!unknown.payload.contains("file_system"));
+    QVERIFY(!PartitionScriptBuilder().buildScript(unknown).valid());
+}
+
+// F2 (operation proof, 2026-11-11): the assistant's model states intent only. What only the app
+// may set (the routing to a bundled tool, the raw partition path, the person's destructive-change
+// confirmation) is refused from a model and derived by the app, and Format, Resize and Check of a
+// non-Windows file system work from the fields the tool documents.
+void PartitionOperationRequestsTests::assistantRequestStatesIntentOnly() {
+    PartitionInventory inventory;
+    PartitionDiskInfo disk = dataDisk(QStringLiteral("GPT"));
+    disk.partitions.append(dataPartition());
+    inventory.disks.append(disk);
+    PartitionTarget named;
+    named.kind = PartitionTargetKind::Partition;
+    named.disk_number = DiskNumber{3};
+    named.partition_number = PartitionNumber{2};
+    const QString raw_path = QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk3\\Partition2");
+
+    for (const char* field : {"non_native_file_system_tool",
+                              "target_wipe_confirmed",
+                              "overwrite_confirmed",
+                              "target_path"}) {
+        QJsonObject payload = formatPartitionPayload({.file_system = QStringLiteral("ext4")});
+        payload[QString::fromLatin1(field)] = true;
+        const auto refused =
+            assistantPartitionOperation(PartitionOperationType::Format, named, payload, inventory);
+        QVERIFY2(!refused && refused.error().contains(QString::fromLatin1(field)), field);
+    }
+
+    // Format ext4 from the documented fields alone: the app routes it to mke2fs, on the raw path
+    // of the partition the scan found, with the confirmation the person gave in the app.
+    const auto ext4 =
+        assistantPartitionOperation(PartitionOperationType::Format,
+                                    named,
+                                    formatPartitionPayload({.file_system = QStringLiteral("ext4"),
+                                                            .label = QStringLiteral("L")}),
+                                    inventory);
+    QVERIFY(ext4);
+    QVERIFY(ext4->payload.value("non_native_file_system_tool").toBool());
+    QCOMPARE(ext4->payload.value("target_path").toString(), raw_path);
+    QVERIFY(ext4->payload.value("target_wipe_confirmed").toBool());
+    QCOMPARE(ext4->target.size_bytes, 512 * kMiB);
+    QCOMPARE(ext4->target.partition_guid, QStringLiteral("{PART}"));
+    QCOMPARE(ext4->target.disk_size_bytes, 1024 * kMiB);  // the disk's identity, as a queue binds
+    const auto ntfs =
+        assistantPartitionOperation(PartitionOperationType::Format,
+                                    named,
+                                    formatPartitionPayload({.file_system = QStringLiteral("NTFS")}),
+                                    inventory);
+    QVERIFY(ntfs && !ntfs->payload.contains("non_native_file_system_tool"));
+
+    // Resize and Check take the file system from the scan.
+    inventory.disks.first().partitions.first().volume->file_system = QStringLiteral("ext4");
+    const auto resize = assistantPartitionOperation(PartitionOperationType::Resize,
+                                                    named,
+                                                    resizePartitionPayload(600 * kMiB, 200 * kMiB),
+                                                    inventory);
+    QVERIFY(resize && resize->payload.value("non_native_file_system_tool").toBool());
+    QCOMPARE(resize->payload.value("file_system").toString(), QStringLiteral("ext4"));
+    QCOMPARE(resize->payload.value("target_path").toString(), raw_path);
+    const auto check = assistantPartitionOperation(
+        PartitionOperationType::CheckFileSystem, named, QJsonObject{}, inventory);
+    QVERIFY(check && check->payload.value("non_native_file_system_tool").toBool());
+    QCOMPARE(check->payload.value("file_system").toString(), QStringLiteral("ext4"));
+    const PartitionScriptBuilder builder;
+    for (const auto* operation : {&*ext4, &*resize, &*check}) {
+        const auto script = builder.buildScript(*operation);
+        QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
+    }
+
+    // A target the scan does not agree with is refused.
+    named.size_bytes = 100 * kMiB;
+    QVERIFY(!assistantPartitionOperation(
+        PartitionOperationType::CheckFileSystem, named, QJsonObject{}, inventory));
+}
+
+// F19 (secfix, on the VM, 2026-11-11): a backup folder that did not exist was accepted by the
+// dialogs and refused only by the script at Apply. The queue now needs a real folder, reached
+// through no junction, with room for what the volume holds.
+void PartitionOperationRequestsTests::backupFolderMustBeARealFolderWithRoom() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString folder = QDir::toNativeSeparators(root.path());
+    QVERIFY(backupDirectoryBlocker(folder, kMiB).isEmpty());
+    const QString missing = QDir::toNativeSeparators(root.filePath(QStringLiteral("not-made")));
+    QVERIFY(backupDirectoryBlocker(missing, 0).contains(QStringLiteral("does not exist")));
+    const QString link = QDir::toNativeSeparators(root.filePath(QStringLiteral("link")));
+    QVERIFY(test::createJunction(link, root.path()));
+    QVERIFY(backupDirectoryBlocker(link, 0).contains(QStringLiteral("not a real folder")));
+    QVERIFY(backupDirectoryBlocker(folder, std::numeric_limits<uint64_t>::max() / 2)
+                .contains(QStringLiteral("Choose a folder on a volume with more room")));
+
+    // Queued: the folder of a Reformat for New Serial Number, with room for the volume's files.
+    PartitionInventory inventory;
+    PartitionDiskInfo disk = dataDisk(QStringLiteral("GPT"));
+    disk.partitions.append(dataPartition());
+    inventory.disks.append(disk);
+    const auto serial = [&](const QString& backup) {
+        return PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::ChangeVolumeSerialNumber,
+            partitionIdentityTarget(dataPartition()),
+            volumeSerialPayload(*dataPartition().volume,
+                                {.backup_directory = backup, .confirmed = true}));
+    };
+    QVERIFY(queuedBackupBlocker(inventory, serial(folder)).isEmpty());
+    QVERIFY(
+        queuedBackupBlocker(inventory, serial(missing)).contains(QStringLiteral("does not exist")));
+    QVERIFY(queuedBackupBlocker(
+                inventory,
+                PartitionOperationPlanner::makeOperation(PartitionOperationType::Format,
+                                                         partitionIdentityTarget(dataPartition()),
+                                                         QJsonObject{}))
+                .isEmpty());
 }
 
 void PartitionOperationRequestsTests::allocateNamesTheDonorAndTheAmount() {
@@ -397,10 +551,15 @@ void PartitionOperationRequestsTests::secureEraseSaysItWasConfirmed() {
 
 void PartitionOperationRequestsTests::everyRequestBuildsARunnableScript() {
     // Without a full inventory these only reach the script builder, which is where a field the
-    // builder wants and the payload lacks would turn into a refusal.
+    // builder wants and the payload lacks would turn into a refusal. What the queue binds from the
+    // scan (a resize's file system) is bound as the queue binds it.
     const PartitionScriptBuilder builder;
     const auto partition = dataPartition();
     const auto selected = partitionSelectionTarget(partition);
+    PartitionInventory inventory;
+    PartitionDiskInfo disk = dataDisk(QStringLiteral("GPT"));
+    disk.partitions.append(partition);
+    inventory.disks.append(disk);
     const QVector<PartitionOperationRequest> requests{
         {PartitionOperationType::Format,
          selected,
@@ -416,12 +575,13 @@ void PartitionOperationRequestsTests::everyRequestBuildsARunnableScript() {
          primaryLogicalPayload(partition, QStringLiteral("logical"), kBackup)},
     };
     for (const auto& request : requests) {
-        const auto operation =
+        auto operation =
             PartitionOperationPlanner::makeOperation(request.type, request.target, request.payload);
+        bindResizeFileSystem(inventory, &operation);
         const auto script = builder.buildScript(operation);
         QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
     }
 }
 
-QTEST_APPLESS_MAIN(PartitionOperationRequestsTests)
+QTEST_GUILESS_MAIN(PartitionOperationRequestsTests)
 #include "test_partition_operation_requests.moc"

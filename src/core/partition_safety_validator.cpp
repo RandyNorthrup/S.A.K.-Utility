@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QSet>
 #include <QStringList>
+#include <QUuid>
 
 #include <algorithm>
 #include <cmath>
@@ -92,6 +93,28 @@ constexpr auto kHfsPayloadText = "hfs_payload_text";
 constexpr auto kHfsFileIdPayload = "hfs_file_id";
 constexpr auto kHfsAttributeNamePayload = "hfs_attribute_name";
 constexpr auto kHfsSecureWipeReleasedBlocksPayload = "hfs_secure_wipe_released_blocks";
+// MBR types that would break the partition table: 00 an empty entry; 05, 0F and 85 an extended
+// partition, which holds logical ones; EE a GPT disk's protective partition.
+constexpr int kTableBreakingMbrTypes[] = {0x00, 0x05, 0x0F, 0x85, 0xEE};
+
+// One byte in hex, as a technician writes an MBR type: "83", "0x83" or "83h".
+std::optional<int> mbrTypeByte(const QString& typed) {
+    constexpr int kHexBase = 16;
+    constexpr uint kLargestByte = 0xFF;
+    const QString hex_prefix = QStringLiteral("0x");
+    QString digits = typed.trimmed();
+    if (digits.startsWith(hex_prefix, Qt::CaseInsensitive)) {
+        digits = digits.mid(hex_prefix.size());
+    } else if (digits.endsWith(QLatin1Char('h'), Qt::CaseInsensitive)) {
+        digits.chop(1);
+    }
+    bool ok = false;
+    const uint value = digits.toUInt(&ok, kHexBase);
+    if (!ok || digits.isEmpty() || value > kLargestByte) {
+        return std::nullopt;
+    }
+    return static_cast<int>(value);
+}
 
 bool isDestructiveDiskOperation(PartitionOperationType type) {
     static const QSet<int> kTypes = {
@@ -747,8 +770,7 @@ bool changeClusterMissingConfirmation(const PartitionOperation& operation) {
 bool isSupportedGptCreateType(const QString& value) {
     return value.isEmpty() || QStringList{QStringLiteral("{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}"),
                                           QStringLiteral("{DE94BBA4-06D1-4D40-A16A-BFD50179D6AC}"),
-                                          QStringLiteral("{C12A7328-F81F-11D2-BA4B-00A0C93EC93B}"),
-                                          QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}")}
+                                          QStringLiteral("{C12A7328-F81F-11D2-BA4B-00A0C93EC93B}")}
                                   .contains(value.toUpper());
 }
 
@@ -777,9 +799,6 @@ bool createTypeMatchesFileSystem(const PartitionOperation& operation) {
     if (gptType == QStringLiteral("{DE94BBA4-06D1-4D40-A16A-BFD50179D6AC}") ||
         mbrType == QStringLiteral("IFS")) {
         return fs == QStringLiteral("NTFS");
-    }
-    if (gptType == QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}")) {
-        return fs == QStringLiteral("APFS");
     }
     return true;
 }
@@ -820,6 +839,88 @@ void validateCreateUnallocatedPayload(const PartitionOperation& operation,
                  QStringLiteral("Create partition type is incompatible with the file system"));
 }
 
+// What a full-formatting operation is called in the refusal, or empty for one that does not
+// full-format: Wipe Partition and Wipe Disk always, Format and Create when asked to.
+QString fullFormatSubject(const PartitionOperation& operation) {
+    switch (operation.type) {
+    case PartitionOperationType::WipePartition:
+        return QStringLiteral("Wiping a partition");
+    case PartitionOperationType::WipeDisk:
+        return QStringLiteral("Wipe Disk");
+    case PartitionOperationType::Format:
+        return payloadBool(operation, QStringLiteral("full_format")) ? QStringLiteral("This format")
+                                                                     : QString();
+    case PartitionOperationType::Create:
+        return payloadBool(operation, QStringLiteral("full_format"))
+                   ? QStringLiteral("This new partition")
+                   : QString();
+    default:
+        return {};
+    }
+}
+
+// Windows allows no full format on a thin-provisioned disk (a VHD or VHDX file), and the script
+// refused only at Apply (operation proof, 2026-11-11). Refused at queue time when the scan says
+// the disk is thin; when it did not say, the script's own check stays the backstop.
+void validateFullFormatOnThinDisk(const PartitionDiskInfo& disk,
+                                  const PartitionOperation& operation,
+                                  PartitionValidationResult* result) {
+    const QString subject = fullFormatSubject(operation);
+    addBlockerIf(result,
+                 !subject.isEmpty() && disk.provisioning_type.compare(QStringLiteral("Thin"),
+                                                                      Qt::CaseInsensitive) == 0,
+                 PartitionSafetyValidator::thinDiskFullFormatRefusal(subject));
+}
+
+// Create makes a partition with a Windows file system only, whatever its payload asks for; a
+// bundled tool's file system is made by Formatting it afterwards (an assistant's ext4 Create
+// reached the builder's "Unsupported file system", operation proof, 2026-11-11).
+bool createAsksForABundledToolFileSystem(const PartitionOperation& operation,
+                                         PartitionValidationResult* result) {
+    if (operation.type != PartitionOperationType::Create) {
+        return false;
+    }
+    const QString blocker = PartitionFileSystemRegistry::createFileSystemBlocker(
+        operation.payload.value(QStringLiteral("file_system")).toString());
+    addBlockerIf(result, !blocker.isEmpty(), blocker);
+    return !blocker.isEmpty();
+}
+
+// A Windows format a queued operation asks for (Create, Format, Change Cluster Size), against
+// what Format-Volume does (PartitionFileSystemRegistry::windowsFormatBlocker): it writes the
+// start of the volume before it refuses a FAT32 cluster size, and drops a label it cannot use.
+void validateWindowsFormatChoice(const PartitionInventory& inventory,
+                                 const PartitionDiskInfo& disk,
+                                 const PartitionOperation& operation,
+                                 PartitionValidationResult* result) {
+    const bool create = operation.type == PartitionOperationType::Create;
+    if (createAsksForABundledToolFileSystem(operation, result)) {
+        return;
+    }
+    if ((!create && operation.type != PartitionOperationType::Format &&
+         operation.type != PartitionOperationType::ChangeClusterSize) ||
+        (!create && isNonNativeFileSystemToolOperation(operation))) {
+        return;
+    }
+    uint64_t partition_bytes = payloadUInt64(operation, QStringLiteral("size_bytes"));
+    if (!create) {
+        const auto* partition =
+            PartitionSafetyValidator::findPartition(disk, operation.target.partition_number);
+        partition_bytes = partition == nullptr ? 0 : partition->size_bytes;
+    }
+    if (partition_bytes == 0) {
+        return;  // the operation's own checks say what is missing
+    }
+    const QString blocker = PartitionFileSystemRegistry::windowsFormatBlocker(
+        {.file_system = operation.payload.value(QStringLiteral("file_system"))
+                            .toString(QStringLiteral("NTFS")),
+         .partition_bytes = partition_bytes,
+         .allocation_unit_bytes = payloadUInt64(operation, QStringLiteral("allocation_unit_bytes")),
+         .label = operation.payload.value(QStringLiteral("label")).toString(QStringLiteral("Data")),
+         .refs_available = inventory.refs_format_available});
+    addBlockerIf(result, !blocker.isEmpty(), blocker);
+}
+
 bool resizeTargetMissing(const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::Resize &&
            payloadUInt64(operation, QStringLiteral("target_size_bytes")) == 0;
@@ -846,6 +947,54 @@ bool resizeExtendsBeyondAdjacentFreeSpace(const PartitionDiskInfo& disk,
         return false;
     }
     return targetSize - partition.size_bytes > adjacentFreeBytesAfter(disk, partition);
+}
+
+// The file system the scan found on the partition: what Windows reports, or what S.A.K.'s own
+// probe identified. Empty, "RAW" and "Unknown" say nobody identified it.
+QString scannedFileSystem(const PartitionInfoEx& partition) {
+    const QString found = partition.volume ? partition.volume->file_system.trimmed() : QString();
+    return found.compare(QStringLiteral("RAW"), Qt::CaseInsensitive) == 0 ||
+                   found.compare(QStringLiteral("Unknown"), Qt::CaseInsensitive) == 0
+               ? QString()
+               : found;
+}
+
+// Nothing is resized unless S.A.K. knows what the partition holds and resizes that file system
+// with it. A Resize queued from a scan that could not identify an ext4 partition reached
+// Resize-Partition with no file-system tool, and cut a 128 MiB ext4 file system to 64 MiB
+// (operation proof, 2026-11-11). Checked again on Apply's own scan, and the script checks the
+// partition once more before it resizes.
+QString resizeFileSystemBlocker(const PartitionInfoEx& partition,
+                                const PartitionOperation& operation) {
+    if (operation.type != PartitionOperationType::Resize) {
+        return {};
+    }
+    const QString held = scannedFileSystem(partition);
+    const uint64_t target_bytes = payloadUInt64(operation, QStringLiteral("target_size_bytes"));
+    if (held.isEmpty()) {
+        return PartitionFileSystemRegistry::windowsResizeBlocker(held,
+                                                                 partition.size_bytes,
+                                                                 target_bytes);
+    }
+    const QString queued =
+        operation.payload.value(QStringLiteral("file_system")).toString().trimmed();
+    if (!queued.isEmpty() && queued.compare(held, Qt::CaseInsensitive) != 0) {
+        return QStringLiteral(
+                   "This resize was queued for %1, but the partition holds %2. Scan Disks again, "
+                   "then queue the resize again.")
+            .arg(queued, held);
+    }
+    if (isExtFileSystemToken(held)) {
+        return isNonNativeFileSystemToolOperation(operation)
+                   ? QString()
+                   : QStringLiteral(
+                         "This would resize the ext partition without resizing its file system. "
+                         "Resize it from Resize/Move Partition, which resizes ext2, ext3 and ext4 "
+                         "with S.A.K.'s bundled tools.");
+    }
+    return PartitionFileSystemRegistry::windowsResizeBlocker(held,
+                                                             partition.size_bytes,
+                                                             target_bytes);
 }
 
 bool resizeRequestsStartMove(const PartitionOperation& operation) {
@@ -921,8 +1070,11 @@ bool nonNativeToolMissingTarget(const PartitionOperation& operation) {
            !targetPathMatchesSelectedRawPartition(operation);
 }
 
+// A read-only check changes nothing, so there is nothing to confirm (F25).
 bool nonNativeToolMissingConfirmation(const PartitionOperation& operation) {
-    return isNonNativeFileSystemToolOperation(operation) &&
+    const bool read_only_check = operation.type == PartitionOperationType::CheckFileSystem &&
+                                 payloadBool(operation, QStringLiteral("read_only_check"));
+    return isNonNativeFileSystemToolOperation(operation) && !read_only_check &&
            !payloadBool(operation, QStringLiteral("target_wipe_confirmed"));
 }
 
@@ -1514,8 +1666,14 @@ bool primaryLogicalRequiresMbrDisk(const PartitionDiskInfo& disk,
 
 bool primaryLogicalRequiresSingleVolumeDisk(const PartitionDiskInfo& disk,
                                             const PartitionOperation& operation) {
-    return operation.type == PartitionOperationType::ConvertPrimaryLogical &&
-           disk.partitions.size() != 1;
+    // A logical partition lives in an extended container, which Windows lists as a partition of
+    // its own (Type "Extended"). Counted, it refused every logical-to-primary conversion
+    // (operation proof, 2026-11-12); the rule is about the data partitions.
+    const auto data_partitions =
+        std::ranges::count_if(disk.partitions, [](const PartitionInfoEx& partition) {
+            return !partition.type_name.contains(QStringLiteral("Extended"), Qt::CaseInsensitive);
+        });
+    return operation.type == PartitionOperationType::ConvertPrimaryLogical && data_partitions != 1;
 }
 
 bool dynamicToBasicMissingPayload(const PartitionOperation& operation) {
@@ -1655,11 +1813,13 @@ void validatePartitionMetadataOperation(const PartitionDiskInfo& disk,
                  operation.type == PartitionOperationType::SetPartitionActive &&
                      disk.partition_style.compare(QStringLiteral("MBR"), Qt::CaseInsensitive) != 0,
                  QStringLiteral("Active flag is only valid on MBR disks"));
-    addBlockerIf(
-        result,
-        operation.type == PartitionOperationType::SetPartitionTypeId &&
-            operation.payload.value(QStringLiteral("type_id")).toString().trimmed().isEmpty(),
-        QStringLiteral("Partition type change requires a type ID"));
+    const QString type_blocker =
+        operation.type == PartitionOperationType::SetPartitionTypeId
+            ? PartitionSafetyValidator::partitionTypeBlocker(
+                  disk.partition_style,
+                  operation.payload.value(QStringLiteral("type_id")).toString())
+            : QString();
+    addBlockerIf(result, !type_blocker.isEmpty(), type_blocker);
     addBlockerIf(result,
                  operation.type == PartitionOperationType::DefragVolume && diskLooksSsd(disk),
                  QStringLiteral("HDD defrag is blocked on SSD/NVMe media"));
@@ -1878,6 +2038,8 @@ void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
 void validateResizeContentBlockers(const PartitionInfoEx& partition,
                                    const PartitionOperation& operation,
                                    PartitionValidationResult* result) {
+    const QString fileSystemBlocker = resizeFileSystemBlocker(partition, operation);
+    addBlockerIf(result, !fileSystemBlocker.isEmpty(), fileSystemBlocker);
     addBlockerIf(result,
                  resizeTargetMissing(operation),
                  QStringLiteral("Resize target size is required"));
@@ -2118,6 +2280,49 @@ const PartitionInfoEx* PartitionSafetyValidator::findPartition(const PartitionDi
     return it == disk.partitions.end() ? nullptr : &(*it);
 }
 
+std::optional<int> PartitionSafetyValidator::mbrPartitionType(const QString& typed) {
+    const auto value = mbrTypeByte(typed);
+    if (!value ||
+        std::ranges::find(kTableBreakingMbrTypes, *value) != std::end(kTableBreakingMbrTypes)) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+QString PartitionSafetyValidator::partitionTypeBlocker(const QString& partition_style,
+                                                       const QString& typed) {
+    const QString table = partition_style.trimmed().toUpper();
+    if (table == QStringLiteral("MBR")) {
+        if (mbrPartitionType(typed)) {
+            return {};
+        }
+        return mbrTypeByte(typed)
+                   ? QStringLiteral(
+                         "That MBR partition type would break the disk's partition table: 00 marks "
+                         "an empty entry, 05, 0F and 85 an extended partition, and EE a GPT disk's "
+                         "protective partition.")
+                   : QStringLiteral(
+                         "An MBR partition type is one byte in hex, such as 07 or 83 "
+                         "(83, 0x83 and 83h all mean 83).");
+    }
+    if (table == QStringLiteral("GPT")) {
+        const QUuid type(typed.trimmed());
+        if (type.isNull()) {
+            return QStringLiteral(
+                "A GPT partition type is a GUID other than all zeros, such as "
+                "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}.");
+        }
+        return {};
+    }
+    return QStringLiteral("Changing a partition type needs an MBR or GPT disk.");
+}
+
+QString PartitionSafetyValidator::thinDiskFullFormatRefusal(const QString& what) {
+    return what + QStringLiteral(
+                      " needs a full format, and Windows does not allow one on a thin-provisioned "
+                      "disk, such as a virtual disk file. Nothing was changed.");
+}
+
 bool PartitionSafetyValidator::isSystemProtectedPartition(const PartitionInfoEx& partition) {
     return partition.is_system || partition.is_boot || partition.is_efi || partition.is_msr ||
            partition.is_recovery;
@@ -2209,6 +2414,8 @@ PartitionValidationResult PartitionSafetyValidator::validate(const PartitionInve
         result.blockers.append(QStringLiteral("Unknown partition target kind"));
         break;
     }
+    validateWindowsFormatChoice(inventory, *disk, operation, &result);
+    validateFullFormatOnThinDisk(*disk, operation, &result);
 
     return result;
 }
@@ -2370,6 +2577,20 @@ static void validateDiskRecoveryBlockers(const PartitionDiskInfo& disk,
     addBlockerIf(result,
                  missingRecoveryCandidateFields(operation),
                  QStringLiteral("Recovered partition restore requires offset, size, and type ID"));
+    // The type goes on as the disk's table holds it: one hex byte on MBR, a GUID on GPT.
+    const QString type_id = operation.payload.value(QStringLiteral("type_id")).toString();
+    const QString payload_table =
+        operation.payload.value(QStringLiteral("partition_style")).toString();
+    if (operation.type == PartitionOperationType::RestoreRecoveredPartition &&
+        !type_id.trimmed().isEmpty()) {
+        addBlockerIf(result,
+                     payload_table.compare(disk.partition_style, Qt::CaseInsensitive) != 0,
+                     QStringLiteral("The recovered partition's table style does not match the "
+                                    "disk's; scan the disk again"));
+        const QString type_blocker =
+            PartitionSafetyValidator::partitionTypeBlocker(disk.partition_style, type_id);
+        addBlockerIf(result, !type_blocker.isEmpty(), type_blocker);
+    }
     addBlockerIf(result,
                  recoveryCandidateOverlapsExistingPartition(disk, operation),
                  QStringLiteral("Recovered partition candidate overlaps an existing partition"));
@@ -2512,29 +2733,8 @@ void PartitionSafetyValidator::validateUnallocatedOperation(const PartitionDiskI
         result->blockers.append(QStringLiteral("Only create is valid for unallocated space"));
     }
     if (operation.type == PartitionOperationType::Create) {
+        // Its file system is checked with every Windows format (validateWindowsFormatChoice).
         validateCreateUnallocatedPayload(operation, result);
-        addBlockerIf(result,
-                     nonNativeToolUnsupportedOperation(operation),
-                     QStringLiteral("Non-Windows filesystem tool support is limited to create, "
-                                    "format, repair, and resize"));
-        addBlockerIf(result,
-                     nonNativeToolUnsupportedFileSystem(operation),
-                     QStringLiteral(
-                         "Non-Windows write support is limited to ext2/ext3/ext4 "
-                         "create/format/repair/resize, HFS+/HFSX create/format/repair/staged file "
-                         "mutation, Linux swap create/format, APFS generated create/format/repair, "
-                         "and copy-on-write root-file/root-directory mutation"));
-        addBlockerIf(
-            result,
-            nonNativeToolMissingConfirmation(operation),
-            QStringLiteral(
-                "Non-Windows filesystem tool operation requires destructive confirmation"));
-        addBlockerIf(result,
-                     isApfsFileSystemToken(
-                         operation.payload.value(QStringLiteral("file_system")).toString()) &&
-                         disk.partition_style.compare(QStringLiteral("GPT"), Qt::CaseInsensitive) !=
-                             0,
-                     QStringLiteral("APFS create requires a GPT disk"));
     }
     if (disk.is_system || disk.is_boot) {
         // On a split-boot config the OS lives on the is_boot disk while the ESP is on the

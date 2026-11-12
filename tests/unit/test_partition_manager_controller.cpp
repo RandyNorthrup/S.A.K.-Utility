@@ -178,9 +178,12 @@ private Q_SLOTS:
     void readOnlyRunRefusesMutatingOperations();
     void realApplyTransitionsAndCleansBeforeSignals();
     void failedVerificationRetainsQueueAndDowngradesReport();
+    void verificationScanThatDoesNotFinishIsRetried();
+    void applyOnAnUnfinishedScanSaysItIsIncomplete();
     void inventoryRefreshCanBeCancelled();
     void finishedInventoryFutureCannotBeRetroactivelyCancelled();
     void filesystemCheckCanBeCancelled();
+    void readOnlyCheckRunsInTheElevatedHelper();
     void windowsPhaseTakesCancelAwayUntilItEnds();
     void destructorCancelsAndJoinsInventoryScan();
     void storageInventoryPassesCancellationToProcessRunner();
@@ -259,7 +262,8 @@ void PartitionManagerControllerTests::refreshDerivesReadyPartialAndFailedStates(
         "The disk scan did not finish: no progress for 30 s (last step: disk 2 of 5)"));
     QCOMPARE(sak::PartitionManagerController::inventoryStatusMessage(unfinished),
              QStringLiteral("Partition Manager: The disk scan did not finish: no progress for 30 s "
-                            "(last step: disk 2 of 5)"));
+                            "(last step: disk 2 of 5). The scan is incomplete, not a PC without "
+                            "disks: click Scan Disks to try again."));
 }
 
 void PartitionManagerControllerTests::queueCapacityRefusalIsAtomic() {
@@ -509,9 +513,7 @@ void PartitionManagerControllerTests::quickPartitionBatchUsesSequentialProjected
     create_target.size_bytes = kProjectedCreateBytes;
     QJsonObject create_payload;
     create_payload[QStringLiteral("size_bytes")] = QString::number(kProjectedCreateBytes);
-    create_payload[QStringLiteral("file_system")] = QStringLiteral("APFS");
-    create_payload[QStringLiteral("filesystem_tool")] = true;
-    create_payload[QStringLiteral("target_wipe_confirmed")] = true;
+    create_payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
     const QVector<sak::PartitionOperationRequest> requests = {
         {.type = sak::PartitionOperationType::InitializeDisk,
          .target = testDiskTarget(),
@@ -902,6 +904,103 @@ void PartitionManagerControllerTests::failedVerificationRetainsQueueAndDowngrade
     verifyFailedPostApplyScan(warning, QStringLiteral("SMART metadata unavailable"));
 }
 
+namespace {
+
+/// What a scan that did not finish returns: no disks, and the reason (F26).
+sak::PartitionInventory unfinishedScanInventory() {
+    sak::PartitionInventory inventory;
+    inventory.scan_did_not_finish = true;
+    inventory.warnings.append(QStringLiteral(
+        "The disk scan did not finish: no progress for 90 s (last step: disk 2 of 5)"));
+    return inventory;
+}
+
+}  // namespace
+
+// F26 (operation proof, 2026-11-12): on a PC under heavy disk load the scan after an Apply timed
+// out, and a Move that had finished was reported failed. The verification scan is tried twice more,
+// after a wait; one that finishes verifies the Apply, and when none does the Apply that ran is not
+// a failure: it says it could not be verified, and nothing can be queued until a scan finishes.
+void PartitionManagerControllerTests::verificationScanThatDoesNotFinishIsRetried() {
+    for (const int unfinished_scans : {2, 3}) {
+        sak::PartitionManagerController controller;
+        controller.setVerificationBackoffForTesting(10);
+        std::atomic_int scans{0};
+        std::optional<sak::PartitionExecutionResult> delivered;
+        controller.setTestInventory(healthyInventory());
+        controller.setInventoryScannerForTesting(
+            [&scans, unfinished_scans](const sak::CancelCheck&) {
+                const int scan = scans.fetch_add(1);
+                // The first is Apply's preflight, on the queue's layout; then the verification
+                // scans.
+                if (scan == 0) {
+                    return inventoryResult(healthyInventory());
+                }
+                if (scan <= unfinished_scans) {
+                    return inventoryResult(unfinishedScanInventory());
+                }
+                return inventoryResult(healthyInventory(QStringLiteral("layout-b")));
+            });
+        controller.setApplyExecutorForTesting(
+            [](const QVector<sak::PartitionOperation>&,
+               bool dry_run,
+               bool,
+               const sak::CancelCheck&) { return successfulResult(dry_run); });
+        connect(&controller,
+                &sak::PartitionManagerController::executionFinished,
+                this,
+                [&delivered](const auto& result) { delivered = result; });
+        queueInitialize(&controller);
+        QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, false));
+        QVERIFY(waitUntil([&delivered]() { return delivered.has_value(); }));
+        QVERIFY2(delivered->success, qPrintable(delivered->message));
+        QVERIFY(controller.queue().isEmpty());
+        if (unfinished_scans == 2) {
+            // The third verification scan finished: verified, and the disks are the new ones.
+            QCOMPARE(scans.load(), 4);
+            QVERIFY(!delivered->message.contains(QStringLiteral("could not re-read")));
+            QCOMPARE(controller.inventory().layout_hash, QStringLiteral("layout-b"));
+            continue;
+        }
+        QCOMPARE(scans.load(), 4);
+        QCOMPARE(delivered->message, QString::fromLatin1(sak::kPartitionUnverifiedMessage));
+        QVERIFY(!delivered->message.contains(QStringLiteral("no disks")));
+        // Fail closed: no disks to queue against until a scan finishes.
+        QVERIFY(controller.inventory().isEmpty());
+        QVERIFY(controller.inventory().scan_did_not_finish);
+        QVERIFY(!controller.queueOperation(sak::PartitionOperationType::InitializeDisk,
+                                           testDiskTarget()));
+    }
+}
+
+// F26: Apply's own scan that does not finish refuses the Apply as incomplete, with the way on, and
+// never as a PC without disks; nothing runs.
+void PartitionManagerControllerTests::applyOnAnUnfinishedScanSaysItIsIncomplete() {
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(healthyInventory());
+    controller.setInventoryScannerForTesting(
+        [](const sak::CancelCheck&) { return inventoryResult(unfinishedScanInventory()); });
+    bool executed = false;
+    controller.setApplyExecutorForTesting(
+        [&executed](const QVector<sak::PartitionOperation>&, bool, bool, const sak::CancelCheck&) {
+            executed = true;
+            return sak::PartitionExecutionResult{};
+        });
+    QSignalSpy refused(&controller, &sak::PartitionManagerController::applyRefused);
+    queueInitialize(&controller);
+    QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, false));
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+    QVERIFY(!executed);
+    QCOMPARE(refused.size(), 1);
+    const QString why = refused.first().first().toStringList().join(QLatin1Char(' '));
+    QVERIFY2(why.contains(QStringLiteral("The disk scan did not finish")) &&
+                 why.contains(
+                     QStringLiteral("The scan is incomplete, not a PC without disks: click "
+                                    "Scan Disks to try again.")) &&
+                 !why.contains(QStringLiteral("no disks")),
+             qPrintable(why));
+}
+
 void PartitionManagerControllerTests::inventoryRefreshCanBeCancelled() {
     sak::PartitionManagerController controller;
     std::atomic_bool entered{false};
@@ -967,6 +1066,72 @@ void PartitionManagerControllerTests::filesystemCheckCanBeCancelled() {
     QVERIFY(!delivered->success);
     QCOMPARE(controller.state(), sak::PartitionManagerState::Ready);
     QVERIFY(!controller.interactionBlocked());
+}
+
+// F25 (operation proof, 2026-11-12): Check Non-Windows File System ran e2fsck in this
+// standard-user process, which may not open the raw partition, and the refusal read as a corrupt
+// superblock. The check is now the read-only operation the elevated helper runs, built from the
+// scan's partition, and what the helper's run says reaches the result in its own words.
+void PartitionManagerControllerTests::readOnlyCheckRunsInTheElevatedHelper() {
+    auto inventory = volumeInventory();
+    auto& partition = inventory.disks[0].partitions[0];
+    partition.volume->file_system = QStringLiteral("ext4");
+    partition.volume->drive_letter.clear();
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(inventory);
+    std::optional<sak::PartitionFileSystemReadOnlyCheckRequest> seen;
+    controller.setFileSystemCheckRunnerForTesting(
+        [&seen](const sak::PartitionFileSystemReadOnlyCheckRequest& request,
+                const sak::CancelCheck&) {
+            seen = request;
+            return sak::PartitionFileSystemToolRunResult{};
+        });
+    const QString raw_path = QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk7\\Partition1");
+    controller.runReadOnlyFileSystemCheck(QStringLiteral("ext4"), raw_path);
+    QVERIFY(waitUntil([&seen]() { return seen.has_value(); }));
+    QVERIFY(seen->helper_operation.has_value());
+    const auto& operation = *seen->helper_operation;
+    QCOMPARE(operation.type, sak::PartitionOperationType::CheckFileSystem);
+    QCOMPARE(operation.risk, sak::OperationRisk::ReadOnly);
+    QVERIFY(operation.payload.value(QStringLiteral("read_only_check")).toBool());
+    QCOMPARE(operation.payload.value(QStringLiteral("target_path")).toString(), raw_path);
+    QCOMPARE(operation.target.partition_number.value(), 1U);
+    QCOMPARE(operation.target.disk_unique_id, QStringLiteral("test-unique-id"));
+    QVERIFY2(seen->helper_blockers.isEmpty(), qPrintable(seen->helper_blockers.join(u';')));
+
+    sak::PartitionExecutionStep refusal;
+    refusal.error_message = QStringLiteral(
+        "S.A.K. could not open the partition: Access is denied. The check read nothing, so this "
+        "says nothing about the file system.");
+    sak::PartitionExecutionResult refused;
+    refused.message = QStringLiteral("batch failed");
+    refused.steps.append(refusal);
+    std::optional<sak::PartitionOperation> ran;
+    const auto failed = sak::PartitionManagerController::runReadOnlyCheckThroughHelper(
+        *seen, [&ran, &refused](const sak::PartitionOperation& run) {
+            ran = run;
+            return refused;
+        });
+    QVERIFY(ran.has_value() && ran->payload.value(QStringLiteral("read_only_check")).toBool());
+    QVERIFY(!failed.success && !failed.blocked);
+    QCOMPARE(failed.problem, refusal.error_message);
+    sak::PartitionExecutionResult passed;
+    passed.success = true;
+    const auto clean = sak::PartitionManagerController::runReadOnlyCheckThroughHelper(
+        *seen, [&passed](const sak::PartitionOperation&) { return passed; });
+    QVERIFY(clean.success && clean.problem.isEmpty());
+
+    // A partition the scan does not have is not checked at all.
+    auto unknown = *seen;
+    unknown.helper_operation.reset();
+    bool called = false;
+    const auto blocked = sak::PartitionManagerController::runReadOnlyCheckThroughHelper(
+        unknown, [&called, &passed](const sak::PartitionOperation&) {
+            called = true;
+            return passed;
+        });
+    QVERIFY(blocked.blocked && !called);
+    QVERIFY(blocked.blockers.join(u' ').contains(QStringLiteral("not in the current scan")));
 }
 
 void PartitionManagerControllerTests::destructorCancelsAndJoinsInventoryScan() {

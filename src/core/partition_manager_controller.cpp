@@ -9,6 +9,7 @@
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/partition_operation_requests.h"
 #include "sak/partition_raw_device_io.h"
 #include "sak/partition_report_generator.h"
 
@@ -16,9 +17,16 @@
 #include <QFutureWatcher>
 #include <QMetaObject>
 #include <QPromise>
+#include <QRegularExpression>
 #include <QtConcurrent>
 #include <QThread>
+#include <QTimer>
 
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <utility>
 
 namespace sak {
@@ -90,6 +98,35 @@ bool requestWatcherCancellation(QFutureWatcher<ResultT>* watcher,
     return true;
 }
 
+// What a read-only file-system check's end says in the status bar. A check whose tool said more
+// than its exit code (e2fsck's "Abort? no") says that, in plain words.
+QString readOnlyCheckStatus(const PartitionFileSystemToolRunResult& result) {
+    if (result.cancelled) {
+        return QStringLiteral("Filesystem check cancelled");
+    }
+    if (result.blocked) {
+        return QStringLiteral("Filesystem check blocked: %1")
+            .arg(result.blockers.join(QStringLiteral("; ")));
+    }
+    if (result.success) {
+        return QStringLiteral("Filesystem check complete");
+    }
+    if (!result.problem.isEmpty()) {
+        return QStringLiteral("Filesystem check failed: %1").arg(result.problem);
+    }
+    return QStringLiteral("Filesystem check failed with exit code %1").arg(result.exit_code);
+}
+
+// The backup folder must be one the backup can be written into now, not only at Apply
+// (queuedBackupBlocker).
+void appendQueuedBackupBlocker(const PartitionInventory& inventory,
+                               const PartitionOperation& operation,
+                               OperationPreview* preview) {
+    if (const QString backup = queuedBackupBlocker(inventory, operation); !backup.isEmpty()) {
+        preview->blockers.append(backup);
+    }
+}
+
 bool projectCreateOperation(PartitionDiskInfo* disk, const PartitionOperation& operation) {
     const uint64_t create_size =
         operation.payload.value(QStringLiteral("size_bytes")).toString().toULongLong();
@@ -118,6 +155,57 @@ bool projectCreateOperation(PartitionDiskInfo* disk, const PartitionOperation& o
     }
     return true;
 }
+
+// The scan's partition that a non-Windows check's raw path names:
+// \\?\GLOBALROOT\Device\HarddiskN\PartitionM.
+const PartitionInfoEx* rawPathPartition(const PartitionInventory& inventory,
+                                        const QString& target_path) {
+    static const QRegularExpression kRawPartition(
+        QStringLiteral(R"(^\\\\\?\\GLOBALROOT\\Device\\Harddisk(\d+)\\Partition(\d+)$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto match = kRawPartition.match(target_path.trimmed());
+    if (!match.hasMatch()) {
+        return nullptr;
+    }
+    const auto* disk = PartitionSafetyValidator::findDisk(inventory,
+                                                          DiskNumber{match.captured(1).toUInt()});
+    if (disk == nullptr) {
+        return nullptr;
+    }
+    const uint32_t number = match.captured(2).toUInt();
+    const auto found = std::ranges::find_if(disk->partitions, [number](const auto& partition) {
+        return partition.partition_number.value() == number;
+    });
+    return found == disk->partitions.end() ? nullptr : &*found;
+}
+
+constexpr auto kReadOnlyCheckCancelPoll = std::chrono::milliseconds(200);
+
+// The elevated executor runs @p operation; a cancel the check is asked for stops it.
+PartitionExecutionResult executeElevated(const PartitionOperation& operation,
+                                         const CancelCheck& should_cancel) {
+    PartitionExecutor executor;
+    std::mutex mutex;
+    std::condition_variable wake;
+    bool done = false;
+    std::thread relay([&]() {
+        std::unique_lock lock(mutex);
+        while (!wake.wait_for(lock, kReadOnlyCheckCancelPoll, [&done]() { return done; })) {
+            if (should_cancel && should_cancel()) {
+                executor.cancel();
+                return;
+            }
+        }
+    });
+    auto result = executor.execute({operation}, false, true);
+    {
+        const std::lock_guard lock(mutex);
+        done = true;
+    }
+    wake.notify_all();
+    relay.join();
+    return result;
+}
 }  // namespace
 
 PartitionManagerController::PartitionManagerController(QObject* parent)
@@ -132,7 +220,10 @@ PartitionManagerController::PartitionManagerController(QObject* parent)
           })
     , m_file_system_check_runner([](const PartitionFileSystemReadOnlyCheckRequest& request,
                                     const CancelCheck& should_cancel) {
-        return PartitionFileSystemToolRunner::runReadOnlyCheck(request, should_cancel);
+        return runReadOnlyCheckThroughHelper(request,
+                                             [&should_cancel](const PartitionOperation& operation) {
+                                                 return executeElevated(operation, should_cancel);
+                                             });
     }) {}
 
 PartitionManagerController::~PartitionManagerController() {
@@ -225,11 +316,20 @@ PartitionManagerState PartitionManagerController::inventoryReadyState(
 
 namespace {
 
+/// A scan that did not finish is incomplete, never a PC with no disks, and a new scan is the way
+/// on (F26, 2026-11-12: a busy PC's timed-out scan read as "found no disks").
+QString incompleteScanText(const PartitionInventory& inventory) {
+    return QStringLiteral(
+               "%1. The scan is incomplete, not a PC without disks: click Scan Disks to "
+               "try again.")
+        .arg(inventory.warnings.join(QStringLiteral("; ")));
+}
+
 /// A scan with no disk: one that did not finish says so, in its own words.
 QString emptyInventoryStatusMessage(const PartitionInventory& inventory) {
     const QString warnings = inventory.warnings.join(QStringLiteral("; "));
     if (inventory.scan_did_not_finish) {
-        return QStringLiteral("Partition Manager: %1").arg(warnings);
+        return QStringLiteral("Partition Manager: %1").arg(incompleteScanText(inventory));
     }
     const QString detail = warnings.isEmpty() ? QString() : QStringLiteral(": %1").arg(warnings);
     return QStringLiteral("Partition Manager: inventory FAILED -- no disks were returned%1")
@@ -309,7 +409,9 @@ bool PartitionManagerController::queueOperations(
         bindDiskIdentity(m_inventory, &operation);
         bindRawPayloadTargetIdentity(m_inventory, &operation);
         bindBackupVolumeIdentity(&operation);
-        const auto preview = m_planner.previewOperation(projected_inventory, operation);
+        bindResizeFileSystem(m_inventory, &operation);
+        auto preview = m_planner.previewOperation(projected_inventory, operation);
+        appendQueuedBackupBlocker(m_inventory, operation, &preview);
         batch.operations.append(preview.operations);
         batch.blockers.append(preview.blockers);
         batch.warnings.append(preview.warnings);
@@ -596,6 +698,9 @@ bool PartitionManagerController::inventoryIsAuthoritative(const PartitionInvento
 }
 
 QString PartitionManagerController::inventoryFailureMessage(const PartitionInventory& inventory) {
+    if (inventory.isEmpty() && inventory.scan_did_not_finish) {
+        return incompleteScanText(inventory);
+    }
     if (inventory.isEmpty()) {
         return inventory.warnings.isEmpty() ? QStringLiteral("inventory returned no disks")
                                             : inventory.warnings.join(QStringLiteral("; "));
@@ -710,6 +815,9 @@ void PartitionManagerController::finishInventoryScan(
     } else if (purpose == InventoryScanPurpose::ApplyPreflight) {
         terminal_state = finishApplyPreflight(std::move(scan_result.inventory),
                                               scan_result.cancelled);
+    } else if (purpose == InventoryScanPurpose::ApplyVerification &&
+               retryVerificationScan(scan_result)) {
+        // Verifying still: the next scan starts after the backoff.
     } else if (purpose == InventoryScanPurpose::ApplyVerification) {
         terminal_state = finishApplyVerification(std::move(scan_result.inventory),
                                                  scan_result.cancelled);
@@ -882,6 +990,8 @@ void PartitionManagerController::finishApplyExecution(
         return;
     }
     m_pending_execution_result = std::move(result);
+    m_verification_attempt = 0;
+    m_verification_elevated = request.use_elevation;
     startInventoryScan(InventoryScanPurpose::ApplyVerification, request.use_elevation);
     QObject::disconnect(watcher, nullptr, this, nullptr);
     m_apply_watcher = nullptr;
@@ -889,6 +999,40 @@ void PartitionManagerController::finishApplyExecution(
     m_active_apply_request.reset();
     m_apply_executor.reset();
     watcher->deleteLater();
+}
+
+namespace {
+
+// What an Apply says when no scan afterwards finished: the operation's own failure, if it failed,
+// and that its result could not be verified.
+QString unverifiedApplyMessage(const PartitionExecutionResult& result) {
+    const QString unverified = QString::fromLatin1(kPartitionUnverifiedMessage);
+    return result.success ? unverified : QStringLiteral("%1; %2").arg(result.message, unverified);
+}
+
+}  // namespace
+
+// A verification scan that did not finish (Windows' storage service did not answer in time) is
+// tried again, twice, after a growing wait; the Apply it follows has finished either way.
+bool PartitionManagerController::retryVerificationScan(const StorageInventoryScanResult& scan) {
+    if (scan.cancelled || !scan.inventory.scan_did_not_finish ||
+        m_verification_attempt >= kPartitionVerificationRetries) {
+        return false;
+    }
+    ++m_verification_attempt;
+    const QString note = QStringLiteral(
+                             "The disk scan after Apply did not finish (%1); scanning again (%2 of "
+                             "%3)")
+                             .arg(scan.inventory.warnings.join(QStringLiteral("; ")))
+                             .arg(m_verification_attempt)
+                             .arg(kPartitionVerificationRetries);
+    logWarning("{}", note.toStdString());
+    Q_EMIT logOutput(note);
+    Q_EMIT statusMessage(note, sak::kTimerStatusDefaultMs);
+    QTimer::singleShot(m_verification_backoff_ms * m_verification_attempt, this, [this]() {
+        startInventoryScan(InventoryScanPurpose::ApplyVerification, m_verification_elevated);
+    });
+    return true;
 }
 
 PartitionManagerState PartitionManagerController::finishApplyVerification(
@@ -903,7 +1047,11 @@ PartitionManagerState PartitionManagerController::finishApplyVerification(
     m_pending_execution_result.reset();
     publishInventoryDiagnostics(inventory);
     const bool verified = !cancelled && inventoryIsAuthoritative(inventory);
-    if (!verified) {
+    if (!cancelled && inventory.scan_did_not_finish) {
+        // Not a failure: the operation ran. Nothing can be queued against this inventory, which
+        // has no disks, until a scan finishes (F26).
+        result.message = unverifiedApplyMessage(result);
+    } else if (!verified) {
         result.success = false;
         result.cancelled = result.cancelled || cancelled;
         const QString reason = cancelled ? QStringLiteral("verification scan cancelled")
@@ -998,11 +1146,23 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
 
     const QString manifest_path = runtimeFilesystemManifestPath();
     const QString tools_root = QFileInfo(manifest_path).absolutePath();
-    const PartitionFileSystemReadOnlyCheckRequest request{.manifest_path = manifest_path,
-                                                          .tools_root = tools_root,
-                                                          .file_system = file_system,
-                                                          .target_path = target_path,
-                                                          .timeout_ms = 0};
+    PartitionFileSystemReadOnlyCheckRequest request{.manifest_path = manifest_path,
+                                                    .tools_root = tools_root,
+                                                    .file_system = file_system,
+                                                    .target_path = target_path,
+                                                    .timeout_ms = 0};
+    if (const auto* partition = rawPathPartition(m_inventory, target_path); partition != nullptr) {
+        auto operation = PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::CheckFileSystem,
+            partitionIdentityTarget(*partition),
+            QJsonObject{{QStringLiteral("non_native_file_system_tool"), true},
+                        {QStringLiteral("read_only_check"), true},
+                        {QStringLiteral("file_system"), file_system},
+                        {QStringLiteral("target_path"), target_path}});
+        bindDiskIdentity(m_inventory, &operation);
+        request.helper_blockers = m_planner.previewOperation(m_inventory, operation).blockers;
+        request.helper_operation = operation;
+    }
     auto cancel_requested = std::make_shared<std::atomic_bool>(false);
     auto* watcher = new QFutureWatcher<PartitionFileSystemToolRunResult>(this);
     const auto runner = m_file_system_check_runner;
@@ -1022,21 +1182,9 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
                 if (!result.std_err.trimmed().isEmpty()) {
                     Q_EMIT logOutput(result.std_err.trimmed());
                 }
-                if (result.cancelled) {
-                    Q_EMIT statusMessage(QStringLiteral("Filesystem check cancelled"),
-                                         sak::kTimerStatusDefaultMs);
-                } else if (result.blocked) {
-                    Q_EMIT statusMessage(QStringLiteral("Filesystem check blocked: %1")
-                                             .arg(result.blockers.join(QStringLiteral("; "))),
-                                         sak::kTimerStatusDefaultMs);
-                } else if (result.success) {
-                    Q_EMIT statusMessage(QStringLiteral("Filesystem check complete"),
-                                         sak::kTimerStatusDefaultMs);
-                } else {
-                    Q_EMIT statusMessage(QStringLiteral("Filesystem check failed with exit code %1")
-                                             .arg(result.exit_code),
-                                         sak::kTimerStatusDefaultMs);
-                }
+                Q_EMIT statusMessage(readOnlyCheckStatus(result),
+                                     result.problem.isEmpty() ? sak::kTimerStatusDefaultMs
+                                                              : sak::kTimerStatusLongMs);
                 Q_EMIT fileSystemCheckFinished(result);
                 const auto terminal_state = stableState();
                 QObject::disconnect(watcher, nullptr, this, nullptr);
@@ -1054,6 +1202,39 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
     setState(PartitionManagerState::PreflightRunning);
     Q_EMIT statusMessage(QStringLiteral("Running read-only %1 filesystem check").arg(file_system),
                          0);
+}
+
+PartitionFileSystemToolRunResult PartitionManagerController::runReadOnlyCheckThroughHelper(
+    const PartitionFileSystemReadOnlyCheckRequest& request,
+    const std::function<PartitionExecutionResult(const PartitionOperation&)>& execute) {
+    PartitionFileSystemToolRunResult result;
+    const auto command = PartitionFileSystemToolRunner::buildReadOnlyCheckCommand(
+        request.file_system, request.target_path);
+    result.tool_id = command.tool_id;
+    result.arguments = command.arguments;
+    result.blockers = command.ok() ? request.helper_blockers : command.blockers;
+    if (result.blockers.isEmpty() && !request.helper_operation) {
+        result.blockers.append(
+            QStringLiteral("The partition to check is not in the current scan. "
+                           "Scan Disks again, then check it."));
+    }
+    if (!result.blockers.isEmpty()) {
+        result.blocked = true;
+        return result;
+    }
+    const PartitionExecutionResult run = execute(*request.helper_operation);
+    result.success = run.success;
+    result.cancelled = run.cancelled;
+    result.timed_out = run.timed_out;
+    result.exit_code = run.success ? 0 : -1;
+    const PartitionExecutionStep step = run.steps.isEmpty() ? PartitionExecutionStep{}
+                                                            : run.steps.first();
+    result.std_out = step.stdout_text;
+    result.std_err = step.stderr_text;
+    if (!run.success && !run.cancelled) {
+        result.problem = !step.error_message.isEmpty() ? step.error_message : run.message;
+    }
+    return result;
 }
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
@@ -1104,6 +1285,10 @@ void PartitionManagerController::setApplyExecutorForTesting(ApplyExecutor execut
     if (!interactionBlocked()) {
         m_apply_executor_for_testing = std::move(executor);
     }
+}
+
+void PartitionManagerController::setVerificationBackoffForTesting(int backoff_ms) {
+    m_verification_backoff_ms = backoff_ms;
 }
 
 void PartitionManagerController::setFileSystemCheckRunnerForTesting(FileSystemCheckRunner runner) {

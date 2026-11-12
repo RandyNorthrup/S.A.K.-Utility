@@ -507,6 +507,7 @@ message(STATUS "Added unit test: test_elevated_helper_connection")
 # test_partition_operation_requests - what the panel and the certification step both queue
 add_executable(test_partition_operation_requests
     unit/test_partition_operation_requests.cpp
+    support/junction_fixture.h
 )
 set_target_properties(test_partition_operation_requests PROPERTIES
     AUTOMOC ON

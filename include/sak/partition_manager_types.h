@@ -197,6 +197,12 @@ struct PartitionVolumeInfo {
     /// refuses there, so this leaves nothing unchecked. Only that scan sets it.
     bool administrator_state_pending{false};
     QString bitlocker_state_error;
+    /// The volume's shadow-copy storage, as Win32_ShadowStorage reports it. Windows answers an
+    /// administrator only, so a scan without those rights leaves shadow_storage_known false. A
+    /// maximum of UINT64_MAX means no limit.
+    bool shadow_storage_known{false};
+    uint64_t shadow_storage_max_bytes{0};
+    uint64_t shadow_storage_used_bytes{0};
 
     [[nodiscard]] bool hasDriveLetter() const noexcept { return !drive_letter.isEmpty(); }
 };
@@ -238,6 +244,9 @@ struct PartitionDiskInfo {
     QString serial_number;
     QString bus_type;
     QString media_type;
+    /// Get-Disk's ProvisioningType: "Thin" for a virtual disk file, on which Windows allows no
+    /// full format; "Fixed"; empty when the scan did not say.
+    QString provisioning_type;
     /// What the drive itself reports through the bundled smartctl. Asked only when Windows says
     /// "Unspecified", and only with administrator rights. Zero means it reported none.
     int rotation_rate_rpm{0};
@@ -287,6 +296,10 @@ struct PartitionInventory {
     /// It lists no disk, its warning says why, and the panel says it did not finish, not that the
     /// PC has no disks.
     bool scan_did_not_finish{false};
+    /// This edition of Windows formats ReFS (PartitionFileSystemRegistry::editionFormatsRefs):
+    /// Windows 11 Pro has ReFS only as a Dev Drive, and Format-Volume refuses it there. False
+    /// until a scan of this PC says otherwise.
+    bool refs_format_available{false};
 
     [[nodiscard]] bool isEmpty() const noexcept { return disks.isEmpty(); }
 

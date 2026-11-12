@@ -6,9 +6,11 @@
 
 #include "sak/partition_script_builder.h"
 
+#include "sak/partition_file_system_registry.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_os_migration.h"
 #include "sak/partition_raw_device_io.h"
+#include "sak/partition_safety_validator.h"
 #include "sak/partition_stop_cleanup.h"
 #include "sak/windows_continued_work.h"
 
@@ -141,6 +143,29 @@ QString windowsContinuedLine(WindowsContinuedWork work,
 // of the volume is not known where these scans run, so the marker carries none.
 QString volumeScanLine(const QString& statement) {
     return windowsContinuedLine(WindowsContinuedWork::VolumeScan, QStringLiteral("0"), statement);
+}
+
+// The scan of the volume at drive letter @p drive (a PowerShell expression). Repair-Volume -Scan
+// reads NTFS and ReFS only, and says "The specified file system is not supported" on FAT32 and
+// exFAT, which get chkdsk without /f: it only reads. Either stops the script on a problem. A
+// Storage cmdlet given -Verbose no longer stops on $ErrorActionPreference, so the scan says
+// -ErrorAction Stop itself (operation proof, 2026-11-12: Check File System on FAT32 and exFAT
+// reported success having checked nothing, and Move of a FAT32 volume failed after moving it).
+// chkdsk's output is captured with Stop relaxed for the call, as the bundled tools' is: under Stop
+// a line on stderr would be a NativeCommandError, and the exit code is read before anything else
+// runs. The drive is held in a variable, since @p drive may be $_ of an enclosing pipeline.
+QString volumeScanStatement(const QString& drive, bool verbose = false) {
+    return QStringLiteral(
+               "if (@('NTFS', 'ReFS') -contains (Get-Volume -DriveLetter %1 -ErrorAction "
+               "Stop).FileSystem) { Repair-Volume -DriveLetter %1 -Scan%2 -ErrorAction Stop } else "
+               "{ $sakScanDrive = %1; $sakScanPreference = $ErrorActionPreference; "
+               "$ErrorActionPreference = 'Continue'; try { $sakScanOutput = & "
+               "([Environment]::SystemDirectory + '\\chkdsk.exe') ('{0}:' -f $sakScanDrive) 2>&1; "
+               "$sakScanExit = [int]$LASTEXITCODE } finally { $ErrorActionPreference = "
+               "$sakScanPreference }; $sakScanOutput | ForEach-Object { Write-Output ([string]$_) "
+               "}; if ($sakScanExit -ne 0) { throw ('chkdsk found a problem on {0}: (exit {1})' -f "
+               "$sakScanDrive, $sakScanExit) } }")
+        .arg(drive, verbose ? QStringLiteral(" -Verbose") : QString());
 }
 
 QString requirePartitionIdentity(const PartitionTarget& target) {
@@ -320,11 +345,6 @@ bool isHfsFileSystemToken(const QString& fileSystem) {
 
 bool isApfsFileSystemToken(const QString& fileSystem) {
     return fileSystem.trimmed().compare(QStringLiteral("apfs"), Qt::CaseInsensitive) == 0;
-}
-
-bool isSupportedNonNativeCreateFormatFileSystem(const QString& fileSystem) {
-    return isExtFileSystemToken(fileSystem) || isHfsFileSystemToken(fileSystem) ||
-           isLinuxSwapFileSystemToken(fileSystem) || isApfsFileSystemToken(fileSystem);
 }
 
 // The partition type a file system S.A.K. formats but Windows does not mount takes: what Linux
@@ -1470,7 +1490,9 @@ ApfsRootFileMutationScriptInput apfsRootFileMutationScriptInput(
 
     input.file_name = apfsRootMutationFileName(operation);
     input.directory_name = apfsRootMutationDirectoryName(operation);
-    input.volume_name = apfsVolumeLabel(operation);
+    // The writer takes a volume name only to relabel; any other command would drop it.
+    input.volume_name = apfsVolumeLabelMutation(operation.type) ? apfsVolumeLabel(operation)
+                                                                : QString();
 
     input.blocker = apfsVolumeLabelBlocker(operation.type, input.volume_name);
     if (!input.blocker.isEmpty()) {
@@ -1731,9 +1753,9 @@ QString runtimeHfsWriterCliPath() {
     return QDir(appDir).filePath(QStringLiteral("sak_hfs_writer_cli.exe"));
 }
 
-// The per-command argument conditionals of Invoke-SakApfsWriterCli (split out to keep each
-// function within the length gate). No format placeholders.
-QString apfsWriterCliArgConditionals() {
+// The volume-name arguments of Invoke-SakApfsWriterCli: a format's volumes and a relabel's new
+// name. No format placeholders.
+QString apfsWriterCliVolumeArgConditionals() {
     return QStringLiteral(
         "  if ($Command -eq 'format-raw') {\n"
         "    $cliArgs += @('--volume-name', $VolumeName)\n"
@@ -1749,59 +1771,75 @@ QString apfsWriterCliArgConditionals() {
         "      $cliArgs += @('--recovery-key-file', $RecoveryKeyFile)\n"
         "    }\n"
         "  }\n"
-        "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
-        "'patch-raw-root-directory-file', "
-        "'delete-raw-root-file', 'write-raw-root-directory-file', "
-        "'delete-raw-root-directory-file', 'commit-raw-file-write', "
-        "'commit-raw-file-delete', 'commit-raw-directory-child-write', "
-        "'commit-raw-directory-child-delete', 'commit-raw-file-patch', "
-        "'commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
+        // Without it the writer names the volume "SAK APFS", its default, and reports success
+        // (operation proof, 2026-11-12).
+        "  if ($Command -eq 'change-raw-volume-label') {\n"
+        "    if ([string]::IsNullOrWhiteSpace($VolumeName)) { throw 'APFS volume name is "
         "required' }\n"
-        "    $cliArgs += @('--file-name', $FileName)\n"
-        "  }\n"
-        "  if ($Command -in @('commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($NewFileName)) { throw 'APFS clone/hard link new "
-        "name is required' }\n"
-        "    $cliArgs += @('--new-file-name', $NewFileName)\n"
-        "  }\n"
-        "  if ($Command -eq 'commit-raw-file-patch' -and "
-        "-not [string]::IsNullOrWhiteSpace($DirectoryName)) {\n"
-        "    $cliArgs += @('--directory-name', $DirectoryName)\n"
-        "  }\n"
-        "  if ($Command -in @('create-raw-root-directory', 'delete-raw-root-directory', "
-        "'write-raw-root-directory-file', 'patch-raw-root-directory-file', "
-        "'delete-raw-root-directory-file', 'commit-raw-directory-create', "
-        "'commit-raw-directory-delete', 'commit-raw-directory-child-write', "
-        "'commit-raw-directory-child-delete')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($DirectoryName)) { throw 'APFS root directory "
-        "name is "
-        "required' }\n"
-        "    $cliArgs += @('--directory-name', $DirectoryName)\n"
-        "  }\n"
-        "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
-        "'patch-raw-root-directory-file', 'write-raw-root-directory-file', "
-        "'commit-raw-file-write', 'commit-raw-directory-child-write', "
-        "'commit-raw-file-patch')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'APFS root file "
-        "payload "
-        "is required' }\n"
-        "    $cliArgs += @('--payload-file', $PayloadFile)\n"
-        "  }\n"
-        "  if ($CompressZlib -and $Command -in @('commit-raw-file-write', "
-        "'commit-raw-directory-child-write')) {\n"
-        "    $cliArgs += '--compress-zlib'\n"
-        "  }\n"
-        "  if ($Command -in @('commit-raw-snapshot-create', 'commit-raw-snapshot-delete', "
-        "'commit-raw-snapshot-revert')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($SnapshotName)) { throw 'APFS snapshot name is "
-        "required' }\n"
-        "    $cliArgs += @('--snapshot-name', $SnapshotName)\n"
-        "  }\n"
-        "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file', "
-        "'commit-raw-file-patch')) {\n"
-        "    $cliArgs += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
+        "    $cliArgs += @('--volume-name', $VolumeName)\n"
         "  }\n");
+}
+
+// The per-command argument conditionals of Invoke-SakApfsWriterCli (split out to keep each
+// function within the length gate). No format placeholders.
+QString apfsWriterCliArgConditionals() {
+    return apfsWriterCliVolumeArgConditionals() +
+           QStringLiteral(
+               "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
+               "'patch-raw-root-directory-file', "
+               "'delete-raw-root-file', 'write-raw-root-directory-file', "
+               "'delete-raw-root-directory-file', 'commit-raw-file-write', "
+               "'commit-raw-file-delete', 'commit-raw-directory-child-write', "
+               "'commit-raw-directory-child-delete', 'commit-raw-file-patch', "
+               "'commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
+               "required' }\n"
+               "    $cliArgs += @('--file-name', $FileName)\n"
+               "  }\n"
+               "  if ($Command -in @('commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($NewFileName)) { throw 'APFS clone/hard link "
+               "new "
+               "name is required' }\n"
+               "    $cliArgs += @('--new-file-name', $NewFileName)\n"
+               "  }\n"
+               "  if ($Command -eq 'commit-raw-file-patch' -and "
+               "-not [string]::IsNullOrWhiteSpace($DirectoryName)) {\n"
+               "    $cliArgs += @('--directory-name', $DirectoryName)\n"
+               "  }\n"
+               "  if ($Command -in @('create-raw-root-directory', 'delete-raw-root-directory', "
+               "'write-raw-root-directory-file', 'patch-raw-root-directory-file', "
+               "'delete-raw-root-directory-file', 'commit-raw-directory-create', "
+               "'commit-raw-directory-delete', 'commit-raw-directory-child-write', "
+               "'commit-raw-directory-child-delete')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($DirectoryName)) { throw 'APFS root directory "
+               "name is "
+               "required' }\n"
+               "    $cliArgs += @('--directory-name', $DirectoryName)\n"
+               "  }\n"
+               "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
+               "'patch-raw-root-directory-file', 'write-raw-root-directory-file', "
+               "'commit-raw-file-write', 'commit-raw-directory-child-write', "
+               "'commit-raw-file-patch')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'APFS root file "
+               "payload "
+               "is required' }\n"
+               "    $cliArgs += @('--payload-file', $PayloadFile)\n"
+               "  }\n"
+               "  if ($CompressZlib -and $Command -in @('commit-raw-file-write', "
+               "'commit-raw-directory-child-write')) {\n"
+               "    $cliArgs += '--compress-zlib'\n"
+               "  }\n"
+               "  if ($Command -in @('commit-raw-snapshot-create', 'commit-raw-snapshot-delete', "
+               "'commit-raw-snapshot-revert')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($SnapshotName)) { throw 'APFS snapshot name "
+               "is "
+               "required' }\n"
+               "    $cliArgs += @('--snapshot-name', $SnapshotName)\n"
+               "  }\n"
+               "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file', "
+               "'commit-raw-file-patch')) {\n"
+               "    $cliArgs += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
+               "  }\n");
 }
 
 QString apfsWriterCliFunctionScript() {
@@ -1923,24 +1961,46 @@ QString powerShellArrayLiteralWithTrailingExpression(const QStringList& values,
 
 QString filesystemToolFunctionScript() {
     return QStringLiteral(
-        "function Invoke-SakFilesystemTool([string]$Name, [string]$ToolPath, "
-        "[string]$ExpectedHash, [string[]]$ToolArgs, [int[]]$AcceptedExitCodes) {\n"
-        "  $actualHash = (Get-FileHash -LiteralPath $ToolPath -Algorithm SHA256).Hash."
-        "ToLowerInvariant()\n"
-        "  if ($actualHash -ne $ExpectedHash) { throw \"Filesystem tool hash mismatch: $Name\" }\n"
-        "  Write-Output ('Running approved filesystem tool: {0} {1}' -f $ToolPath, "
-        "($ToolArgs -join ' '))\n"
-        // e2fsprogs print their version banner to stderr (resize2fs always, e2fsck and mke2fs
-        // mostly); under Stop that first line threw NativeCommandError and ext format, grow,
-        // shrink and repair stopped there (audit e1). Stop is relaxed for the call only.
-        "  $oldPreference = $ErrorActionPreference\n"
-        "  $ErrorActionPreference = 'Continue'\n"
-        "  try { $toolOutput = & $ToolPath @ToolArgs 2>&1; $toolExitCode = [int]$LASTEXITCODE "
-        "} finally { $ErrorActionPreference = $oldPreference }\n"
-        "  $toolOutput | ForEach-Object { Write-Output ([string]$_) }\n"
-        "  Write-Output ('Filesystem tool exit code: {0}' -f $toolExitCode)\n"
-        "  if ($AcceptedExitCodes -notcontains $toolExitCode) { exit $toolExitCode }\n"
-        "}\n");
+               "function Invoke-SakFilesystemTool([string]$Name, [string]$ToolPath, "
+               "[string]$ExpectedHash, [string[]]$ToolArgs, [int[]]$AcceptedExitCodes) {\n"
+               "  $actualHash = (Get-FileHash -LiteralPath $ToolPath -Algorithm SHA256).Hash."
+               "ToLowerInvariant()\n"
+               "  if ($actualHash -ne $ExpectedHash) { throw \"Filesystem tool hash mismatch: "
+               "$Name\" }\n"
+               "  Write-Output ('Running approved filesystem tool: {0} {1}' -f $ToolPath, "
+               "($ToolArgs -join ' '))\n"
+               // e2fsprogs print their version banner to stderr (resize2fs always, e2fsck and
+               // mke2fs mostly); under Stop that first line threw NativeCommandError and ext
+               // format, grow, shrink and repair stopped there (audit e1). Stop is relaxed for the
+               // call only.
+               "  $oldPreference = $ErrorActionPreference\n"
+               "  $ErrorActionPreference = 'Continue'\n"
+               "  try { $toolOutput = & $ToolPath @ToolArgs 2>&1; $toolExitCode = "
+               "[int]$LASTEXITCODE "
+               "} finally { $ErrorActionPreference = $oldPreference }\n"
+               "  $toolOutput | ForEach-Object { Write-Output ([string]$_) }\n"
+               "  Write-Output ('Filesystem tool exit code: {0}' -f $toolExitCode)\n"
+               // A tool that could not open the partition says so, never as damage to a file
+               // system it never read (F25, 2026-11-12).
+               "  $openFailure = Get-SakToolOpenFailure (($toolOutput | ForEach-Object { "
+               "[string]$_ }) -join \"`n\")\n"
+               "  if ($openFailure) { throw $openFailure }\n"
+               // e2fsck's answer is its output as well as its exit code: a check exits 0 after
+               // answering no to "Abort?" on a file system larger than its partition (2026-11-11).
+               "  if ([System.IO.Path]::GetFileNameWithoutExtension($ToolPath) -ieq 'e2fsck') {\n"
+               "    $problem = Get-SakE2fsckProblem $toolExitCode (($toolOutput | ForEach-Object { "
+               "[string]$_ }) -join \"`n\") $AcceptedExitCodes\n"
+               "    if ($problem) { throw ('{0}: {1}' -f $Name, $problem) }\n"
+               "  }\n"
+               "  if ($AcceptedExitCodes -notcontains $toolExitCode) { exit $toolExitCode }\n"
+               "}\n") +
+           PartitionFileSystemToolRunner::e2fsckProblemFunctionScript();
+}
+
+// What an e2fsck repair (-p) may end with: 0 clean, 1 corrected, 2 corrected and the system should
+// be rebooted (e2fsck(8)). 4 and up are errors left, an operational error, or a cancel.
+QStringList e2fsckRepairExitCodes() {
+    return {QStringLiteral("0"), QStringLiteral("1"), QStringLiteral("2")};
 }
 
 QString filesystemToolCallScript(const QString& name,
@@ -1989,6 +2049,151 @@ QString takeSelectedPartitionScript(bool clearFileSystem) {
                 ? QStringLiteral("[Sak.RawPartitionWrite]::ClearFileSystem("
                                  "$sakTakenPartition, [int64]$p.Size)\n")
                 : QStringLiteral("[Sak.RawPartitionWrite]::Release($sakTakenPartition)\n"));
+}
+
+// What Format-Volume would refuse (PartitionFileSystemRegistry::windowsFormatBlocker), found
+// before the script is made: the file system, the cluster size for the partition's size, and
+// the label. The edition (ReFS) is the script's to check, on the PC that runs it.
+QString windowsFormatChoiceBlocker(const QString& fileSystem,
+                                   uint64_t partitionBytes,
+                                   uint64_t allocationUnit,
+                                   const QString& label) {
+    return PartitionFileSystemRegistry::windowsFormatBlocker(
+        {.file_system = fileSystem,
+         .partition_bytes = partitionBytes,
+         .allocation_unit_bytes = allocationUnit,
+         .label = label,
+         .refs_available = true});
+}
+
+// The script's own check, just before it writes: the same rules on the partition as it is then,
+// with this PC's edition and the disk's physical sector size.
+QString windowsFormatCheckScript(const QString& disk,
+                                 const QString& sizeExpression,
+                                 const QString& fileSystem,
+                                 uint64_t allocationUnit) {
+    return PartitionFileSystemRegistry::windowsFormatCheckFunctionScript() +
+           QStringLiteral("Assert-SakWindowsFormatChoice %1 %2 %3 %4\n")
+               .arg(disk,
+                    sizeExpression,
+                    PartitionScriptBuilder::quotePowerShell(fileSystem.trimmed()),
+                    uintArg(allocationUnit));
+}
+
+// Create is all or nothing: when Windows cannot format the partition it has just made, the
+// partition is removed again and the disk is as it was. A failed ReFS or FAT32 format left a RAW,
+// lettered partition behind (operation proof, 2026-11-11).
+QString createdPartitionFormatScript(const PartitionOperation& operation, const QString& format) {
+    return QStringLiteral(
+               "try {\n"
+               "%1"
+               "} catch {\n"
+               "  $sakFormatError = $_.Exception.Message\n"
+               "  $sakUndo = 'The new partition was removed, so the disk is as it was.'\n"
+               "  try {\n"
+               "Remove-Partition -DiskNumber %2 -PartitionNumber $p.PartitionNumber "
+               "-Confirm:$false -ErrorAction Stop\n"
+               "  } catch {\n"
+               "    $sakUndo = ('The new partition could not be removed ({0}): delete Disk %2 "
+               "Partition {1} before you use the disk.' -f $_.Exception.Message, "
+               "$p.PartitionNumber)\n"
+               "  }\n"
+               "  throw ('Windows could not format the new partition: {0} {1}' -f $sakFormatError, "
+               "$sakUndo)\n"
+               "}\n")
+        .arg(format, uintArg(operation.target.disk_number.value()));
+}
+
+// Hide: every drive letter and folder path the partition has is removed while it is visible, then
+// it is hidden, and Windows is asked afterwards that it is hidden with no access path left.
+// Set-Partition -IsHidden drops the access paths itself on Windows 11 25H2, so the removal that
+// came after it failed with "The access path is not valid" and Hide failed on every lettered
+// partition (operation proof, 2026-11-11; on testpc1 the same on GPT and MBR, and a partition
+// hidden that way got its letter and folder path back on Unhide). The volume's own \\?\Volume{...}
+// path is not an access path to remove.
+QString hidePartitionScript(const PartitionOperation& operation) {
+    return QStringLiteral(
+               "$sakHideDisk = [uint32]%1\n"
+               "$sakHideNumber = [uint32]%2\n"
+               "$sakHide = Get-Partition -DiskNumber $sakHideDisk -PartitionNumber $sakHideNumber "
+               "-ErrorAction Stop\n"
+               "foreach ($sakAccessPath in @($sakHide.AccessPaths)) {\n"
+               "  if (-not [string]::IsNullOrWhiteSpace($sakAccessPath) -and "
+               "-not ([string]$sakAccessPath).StartsWith('\\\\?\\Volume{')) {\n"
+               "    Remove-PartitionAccessPath -DiskNumber $sakHideDisk -PartitionNumber "
+               "$sakHideNumber -AccessPath $sakAccessPath -ErrorAction Stop\n"
+               "    Write-Output ('Removed the partition''s access path {0}' -f $sakAccessPath)\n"
+               "  }\n"
+               "}\n"
+               "Set-Partition -DiskNumber %1 -PartitionNumber %2 -IsHidden $true "
+               "-NoDefaultDriveLetter $true -ErrorAction Stop\n"
+               "Update-HostStorageCache -ErrorAction Stop\n"
+               "$sakHidden = Get-Partition -DiskNumber $sakHideDisk -PartitionNumber "
+               "$sakHideNumber -ErrorAction Stop\n"
+               "if (-not $sakHidden.IsHidden) { throw 'Windows did not hide the partition' }\n"
+               "$sakLeft = @($sakHidden.AccessPaths | Where-Object { $_ -and -not "
+               "([string]$_).StartsWith('\\\\?\\Volume{') })\n"
+               "if ($sakLeft.Count -gt 0) { throw ('The partition is hidden, but can still be "
+               "reached at {0}' -f ($sakLeft -join ', ')) }\n"
+               "Write-Output 'The partition is hidden, with no drive letter or folder path'\n")
+        .arg(uintArg(operation.target.disk_number.value()),
+             uintArg(operation.target.partition_number.value()));
+}
+
+// Unhide, and a drive letter back when Windows reads the volume's file system: one that Hide took
+// the paths from comes back with none (testpc1, 2026-11-11), and a person unhiding a partition
+// expects to open it. A partition with no file system Windows reads gets none, which would only
+// have Windows offer to format it.
+QString unhidePartitionScript(const PartitionOperation& operation) {
+    return QStringLiteral(
+               "$sakShowDisk = [uint32]%1\n"
+               "$sakShowNumber = [uint32]%2\n"
+               "Set-Partition -DiskNumber %1 -PartitionNumber %2 -IsHidden $false "
+               "-NoDefaultDriveLetter $false -ErrorAction Stop\n"
+               "Update-HostStorageCache -ErrorAction Stop\n"
+               "$sakShown = Get-Partition -DiskNumber $sakShowDisk -PartitionNumber "
+               "$sakShowNumber -ErrorAction Stop\n"
+               "if ($sakShown.IsHidden) { throw 'Windows did not unhide the partition' }\n"
+               "$sakShownFileSystem = ''\n"
+               "try { $sakShownFileSystem = [string]($sakShown | Get-Volume -ErrorAction "
+               "Stop).FileSystem } catch { $sakShownFileSystem = '' }\n"
+               "if (-not $sakShown.DriveLetter -and $sakShownFileSystem) {\n"
+               "  Add-PartitionAccessPath -DiskNumber $sakShowDisk -PartitionNumber $sakShowNumber "
+               "-AssignDriveLetter -ErrorAction Stop\n"
+               "  Update-HostStorageCache -ErrorAction Stop\n"
+               "  $sakShown = Get-Partition -DiskNumber $sakShowDisk -PartitionNumber "
+               "$sakShowNumber -ErrorAction Stop\n"
+               "  if (-not $sakShown.DriveLetter) { throw 'Windows unhid the partition but gave it "
+               "no drive letter' }\n"
+               "}\n"
+               "Write-Output ('The partition is visible{0}' -f $(if ($sakShown.DriveLetter) { ' "
+               "as ' + $sakShown.DriveLetter + ':' } else { ', with no file system Windows reads, "
+               "so "
+               "no drive letter' }))\n")
+        .arg(uintArg(operation.target.disk_number.value()),
+             uintArg(operation.target.partition_number.value()));
+}
+
+// Format-Volume can write the start of a volume and then refuse (a FAT32 cluster size, measured
+// on testpc1, 2026-11-11), and the old file system is then gone: the message says it may be. The
+// partition is taken before the format (Sak.RawPartitionWrite: refused while anything has it
+// open, and Windows lets go of the old file system), and let go of again after a failure, so a
+// half-written volume is not left mounted.
+QString windowsFormatOrReportScript(const QString& format) {
+    return QStringLiteral(
+               "try {\n"
+               "%1"
+               "} catch {\n"
+               "  $sakFormatError = $_.Exception.Message\n"
+               "  $sakLetGo = ''\n"
+               "  try { [Sak.RawPartitionWrite]::Release($sakTakenPartition) } catch { $sakLetGo = "
+               "' Windows would not let go of the partition afterwards either: ' + "
+               "$_.Exception.Message }\n"
+               "  throw ('Windows could not format the partition: {0} Format-Volume can write the "
+               "start of the partition before it refuses, so the old file system may already be "
+               "gone.{1}' -f $sakFormatError, $sakLetGo)\n"
+               "}\n")
+        .arg(format);
 }
 
 QString diskPartLabel(QString label) {
@@ -2354,8 +2559,7 @@ bool isSupportedAllocationUnitSize(uint64_t value) {
 bool isSupportedGptCreateType(const QString& value) {
     return value.isEmpty() || QStringList{QStringLiteral("{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}"),
                                           QStringLiteral("{DE94BBA4-06D1-4D40-A16A-BFD50179D6AC}"),
-                                          QStringLiteral("{C12A7328-F81F-11D2-BA4B-00A0C93EC93B}"),
-                                          QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}")}
+                                          QStringLiteral("{C12A7328-F81F-11D2-BA4B-00A0C93EC93B}")}
                                   .contains(value.toUpper());
 }
 
@@ -2381,9 +2585,6 @@ bool createTypeMatchesFileSystem(const PartitionOperation& operation, const QStr
     if (gptType == QStringLiteral("{DE94BBA4-06D1-4D40-A16A-BFD50179D6AC}") ||
         mbrType == QStringLiteral("IFS")) {
         return fs.compare(QStringLiteral("NTFS"), Qt::CaseInsensitive) == 0;
-    }
-    if (gptType == QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}")) {
-        return isApfsFileSystemToken(fs);
     }
     return true;
 }
@@ -2683,14 +2884,18 @@ CreateScriptSpec createScriptSpec(const PartitionOperation& operation) {
     return spec;
 }
 
-QString validateCreateFileSystemSupport(const CreateScriptSpec& spec, bool nonNativeCreate) {
-    if (nonNativeCreate && !isSupportedNonNativeCreateFormatFileSystem(spec.file_system)) {
-        return QStringLiteral("Unsupported non-Windows create file system");
+// Create makes a partition with a Windows file system only; a bundled tool's file system is made
+// by Formatting it afterwards (PartitionFileSystemRegistry::createFileSystemBlocker).
+QString validateCreateFileSystemSupport(const CreateScriptSpec& spec) {
+    if (const QString blocker =
+            PartitionFileSystemRegistry::createFileSystemBlocker(spec.file_system);
+        !blocker.isEmpty()) {
+        return blocker;
     }
-    if (!nonNativeCreate && !PartitionScriptBuilder::isSupportedFileSystem(spec.file_system)) {
+    if (!PartitionScriptBuilder::isSupportedFileSystem(spec.file_system)) {
         return QStringLiteral("Unsupported file system");
     }
-    if (!nonNativeCreate && !isSupportedAllocationUnitSize(spec.allocation_unit)) {
+    if (!isSupportedAllocationUnitSize(spec.allocation_unit)) {
         return QStringLiteral("Unsupported allocation unit size");
     }
     return {};
@@ -2710,37 +2915,15 @@ QString validateCreatePartitionType(const PartitionOperation& operation,
     return {};
 }
 
-QString validateNonNativeCreatePayload(const PartitionOperation& operation,
-                                       const CreateScriptSpec& spec,
-                                       bool nonNativeCreate) {
-    if (!nonNativeCreate) {
-        return {};
-    }
-    if (!payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload))) {
-        return QStringLiteral("Non-Windows create format requires destructive confirmation");
-    }
-    if (isLinuxSwapFileSystemToken(spec.file_system) &&
-        !isSupportedLinuxSwapPageSize(linuxSwapPageSize(operation))) {
-        return QStringLiteral("Unsupported Linux swap page size");
-    }
-    return {};
-}
-
 QString validateCreateScriptSpec(const PartitionOperation& operation,
                                  const CreateScriptSpec& spec) {
-    const bool nonNativeCreate = isNonNativeFileSystemToolOperation(operation);
     if (spec.size == 0) {
         return QStringLiteral("Create requires size_bytes");
     }
-    if (const QString blocker = validateCreateFileSystemSupport(spec, nonNativeCreate);
-        !blocker.isEmpty()) {
+    if (const QString blocker = validateCreateFileSystemSupport(spec); !blocker.isEmpty()) {
         return blocker;
     }
     if (const QString blocker = validateCreatePartitionType(operation, spec); !blocker.isEmpty()) {
-        return blocker;
-    }
-    if (const QString blocker = validateNonNativeCreatePayload(operation, spec, nonNativeCreate);
-        !blocker.isEmpty()) {
         return blocker;
     }
     if (!createFitsSelectedRegion(operation, spec.size)) {
@@ -2835,9 +3018,7 @@ QString fullFormatAllowedScript(uint32_t disk_number, const QString& what) {
                "throw %2 }\n")
         .arg(disk_number)
         .arg(PartitionScriptBuilder::quotePowerShell(
-            what + QStringLiteral(" needs a full format, and Windows does not allow one on a "
-                                  "thin-provisioned disk, such as a virtual disk file. Nothing "
-                                  "was changed.")));
+            PartitionSafetyValidator::thinDiskFullFormatRefusal(what)));
 }
 
 QString cloneTransferRawTargetFunctionsScript(const PartitionOperation& operation) {
@@ -3527,15 +3708,212 @@ struct ExternalFileSystemToolScriptRequest {
     PartitionFileSystemToolCommand command;
 };
 
+// Just before a resize, the partition is asked again what it holds, and the resize stops, with
+// nothing changed, unless it is the file system the resize was queued for. A Resize queued from a
+// scan that could not identify an ext4 partition reached Resize-Partition and cut the file system
+// in half (operation proof, 2026-11-11); the queue refuses that now, and this is the check that
+// does not depend on any scan.
+static QString windowsFileSystemCheckScript(const PartitionOperation& operation,
+                                            const QString& queuedFileSystem) {
+    return QStringLiteral(R"PS(
+function Assert-SakWindowsFileSystem([uint32]$Disk, [uint32]$Number, [string]$Queued) {
+  $found = ''
+  $why = ''
+  try {
+    $found = [string](Get-Partition -DiskNumber $Disk -PartitionNumber $Number -ErrorAction Stop | Get-Volume -ErrorAction Stop).FileSystem
+  } catch {
+    $why = $_.Exception.Message
+  }
+  if ($found -ne $Queued) {
+    $what = $(if ([string]::IsNullOrWhiteSpace($found)) { 'no file system Windows can read' } else { $found })
+    if ($why) { $what = '{0} ({1})' -f $what, $why }
+    throw ('Nothing was changed: this resize was queued for a {0} partition, but the partition holds {1} now. Run Scan Disks as administrator, then queue the resize again.' -f $Queued, $what)
+  }
+  Write-Output ('The partition still holds {0}, as queued' -f $found)
+}
+Assert-SakWindowsFileSystem %1 %2 %3
+)PS")
+        .arg(uintArg(operation.target.disk_number.value()),
+             uintArg(operation.target.partition_number.value()),
+             PartitionScriptBuilder::quotePowerShell(queuedFileSystem));
+}
+
+// The same check for an ext resize: the ext superblock's magic, read through the partition taken
+// as the tools take it (Sak.RawPartitionWrite), since Windows has no volume on a Linux partition.
+static QString extFileSystemCheckScript(const QString& targetPath,
+                                        const QString& queuedFileSystem) {
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
+           QStringLiteral(R"PS(
+function Assert-SakExtFileSystem([string]$Path, [string]$Queued) {
+  $head = New-Object byte[] 4096
+  $have = 0
+  $stream = [Sak.RawPartitionWrite]::Open($Path)
+  try {
+    [void]$stream.Seek(0, [System.IO.SeekOrigin]::Begin)
+    while ($have -lt $head.Length) {
+      $read = $stream.Read($head, $have, $head.Length - $have)
+      if ($read -le 0) { break }
+      $have += $read
+    }
+  } finally {
+    $stream.Dispose()
+  }
+  # The superblock starts 1024 bytes in, and its magic (0xEF53, little-endian) 56 bytes into it.
+  if ($have -lt 1082 -or $head[1080] -ne 0x53 -or $head[1081] -ne 0xEF) {
+    throw ('Nothing was changed: this resize was queued for an {0} partition, but the partition holds no ext file system now. Run Scan Disks as administrator, then queue the resize again.' -f $Queued)
+  }
+  Write-Output ('The partition still holds an ext file system, as queued ({0})' -f $Queued)
+}
+Assert-SakExtFileSystem %1 %2
+)PS")
+               .arg(PartitionScriptBuilder::quotePowerShell(targetPath),
+                    PartitionScriptBuilder::quotePowerShell(queuedFileSystem));
+}
+
+// Windows' Resize-Partition takes a data partition only ("This operation is only supported on data
+// partitions", StorageWMI 42011): GPT basic data, or MBR 07 or 0C. An ext partition carries the
+// Linux type once S.A.K. has formatted it, so every ext resize failed there (operation proof,
+// 2026-11-12, F24). A partition of another type is resized as a data partition and given its own
+// type and attributes back in a finally, so the type comes back when the resize fails too. Its
+// letters are held off while it has the data type: GPT's no-default-letter attribute, and on MBR,
+// which has none, any path Windows gives it is removed. Afterwards it is read back: its own type,
+// no path it did not have, and the new size.
+static QString resizeAsDataPartitionFunctionScript() {
+    return QStringLiteral(R"PS(
+function Remove-SakNewAccessPaths([uint32]$Disk, [uint32]$Number, [string[]]$Keep) {
+  Update-HostStorageCache -ErrorAction Stop
+  $now = Get-Partition -DiskNumber $Disk -PartitionNumber $Number -ErrorAction Stop
+  foreach ($path in @($now.AccessPaths)) {
+    if (-not $path -or "$path".StartsWith('\\?\Volume{') -or @($Keep) -contains "$path") { continue }
+    Remove-PartitionAccessPath -DiskNumber $Disk -PartitionNumber $Number -AccessPath $path -ErrorAction Stop
+    Write-Output ('Removed {0}, which Windows gave the partition while it had the data type' -f $path)
+  }
+}
+function Set-SakPartitionType([uint32]$Disk, [uint32]$Number, [bool]$Gpt, $Type, [bool]$NoLetter) {
+  if ($Gpt) {
+    Set-Partition -DiskNumber $Disk -PartitionNumber $Number -GptType $Type -ErrorAction Stop
+    Set-Partition -DiskNumber $Disk -PartitionNumber $Number -NoDefaultDriveLetter $NoLetter -ErrorAction Stop
+  } else {
+    Set-Partition -DiskNumber $Disk -PartitionNumber $Number -MbrType $Type -ErrorAction Stop
+  }
+}
+function Invoke-SakResizeAsDataPartition([uint32]$Disk, [uint32]$Number, [uint64]$Size) {
+  $basicData = '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}'
+  $before = Get-Partition -DiskNumber $Disk -PartitionNumber $Number -ErrorAction Stop
+  $gpt = "$((Get-Disk -Number $Disk -ErrorAction Stop).PartitionStyle)" -eq 'GPT'
+  $type = if ($gpt) { "$($before.GptType)" } else { [int]$before.MbrType }
+  if (($gpt -and $type -eq $basicData) -or (-not $gpt -and @(7, 12) -contains $type)) {
+    Resize-Partition -DiskNumber $Disk -PartitionNumber $Number -Size $Size -ErrorAction Stop
+    return
+  }
+  $noLetter = [bool]$before.NoDefaultDriveLetter
+  $paths = @(@($before.AccessPaths) | Where-Object { $_ -and -not "$_".StartsWith('\\?\Volume{') } | ForEach-Object { "$_" })
+  $shown = if ($gpt) { $type } else { '{0:X2}' -f $type }
+  Write-Output ('Windows resizes data partitions only, so this one has the data type for the resize, then its own ({0}) back' -f $shown)
+  $failure = $null
+  $restoreError = ''
+  try {
+    if ($gpt) {
+      Set-Partition -DiskNumber $Disk -PartitionNumber $Number -NoDefaultDriveLetter $true -ErrorAction Stop
+      Set-Partition -DiskNumber $Disk -PartitionNumber $Number -GptType $basicData -ErrorAction Stop
+    } else {
+      Set-Partition -DiskNumber $Disk -PartitionNumber $Number -MbrType 7 -ErrorAction Stop
+    }
+    Remove-SakNewAccessPaths $Disk $Number $paths
+    Resize-Partition -DiskNumber $Disk -PartitionNumber $Number -Size $Size -ErrorAction Stop
+  } catch {
+    $failure = $_
+  } finally {
+    try {
+      Set-SakPartitionType $Disk $Number $gpt $type $noLetter
+      Remove-SakNewAccessPaths $Disk $Number $paths
+    } catch { $restoreError = $_.Exception.Message }
+  }
+  if ($restoreError) {
+    $how = if ($gpt) { "-GptType '$type'" } else { "-MbrType 0x$shown" }
+    throw ('Windows did not give the partition its type back ({0}): {1} Set it back before the disk is used: Set-Partition -DiskNumber {2} -PartitionNumber {3} {4}' -f $shown, $restoreError, $Disk, $Number, $how)
+  }
+  if ($failure) { throw $failure }
+  $after = Get-Partition -DiskNumber $Disk -PartitionNumber $Number -ErrorAction Stop
+  $typeNow = if ($gpt) { "$($after.GptType)" } else { [int]$after.MbrType }
+  if ($typeNow -ne $type) { throw ('The partition was resized, but its type reads {0}, not its own {1}' -f $typeNow, $shown) }
+  $added = @(@($after.AccessPaths) | Where-Object { $_ -and -not "$_".StartsWith('\\?\Volume{') -and $paths -notcontains "$_" })
+  if ($added.Count -gt 0) { throw ('The partition was resized, but Windows left it reachable at {0}' -f ($added -join ', ')) }
+  if ($gpt -and [bool]$after.NoDefaultDriveLetter -ne $noLetter) { throw 'The partition was resized, but its no-default-letter attribute did not come back' }
+  if ([uint64]$after.Size -ne $Size) { throw 'Partition resize did not reach target size' }
+  Write-Output ('Resized, and its type is its own again ({0})' -f $shown)
+}
+)PS");
+}
+
+// The F7 check for an APFS grow: the container superblock's magic, "NXSB" 32 bytes into the
+// partition, read through the partition as the writer reads it, since Windows has no volume there.
+static QString apfsContainerCheckScript(const PartitionOperation& operation) {
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
+           QStringLiteral(R"PS(
+function Assert-SakApfsContainer([string]$Path) {
+  $head = New-Object byte[] 4096
+  $have = 0
+  $stream = [Sak.RawPartitionWrite]::Open($Path)
+  try {
+    [void]$stream.Seek(0, [System.IO.SeekOrigin]::Begin)
+    while ($have -lt $head.Length) {
+      $read = $stream.Read($head, $have, $head.Length - $have)
+      if ($read -le 0) { break }
+      $have += $read
+    }
+  } finally {
+    $stream.Dispose()
+  }
+  if ($have -lt 36 -or [Text.Encoding]::ASCII.GetString($head, 32, 4) -cne 'NXSB') {
+    throw 'Nothing was changed: this resize was queued for an APFS partition, but the partition holds no APFS container now. Run Scan Disks as administrator, then queue the resize again.'
+  }
+  Write-Output 'The partition still holds an APFS container, as queued'
+}
+Assert-SakApfsContainer %1
+)PS")
+               .arg(PartitionScriptBuilder::quotePowerShell(
+                   QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk%1\\Partition%2")
+                       .arg(operation.target.disk_number.value())
+                       .arg(operation.target.partition_number.value())));
+}
+
+// An APFS partition grows into the free space after it, as a data partition for the moment of the
+// resize, with its Apple type back afterwards. The container does not grow with it: APFS container
+// actions > Resize container to fill partition does that.
+static PartitionScript buildApfsGrowScript(const PartitionOperation& operation,
+                                           uint64_t targetSize) {
+    PartitionScript out;
+    out.preview = QStringLiteral("Grow Disk %1 Partition %2 (APFS) to %3. %4")
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value())
+                      .arg(formatPartitionBytes(targetSize),
+                           PartitionFileSystemRegistry::apfsGrowNote());
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+                 apfsContainerCheckScript(operation) + resizeAsDataPartitionFunctionScript() +
+                 QStringLiteral(
+                     "Invoke-SakResizeAsDataPartition -Disk %1 -Number %2 -Size %3\n"
+                     "Update-HostStorageCache -ErrorAction Stop\n"
+                     "Write-Output %4\n")
+                     .arg(operation.target.disk_number.value())
+                     .arg(operation.target.partition_number.value())
+                     .arg(uintArg(targetSize),
+                          PartitionScriptBuilder::quotePowerShell(
+                              PartitionFileSystemRegistry::apfsGrowNote()));
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
+    return out;
+}
+
 static PartitionScript buildNativeResizeScript(const PartitionOperation& operation,
-                                               uint64_t targetSize) {
+                                               uint64_t targetSize,
+                                               const QString& queuedFileSystem) {
     PartitionScript out;
     out.preview = QStringLiteral("Resize Disk %1 Partition %2 to %3")
                       .arg(operation.target.disk_number.value())
                       .arg(operation.target.partition_number.value())
                       .arg(formatPartitionBytes(targetSize));
     const QString resize =
-        QStringLiteral("Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size %3")
+        QStringLiteral("Invoke-SakResizeAsDataPartition -Disk %1 -Number %2 -Size %3")
             .arg(operation.target.disk_number.value())
             .arg(operation.target.partition_number.value())
             .arg(uintArg(targetSize));
@@ -3543,6 +3921,8 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
     // An extend ends at once.
     const bool shrinks = targetSize < operation.target.size_bytes;
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+                 windowsFileSystemCheckScript(operation, queuedFileSystem) +
+                 resizeAsDataPartitionFunctionScript() +
                  QStringLiteral(
                      "$s = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %2\n"
                      "if ([uint64]%3 -lt [uint64]$s.SizeMin -or [uint64]%3 -gt [uint64]$s.SizeMax) "
@@ -3559,17 +3939,20 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
 }
 
 static QString growExtResizePreToolScript(const PartitionOperation& operation,
+                                          const QString& fs,
+                                          const QString& targetPath,
                                           uint64_t targetSize) {
-    return QStringLiteral(
+    return extFileSystemCheckScript(targetPath, fs) + resizeAsDataPartitionFunctionScript() +
+           QStringLiteral(
                "$targetSizeBytes = [uint64]%1\n"
-               "Resize-Partition -DiskNumber %2 -PartitionNumber %3 -Size $targetSizeBytes\n"
+               "Invoke-SakResizeAsDataPartition -Disk %2 -Number %3 -Size $targetSizeBytes\n"
                "Update-HostStorageCache -ErrorAction Stop\n"
                "$p = Get-Partition -DiskNumber %2 -PartitionNumber %3 -ErrorAction Stop\n"
                "if ([uint64]$p.Size -ne $targetSizeBytes) { throw 'Partition resize did not reach "
                "target size' }\n")
-        .arg(uintArg(targetSize))
-        .arg(operation.target.disk_number.value())
-        .arg(operation.target.partition_number.value());
+               .arg(uintArg(targetSize))
+               .arg(operation.target.disk_number.value())
+               .arg(operation.target.partition_number.value());
 }
 
 static ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionOperation& operation,
@@ -3584,7 +3967,7 @@ static ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionO
             .arg(operation.target.partition_number.value())
             .arg(fs.toLower());
     request.accepted_exit_codes = {QStringLiteral("0")};
-    request.pre_tool_script = growExtResizePreToolScript(operation, targetSize);
+    request.pre_tool_script = growExtResizePreToolScript(operation, fs, targetPath, targetSize);
     request.command = PartitionFileSystemToolRunner::buildResizeCommand(
         fs, targetPath, payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload)));
     return request;
@@ -3596,11 +3979,11 @@ static QString extShrinkPreToolScript(uint64_t targetSize) {
 
 static QString extShrinkPartitionScript(const PartitionOperation& operation) {
     // Always a shrink: defragsvc moves the data and finishes even if this script is killed.
-    return (windowsContinuedLine(
-                WindowsContinuedWork::PartitionShrink,
-                uintArg(operation.target.size_bytes),
-                QStringLiteral(
-                    "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size $targetSizeBytes")) +
+    return (windowsContinuedLine(WindowsContinuedWork::PartitionShrink,
+                                 uintArg(operation.target.size_bytes),
+                                 QStringLiteral(
+                                     "Invoke-SakResizeAsDataPartition -Disk %1 -Number %2 -Size "
+                                     "$targetSizeBytes")) +
             QStringLiteral(
                 "Update-HostStorageCache -ErrorAction Stop\n"
                 "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
@@ -3646,17 +4029,17 @@ static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& oper
             .arg(operation.target.partition_number.value())
             .arg(fs.toLower());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 filesystemToolFunctionScript() + extShrinkPreToolScript(targetSize) +
-                 takeSelectedPartitionScript(false) +
+                 extFileSystemCheckScript(targetPath, fs) + filesystemToolFunctionScript() +
+                 extShrinkPreToolScript(targetSize) + takeSelectedPartitionScript(false) +
                  filesystemToolCallScript(QStringLiteral("e2fsck pre-shrink repair"),
                                           e2fsck,
                                           {QStringLiteral("-p"), QStringLiteral("-f"), targetPath},
-                                          {QStringLiteral("0"), QStringLiteral("1")}) +
+                                          e2fsckRepairExitCodes()) +
                  filesystemToolCallScript(QStringLiteral("resize2fs shrink"),
                                           resize2fs,
                                           {QStringLiteral("-p"), targetPath, resizeSizeArg},
                                           {QStringLiteral("0")}) +
-                 extShrinkPartitionScript(operation) +
+                 resizeAsDataPartitionFunctionScript() + extShrinkPartitionScript(operation) +
                  filesystemToolCallScript(QStringLiteral("e2fsck post-shrink read-only check"),
                                           e2fsck,
                                           {QStringLiteral("-n"), QStringLiteral("-f"), targetPath},
@@ -3804,12 +4187,12 @@ static QString allocateExecutionScript(const PartitionOperation& operation,
                 "if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
                 "'Restored donor manifest differs from backup' }\n"
                 "if ($targetVolume -and $targetVolume.DriveLetter) { ") +
-            windowsContinuedStatement(
-                WindowsContinuedWork::VolumeScan,
-                QStringLiteral("0"),
-                QStringLiteral("Repair-Volume -DriveLetter $targetVolume.DriveLetter -Scan")) +
+            windowsContinuedStatement(WindowsContinuedWork::VolumeScan,
+                                      QStringLiteral("0"),
+                                      volumeScanStatement(
+                                          QStringLiteral("$targetVolume.DriveLetter"))) +
             QStringLiteral(" }\n") +
-            volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $sourceDrive -Scan")) +
+            volumeScanLine(volumeScanStatement(QStringLiteral("$sourceDrive"))) +
             QStringLiteral("Get-Partition -DiskNumber %1 | Sort-Object Offset | Format-Table "
                            "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))
         .arg(operation.target.disk_number.value())
@@ -3909,7 +4292,7 @@ static QString clusterExecutionScript() {
                "$restoredManifest -Property RelativePath,Length,Hash)\n"
                "if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
                "'Restored file manifest differs from backup' }\n") +
-           volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+           volumeScanLine(volumeScanStatement(QStringLiteral("$drive"))) +
            QStringLiteral(
                "fsutil.exe fsinfo volumeinfo $targetDrive\n"
                "if ($fileSystem -eq 'NTFS') { fsutil.exe fsinfo ntfsinfo $targetDrive }\n");
@@ -4560,194 +4943,6 @@ static QString newPartitionCommandScript(const PartitionOperation& operation,
         .arg(driveArg, partitionTypeArg(operation), createOffsetArg(operation));
 }
 
-static QString refreshCreatedPartitionAndRawTargetScript(const PartitionOperation& operation,
-                                                         const CreateScriptSpec& spec) {
-    return QStringLiteral(
-               "Update-HostStorageCache -ErrorAction Stop\n"
-               "$p = Get-Partition -DiskNumber %1 -PartitionNumber $p.PartitionNumber "
-               "-ErrorAction Stop\n"
-               "if ([uint64]$p.Size -lt [uint64]%2) { throw 'Created partition is smaller than "
-               "requested' }\n"
-               "$rawTargetPath = ('\\\\?\\GLOBALROOT\\Device\\Harddisk{0}\\Partition{1}' -f "
-               "$p.DiskNumber, $p.PartitionNumber)\n"
-               "Write-Output ('Created raw partition target: {0}' -f $rawTargetPath)\n")
-        .arg(operation.target.disk_number.value())
-        .arg(uintArg(spec.size));
-}
-
-static PartitionScript buildCreateLinuxSwapScript(const PartitionOperation& operation,
-                                                  const CreateScriptSpec& spec) {
-    const uint64_t pageSize = linuxSwapPageSize(operation);
-    if (!isSupportedLinuxSwapPageSize(pageSize)) {
-        return invalidPartitionScript(QStringLiteral("Unsupported Linux swap page size"));
-    }
-    const uint64_t pageCount = spec.size / pageSize;
-    if (pageCount < kLinuxSwapMinPages || pageCount > kLinuxSwapMaxPages) {
-        return invalidPartitionScript(
-            QStringLiteral("Linux swap partition size is outside supported bounds"));
-    }
-
-    PartitionScript out;
-    out.preview = QStringLiteral("Create %1 Linux swap partition on Disk %2")
-                      .arg(formatPartitionBytes(spec.size),
-                           QString::number(operation.target.disk_number.value()));
-    out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
-                 refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-                 linuxSwapFormatBodyScript(QStringLiteral("$rawTargetPath"),
-                                           QStringLiteral("[uint64]$p.Size"),
-                                           spec.label,
-                                           pageSize) +
-                 QStringLiteral("$p | ConvertTo-Json -Compress\n");
-    out.dry_run_script =
-        out.preview +
-        QStringLiteral("\nCreate partition, derive raw target, write SWAPSPACE2 v1 header");
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
-    return out;
-}
-
-static PartitionScript buildCreateApfsScript(const PartitionOperation& operation,
-                                             const CreateScriptSpec& spec) {
-    PartitionScript out;
-    out.preview = QStringLiteral("Create %1 APFS partition on Disk %2 with S.A.K. APFS writer")
-                      .arg(formatPartitionBytes(spec.size),
-                           QString::number(operation.target.disk_number.value()));
-    out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
-                 refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-                 takeSelectedPartitionScript(false) + apfsWriterCliFunctionScript() +
-                 QStringLiteral(
-                     "Invoke-SakApfsWriterCli -Command 'format-raw' -TargetPath $rawTargetPath "
-                     "-SizeBytes ([uint64]$p.Size) -VolumeName %1 -EvidenceId "
-                     "'ui.apfs-generated-raw-create-format'\n"
-                     "Update-HostStorageCache -ErrorAction Stop\n"
-                     "$p | ConvertTo-Json -Compress\n")
-                     .arg(PartitionScriptBuilder::quotePowerShell(spec.label));
-    out.dry_run_script =
-        out.preview +
-        QStringLiteral("\nCreate partition, derive raw target, run APFS writer helper");
-    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
-    return out;
-}
-
-static PartitionScript buildCreateExtScript(const PartitionOperation& operation,
-                                            const CreateScriptSpec& spec,
-                                            const PartitionFileSystemToolCommand& command,
-                                            const PartitionFileSystemToolResolution& resolution) {
-    PartitionScript out;
-    out.preview = QStringLiteral("Create %1 %2 partition on Disk %3 with bundled %4")
-                      .arg(formatPartitionBytes(spec.size),
-                           spec.file_system,
-                           QString::number(operation.target.disk_number.value()),
-                           command.tool_id);
-    out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
-                 refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-                 filesystemToolFunctionScript() + takeSelectedPartitionScript(true) +
-                 filesystemToolCallScriptWithArgsExpression(
-                     QStringLiteral("mke2fs create format"),
-                     resolution,
-                     powerShellArrayLiteralWithTrailingExpression(command.arguments,
-                                                                  QStringLiteral("$rawTargetPath")),
-                     {QStringLiteral("0")}) +
-                 QStringLiteral(
-                     "Update-HostStorageCache -ErrorAction Stop\n"
-                     "$p | ConvertTo-Json -Compress\n");
-    out.dry_run_script = out.preview +
-                         QStringLiteral("\nCreate partition, derive raw target, run ") +
-                         PartitionScriptBuilder::quotePowerShell(resolution.tool_path);
-    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
-    return out;
-}
-
-static PartitionScript buildCreateStagedHfsScript(
-    const PartitionOperation& operation,
-    const CreateScriptSpec& spec,
-    const PartitionFileSystemToolCommand& command,
-    const PartitionFileSystemToolResolution& formatResolution,
-    const PartitionFileSystemToolResolution& fsckResolution) {
-    PartitionScript out;
-    out.preview = QStringLiteral("Create %1 %2 partition on Disk %3 with sparse-staged %4")
-                      .arg(formatPartitionBytes(spec.size),
-                           spec.file_system,
-                           QString::number(operation.target.disk_number.value()),
-                           command.tool_id);
-    const QStringList formatArgs = command.arguments;
-    out.script =
-        commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
-        refreshCreatedPartitionAndRawTargetScript(operation, spec) + hfsStagedFunctionsScript() +
-        QStringLiteral(
-            "$targetPath = $rawTargetPath\n"
-            "$targetSizeBytes = [uint64]$p.Size\n") +
-        hfsStagedImagePathScript(QStringLiteral("sak-hfs-create-format")) +
-        QStringLiteral(
-            "try {\n"
-            "  New-SakSparseImageFile -Path $stagedImagePath -SizeBytes $targetSizeBytes\n"
-            "  $formatArgs = %1\n"
-            "  [void](Invoke-SakCheckedHfsTool -Name 'newfs_hfs create format' -FilePath %2 "
-            "-ExpectedHash %3 -Arguments $formatArgs -AcceptedExitCodes @(0))\n"
-            "  Invoke-SakHfsRepairUntilClean -FsckPath %4 -ExpectedHash %5 "
-            "-ImagePath $stagedImagePath -FileSystem %6\n"
-            "  Copy-SakSparseImageToRawTarget -ImagePath $stagedImagePath -RawTarget "
-            "$targetPath -TargetSizeBytes $targetSizeBytes\n"
-            "} finally {\n"
-            "  Remove-SakTemporaryPath $stagedImagePath\n"
-            "}\n"
-            "Update-HostStorageCache -ErrorAction Stop\n"
-            "$p | ConvertTo-Json -Compress\n")
-            .arg(powerShellArrayLiteralWithTrailingExpression(formatArgs,
-                                                              QStringLiteral("$stagedImagePath")),
-                 PartitionScriptBuilder::quotePowerShell(
-                     QDir::toNativeSeparators(formatResolution.tool_path)),
-                 PartitionScriptBuilder::quotePowerShell(
-                     formatResolution.tool.binary_sha256.toLower()),
-                 PartitionScriptBuilder::quotePowerShell(
-                     QDir::toNativeSeparators(fsckResolution.tool_path)),
-                 PartitionScriptBuilder::quotePowerShell(
-                     fsckResolution.tool.binary_sha256.toLower()),
-                 PartitionScriptBuilder::quotePowerShell(command.file_system));
-    out.dry_run_script =
-        out.preview +
-        QStringLiteral("\nCreate partition, stage HFS image, copy sparse ranges to raw target");
-    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
-    return out;
-}
-
-static PartitionScript buildCreateNonNativeFormatScript(const PartitionOperation& operation,
-                                                        const CreateScriptSpec& spec) {
-    if (isLinuxSwapFileSystemToken(spec.file_system)) {
-        return buildCreateLinuxSwapScript(operation, spec);
-    }
-    if (isApfsFileSystemToken(spec.file_system)) {
-        return buildCreateApfsScript(operation, spec);
-    }
-
-    constexpr auto kCreateRawTargetPlaceholder = "__SAK_NEW_PARTITION_RAW_TARGET__";
-    const auto command = PartitionFileSystemToolRunner::buildFormatCommand(
-        spec.file_system,
-        QString::fromLatin1(kCreateRawTargetPlaceholder),
-        spec.label,
-        payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload)));
-    if (!command.ok()) {
-        return invalidPartitionScript(command.blockers.join(QStringLiteral("; ")));
-    }
-
-    const QString manifestPath = runtimeFilesystemManifestPath();
-    const QString toolsRoot = QFileInfo(manifestPath).absolutePath();
-    const auto resolution = PartitionFileSystemToolRunner::resolveApprovedTool(
-        manifestPath, toolsRoot, command.tool_id, command.operation, command.file_system);
-    if (!resolution.ok) {
-        return invalidPartitionScript(resolution.blockers.join(QStringLiteral("; ")));
-    }
-
-    if (isHfsToolFileSystem(command.file_system)) {
-        const auto repairResolution =
-            resolveFsckHfsTool(manifestPath, toolsRoot, command.file_system);
-        if (!repairResolution.ok) {
-            return invalidPartitionScript(repairResolution.blockers.join(QStringLiteral("; ")));
-        }
-        return buildCreateStagedHfsScript(operation, spec, command, resolution, repairResolution);
-    }
-    return buildCreateExtScript(operation, spec, command, resolution);
-}
-
 QHash<int, PartitionScriptBuilder::Builder> PartitionScriptBuilder::buildOperationDispatchTable() {
     QHash<int, Builder> builders;
     appendCoreBuilders(&builders);
@@ -5042,8 +5237,13 @@ PartitionScript PartitionScriptBuilder::buildCreateScript(
     if (!blocker.isEmpty()) {
         return invalidScript(blocker);
     }
-    if (isNonNativeFileSystemToolOperation(operation)) {
-        return buildCreateNonNativeFormatScript(operation, spec);
+
+    // What Format-Volume would refuse is refused here, before anything is created (the edition
+    // and the disk's sector size are checked by the script).
+    if (const QString formatBlocker = windowsFormatChoiceBlocker(
+            spec.file_system, spec.size, spec.allocation_unit, spec.label);
+        !formatBlocker.isEmpty()) {
+        return invalidScript(formatBlocker);
     }
 
     const QString driveArg = isValidDriveLetter(spec.drive_letter)
@@ -5063,17 +5263,24 @@ PartitionScript PartitionScriptBuilder::buildCreateScript(
                  allocationUnitArg(operation));
     // A full format is a storage job Windows finishes even if this script is killed; a quick one
     // ends at once.
-    out.script = commonHeader(out.preview) +
-                 (spec.full_format_arg.isEmpty()
-                      ? QString()
-                      : fullFormatAllowedScript(operation.target.disk_number.value(),
-                                                QStringLiteral("This new partition"))) +
-                 newPartitionCommandScript(operation, spec, QStringLiteral(" ") + driveArg) +
-                 (spec.full_format_arg.isEmpty()
-                      ? format + QLatin1Char('\n')
-                      : windowsContinuedLine(
-                            WindowsContinuedWork::FullFormat, QStringLiteral("$p.Size"), format)) +
-                 QStringLiteral("$p | ConvertTo-Json -Compress\n");
+    out.script =
+        commonHeader(out.preview) +
+        windowsFormatCheckScript(uintArg(operation.target.disk_number.value()),
+                                 uintArg(spec.size),
+                                 spec.file_system,
+                                 spec.allocation_unit) +
+        (spec.full_format_arg.isEmpty()
+             ? QString()
+             : fullFormatAllowedScript(operation.target.disk_number.value(),
+                                       QStringLiteral("This new partition"))) +
+        newPartitionCommandScript(operation, spec, QStringLiteral(" ") + driveArg) +
+        createdPartitionFormatScript(operation,
+                                     spec.full_format_arg.isEmpty()
+                                         ? format + QLatin1Char('\n')
+                                         : windowsContinuedLine(WindowsContinuedWork::FullFormat,
+                                                                QStringLiteral("$p.Size"),
+                                                                format)) +
+        QStringLiteral("$p | ConvertTo-Json -Compress\n");
     return out;
 }
 
@@ -5112,6 +5319,13 @@ PartitionScript buildWindowsFormatScript(const PartitionOperation& operation,
     if (!isSupportedAllocationUnitSize(allocationUnit)) {
         return invalidPartitionScript(QStringLiteral("Unsupported allocation unit size"));
     }
+    // What Format-Volume would refuse is refused before the script exists: it writes the start of
+    // the volume before it refuses a FAT32 cluster size (testpc1, 2026-11-11).
+    if (const QString blocker =
+            windowsFormatChoiceBlocker(fs, operation.target.size_bytes, allocationUnit, label);
+        !blocker.isEmpty()) {
+        return invalidPartitionScript(blocker);
+    }
 
     PartitionScript out;
     out.preview = QStringLiteral("Format Disk %1 Partition %2 as %3")
@@ -5126,23 +5340,29 @@ PartitionScript buildWindowsFormatScript(const PartitionOperation& operation,
                  fullArg,
                  allocationUnitArg(operation));
     // A full format is a storage job Windows finishes even if this script is killed; a quick one
-    // ends at once. A partition S.A.K. gave a Linux or Apple type (or a Linux or Mac disk brought
-    // in) has no Windows volume until its type is a Windows data partition again.
+    // ends at once.
+    const QString formatLine = fullArg.isEmpty()
+                                   ? format + QLatin1Char('\n')
+                                   : windowsContinuedLine(WindowsContinuedWork::FullFormat,
+                                                          uintArg(operation.target.size_bytes),
+                                                          format);
+    // A partition S.A.K. gave a Linux or Apple type (or a Linux or Mac disk brought in) has no
+    // Windows volume until its type is a Windows data partition again. Then the choices are
+    // checked on the partition as it is, and the partition is taken before Format-Volume.
     const QString disk = uintArg(operation.target.disk_number.value());
     const QString number = uintArg(operation.target.partition_number.value());
-    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 PartitionScriptBuilder::windowsDataPartitionTypeScript(fs, disk, number) +
-                 QStringLiteral(
-                     "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 "
-                     "-ErrorAction Stop\n")
-                     .arg(disk, number) +
-                 (fullArg.isEmpty() ? QString()
-                                    : fullFormatAllowedScript(operation.target.disk_number.value(),
-                                                              QStringLiteral("This format"))) +
-                 (fullArg.isEmpty() ? format + QLatin1Char('\n')
-                                    : windowsContinuedLine(WindowsContinuedWork::FullFormat,
-                                                           uintArg(operation.target.size_bytes),
-                                                           format));
+    out.script =
+        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+        PartitionScriptBuilder::windowsDataPartitionTypeScript(fs, disk, number) +
+        QStringLiteral(
+            "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 "
+            "-ErrorAction Stop\n")
+            .arg(disk, number) +
+        windowsFormatCheckScript(disk, QStringLiteral("([uint64]$p.Size)"), fs, allocationUnit) +
+        (fullArg.isEmpty() ? QString()
+                           : fullFormatAllowedScript(operation.target.disk_number.value(),
+                                                     QStringLiteral("This format"))) +
+        takeSelectedPartitionScript(false) + windowsFormatOrReportScript(formatLine);
     out.timeout_seconds = fullArg.isEmpty() ? kPartitionFormatTaskTimeoutSeconds
                                             : kPartitionLongTaskTimeoutSeconds;
     return out;
@@ -5226,6 +5446,26 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionLabelScript(
     return out;
 }
 
+// The read-only check of a non-Windows file system, run in the elevated helper: only an
+// administrator can open \\?\GLOBALROOT\Device\HarddiskN\PartitionM, and e2fsck run in the
+// standard-user app reported that refusal as an unreadable superblock (operation proof,
+// 2026-11-12, F25). It changes nothing: e2fsck -n, fsck_hfs -n, xfs_repair -n, btrfs check
+// --readonly, and only exit code 0 passes.
+static ExternalFileSystemToolScriptRequest readOnlyToolCheckRequest(
+    const PartitionOperation& operation, const QString& fs, const QString& targetPath) {
+    ExternalFileSystemToolScriptRequest request;
+    request.operation_name = PartitionFileSystemToolRunner::readOnlyCheckOperation();
+    request.command = PartitionFileSystemToolRunner::buildReadOnlyCheckCommand(fs, targetPath);
+    request.preview = QStringLiteral(
+                          "Check Disk %1 Partition %2 %3 file system (read-only) with "
+                          "bundled %4")
+                          .arg(operation.target.disk_number.value())
+                          .arg(operation.target.partition_number.value())
+                          .arg(fs.toLower(), request.command.tool_id);
+    request.accepted_exit_codes = {QStringLiteral("0")};
+    return request;
+}
+
 PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
     const PartitionOperation& operation) const {
     if (isNonNativeFileSystemToolOperation(operation)) {
@@ -5235,10 +5475,14 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
         }
         const QString fs =
             payloadString(operation, QStringLiteral("file_system"), QStringLiteral("ext4"));
+        const QString targetPath = rawPartitionTargetPath(operation);
+        if (payloadBool(operation, QStringLiteral("read_only_check"))) {
+            return buildExternalFileSystemToolScript(
+                operation, readOnlyToolCheckRequest(operation, fs, targetPath));
+        }
         if (isApfsFileSystemToken(fs)) {
             return buildApfsRawRepairScript(operation, fs);
         }
-        const QString targetPath = rawPartitionTargetPath(operation);
         const auto command = PartitionFileSystemToolRunner::buildRepairCommand(
             fs,
             targetPath,
@@ -5251,7 +5495,7 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
                 .arg(operation.target.partition_number.value())
                 .arg(fs.toLower(), command.tool_id);
         request.accepted_exit_codes = command.tool_id == QStringLiteral("e2fsck")
-                                          ? QStringList{QStringLiteral("0"), QStringLiteral("1")}
+                                          ? e2fsckRepairExitCodes()
                                           : QStringList{QStringLiteral("0")};
         request.command = command;
         return buildExternalFileSystemToolScript(operation, request);
@@ -5263,12 +5507,10 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Check file system on %1:").arg(letter.toUpper());
-    out.script =
-        commonHeader(out.preview) +
-        windowsContinuedLine(
-            WindowsContinuedWork::VolumeScan,
-            uintArg(operation.target.size_bytes),
-            QStringLiteral("Repair-Volume -DriveLetter %1 -Scan -Verbose").arg(letter.toUpper()));
+    out.script = commonHeader(out.preview) +
+                 windowsContinuedLine(WindowsContinuedWork::VolumeScan,
+                                      uintArg(operation.target.size_bytes),
+                                      volumeScanStatement(quotePowerShell(letter.toUpper()), true));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -5544,8 +5786,7 @@ PartitionScript PartitionScriptBuilder::buildSurfaceTestScript(
             .arg(operation.target.disk_number.value()) +
         windowsContinuedLine(WindowsContinuedWork::VolumeScan,
                              QStringLiteral("$_.Size"),
-                             QStringLiteral("Repair-Volume -DriveLetter $_.DriveLetter -Scan "
-                                            "-Verbose")) +
+                             volumeScanStatement(QStringLiteral("$_.DriveLetter"), true)) +
         QStringLiteral("}\n");
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
@@ -5694,23 +5935,73 @@ PartitionScript PartitionScriptBuilder::buildPartitionRecoveryScanScript(
 namespace {
 // More than Windows blanks of a partition it creates, measured at about 33 KB.
 constexpr uint64_t kRecoveredPartitionHeadBytes = 1024ULL * 1024ULL;
+
+/// An MBR partition type as Set-Partition -MbrType has to have it: a number, written in hex
+/// (0x83). A quoted "83" reached it as decimal 83, which is 0x53 (operation proof, 2026-11-11).
+/// Empty when @p typed is no MBR type PartitionSafetyValidator accepts.
+QString mbrTypeLiteral(const QString& typed);
+
+struct RecoveredPartitionType {
+    QString new_partition_argument;
+    QString set_mbr_type;
+};
+
+// What Restore Recovered Partition needs before it writes: where, how large, and a type the
+// disk's table holds (PartitionSafetyValidator::partitionTypeBlocker).
+QString recoveredPartitionBlocker(const PartitionOperation& operation) {
+    const QString typeId = payloadString(operation, QStringLiteral("type_id")).trimmed();
+    if (operation.target.kind != PartitionTargetKind::Disk ||
+        payloadUInt64(operation, QStringLiteral("offset_bytes")) == 0 ||
+        payloadUInt64(operation, QStringLiteral("size_bytes")) == 0 || typeId.isEmpty()) {
+        return QStringLiteral(
+            "Recovered partition restore requires disk, offset, size, and type_id");
+    }
+    return PartitionSafetyValidator::partitionTypeBlocker(
+        payloadString(operation, QStringLiteral("partition_style")), typeId);
+}
+
+// New-Partition's -MbrType is an enum of six named types: it read "0x07" as none of them and has
+// no Linux byte at all. So an MBR partition is made, then given its byte by Set-Partition, which
+// takes any; a GPT partition is made with its type.
+RecoveredPartitionType recoveredPartitionType(const PartitionOperation& operation,
+                                              const QString& typeId,
+                                              bool gpt) {
+    if (gpt) {
+        return {
+            .new_partition_argument =
+                QStringLiteral("-GptType %1").arg(PartitionScriptBuilder::quotePowerShell(typeId)),
+            .set_mbr_type = {}};
+    }
+    return {.new_partition_argument = {},
+            .set_mbr_type =
+                QStringLiteral("Set-Partition -DiskNumber %1 -PartitionNumber "
+                               "$sakNew.PartitionNumber -MbrType %2 -ErrorAction Stop\n")
+                    .arg(uintArg(operation.target.disk_number.value()), mbrTypeLiteral(typeId))};
+}
+
+QString mbrTypeLiteral(const QString& typed) {
+    constexpr int kHexBase = 16;
+    constexpr int kMbrTypeDigits = 2;
+    const auto value = PartitionSafetyValidator::mbrPartitionType(typed);
+    if (!value) {
+        return {};
+    }
+    const QString hex = QString::number(*value, kHexBase).toUpper();
+    return QStringLiteral("0x%1").arg(hex.rightJustified(kMbrTypeDigits, QLatin1Char('0')));
+}
 }  // namespace
 
 PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
     const PartitionOperation& operation) const {
+    if (const QString blocker = recoveredPartitionBlocker(operation); !blocker.isEmpty()) {
+        return invalidScript(blocker);
+    }
     const uint64_t offset = payloadUInt64(operation, QStringLiteral("offset_bytes"));
     const uint64_t size = payloadUInt64(operation, QStringLiteral("size_bytes"));
     const QString typeId = payloadString(operation, QStringLiteral("type_id")).trimmed();
-    if (operation.target.kind != PartitionTargetKind::Disk || offset == 0 || size == 0 ||
-        typeId.isEmpty()) {
-        return invalidScript(
-            QStringLiteral("Recovered partition restore requires disk, offset, size, and type_id"));
-    }
-
     const bool gpt = payloadString(operation, QStringLiteral("partition_style"))
                          .compare(QStringLiteral("GPT"), Qt::CaseInsensitive) == 0;
-    const QString typeArg = gpt ? QStringLiteral("-GptType %1").arg(quotePowerShell(typeId))
-                                : QStringLiteral("-MbrType %1").arg(quotePowerShell(typeId));
+    const auto [typeArg, setMbrType] = recoveredPartitionType(operation, typeId, gpt);
     PartitionScript out;
     out.preview = QStringLiteral("Restore recovered partition on Disk %1 at %2")
                       .arg(operation.target.disk_number.value())
@@ -5747,6 +6038,7 @@ PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
             "} finally { $sakRaw.Dispose() }\n"
             "$sakNew = New-Partition -DiskNumber %1 -Offset %2 -Size %3 %4 -ErrorAction "
             "Stop\n"
+            "%6"
             "$sakRaw = [System.IO.File]::Open($sakDiskPath, 'Open', 'ReadWrite', "
             "'ReadWrite')\n"
             "try {\n"
@@ -5759,7 +6051,11 @@ PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
             "| Out-Null }\n"
             "Update-HostStorageCache -ErrorAction Stop\n")
             .arg(operation.target.disk_number.value())
-            .arg(uintArg(offset), uintArg(size), typeArg, uintArg(kRecoveredPartitionHeadBytes));
+            .arg(uintArg(offset),
+                 uintArg(size),
+                 typeArg,
+                 uintArg(kRecoveredPartitionHeadBytes),
+                 setMbrType);
     out.timeout_seconds = kPartitionMediumTaskTimeoutSeconds;
     return out;
 }
@@ -5773,21 +6069,7 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionHiddenScript(
                       .arg(operation.target.disk_number.value())
                       .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 QStringLiteral(
-                     "Set-Partition -DiskNumber %1 -PartitionNumber %2 "
-                     "-IsHidden $%3 -NoDefaultDriveLetter $%3\n")
-                     .arg(operation.target.disk_number.value())
-                     .arg(operation.target.partition_number.value())
-                     .arg(hidden ? QStringLiteral("true") : QStringLiteral("false"));
-    if (hidden && isValidDriveLetter(operation.target.drive_letter.left(1))) {
-        out.script += QStringLiteral(
-                          "Remove-PartitionAccessPath -DiskNumber %1 -PartitionNumber %2 "
-                          "-AccessPath %3 -ErrorAction Stop\n")
-                          .arg(operation.target.disk_number.value())
-                          .arg(operation.target.partition_number.value())
-                          .arg(quotePowerShell(operation.target.drive_letter.left(1).toUpper() +
-                                               QStringLiteral(":\\")));
-    }
+                 (hidden ? hidePartitionScript(operation) : unhidePartitionScript(operation));
     return out;
 }
 
@@ -5813,6 +6095,13 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionTypeIdScript(
     if (typeId.isEmpty()) {
         return invalidScript(QStringLiteral("Partition type change requires type_id"));
     }
+    // The disk's style is read when the script runs, so text that is no type for it (a GPT GUID
+    // on an MBR disk, a byte on a GPT one) stops it there, before Set-Partition.
+    const QString mbrType = mbrTypeLiteral(typeId);
+    const QString mbrRefusal = PartitionSafetyValidator::partitionTypeBlocker(QStringLiteral("MBR"),
+                                                                              typeId);
+    const QString gptRefusal = PartitionSafetyValidator::partitionTypeBlocker(QStringLiteral("GPT"),
+                                                                              typeId);
 
     PartitionScript out;
     out.preview = QStringLiteral("Change Disk %1 Partition %2 type ID to %3")
@@ -5823,14 +6112,21 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionTypeIdScript(
                  QStringLiteral(
                      "$d = Get-Disk -Number %1 -ErrorAction Stop\n"
                      "$typeId = %2\n"
+                     "$mbrType = %4\n"
                      "if ($d.PartitionStyle -eq 'GPT') {\n"
+                     "  if (%6) { throw %6 }\n"
                      "  Set-Partition -DiskNumber %1 -PartitionNumber %3 -GptType $typeId\n"
                      "} elseif ($d.PartitionStyle -eq 'MBR') {\n"
-                     "  Set-Partition -DiskNumber %1 -PartitionNumber %3 -MbrType $typeId\n"
+                     "  if ($null -eq $mbrType) { throw %5 }\n"
+                     "  Set-Partition -DiskNumber %1 -PartitionNumber %3 -MbrType $mbrType\n"
                      "} else { throw 'Partition type ID requires MBR or GPT disk' }\n")
-                     .arg(operation.target.disk_number.value())
-                     .arg(quotePowerShell(typeId))
-                     .arg(operation.target.partition_number.value());
+                     // One pass, so a %n in the typed text is never read as a placeholder.
+                     .arg(QString::number(operation.target.disk_number.value()),
+                          quotePowerShell(typeId),
+                          QString::number(operation.target.partition_number.value()),
+                          mbrType.isEmpty() ? QStringLiteral("$null") : mbrType,
+                          quotePowerShell(mbrRefusal),
+                          quotePowerShell(gptRefusal));
     return out;
 }
 
@@ -5883,13 +6179,16 @@ PartitionScript PartitionScriptBuilder::buildResizeScript(
     if (targetSize == 0) {
         return invalidScript(QStringLiteral("Resize requires target_size_bytes"));
     }
+    // The file system the resize was queued for: the script checks the partition still holds it.
+    const QString fs = payloadString(operation, QStringLiteral("file_system")).trimmed();
+    if (fs.isEmpty()) {
+        return invalidScript(QStringLiteral("Resize requires the file system it was queued for"));
+    }
     if (isNonNativeFileSystemToolOperation(operation)) {
         const QString targetBlocker = rawPartitionTargetPathBlocker(operation);
         if (!targetBlocker.isEmpty()) {
             return invalidScript(targetBlocker);
         }
-        const QString fs =
-            payloadString(operation, QStringLiteral("file_system"), QStringLiteral("ext4"));
         if (!isExtFileSystemToken(fs)) {
             return invalidScript(
                 QStringLiteral("Non-Windows resize currently supports ext2/ext3/ext4 only"));
@@ -5901,8 +6200,15 @@ PartitionScript PartitionScriptBuilder::buildResizeScript(
         const auto request = growExtResizeRequest(operation, fs, targetPath, targetSize);
         return buildExternalFileSystemToolScript(operation, request);
     }
-
-    return buildNativeResizeScript(operation, targetSize);
+    if (const QString blocker = PartitionFileSystemRegistry::windowsResizeBlocker(
+            fs, operation.target.size_bytes, targetSize);
+        !blocker.isEmpty()) {
+        return invalidScript(blocker);
+    }
+    if (PartitionFileSystemRegistry::isApfs(fs)) {
+        return buildApfsGrowScript(operation, targetSize);
+    }
+    return buildNativeResizeScript(operation, targetSize, fs);
 }
 
 PartitionScript PartitionScriptBuilder::buildAllocateFreeSpaceScript(
@@ -6357,10 +6663,11 @@ PartitionScript PartitionScriptBuilder::buildOptimizeSsdScript(
     // killed.
     out.script =
         commonHeader(out.preview) + QStringLiteral("fsutil behavior query DisableDeleteNotify\n") +
-        windowsContinuedLine(WindowsContinuedWork::Retrim,
-                             uintArg(operation.target.size_bytes),
-                             QStringLiteral("Optimize-Volume -DriveLetter %1 -ReTrim -Verbose")
-                                 .arg(letter.toUpper()));
+        windowsContinuedLine(
+            WindowsContinuedWork::Retrim,
+            uintArg(operation.target.size_bytes),
+            QStringLiteral("Optimize-Volume -DriveLetter %1 -ReTrim -Verbose -ErrorAction Stop")
+                .arg(letter.toUpper()));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -6399,17 +6706,18 @@ PartitionScript PartitionScriptBuilder::buildDefragVolumeScript(
             "        throw \"Could not confirm HDD media classification: $mediaText\"\n"
             "    }\n"
             "}\n"
-            "Optimize-Volume -DriveLetter $driveLetter -Analyze -Verbose\n")
+            "Optimize-Volume -DriveLetter $driveLetter -Analyze -Verbose -ErrorAction Stop\n")
             .arg(quotePowerShell(letter.toUpper())) +
         // The defrag and the scan are storage jobs Windows finishes even if this script
         // is killed; the analysis ends too quickly to matter.
         windowsContinuedLine(WindowsContinuedWork::Defragment,
                              uintArg(operation.target.size_bytes),
                              QStringLiteral(
-                                 "Optimize-Volume -DriveLetter $driveLetter -Defrag -Verbose")) +
+                                 "Optimize-Volume -DriveLetter $driveLetter -Defrag -Verbose "
+                                 "-ErrorAction Stop")) +
         windowsContinuedLine(WindowsContinuedWork::VolumeScan,
                              uintArg(operation.target.size_bytes),
-                             QStringLiteral("Repair-Volume -DriveLetter $driveLetter -Scan"));
+                             volumeScanStatement(QStringLiteral("$driveLetter")));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -6600,7 +6908,7 @@ PartitionScript PartitionScriptBuilder::buildMovePartitionScript(
                         "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
          windowsContinuedLine(WindowsContinuedWork::VolumeScan,
                               QStringLiteral("$targetSize"),
-                              QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+                              volumeScanStatement(QStringLiteral("$drive"))) +
          QStringLiteral("Get-Partition -DiskNumber %7 | Sort-Object Offset | Format-Table "
                         "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))
             .arg(quotePowerShell(payload.drive),
@@ -6664,7 +6972,7 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
              "Invoke-SakRobocopy $backupPath $sourceRoot\n"
              "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
              "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
-         volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+         volumeScanLine(volumeScanStatement(QStringLiteral("$drive"))) +
          QStringLiteral("Get-Partition -DiskNumber %7 | Sort-Object Offset | Format-Table "
                         "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))
             .arg(quotePowerShell(payload.drive),
@@ -6733,7 +7041,7 @@ PartitionScript PartitionScriptBuilder::buildChangeVolumeSerialNumberScript(
              "Invoke-SakRobocopy $backupPath $sourceRoot\n"
              "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
              "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
-         volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+         volumeScanLine(volumeScanStatement(QStringLiteral("$drive"))) +
          QStringLiteral("Write-Output ('Volume serial changed from {0} to {1}' -f $beforeSerial, "
                         "$afterSerial)\n"))
             .arg(quotePowerShell(drive),
@@ -6825,7 +7133,7 @@ PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
              "Invoke-SakRobocopy $backupPath $sourceRoot\n"
              "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
              "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
-         volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+         volumeScanLine(volumeScanStatement(QStringLiteral("$drive"))) +
          QStringLiteral("Get-Disk -Number %6 | Format-List "
                         "Number,PartitionStyle,IsBoot,IsSystem,IsReadOnly\n"))
             .arg(quotePowerShell(drive),

@@ -856,9 +856,16 @@ private:
     int m_timeout_ms;
 };
 
-/// Why a scan gave no disks, in the scan's own words: a scan that timed out, and one that found
-/// nothing, read the same without them.
+/// Why a scan gave no disks, in the scan's own words. A scan that did not finish is incomplete, not
+/// a scan that found no disks (F26, 2026-11-12: a busy PC's timed-out scan read as "found no
+/// disks").
 QString emptyScanRefusal(const sak::PartitionInventory& inventory) {
+    if (inventory.scan_did_not_finish) {
+        return QStringLiteral(
+                   "The inventory scan did not finish, so it says nothing about the "
+                   "disks: %1")
+            .arg(inventory.warnings.join(QStringLiteral("; ")));
+    }
     if (inventory.warnings.isEmpty()) {
         return QStringLiteral("The inventory scan found no disks");
     }
@@ -866,11 +873,26 @@ QString emptyScanRefusal(const sak::PartitionInventory& inventory) {
         .arg(inventory.warnings.join(QStringLiteral("; ")));
 }
 
-Result<void> refreshInventory(sak::PartitionManagerController& controller, int timeout_seconds) {
-    const auto scanned = ControllerWait(controller, timeout_seconds).run([&controller]() {
-        controller.refreshInventory();
-        return true;
-    });
+/// The scan a step starts from. An operation-proof step on a non-Windows file system asks for the
+/// scan with administrator rights (choices.administrator_scan), because a standard scan cannot
+/// read a raw partition: in the panel that file system is known from the elevated scan of the
+/// Apply that wrote it, or from Scan Disks with administrator rights.
+bool wantsAdministratorScan(const StepJob& job) {
+    return job.operation_proof &&
+           job.choices.value(QLatin1String("administrator_scan")).toBool(false);
+}
+
+Result<void> refreshInventory(sak::PartitionManagerController& controller,
+                              int timeout_seconds,
+                              bool administrator_scan = false) {
+    const auto scanned =
+        ControllerWait(controller, timeout_seconds).run([&controller, administrator_scan]() {
+            if (administrator_scan) {
+                return controller.refreshInventoryWithAdministratorRights();
+            }
+            controller.refreshInventory();
+            return true;
+        });
     if (!scanned) {
         return refused(scanned.error());
     }
@@ -949,6 +971,19 @@ bool expectedCancel(const StepJob& job, const sak::PartitionExecutionResult& res
     return job.operation_proof && job.expect == QStringLiteral("cancelled") && result.cancelled;
 }
 
+/// Whether an Apply that ran did what the step expected. A step that expected a refusal, a
+/// failure or a stop and saw the operation run to the end did not: a refusal comes before Apply
+/// and is answered there. Until 2026-11-11 a run that succeeded met every expectation, and a
+/// shrink the row expected refused, which cut an ext4 file system short, reported Passed.
+bool executionMetExpectation(const StepJob& job,
+                             const sak::PartitionExecutionResult& result,
+                             qsizetype queued) {
+    if (job.expect == QStringLiteral("success")) {
+        return executionPassed(result, queued);
+    }
+    return expectedFailure(job, result) || expectedCancel(job, result);
+}
+
 Result<void> applyQueued(sak::PartitionManagerController& controller,
                          const StepJob& job,
                          QJsonObject* report) {
@@ -1000,8 +1035,7 @@ Result<void> applyQueued(sak::PartitionManagerController& controller,
     const auto& result = **execution;
     report->insert("execution", executionJson(result));
     report->insert("helper_connected", sak::ElevationBroker::sessionBroker()->isConnected());
-    if (!executionPassed(result, queued) && !expectedFailure(job, result) &&
-        !expectedCancel(job, result)) {
+    if (!executionMetExpectation(job, result, queued)) {
         return refused(
             QStringLiteral("Apply did not do what the step expected: %1").arg(result.message));
     }
@@ -1299,9 +1333,13 @@ std::map<QString, ProofBuilder> operationProofBuilders() {
 }
 
 /// The builder an operation-proof job runs, and where its payload comes from.
-Result<std::pair<RequestBuilder, QString>> proofBuilderFor(const QString& operation) {
+/// A panel-route job takes the panel's payload where the panel builds one inline. An
+/// assistant-route job never does: a model writes only the fields its tool documents, which are
+/// the core request functions' (coordinator, 2026-11-11), so it gets those or nothing.
+Result<std::pair<RequestBuilder, QString>> proofBuilderFor(const QString& operation,
+                                                           bool assistant_route) {
     const auto proof = operationProofBuilders();
-    if (const auto found = proof.find(operation); found != proof.cend()) {
+    if (const auto found = proof.find(operation); !assistant_route && found != proof.cend()) {
         return std::make_pair(found->second.build,
                               QStringLiteral("replicated from PartitionManagerPanel %1")
                                   .arg(found->second.payload_source));
@@ -1406,7 +1444,7 @@ Result<void> runReadOnlyNow(sak::PartitionManagerController& controller,
         return refused(QStringLiteral("The read-only run gave no result"));
     }
     report->insert("execution", executionJson(**execution));
-    if (!executionPassed(**execution, 1) && !expectedFailure(context.job, **execution)) {
+    if (!executionMetExpectation(context.job, **execution, 1)) {
         return refused(QStringLiteral("The read-only run did not do what the step expected: %1")
                            .arg((*execution)->message));
     }
@@ -1421,10 +1459,23 @@ Result<void> runAssistantRoute(const StepJob& job, const Requests& requests, QJs
     if (requests.size() != 1) {
         return refused(QStringLiteral("The assistant applies one operation at a time"));
     }
-    const auto operation = sak::PartitionOperationPlanner::makeOperation(
-        requests.constFirst().type, requests.constFirst().target, requests.constFirst().payload);
-    // The assistant reads the disks itself, without elevation, before it validates.
+    // The assistant reads the disks itself, without elevation, then derives what only the app may
+    // set (sak::assistantPartitionOperation), and validates.
     const sak::PartitionInventory inventory = sak::StorageInventoryWorker::scanCurrentSystem(false);
+    const auto requested = sak::assistantPartitionOperation(requests.constFirst().type,
+                                                            requests.constFirst().target,
+                                                            requests.constFirst().payload,
+                                                            inventory);
+    if (!requested) {
+        report->insert("assistant_blockers", QJsonArray{requested.error()});
+        if (expectedRefusal(job, {requested.error()})) {
+            report->insert("refused_at", QStringLiteral("assistant-request"));
+            report->insert("expectation_met", true);
+            return {};
+        }
+        return refused(requested.error());
+    }
+    const sak::PartitionOperation& operation = *requested;
     const auto validation = sak::PartitionSafetyValidator::validate(inventory, operation);
     const sak::PartitionScriptBuilder builder;
     const auto script = builder.buildScript(operation);
@@ -1462,7 +1513,7 @@ Result<void> runAssistantRoute(const StepJob& job, const Requests& requests, QJs
     watcher.waitForFinished();
     const sak::PartitionExecutionResult result = watcher.result();
     report->insert("execution", executionJson(result));
-    if (!executionPassed(result, 1) && !expectedFailure(job, result)) {
+    if (!executionMetExpectation(job, result, 1)) {
         return refused(
             QStringLiteral("Apply did not do what the step expected: %1").arg(result.message));
     }
@@ -1556,7 +1607,8 @@ Result<void> runProofStep(sak::PartitionManagerController& controller,
     if (auto now = runProofNow(controller, context, report)) {
         return *now;
     }
-    const auto builder = proofBuilderFor(context.job.operation);
+    const bool assistant_route = context.job.route == QStringLiteral("assistant");
+    const auto builder = proofBuilderFor(context.job.operation, assistant_route);
     if (!builder) {
         return refused(builder.error());
     }
@@ -1565,7 +1617,7 @@ Result<void> runProofStep(sak::PartitionManagerController& controller,
     if (!requests) {
         return refused(requests.error());
     }
-    if (context.job.route == QStringLiteral("assistant")) {
+    if (assistant_route) {
         return runAssistantRoute(context.job, *requests, report);
     }
     return queueAndApply(controller, context.job, *requests, report);
@@ -1606,7 +1658,9 @@ Result<void> runStep(sak::PartitionManagerController& controller,
     if (auto in_process = runInProcess(job, report)) {
         return *in_process;
     }
-    if (const auto scan = refreshInventory(controller, job.timeout_seconds); !scan) {
+    if (const auto scan =
+            refreshInventory(controller, job.timeout_seconds, wantsAdministratorScan(job));
+        !scan) {
         return scan;
     }
     const sak::PartitionInventory inventory = controller.inventory();
@@ -1749,8 +1803,13 @@ void selfTestOutcomes(const AddCheck& add) {
         QString::fromLatin1(SAK_CODE_DIGEST).size() == 64);
     sak::PartitionInventory unfinished;
     unfinished.warnings = {QStringLiteral("The disk scan did not finish")};
+    unfinished.scan_did_not_finish = true;
     add(QStringLiteral("step-empty-scan-says-why"),
-        emptyScanRefusal(unfinished).endsWith(QStringLiteral(": The disk scan did not finish")) &&
+        emptyScanRefusal(unfinished)
+                .startsWith(QStringLiteral("The inventory scan did not finish")) &&
+            emptyScanRefusal(unfinished)
+                .endsWith(QStringLiteral(": The disk scan did not finish")) &&
+            !emptyScanRefusal(unfinished).contains(QStringLiteral("found no disks")) &&
             emptyScanRefusal({}) == QStringLiteral("The inventory scan found no disks"));
 
     sak::PartitionExecutionResult result;
@@ -1760,6 +1819,11 @@ void selfTestOutcomes(const AddCheck& add) {
     step.success = true;
     result.steps.append(step);
     add(QStringLiteral("step-execution-passes-with-every-step"), executionPassed(result, 1));
+    // An Apply that ran to the end is what a success step expects, and never a refusal.
+    const StepJob success_job{.expect = QStringLiteral("success")};
+    add(QStringLiteral("step-an-apply-that-ran-is-no-refusal"),
+        executionMetExpectation(success_job, result, 1) &&
+            !executionMetExpectation(refused_job, result, 1));
     result.steps.first().skipped = true;
     add(QStringLiteral("step-execution-refuses-a-skipped-step"), !executionPassed(result, 1));
     add(QStringLiteral("step-has-a-builder-for-each-operation"), requestBuilders().size() == 27);
@@ -1774,6 +1838,19 @@ void selfTestOperationProof(const AddCheck& add) {
     add(QStringLiteral("step-proof-writes-through-the-panel-raw-path"),
         panelRawPartitionPath(partition) ==
             QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk3\\Partition2"));
+    const auto panel_format = proofBuilderFor(QStringLiteral("Format"), false);
+    const auto assistant_format = proofBuilderFor(QStringLiteral("Format"), true);
+    add(QStringLiteral("step-proof-assistant-route-takes-only-core-payloads"),
+        panel_format.has_value() && assistant_format.has_value() &&
+            panel_format->second.startsWith(QStringLiteral("replicated")) &&
+            assistant_format->second == QStringLiteral("core partition_operation_requests") &&
+            !proofBuilderFor(QStringLiteral("SetDriveLetter"), true).has_value());
+    StepJob scan_job;
+    scan_job.choices = QJsonObject{{"administrator_scan", true}};
+    const bool certification_scan = wantsAdministratorScan(scan_job);
+    scan_job.operation_proof = true;
+    add(QStringLiteral("step-administrator-scan-only-for-proof-jobs"),
+        !certification_scan && wantsAdministratorScan(scan_job));
     add(QStringLiteral("step-proof-format-adds-tool-fields-only-for-non-windows"),
         isPanelNonNativeFormat(QStringLiteral("ext4")) &&
             isPanelNonNativeFormat(QStringLiteral("Linux swap")) &&
