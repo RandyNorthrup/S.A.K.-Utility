@@ -1923,12 +1923,12 @@ function Get-OpsBiosBootFacts {
 }
 
 function Hide-OpsBootmgr {
-    # The break: bootmgr renamed out of the way. A disk an earlier row broke and the app repaired
-    # still holds that row's renamed copy, which is this row's own leftover and goes first.
+    # The break: bootmgr renamed out of the way, to a name of its own each time. A disk an earlier
+    # row broke and the app repaired still holds that row's renamed copy, which Windows will not
+    # let even an administrator delete ("Access to the path is denied", 2026-11-12).
     param([object]$System)
-    $broken = "$($System.letter):\bootmgr.opsproof-broken"
-    if (Test-Path -LiteralPath $broken) { Remove-Item -LiteralPath $broken -Force }
-    if (Test-Path -LiteralPath "$($System.letter):\bootmgr") { Rename-Item -LiteralPath "$($System.letter):\bootmgr" -NewName 'bootmgr.opsproof-broken' -Force }
+    $name = 'bootmgr.opsproof-broken-{0}' -f (Get-Date).ToString('yyyyMMddHHmmss')
+    if (Test-Path -LiteralPath "$($System.letter):\bootmgr") { Rename-Item -LiteralPath "$($System.letter):\bootmgr" -NewName $name -Force }
 }
 
 function Remove-OpsAddedLetter {
