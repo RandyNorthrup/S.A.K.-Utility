@@ -448,11 +448,13 @@ function ConvertTo-OpsWslPath {
 }
 
 function Invoke-OpsWsl {
-    param([string[]]$Arguments)
+    param([string[]]$Arguments, [string]$Alarm = '')
     $output = & wsl.exe -d archlinux -u root -- @Arguments 2>&1 | ForEach-Object { "$_" }
     $code = $LASTEXITCODE
     $lines = @($output | Where-Object { $_.Trim() } | Select-Object -Last 15)
-    return [pscustomobject]@{ command = ($Arguments -join ' '); exit_code = [int]$code; tail = ($lines -join ' | ') }
+    # Lines anywhere in the output that fail the check whatever the exit code says.
+    $alarms = @(if ($Alarm) { $output | Where-Object { $_ -match $Alarm } | ForEach-Object { $_.Trim() } })
+    return [pscustomobject]@{ command = ($Arguments -join ' '); exit_code = [int]$code; tail = ($lines -join ' | '); alarms = ($alarms -join ' | ') }
 }
 
 function Invoke-OpsMacCheck {
@@ -499,8 +501,9 @@ function Invoke-OpsHostChecks {
             $wsl = ConvertTo-OpsWslPath $path
             switch -Regex ("$($image.expect)") {
                 '^ext[234]$' {
-                    $fsck = Invoke-OpsWsl @('e2fsck', '-fn', $wsl)
-                    $checks += [ordered]@{ name = "host: Linux e2fsck -fn $($image.name) exits 0"; passed = ($fsck.exit_code -eq 0); detail = $fsck }
+                    # e2fsck -n exits 0 for a file system larger than its partition; it says so in words.
+                    $fsck = Invoke-OpsWsl -Arguments @('e2fsck', '-fn', $wsl) -Alarm 'likely to be corrupt|physical size of the device|Abort\? no'
+                    $checks += [ordered]@{ name = "host: Linux e2fsck -fn $($image.name) exits 0 and finds the file system whole"; passed = ($fsck.exit_code -eq 0 -and -not $fsck.alarms); detail = $fsck }
                     $dump = Invoke-OpsWsl @('sh', '-c', "dumpe2fs -h '$wsl' 2>/dev/null | grep -E 'features|volume name|Block count|Block size|state'")
                     $features = if ($dump.tail -match 'Filesystem features:\s*([^|]+)') { $Matches[1].Trim() } else { '' }
                     $kind = if (-not $features) { '' } elseif ($features -match '\bextents?\b') { 'ext4' } elseif ($features -match '\bhas_journal\b') { 'ext3' } else { 'ext2' }

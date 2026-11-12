@@ -23,6 +23,9 @@ $Script:OpsGptLinuxData = '0fc63daf-8483-4772-8e79-3d69d8477de4'
 $Script:OpsGptHiddenAttribute = [Convert]::ToUInt64('4000000000000000', 16)
 $Script:OpsGptNoDriveLetterAttribute = [Convert]::ToUInt64('8000000000000000', 16)
 $Script:OpsImageChunkBytes = 4MB
+# What e2fsck -n says, exit code 0 and all, about a file system larger than its partition: it
+# answers its own "Abort?" with no and goes on (ops.resize-unknown-fs-below-fs, b28, 2026-11-11).
+$Script:OpsE2fsckAlarm = 'likely to be corrupt|physical size of the device|Abort\? no'
 
 function New-OpsCheck {
     param([Parameter(Mandatory = $true)] [string]$Name, [bool]$Passed, [AllowNull()] [object]$Detail = '')
@@ -190,12 +193,15 @@ function Invoke-OpsTool {
     .SYNOPSIS
         Runs a bundled checker on an image copy and keeps its exit code and the end of what it said.
     #>
-    param([Parameter(Mandatory = $true)] [string]$Tool, [string[]]$Arguments = @())
+    param([Parameter(Mandatory = $true)] [string]$Tool, [string[]]$Arguments = @(), [string]$Alarm = '')
     $ErrorActionPreference = 'Continue'
     $output = & $Tool @Arguments 2>&1 | ForEach-Object { "$_" } | Out-String
     $code = $LASTEXITCODE
-    $lines = @($output -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 12)
-    return [pscustomobject]@{ tool = (Split-Path -Leaf $Tool); arguments = ($Arguments -join ' '); exit_code = [int]$code; tail = ($lines -join ' | ') }
+    $all = @($output -split "`r?`n" | Where-Object { $_.Trim() })
+    $lines = @($all | Select-Object -Last 12)
+    # Lines anywhere in the output that fail the check whatever the exit code says.
+    $alarms = @(if ($Alarm) { $all | Where-Object { $_ -match $Alarm } | ForEach-Object { $_.Trim() } })
+    return [pscustomobject]@{ tool = (Split-Path -Leaf $Tool); arguments = ($Arguments -join ' '); exit_code = [int]$code; tail = ($lines -join ' | '); alarms = ($alarms -join ' | ') }
 }
 
 function Get-OpsExtSuperblock {
@@ -240,8 +246,8 @@ function Test-OpsExtImage {
         $checks += New-OpsCheck -Name "$Prefix file system fits its partition" -Passed ($sb.file_system_bytes -le $Image.size_bytes -and $sb.file_system_bytes -ge ($Image.size_bytes - 4 * $Script:OpsMiB)) -Detail "$($sb.file_system_bytes) of $($Image.size_bytes)"
         if ($null -ne $Label) { $checks += New-OpsCheck -Name "$Prefix label is '$Label'" -Passed ($sb.label -ceq $Label) -Detail $sb.label }
     }
-    $e2fsck = Invoke-OpsTool -Tool (Get-OpsTool 'tools\filesystem\e2fsprogs\e2fsck.exe') -Arguments @('-fn', $Image.path)
-    $checks += New-OpsCheck -Name "$Prefix bundled e2fsck -fn on a copy exits 0" -Passed ($e2fsck.exit_code -eq 0) -Detail $e2fsck
+    $e2fsck = Invoke-OpsTool -Tool (Get-OpsTool 'tools\filesystem\e2fsprogs\e2fsck.exe') -Arguments @('-fn', $Image.path) -Alarm $Script:OpsE2fsckAlarm
+    $checks += New-OpsCheck -Name "$Prefix bundled e2fsck -fn on a copy exits 0 and finds the file system whole" -Passed ($e2fsck.exit_code -eq 0 -and -not $e2fsck.alarms) -Detail $e2fsck
     return , $checks
 }
 
