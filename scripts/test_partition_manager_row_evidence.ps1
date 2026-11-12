@@ -408,6 +408,15 @@ Assert-Limit (Get-PmWholeDiskPassSeconds -SizeBytes $Script:Rehearsal) 21600 'on
 Assert-Limit (Get-PmWholeDiskPassSeconds -SizeBytes ([uint64]8192 * $Script:MiB)) 21600 'one pass on the 8 GB VDI keeps its 6 hours'
 Assert-Limit (Get-PmWholeDiskPassSeconds -SizeBytes $Script:Terabyte) 65392 'one pass on a 1 TB drive'
 
+# The operation proof reruns certification rows from an uncommitted build and so drops the
+# release-binding reasons, "built from other code" among them, in its own driver only
+# (Get-OpsCertVerdict). The certification's verdicts, the evidence selector and the status, must
+# take Test-PmRowEvidence's reasons whole: neither may name a reason it ignores.
+foreach ($certification in 'select_partition_manager_evidence.ps1', 'get_partition_manager_certification_status.ps1') {
+    $text = Get-Content -LiteralPath (Join-Path $PSScriptRoot $certification) -Raw
+    if ($text -match 'built from other code|is for other code|uncommitted changes|names no real commit|Get-OpsCertVerdict') { $Script:Failures.Add("$certification drops a release-binding reason") } else { $Script:Passes++ }
+}
+
 if ($Script:Failures.Count -gt 0) {
     $Script:Failures | ForEach-Object { Write-Host "FAIL $_" }
     throw "$($Script:Failures.Count) evidence guard(s) failed, $($Script:Passes) held"
