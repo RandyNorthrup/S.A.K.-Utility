@@ -6193,11 +6193,10 @@ PartitionScript PartitionScriptBuilder::buildResizeScript(
         const auto request = growExtResizeRequest(operation, fs, targetPath, targetSize);
         return buildExternalFileSystemToolScript(operation, request);
     }
-    if (!PartitionFileSystemRegistry::windowsResizesFileSystem(fs)) {
-        return invalidScript(
-            QStringLiteral("Windows resizes NTFS, ReFS, FAT, FAT32 and exFAT partitions; a %1 "
-                           "partition is resized only with its own tools")
-                .arg(fs));
+    if (const QString blocker = PartitionFileSystemRegistry::windowsResizeBlocker(
+            fs, operation.target.size_bytes, targetSize);
+        !blocker.isEmpty()) {
+        return invalidScript(blocker);
     }
     return buildNativeResizeScript(operation, targetSize, fs);
 }

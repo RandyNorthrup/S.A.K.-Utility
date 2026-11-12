@@ -5997,8 +5997,24 @@ ResizePartitionWidgets addResizePartitionControls(PartitionOperationDialog& dial
     return widgets;
 }
 
+// Why Windows would not resize this partition in place, or empty: it resizes NTFS and ReFS, and
+// neither shrinks nor grows FAT32 or exFAT (testpc1, 2026-11-12), and a partition whose file system
+// the scan did not identify is not resized at all. ext goes through S.A.K.'s own tools instead.
+QString inPlaceResizeRefusal(const ResizePartitionWidgets& widgets) {
+    if (widgets.non_native_ext || selectedResizeMode(widgets) != adjacentResizeMode() ||
+        !selectedResizeTargetChanged(widgets)) {
+        return {};
+    }
+    return PartitionFileSystemRegistry::windowsResizeBlocker(widgets.file_system,
+                                                             widgets.current_bytes,
+                                                             selectedResizeTargetBytes(widgets));
+}
+
 QString resizeModeStatusText(const ResizePartitionWidgets& widgets) {
     const QString mode = selectedResizeMode(widgets);
+    if (const QString refusal = inPlaceResizeRefusal(widgets); !refusal.isEmpty()) {
+        return refusal;
+    }
     if (widgets.non_native_ext) {
         const uint64_t target_bytes = selectedResizeTargetBytes(widgets);
         if (mode != adjacentResizeMode()) {
@@ -6110,6 +6126,19 @@ void updateResizeControlState(const ResizePartitionWidgets& widgets, bool move_m
     widgets.donor_partition->setEnabled(selectedResizeMode(widgets) == donorResizeMode());
 }
 
+// An in-place resize the dialog may queue: Windows' own for NTFS and ReFS (nothing it would refuse,
+// inPlaceResizeRefusal), or the bundled tools' for ext once the person confirms it.
+bool resizeInPlaceReady(const ResizePartitionWidgets& widgets, uint64_t target_bytes) {
+    if (selectedResizeMode(widgets) != adjacentResizeMode()) {
+        return false;
+    }
+    if (!widgets.non_native_ext) {
+        return selectedResizeTargetChanged(widgets) && inPlaceResizeRefusal(widgets).isEmpty();
+    }
+    return target_bytes != widgets.current_bytes && (widgets.non_native_confirmation != nullptr) &&
+           widgets.non_native_confirmation->isChecked();
+}
+
 void updateResizePartitionPreview(PartitionOperationDialog& dialog,
                                   const ResizePartitionWidgets& widgets) {
     const uint64_t target_bytes = selectedResizeTargetBytes(widgets);
@@ -6120,16 +6149,7 @@ void updateResizePartitionPreview(PartitionOperationDialog& dialog,
                                           target_bytes);
     updateResizePreviewRows(widgets, target_bytes, scale_bytes);
     const bool move_ready = resizeMoveReady(widgets, move_mode, target_bytes, target_offset_bytes);
-    const bool native_adjacent_ready = !widgets.non_native_ext &&
-                                       selectedResizeMode(widgets) == adjacentResizeMode() &&
-                                       selectedResizeTargetChanged(widgets);
-    const bool ext_adjacent_ready = widgets.non_native_ext &&
-                                    selectedResizeMode(widgets) == adjacentResizeMode() &&
-                                    target_bytes != widgets.current_bytes &&
-                                    (widgets.non_native_confirmation != nullptr) &&
-                                    widgets.non_native_confirmation->isChecked();
-    const bool adjacent_ready = native_adjacent_ready || ext_adjacent_ready;
-    const bool queueable = adjacent_ready || move_ready;
+    const bool queueable = resizeInPlaceReady(widgets, target_bytes) || move_ready;
     updateResizeControlState(widgets, move_mode);
     {
         const QSignalBlocker target_handle_blocker(widgets.target_size_handle);

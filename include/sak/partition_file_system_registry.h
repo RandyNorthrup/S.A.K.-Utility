@@ -47,10 +47,15 @@ public:
     /// or the volume. A RAW volume nothing identified is not one: that is what an unreadable
     /// volume looks like.
     [[nodiscard]] static bool identifiedNonWindowsVolume(const PartitionVolumeInfo& volume);
-    /// The file systems Windows resizes itself, with Resize-Partition: NTFS, ReFS, FAT, FAT32 and
-    /// exFAT (its supported-size answer then says how far). Any other is resized only with its own
-    /// tools, or not at all.
-    [[nodiscard]] static bool windowsResizesFileSystem(const QString& file_system);
+    /// Why Windows would not resize a @p file_system partition from @p current_bytes to
+    /// @p target_bytes with Resize-Partition, in plain words; empty for NTFS and ReFS, which it
+    /// resizes (its supported-size answer then says how far). Measured on testpc1 (2026-11-12):
+    /// Resize-Partition answered "Not Supported" for FAT32 and exFAT, shrinking and growing, while
+    /// Get-PartitionSupportedSize offered room to grow them. ext is resized with S.A.K.'s bundled
+    /// tools, not here; any other file system is not resized at all.
+    [[nodiscard]] static QString windowsResizeBlocker(const QString& file_system,
+                                                      uint64_t current_bytes,
+                                                      uint64_t target_bytes);
 
     /// Why Windows' Format-Volume would refuse @p choice, or drop its label, in plain words;
     /// empty when it would make what was asked. Format-Volume writes the start of the volume

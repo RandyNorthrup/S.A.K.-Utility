@@ -562,13 +562,28 @@ function Assert-SakWindowsFormatChoice([uint32]$DiskNumber, [uint64]$SizeBytes, 
              QString::number(kNtfsMaximumClusters));
 }
 
-bool PartitionFileSystemRegistry::windowsResizesFileSystem(const QString& file_system) {
-    return matches(file_system.trimmed(),
-                   {QStringLiteral("NTFS"),
-                    QStringLiteral("ReFS"),
-                    QStringLiteral("FAT"),
-                    QStringLiteral("FAT32"),
-                    QStringLiteral("exFAT")});
+QString PartitionFileSystemRegistry::windowsResizeBlocker(const QString& file_system,
+                                                          uint64_t current_bytes,
+                                                          uint64_t target_bytes) {
+    const QString fs = file_system.trimmed();
+    if (fs.isEmpty() || matches(fs, {QStringLiteral("RAW"), QStringLiteral("Unknown")})) {
+        return QStringLiteral(
+            "S.A.K. could not identify this partition's file system, so it will not resize it. "
+            "Run Scan Disks as administrator first.");
+    }
+    if (matches(fs, {QStringLiteral("NTFS"), QStringLiteral("ReFS")})) {
+        return {};
+    }
+    if (matches(fs, {QStringLiteral("FAT32"), QStringLiteral("exFAT")})) {
+        return QStringLiteral(
+                   "Windows cannot %1 FAT32 or exFAT partitions. Back up the files, then delete "
+                   "and recreate the partition at the size you want.")
+            .arg(target_bytes < current_bytes ? QStringLiteral("shrink") : QStringLiteral("grow"));
+    }
+    return QStringLiteral(
+               "S.A.K. cannot resize a %1 partition. Windows resizes NTFS and ReFS partitions, and "
+               "S.A.K. resizes ext2, ext3 and ext4 with its bundled tools.")
+        .arg(fs);
 }
 
 }  // namespace sak

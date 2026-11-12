@@ -924,10 +924,11 @@ QString resizeFileSystemBlocker(const PartitionInfoEx& partition,
         return {};
     }
     const QString held = scannedFileSystem(partition);
+    const uint64_t target_bytes = payloadUInt64(operation, QStringLiteral("target_size_bytes"));
     if (held.isEmpty()) {
-        return QStringLiteral(
-            "S.A.K. could not identify this partition's file system, so it will not resize it. "
-            "Run Scan Disks as administrator first.");
+        return PartitionFileSystemRegistry::windowsResizeBlocker(held,
+                                                                 partition.size_bytes,
+                                                                 target_bytes);
     }
     const QString queued =
         operation.payload.value(QStringLiteral("file_system")).toString().trimmed();
@@ -945,13 +946,9 @@ QString resizeFileSystemBlocker(const PartitionInfoEx& partition,
                          "Resize it from Resize/Move Partition, which resizes ext2, ext3 and ext4 "
                          "with S.A.K.'s bundled tools.");
     }
-    if (!PartitionFileSystemRegistry::windowsResizesFileSystem(held)) {
-        return QStringLiteral(
-                   "S.A.K. cannot resize a %1 partition. Windows resizes NTFS and ReFS "
-                   "partitions, and S.A.K. resizes ext2, ext3 and ext4 with its bundled tools.")
-            .arg(held);
-    }
-    return {};
+    return PartitionFileSystemRegistry::windowsResizeBlocker(held,
+                                                             partition.size_bytes,
+                                                             target_bytes);
 }
 
 bool resizeRequestsStartMove(const PartitionOperation& operation) {

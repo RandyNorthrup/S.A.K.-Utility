@@ -1944,6 +1944,7 @@ private Q_SLOTS:
     void safetyValidator_blocksResizeStartMovePayload();
     void safetyValidator_blocksResizeDonorPayload();
     void safetyValidator_resizesOnlyAnIdentifiedFileSystem();
+    void safetyValidator_refusesResizingFat32OrExfat();
     void safetyValidator_refusesWhatFormatVolumeWouldRefuse();
     void safetyValidator_refusesAPartitionTypeTheTableCannotHold();
     void safetyValidator_blocksOversizedCreate();
@@ -24083,6 +24084,47 @@ void PartitionManagerCoreTests::safetyValidator_resizesOnlyAnIdentifiedFileSyste
     QVERIFY2(blockers(queued_ext)
                  .contains(QStringLiteral("queued for ext4, but the partition holds NTFS")),
              qPrintable(blockers(queued_ext)));
+}
+
+// F4 (operation proof, 2026-11-11): Shrink was offered for FAT32 and exFAT and refused only at
+// Apply ("Target size outside supported range"). Resize-Partition answered "Not Supported" for
+// both, shrinking and growing (testpc1, 2026-11-12), so the queue refuses them with the reason.
+void PartitionManagerCoreTests::safetyValidator_refusesResizingFat32OrExfat() {
+    auto inventory = singleDataDiskInventory();
+    auto& partition = inventory.disks.first().partitions.first();
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = inventory.disks.first().disk_number;
+    target.partition_number = partition.partition_number;
+    target.offset_bytes = partition.offset_bytes;
+    target.size_bytes = partition.size_bytes;
+    target.drive_letter = QStringLiteral("T");
+    for (const QString& file_system : {QStringLiteral("FAT32"), QStringLiteral("exFAT")}) {
+        partition.volume->file_system = file_system;
+        for (const bool grow : {false, true}) {
+            const QJsonObject payload{
+                {QStringLiteral("target_size_bytes"),
+                 QString::number(grow ? partition.size_bytes + 64 * 1024 * 1024
+                                      : partition.size_bytes - 64 * 1024 * 1024)}};
+            const QString blockers = PartitionSafetyValidator::validate(
+                                         inventory,
+                                         PartitionOperationPlanner::makeOperation(
+                                             PartitionOperationType::Resize, target, payload))
+                                         .blockers.join(QLatin1Char(' '));
+            QVERIFY2(blockers.contains(
+                         QStringLiteral("Windows cannot %1 FAT32 or exFAT partitions. Back up the "
+                                        "files, then delete and recreate the partition at the size "
+                                        "you want.")
+                             .arg(grow ? QStringLiteral("grow") : QStringLiteral("shrink"))),
+                     qPrintable(file_system + QStringLiteral(": ") + blockers));
+        }
+    }
+    QVERIFY(
+        PartitionFileSystemRegistry::windowsResizeBlocker(QStringLiteral("NTFS"), 2, 1).isEmpty());
+    QVERIFY(
+        PartitionFileSystemRegistry::windowsResizeBlocker(QStringLiteral("ReFS"), 1, 2).isEmpty());
+    QVERIFY(PartitionFileSystemRegistry::windowsResizeBlocker(QStringLiteral("FAT"), 2, 1)
+                .contains(QStringLiteral("cannot resize a FAT partition")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksOversizedCreate() {
