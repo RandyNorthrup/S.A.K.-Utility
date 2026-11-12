@@ -2178,7 +2178,11 @@ QString backupCopyFunctionsScript() {
         "  $script:sakBackupFolderHolds += ,([Sak.SafeFiles]::HoldDirectory($path))\n"
         "}\n"
         "function Invoke-SakRobocopy([string]$from, [string]$to) {\n"
-        "  robocopy.exe $from $to /E /COPYALL /DCOPY:DAT /XJ /R:1 /W:1\n"
+        // What Get-SakFileManifest leaves out, and at the root only: System Volume Information
+        // belongs to the volume, and Windows writes WPSettings.dat there, readable by SYSTEM only,
+        // so copying it stopped every Merge with exit 9 (operation proof, 2026-11-11).
+        "  robocopy.exe $from $to /E /COPYALL /DCOPY:DAT /XJ /R:1 /W:1 /XD (Join-Path $from "
+        "'System Volume Information') (Join-Path $from '$RECYCLE.BIN')\n"
         "  $code = $LASTEXITCODE\n"
         // Robocopy exit is a bitmask: 1=copied, 2=extra, 4=MISMATCH, 8=some files
         // could not be copied, 16=fatal. A clean mirror to a fresh target is only

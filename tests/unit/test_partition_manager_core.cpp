@@ -19752,6 +19752,13 @@ void PartitionManagerCoreTests::scriptBuilder_buildsMergeScript() {
     QVERIFY(!script.script.contains(QStringLiteral("New-Item -ItemType Directory -Force")));
     const auto copy_at = script.script.indexOf(QStringLiteral("Invoke-SakRobocopy ('"));
     QVERIFY(copy_at > 0 && copy_at < script.script.indexOf(QStringLiteral("Remove-Partition")));
+    // The source's root holds System Volume Information, and Windows writes WPSettings.dat there,
+    // readable by SYSTEM only: copying it stopped Merge with exit 9 on an ordinary NTFS volume
+    // (operation proof, 2026-11-11). The copy leaves out what the manifest leaves out, at the root.
+    QVERIFY2(script.script.contains(
+                 QStringLiteral("/XD (Join-Path $from 'System Volume Information') "
+                                "(Join-Path $from '$RECYCLE.BIN')")),
+             qPrintable(script.script));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_formatsByPartitionIdentity() {
