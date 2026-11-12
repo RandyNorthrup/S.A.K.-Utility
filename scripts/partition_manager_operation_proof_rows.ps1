@@ -1348,7 +1348,7 @@ function Invoke-OpsVhdDetachDrill {
         down with mountvol /P, the disk taken offline, the file detached and deleted. Every step's
         time goes to the runner's log and the row's evidence.
     #>
-    param([int]$Minutes, [switch]$WithLoad, [int]$SettleSeconds = 0)
+    param([int]$Minutes, [switch]$WithLoad, [int]$SettleSeconds = 0, [switch]$NoReadback)
     $drillStarted = Get-Date
     $log = [System.Collections.Generic.List[string]]::new()
     $failed = [System.Collections.Generic.List[string]]::new()
@@ -1393,7 +1393,10 @@ function Invoke-OpsVhdDetachDrill {
             & $write "scan-$round start"
             $report = Invoke-OpsStep -Disk $disk -Step "scan-$round" -Operation 'CheckFileSystem' -Select @{ partition_number = [int]$part[0].PartitionNumber } -TimeoutSeconds 3600 -ReadBackOnFailure
             if ($null -eq $report) { $failed.Add("scan-$round"); & $write "scan-$round FAILED" } else { & $write "scan-$round done" }
-            if ($letter) {
+            # Drill F: the disk goes the moment the app says its check is done, as a technician's
+            # would; the product's own settle is what is being proved.
+            if ($NoReadback) { & $write "round ${round}: no harness readback, detach at once" }
+            elseif ($letter) {
                 & $write "readback-$round start"
                 $read = @(Test-OpsWindowsVolume -Prefix "round ${round}:" -Letter $letter -FileSystem 'NTFS' -Label 'OPSDETACH')
                 $readbacks++
@@ -1419,10 +1422,10 @@ function Invoke-OpsVhdDetachDrill {
         $low = @($loadLog | Where-Object { $_ -match 'free (\d+) MB' -and [int]$Matches[1] -le 2500 }).Count
         $checks += New-OpsCheck -Name 'the load held memory near A run 2 (2.5 GB free or less) for most samples' -Passed ($loadLog.Count -gt 0 -and $low -ge [Math]::Ceiling($loadLog.Count * 0.6)) -Detail "$low of $($loadLog.Count) samples"
     }
-    $checks += New-OpsCheck -Name "every readback found the volume as made, and chkdsk's scan clean" -Passed ($readbacks -gt 0 -and $dirty.Count -eq 0) -Detail "$readbacks readbacks; $(@($dirty) -join ' | ')"
+    if (-not $NoReadback) { $checks += New-OpsCheck -Name "every readback found the volume as made, and chkdsk's scan clean" -Passed ($readbacks -gt 0 -and $dirty.Count -eq 0) -Detail "$readbacks readbacks; $(@($dirty) -join ' | ')" }
     $left = @(Get-ChildItem -LiteralPath $WorkRoot -Filter "$($Script:RowId.Replace('ops.', ''))-round*.vhdx" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
     $checks += New-OpsCheck -Name 'no virtual disk file was left behind' -Passed ($left.Count -eq 0) -Detail $left
-    $extra = [ordered]@{ minutes = $Minutes; with_load = [bool]$WithLoad; settle_seconds = $SettleSeconds; rounds = $round; skipped_rounds = $skipped; failed_steps = @($failed); log = @($log); load_samples = @($loadLog) }
+    $extra = [ordered]@{ minutes = $Minutes; with_load = [bool]$WithLoad; settle_seconds = $SettleSeconds; harness_readback = (-not $NoReadback); rounds = $round; skipped_rounds = $skipped; failed_steps = @($failed); log = @($log); load_samples = @($loadLog) }
     $events = Get-OpsDrillEvents -Since $drillStarted
     foreach ($key in $events.Keys) { $extra[$key] = $events[$key] }
     return Complete-OpsRow -Media $media -Checks $checks -Extra $extra
@@ -1557,6 +1560,7 @@ Add-OpsRow 'ops.drill-d-scan-then-detach-vhd' { Invoke-OpsVhdDetachDrill -Minute
 Add-OpsRow 'ops.drill-d-idle' { Invoke-OpsVhdDetachDrill -Minutes 150 }
 Add-OpsRow 'ops.drill-e-settle-10s' { Invoke-OpsVhdDetachDrill -Minutes 60 -WithLoad -SettleSeconds 10 }
 Add-OpsRow 'ops.drill-e-settle-30s' { Invoke-OpsVhdDetachDrill -Minutes 60 -WithLoad -SettleSeconds 30 }
+Add-OpsRow 'ops.drill-f-app-settle' { Invoke-OpsVhdDetachDrill -Minutes 60 -WithLoad -NoReadback }
 
 function Invoke-OpsLockAndDismount {
     # FSCTL_LOCK_VOLUME, then FSCTL_DISMOUNT_VOLUME, on the volume's own device, then the handle is
