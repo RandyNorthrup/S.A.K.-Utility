@@ -35,7 +35,8 @@ function Get-OpsChkdsk {
         chkdsk without /f: it reads and reports, and repairs nothing. NTFS gets the online scan.
     #>
     param([Parameter(Mandatory = $true)] [string]$Letter, [Parameter(Mandatory = $true)] [string]$FileSystem)
-    $arguments = if ($FileSystem -eq 'NTFS') { @("${Letter}:", '/scan') } else { @("${Letter}:") }
+    # @( ) keeps one argument an array: a lone string splatted goes in one character at a time.
+    $arguments = @(if ($FileSystem -eq 'NTFS') { "${Letter}:"; '/scan' } else { "${Letter}:" })
     $output = & chkdsk.exe @arguments 2>&1 | Out-String
     $code = $LASTEXITCODE
     $lines = @($output -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 8)
