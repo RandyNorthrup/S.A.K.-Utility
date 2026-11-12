@@ -178,6 +178,8 @@ private Q_SLOTS:
     void readOnlyRunRefusesMutatingOperations();
     void realApplyTransitionsAndCleansBeforeSignals();
     void failedVerificationRetainsQueueAndDowngradesReport();
+    void verificationScanThatDoesNotFinishIsRetried();
+    void applyOnAnUnfinishedScanSaysItIsIncomplete();
     void inventoryRefreshCanBeCancelled();
     void finishedInventoryFutureCannotBeRetroactivelyCancelled();
     void filesystemCheckCanBeCancelled();
@@ -260,7 +262,8 @@ void PartitionManagerControllerTests::refreshDerivesReadyPartialAndFailedStates(
         "The disk scan did not finish: no progress for 30 s (last step: disk 2 of 5)"));
     QCOMPARE(sak::PartitionManagerController::inventoryStatusMessage(unfinished),
              QStringLiteral("Partition Manager: The disk scan did not finish: no progress for 30 s "
-                            "(last step: disk 2 of 5)"));
+                            "(last step: disk 2 of 5). The scan is incomplete, not a PC without "
+                            "disks: click Scan Disks to try again."));
 }
 
 void PartitionManagerControllerTests::queueCapacityRefusalIsAtomic() {
@@ -899,6 +902,103 @@ void PartitionManagerControllerTests::failedVerificationRetainsQueueAndDowngrade
     auto warning = healthyInventory(QStringLiteral("warning-layout"));
     warning.warnings.append(QStringLiteral("SMART metadata unavailable"));
     verifyFailedPostApplyScan(warning, QStringLiteral("SMART metadata unavailable"));
+}
+
+namespace {
+
+/// What a scan that did not finish returns: no disks, and the reason (F26).
+sak::PartitionInventory unfinishedScanInventory() {
+    sak::PartitionInventory inventory;
+    inventory.scan_did_not_finish = true;
+    inventory.warnings.append(QStringLiteral(
+        "The disk scan did not finish: no progress for 90 s (last step: disk 2 of 5)"));
+    return inventory;
+}
+
+}  // namespace
+
+// F26 (operation proof, 2026-11-12): on a PC under heavy disk load the scan after an Apply timed
+// out, and a Move that had finished was reported failed. The verification scan is tried twice more,
+// after a wait; one that finishes verifies the Apply, and when none does the Apply that ran is not
+// a failure: it says it could not be verified, and nothing can be queued until a scan finishes.
+void PartitionManagerControllerTests::verificationScanThatDoesNotFinishIsRetried() {
+    for (const int unfinished_scans : {2, 3}) {
+        sak::PartitionManagerController controller;
+        controller.setVerificationBackoffForTesting(10);
+        std::atomic_int scans{0};
+        std::optional<sak::PartitionExecutionResult> delivered;
+        controller.setTestInventory(healthyInventory());
+        controller.setInventoryScannerForTesting(
+            [&scans, unfinished_scans](const sak::CancelCheck&) {
+                const int scan = scans.fetch_add(1);
+                // The first is Apply's preflight, on the queue's layout; then the verification
+                // scans.
+                if (scan == 0) {
+                    return inventoryResult(healthyInventory());
+                }
+                if (scan <= unfinished_scans) {
+                    return inventoryResult(unfinishedScanInventory());
+                }
+                return inventoryResult(healthyInventory(QStringLiteral("layout-b")));
+            });
+        controller.setApplyExecutorForTesting(
+            [](const QVector<sak::PartitionOperation>&,
+               bool dry_run,
+               bool,
+               const sak::CancelCheck&) { return successfulResult(dry_run); });
+        connect(&controller,
+                &sak::PartitionManagerController::executionFinished,
+                this,
+                [&delivered](const auto& result) { delivered = result; });
+        queueInitialize(&controller);
+        QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, false));
+        QVERIFY(waitUntil([&delivered]() { return delivered.has_value(); }));
+        QVERIFY2(delivered->success, qPrintable(delivered->message));
+        QVERIFY(controller.queue().isEmpty());
+        if (unfinished_scans == 2) {
+            // The third verification scan finished: verified, and the disks are the new ones.
+            QCOMPARE(scans.load(), 4);
+            QVERIFY(!delivered->message.contains(QStringLiteral("could not re-read")));
+            QCOMPARE(controller.inventory().layout_hash, QStringLiteral("layout-b"));
+            continue;
+        }
+        QCOMPARE(scans.load(), 4);
+        QCOMPARE(delivered->message, QString::fromLatin1(sak::kPartitionUnverifiedMessage));
+        QVERIFY(!delivered->message.contains(QStringLiteral("no disks")));
+        // Fail closed: no disks to queue against until a scan finishes.
+        QVERIFY(controller.inventory().isEmpty());
+        QVERIFY(controller.inventory().scan_did_not_finish);
+        QVERIFY(!controller.queueOperation(sak::PartitionOperationType::InitializeDisk,
+                                           testDiskTarget()));
+    }
+}
+
+// F26: Apply's own scan that does not finish refuses the Apply as incomplete, with the way on, and
+// never as a PC without disks; nothing runs.
+void PartitionManagerControllerTests::applyOnAnUnfinishedScanSaysItIsIncomplete() {
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(healthyInventory());
+    controller.setInventoryScannerForTesting(
+        [](const sak::CancelCheck&) { return inventoryResult(unfinishedScanInventory()); });
+    bool executed = false;
+    controller.setApplyExecutorForTesting(
+        [&executed](const QVector<sak::PartitionOperation>&, bool, bool, const sak::CancelCheck&) {
+            executed = true;
+            return sak::PartitionExecutionResult{};
+        });
+    QSignalSpy refused(&controller, &sak::PartitionManagerController::applyRefused);
+    queueInitialize(&controller);
+    QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, false));
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+    QVERIFY(!executed);
+    QCOMPARE(refused.size(), 1);
+    const QString why = refused.first().first().toStringList().join(QLatin1Char(' '));
+    QVERIFY2(why.contains(QStringLiteral("The disk scan did not finish")) &&
+                 why.contains(
+                     QStringLiteral("The scan is incomplete, not a PC without disks: click "
+                                    "Scan Disks to try again.")) &&
+                 !why.contains(QStringLiteral("no disks")),
+             qPrintable(why));
 }
 
 void PartitionManagerControllerTests::inventoryRefreshCanBeCancelled() {

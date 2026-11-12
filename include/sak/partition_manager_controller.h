@@ -22,6 +22,17 @@
 
 namespace sak {
 
+/// The scan that verifies an Apply is tried this many times more when it does not finish, waiting
+/// kPartitionVerificationBackoffMs times the attempt before each (operation proof, 2026-11-12,
+/// F26).
+inline constexpr int kPartitionVerificationRetries = 2;
+inline constexpr int kPartitionVerificationBackoffMs = 5000;
+/// What an Apply that ran says when no scan afterwards could finish: it is not a failure, and
+/// nothing can be queued until a scan does finish.
+inline constexpr auto kPartitionUnverifiedMessage =
+    "The operation finished, but S.A.K. could not re-read the disks to verify it: Windows' "
+    "storage service did not answer in time. Rescan before trusting the layout.";
+
 class PartitionManagerController : public QObject {
     Q_OBJECT
 
@@ -113,6 +124,7 @@ public Q_SLOTS:
     void setInventoryScannerWithProgressForTesting(InventoryScannerWithProgress scanner);
     void setApplyInventoryScannerForTesting(InventoryScanner scanner);
     void setApplyExecutorForTesting(ApplyExecutor executor);
+    void setVerificationBackoffForTesting(int backoff_ms);
     void setFileSystemCheckRunnerForTesting(FileSystemCheckRunner runner);
     /// Reports a Windows-continued phase as the executor's signals do, for an apply run by a
     /// test executor; nothing means the phase ended.
@@ -170,6 +182,11 @@ private:
     std::optional<PendingApplyRequest> m_pending_apply_request;
     std::optional<PendingApplyRequest> m_active_apply_request;
     std::optional<PartitionExecutionResult> m_pending_execution_result;
+    /// The verification scan after an Apply: which retry this is, with what rights it runs, and
+    /// how long the first retry waits.
+    int m_verification_attempt{0};
+    bool m_verification_elevated{false};
+    int m_verification_backoff_ms{kPartitionVerificationBackoffMs};
     std::optional<WindowsContinuedPhase> m_windows_phase;
     std::function<StorageInventoryScanResult(const CancelCheck&,
                                              const InventoryScanProgressCallback&)>
@@ -195,6 +212,7 @@ private:
     [[nodiscard]] bool revalidateQueuedOperations(const PartitionInventory& inventory,
                                                   QVector<PartitionOperation>* operations);
     [[nodiscard]] bool reviewTokenMatches(const PartitionQueueReviewToken& reviewed) const;
+    [[nodiscard]] bool retryVerificationScan(const StorageInventoryScanResult& scan);
     static void bindDiskIdentity(const PartitionInventory& inventory,
                                  PartitionOperation* operation);
     static void bindRawPayloadTargetIdentity(const PartitionInventory& inventory,

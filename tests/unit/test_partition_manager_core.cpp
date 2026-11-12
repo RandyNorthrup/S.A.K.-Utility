@@ -1981,6 +1981,7 @@ private Q_SLOTS:
     void inventoryScan_aSlowCallThatSaysItIsWaitingFinishes();
     void inventoryScan_aCallPastItsOwnLimitSaysWhichStep();
     void inventoryScan_aWaitingLineKeepsItsStep();
+    void inventoryScan_quietIsLoggedAndStoppedAtNinetySeconds();
     void inventoryScan_everySlowCallIsBoundedAndNamed();
     void scriptBuilder_defragAsksTheDriveOnlyWhenWindowsCannotSay();
     void driveRotationRateFunction_readsWhatTheToolReports();
@@ -26190,6 +26191,37 @@ void PartitionManagerCoreTests::inventoryScan_aCallPastItsOwnLimitSaysWhichStep(
         QVERIFY(scan.inventory.disks.isEmpty());
         QVERIFY2(took.elapsed() < 9000, qPrintable(step + QStringLiteral(" kept the scan open")));
     }
+}
+
+// F26 (operation proof, 2026-11-12): on a PC under heavy disk load, Windows' storage service was
+// slow enough that 30 s without progress stopped four scans. A scan is stopped after 90 s without
+// progress, as long as one call may wait, and the log says every 15 s that it is waiting and where.
+void PartitionManagerCoreTests::inventoryScan_quietIsLoggedAndStoppedAtNinetySeconds() {
+    QCOMPARE(sak::InventoryScanLimits{}.idle_ms, 90'000);
+    static_assert(sak::kInventoryScanIdleLimitMs >= sak::kInventoryQueryCapSeconds * 1000);
+    QCOMPARE(sak::InventoryScanLimits{}.quiet_log_ms, 15'000);
+    sak::InventoryScanLiveness liveness(
+        {.idle_ms = 5000, .ceiling_ms = 10'000, .quiet_log_ms = 100}, {});
+    QVERIFY(liveness.reportQuiet().isEmpty());
+    liveness.feed(QStringLiteral("SAK-SCAN-PROGRESS disk 2 of 5\n"));
+    const auto quiet_for = [](int ms) {
+        QElapsedTimer waited;
+        waited.start();
+        while (waited.elapsed() < ms) {
+            std::this_thread::yield();
+        }
+    };
+    quiet_for(150);
+    const QString line = liveness.reportQuiet();
+    QVERIFY2(line == QStringLiteral("Disk scan: no progress for 0 s (last step: disk 2 of 5); it "
+                                    "is stopped at 5 s"),
+             qPrintable(line));
+    QVERIFY(liveness.reportQuiet().isEmpty());
+    quiet_for(120);
+    QVERIFY(!liveness.reportQuiet().isEmpty());
+    liveness.feed(QStringLiteral("SAK-SCAN-PROGRESS disk 3 of 5\n"));
+    QVERIFY(liveness.reportQuiet().isEmpty());
+    QVERIFY(!liveness.idleExpired());
 }
 
 // A scan that goes quiet while a call was waiting names the call's step, not the waiting line.

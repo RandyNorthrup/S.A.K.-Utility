@@ -20,6 +20,7 @@
 #include <QRegularExpression>
 #include <QtConcurrent>
 #include <QThread>
+#include <QTimer>
 
 #include <algorithm>
 #include <chrono>
@@ -315,11 +316,20 @@ PartitionManagerState PartitionManagerController::inventoryReadyState(
 
 namespace {
 
+/// A scan that did not finish is incomplete, never a PC with no disks, and a new scan is the way
+/// on (F26, 2026-11-12: a busy PC's timed-out scan read as "found no disks").
+QString incompleteScanText(const PartitionInventory& inventory) {
+    return QStringLiteral(
+               "%1. The scan is incomplete, not a PC without disks: click Scan Disks to "
+               "try again.")
+        .arg(inventory.warnings.join(QStringLiteral("; ")));
+}
+
 /// A scan with no disk: one that did not finish says so, in its own words.
 QString emptyInventoryStatusMessage(const PartitionInventory& inventory) {
     const QString warnings = inventory.warnings.join(QStringLiteral("; "));
     if (inventory.scan_did_not_finish) {
-        return QStringLiteral("Partition Manager: %1").arg(warnings);
+        return QStringLiteral("Partition Manager: %1").arg(incompleteScanText(inventory));
     }
     const QString detail = warnings.isEmpty() ? QString() : QStringLiteral(": %1").arg(warnings);
     return QStringLiteral("Partition Manager: inventory FAILED -- no disks were returned%1")
@@ -688,6 +698,9 @@ bool PartitionManagerController::inventoryIsAuthoritative(const PartitionInvento
 }
 
 QString PartitionManagerController::inventoryFailureMessage(const PartitionInventory& inventory) {
+    if (inventory.isEmpty() && inventory.scan_did_not_finish) {
+        return incompleteScanText(inventory);
+    }
     if (inventory.isEmpty()) {
         return inventory.warnings.isEmpty() ? QStringLiteral("inventory returned no disks")
                                             : inventory.warnings.join(QStringLiteral("; "));
@@ -802,6 +815,9 @@ void PartitionManagerController::finishInventoryScan(
     } else if (purpose == InventoryScanPurpose::ApplyPreflight) {
         terminal_state = finishApplyPreflight(std::move(scan_result.inventory),
                                               scan_result.cancelled);
+    } else if (purpose == InventoryScanPurpose::ApplyVerification &&
+               retryVerificationScan(scan_result)) {
+        // Verifying still: the next scan starts after the backoff.
     } else if (purpose == InventoryScanPurpose::ApplyVerification) {
         terminal_state = finishApplyVerification(std::move(scan_result.inventory),
                                                  scan_result.cancelled);
@@ -974,6 +990,8 @@ void PartitionManagerController::finishApplyExecution(
         return;
     }
     m_pending_execution_result = std::move(result);
+    m_verification_attempt = 0;
+    m_verification_elevated = request.use_elevation;
     startInventoryScan(InventoryScanPurpose::ApplyVerification, request.use_elevation);
     QObject::disconnect(watcher, nullptr, this, nullptr);
     m_apply_watcher = nullptr;
@@ -981,6 +999,40 @@ void PartitionManagerController::finishApplyExecution(
     m_active_apply_request.reset();
     m_apply_executor.reset();
     watcher->deleteLater();
+}
+
+namespace {
+
+// What an Apply says when no scan afterwards finished: the operation's own failure, if it failed,
+// and that its result could not be verified.
+QString unverifiedApplyMessage(const PartitionExecutionResult& result) {
+    const QString unverified = QString::fromLatin1(kPartitionUnverifiedMessage);
+    return result.success ? unverified : QStringLiteral("%1; %2").arg(result.message, unverified);
+}
+
+}  // namespace
+
+// A verification scan that did not finish (Windows' storage service did not answer in time) is
+// tried again, twice, after a growing wait; the Apply it follows has finished either way.
+bool PartitionManagerController::retryVerificationScan(const StorageInventoryScanResult& scan) {
+    if (scan.cancelled || !scan.inventory.scan_did_not_finish ||
+        m_verification_attempt >= kPartitionVerificationRetries) {
+        return false;
+    }
+    ++m_verification_attempt;
+    const QString note = QStringLiteral(
+                             "The disk scan after Apply did not finish (%1); scanning again (%2 of "
+                             "%3)")
+                             .arg(scan.inventory.warnings.join(QStringLiteral("; ")))
+                             .arg(m_verification_attempt)
+                             .arg(kPartitionVerificationRetries);
+    logWarning("{}", note.toStdString());
+    Q_EMIT logOutput(note);
+    Q_EMIT statusMessage(note, sak::kTimerStatusDefaultMs);
+    QTimer::singleShot(m_verification_backoff_ms * m_verification_attempt, this, [this]() {
+        startInventoryScan(InventoryScanPurpose::ApplyVerification, m_verification_elevated);
+    });
+    return true;
 }
 
 PartitionManagerState PartitionManagerController::finishApplyVerification(
@@ -995,7 +1047,11 @@ PartitionManagerState PartitionManagerController::finishApplyVerification(
     m_pending_execution_result.reset();
     publishInventoryDiagnostics(inventory);
     const bool verified = !cancelled && inventoryIsAuthoritative(inventory);
-    if (!verified) {
+    if (!cancelled && inventory.scan_did_not_finish) {
+        // Not a failure: the operation ran. Nothing can be queued against this inventory, which
+        // has no disks, until a scan finishes (F26).
+        result.message = unverifiedApplyMessage(result);
+    } else if (!verified) {
         result.success = false;
         result.cancelled = result.cancelled || cancelled;
         const QString reason = cancelled ? QStringLiteral("verification scan cancelled")
@@ -1229,6 +1285,10 @@ void PartitionManagerController::setApplyExecutorForTesting(ApplyExecutor execut
     if (!interactionBlocked()) {
         m_apply_executor_for_testing = std::move(executor);
     }
+}
+
+void PartitionManagerController::setVerificationBackoffForTesting(int backoff_ms) {
+    m_verification_backoff_ms = backoff_ms;
 }
 
 void PartitionManagerController::setFileSystemCheckRunnerForTesting(FileSystemCheckRunner runner) {

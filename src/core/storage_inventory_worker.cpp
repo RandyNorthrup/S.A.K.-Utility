@@ -9,6 +9,7 @@
 #include "sak/elevation_broker.h"
 #include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_registry.h"
 #include "sak/partition_safety_validator.h"
@@ -773,6 +774,7 @@ void InventoryScanLiveness::feed(const QString& stderr_chunk) {
             m_last_step = stepOfProgressLine(line.mid(kScanProgressPrefix.size()).trimmed());
             m_armed = true;
             m_since_progress.start();
+            m_quiet_reported_ms = 0;
             const auto match = disk_of.match(m_last_step);
             if (match.hasMatch()) {
                 reached = InventoryScanProgress{.disk = match.captured(kDiskGroup).toInt(),
@@ -791,6 +793,29 @@ void InventoryScanLiveness::feed(const QString& stderr_chunk) {
 bool InventoryScanLiveness::idleExpired() const {
     std::lock_guard lock(m_mutex);
     return m_armed && m_since_progress.elapsed() >= m_limits.idle_ms;
+}
+
+QString InventoryScanLiveness::reportQuiet() {
+    QString line;
+    {
+        std::lock_guard lock(m_mutex);
+        if (!m_armed || m_stopped || m_limits.quiet_log_ms <= 0) {
+            return {};
+        }
+        const qint64 quiet_ms = m_since_progress.elapsed();
+        if (quiet_ms < m_quiet_reported_ms + m_limits.quiet_log_ms) {
+            return {};
+        }
+        m_quiet_reported_ms = quiet_ms - (quiet_ms % m_limits.quiet_log_ms);
+        line = QStringLiteral(
+                   "Disk scan: no progress for %1 s (last step: %2); it is stopped at "
+                   "%3 s")
+                   .arg(quiet_ms / kMsPerSecond)
+                   .arg(m_last_step.isEmpty() ? QStringLiteral("none") : m_last_step)
+                   .arg(m_limits.idle_ms / kMsPerSecond);
+    }
+    logInfo("{}", line.toStdString());
+    return line;
 }
 
 void InventoryScanLiveness::markStopped() {
@@ -898,6 +923,7 @@ std::expected<ProcessResult, QString> runInventoryScriptInHelper(
                 broker->cancelCurrentTask();
                 return;
             }
+            (void)liveness.reportQuiet();
             if (liveness.idleExpired()) {
                 liveness.markStopped();
                 broker->cancelCurrentTask();
@@ -964,6 +990,7 @@ ProcessResult StorageInventoryWorker::runInventoryScript(
         if (cancellationRequested(should_cancel)) {
             return true;
         }
+        (void)liveness.reportQuiet();
         if (liveness.idleExpired()) {
             liveness.markStopped();
             return true;

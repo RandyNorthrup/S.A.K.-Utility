@@ -856,9 +856,16 @@ private:
     int m_timeout_ms;
 };
 
-/// Why a scan gave no disks, in the scan's own words: a scan that timed out, and one that found
-/// nothing, read the same without them.
+/// Why a scan gave no disks, in the scan's own words. A scan that did not finish is incomplete, not
+/// a scan that found no disks (F26, 2026-11-12: a busy PC's timed-out scan read as "found no
+/// disks").
 QString emptyScanRefusal(const sak::PartitionInventory& inventory) {
+    if (inventory.scan_did_not_finish) {
+        return QStringLiteral(
+                   "The inventory scan did not finish, so it says nothing about the "
+                   "disks: %1")
+            .arg(inventory.warnings.join(QStringLiteral("; ")));
+    }
     if (inventory.warnings.isEmpty()) {
         return QStringLiteral("The inventory scan found no disks");
     }
@@ -1796,8 +1803,13 @@ void selfTestOutcomes(const AddCheck& add) {
         QString::fromLatin1(SAK_CODE_DIGEST).size() == 64);
     sak::PartitionInventory unfinished;
     unfinished.warnings = {QStringLiteral("The disk scan did not finish")};
+    unfinished.scan_did_not_finish = true;
     add(QStringLiteral("step-empty-scan-says-why"),
-        emptyScanRefusal(unfinished).endsWith(QStringLiteral(": The disk scan did not finish")) &&
+        emptyScanRefusal(unfinished)
+                .startsWith(QStringLiteral("The inventory scan did not finish")) &&
+            emptyScanRefusal(unfinished)
+                .endsWith(QStringLiteral(": The disk scan did not finish")) &&
+            !emptyScanRefusal(unfinished).contains(QStringLiteral("found no disks")) &&
             emptyScanRefusal({}) == QStringLiteral("The inventory scan found no disks"));
 
     sak::PartitionExecutionResult result;
