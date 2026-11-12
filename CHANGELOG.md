@@ -60,7 +60,8 @@ of its own put on the PC.
   containers it formatted itself, up to 128.0 MB." HFS+ staging no longer reads fsutil's translated output, so it
   works on a Windows in any language. Merge Partitions makes its destination folder new and holds it while it copies.
 - **Windows no longer offers to format a Linux or Mac partition S.A.K. Utility just made** - Format to ext2/3/4,
-  Linux swap, HFS+ or APFS now removes the partition's drive letters and folder paths and gives it that file
+  Linux swap, HFS+ or APFS now removes the partition's drive letters and folder paths before it writes (File
+  Explorer held a lettered partition open and the APFS writer could not take it) and gives it that file
   system's own partition type (GPT: Linux file system, Linux swap, Apple HFS+, APFS; MBR: 0x83, 0x82, 0xAF), so
   Windows leaves it alone instead of asking "You need to format the disk in drive T:". Format back to NTFS, FAT32 or
   exFAT sets a Windows data type first, which also lets it format a Linux or Mac partition brought in from another
@@ -70,6 +71,27 @@ of its own put on the PC.
   verification failed") and refused every later Apply; an ext repair of such a volume was not even added to the
   queue ("BitLocker protection and lock state could not be determined"). The scan and the queue skip them for a
   volume identified as ext, HFS+, APFS or Linux swap, and still refuse a RAW volume nothing could identify.
+- **Merge Partitions works on an ordinary NTFS volume** - It stopped with robocopy exit 9 copying the source's
+  `System Volume Information\WPSettings.dat`, which only SYSTEM can read. The copy now leaves out the root's
+  `System Volume Information` and `$RECYCLE.BIN`, as its file check already did; folders of those names deeper down
+  are copied.
+- **A long partition script stops when a disk command fails** - A script too long for a command line (Migrate OS,
+  and a file change carrying a large file to an HFS+ or APFS partition) ran in a scope the disk commands did not
+  take their stop-on-error setting from, so a failed one was passed over and Apply reported success. It now runs
+  as a short script does.
+- **Restore Image runs again** - Every restore stopped at once with "Unable to find type [SakLockedFilePath]";
+  nothing was written. The script now loads its types before it uses them, and the check over the generated
+  scripts now sees a script of every operation and branch.
+- **Change Cluster Size and Allocate Free Space run again** - Both stopped at once with "The term
+  'New-SakBackupFolder' is not recognized": their script called the new backup-folder function before defining
+  it. Nothing was changed on the disk. The scripts now define it first, and a check over every generated script
+  refuses a call that comes before its function's definition.
+- **Format to APFS asks for a volume name before it starts** - A partition with no label (a RAW or unlabelled
+  volume) went to Apply and failed with only "APFS writer helper failed with exit code 1"; Add to Queue now says
+  "An APFS volume needs a name: type one in Volume label".
+- **A slow PC no longer times out starting the administrator helper** - S.A.K. Utility waited 10 seconds for the
+  helper, which checks every program file before it answers; a slow USB drive or a busy PC could run past that
+  ("Elevated helper did not respond in time"). It now waits 30 seconds and says in the log that it is still waiting.
 - **Started from a PowerShell 7 window, S.A.K. Utility's scripts still find their commands** - Windows PowerShell
   given PowerShell 7's module path cannot load `Get-FileHash`, which the HFS+ tool check and other partition scripts
   use. The scripts S.A.K. Utility starts now get Windows PowerShell's own module path.

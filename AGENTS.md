@@ -208,6 +208,21 @@ the file system Windows had mounted on it. So:
   dismount (`openFileOrRawDeviceReadWrite` in C++, `[Sak.RawPartitionWrite]::Open` in a script).
   Tests that write image files say nothing about this; `test_raw_partition_write` writes real
   partitions.
+- A script calls its own function only after that function's definition (the guard's
+  `Get-SakOrderProblems`): Change Cluster Size and Allocate Free Space called one before it, and
+  failed on every run (2026-11-11).
+- A script runs in the scope a short script runs in, whatever its length: one read from standard
+  input and run as a child scriptblock kept its Stop from the Storage cmdlets, and a failed disk
+  command was passed over (2026-11-12).
+- The generated-script guards see only what the corpus builds. A new operation or builder branch
+  gets a corpus input that builds a real script and a row in
+  `generatedScripts_corpusBuildsEveryOperationAndBranch`: Restore Image named a type before
+  loading its DLL, and the guard that checks exactly that never saw a Restore Image script
+  (2026-11-12).
+- Nothing in `tests/`, `scripts/` or a package may be something Defender flags:
+  `test_defender_clean` scans them. A test that checks a script loads its DLL names the DLL; it
+  does not spell out the reflective load beside C# it compiles (Defender quarantined such a fixture
+  as Trojan:PowerShell/Fleisnam.E, 2026-11-11).
 
 ---
 
