@@ -1545,18 +1545,6 @@ std::optional<Result<void>> runProofNow(sak::PartitionManagerController& control
     return std::nullopt;
 }
 
-/// The assistant's payload is whatever the model writes, so an assistant-route job may add fields
-/// no panel request function sets (choices.assistant_payload), as a model may. A panel route never
-/// takes them.
-Requests withAssistantPayload(Requests requests, const QJsonObject& model_fields) {
-    for (auto& request : requests) {
-        for (auto field = model_fields.constBegin(); field != model_fields.constEnd(); ++field) {
-            request.payload.insert(field.key(), field.value());
-        }
-    }
-    return requests;
-}
-
 /// An operation-proof step on its pinned disk: one of the operations run now, or a request built
 /// as the panel builds it, then queued and applied, or handed to the assistant's route.
 Result<void> runProofStep(sak::PartitionManagerController& controller,
@@ -1578,11 +1566,7 @@ Result<void> runProofStep(sak::PartitionManagerController& controller,
         return refused(requests.error());
     }
     if (context.job.route == QStringLiteral("assistant")) {
-        const QJsonObject model_fields =
-            context.job.choices.value(QLatin1String("assistant_payload")).toObject();
-        return runAssistantRoute(context.job,
-                                 withAssistantPayload(*requests, model_fields),
-                                 report);
+        return runAssistantRoute(context.job, *requests, report);
     }
     return queueAndApply(controller, context.job, *requests, report);
 }
@@ -1790,16 +1774,6 @@ void selfTestOperationProof(const AddCheck& add) {
     add(QStringLiteral("step-proof-writes-through-the-panel-raw-path"),
         panelRawPartitionPath(partition) ==
             QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk3\\Partition2"));
-    const Requests one{{.type = OpType::Create, .payload = QJsonObject{{"file_system", "ext4"}}}};
-    const Requests merged = withAssistantPayload(
-        one, QJsonObject{{"non_native_file_system_tool", true}, {"target_wipe_confirmed", true}});
-    add(QStringLiteral("step-proof-assistant-payload-adds-the-model-fields"),
-        merged.size() == 1 &&
-            merged.constFirst().payload.value(QLatin1String("file_system")).toString() ==
-                QStringLiteral("ext4") &&
-            merged.constFirst()
-                .payload.value(QLatin1String("non_native_file_system_tool"))
-                .toBool());
     add(QStringLiteral("step-proof-format-adds-tool-fields-only-for-non-windows"),
         isPanelNonNativeFormat(QStringLiteral("ext4")) &&
             isPanelNonNativeFormat(QStringLiteral("Linux swap")) &&
