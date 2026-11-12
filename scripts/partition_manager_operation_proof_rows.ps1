@@ -566,20 +566,17 @@ Add-OpsRow 'ops.resize-ext3' { Invoke-OpsExtResize -Kind 'ext3' }
 Add-OpsRow 'ops.resize-ext4' { Invoke-OpsExtResize -Kind 'ext4' }
 
 function Get-OpsTableEntry {
-    # The raw table's entry at an offset, plus what the snapshot does not parse: on GPT the
-    # attribute bits and the name, read from the entry's own bytes.
-    param([int]$DiskNumber, [uint64]$Offset)
-    $found = Get-OpsRawPartition -DiskNumber $DiskNumber -Offset $Offset
-    if (-not $found.raw) { return $null }
-    $entry = [ordered]@{ type = "$($found.raw.type)"; size_bytes = [uint64]$found.raw.size_bytes; partition_id = ''; attributes = ''; name = '' }
-    if ($found.snapshot.table.style -eq 'GPT') {
-        $bytes = ConvertFrom-RbHex -Hex ([string]$found.snapshot.raw.gpt_entries_hex)
-        $at = ([int]$found.raw.slot - 1) * $Script:RbGptEntryBytes
-        $entry.partition_id = "$($found.raw.partition_id)"
-        $entry.attributes = '0x{0:X16}' -f [BitConverter]::ToUInt64($bytes, $at + 48)
-        $entry.name = [Text.Encoding]::Unicode.GetString($bytes, $at + 56, 72).TrimEnd([char]0)
+    # The table entry at an offset, straight from the disk's sectors, in one shape for both styles:
+    # on GPT its type, attribute bits, id and name; on MBR its type byte.
+    param([int]$DiskNumber, [uint64]$Offset, [ValidateSet('GPT', 'MBR')] [string]$Style)
+    if ($Style -eq 'MBR') {
+        $mbr = Get-OpsMbrEntry -DiskNumber $DiskNumber -OffsetBytes $Offset
+        if ($null -eq $mbr) { return $null }
+        return [pscustomobject]@{ type = "$($mbr.type)"; partition_id = ''; attributes = ''; name = '' }
     }
-    return [pscustomobject]$entry
+    $gpt = Get-OpsGptEntry -DiskNumber $DiskNumber -OffsetBytes $Offset
+    if ($null -eq $gpt) { return $null }
+    return [pscustomobject]@{ type = "$($gpt.type)"; partition_id = "$($gpt.partition_id)"; attributes = ('0x{0:X16}' -f [uint64]$gpt.attributes); name = "$($gpt.name)" }
 }
 
 function Get-OpsPartitionLetters {
@@ -714,7 +711,7 @@ function Invoke-OpsExtResizeKept {
     $select = @{ partition_number = $part.partition_number }
     $wantedType = if ($Style -eq 'GPT') { '0fc63daf-8483-4772-8e79-3d69d8477de4' } else { '83' }
     Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = 'ext4'; allocation_unit_bytes = 0; label = 'OPSKEPT'; full_format = $false } | Out-Null
-    $formatted = Get-OpsTableEntry -DiskNumber $disk -Offset $part.offset
+    $formatted = Get-OpsTableEntry -DiskNumber $disk -Offset $part.offset -Style $Style
     $checks = @(New-OpsCheck -Name "after format: the table gives it type $wantedType" -Passed ("$($formatted.type)" -eq $wantedType) -Detail $formatted)
     $letters = @(Get-OpsPartitionLetters -DiskNumber $disk -Offset $part.offset)
     $checks += New-OpsCheck -Name 'after format: the partition has no drive letter' -Passed ($letters.Count -eq 0) -Detail $letters
@@ -733,7 +730,7 @@ function Invoke-OpsExtResizeKept {
         $checks += New-OpsCheck -Name "${name}: no drive letter appeared while it ran" -Passed (@($seen.letters_that_appeared).Count -eq 0) -Detail @($seen.letters_that_appeared)
         $checks += New-OpsCheck -Name "${name}: no Explorer window or prompt opened while it ran" -Passed (@($seen.windows_that_appeared | Where-Object { $_ -like 'explorer|*' }).Count -eq 0) -Detail @($seen.windows_that_appeared)
         $checks += Test-OpsExtent -Name "${name}: the raw table holds it at $($resize.mib) MiB" -DiskNumber $disk -Offset $part.offset -SizeBytes ([uint64]$resize.mib * $Script:OpsMiB)
-        $entry = Get-OpsTableEntry -DiskNumber $disk -Offset $part.offset
+        $entry = Get-OpsTableEntry -DiskNumber $disk -Offset $part.offset -Style $Style
         $checks += New-OpsCheck -Name "${name}: the type is still $wantedType" -Passed ("$($entry.type)" -eq $wantedType) -Detail $entry
         if ($Style -eq 'GPT') {
             $kept = ($null -ne $entry -and $entry.attributes -eq $formatted.attributes -and $entry.partition_id -eq $formatted.partition_id -and $entry.name -ceq $formatted.name)
@@ -1318,17 +1315,105 @@ function Invoke-OpsVolumeChurnDrill {
     $checks = @(New-OpsCheck -Name 'the drill ran its time without stopping' -Passed (-not $stopped) -Detail $(if ($stopped) { $stopped } else { "$round rounds, $skipped skipped" }))
     $after = @(Get-Partition -DiskNumber $disk -ErrorAction SilentlyContinue | Sort-Object Offset | ForEach-Object { "$($_.Offset):$($_.Size)" }) -join ' '
     $checks += New-OpsCheck -Name "the drive's own partitions are as they were" -Passed ($after -eq $kept) -Detail "$kept / $after"
-    # Every snapshot made during the drill, on the drive's volumes and on C:, and by whom: VSS's
-    # 'creation initiated' (8231, with the process), its other events, and volsnap's.
-    $vss = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'VSS'; StartTime = $drillStarted } -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object { $said = $_.Message -replace '\s+', ' '; "$($_.TimeCreated.ToString('HH:mm:ss')) VSS $($_.Id) $($said.Substring(0, [Math]::Min(260, $said.Length)))" })
-    $volsnap = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'volsnap'; StartTime = $drillStarted } -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object { $said = $_.Message -replace '\s+', ' '; "$($_.TimeCreated.ToString('HH:mm:ss')) volsnap $($_.Id) $($said.Substring(0, [Math]::Min(200, $said.Length)))" })
+    $extra = [ordered]@{ minutes = $Minutes; pause_seconds = $PauseSeconds; with_move = [bool]$WithMove; guard_removals = [bool]$GuardRemovals; rounds = $round; skipped_rounds = $skipped; failed_steps = @($failed); log = @($log) }
+    $events = Get-OpsDrillEvents -Since $drillStarted
+    foreach ($key in $events.Keys) { $extra[$key] = $events[$key] }
+    return Complete-OpsRow -Media $media -Checks $checks -Extra $extra
+}
+
+function Get-OpsDrillEvents {
+    # Every snapshot made during a drill, on any volume, and by whom: VSS's 'creation initiated'
+    # (8231, with the process), its other events, volsnap's, and the shadow copies left.
+    param([datetime]$Since)
+    $vss = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'VSS'; StartTime = $Since } -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object { $said = $_.Message -replace '\s+', ' '; "$($_.TimeCreated.ToString('HH:mm:ss')) VSS $($_.Id) $($said.Substring(0, [Math]::Min(260, $said.Length)))" })
+    $volsnap = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'volsnap'; StartTime = $Since } -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object { $said = $_.Message -replace '\s+', ' '; "$($_.TimeCreated.ToString('HH:mm:ss')) volsnap $($_.Id) $($said.Substring(0, [Math]::Min(200, $said.Length)))" })
     $shadows = @(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction SilentlyContinue | ForEach-Object { "$($_.InstallDate) $($_.VolumeName) $($_.ID)" })
-    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ minutes = $Minutes; pause_seconds = $PauseSeconds; with_move = [bool]$WithMove; guard_removals = [bool]$GuardRemovals; rounds = $round; skipped_rounds = $skipped; failed_steps = @($failed); log = @($log); vss_events = $vss; volsnap_events = $volsnap; shadow_copies = $shadows })
+    return [ordered]@{ vss_events = $vss; volsnap_events = $volsnap; shadow_copies = $shadows }
 }
 
 Add-OpsRow 'ops.drill-a-scan-then-remove' { Invoke-OpsVolumeChurnDrill -Minutes 90 -PauseSeconds 0 -WithMove }
 Add-OpsRow 'ops.drill-b-pause-before-remove' { Invoke-OpsVolumeChurnDrill -Minutes 90 -PauseSeconds 180 }
 Add-OpsRow 'ops.drill-c-guarded-remove' { Invoke-OpsVolumeChurnDrill -Minutes 90 -PauseSeconds 0 -GuardRemovals }
+
+function Invoke-OpsVhdDetachDrill {
+    <#
+    .SYNOPSIS
+        Drill D (coordinator, 2026-11-12): is removing the whole disk the ingredient the volsnap
+        bugchecks need? All four came while this harness read a volume back and detached its
+        virtual disk, seconds after a scan; drills A to C remove volumes, never a disk.
+    .DESCRIPTION
+        Each round, on a new virtual disk file under -WorkRoot: the app's Create (NTFS), files,
+        the app's Check File System, then exactly what the harness does at the end of a row: the
+        read-only readback (Get-RbVolumeFacts and chkdsk /scan), each volume flushed and taken
+        down with mountvol /P, the disk taken offline, the file detached and deleted. Every step's
+        time goes to the runner's log and the row's evidence.
+    #>
+    param([int]$Minutes)
+    $drillStarted = Get-Date
+    $log = [System.Collections.Generic.List[string]]::new()
+    $failed = [System.Collections.Generic.List[string]]::new()
+    $stopped = ''
+    $round = 0
+    $skipped = 0
+    $missedCreates = 0
+    $readbacks = 0
+    $dirty = [System.Collections.Generic.List[string]]::new()
+    $media = $null
+    $write = { param([string]$Text) $line = "$((Get-Date).ToString('HH:mm:ss')) $Text"; $log.Add($line); Write-Host "  drill $line" }
+    try {
+        $deadline = (Get-Date).AddMinutes($Minutes)
+        while ((Get-Date) -lt $deadline) {
+            $round++
+            & $write "round $round"
+            $disk = New-OpsDisk -Name "round$round" -SizeMB 2048
+            if ($null -eq $media) { $media = Get-OpsMedia -DiskNumber $disk }
+            & $write "create-$round start"
+            $report = Invoke-OpsStep -Disk $disk -Step "create-$round" -Operation 'Create' -Choices @{ size_mib = 1536; free_before_mib = 0; file_system = 'NTFS'; allocation_unit_bytes = 4096; partition_type = $Script:GptBasicData; label = 'OPSDETACH'; full_format = $false } -TimeoutSeconds 3600 -ReadBackOnFailure
+            & $write $(if ($null -eq $report) { "create-$round FAILED" } else { "create-$round done" })
+            $part = @(Get-Partition -DiskNumber $disk | Where-Object { $_.Type -eq 'Basic' })
+            if ($part.Count -ne 1) {
+                if ($null -eq $report) { $failed.Add("create-$round") }
+                $skipped++
+                $missedCreates++
+                & $write "round ${round}: Create made $($part.Count) data partitions; the disk is detached and the round skipped ($missedCreates in a row)"
+                Close-OpsRowVolumes
+                Remove-CertVhds
+                if ($missedCreates -ge 3) { throw "round ${round}: three Creates in a row made no partition" }
+                continue
+            }
+            $missedCreates = 0
+            $letter = Wait-OpsLetter -DiskNumber $disk -Offset ([uint64]$part[0].Offset)
+            if ($letter) { Write-RbFixtureTree -Root "${letter}:\fixture" -FileCount 12 -MaxKilobytes 2048 | Out-Null; Write-VolumeCache -DriveLetter $letter }
+            & $write "scan-$round start"
+            $report = Invoke-OpsStep -Disk $disk -Step "scan-$round" -Operation 'CheckFileSystem' -Select @{ partition_number = [int]$part[0].PartitionNumber } -TimeoutSeconds 3600 -ReadBackOnFailure
+            if ($null -eq $report) { $failed.Add("scan-$round"); & $write "scan-$round FAILED" } else { & $write "scan-$round done" }
+            if ($letter) {
+                & $write "readback-$round start"
+                $read = @(Test-OpsWindowsVolume -Prefix "round ${round}:" -Letter $letter -FileSystem 'NTFS' -Label 'OPSDETACH')
+                $readbacks++
+                foreach ($check in $read) { if (-not $check.passed) { $dirty.Add("$($check.name): $($check.detail)") } }
+                & $write "readback-$round done"
+            } else { & $write "round ${round}: no letter, so no readback" }
+            & $write "detach-$round start"
+            Close-OpsRowVolumes
+            Remove-CertVhds
+            & $write "detach-$round done"
+        }
+    } catch {
+        $stopped = $_.Exception.Message
+        & $write "stopped: $stopped"
+    }
+    $checks = @(New-OpsCheck -Name 'the drill ran its time without stopping' -Passed (-not $stopped) -Detail $(if ($stopped) { $stopped } else { "$round rounds, $skipped skipped" }))
+    $checks += New-OpsCheck -Name "every readback found the volume as made, and chkdsk's scan clean" -Passed ($readbacks -gt 0 -and $dirty.Count -eq 0) -Detail "$readbacks readbacks; $(@($dirty) -join ' | ')"
+    $left = @(Get-ChildItem -LiteralPath $WorkRoot -Filter "$($Script:RowId.Replace('ops.', ''))-round*.vhdx" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
+    $checks += New-OpsCheck -Name 'no virtual disk file was left behind' -Passed ($left.Count -eq 0) -Detail $left
+    $extra = [ordered]@{ minutes = $Minutes; rounds = $round; skipped_rounds = $skipped; failed_steps = @($failed); log = @($log) }
+    $events = Get-OpsDrillEvents -Since $drillStarted
+    foreach ($key in $events.Keys) { $extra[$key] = $events[$key] }
+    return Complete-OpsRow -Media $media -Checks $checks -Extra $extra
+}
+
+Add-OpsRow 'ops.drill-d-scan-then-detach-vhd' { Invoke-OpsVhdDetachDrill -Minutes 90 }
 
 function Invoke-OpsLockAndDismount {
     # FSCTL_LOCK_VOLUME, then FSCTL_DISMOUNT_VOLUME, on the volume's own device, then the handle is

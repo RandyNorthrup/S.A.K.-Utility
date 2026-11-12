@@ -94,10 +94,14 @@ function Get-OpsGptEntry {
         if ($first * 512 -ne $OffsetBytes) { continue }
         $typeBytes = New-Object byte[] 16
         [Array]::Copy($table, $at, $typeBytes, 0, 16)
+        $idBytes = New-Object byte[] 16
+        [Array]::Copy($table, $at + 16, $idBytes, 0, 16)
         return [pscustomobject]@{
             slot = $slot + 1
             type = ([Guid]::new($typeBytes)).ToString()
+            partition_id = ([Guid]::new($idBytes)).ToString()
             attributes = [BitConverter]::ToUInt64($table, $at + 48)
+            name = [Text.Encoding]::Unicode.GetString($table, $at + 56, 72).TrimEnd([char]0)
             first_lba = $first
             last_lba = [BitConverter]::ToUInt64($table, $at + 40)
         }
