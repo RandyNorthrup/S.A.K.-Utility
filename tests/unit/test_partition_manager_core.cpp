@@ -1594,6 +1594,7 @@ private Q_SLOTS:
     void hfsStaging_repairReadsTheToolsExitCode();
     void generatedScripts_callTheirOwnFunctionsWithDeclaredParameters();
     void generatedScripts_checkerNamesAStorageCmdletThatWouldNotStop();
+    void generatedScripts_writerCallsPassEveryArgumentOn();
     void generatedScripts_volumeScanStopsOnWhatItFinds();
     void generatedScripts_toolRunnerSurvivesStderrAndKeepsTheExitCode();
     void generatedScripts_toolRunnerReadsWhatE2fsckSays();
@@ -3805,6 +3806,23 @@ namespace {
 /// The (target, payload) pairs every operation type is tried with below: enough that each script
 /// family the builder has (Windows volumes, disks, clone and image, ext, HFS+ staging, HFS+ and
 /// APFS file changes) comes out valid for some type.
+/// Payloads naming everything the APFS and HFS+ writer commands take (a relabel's name, a
+/// directory, a snapshot, a clone's new name, a destination path, a secure wipe), so every writer
+/// call site the builder has comes out of the corpus with each argument it can pass.
+QVector<QJsonObject> writerNamesCorpusPayloads() {
+    QJsonObject apfs = baseApfsRootFileMutationPayload();
+    apfs[QStringLiteral("label")] = QStringLiteral("SAK Relabeled");
+    apfs[QStringLiteral("apfs_root_directory_name")] = QStringLiteral("sak-dir");
+    apfs[QStringLiteral("apfs_snapshot_name")] = QStringLiteral("sak-snapshot");
+    apfs[QStringLiteral("apfs_root_file_new_name")] = QStringLiteral("sak-clone.txt");
+    apfs[QStringLiteral("apfs_compress_zlib")] = true;
+    QJsonObject hfs_destination = baseHfsFileMutationPayload();
+    hfs_destination[QStringLiteral("hfs_destination_path")] = QStringLiteral("/renamed.txt");
+    QJsonObject hfs_wipe = baseHfsFileMutationPayload();
+    hfs_wipe[QStringLiteral("hfs_secure_wipe_released_blocks")] = true;
+    return {apfs, hfs_destination, hfs_wipe};
+}
+
 QVector<QPair<PartitionTarget, QJsonObject>> scriptCorpusInputs() {
     const PartitionTarget partition = extToolPartitionTarget();
     QVector<QPair<PartitionTarget, QJsonObject>> inputs;
@@ -3859,6 +3877,9 @@ QVector<QPair<PartitionTarget, QJsonObject>> scriptCorpusInputs() {
     copy[QStringLiteral("target_offset_bytes")] = QStringLiteral("1048576");
     pinRawTargetIdentity(&copy);
     inputs.append({copy_target, copy});
+    for (const QJsonObject& payload : writerNamesCorpusPayloads()) {
+        inputs.append({partition, payload});
+    }
     return inputs;
 }
 
@@ -4028,6 +4049,135 @@ QString ownFunctionCallChecker(const QString& folder) {
                "define') } }\n"
                "'CHECKED ' + $checked + ' CALLS ' + $script:calls + ' TYPES ' + $types.Count + "
                "' STORAGE-VERBOSE ' + $script:storageVerboseCalls\n"
+               "$problems | ForEach-Object { 'PROBLEM ' + $_ }\n")
+               .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(folder)));
+}
+
+/// PowerShell: $flags, the option each writer wrapper parameter becomes on its CLI's command line,
+/// and Write-SakStandInArgv, which stands in for the CLI and prints each argument it is given.
+QString writerCliStandInScript() {
+    return QStringLiteral(
+        "$flags = @{ TargetPath = '--target'; ImagePath = '--target'; SizeBytes = '--size-bytes'; "
+        "VolumeName = '--volume-name'; EvidenceId = '--evidence-id'; FileName = '--file-name'; "
+        "DirectoryName = '--directory-name'; PayloadFile = '--payload-file'; PatchOffsetBytes = "
+        "'--patch-offset-bytes'; AdditionalVolumeNames = '--additional-volume-name'; CompressZlib "
+        "= "
+        "'--compress-zlib'; SnapshotName = '--snapshot-name'; VolumePasswordFile = "
+        "'--volume-password-file'; RecoveryKeyFile = '--recovery-key-file'; NewFileName = "
+        "'--new-file-name'; HfsPath = '--hfs-path'; DestinationHfsPath = '--destination-hfs-path'; "
+        "FileId = '--file-id'; AttributeName = '--attribute-name'; AllowJournaled = "
+        "'--allow-journaled-volume'; AllowWrapped = '--allow-wrapped-volume'; "
+        "SecureWipeReleasedBlocks = '--secure-wipe-released-blocks' }\n"
+        "function Write-SakStandInArgv([object[]]$Argv) { foreach ($a in $Argv) { 'SAKARGV ' + "
+        "[string]$a }; $global:LASTEXITCODE = 0 }\n");
+}
+
+/// PowerShell: Get-SakWriterCallBinding gives each argument a writer call passes that says
+/// something (not '', @(), $false or 0) a marker value: Bound is what the wrapper is called with,
+/// Expect the value each must reach the CLI with ($null: a switch, whose option is enough).
+QString writerCallBindingScript() {
+    return QStringLiteral(
+        "function Get-SakWriterCallBinding($c, $wrapper, $where) {\n"
+        "  $bound = @{}; $expect = @{}; $problems = @()\n"
+        "  $elements = @($c.CommandElements)\n"
+        "  for ($i = 1; $i -lt $elements.Count; $i++) {\n"
+        "    $e = $elements[$i]\n"
+        "    $names = @($wrapper.Parameters.Keys | Where-Object { $e -is "
+        "[System.Management.Automation.Language.CommandParameterAst] -and $_ -like "
+        "($e.ParameterName + '*') })\n"
+        "    if ($names.Count -ne 1) { $problems += ($where + ': cannot bind ' + $e.Extent.Text); "
+        "continue }\n"
+        "    $name = $names[0]; $type = $wrapper.Parameters[$name].ParameterType\n"
+        "    $arg = $e.Argument\n"
+        "    if (-not $arg -and $type -ne [System.Management.Automation.SwitchParameter]) { $i++; "
+        "$arg = $elements[$i] }\n"
+        "    if ($name -eq 'Command') { $bound.Command = $arg.SafeGetValue(); continue }\n"
+        "    if ($arg -and @(\"''\", '\"\"', '@()', '$false', '0') -contains $arg.Extent.Text) { "
+        "continue }\n"
+        "    if (-not $flags.ContainsKey($name)) { $problems += ($where + ': no CLI option is "
+        "known "
+        "for -' + $name); continue }\n"
+        "    $marker = 'sak-' + $name\n"
+        "    if ($type -eq [System.Management.Automation.SwitchParameter] -or $type -eq [bool]) { "
+        "$bound[$name] = $true; $expect[$name] = $null }\n"
+        "    elseif ($type -eq [uint64]) { $bound[$name] = [uint64](900001 + $i); $expect[$name] = "
+        "[string](900001 + $i) }\n"
+        "    elseif ($type -eq [string[]]) { $bound[$name] = @($marker); $expect[$name] = $marker "
+        "}\n"
+        "    else { $bound[$name] = $marker; $expect[$name] = $marker }\n"
+        "  }\n"
+        "  return @{ Bound = $bound; Expect = $expect; Problems = $problems }\n"
+        "}\n");
+}
+
+/// PowerShell: Get-SakWriterCallProblems calls wrapper @p $w with a binding, and names each
+/// argument that does not reach the stand-in CLI after its option.
+QString writerCallProblemsScript() {
+    return QStringLiteral(
+        "function Get-SakWriterCallProblems($w, $binding, $where) {\n"
+        "  $bound = $binding.Bound\n"
+        "  try { $argv = @(& $w @bound 2>&1 | ForEach-Object { [string]$_ } | Where-Object { "
+        "$_.StartsWith('SAKARGV ') } | ForEach-Object { $_.Substring(8) }) } catch { return "
+        "($where + ': ' + $_.Exception.Message) }\n"
+        "  if ($argv.Count -eq 0 -or $argv[0] -ne $bound.Command) { return ($where + ': the CLI "
+        "was not given the command') }\n"
+        "  foreach ($name in @($binding.Expect.Keys)) {\n"
+        "    $flag = $flags[$name]; $value = $binding.Expect[$name]; $reached = $false\n"
+        "    for ($k = 1; $k -lt $argv.Count; $k++) {\n"
+        "      if ($argv[$k] -eq $flag -and ($null -eq $value -or ($k + 1 -lt $argv.Count -and "
+        "$argv[$k + 1] -eq $value))) { $reached = $true }\n"
+        "    }\n"
+        "    if (-not $reached) { $where + ': -' + $name + ' does not reach the CLI as ' + $flag "
+        "}\n"
+        "  }\n"
+        "}\n");
+}
+
+/// The PowerShell that runs every call to Invoke-SakApfsWriterCli or Invoke-SakHfsWriterCli in the
+/// .ps1 files in @p folder through that script's own wrapper, with the CLI replaced by a stand-in
+/// that prints the arguments it is given, and checks that each argument the call passes reaches the
+/// CLI after its option for that command. Prints "CALL <wrapper> <command> <parameters>" once for
+/// each kind of call, then "CHECKED <n>", then one "PROBLEM ..." line per argument the CLI would
+/// not be given.
+QString writerCliArgumentChecker(const QString& folder) {
+    return QStringLiteral("$ErrorActionPreference = 'Stop'\n") + writerCliStandInScript() +
+           writerCallBindingScript() + writerCallProblemsScript() +
+           QStringLiteral(
+               "$problems = @(); $calls = 0; $seen = @{}\n"
+               "foreach ($file in Get-ChildItem -LiteralPath %1 -Filter *.ps1) {\n"
+               "  $tokens = $null; $errors = $null\n"
+               "  $ast = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, "
+               "[ref]$tokens, [ref]$errors)\n"
+               "  foreach ($w in @('Invoke-SakApfsWriterCli', 'Invoke-SakHfsWriterCli')) {\n"
+               "    $def = $ast.Find({ param($n) $n -is "
+               "[System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $w "
+               "}, $true)\n"
+               "    if (-not $def) { continue }\n"
+               "    $text = $def.Extent.Text\n"
+               "    if (-not $text.Contains('& $cliPath @cliArgs')) { $problems += ($file.Name + "
+               "': ' + $w + ' runs its CLI some other way'); continue }\n"
+               // The real CLI never runs: the wrapper hands its arguments to the stand-in, and
+               // its check that the CLI exists is given a file that does.
+               "    $text = $text.Replace('& $cliPath @cliArgs', 'Write-SakStandInArgv $cliArgs') "
+               "-replace '(?m)^(\\s*)\\$cliPath = .*$', '$1$cliPath = (Join-Path $PSHOME "
+               "''powershell.exe'')'\n"
+               "    . ([scriptblock]::Create($text))\n"
+               "    $wrapper = Get-Command -Name $w -CommandType Function\n"
+               "    foreach ($c in $ast.FindAll({ param($n) $n -is "
+               "[System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq $w "
+               "}, $true)) {\n"
+               "      $where = $file.Name + ': ' + $c.Extent.Text\n"
+               "      $binding = Get-SakWriterCallBinding $c $wrapper $where\n"
+               "      $problems += @($binding.Problems)\n"
+               "      $calls++\n"
+               "      $problems += @(Get-SakWriterCallProblems $w $binding $where)\n"
+               "      $key = $w + ' ' + $binding.Bound.Command + ' ' + ((@($binding.Expect.Keys) | "
+               "Sort-Object) -join ',')\n"
+               "      if (-not $seen.ContainsKey($key)) { $seen[$key] = $true; 'CALL ' + $key }\n"
+               "    }\n"
+               "  }\n"
+               "}\n"
+               "'CHECKED ' + $calls\n"
                "$problems | ForEach-Object { 'PROBLEM ' + $_ }\n")
                .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(folder)));
 }
@@ -5200,6 +5350,47 @@ void PartitionManagerCoreTests::generatedScripts_checkerNamesAStorageCmdletThatW
                                          "Storage cmdlet given -Verbose stops only on "
                                          "-ErrorAction Stop")),
              qPrintable(out));
+}
+
+// F22 (operation proof, 2026-11-12): Change APFS Volume Label named every volume "SAK APFS", the
+// writer's default, and reported success: Invoke-SakApfsWriterCli was given -VolumeName and passed
+// it on only for format-raw. Every APFS and HFS+ writer call the corpus builds runs through its
+// script's own wrapper against a stand-in CLI, and each argument the call passes must reach the
+// CLI after its option.
+void PartitionManagerCoreTests::generatedScripts_writerCallsPassEveryArgumentOn() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const PartitionScriptBuilder builder;
+    const auto inputs = scriptCorpusInputs();
+    const QRegularExpression call(QStringLiteral("Invoke-Sak(Apfs|Hfs)WriterCli -Command"));
+    const int type_count = static_cast<int>(PartitionOperationType::HfsDeleteHardlink) + 1;
+    QSet<QByteArray> seen;
+    for (int type = 0; type < type_count; ++type) {
+        for (const auto& [target, payload] : inputs) {
+            const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+                static_cast<PartitionOperationType>(type), target, payload));
+            const QByteArray bytes = script.script.toUtf8();
+            if (!script.valid() || !call.match(script.script).hasMatch() || seen.contains(bytes)) {
+                continue;
+            }
+            seen.insert(bytes);
+            QFile file(dir.filePath(QStringLiteral("writer-%1.ps1").arg(seen.size())));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(bytes), bytes.size());
+        }
+    }
+
+    const ProcessResult proc = sak::runPowerShell(writerCliArgumentChecker(dir.path()), 300'000);
+    const QString out = (proc.std_out + proc.std_err).trimmed();
+    QVERIFY2(out.contains(QStringLiteral("CHECKED ")) && !out.contains(QStringLiteral("CHECKED 0")),
+             qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("CALL Invoke-SakApfsWriterCli change-raw-volume-label "
+                                         "EvidenceId,SizeBytes,TargetPath,VolumeName")),
+             qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("CALL Invoke-SakApfsWriterCli format-raw ")),
+             qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("CALL Invoke-SakHfsWriterCli ")), qPrintable(out));
+    QVERIFY2(!out.contains(QStringLiteral("PROBLEM")), qPrintable(out));
 }
 
 namespace {
@@ -19975,7 +20166,14 @@ void verifyApfsRootDirectoryAndLabelScripts(const PartitionScriptBuilder* builde
                           .payload = labelPayload,
                           .present = {QStringLiteral("change-raw-volume-label"),
                                       QStringLiteral("-VolumeName 'SAK Relabeled'"),
-                                      QStringLiteral("ui.apfs-cow-raw-volume-label-change")},
+                                      QStringLiteral("ui.apfs-cow-raw-volume-label-change"),
+                                      // The name reaches the writer: without it the writer
+                                      // named every volume "SAK APFS" (operation proof).
+                                      QStringLiteral("if ($Command -eq 'change-raw-volume-label') "
+                                                     "{\n    if ([string]::IsNullOrWhiteSpace("
+                                                     "$VolumeName)) { throw 'APFS volume name is "
+                                                     "required' }\n    $cliArgs += @('--volume-"
+                                                     "name', $VolumeName)")},
                           .absent = {QStringLiteral("FromBase64String"),
                                      QStringLiteral("-FileName")}});
 }

@@ -1480,7 +1480,9 @@ ApfsRootFileMutationScriptInput apfsRootFileMutationScriptInput(
 
     input.file_name = apfsRootMutationFileName(operation);
     input.directory_name = apfsRootMutationDirectoryName(operation);
-    input.volume_name = apfsVolumeLabel(operation);
+    // The writer takes a volume name only to relabel; any other command would drop it.
+    input.volume_name = apfsVolumeLabelMutation(operation.type) ? apfsVolumeLabel(operation)
+                                                                : QString();
 
     input.blocker = apfsVolumeLabelBlocker(operation.type, input.volume_name);
     if (!input.blocker.isEmpty()) {
@@ -1741,9 +1743,9 @@ QString runtimeHfsWriterCliPath() {
     return QDir(appDir).filePath(QStringLiteral("sak_hfs_writer_cli.exe"));
 }
 
-// The per-command argument conditionals of Invoke-SakApfsWriterCli (split out to keep each
-// function within the length gate). No format placeholders.
-QString apfsWriterCliArgConditionals() {
+// The volume-name arguments of Invoke-SakApfsWriterCli: a format's volumes and a relabel's new
+// name. No format placeholders.
+QString apfsWriterCliVolumeArgConditionals() {
     return QStringLiteral(
         "  if ($Command -eq 'format-raw') {\n"
         "    $cliArgs += @('--volume-name', $VolumeName)\n"
@@ -1759,59 +1761,75 @@ QString apfsWriterCliArgConditionals() {
         "      $cliArgs += @('--recovery-key-file', $RecoveryKeyFile)\n"
         "    }\n"
         "  }\n"
-        "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
-        "'patch-raw-root-directory-file', "
-        "'delete-raw-root-file', 'write-raw-root-directory-file', "
-        "'delete-raw-root-directory-file', 'commit-raw-file-write', "
-        "'commit-raw-file-delete', 'commit-raw-directory-child-write', "
-        "'commit-raw-directory-child-delete', 'commit-raw-file-patch', "
-        "'commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
+        // Without it the writer names the volume "SAK APFS", its default, and reports success
+        // (operation proof, 2026-11-12).
+        "  if ($Command -eq 'change-raw-volume-label') {\n"
+        "    if ([string]::IsNullOrWhiteSpace($VolumeName)) { throw 'APFS volume name is "
         "required' }\n"
-        "    $cliArgs += @('--file-name', $FileName)\n"
-        "  }\n"
-        "  if ($Command -in @('commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($NewFileName)) { throw 'APFS clone/hard link new "
-        "name is required' }\n"
-        "    $cliArgs += @('--new-file-name', $NewFileName)\n"
-        "  }\n"
-        "  if ($Command -eq 'commit-raw-file-patch' -and "
-        "-not [string]::IsNullOrWhiteSpace($DirectoryName)) {\n"
-        "    $cliArgs += @('--directory-name', $DirectoryName)\n"
-        "  }\n"
-        "  if ($Command -in @('create-raw-root-directory', 'delete-raw-root-directory', "
-        "'write-raw-root-directory-file', 'patch-raw-root-directory-file', "
-        "'delete-raw-root-directory-file', 'commit-raw-directory-create', "
-        "'commit-raw-directory-delete', 'commit-raw-directory-child-write', "
-        "'commit-raw-directory-child-delete')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($DirectoryName)) { throw 'APFS root directory "
-        "name is "
-        "required' }\n"
-        "    $cliArgs += @('--directory-name', $DirectoryName)\n"
-        "  }\n"
-        "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
-        "'patch-raw-root-directory-file', 'write-raw-root-directory-file', "
-        "'commit-raw-file-write', 'commit-raw-directory-child-write', "
-        "'commit-raw-file-patch')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'APFS root file "
-        "payload "
-        "is required' }\n"
-        "    $cliArgs += @('--payload-file', $PayloadFile)\n"
-        "  }\n"
-        "  if ($CompressZlib -and $Command -in @('commit-raw-file-write', "
-        "'commit-raw-directory-child-write')) {\n"
-        "    $cliArgs += '--compress-zlib'\n"
-        "  }\n"
-        "  if ($Command -in @('commit-raw-snapshot-create', 'commit-raw-snapshot-delete', "
-        "'commit-raw-snapshot-revert')) {\n"
-        "    if ([string]::IsNullOrWhiteSpace($SnapshotName)) { throw 'APFS snapshot name is "
-        "required' }\n"
-        "    $cliArgs += @('--snapshot-name', $SnapshotName)\n"
-        "  }\n"
-        "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file', "
-        "'commit-raw-file-patch')) {\n"
-        "    $cliArgs += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
+        "    $cliArgs += @('--volume-name', $VolumeName)\n"
         "  }\n");
+}
+
+// The per-command argument conditionals of Invoke-SakApfsWriterCli (split out to keep each
+// function within the length gate). No format placeholders.
+QString apfsWriterCliArgConditionals() {
+    return apfsWriterCliVolumeArgConditionals() +
+           QStringLiteral(
+               "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
+               "'patch-raw-root-directory-file', "
+               "'delete-raw-root-file', 'write-raw-root-directory-file', "
+               "'delete-raw-root-directory-file', 'commit-raw-file-write', "
+               "'commit-raw-file-delete', 'commit-raw-directory-child-write', "
+               "'commit-raw-directory-child-delete', 'commit-raw-file-patch', "
+               "'commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($FileName)) { throw 'APFS root file name is "
+               "required' }\n"
+               "    $cliArgs += @('--file-name', $FileName)\n"
+               "  }\n"
+               "  if ($Command -in @('commit-raw-file-clone', 'commit-raw-file-hardlink')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($NewFileName)) { throw 'APFS clone/hard link "
+               "new "
+               "name is required' }\n"
+               "    $cliArgs += @('--new-file-name', $NewFileName)\n"
+               "  }\n"
+               "  if ($Command -eq 'commit-raw-file-patch' -and "
+               "-not [string]::IsNullOrWhiteSpace($DirectoryName)) {\n"
+               "    $cliArgs += @('--directory-name', $DirectoryName)\n"
+               "  }\n"
+               "  if ($Command -in @('create-raw-root-directory', 'delete-raw-root-directory', "
+               "'write-raw-root-directory-file', 'patch-raw-root-directory-file', "
+               "'delete-raw-root-directory-file', 'commit-raw-directory-create', "
+               "'commit-raw-directory-delete', 'commit-raw-directory-child-write', "
+               "'commit-raw-directory-child-delete')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($DirectoryName)) { throw 'APFS root directory "
+               "name is "
+               "required' }\n"
+               "    $cliArgs += @('--directory-name', $DirectoryName)\n"
+               "  }\n"
+               "  if ($Command -in @('write-raw-root-file', 'patch-raw-root-file', "
+               "'patch-raw-root-directory-file', 'write-raw-root-directory-file', "
+               "'commit-raw-file-write', 'commit-raw-directory-child-write', "
+               "'commit-raw-file-patch')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($PayloadFile)) { throw 'APFS root file "
+               "payload "
+               "is required' }\n"
+               "    $cliArgs += @('--payload-file', $PayloadFile)\n"
+               "  }\n"
+               "  if ($CompressZlib -and $Command -in @('commit-raw-file-write', "
+               "'commit-raw-directory-child-write')) {\n"
+               "    $cliArgs += '--compress-zlib'\n"
+               "  }\n"
+               "  if ($Command -in @('commit-raw-snapshot-create', 'commit-raw-snapshot-delete', "
+               "'commit-raw-snapshot-revert')) {\n"
+               "    if ([string]::IsNullOrWhiteSpace($SnapshotName)) { throw 'APFS snapshot name "
+               "is "
+               "required' }\n"
+               "    $cliArgs += @('--snapshot-name', $SnapshotName)\n"
+               "  }\n"
+               "  if ($Command -in @('patch-raw-root-file', 'patch-raw-root-directory-file', "
+               "'commit-raw-file-patch')) {\n"
+               "    $cliArgs += @('--patch-offset-bytes', ([string]$PatchOffsetBytes))\n"
+               "  }\n");
 }
 
 QString apfsWriterCliFunctionScript() {
