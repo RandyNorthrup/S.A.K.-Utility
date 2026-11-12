@@ -290,9 +290,20 @@ try {
     # The rows themselves stop on this machine, or on any that nobody named as disposable.
     . (Join-Path $PSScriptRoot 'partition_manager_readback.ps1')
     if (-not (Test-RbInVirtualBox -Facts (Get-RbMachineFacts))) {
-        $rows = Invoke-Script -Path (Join-Path $PSScriptRoot 'run_partition_manager_app_certification.ps1') -Arguments @('-Rows', 'vhd.none', '-StageRoot', $Script:Root, '-OutputRoot', (Join-Path $Script:Root 'rows'), '-WorkRoot', (Join-Path $Script:Root 'work'))
+        # Hermetic: the rows read an approval file of the test's own, never the one this machine
+        # may hold (C:\SAKCert\disposable-machine.json, left on testpc2 by a certification run,
+        # turned this case red there).
+        $rowsScript = Join-Path $PSScriptRoot 'run_partition_manager_app_certification.ps1'
+        $rowArgs = @('-Rows', 'vhd.none', '-StageRoot', $Script:Root, '-OutputRoot', (Join-Path $Script:Root 'rows'), '-WorkRoot', (Join-Path $Script:Root 'work'))
+        $rows = Invoke-Script -Path $rowsScript -Arguments ($rowArgs + @('-ApprovalPath', (Join-Path $Script:Root 'no-approval.json')))
         Assert-That ($rows.code -ne 0 -and $rows.text -match 'runs only in a VirtualBox') 'The rows stop on this machine' $rows.text
         Assert-That (-not (Test-Path -LiteralPath (Join-Path $Script:Root 'rows'))) 'before they make anything' $rows.text
+        # The approval named is the one read: one naming another machine stops the rows for that.
+        $other = Join-Path $Script:Root 'other-machine.json'
+        [IO.File]::WriteAllText($other, (@{ machine_uuid = '11111111-2222-3333-4444-555555555555'; confirmation = 'DISPOSABLE elsewhere' } | ConvertTo-Json))
+        $named = Invoke-Script -Path $rowsScript -Arguments ($rowArgs + @('-ApprovalPath', $other))
+        Assert-That ($named.code -ne 0 -and $named.text -match 'names another one|has no id of its own') 'The rows read the approval they are given' $named.text
+        Assert-That (-not (Test-Path -LiteralPath (Join-Path $Script:Root 'rows'))) 'and still make nothing' $named.text
     }
 } finally {
     if (Test-Path -LiteralPath $Script:Root) { Remove-Item -LiteralPath $Script:Root -Recurse -Force }

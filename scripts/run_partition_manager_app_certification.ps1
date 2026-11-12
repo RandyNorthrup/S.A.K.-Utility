@@ -29,6 +29,9 @@
 .PARAMETER PhysicalPins
     JSON file: { "ssd": {pin}, "hdd": {pin} }, each pin holding unique_id, serial_number, model,
     size_bytes and the words a person typed.
+.PARAMETER ApprovalPath
+    The disposable-machine approval to read (the one the rig's PcPrepare writes). A test names
+    a file of its own, so the approval of the machine it runs on cannot change its result.
 #>
 
 [CmdletBinding()]
@@ -40,7 +43,8 @@ param(
     [string]$PhysicalPins = '',
     [string]$Phase = '',
     [uint64]$DataDiskBytes = 0,
-    [switch]$DataRowsOnDevice
+    [switch]$DataRowsOnDevice,
+    [string]$ApprovalPath = 'C:\SAKCert\disposable-machine.json'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,7 +52,7 @@ $ProgressPreference = 'SilentlyContinue'
 . (Join-Path $PSScriptRoot 'partition_manager_readback.ps1')
 . (Join-Path $PSScriptRoot 'partition_manager_row_evidence.ps1')
 
-Assert-RbDisposableMachine
+Assert-RbDisposableMachine -ApprovalPath $ApprovalPath
 $Script:InVirtualBox = Test-RbInVirtualBox -Facts (Get-RbMachineFacts)
 $Script:VhdKind = if ($Script:InVirtualBox) { 'VHDX in a VM' } else { 'VHDX on a physical PC' }
 $identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
