@@ -1070,8 +1070,11 @@ bool nonNativeToolMissingTarget(const PartitionOperation& operation) {
            !targetPathMatchesSelectedRawPartition(operation);
 }
 
+// A read-only check changes nothing, so there is nothing to confirm (F25).
 bool nonNativeToolMissingConfirmation(const PartitionOperation& operation) {
-    return isNonNativeFileSystemToolOperation(operation) &&
+    const bool read_only_check = operation.type == PartitionOperationType::CheckFileSystem &&
+                                 payloadBool(operation, QStringLiteral("read_only_check"));
+    return isNonNativeFileSystemToolOperation(operation) && !read_only_check &&
            !payloadBool(operation, QStringLiteral("target_wipe_confirmed"));
 }
 

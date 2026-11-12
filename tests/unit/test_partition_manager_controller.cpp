@@ -181,6 +181,7 @@ private Q_SLOTS:
     void inventoryRefreshCanBeCancelled();
     void finishedInventoryFutureCannotBeRetroactivelyCancelled();
     void filesystemCheckCanBeCancelled();
+    void readOnlyCheckRunsInTheElevatedHelper();
     void windowsPhaseTakesCancelAwayUntilItEnds();
     void destructorCancelsAndJoinsInventoryScan();
     void storageInventoryPassesCancellationToProcessRunner();
@@ -965,6 +966,72 @@ void PartitionManagerControllerTests::filesystemCheckCanBeCancelled() {
     QVERIFY(!delivered->success);
     QCOMPARE(controller.state(), sak::PartitionManagerState::Ready);
     QVERIFY(!controller.interactionBlocked());
+}
+
+// F25 (operation proof, 2026-11-12): Check Non-Windows File System ran e2fsck in this
+// standard-user process, which may not open the raw partition, and the refusal read as a corrupt
+// superblock. The check is now the read-only operation the elevated helper runs, built from the
+// scan's partition, and what the helper's run says reaches the result in its own words.
+void PartitionManagerControllerTests::readOnlyCheckRunsInTheElevatedHelper() {
+    auto inventory = volumeInventory();
+    auto& partition = inventory.disks[0].partitions[0];
+    partition.volume->file_system = QStringLiteral("ext4");
+    partition.volume->drive_letter.clear();
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(inventory);
+    std::optional<sak::PartitionFileSystemReadOnlyCheckRequest> seen;
+    controller.setFileSystemCheckRunnerForTesting(
+        [&seen](const sak::PartitionFileSystemReadOnlyCheckRequest& request,
+                const sak::CancelCheck&) {
+            seen = request;
+            return sak::PartitionFileSystemToolRunResult{};
+        });
+    const QString raw_path = QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk7\\Partition1");
+    controller.runReadOnlyFileSystemCheck(QStringLiteral("ext4"), raw_path);
+    QVERIFY(waitUntil([&seen]() { return seen.has_value(); }));
+    QVERIFY(seen->helper_operation.has_value());
+    const auto& operation = *seen->helper_operation;
+    QCOMPARE(operation.type, sak::PartitionOperationType::CheckFileSystem);
+    QCOMPARE(operation.risk, sak::OperationRisk::ReadOnly);
+    QVERIFY(operation.payload.value(QStringLiteral("read_only_check")).toBool());
+    QCOMPARE(operation.payload.value(QStringLiteral("target_path")).toString(), raw_path);
+    QCOMPARE(operation.target.partition_number.value(), 1U);
+    QCOMPARE(operation.target.disk_unique_id, QStringLiteral("test-unique-id"));
+    QVERIFY2(seen->helper_blockers.isEmpty(), qPrintable(seen->helper_blockers.join(u';')));
+
+    sak::PartitionExecutionStep refusal;
+    refusal.error_message = QStringLiteral(
+        "S.A.K. could not open the partition: Access is denied. The check read nothing, so this "
+        "says nothing about the file system.");
+    sak::PartitionExecutionResult refused;
+    refused.message = QStringLiteral("batch failed");
+    refused.steps.append(refusal);
+    std::optional<sak::PartitionOperation> ran;
+    const auto failed = sak::PartitionManagerController::runReadOnlyCheckThroughHelper(
+        *seen, [&ran, &refused](const sak::PartitionOperation& run) {
+            ran = run;
+            return refused;
+        });
+    QVERIFY(ran.has_value() && ran->payload.value(QStringLiteral("read_only_check")).toBool());
+    QVERIFY(!failed.success && !failed.blocked);
+    QCOMPARE(failed.problem, refusal.error_message);
+    sak::PartitionExecutionResult passed;
+    passed.success = true;
+    const auto clean = sak::PartitionManagerController::runReadOnlyCheckThroughHelper(
+        *seen, [&passed](const sak::PartitionOperation&) { return passed; });
+    QVERIFY(clean.success && clean.problem.isEmpty());
+
+    // A partition the scan does not have is not checked at all.
+    auto unknown = *seen;
+    unknown.helper_operation.reset();
+    bool called = false;
+    const auto blocked = sak::PartitionManagerController::runReadOnlyCheckThroughHelper(
+        unknown, [&called, &passed](const sak::PartitionOperation&) {
+            called = true;
+            return passed;
+        });
+    QVERIFY(blocked.blocked && !called);
+    QVERIFY(blocked.blockers.join(u' ').contains(QStringLiteral("not in the current scan")));
 }
 
 void PartitionManagerControllerTests::destructorCancelsAndJoinsInventoryScan() {

@@ -1598,6 +1598,7 @@ private Q_SLOTS:
     void generatedScripts_volumeScanStopsOnWhatItFinds();
     void generatedScripts_toolRunnerSurvivesStderrAndKeepsTheExitCode();
     void generatedScripts_toolRunnerReadsWhatE2fsckSays();
+    void fileSystemTools_sayWhenTheyCouldNotOpenThePartition();
     void generatedScripts_writerWrapperReportsTheHelpersExitCode();
     void generatedScripts_valueFunctionsReturnOnlyTheirValue();
     void generatedScripts_sparseRangesComeFromTheFileSystem();
@@ -4426,6 +4427,79 @@ void PartitionManagerCoreTests::generatedScripts_toolRunnerReadsWhatE2fsckSays()
              qPrintable(errors));
     const QString other = run(other_tool, QStringLiteral("0"));
     QVERIFY2(other.contains(QStringLiteral("WENT ON")), qPrintable(other));
+}
+
+namespace {
+
+/// What e2fsck printed when the standard-user app ran it on a raw partition it may not open
+/// (operation proof, 2026-11-12, F25): the refusal, then advice about a corrupt superblock.
+QStringList e2fsckCouldNotOpen() {
+    return {QStringLiteral("e2fsck 1.47.1 (20-May-2024)"),
+            QStringLiteral("e2fsck: Illegal or malformed device name while trying to open "
+                           "\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition1"),
+            QStringLiteral("The superblock could not be read or does not describe a valid "
+                           "ext2/ext3/ext4"),
+            QStringLiteral("filesystem.  If the device is valid and it really contains an "
+                           "ext2/ext3/ext4"),
+            QStringLiteral("filesystem (and not swap or ufs or something else), then the "
+                           "superblock"),
+            QStringLiteral("is corrupt, and you might try running e2fsck with an alternate "
+                           "superblock:")};
+}
+
+}  // namespace
+
+// F25 (operation proof, 2026-11-12): Check Non-Windows File System ran e2fsck in the
+// standard-user app, which may not open \\?\GLOBALROOT\Device\HarddiskN\PartitionM, and e2fsck
+// reported the refusal as a superblock that could not be read or was corrupt. The check now runs
+// read-only in the elevated helper, and a tool that could not open the partition says so, never as
+// damage to a file system it never read: in C++, and from the script's Invoke-SakFilesystemTool
+// in Windows PowerShell 5.1 against a stand-in e2fsck that prints the real refusal.
+void PartitionManagerCoreTests::fileSystemTools_sayWhenTheyCouldNotOpenThePartition() {
+    const QString not_opened = QStringLiteral(
+        "S.A.K. could not open the partition: Illegal or malformed device name. The check read "
+        "nothing, so this says nothing about the file system.");
+    QCOMPARE(PartitionFileSystemToolRunner::e2fsckProblem(
+                 8, e2fsckCouldNotOpen().join(QLatin1Char('\n')), {0}),
+             not_opened);
+    QCOMPARE(PartitionFileSystemToolRunner::openFailureProblem(
+                 QStringLiteral("fsck_hfs: can't open /dev/rdisk2s2: Permission denied\n")),
+             QStringLiteral("S.A.K. could not open the partition: Permission denied. The check "
+                            "read nothing, so this says nothing about the file system."));
+    QVERIFY(PartitionFileSystemToolRunner::openFailureProblem(
+                e2fsckOnACutFileSystem().join(QLatin1Char('\n')))
+                .isEmpty());
+
+    // The helper's operation: read-only, e2fsck -n, and only exit code 0 passes.
+    const QJsonObject payload{{QStringLiteral("non_native_file_system_tool"), true},
+                              {QStringLiteral("read_only_check"), true},
+                              {QStringLiteral("file_system"), QStringLiteral("ext4")},
+                              {QStringLiteral("target_path"), extToolRawTargetPath()}};
+    const auto operation = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CheckFileSystem, extToolPartitionTarget(), payload);
+    QCOMPARE(operation.risk, OperationRisk::ReadOnly);
+    const auto check = PartitionScriptBuilder().buildScript(operation);
+    QVERIFY2(check.valid(), qPrintable(check.blockers.join(' ')));
+    QVERIFY2(check.script.contains(QStringLiteral("-ToolArgs @('-n', '-f', ")) &&
+                 check.script.contains(QStringLiteral("-AcceptedExitCodes @(0)")) &&
+                 !check.script.contains(QStringLiteral("'-p'")),
+             qPrintable(check.script));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString tool = writeStandInE2fsck(dir, QStringLiteral("denied"), e2fsckCouldNotOpen(), 8);
+    QVERIFY(!tool.isEmpty());
+    int exit_code = -1;
+    const QString out = runWithScriptFunctions(
+        check.script,
+        QStringLiteral(
+            "$hash = (Get-FileHash -LiteralPath %1 -Algorithm SHA256).Hash.ToLowerInvariant()\n"
+            "try { Invoke-SakFilesystemTool -Name 'e2fsck' -ToolPath %1 -ExpectedHash $hash "
+            "-ToolArgs @('-n', '-f') -AcceptedExitCodes @(0); 'WENT ON' } catch { 'THREW ' + "
+            "$_.Exception.Message }\n")
+            .arg(PartitionScriptBuilder::quotePowerShell(tool)),
+        &exit_code);
+    QVERIFY2(out.contains(QStringLiteral("THREW ") + not_opened), qPrintable(out));
 }
 
 // Audit e5: the writer helpers' wrappers. A helper that fails with a line on stderr reports its

@@ -1970,6 +1970,11 @@ QString filesystemToolFunctionScript() {
                "} finally { $ErrorActionPreference = $oldPreference }\n"
                "  $toolOutput | ForEach-Object { Write-Output ([string]$_) }\n"
                "  Write-Output ('Filesystem tool exit code: {0}' -f $toolExitCode)\n"
+               // A tool that could not open the partition says so, never as damage to a file
+               // system it never read (F25, 2026-11-12).
+               "  $openFailure = Get-SakToolOpenFailure (($toolOutput | ForEach-Object { "
+               "[string]$_ }) -join \"`n\")\n"
+               "  if ($openFailure) { throw $openFailure }\n"
                // e2fsck's answer is its output as well as its exit code: a check exits 0 after
                // answering no to "Abort?" on a file system larger than its partition (2026-11-11).
                "  if ([System.IO.Path]::GetFileNameWithoutExtension($ToolPath) -ieq 'e2fsck') {\n"
@@ -5419,6 +5424,26 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionLabelScript(
     return out;
 }
 
+// The read-only check of a non-Windows file system, run in the elevated helper: only an
+// administrator can open \\?\GLOBALROOT\Device\HarddiskN\PartitionM, and e2fsck run in the
+// standard-user app reported that refusal as an unreadable superblock (operation proof,
+// 2026-11-12, F25). It changes nothing: e2fsck -n, fsck_hfs -n, xfs_repair -n, btrfs check
+// --readonly, and only exit code 0 passes.
+static ExternalFileSystemToolScriptRequest readOnlyToolCheckRequest(
+    const PartitionOperation& operation, const QString& fs, const QString& targetPath) {
+    ExternalFileSystemToolScriptRequest request;
+    request.operation_name = PartitionFileSystemToolRunner::readOnlyCheckOperation();
+    request.command = PartitionFileSystemToolRunner::buildReadOnlyCheckCommand(fs, targetPath);
+    request.preview = QStringLiteral(
+                          "Check Disk %1 Partition %2 %3 file system (read-only) with "
+                          "bundled %4")
+                          .arg(operation.target.disk_number.value())
+                          .arg(operation.target.partition_number.value())
+                          .arg(fs.toLower(), request.command.tool_id);
+    request.accepted_exit_codes = {QStringLiteral("0")};
+    return request;
+}
+
 PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
     const PartitionOperation& operation) const {
     if (isNonNativeFileSystemToolOperation(operation)) {
@@ -5428,10 +5453,14 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
         }
         const QString fs =
             payloadString(operation, QStringLiteral("file_system"), QStringLiteral("ext4"));
+        const QString targetPath = rawPartitionTargetPath(operation);
+        if (payloadBool(operation, QStringLiteral("read_only_check"))) {
+            return buildExternalFileSystemToolScript(
+                operation, readOnlyToolCheckRequest(operation, fs, targetPath));
+        }
         if (isApfsFileSystemToken(fs)) {
             return buildApfsRawRepairScript(operation, fs);
         }
-        const QString targetPath = rawPartitionTargetPath(operation);
         const auto command = PartitionFileSystemToolRunner::buildRepairCommand(
             fs,
             targetPath,

@@ -48,6 +48,12 @@ public:
     /// @brief Status line for a completed scan, including empty and partial scan reasons.
     [[nodiscard]] static QString inventoryStatusMessage(const PartitionInventory& inventory);
 
+    /// What the helper route makes of @p request: its operation run by @p execute (the elevated
+    /// executor), or the reason it is not run. A failed run's problem is the script's own words.
+    [[nodiscard]] static PartitionFileSystemToolRunResult runReadOnlyCheckThroughHelper(
+        const PartitionFileSystemReadOnlyCheckRequest& request,
+        const std::function<PartitionExecutionResult(const PartitionOperation&)>& execute);
+
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
     using InventoryScanner = std::function<StorageInventoryScanResult(const CancelCheck&)>;
     using InventoryScannerWithProgress = std::function<StorageInventoryScanResult(
@@ -81,6 +87,11 @@ public Q_SLOTS:
     /// step's script and everything after it. A phase Windows finishes on its own goes on, and the
     /// batch's result names that step as possibly still running in Windows.
     void cancelForExit();
+    /// The read-only check of a non-Windows file system (e2fsck -n, fsck_hfs -n, ...). It runs in
+    /// the elevated helper, as a repair does: only an administrator can open the raw partition,
+    /// and e2fsck run in this standard-user process reported the refusal as an unreadable
+    /// superblock (operation proof, 2026-11-12, F25). The result arrives through
+    /// fileSystemCheckFinished.
     void runReadOnlyFileSystemCheck(const QString& file_system, const QString& target_path);
     /// @brief Run one read-only operation now instead of queueing it for Apply.
     /// A scan changes nothing on the disk, so making the user queue it and then press Apply is

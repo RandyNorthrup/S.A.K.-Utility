@@ -17,9 +17,15 @@
 #include <QFutureWatcher>
 #include <QMetaObject>
 #include <QPromise>
+#include <QRegularExpression>
 #include <QtConcurrent>
 #include <QThread>
 
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include <utility>
 
 namespace sak {
@@ -148,6 +154,57 @@ bool projectCreateOperation(PartitionDiskInfo* disk, const PartitionOperation& o
     }
     return true;
 }
+
+// The scan's partition that a non-Windows check's raw path names:
+// \\?\GLOBALROOT\Device\HarddiskN\PartitionM.
+const PartitionInfoEx* rawPathPartition(const PartitionInventory& inventory,
+                                        const QString& target_path) {
+    static const QRegularExpression kRawPartition(
+        QStringLiteral(R"(^\\\\\?\\GLOBALROOT\\Device\\Harddisk(\d+)\\Partition(\d+)$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const auto match = kRawPartition.match(target_path.trimmed());
+    if (!match.hasMatch()) {
+        return nullptr;
+    }
+    const auto* disk = PartitionSafetyValidator::findDisk(inventory,
+                                                          DiskNumber{match.captured(1).toUInt()});
+    if (disk == nullptr) {
+        return nullptr;
+    }
+    const uint32_t number = match.captured(2).toUInt();
+    const auto found = std::ranges::find_if(disk->partitions, [number](const auto& partition) {
+        return partition.partition_number.value() == number;
+    });
+    return found == disk->partitions.end() ? nullptr : &*found;
+}
+
+constexpr auto kReadOnlyCheckCancelPoll = std::chrono::milliseconds(200);
+
+// The elevated executor runs @p operation; a cancel the check is asked for stops it.
+PartitionExecutionResult executeElevated(const PartitionOperation& operation,
+                                         const CancelCheck& should_cancel) {
+    PartitionExecutor executor;
+    std::mutex mutex;
+    std::condition_variable wake;
+    bool done = false;
+    std::thread relay([&]() {
+        std::unique_lock lock(mutex);
+        while (!wake.wait_for(lock, kReadOnlyCheckCancelPoll, [&done]() { return done; })) {
+            if (should_cancel && should_cancel()) {
+                executor.cancel();
+                return;
+            }
+        }
+    });
+    auto result = executor.execute({operation}, false, true);
+    {
+        const std::lock_guard lock(mutex);
+        done = true;
+    }
+    wake.notify_all();
+    relay.join();
+    return result;
+}
 }  // namespace
 
 PartitionManagerController::PartitionManagerController(QObject* parent)
@@ -162,7 +219,10 @@ PartitionManagerController::PartitionManagerController(QObject* parent)
           })
     , m_file_system_check_runner([](const PartitionFileSystemReadOnlyCheckRequest& request,
                                     const CancelCheck& should_cancel) {
-        return PartitionFileSystemToolRunner::runReadOnlyCheck(request, should_cancel);
+        return runReadOnlyCheckThroughHelper(request,
+                                             [&should_cancel](const PartitionOperation& operation) {
+                                                 return executeElevated(operation, should_cancel);
+                                             });
     }) {}
 
 PartitionManagerController::~PartitionManagerController() {
@@ -1030,11 +1090,23 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
 
     const QString manifest_path = runtimeFilesystemManifestPath();
     const QString tools_root = QFileInfo(manifest_path).absolutePath();
-    const PartitionFileSystemReadOnlyCheckRequest request{.manifest_path = manifest_path,
-                                                          .tools_root = tools_root,
-                                                          .file_system = file_system,
-                                                          .target_path = target_path,
-                                                          .timeout_ms = 0};
+    PartitionFileSystemReadOnlyCheckRequest request{.manifest_path = manifest_path,
+                                                    .tools_root = tools_root,
+                                                    .file_system = file_system,
+                                                    .target_path = target_path,
+                                                    .timeout_ms = 0};
+    if (const auto* partition = rawPathPartition(m_inventory, target_path); partition != nullptr) {
+        auto operation = PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::CheckFileSystem,
+            partitionIdentityTarget(*partition),
+            QJsonObject{{QStringLiteral("non_native_file_system_tool"), true},
+                        {QStringLiteral("read_only_check"), true},
+                        {QStringLiteral("file_system"), file_system},
+                        {QStringLiteral("target_path"), target_path}});
+        bindDiskIdentity(m_inventory, &operation);
+        request.helper_blockers = m_planner.previewOperation(m_inventory, operation).blockers;
+        request.helper_operation = operation;
+    }
     auto cancel_requested = std::make_shared<std::atomic_bool>(false);
     auto* watcher = new QFutureWatcher<PartitionFileSystemToolRunResult>(this);
     const auto runner = m_file_system_check_runner;
@@ -1074,6 +1146,39 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
     setState(PartitionManagerState::PreflightRunning);
     Q_EMIT statusMessage(QStringLiteral("Running read-only %1 filesystem check").arg(file_system),
                          0);
+}
+
+PartitionFileSystemToolRunResult PartitionManagerController::runReadOnlyCheckThroughHelper(
+    const PartitionFileSystemReadOnlyCheckRequest& request,
+    const std::function<PartitionExecutionResult(const PartitionOperation&)>& execute) {
+    PartitionFileSystemToolRunResult result;
+    const auto command = PartitionFileSystemToolRunner::buildReadOnlyCheckCommand(
+        request.file_system, request.target_path);
+    result.tool_id = command.tool_id;
+    result.arguments = command.arguments;
+    result.blockers = command.ok() ? request.helper_blockers : command.blockers;
+    if (result.blockers.isEmpty() && !request.helper_operation) {
+        result.blockers.append(
+            QStringLiteral("The partition to check is not in the current scan. "
+                           "Scan Disks again, then check it."));
+    }
+    if (!result.blockers.isEmpty()) {
+        result.blocked = true;
+        return result;
+    }
+    const PartitionExecutionResult run = execute(*request.helper_operation);
+    result.success = run.success;
+    result.cancelled = run.cancelled;
+    result.timed_out = run.timed_out;
+    result.exit_code = run.success ? 0 : -1;
+    const PartitionExecutionStep step = run.steps.isEmpty() ? PartitionExecutionStep{}
+                                                            : run.steps.first();
+    result.std_out = step.stdout_text;
+    result.std_err = step.stderr_text;
+    if (!run.success && !run.cancelled) {
+        result.problem = !step.error_message.isEmpty() ? step.error_message : run.message;
+    }
+    return result;
 }
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS

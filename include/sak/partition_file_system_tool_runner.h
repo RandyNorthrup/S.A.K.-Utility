@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/partition_file_system_tool_manifest.h"
+#include "sak/partition_manager_types.h"
 #include "sak/process_runner.h"
 
 #include <QList>
@@ -38,6 +39,11 @@ struct PartitionFileSystemReadOnlyCheckRequest {
     QString file_system;
     QString target_path;
     int timeout_ms{0};
+    /// The read-only CheckFileSystem operation the elevated helper runs for this check, built
+    /// from the scan's partition at @p target_path, or nothing when the scan has none there; and
+    /// why the queue's validation would refuse it (PartitionManagerController's helper route).
+    std::optional<PartitionOperation> helper_operation;
+    QStringList helper_blockers;
 };
 
 struct PartitionFileSystemToolRunResult {
@@ -99,6 +105,14 @@ public:
     /// Get-SakE2fsckProblem: the same reading, in Windows PowerShell, for the generated scripts
     /// that run e2fsck (a repair, and the checks before and after a shrink).
     [[nodiscard]] static QString e2fsckProblemFunctionScript();
+    /// When a tool says it could not open the partition, that, in plain words, or empty. e2fsck
+    /// run without the rights to open \\?\GLOBALROOT\Device\HarddiskN\PartitionM says
+    /// "Illegal or malformed device name while trying to open" and then that the superblock could
+    /// not be read or is corrupt, which reads as damage to a file system it never read (operation
+    /// proof, 2026-11-12, F25). Checked before anything else a tool says.
+    [[nodiscard]] static QString openFailureProblem(const QString& output);
+    /// Get-SakToolOpenFailure: the same reading, in Windows PowerShell.
+    [[nodiscard]] static QString openFailureFunctionScript();
 };
 
 }  // namespace sak
