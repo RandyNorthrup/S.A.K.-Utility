@@ -1922,6 +1922,15 @@ function Get-OpsBiosBootFacts {
     }
 }
 
+function Hide-OpsBootmgr {
+    # The break: bootmgr renamed out of the way. A disk an earlier row broke and the app repaired
+    # still holds that row's renamed copy, which is this row's own leftover and goes first.
+    param([object]$System)
+    $broken = "$($System.letter):\bootmgr.opsproof-broken"
+    if (Test-Path -LiteralPath $broken) { Remove-Item -LiteralPath $broken -Force }
+    if (Test-Path -LiteralPath "$($System.letter):\bootmgr") { Rename-Item -LiteralPath "$($System.letter):\bootmgr" -NewName 'bootmgr.opsproof-broken' -Force }
+}
+
 function Remove-OpsAddedLetter {
     param([int]$DiskNumber, [object]$System)
     if ($System.letter_added) { Remove-PartitionAccessPath -DiskNumber $DiskNumber -PartitionNumber $System.number -AccessPath "$($System.letter):\" -ErrorAction SilentlyContinue }
@@ -1940,7 +1949,7 @@ Add-OpsRow 'ops.repair-boot-attached-bios-no-active' {
     if ($Phase -eq 'break') {
         $before = Get-OpsBiosBootFacts -DiskNumber $found.number -System $system
         Set-Partition -DiskNumber $found.number -PartitionNumber $system.number -IsActive $false
-        if (Test-Path -LiteralPath "$($system.letter):\bootmgr") { Rename-Item -LiteralPath "$($system.letter):\bootmgr" -NewName 'bootmgr.opsproof-broken' -Force }
+        Hide-OpsBootmgr -System $system
         $broken = Get-OpsBiosBootFacts -DiskNumber $found.number -System $system
         Remove-OpsAddedLetter -DiskNumber $found.number -System $system
         $kept | Add-Member -NotePropertyName facts_before -NotePropertyValue $before -Force
@@ -1974,7 +1983,7 @@ Add-OpsRow 'ops.repair-boot-running-bios' {
     $media = Get-CertMedia -DiskNumber $boot -Class 'virtual_machine' -Kind 'the running Windows, in a BIOS VM'
     $system = Get-OpsBiosSystemPartition -DiskNumber $boot
     $before = Get-OpsBiosBootFacts -DiskNumber $boot -System $system
-    if (Test-Path -LiteralPath "$($system.letter):\bootmgr") { Rename-Item -LiteralPath "$($system.letter):\bootmgr" -NewName 'bootmgr.opsproof-broken' -Force }
+    Hide-OpsBootmgr -System $system
     $broken = Get-OpsBiosBootFacts -DiskNumber $boot -System $system
     Remove-OpsAddedLetter -DiskNumber $boot -System $system
     Invoke-OpsStep -Disk $boot -GivenPin (Get-CertPin -DiskNumber $boot) -Step 'repair' -Operation 'RepairBoot' -Choices @{ boot_mode = 'BIOS'; windows_path = "$env:SystemRoot" } -TimeoutSeconds 900 | Out-Null
