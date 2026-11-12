@@ -324,11 +324,6 @@ bool isApfsFileSystemToken(const QString& fileSystem) {
     return fileSystem.trimmed().compare(QStringLiteral("apfs"), Qt::CaseInsensitive) == 0;
 }
 
-bool isSupportedNonNativeCreateFormatFileSystem(const QString& fileSystem) {
-    return isExtFileSystemToken(fileSystem) || isHfsFileSystemToken(fileSystem) ||
-           isLinuxSwapFileSystemToken(fileSystem) || isApfsFileSystemToken(fileSystem);
-}
-
 // The partition type a file system S.A.K. formats but Windows does not mount takes: what Linux
 // and macOS give it. On a GPT basic-data or MBR 0x07/0x0C partition Windows mounts a volume and,
 // finding a file system it does not know there, offers "You need to format the disk in drive T:";
@@ -2504,8 +2499,7 @@ bool isSupportedAllocationUnitSize(uint64_t value) {
 bool isSupportedGptCreateType(const QString& value) {
     return value.isEmpty() || QStringList{QStringLiteral("{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}"),
                                           QStringLiteral("{DE94BBA4-06D1-4D40-A16A-BFD50179D6AC}"),
-                                          QStringLiteral("{C12A7328-F81F-11D2-BA4B-00A0C93EC93B}"),
-                                          QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}")}
+                                          QStringLiteral("{C12A7328-F81F-11D2-BA4B-00A0C93EC93B}")}
                                   .contains(value.toUpper());
 }
 
@@ -2531,9 +2525,6 @@ bool createTypeMatchesFileSystem(const PartitionOperation& operation, const QStr
     if (gptType == QStringLiteral("{DE94BBA4-06D1-4D40-A16A-BFD50179D6AC}") ||
         mbrType == QStringLiteral("IFS")) {
         return fs.compare(QStringLiteral("NTFS"), Qt::CaseInsensitive) == 0;
-    }
-    if (gptType == QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}")) {
-        return isApfsFileSystemToken(fs);
     }
     return true;
 }
@@ -2833,14 +2824,18 @@ CreateScriptSpec createScriptSpec(const PartitionOperation& operation) {
     return spec;
 }
 
-QString validateCreateFileSystemSupport(const CreateScriptSpec& spec, bool nonNativeCreate) {
-    if (nonNativeCreate && !isSupportedNonNativeCreateFormatFileSystem(spec.file_system)) {
-        return QStringLiteral("Unsupported non-Windows create file system");
+// Create makes a partition with a Windows file system only; a bundled tool's file system is made
+// by Formatting it afterwards (PartitionFileSystemRegistry::createFileSystemBlocker).
+QString validateCreateFileSystemSupport(const CreateScriptSpec& spec) {
+    if (const QString blocker =
+            PartitionFileSystemRegistry::createFileSystemBlocker(spec.file_system);
+        !blocker.isEmpty()) {
+        return blocker;
     }
-    if (!nonNativeCreate && !PartitionScriptBuilder::isSupportedFileSystem(spec.file_system)) {
+    if (!PartitionScriptBuilder::isSupportedFileSystem(spec.file_system)) {
         return QStringLiteral("Unsupported file system");
     }
-    if (!nonNativeCreate && !isSupportedAllocationUnitSize(spec.allocation_unit)) {
+    if (!isSupportedAllocationUnitSize(spec.allocation_unit)) {
         return QStringLiteral("Unsupported allocation unit size");
     }
     return {};
@@ -2860,37 +2855,15 @@ QString validateCreatePartitionType(const PartitionOperation& operation,
     return {};
 }
 
-QString validateNonNativeCreatePayload(const PartitionOperation& operation,
-                                       const CreateScriptSpec& spec,
-                                       bool nonNativeCreate) {
-    if (!nonNativeCreate) {
-        return {};
-    }
-    if (!payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload))) {
-        return QStringLiteral("Non-Windows create format requires destructive confirmation");
-    }
-    if (isLinuxSwapFileSystemToken(spec.file_system) &&
-        !isSupportedLinuxSwapPageSize(linuxSwapPageSize(operation))) {
-        return QStringLiteral("Unsupported Linux swap page size");
-    }
-    return {};
-}
-
 QString validateCreateScriptSpec(const PartitionOperation& operation,
                                  const CreateScriptSpec& spec) {
-    const bool nonNativeCreate = isNonNativeFileSystemToolOperation(operation);
     if (spec.size == 0) {
         return QStringLiteral("Create requires size_bytes");
     }
-    if (const QString blocker = validateCreateFileSystemSupport(spec, nonNativeCreate);
-        !blocker.isEmpty()) {
+    if (const QString blocker = validateCreateFileSystemSupport(spec); !blocker.isEmpty()) {
         return blocker;
     }
     if (const QString blocker = validateCreatePartitionType(operation, spec); !blocker.isEmpty()) {
-        return blocker;
-    }
-    if (const QString blocker = validateNonNativeCreatePayload(operation, spec, nonNativeCreate);
-        !blocker.isEmpty()) {
         return blocker;
     }
     if (!createFitsSelectedRegion(operation, spec.size)) {
@@ -4777,194 +4750,6 @@ static QString newPartitionCommandScript(const PartitionOperation& operation,
         .arg(driveArg, partitionTypeArg(operation), createOffsetArg(operation));
 }
 
-static QString refreshCreatedPartitionAndRawTargetScript(const PartitionOperation& operation,
-                                                         const CreateScriptSpec& spec) {
-    return QStringLiteral(
-               "Update-HostStorageCache -ErrorAction Stop\n"
-               "$p = Get-Partition -DiskNumber %1 -PartitionNumber $p.PartitionNumber "
-               "-ErrorAction Stop\n"
-               "if ([uint64]$p.Size -lt [uint64]%2) { throw 'Created partition is smaller than "
-               "requested' }\n"
-               "$rawTargetPath = ('\\\\?\\GLOBALROOT\\Device\\Harddisk{0}\\Partition{1}' -f "
-               "$p.DiskNumber, $p.PartitionNumber)\n"
-               "Write-Output ('Created raw partition target: {0}' -f $rawTargetPath)\n")
-        .arg(operation.target.disk_number.value())
-        .arg(uintArg(spec.size));
-}
-
-static PartitionScript buildCreateLinuxSwapScript(const PartitionOperation& operation,
-                                                  const CreateScriptSpec& spec) {
-    const uint64_t pageSize = linuxSwapPageSize(operation);
-    if (!isSupportedLinuxSwapPageSize(pageSize)) {
-        return invalidPartitionScript(QStringLiteral("Unsupported Linux swap page size"));
-    }
-    const uint64_t pageCount = spec.size / pageSize;
-    if (pageCount < kLinuxSwapMinPages || pageCount > kLinuxSwapMaxPages) {
-        return invalidPartitionScript(
-            QStringLiteral("Linux swap partition size is outside supported bounds"));
-    }
-
-    PartitionScript out;
-    out.preview = QStringLiteral("Create %1 Linux swap partition on Disk %2")
-                      .arg(formatPartitionBytes(spec.size),
-                           QString::number(operation.target.disk_number.value()));
-    out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
-                 refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-                 linuxSwapFormatBodyScript(QStringLiteral("$rawTargetPath"),
-                                           QStringLiteral("[uint64]$p.Size"),
-                                           spec.label,
-                                           pageSize) +
-                 QStringLiteral("$p | ConvertTo-Json -Compress\n");
-    out.dry_run_script =
-        out.preview +
-        QStringLiteral("\nCreate partition, derive raw target, write SWAPSPACE2 v1 header");
-    out.timeout_seconds = kPartitionFormatTaskTimeoutSeconds;
-    return out;
-}
-
-static PartitionScript buildCreateApfsScript(const PartitionOperation& operation,
-                                             const CreateScriptSpec& spec) {
-    PartitionScript out;
-    out.preview = QStringLiteral("Create %1 APFS partition on Disk %2 with S.A.K. APFS writer")
-                      .arg(formatPartitionBytes(spec.size),
-                           QString::number(operation.target.disk_number.value()));
-    out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
-                 refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-                 takeSelectedPartitionScript(false) + apfsWriterCliFunctionScript() +
-                 QStringLiteral(
-                     "Invoke-SakApfsWriterCli -Command 'format-raw' -TargetPath $rawTargetPath "
-                     "-SizeBytes ([uint64]$p.Size) -VolumeName %1 -EvidenceId "
-                     "'ui.apfs-generated-raw-create-format'\n"
-                     "Update-HostStorageCache -ErrorAction Stop\n"
-                     "$p | ConvertTo-Json -Compress\n")
-                     .arg(PartitionScriptBuilder::quotePowerShell(spec.label));
-    out.dry_run_script =
-        out.preview +
-        QStringLiteral("\nCreate partition, derive raw target, run APFS writer helper");
-    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
-    return out;
-}
-
-static PartitionScript buildCreateExtScript(const PartitionOperation& operation,
-                                            const CreateScriptSpec& spec,
-                                            const PartitionFileSystemToolCommand& command,
-                                            const PartitionFileSystemToolResolution& resolution) {
-    PartitionScript out;
-    out.preview = QStringLiteral("Create %1 %2 partition on Disk %3 with bundled %4")
-                      .arg(formatPartitionBytes(spec.size),
-                           spec.file_system,
-                           QString::number(operation.target.disk_number.value()),
-                           command.tool_id);
-    out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
-                 refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-                 filesystemToolFunctionScript() + takeSelectedPartitionScript(true) +
-                 filesystemToolCallScriptWithArgsExpression(
-                     QStringLiteral("mke2fs create format"),
-                     resolution,
-                     powerShellArrayLiteralWithTrailingExpression(command.arguments,
-                                                                  QStringLiteral("$rawTargetPath")),
-                     {QStringLiteral("0")}) +
-                 QStringLiteral(
-                     "Update-HostStorageCache -ErrorAction Stop\n"
-                     "$p | ConvertTo-Json -Compress\n");
-    out.dry_run_script = out.preview +
-                         QStringLiteral("\nCreate partition, derive raw target, run ") +
-                         PartitionScriptBuilder::quotePowerShell(resolution.tool_path);
-    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
-    return out;
-}
-
-static PartitionScript buildCreateStagedHfsScript(
-    const PartitionOperation& operation,
-    const CreateScriptSpec& spec,
-    const PartitionFileSystemToolCommand& command,
-    const PartitionFileSystemToolResolution& formatResolution,
-    const PartitionFileSystemToolResolution& fsckResolution) {
-    PartitionScript out;
-    out.preview = QStringLiteral("Create %1 %2 partition on Disk %3 with sparse-staged %4")
-                      .arg(formatPartitionBytes(spec.size),
-                           spec.file_system,
-                           QString::number(operation.target.disk_number.value()),
-                           command.tool_id);
-    const QStringList formatArgs = command.arguments;
-    out.script =
-        commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
-        refreshCreatedPartitionAndRawTargetScript(operation, spec) + hfsStagedFunctionsScript() +
-        QStringLiteral(
-            "$targetPath = $rawTargetPath\n"
-            "$targetSizeBytes = [uint64]$p.Size\n") +
-        hfsStagedImagePathScript(QStringLiteral("sak-hfs-create-format")) +
-        QStringLiteral(
-            "try {\n"
-            "  New-SakSparseImageFile -Path $stagedImagePath -SizeBytes $targetSizeBytes\n"
-            "  $formatArgs = %1\n"
-            "  [void](Invoke-SakCheckedHfsTool -Name 'newfs_hfs create format' -FilePath %2 "
-            "-ExpectedHash %3 -Arguments $formatArgs -AcceptedExitCodes @(0))\n"
-            "  Invoke-SakHfsRepairUntilClean -FsckPath %4 -ExpectedHash %5 "
-            "-ImagePath $stagedImagePath -FileSystem %6\n"
-            "  Copy-SakSparseImageToRawTarget -ImagePath $stagedImagePath -RawTarget "
-            "$targetPath -TargetSizeBytes $targetSizeBytes\n"
-            "} finally {\n"
-            "  Remove-SakTemporaryPath $stagedImagePath\n"
-            "}\n"
-            "Update-HostStorageCache -ErrorAction Stop\n"
-            "$p | ConvertTo-Json -Compress\n")
-            .arg(powerShellArrayLiteralWithTrailingExpression(formatArgs,
-                                                              QStringLiteral("$stagedImagePath")),
-                 PartitionScriptBuilder::quotePowerShell(
-                     QDir::toNativeSeparators(formatResolution.tool_path)),
-                 PartitionScriptBuilder::quotePowerShell(
-                     formatResolution.tool.binary_sha256.toLower()),
-                 PartitionScriptBuilder::quotePowerShell(
-                     QDir::toNativeSeparators(fsckResolution.tool_path)),
-                 PartitionScriptBuilder::quotePowerShell(
-                     fsckResolution.tool.binary_sha256.toLower()),
-                 PartitionScriptBuilder::quotePowerShell(command.file_system));
-    out.dry_run_script =
-        out.preview +
-        QStringLiteral("\nCreate partition, stage HFS image, copy sparse ranges to raw target");
-    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
-    return out;
-}
-
-static PartitionScript buildCreateNonNativeFormatScript(const PartitionOperation& operation,
-                                                        const CreateScriptSpec& spec) {
-    if (isLinuxSwapFileSystemToken(spec.file_system)) {
-        return buildCreateLinuxSwapScript(operation, spec);
-    }
-    if (isApfsFileSystemToken(spec.file_system)) {
-        return buildCreateApfsScript(operation, spec);
-    }
-
-    constexpr auto kCreateRawTargetPlaceholder = "__SAK_NEW_PARTITION_RAW_TARGET__";
-    const auto command = PartitionFileSystemToolRunner::buildFormatCommand(
-        spec.file_system,
-        QString::fromLatin1(kCreateRawTargetPlaceholder),
-        spec.label,
-        payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload)));
-    if (!command.ok()) {
-        return invalidPartitionScript(command.blockers.join(QStringLiteral("; ")));
-    }
-
-    const QString manifestPath = runtimeFilesystemManifestPath();
-    const QString toolsRoot = QFileInfo(manifestPath).absolutePath();
-    const auto resolution = PartitionFileSystemToolRunner::resolveApprovedTool(
-        manifestPath, toolsRoot, command.tool_id, command.operation, command.file_system);
-    if (!resolution.ok) {
-        return invalidPartitionScript(resolution.blockers.join(QStringLiteral("; ")));
-    }
-
-    if (isHfsToolFileSystem(command.file_system)) {
-        const auto repairResolution =
-            resolveFsckHfsTool(manifestPath, toolsRoot, command.file_system);
-        if (!repairResolution.ok) {
-            return invalidPartitionScript(repairResolution.blockers.join(QStringLiteral("; ")));
-        }
-        return buildCreateStagedHfsScript(operation, spec, command, resolution, repairResolution);
-    }
-    return buildCreateExtScript(operation, spec, command, resolution);
-}
-
 QHash<int, PartitionScriptBuilder::Builder> PartitionScriptBuilder::buildOperationDispatchTable() {
     QHash<int, Builder> builders;
     appendCoreBuilders(&builders);
@@ -5250,9 +5035,6 @@ PartitionScript PartitionScriptBuilder::buildCreateScript(
     const QString blocker = validateCreateScriptSpec(operation, spec);
     if (!blocker.isEmpty()) {
         return invalidScript(blocker);
-    }
-    if (isNonNativeFileSystemToolOperation(operation)) {
-        return buildCreateNonNativeFormatScript(operation, spec);
     }
 
     // What Format-Volume would refuse is refused here, before anything is created (the edition

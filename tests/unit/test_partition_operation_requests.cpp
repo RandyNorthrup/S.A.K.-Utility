@@ -58,6 +58,7 @@ private Q_SLOTS:
     void freeSpaceBeforeAPartitionMovesItsStart();
     void freeSpaceAfterAPartitionGrowsIt();
     void resizeTakesTheFileSystemTheScanFound();
+    void assistantRequestStatesIntentOnly();
     void allocateNamesTheDonorAndTheAmount();
     void primaryLogicalNamesTheNewLayoutAndTheBackup();
     void serialAndClusterReformatWithTheVolumesOwnFacts();
@@ -200,6 +201,79 @@ void PartitionOperationRequestsTests::resizeTakesTheFileSystemTheScanFound() {
     bindResizeFileSystem(inventory, &unknown);
     QVERIFY(!unknown.payload.contains("file_system"));
     QVERIFY(!PartitionScriptBuilder().buildScript(unknown).valid());
+}
+
+// F2 (operation proof, 2026-11-11): the assistant's model states intent only. What only the app
+// may set (the routing to a bundled tool, the raw partition path, the person's destructive-change
+// confirmation) is refused from a model and derived by the app, and Format, Resize and Check of a
+// non-Windows file system work from the fields the tool documents.
+void PartitionOperationRequestsTests::assistantRequestStatesIntentOnly() {
+    PartitionInventory inventory;
+    PartitionDiskInfo disk = dataDisk(QStringLiteral("GPT"));
+    disk.partitions.append(dataPartition());
+    inventory.disks.append(disk);
+    PartitionTarget named;
+    named.kind = PartitionTargetKind::Partition;
+    named.disk_number = DiskNumber{3};
+    named.partition_number = PartitionNumber{2};
+    const QString raw_path = QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk3\\Partition2");
+
+    for (const char* field : {"non_native_file_system_tool",
+                              "target_wipe_confirmed",
+                              "overwrite_confirmed",
+                              "target_path"}) {
+        QJsonObject payload = formatPartitionPayload({.file_system = QStringLiteral("ext4")});
+        payload[QString::fromLatin1(field)] = true;
+        const auto refused =
+            assistantPartitionOperation(PartitionOperationType::Format, named, payload, inventory);
+        QVERIFY2(!refused && refused.error().contains(QString::fromLatin1(field)), field);
+    }
+
+    // Format ext4 from the documented fields alone: the app routes it to mke2fs, on the raw path
+    // of the partition the scan found, with the confirmation the person gave in the app.
+    const auto ext4 =
+        assistantPartitionOperation(PartitionOperationType::Format,
+                                    named,
+                                    formatPartitionPayload({.file_system = QStringLiteral("ext4"),
+                                                            .label = QStringLiteral("L")}),
+                                    inventory);
+    QVERIFY(ext4);
+    QVERIFY(ext4->payload.value("non_native_file_system_tool").toBool());
+    QCOMPARE(ext4->payload.value("target_path").toString(), raw_path);
+    QVERIFY(ext4->payload.value("target_wipe_confirmed").toBool());
+    QCOMPARE(ext4->target.size_bytes, 512 * kMiB);
+    QCOMPARE(ext4->target.partition_guid, QStringLiteral("{PART}"));
+    QCOMPARE(ext4->target.disk_size_bytes, 1024 * kMiB);  // the disk's identity, as a queue binds
+    const auto ntfs =
+        assistantPartitionOperation(PartitionOperationType::Format,
+                                    named,
+                                    formatPartitionPayload({.file_system = QStringLiteral("NTFS")}),
+                                    inventory);
+    QVERIFY(ntfs && !ntfs->payload.contains("non_native_file_system_tool"));
+
+    // Resize and Check take the file system from the scan.
+    inventory.disks.first().partitions.first().volume->file_system = QStringLiteral("ext4");
+    const auto resize = assistantPartitionOperation(PartitionOperationType::Resize,
+                                                    named,
+                                                    resizePartitionPayload(600 * kMiB, 200 * kMiB),
+                                                    inventory);
+    QVERIFY(resize && resize->payload.value("non_native_file_system_tool").toBool());
+    QCOMPARE(resize->payload.value("file_system").toString(), QStringLiteral("ext4"));
+    QCOMPARE(resize->payload.value("target_path").toString(), raw_path);
+    const auto check = assistantPartitionOperation(
+        PartitionOperationType::CheckFileSystem, named, QJsonObject{}, inventory);
+    QVERIFY(check && check->payload.value("non_native_file_system_tool").toBool());
+    QCOMPARE(check->payload.value("file_system").toString(), QStringLiteral("ext4"));
+    const PartitionScriptBuilder builder;
+    for (const auto* operation : {&*ext4, &*resize, &*check}) {
+        const auto script = builder.buildScript(*operation);
+        QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
+    }
+
+    // A target the scan does not agree with is refused.
+    named.size_bytes = 100 * kMiB;
+    QVERIFY(!assistantPartitionOperation(
+        PartitionOperationType::CheckFileSystem, named, QJsonObject{}, inventory));
 }
 
 void PartitionOperationRequestsTests::allocateNamesTheDonorAndTheAmount() {
@@ -464,5 +538,5 @@ void PartitionOperationRequestsTests::everyRequestBuildsARunnableScript() {
     }
 }
 
-QTEST_APPLESS_MAIN(PartitionOperationRequestsTests)
+QTEST_GUILESS_MAIN(PartitionOperationRequestsTests)
 #include "test_partition_operation_requests.moc"

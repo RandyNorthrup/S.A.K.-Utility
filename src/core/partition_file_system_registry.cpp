@@ -504,6 +504,30 @@ QString PartitionFileSystemRegistry::windowsFormatBlocker(const WindowsFormatCho
     return labelBlocker(fs, choice.label);
 }
 
+bool PartitionFileSystemRegistry::formattedByBundledTools(const QString& file_system) {
+    return matches(file_system.trimmed(),
+                   {QStringLiteral("ext2"),
+                    QStringLiteral("ext3"),
+                    QStringLiteral("ext4"),
+                    QStringLiteral("HFS+"),
+                    QStringLiteral("HFSX"),
+                    QStringLiteral("hfsplus"),
+                    QStringLiteral("APFS"),
+                    QStringLiteral("Linux swap"),
+                    QStringLiteral("linux-swap"),
+                    QStringLiteral("swap")});
+}
+
+QString PartitionFileSystemRegistry::createFileSystemBlocker(const QString& file_system) {
+    if (formattedByBundledTools(file_system)) {
+        return QStringLiteral(
+                   "S.A.K. creates partitions with a Windows file system only. Create the "
+                   "partition with a Windows file system, then Format it as %1.")
+            .arg(file_system.trimmed());
+    }
+    return {};
+}
+
 bool PartitionFileSystemRegistry::editionFormatsRefs(const QString& edition_id) {
     static const QRegularExpression kEditions(QString::fromLatin1(kRefsEditionPattern),
                                               QRegularExpression::CaseInsensitiveOption);

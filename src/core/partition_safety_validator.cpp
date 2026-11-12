@@ -770,8 +770,7 @@ bool changeClusterMissingConfirmation(const PartitionOperation& operation) {
 bool isSupportedGptCreateType(const QString& value) {
     return value.isEmpty() || QStringList{QStringLiteral("{EBD0A0A2-B9E5-4433-87C0-68B6B72699C7}"),
                                           QStringLiteral("{DE94BBA4-06D1-4D40-A16A-BFD50179D6AC}"),
-                                          QStringLiteral("{C12A7328-F81F-11D2-BA4B-00A0C93EC93B}"),
-                                          QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}")}
+                                          QStringLiteral("{C12A7328-F81F-11D2-BA4B-00A0C93EC93B}")}
                                   .contains(value.toUpper());
 }
 
@@ -800,9 +799,6 @@ bool createTypeMatchesFileSystem(const PartitionOperation& operation) {
     if (gptType == QStringLiteral("{DE94BBA4-06D1-4D40-A16A-BFD50179D6AC}") ||
         mbrType == QStringLiteral("IFS")) {
         return fs == QStringLiteral("NTFS");
-    }
-    if (gptType == QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}")) {
-        return fs == QStringLiteral("APFS");
     }
     return true;
 }
@@ -843,6 +839,20 @@ void validateCreateUnallocatedPayload(const PartitionOperation& operation,
                  QStringLiteral("Create partition type is incompatible with the file system"));
 }
 
+// Create makes a partition with a Windows file system only, whatever its payload asks for; a
+// bundled tool's file system is made by Formatting it afterwards (an assistant's ext4 Create
+// reached the builder's "Unsupported file system", operation proof, 2026-11-11).
+bool createAsksForABundledToolFileSystem(const PartitionOperation& operation,
+                                         PartitionValidationResult* result) {
+    if (operation.type != PartitionOperationType::Create) {
+        return false;
+    }
+    const QString blocker = PartitionFileSystemRegistry::createFileSystemBlocker(
+        operation.payload.value(QStringLiteral("file_system")).toString());
+    addBlockerIf(result, !blocker.isEmpty(), blocker);
+    return !blocker.isEmpty();
+}
+
 // A Windows format a queued operation asks for (Create, Format, Change Cluster Size), against
 // what Format-Volume does (PartitionFileSystemRegistry::windowsFormatBlocker): it writes the
 // start of the volume before it refuses a FAT32 cluster size, and drops a label it cannot use.
@@ -851,9 +861,12 @@ void validateWindowsFormatChoice(const PartitionInventory& inventory,
                                  const PartitionOperation& operation,
                                  PartitionValidationResult* result) {
     const bool create = operation.type == PartitionOperationType::Create;
+    if (createAsksForABundledToolFileSystem(operation, result)) {
+        return;
+    }
     if ((!create && operation.type != PartitionOperationType::Format &&
          operation.type != PartitionOperationType::ChangeClusterSize) ||
-        isNonNativeFileSystemToolOperation(operation)) {
+        (!create && isNonNativeFileSystemToolOperation(operation))) {
         return;
     }
     uint64_t partition_bytes = payloadUInt64(operation, QStringLiteral("size_bytes"));
@@ -2656,29 +2669,8 @@ void PartitionSafetyValidator::validateUnallocatedOperation(const PartitionDiskI
         result->blockers.append(QStringLiteral("Only create is valid for unallocated space"));
     }
     if (operation.type == PartitionOperationType::Create) {
+        // Its file system is checked with every Windows format (validateWindowsFormatChoice).
         validateCreateUnallocatedPayload(operation, result);
-        addBlockerIf(result,
-                     nonNativeToolUnsupportedOperation(operation),
-                     QStringLiteral("Non-Windows filesystem tool support is limited to create, "
-                                    "format, repair, and resize"));
-        addBlockerIf(result,
-                     nonNativeToolUnsupportedFileSystem(operation),
-                     QStringLiteral(
-                         "Non-Windows write support is limited to ext2/ext3/ext4 "
-                         "create/format/repair/resize, HFS+/HFSX create/format/repair/staged file "
-                         "mutation, Linux swap create/format, APFS generated create/format/repair, "
-                         "and copy-on-write root-file/root-directory mutation"));
-        addBlockerIf(
-            result,
-            nonNativeToolMissingConfirmation(operation),
-            QStringLiteral(
-                "Non-Windows filesystem tool operation requires destructive confirmation"));
-        addBlockerIf(result,
-                     isApfsFileSystemToken(
-                         operation.payload.value(QStringLiteral("file_system")).toString()) &&
-                         disk.partition_style.compare(QStringLiteral("GPT"), Qt::CaseInsensitive) !=
-                             0,
-                     QStringLiteral("APFS create requires a GPT disk"));
     }
     if (disk.is_system || disk.is_boot) {
         // On a split-boot config the OS lives on the is_boot disk while the ESP is on the

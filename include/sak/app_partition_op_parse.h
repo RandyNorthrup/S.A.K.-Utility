@@ -90,6 +90,31 @@ struct ParsedPartitionOp {
         "wipe_partition, wipe_disk, wipe_free_space");
 }
 
+// What the model puts in a partition op's payload, by operation: intent only. One text for the
+// preview and the apply schema. The app derives the rest (assistantPartitionOperation): the
+// partition's identity, the file system a resize or a check acts on, the routing to S.A.K.'s
+// bundled tools and the raw path they write, and the confirmation the person gives in the app.
+[[nodiscard]] inline QString partitionOperationPayloadDescription() {
+    return QStringLiteral(
+        "Operation fields, by operation (intent only). create: size_bytes, "
+        "relative_offset_bytes, file_system (NTFS, exFAT, FAT32 or ReFS; for ext2, ext3, ext4, "
+        "HFS+, HFSX, APFS or Linux swap, create the partition with a Windows file system, then "
+        "format it as that file system), allocation_unit_bytes (0 for the default), label, "
+        "full_format, drive_letter, gpt_type or mbr_type. format: file_system (NTFS, exFAT, "
+        "FAT32, ReFS, ext2, ext3, ext4, HFS+, HFSX, APFS or Linux swap), allocation_unit_bytes, "
+        "label, full_format, and linux_swap_page_size_bytes for Linux swap. resize: "
+        "target_size_bytes (the file system comes from the disk scan; ext is resized with "
+        "S.A.K.'s bundled tools; FAT32 and exFAT are not resized). check_file_system: nothing "
+        "(the file system comes from the disk scan). set_drive_letter: new_drive_letter. "
+        "set_partition_label: label. set_partition_hidden: hidden. set_partition_active: active. "
+        "set_partition_type_id: type_id (MBR: one byte in hex, such as 07 or 83; GPT: a GUID). "
+        "split: first_size_bytes, new_file_system. merge: source_partition_number, target_folder. "
+        "initialize_disk and convert_partition_style: target_style (GPT or MBR). Never send "
+        "non_native_file_system_tool, target_wipe_confirmed or (for format, resize and "
+        "check_file_system) target_path: S.A.K. sets them, and the person confirms a change to a "
+        "disk in S.A.K.'s own dialog. A payload that carries one is refused.");
+}
+
 // Convert an untrusted JSON byte-count double to uint64_t with no UB: a negative,
 // NaN, or out-of-range magnitude never reaches a floating-to-unsigned cast that
 // [conv.fpint] leaves undefined. Callers reject negatives up front; this is the

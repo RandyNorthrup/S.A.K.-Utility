@@ -1452,13 +1452,23 @@ Result<void> runAssistantRoute(const StepJob& job, const Requests& requests, QJs
     if (requests.size() != 1) {
         return refused(QStringLiteral("The assistant applies one operation at a time"));
     }
-    auto operation = sak::PartitionOperationPlanner::makeOperation(requests.constFirst().type,
-                                                                   requests.constFirst().target,
-                                                                   requests.constFirst().payload);
-    // The assistant reads the disks itself, without elevation, before it validates, and a Resize
-    // takes the file system that scan found.
+    // The assistant reads the disks itself, without elevation, then derives what only the app may
+    // set (sak::assistantPartitionOperation), and validates.
     const sak::PartitionInventory inventory = sak::StorageInventoryWorker::scanCurrentSystem(false);
-    sak::bindResizeFileSystem(inventory, &operation);
+    const auto requested = sak::assistantPartitionOperation(requests.constFirst().type,
+                                                            requests.constFirst().target,
+                                                            requests.constFirst().payload,
+                                                            inventory);
+    if (!requested) {
+        report->insert("assistant_blockers", QJsonArray{requested.error()});
+        if (expectedRefusal(job, {requested.error()})) {
+            report->insert("refused_at", QStringLiteral("assistant-request"));
+            report->insert("expectation_met", true);
+            return {};
+        }
+        return refused(requested.error());
+    }
+    const sak::PartitionOperation& operation = *requested;
     const auto validation = sak::PartitionSafetyValidator::validate(inventory, operation);
     const sak::PartitionScriptBuilder builder;
     const auto script = builder.buildScript(operation);

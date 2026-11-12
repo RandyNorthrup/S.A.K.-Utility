@@ -2014,10 +2014,14 @@ AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
     const int disk_number = args.value(QStringLiteral("disk_number")).toInt(-1);
     const PartitionTarget pt =
         buildPartitionOpTarget(args, static_cast<uint32_t>(disk_number), parsed.kind);
-    const QJsonObject payload = args.value(QStringLiteral("payload")).toObject();
-    PartitionOperation op = PartitionOperationPlanner::makeOperation(parsed.type, pt, payload);
-    // The file system the scan found, which the script checks again before it resizes.
-    bindResizeFileSystem(inventory, &op);
+    // The model states intent; what only the app may set (tool routing, the raw path, the
+    // confirmation the person gave in the app's own dialog) the app derives.
+    const auto requested = assistantPartitionOperation(
+        parsed.type, pt, args.value(QStringLiteral("payload")).toObject(), inventory);
+    if (!requested) {
+        return {false, requested.error(), {}};
+    }
+    const PartitionOperation& op = *requested;
 
     // Independent of the OS-disk guard: refuse an op the safety validator blocks (the
     // same rules preview_operation reports), so a knowingly-invalid or
@@ -2099,11 +2103,10 @@ QJsonObject applyParamsSchema() {
         return QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")},
                            {QStringLiteral("description"), description}};
     };
-    QJsonObject payload_prop{
-        {QStringLiteral("type"), QStringLiteral("object")},
-        {QStringLiteral("description"),
-         QStringLiteral("Operation-specific fields (e.g. file_system, label, target_size_bytes)")},
-        {QStringLiteral("additionalProperties"), true}};
+    QJsonObject payload_prop{{QStringLiteral("type"), QStringLiteral("object")},
+                             {QStringLiteral("description"),
+                              partitionOperationPayloadDescription()},
+                             {QStringLiteral("additionalProperties"), true}};
     QJsonObject dry_prop{
         {QStringLiteral("type"), QStringLiteral("boolean")},
         {QStringLiteral("description"),

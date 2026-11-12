@@ -17,6 +17,7 @@
 #include <QVector>
 
 #include <cstdint>
+#include <expected>
 #include <optional>
 
 namespace sak {
@@ -72,6 +73,19 @@ struct BackupRestoreChoices {
 /// names one itself: the script checks the partition still holds it just before it resizes, and
 /// the safety validator refuses a resize whose file system is unknown or not the one it names.
 void bindResizeFileSystem(const PartitionInventory& inventory, PartitionOperation* operation);
+
+/// What the assistant's partition.apply_operation and preview_operation run for a model's request:
+/// the operation it states, with what only the app may set derived by the app. A model states
+/// intent: the target, the file system, sizes and labels the tool documents. The partition's
+/// identity, the file system a resize or a check acts on (from @p inventory), the routing to a
+/// bundled tool and the raw partition path it writes, and the destructive-change confirmation are
+/// the app's: the person confirms the operation in the app's own dialog before it runs. A payload
+/// that carries any of those is refused, as is a target that does not match the scan.
+[[nodiscard]] std::expected<PartitionOperation, QString> assistantPartitionOperation(
+    PartitionOperationType type,
+    const PartitionTarget& target,
+    const QJsonObject& payload,
+    const PartitionInventory& inventory);
 
 /// Adds what moving a partition's start needs to a resize's payload, or starts a payload for it.
 void addMovePartitionFields(QJsonObject* payload,

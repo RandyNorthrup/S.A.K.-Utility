@@ -71,6 +71,13 @@ public:
     /// answer: they list no exFAT size at all, and no FAT32 on 40 MiB or 40 GiB, which
     /// Format-Volume formats.
     [[nodiscard]] static QString windowsFormatBlocker(const WindowsFormatChoice& choice);
+    /// The file systems S.A.K. formats with its bundled tools or writers, not Windows: ext2, ext3,
+    /// ext4, HFS+, HFSX, APFS and Linux swap.
+    [[nodiscard]] static bool formattedByBundledTools(const QString& file_system);
+    /// Why Create does not make a @p file_system partition, in plain words, or empty for a file
+    /// system Windows formats. Create makes a partition with a Windows file system only; one of
+    /// the bundled tools' file systems is made by Formatting it afterwards.
+    [[nodiscard]] static QString createFileSystemBlocker(const QString& file_system);
     /// Whether a Windows edition (the registry's EditionID) formats ReFS: Enterprise, Pro for
     /// Workstations, IoT Enterprise and Server editions. Education is left out: not confirmed.
     [[nodiscard]] static bool editionFormatsRefs(const QString& edition_id);

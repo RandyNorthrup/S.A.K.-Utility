@@ -1839,7 +1839,7 @@ private Q_SLOTS:
     void safetyValidator_refusesForgedTargetKind();    // R5-G10-9
     void safetyValidator_refusesReadOnlyTargetDisk();  // R5-G10-9
     void scriptBuilder_createRespectsWizardPayload();
-    void scriptBuilder_buildsNonNativeCreateFormatScripts();
+    void scriptBuilder_createRefusesNonWindowsFileSystems();
     void scriptBuilder_rejectsInvalidCreatePartitionType();
     void scriptBuilder_rejectsUnsupportedAllocationUnit();
     void scriptBuilder_rejectsNativeFormatForNonWindowsFilesystem();
@@ -3754,10 +3754,12 @@ QString runEverySparseImageCall(const QString& script) {
 
 }  // namespace
 
-// Every script that stages an HFS+ image (format, repair, create-and-format, a file change) calls
+// Every script that stages an HFS+ image (format, repair, a file change) calls
 // New-SakSparseImageFile, and each call is run here the way the script runs it. From 2026-08-31 to
-// 2026-11-11 the function took a [ref] parameter none of the four callers passed, so every one of
-// them failed at that line on a real disk while every test that only read the script text passed.
+// 2026-11-11 the function took a [ref] parameter none of its callers passed, so every one of them
+// failed at that line on a real disk while every test that only read the script text passed.
+// (Create made HFS+ in one step then too; it creates a Windows file system only since F2,
+// 2026-11-12, and Format makes HFS+ on the new partition.)
 void PartitionManagerCoreTests::hfsStaging_everyCallerRunsTheStagingFunction() {
     PartitionScriptBuilder builder;
     const PartitionTarget partition = extToolPartitionTarget();
@@ -3766,19 +3768,6 @@ void PartitionManagerCoreTests::hfsStaging_everyCallerRunsTheStagingFunction() {
     format_payload[QStringLiteral("label")] = QStringLiteral("SAK_HFSX");
     QJsonObject repair_payload = baseExtToolPayload();
     repair_payload[QStringLiteral("file_system")] = QStringLiteral("HFS+");
-
-    PartitionTarget unallocated;
-    unallocated.kind = PartitionTargetKind::Unallocated;
-    unallocated.disk_number = DiskNumber{2};
-    unallocated.offset_bytes = 1'048'576;
-    unallocated.size_bytes = 256ULL * 1024ULL * 1024ULL;
-    QJsonObject create_payload;
-    create_payload[QStringLiteral("size_bytes")] = QStringLiteral("134217728");
-    create_payload[QStringLiteral("relative_offset_bytes")] = QStringLiteral("1048576");
-    create_payload[QStringLiteral("non_native_file_system_tool")] = true;
-    create_payload[QStringLiteral("file_system")] = QStringLiteral("HFSX");
-    create_payload[QStringLiteral("label")] = QStringLiteral("SAK_HFSX");
-    create_payload[QStringLiteral("target_wipe_confirmed")] = true;
 
     const struct {
         const char* name{nullptr};
@@ -3790,9 +3779,6 @@ void PartitionManagerCoreTests::hfsStaging_everyCallerRunsTheStagingFunction() {
         {"repair",
          PartitionOperationPlanner::makeOperation(
              PartitionOperationType::CheckFileSystem, partition, repair_payload)},
-        {"create and format",
-         PartitionOperationPlanner::makeOperation(
-             PartitionOperationType::Create, unallocated, create_payload)},
         {"file change",
          PartitionOperationPlanner::makeOperation(
              PartitionOperationType::HfsReplaceFile, partition, baseHfsFileMutationPayload())},
@@ -3831,16 +3817,12 @@ QVector<QPair<PartitionTarget, QJsonObject>> scriptCorpusInputs() {
     unallocated.disk_number = DiskNumber{2};
     unallocated.offset_bytes = 1'048'576;
     unallocated.size_bytes = 256ULL * 1024ULL * 1024ULL;
-    for (const char* fs : {"ext4", "HFSX", "NTFS"}) {
-        QJsonObject create;
-        create[QStringLiteral("size_bytes")] = QStringLiteral("134217728");
-        create[QStringLiteral("relative_offset_bytes")] = QStringLiteral("1048576");
-        create[QStringLiteral("non_native_file_system_tool")] = qstrcmp(fs, "NTFS") != 0;
-        create[QStringLiteral("file_system")] = QString::fromLatin1(fs);
-        create[QStringLiteral("label")] = QStringLiteral("SAK");
-        create[QStringLiteral("target_wipe_confirmed")] = true;
-        inputs.append({unallocated, create});
-    }
+    QJsonObject create;
+    create[QStringLiteral("size_bytes")] = QStringLiteral("134217728");
+    create[QStringLiteral("relative_offset_bytes")] = QStringLiteral("1048576");
+    create[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    create[QStringLiteral("label")] = QStringLiteral("SAK");
+    inputs.append({unallocated, create});
     PartitionTarget disk;
     disk.kind = PartitionTargetKind::Disk;
     disk.disk_number = DiskNumber{3};
@@ -19591,97 +19573,39 @@ void PartitionManagerCoreTests::scriptBuilder_createRespectsWizardPayload() {
         QStringLiteral("-NewFileSystemLabel 'Field Media' -Full -AllocationUnitSize 4096")));
 }
 
-namespace {
-void verifyNonNativeCreateScriptVariants(const PartitionScriptBuilder* builder,
-                                         const PartitionTarget& target,
-                                         const QJsonObject& payload);
-}  // namespace
-
-void PartitionManagerCoreTests::scriptBuilder_buildsNonNativeCreateFormatScripts() {
+// F2 (operation proof, 2026-11-11): Create makes a partition with a Windows file system only; a
+// bundled tool's file system is made by Formatting the partition afterwards. The one-step builders
+// that made one in a Create are gone, so a Create that asks for one is refused, with the guidance,
+// whether or not its payload carries the tool's routing.
+void PartitionManagerCoreTests::scriptBuilder_createRefusesNonWindowsFileSystems() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Unallocated;
     target.disk_number = DiskNumber{2};
     target.offset_bytes = 1'048'576;
     target.size_bytes = 256ULL * 1024ULL * 1024ULL;
-
-    QJsonObject payload;
-    payload[QStringLiteral("size_bytes")] = QStringLiteral("134217728");
-    payload[QStringLiteral("relative_offset_bytes")] = QStringLiteral("1048576");
-    payload[QStringLiteral("non_native_file_system_tool")] = true;
-    payload[QStringLiteral("file_system")] = QStringLiteral("ext4");
-    payload[QStringLiteral("label")] = QStringLiteral("SAK_EXT4");
-    payload[QStringLiteral("target_wipe_confirmed")] = true;
-
-    PartitionScriptBuilder builder;
-    const auto extScript = builder.buildScript(
-        PartitionOperationPlanner::makeOperation(PartitionOperationType::Create, target, payload));
-    QVERIFY2(extScript.valid(), qPrintable(extScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(extScript.script.contains(QStringLiteral("New-Partition -DiskNumber 2")));
-    QVERIFY(extScript.script.contains(QStringLiteral("-Offset 2097152")));
-    QVERIFY(extScript.script.contains(QStringLiteral("$rawTargetPath")));
-    QVERIFY(extScript.script.contains(QStringLiteral("mke2fs")));
-    QVERIFY(extScript.script.contains(QStringLiteral("'ext4'")));
-    // A new partition can still carry an old file system's boot sector: cleared before mke2fs.
-    QVERIFY(extScript.script.contains(QStringLiteral(
-        "[Sak.RawPartitionWrite]::ClearFileSystem($sakTakenPartition, [int64]$p.Size)")));
-    QVERIFY(!extScript.script.contains(QStringLiteral("Dismount-Volume")));
-    QVERIFY(!extScript.script.contains(QStringLiteral("-AssignDriveLetter")));
-    QVERIFY(!extScript.script.contains(QStringLiteral("Format-Volume")));
-    QVERIFY(!extScript.script.contains(QStringLiteral("__SAK_NEW_PARTITION_RAW_TARGET__")));
-
-    verifyNonNativeCreateScriptVariants(&builder, target, payload);
+    const PartitionScriptBuilder builder;
+    for (const QString& file_system : {QStringLiteral("ext4"),
+                                       QStringLiteral("HFSX"),
+                                       QStringLiteral("APFS"),
+                                       QStringLiteral("Linux swap")}) {
+        for (const bool routed : {false, true}) {
+            QJsonObject payload{{QStringLiteral("size_bytes"), QStringLiteral("134217728")},
+                                {QStringLiteral("file_system"), file_system},
+                                {QStringLiteral("label"), QStringLiteral("SAK")}};
+            if (routed) {
+                payload[QStringLiteral("non_native_file_system_tool")] = true;
+                payload[QStringLiteral("target_wipe_confirmed")] = true;
+            }
+            const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+                PartitionOperationType::Create, target, payload));
+            QVERIFY2(script.blockers.join(' ').contains(
+                         QStringLiteral("Create the partition with a Windows file system, then "
+                                        "Format it as %1.")
+                             .arg(file_system)),
+                     qPrintable(file_system + QStringLiteral(": ") + script.blockers.join(' ')));
+        }
+    }
 }
-
-namespace {
-
-void verifyNonNativeCreateScriptVariants(const PartitionScriptBuilder* builder,
-                                         const PartitionTarget& target,
-                                         const QJsonObject& payload) {
-    QJsonObject hfsPayload = payload;
-    hfsPayload[QStringLiteral("file_system")] = QStringLiteral("HFSX");
-    hfsPayload[QStringLiteral("label")] = QStringLiteral("SAK_HFSX");
-    const auto hfsScript = builder->buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::Create, target, hfsPayload));
-    QVERIFY2(hfsScript.valid(), qPrintable(hfsScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(hfsScript.script.contains(QStringLiteral("newfs_hfs")));
-    QVERIFY(hfsScript.script.contains(QStringLiteral("fsck_hfs")));
-    QVERIFY(hfsScript.script.contains(QStringLiteral("Copy-SakSparseImageToRawTarget")));
-    QVERIFY(hfsScript.script.contains(QStringLiteral("$stagedImagePath")));
-    QVERIFY(!hfsScript.script.contains(QStringLiteral("Format-Volume")));
-
-    QJsonObject swapPayload = payload;
-    swapPayload[QStringLiteral("file_system")] = QStringLiteral("Linux swap");
-    swapPayload[QStringLiteral("label")] = QStringLiteral("SAK_SWAP");
-    swapPayload[QStringLiteral("linux_swap_page_size_bytes")] = QStringLiteral("4096");
-    const auto swapScript = builder->buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::Create, target, swapPayload));
-    QVERIFY2(swapScript.valid(), qPrintable(swapScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(swapScript.script.contains(QStringLiteral("SWAPSPACE2")));
-    QVERIFY(swapScript.script.contains(QStringLiteral("$rawTargetPath")));
-    QVERIFY(!swapScript.script.contains(QStringLiteral("Format-Volume")));
-
-    QJsonObject apfsPayload = payload;
-    apfsPayload[QStringLiteral("file_system")] = QStringLiteral("APFS");
-    apfsPayload[QStringLiteral("label")] = QStringLiteral("SAK_APFS");
-    apfsPayload[QStringLiteral("gpt_type")] =
-        QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}");
-    const auto apfsScript = builder->buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::Create, target, apfsPayload));
-    QVERIFY2(apfsScript.valid(), qPrintable(apfsScript.blockers.join(QStringLiteral("; "))));
-    QVERIFY(apfsScript.script.contains(QStringLiteral("sak_apfs_writer_cli.exe")));
-    QVERIFY(apfsScript.script.contains(QStringLiteral("format-raw")));
-    QVERIFY(apfsScript.script.contains(QStringLiteral("ui.apfs-generated-raw-create-format")));
-    QVERIFY(!apfsScript.script.contains(QStringLiteral("Format-Volume")));
-
-    QJsonObject unconfirmedPayload = payload;
-    unconfirmedPayload[QStringLiteral("target_wipe_confirmed")] = false;
-    const auto blockedScript = builder->buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::Create, target, unconfirmedPayload));
-    QVERIFY(!blockedScript.valid());
-    QVERIFY(blockedScript.blockers.join(' ').contains(QStringLiteral("confirmation")));
-}
-
-}  // namespace
 
 void PartitionManagerCoreTests::scriptBuilder_rejectsInvalidCreatePartitionType() {
     PartitionTarget target;
@@ -23298,43 +23222,35 @@ void verifyNonNativeCreateSafetyGates(const PartitionInventory& inventory,
     createTarget.offset_bytes = region.offset_bytes;
     createTarget.size_bytes = region.size_bytes;
 
+    // F2: Create makes a Windows file system only; an assistant's ext4 Create reached the builder's
+    // "Unsupported file system". The queue refuses it with the two steps that make one.
     QJsonObject createPayload;
     createPayload[QStringLiteral("size_bytes")] = QString::number(128ULL * 1024ULL * 1024ULL);
-    createPayload[QStringLiteral("non_native_file_system_tool")] = true;
     createPayload[QStringLiteral("file_system")] = QStringLiteral("ext4");
-    createPayload[QStringLiteral("target_wipe_confirmed")] = true;
     auto preview = previewNonNativeOperation(
         inventory, PartitionOperationType::Create, createTarget, createPayload);
-    QVERIFY2(preview.canApply(), qPrintable(preview.blockers.join(QStringLiteral("; "))));
-
-    QJsonObject blockedCreate = createPayload;
-    blockedCreate[QStringLiteral("target_wipe_confirmed")] = false;
-    preview = previewNonNativeOperation(
-        inventory, PartitionOperationType::Create, createTarget, blockedCreate);
     QVERIFY(!preview.canApply());
-    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("confirmation")));
+    QVERIFY2(preview.blockers.join(' ').contains(
+                 QStringLiteral("Create the partition with a Windows file system, then Format it "
+                                "as ext4.")),
+             qPrintable(preview.blockers.join(QStringLiteral("; "))));
 
-    QJsonObject unsupportedCreate = createPayload;
-    unsupportedCreate[QStringLiteral("file_system")] = QStringLiteral("XFS");
-    preview = previewNonNativeOperation(
-        inventory, PartitionOperationType::Create, createTarget, unsupportedCreate);
+    QJsonObject routed = createPayload;
+    routed[QStringLiteral("non_native_file_system_tool")] = true;
+    routed[QStringLiteral("target_wipe_confirmed")] = true;
+    routed[QStringLiteral("file_system")] = QStringLiteral("APFS");
+    preview =
+        previewNonNativeOperation(inventory, PartitionOperationType::Create, createTarget, routed);
     QVERIFY(!preview.canApply());
-    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("Non-Windows write support")));
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("then Format it as APFS")));
 
-    QJsonObject apfsCreate = createPayload;
-    apfsCreate[QStringLiteral("file_system")] = QStringLiteral("APFS");
+    QJsonObject unsupported = createPayload;
+    unsupported[QStringLiteral("file_system")] = QStringLiteral("XFS");
     preview = previewNonNativeOperation(
-        inventory, PartitionOperationType::Create, createTarget, apfsCreate);
+        inventory, PartitionOperationType::Create, createTarget, unsupported);
     QVERIFY(!preview.canApply());
-    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("GPT disk")));
-
-    auto gptInventory = inventory;
-    gptInventory.disks[0].partition_style = QStringLiteral("GPT");
-    apfsCreate[QStringLiteral("gpt_type")] =
-        QStringLiteral("{7C3457EF-0000-11AA-AA11-00306543ECAC}");
-    preview = previewNonNativeOperation(
-        gptInventory, PartitionOperationType::Create, createTarget, apfsCreate);
-    QVERIFY2(preview.canApply(), qPrintable(preview.blockers.join(QStringLiteral("; "))));
+    QVERIFY(
+        preview.blockers.join(' ').contains(QStringLiteral("NTFS, FAT32, exFAT and ReFS only")));
 }
 
 void verifyExtPartitionWriteSafetyGates(const PartitionInventory& inventory,

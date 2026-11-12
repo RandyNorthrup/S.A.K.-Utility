@@ -6,6 +6,8 @@
 
 #include "sak/partition_operation_requests.h"
 
+#include "sak/partition_file_system_registry.h"
+#include "sak/partition_operation_planner.h"
 #include "sak/partition_os_migration.h"
 #include "sak/partition_raw_device_io.h"
 #include "sak/partition_safety_validator.h"
@@ -208,6 +210,152 @@ void bindResizeFileSystem(const PartitionInventory& inventory, PartitionOperatio
         operation->payload[QStringLiteral("file_system")] =
             partition->volume->file_system.trimmed();
     }
+}
+
+namespace {
+
+// What only the app sets on an operation: the routing to a bundled tool, the person's
+// destructive-change confirmations, and the identities a queue binds from its scan.
+const QStringList& appOwnedPayloadFields() {
+    static const QStringList kFields = {QStringLiteral("non_native_file_system_tool"),
+                                        QStringLiteral("target_wipe_confirmed"),
+                                        QStringLiteral("overwrite_confirmed"),
+                                        QStringLiteral("restore_acknowledged"),
+                                        QStringLiteral("apfs_cow_mutation_certified"),
+                                        QStringLiteral("target_disk_unique_id"),
+                                        QStringLiteral("target_disk_serial_number"),
+                                        QStringLiteral("target_disk_size_bytes"),
+                                        QStringLiteral("backup_volume_guid"),
+                                        QStringLiteral("backup_volume_identity_error")};
+    return kFields;
+}
+
+// The operations whose target_path is the selected partition's raw path, which the app derives.
+bool writesTheSelectedPartitionRaw(PartitionOperationType type) {
+    return type == PartitionOperationType::Format || type == PartitionOperationType::Resize ||
+           type == PartitionOperationType::CheckFileSystem;
+}
+
+bool isExtFileSystem(const QString& file_system) {
+    return QStringList{QStringLiteral("ext2"), QStringLiteral("ext3"), QStringLiteral("ext4")}
+        .contains(file_system.trimmed(), Qt::CaseInsensitive);
+}
+
+bool isLinuxSwap(const QString& file_system) {
+    return QStringList{QStringLiteral("Linux swap"),
+                       QStringLiteral("linux-swap"),
+                       QStringLiteral("swap")}
+        .contains(file_system.trimmed(), Qt::CaseInsensitive);
+}
+
+// The route the panel takes for a file system a bundled tool writes (its Format, Resize and Check
+// dialogs): the tool, its file system, and the selected partition's raw path.
+void routeToBundledTool(PartitionOperation* operation, const QString& file_system) {
+    operation->payload[QStringLiteral("non_native_file_system_tool")] = true;
+    operation->payload[QStringLiteral("file_system")] = file_system;
+    operation->payload[QStringLiteral("target_path")] =
+        QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk%1\\Partition%2")
+            .arg(operation->target.disk_number.value())
+            .arg(operation->target.partition_number.value());
+}
+
+// The partition the model named, as the scan found it; a target whose offset or size it gave
+// differently is refused.
+std::expected<const PartitionInfoEx*, QString> scannedPartition(
+    const PartitionTarget& target, const PartitionInventory& inventory) {
+    const auto* disk = PartitionSafetyValidator::findDisk(inventory, target.disk_number);
+    const auto* partition =
+        disk == nullptr ? nullptr
+                        : PartitionSafetyValidator::findPartition(*disk, target.partition_number);
+    if (partition != nullptr &&
+        ((target.size_bytes != 0 && target.size_bytes != partition->size_bytes) ||
+         (target.offset_bytes != 0 && target.offset_bytes != partition->offset_bytes))) {
+        return std::unexpected(
+            QStringLiteral("The offset or size given does not match Disk %1 Partition %2 as the "
+                           "disk scan found it. Read the layout again (list_inventory).")
+                .arg(target.disk_number.value())
+                .arg(target.partition_number.value()));
+    }
+    return partition;
+}
+
+}  // namespace
+
+namespace {
+
+// A field only the app sets, in a model's payload: the reason it is refused, or empty.
+QString appOwnedFieldRefusal(PartitionOperationType type, const QJsonObject& payload) {
+    for (const QString& field : payload.keys()) {
+        if (appOwnedPayloadFields().contains(field) ||
+            (field == QStringLiteral("target_path") && writesTheSelectedPartitionRaw(type))) {
+            return QStringLiteral(
+                       "'%1' is not the assistant's to send: S.A.K. sets it itself, and the "
+                       "person confirms a change to a disk in S.A.K.'s own dialog. Send only the "
+                       "fields the tool describes.")
+                .arg(field);
+        }
+    }
+    return {};
+}
+
+// A bundled tool's file system goes to that tool, as the panel's dialogs route it: Format by the
+// file system asked for, Resize by the one the scan found (ext only), Check by the scan's.
+void routeAssistantOperation(PartitionOperation* operation, const PartitionInfoEx* partition) {
+    const QString file_system =
+        operation->payload.value(QStringLiteral("file_system")).toString().trimmed();
+    if ((operation->type == PartitionOperationType::Format &&
+         PartitionFileSystemRegistry::formattedByBundledTools(file_system)) ||
+        (operation->type == PartitionOperationType::Resize && isExtFileSystem(file_system))) {
+        routeToBundledTool(operation, file_system);
+        return;
+    }
+    if (operation->type != PartitionOperationType::CheckFileSystem || partition == nullptr ||
+        !partition->volume) {
+        return;
+    }
+    const QString held = partition->volume->file_system.trimmed();
+    if (PartitionFileSystemRegistry::formattedByBundledTools(held) && !isLinuxSwap(held)) {
+        routeToBundledTool(operation, held);
+    }
+}
+
+}  // namespace
+
+std::expected<PartitionOperation, QString> assistantPartitionOperation(
+    PartitionOperationType type,
+    const PartitionTarget& target,
+    const QJsonObject& payload,
+    const PartitionInventory& inventory) {
+    if (const QString refusal = appOwnedFieldRefusal(type, payload); !refusal.isEmpty()) {
+        return std::unexpected(refusal);
+    }
+    PartitionTarget resolved = target;
+    const PartitionInfoEx* partition = nullptr;
+    if (target.kind == PartitionTargetKind::Partition) {
+        const auto scanned = scannedPartition(target, inventory);
+        if (!scanned) {
+            return std::unexpected(scanned.error());
+        }
+        partition = *scanned;
+        if (partition != nullptr) {
+            resolved = partitionIdentityTarget(*partition);
+        }
+    }
+    // The disk's identity, as the queue binds it: a script that changes the disk checks it first.
+    if (const auto* disk = PartitionSafetyValidator::findDisk(inventory, resolved.disk_number);
+        disk != nullptr) {
+        resolved.disk_unique_id = disk->unique_id.trimmed();
+        resolved.disk_serial_number = disk->serial_number.trimmed();
+        resolved.disk_size_bytes = disk->size_bytes;
+    }
+    QJsonObject derived = payload;
+    // The app's own confirmation: the assistant runs this only after the person confirmed the
+    // operation in S.A.K.'s dialog, which a model cannot answer (a catastrophic app action).
+    derived[QStringLiteral("target_wipe_confirmed")] = true;
+    auto operation = PartitionOperationPlanner::makeOperation(type, resolved, derived);
+    bindResizeFileSystem(inventory, &operation);
+    routeAssistantOperation(&operation, partition);
+    return operation;
 }
 
 void addMovePartitionFields(QJsonObject* payload,
