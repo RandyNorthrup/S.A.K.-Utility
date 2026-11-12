@@ -160,7 +160,7 @@ function Invoke-OpsVmRun {
     $stage = Join-Path (Split-Path -Parent $ResultsPath) "vm-stage-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
     $failure = $null
     try {
-        & pwsh -NoProfile -File $rig -Action Stage -ReleaseDir $ReleaseDir -StageDir $stage -CredFile $VmCredFile
+        & pwsh -NoProfile -File $rig -Action Stage -ReleaseDir $ReleaseDir -StageDir $stage -CredFile $VmCredFile -OperationProof
         if ($LASTEXITCODE -ne 0) { throw 'The rig could not stage the build' }
         & pwsh -NoProfile -File $rig -Action On -CredFile $VmCredFile
         if ($LASTEXITCODE -ne 0) { throw 'The VM did not start and sign in' }

@@ -394,7 +394,14 @@ function New-RigStage {
     if (-not (Test-Path -LiteralPath (Join-Path $release 'partition_manager_live_certifier.exe'))) { throw "No step client in $release" }
     Remove-RigFile -Path $stage
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
-    Copy-Item (Join-Path $release 'partition_manager_live_certifier.exe') (Join-Path $stage 'sak_utility.exe')
+    # The operation proof stages a whole release package, as on testpc2: since the security round
+    # its scripts load sak_script_types.dll from the program's folder, which the list below leaves
+    # out. No other program goes in: the app checks what is in its folder. A certification stage is
+    # unchanged.
+    if ($OperationProof) {
+        Copy-Item -Path (Join-Path $release '*') -Destination $stage -Recurse -Force -Exclude 'partition_manager_live_certifier.exe', 'partition_filesystem_probe_certifier.exe'
+    }
+    Copy-Item (Join-Path $release 'partition_manager_live_certifier.exe') (Join-Path $stage 'sak_utility.exe') -Force
     Copy-Item (Join-Path $release 'sak_elevated_helper.exe') $stage
     foreach ($dll in 'Qt6Core', 'Qt6Gui', 'Qt6Network', 'Qt6Concurrent', 'Qt6Widgets', 'Qt6Xml', 'Qt6Svg', 'msvcp140', 'msvcp140_1', 'msvcp140_2', 'msvcp140_atomic_wait', 'vcruntime140', 'vcruntime140_1', 'concrt140', 'z', 'zlib1', 'bz2', 'liblzma', 'pcre2-16', 'double-conversion', 'icudt', 'icuin', 'icuuc', 'b2-1') {
         $source = Join-Path $release "$dll.dll"
