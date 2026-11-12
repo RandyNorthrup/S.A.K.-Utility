@@ -21817,10 +21817,16 @@ namespace {
 
 void verifyAdvancedScriptFailureReporting(const PartitionScript& hidden,
                                           const PartitionScript& surface) {
-    // Each access path the partition has is removed, and a failure stops the script.
-    QVERIFY(hidden.script.contains(
-        QStringLiteral("Remove-PartitionAccessPath -DiskNumber $sakHideDisk -PartitionNumber "
-                       "$sakHideNumber -AccessPath $sakAccessPath -ErrorAction Stop")));
+    // Each access path the partition has is removed, and a failure stops the script: by the one
+    // function a non-Windows Format uses too, before the partition is hidden.
+    const QString removal = PartitionScriptBuilder::removePartitionAccessPathsScript(
+        QStringLiteral("1"), QStringLiteral("3"));
+    QVERIFY(hidden.script.contains(removal));
+    QVERIFY(hidden.script.indexOf(removal) <
+            hidden.script.indexOf(QStringLiteral("-IsHidden $true")));
+    QVERIFY(removal.contains(
+        QStringLiteral("Remove-PartitionAccessPath -DiskNumber $sakTypeDisk -PartitionNumber "
+                       "$sakTypeNumber -AccessPath $sakAccessPath -ErrorAction Stop")));
     QVERIFY(!hidden.script.contains(QStringLiteral("-ErrorAction SilentlyContinue")));
     QVERIFY(
         surface.script.contains(QStringLiteral("Get-StorageReliabilityCounter -ErrorAction Stop")));

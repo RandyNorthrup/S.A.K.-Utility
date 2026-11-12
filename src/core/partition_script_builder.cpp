@@ -2112,32 +2112,23 @@ QString createdPartitionFormatScript(const PartitionOperation& operation, const 
 // hidden that way got its letter and folder path back on Unhide). The volume's own \\?\Volume{...}
 // path is not an access path to remove.
 QString hidePartitionScript(const PartitionOperation& operation) {
-    return QStringLiteral(
-               "$sakHideDisk = [uint32]%1\n"
-               "$sakHideNumber = [uint32]%2\n"
-               "$sakHide = Get-Partition -DiskNumber $sakHideDisk -PartitionNumber $sakHideNumber "
-               "-ErrorAction Stop\n"
-               "foreach ($sakAccessPath in @($sakHide.AccessPaths)) {\n"
-               "  if (-not [string]::IsNullOrWhiteSpace($sakAccessPath) -and "
-               "-not ([string]$sakAccessPath).StartsWith('\\\\?\\Volume{')) {\n"
-               "    Remove-PartitionAccessPath -DiskNumber $sakHideDisk -PartitionNumber "
-               "$sakHideNumber -AccessPath $sakAccessPath -ErrorAction Stop\n"
-               "    Write-Output ('Removed the partition''s access path {0}' -f $sakAccessPath)\n"
-               "  }\n"
-               "}\n"
+    const QString disk = uintArg(operation.target.disk_number.value());
+    const QString number = uintArg(operation.target.partition_number.value());
+    // The same removal a non-Windows Format runs before it takes the partition (merge round,
+    // 2026-11-12: one function, not two copies of the loop).
+    return PartitionScriptBuilder::removePartitionAccessPathsScript(disk, number) +
+           QStringLiteral(
                "Set-Partition -DiskNumber %1 -PartitionNumber %2 -IsHidden $true "
                "-NoDefaultDriveLetter $true -ErrorAction Stop\n"
                "Update-HostStorageCache -ErrorAction Stop\n"
-               "$sakHidden = Get-Partition -DiskNumber $sakHideDisk -PartitionNumber "
-               "$sakHideNumber -ErrorAction Stop\n"
+               "$sakHidden = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
                "if (-not $sakHidden.IsHidden) { throw 'Windows did not hide the partition' }\n"
                "$sakLeft = @($sakHidden.AccessPaths | Where-Object { $_ -and -not "
                "([string]$_).StartsWith('\\\\?\\Volume{') })\n"
                "if ($sakLeft.Count -gt 0) { throw ('The partition is hidden, but can still be "
                "reached at {0}' -f ($sakLeft -join ', ')) }\n"
                "Write-Output 'The partition is hidden, with no drive letter or folder path'\n")
-        .arg(uintArg(operation.target.disk_number.value()),
-             uintArg(operation.target.partition_number.value()));
+               .arg(disk, number);
 }
 
 // Unhide, and a drive letter back when Windows reads the volume's file system: one that Hide took
