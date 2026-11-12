@@ -1604,6 +1604,7 @@ private Q_SLOTS:
     void generatedScripts_partitionTypeStepsRunAgainstStandIns();
     void generatedScripts_windowsDataTypeStepRunsAgainstStandIns();
     void generatedScripts_resizeChecksTheFileSystemFirst();
+    void generatedScripts_resizeGivesANonDataPartitionItsTypeBack();
     void scriptBuilder_nonWindowsFormatTakesItsPartitionType();
     void scriptBuilder_windowsFormatRestoresAWindowsDataType();
     void generatedScripts_formatChoiceCheckAgreesWithTheQueue();
@@ -3507,7 +3508,8 @@ void verifyExtResizeScripts(const PartitionScriptBuilder* builder, const Partiti
     const auto resize = builder->buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::Resize, target, resizePayload));
     QVERIFY2(resize.valid(), qPrintable(resize.blockers.join(QStringLiteral("; "))));
-    QVERIFY(resize.script.contains(QStringLiteral("Resize-Partition -DiskNumber 2")));
+    // As a data partition, which is all Resize-Partition takes (F24).
+    QVERIFY(resize.script.contains(QStringLiteral("Invoke-SakResizeAsDataPartition -Disk 2")));
     QVERIFY(resize.script.contains(QStringLiteral("resize2fs")));
 
     QJsonObject shrinkPayload = resizePayload;
@@ -4673,13 +4675,17 @@ void PartitionManagerCoreTests::generatedScripts_windowsDataTypeStepRunsAgainstS
 
 namespace {
 
-/// Stand-ins for what a native resize script calls: Disk 2 Partition 1 of 1 GiB, whose volume
-/// holds $global:volume (none at all when it is $null); Resize-Partition records its call.
+/// Stand-ins for what a native resize script calls: Disk 2 (GPT) Partition 1 of 1 GiB, a basic
+/// data partition, whose volume holds $global:volume (none at all when it is $null);
+/// Resize-Partition records its call.
 QString resizeStandIns() {
     return QStringLiteral(
         "function Get-Partition { param($DiskNumber, $PartitionNumber, $ErrorAction) "
         "[pscustomobject]@{ DiskNumber = 2; PartitionNumber = 1; Size = 1073741824; Offset = "
-        "1048576; Guid = '' } }\n"
+        "1048576; Guid = ''; GptType = '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}'; AccessPaths = "
+        "@() } }\n"
+        "function Get-Disk { param($Number, $ErrorAction) [pscustomobject]@{ PartitionStyle = "
+        "'GPT' } }\n"
         "function Get-Volume { param([Parameter(ValueFromPipeline = $true)]$InputObject) "
         "process { if ($null -eq $global:volume) { throw 'No matching MSFT_Volume objects "
         "found' }; [pscustomobject]@{ FileSystem = $global:volume } } }\n"
@@ -4790,6 +4796,149 @@ void PartitionManagerCoreTests::generatedScripts_resizeChecksTheFileSystemFirst(
                                                 "for an ext4 partition, but the partition holds "
                                                 "no ext file system now")),
              qPrintable(checks));
+}
+
+namespace {
+
+constexpr auto kLinuxGptType = "{0fc63daf-8483-4772-8e79-3d69d8477de4}";
+
+/// Stand-ins for a resize of Disk 2 Partition 1 (1 GiB) on a $global:style disk, typed
+/// $global:startType (GPT) or $global:startMbr (MBR). Resize-Partition refuses anything but a data
+/// partition, as Windows' does, and fails with $global:resizeError when set; Set-Partition fails to
+/// give a GPT partition back any type but basic data when $global:failRestore is set; on MBR,
+/// Windows gives the partition the letter Q: when its type becomes 07. Every change is recorded.
+QString resizeTypeStandIns() {
+    return QStringLiteral(
+        "function Reset-SakStandIn($style, $gptType, $mbr, $resizeError, $failRestore) {\n"
+        "  $global:style = $style; $global:resizeError = $resizeError; $global:failRestore = "
+        "$failRestore\n"
+        "  $global:calls = New-Object System.Collections.ArrayList\n"
+        "  $global:part = [pscustomobject]@{ DiskNumber = 2; PartitionNumber = 1; Size = "
+        "[uint64]1073741824; GptType = $gptType; MbrType = $mbr; NoDefaultDriveLetter = $false; "
+        "AccessPaths = @('\\\\?\\Volume{1}\\') }\n"
+        "}\n"
+        "function Get-Disk { param($Number, $ErrorAction) [pscustomobject]@{ PartitionStyle = "
+        "$global:style } }\n"
+        "function Get-Partition { param($DiskNumber, $PartitionNumber, $ErrorAction) $global:part "
+        "}\n"
+        "function Update-HostStorageCache { param($ErrorAction) }\n"
+        "function Set-Partition { param($DiskNumber, $PartitionNumber, $GptType, $MbrType, "
+        "$NoDefaultDriveLetter, $ErrorAction)\n"
+        "  if ($PSBoundParameters.ContainsKey('GptType')) { [void]$global:calls.Add('type ' + "
+        "$GptType); if ($global:failRestore -and $GptType -ne "
+        "'{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}') { throw 'The parameter is incorrect.' }; "
+        "$global:part.GptType = $GptType }\n"
+        "  if ($PSBoundParameters.ContainsKey('MbrType')) { [void]$global:calls.Add('mbr ' + "
+        "$MbrType); $global:part.MbrType = [int]$MbrType; if ([int]$MbrType -eq 7) { "
+        "$global:part.AccessPaths += 'Q:\\' } }\n"
+        "  if ($PSBoundParameters.ContainsKey('NoDefaultDriveLetter')) { "
+        "[void]$global:calls.Add('noletter ' + $NoDefaultDriveLetter); "
+        "$global:part.NoDefaultDriveLetter = [bool]$NoDefaultDriveLetter }\n"
+        "}\n"
+        "function Remove-PartitionAccessPath { param($DiskNumber, $PartitionNumber, $AccessPath, "
+        "$ErrorAction) [void]$global:calls.Add('remove ' + $AccessPath); $global:part.AccessPaths "
+        "= @($global:part.AccessPaths | Where-Object { $_ -ne $AccessPath }) }\n"
+        "function Resize-Partition { param($DiskNumber, $PartitionNumber, $Size, $ErrorAction)\n"
+        "  $data = if ($global:style -eq 'GPT') { $global:part.GptType -eq "
+        "'{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}' } else { @(7, 12) -contains "
+        "[int]$global:part.MbrType }\n"
+        "  if (-not $data) { throw 'This operation is only supported on data partitions.' }\n"
+        "  [void]$global:calls.Add('resize ' + $Size)\n"
+        "  if ($global:resizeError) { throw $global:resizeError }\n"
+        "  $global:part.Size = [uint64]$Size\n"
+        "}\n"
+        "function Invoke-SakCase([string]$name) {\n"
+        "  try { Invoke-SakResizeAsDataPartition -Disk 2 -Number 1 -Size 536870912 | Out-Null; "
+        "$result = 'DONE' } catch { $result = 'THREW ' + $_.Exception.Message }\n"
+        "  \"$name $result | type=$($global:part.GptType)$($global:part.MbrType) | "
+        "paths=$(@($global:part.AccessPaths) -join ',') | size=$($global:part.Size) | "
+        "calls=$($global:calls -join ';')\"\n"
+        "}\n");
+}
+
+/// The line Invoke-SakCase printed for @p name in @p out.
+QString caseLine(const QString& out, const QString& name) {
+    for (const QString& line : out.split(u'\n')) {
+        if (line.startsWith(name + QLatin1Char(' '))) {
+            return line.trimmed();
+        }
+    }
+    return {};
+}
+
+}  // namespace
+
+// F24 (operation proof, 2026-11-12): every ext resize failed, since an ext partition S.A.K.
+// formatted carries the Linux type and Windows' Resize-Partition takes data partitions only
+// ("This operation is only supported on data partitions", StorageWMI 42011). The partition is
+// resized as a data partition and gets its own type back in a finally, so the type comes back when
+// the resize fails too, with its letters held off and read back. Windows PowerShell 5.1 runs the
+// script's own function against stand-in Storage cmdlets.
+void PartitionManagerCoreTests::generatedScripts_resizeGivesANonDataPartitionItsTypeBack() {
+    const PartitionScriptBuilder builder;
+    PartitionTarget target = extToolPartitionTarget();
+    QJsonObject ext = baseExtToolPayload();
+    ext[QStringLiteral("target_size_bytes")] = QStringLiteral("536870912");
+    const auto shrink = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Resize, target, ext));
+    QVERIFY2(shrink.valid(), qPrintable(shrink.blockers.join(' ')));
+    // resize2fs shrinks the file system before the partition shrinks, and the partition grows
+    // before resize2fs grows the file system.
+    const QString call = QStringLiteral("Invoke-SakResizeAsDataPartition -Disk 2 -Number 1");
+    QVERIFY(shrink.script.indexOf(QStringLiteral("Invoke-SakFilesystemTool -Name 'resize2fs "
+                                                 "shrink'")) < shrink.script.indexOf(call));
+    ext[QStringLiteral("target_size_bytes")] = QStringLiteral("2147483648");
+    const auto grow = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Resize, target, ext));
+    QVERIFY2(grow.valid(), qPrintable(grow.blockers.join(' ')));
+    const qsizetype grown = grow.script.indexOf(call);
+    QVERIFY(grown > 0 &&
+            grown < grow.script.indexOf(QStringLiteral("Invoke-SakFilesystemTool -Name"), grown));
+
+    int exit_code = -1;
+    const QString linux_type = QString::fromLatin1(kLinuxGptType);
+    const QString out = runWithScriptFunctions(
+        shrink.script,
+        resizeTypeStandIns() +
+            QStringLiteral("Reset-SakStandIn 'GPT' %1 $null '' $false; Invoke-SakCase LINUXOK\n"
+                           "Reset-SakStandIn 'GPT' %1 $null 'Not enough space on the disk.' "
+                           "$false; Invoke-SakCase LINUXFAIL\n"
+                           "Reset-SakStandIn 'MBR' $null 131 '' $false; Invoke-SakCase MBR83\n"
+                           "Reset-SakStandIn 'GPT' '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}' $null "
+                           "'' $false; Invoke-SakCase DATA\n"
+                           "Reset-SakStandIn 'GPT' %1 $null '' $true; Invoke-SakCase NORESTORE\n")
+                .arg(PartitionScriptBuilder::quotePowerShell(linux_type)),
+        &exit_code);
+    const QString ok = caseLine(out, QStringLiteral("LINUXOK"));
+    QVERIFY2(ok == QStringLiteral("LINUXOK DONE | type=%1 | paths=\\\\?\\Volume{1}\\ | "
+                                  "size=536870912 | calls=noletter True;type "
+                                  "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7};resize 536870912;type "
+                                  "%1;noletter False")
+                       .arg(linux_type),
+             qPrintable(out));
+    // The resize failed, and the partition still has its own type.
+    const QString failed = caseLine(out, QStringLiteral("LINUXFAIL"));
+    QVERIFY2(failed.startsWith(QStringLiteral("LINUXFAIL THREW Not enough space on the disk. | "
+                                              "type=%1 | ")
+                                   .arg(linux_type)) &&
+                 failed.endsWith(QStringLiteral("type %1;noletter False").arg(linux_type)),
+             qPrintable(out));
+    // MBR has no attribute to hold letters off: the one Windows gave it is removed.
+    QVERIFY2(caseLine(out, QStringLiteral("MBR83")) ==
+                 QStringLiteral("MBR83 DONE | type=131 | paths=\\\\?\\Volume{1}\\ | "
+                                "size=536870912 | calls=mbr 7;remove Q:\\;resize 536870912;mbr "
+                                "131"),
+             qPrintable(out));
+    QVERIFY2(
+        caseLine(out, QStringLiteral("DATA")).endsWith(QStringLiteral("calls=resize 536870912")),
+        qPrintable(out));
+    QVERIFY2(caseLine(out, QStringLiteral("NORESTORE"))
+                 .contains(QStringLiteral("THREW Windows did not give the partition its type back "
+                                          "(%1): The parameter is incorrect. Set it back before "
+                                          "the disk is used: Set-Partition -DiskNumber 2 "
+                                          "-PartitionNumber 1 -GptType '%1'")
+                               .arg(linux_type)),
+             qPrintable(out));
 }
 
 namespace {

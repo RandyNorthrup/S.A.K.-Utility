@@ -3751,6 +3751,82 @@ Assert-SakExtFileSystem %1 %2
                     PartitionScriptBuilder::quotePowerShell(queuedFileSystem));
 }
 
+// Windows' Resize-Partition takes a data partition only ("This operation is only supported on data
+// partitions", StorageWMI 42011): GPT basic data, or MBR 07 or 0C. An ext partition carries the
+// Linux type once S.A.K. has formatted it, so every ext resize failed there (operation proof,
+// 2026-11-12, F24). A partition of another type is resized as a data partition and given its own
+// type and attributes back in a finally, so the type comes back when the resize fails too. Its
+// letters are held off while it has the data type: GPT's no-default-letter attribute, and on MBR,
+// which has none, any path Windows gives it is removed. Afterwards it is read back: its own type,
+// no path it did not have, and the new size.
+static QString resizeAsDataPartitionFunctionScript() {
+    return QStringLiteral(R"PS(
+function Remove-SakNewAccessPaths([uint32]$Disk, [uint32]$Number, [string[]]$Keep) {
+  Update-HostStorageCache -ErrorAction Stop
+  $now = Get-Partition -DiskNumber $Disk -PartitionNumber $Number -ErrorAction Stop
+  foreach ($path in @($now.AccessPaths)) {
+    if (-not $path -or "$path".StartsWith('\\?\Volume{') -or @($Keep) -contains "$path") { continue }
+    Remove-PartitionAccessPath -DiskNumber $Disk -PartitionNumber $Number -AccessPath $path -ErrorAction Stop
+    Write-Output ('Removed {0}, which Windows gave the partition while it had the data type' -f $path)
+  }
+}
+function Set-SakPartitionType([uint32]$Disk, [uint32]$Number, [bool]$Gpt, $Type, [bool]$NoLetter) {
+  if ($Gpt) {
+    Set-Partition -DiskNumber $Disk -PartitionNumber $Number -GptType $Type -ErrorAction Stop
+    Set-Partition -DiskNumber $Disk -PartitionNumber $Number -NoDefaultDriveLetter $NoLetter -ErrorAction Stop
+  } else {
+    Set-Partition -DiskNumber $Disk -PartitionNumber $Number -MbrType $Type -ErrorAction Stop
+  }
+}
+function Invoke-SakResizeAsDataPartition([uint32]$Disk, [uint32]$Number, [uint64]$Size) {
+  $basicData = '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}'
+  $before = Get-Partition -DiskNumber $Disk -PartitionNumber $Number -ErrorAction Stop
+  $gpt = "$((Get-Disk -Number $Disk -ErrorAction Stop).PartitionStyle)" -eq 'GPT'
+  $type = if ($gpt) { "$($before.GptType)" } else { [int]$before.MbrType }
+  if (($gpt -and $type -eq $basicData) -or (-not $gpt -and @(7, 12) -contains $type)) {
+    Resize-Partition -DiskNumber $Disk -PartitionNumber $Number -Size $Size -ErrorAction Stop
+    return
+  }
+  $noLetter = [bool]$before.NoDefaultDriveLetter
+  $paths = @(@($before.AccessPaths) | Where-Object { $_ -and -not "$_".StartsWith('\\?\Volume{') } | ForEach-Object { "$_" })
+  $shown = if ($gpt) { $type } else { '{0:X2}' -f $type }
+  Write-Output ('Windows resizes data partitions only, so this one has the data type for the resize, then its own ({0}) back' -f $shown)
+  $failure = $null
+  $restoreError = ''
+  try {
+    if ($gpt) {
+      Set-Partition -DiskNumber $Disk -PartitionNumber $Number -NoDefaultDriveLetter $true -ErrorAction Stop
+      Set-Partition -DiskNumber $Disk -PartitionNumber $Number -GptType $basicData -ErrorAction Stop
+    } else {
+      Set-Partition -DiskNumber $Disk -PartitionNumber $Number -MbrType 7 -ErrorAction Stop
+    }
+    Remove-SakNewAccessPaths $Disk $Number $paths
+    Resize-Partition -DiskNumber $Disk -PartitionNumber $Number -Size $Size -ErrorAction Stop
+  } catch {
+    $failure = $_
+  } finally {
+    try {
+      Set-SakPartitionType $Disk $Number $gpt $type $noLetter
+      Remove-SakNewAccessPaths $Disk $Number $paths
+    } catch { $restoreError = $_.Exception.Message }
+  }
+  if ($restoreError) {
+    $how = if ($gpt) { "-GptType '$type'" } else { "-MbrType 0x$shown" }
+    throw ('Windows did not give the partition its type back ({0}): {1} Set it back before the disk is used: Set-Partition -DiskNumber {2} -PartitionNumber {3} {4}' -f $shown, $restoreError, $Disk, $Number, $how)
+  }
+  if ($failure) { throw $failure }
+  $after = Get-Partition -DiskNumber $Disk -PartitionNumber $Number -ErrorAction Stop
+  $typeNow = if ($gpt) { "$($after.GptType)" } else { [int]$after.MbrType }
+  if ($typeNow -ne $type) { throw ('The partition was resized, but its type reads {0}, not its own {1}' -f $typeNow, $shown) }
+  $added = @(@($after.AccessPaths) | Where-Object { $_ -and -not "$_".StartsWith('\\?\Volume{') -and $paths -notcontains "$_" })
+  if ($added.Count -gt 0) { throw ('The partition was resized, but Windows left it reachable at {0}' -f ($added -join ', ')) }
+  if ($gpt -and [bool]$after.NoDefaultDriveLetter -ne $noLetter) { throw 'The partition was resized, but its no-default-letter attribute did not come back' }
+  if ([uint64]$after.Size -ne $Size) { throw 'Partition resize did not reach target size' }
+  Write-Output ('Resized, and its type is its own again ({0})' -f $shown)
+}
+)PS");
+}
+
 static PartitionScript buildNativeResizeScript(const PartitionOperation& operation,
                                                uint64_t targetSize,
                                                const QString& queuedFileSystem) {
@@ -3760,7 +3836,7 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
                       .arg(operation.target.partition_number.value())
                       .arg(formatPartitionBytes(targetSize));
     const QString resize =
-        QStringLiteral("Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size %3")
+        QStringLiteral("Invoke-SakResizeAsDataPartition -Disk %1 -Number %2 -Size %3")
             .arg(operation.target.disk_number.value())
             .arg(operation.target.partition_number.value())
             .arg(uintArg(targetSize));
@@ -3769,6 +3845,7 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
     const bool shrinks = targetSize < operation.target.size_bytes;
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  windowsFileSystemCheckScript(operation, queuedFileSystem) +
+                 resizeAsDataPartitionFunctionScript() +
                  QStringLiteral(
                      "$s = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %2\n"
                      "if ([uint64]%3 -lt [uint64]$s.SizeMin -or [uint64]%3 -gt [uint64]$s.SizeMax) "
@@ -3788,10 +3865,10 @@ static QString growExtResizePreToolScript(const PartitionOperation& operation,
                                           const QString& fs,
                                           const QString& targetPath,
                                           uint64_t targetSize) {
-    return extFileSystemCheckScript(targetPath, fs) +
+    return extFileSystemCheckScript(targetPath, fs) + resizeAsDataPartitionFunctionScript() +
            QStringLiteral(
                "$targetSizeBytes = [uint64]%1\n"
-               "Resize-Partition -DiskNumber %2 -PartitionNumber %3 -Size $targetSizeBytes\n"
+               "Invoke-SakResizeAsDataPartition -Disk %2 -Number %3 -Size $targetSizeBytes\n"
                "Update-HostStorageCache -ErrorAction Stop\n"
                "$p = Get-Partition -DiskNumber %2 -PartitionNumber %3 -ErrorAction Stop\n"
                "if ([uint64]$p.Size -ne $targetSizeBytes) { throw 'Partition resize did not reach "
@@ -3825,11 +3902,11 @@ static QString extShrinkPreToolScript(uint64_t targetSize) {
 
 static QString extShrinkPartitionScript(const PartitionOperation& operation) {
     // Always a shrink: defragsvc moves the data and finishes even if this script is killed.
-    return (windowsContinuedLine(
-                WindowsContinuedWork::PartitionShrink,
-                uintArg(operation.target.size_bytes),
-                QStringLiteral(
-                    "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size $targetSizeBytes")) +
+    return (windowsContinuedLine(WindowsContinuedWork::PartitionShrink,
+                                 uintArg(operation.target.size_bytes),
+                                 QStringLiteral(
+                                     "Invoke-SakResizeAsDataPartition -Disk %1 -Number %2 -Size "
+                                     "$targetSizeBytes")) +
             QStringLiteral(
                 "Update-HostStorageCache -ErrorAction Stop\n"
                 "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
@@ -3885,7 +3962,7 @@ static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& oper
                                           resize2fs,
                                           {QStringLiteral("-p"), targetPath, resizeSizeArg},
                                           {QStringLiteral("0")}) +
-                 extShrinkPartitionScript(operation) +
+                 resizeAsDataPartitionFunctionScript() + extShrinkPartitionScript(operation) +
                  filesystemToolCallScript(QStringLiteral("e2fsck post-shrink read-only check"),
                                           e2fsck,
                                           {QStringLiteral("-n"), QStringLiteral("-f"), targetPath},
