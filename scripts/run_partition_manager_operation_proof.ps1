@@ -720,7 +720,8 @@ try {
             Write-OpsResults
         }
         'Run' {
-            $wanted = if ($Rows.Count) { $Rows } else { @(Get-OpsPlanRows -For $Machine | Where-Object { -not $_.Pending } | ForEach-Object { $_.Id }) }
+            # A drill (hours of one loop) runs only when it is named.
+            $wanted = if ($Rows.Count) { $Rows } else { @(Get-OpsPlanRows -For $Machine | Where-Object { -not $_.Pending -and -not $_.Drill } | ForEach-Object { $_.Id }) }
             foreach ($id in $wanted) {
                 $row = @($Plan.Rows | Where-Object { $_.Id -ceq $id })
                 if ($row.Count -ne 1 -or $row[0].Machine -ne $Machine -or $row[0].Pending) { throw "$id is not a ready $Machine row in the plan" }
