@@ -642,7 +642,8 @@ function Write-OpsResults {
     foreach ($row in $Plan.Rows) {
         $found = $null
         foreach ($run in $runs) { $dir = Join-Path $run.FullName $row.Id; if (Test-Path -LiteralPath (Join-Path $dir 'report.json')) { $found = $dir; break } }
-        if ($found) {
+        # A row no machine can run says why, whatever an earlier attempt left behind.
+        if ($found -and $row.Machine -ne 'none') {
             $s = Get-OpsRowSummary -RowDir $found -PlanRow $row
             $tally[($s.verdict -split ' ')[0]]++
             $lines += "| $($s.id) | $($s.operation) | $($s.variant) | $($row.Machine) | $($s.build) | $($s.scripts) | $($s.helper) | $($s.verifier) | **$($s.verdict)** | $($s.run) |"
