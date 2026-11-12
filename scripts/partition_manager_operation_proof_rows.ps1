@@ -509,7 +509,7 @@ Add-OpsRow 'ops.resize-unknown-fs-below-fs' {
     $part = New-OpsRawPartition -DiskNumber $disk -SizeMB 128
     $select = @{ partition_number = $part.partition_number }
     Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = 'ext4'; allocation_unit_bytes = 0; label = 'OPSKEEP'; full_format = $false } | Out-Null
-    Invoke-OpsStep -Disk $disk -Step 'shrink' -Operation 'Resize' -Select $select -Choices @{ target_size_mib = 64 } -Expect 'refused' -RefusalContains 'file system' -ReadBackOnFailure | Out-Null
+    Invoke-OpsStep -Disk $disk -Step 'shrink' -Operation 'Resize' -Select $select -Choices @{ target_size_mib = 64 } -Expect 'refused' -RefusalContains "could not identify this partition's file system" -ReadBackOnFailure | Out-Null
     $checks = @(Test-OpsExtent -Name 'the partition is still 128 MiB' -DiskNumber $disk -Offset $part.offset -SizeBytes (128 * $Script:OpsMiB))
     $read = Test-OpsNonNativePartition -Prefix 'afterwards:' -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem 'ext4' -Label 'OPSKEEP' -Name 'after'
     $checks += $read.checks
