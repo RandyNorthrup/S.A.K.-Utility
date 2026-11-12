@@ -569,19 +569,19 @@ Add-OpsRow 'ops.resize-unknown-fs-below-fs' {
 }
 
 Add-OpsRow 'ops.apfs-container-resize' {
-    # An APFS container written into 128 MiB, the partition grown to 256 MiB with Windows' tools,
-    # then the app's "Resize container to fill partition".
+    # The app's two steps (opsfix, 2026-11-12): Resize grows the APFS partition in place into the
+    # free space after it, and "Resize container to fill partition" then grows the container.
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk
     $part = New-OpsRawPartition -DiskNumber $disk -SizeMB 128
     $select = @{ partition_number = $part.partition_number }
     Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = 'APFS'; allocation_unit_bytes = 0; label = 'OPSAPFS'; full_format = $false } | Out-Null
-    # Windows resizes only data partitions, and since opsfix the app's APFS Format gives the
-    # partition Apple's APFS type: the fixture grows it as basic data, then puts the type back.
-    $apfsType = (Get-Partition -DiskNumber $disk -PartitionNumber $part.partition_number).GptType
-    Set-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -GptType "{$Script:OpsGptBasicData}" -ErrorAction Stop
-    Resize-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -Size (256 * $Script:OpsMiB) -ErrorAction Stop
-    Set-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -GptType $apfsType -ErrorAction Stop
+    $typeBefore = "$((Get-Partition -DiskNumber $disk -PartitionNumber $part.partition_number).GptType)"
+    $grow = Invoke-OpsStep -Disk $disk -Step 'grow' -Operation 'Resize' -Select $select -Choices @{ target_size_mib = 256; administrator_scan = $true } -ReadBackOnFailure
+    $checks = @(Test-OpsExtent -Name 'the partition grew in place to 256 MiB' -DiskNumber $disk -Offset $part.offset -SizeBytes (256 * $Script:OpsMiB))
+    $checks += New-OpsCheck -Name 'the grow kept the APFS partition type' -Passed ("$((Get-Partition -DiskNumber $disk -PartitionNumber $part.partition_number).GptType)" -eq $typeBefore) -Detail $typeBefore
+    $preview = "$(@($grow.queued_operations)[0].summary) $(@($grow.execution.steps | ForEach-Object { $_.stdout }) -join ' ')"
+    $checks += New-OpsCheck -Name 'the grow says to resize the container next' -Passed ($preview -match 'Resize container to fill partition') -Detail ($preview.Substring(0, [Math]::Min(300, $preview.Length)))
     $before = Copy-OpsPartitionImage -DiskNumber $disk -PartitionNumber $part.partition_number -Name 'before'
     $beforeBlocks = [BitConverter]::ToUInt64((Read-OpsImageBytes -Path $before.path -Offset 0 -Length 4096), 40)
     Invoke-OpsStep -Disk $disk -Step 'resize' -Operation 'ApfsResizeContainer' -Select $select -Choices @{ administrator_scan = $true } | Out-Null
@@ -589,10 +589,32 @@ Add-OpsRow 'ops.apfs-container-resize' {
     $block = Read-OpsImageBytes -Path $read.image.path -Offset 0 -Length 4096
     $blockSize = [uint64][BitConverter]::ToUInt32($block, 36)
     $afterBlocks = [BitConverter]::ToUInt64($block, 40)
-    $checks = @($read.checks)
+    $checks += @($read.checks)
     $checks += New-OpsCheck -Name 'the container now fills the 256 MiB partition' -Passed ($afterBlocks * $blockSize -gt 250 * $Script:OpsMiB -and $afterBlocks * $blockSize -le 256 * $Script:OpsMiB) -Detail "$beforeBlocks -> $afterBlocks blocks of $blockSize"
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ images = @($before, $read.image) })
 }
+
+function Invoke-OpsResizeRefused {
+    # Resizes S.A.K. refuses (opsfix, 2026-11-12): an APFS shrink, and any HFS+ resize. The step
+    # expects the refusal, and the row reads back that nothing changed: the extent and the whole
+    # partition's bytes.
+    param([string]$FileSystem, [int]$FromMiB, [int]$ToMiB, [string]$Says)
+    $disk = New-OpsDisk -Name 'disk'
+    $media = Get-OpsMedia -DiskNumber $disk
+    $part = New-OpsRawPartition -DiskNumber $disk -SizeMB $FromMiB
+    $select = @{ partition_number = $part.partition_number }
+    Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = $FileSystem; allocation_unit_bytes = 0; label = 'OPSKEEP'; full_format = $false } | Out-Null
+    $before = Copy-OpsPartitionImage -DiskNumber $disk -PartitionNumber $part.partition_number -Name 'before'
+    Invoke-OpsStep -Disk $disk -Step 'resize' -Operation 'Resize' -Select $select -Choices @{ target_size_mib = $ToMiB; administrator_scan = $true } -Expect 'refused' -RefusalContains $Says -ReadBackOnFailure | Out-Null
+    $checks = @(Test-OpsExtent -Name "the partition is still $FromMiB MiB" -DiskNumber $disk -Offset $part.offset -SizeBytes ([uint64]$FromMiB * $Script:OpsMiB))
+    $after = Copy-OpsPartitionImage -DiskNumber $disk -PartitionNumber $part.partition_number -Name 'after'
+    $checks += New-OpsCheck -Name 'not one byte of the partition changed' -Passed ($before.sha256 -eq $after.sha256) -Detail "$($before.sha256) / $($after.sha256)"
+    Remove-Item -LiteralPath $before.path, $after.path -Force -ErrorAction SilentlyContinue
+    return Complete-OpsRow -Media $media -Checks $checks
+}
+
+Add-OpsRow 'ops.resize-apfs-shrink-refused' { Invoke-OpsResizeRefused -FileSystem 'APFS' -FromMiB 256 -ToMiB 128 -Says 'S.A.K. cannot resize APFS partitions' }
+Add-OpsRow 'ops.resize-hfsplus-refused' { Invoke-OpsResizeRefused -FileSystem 'HFS+' -FromMiB 128 -ToMiB 256 -Says 'S.A.K. cannot resize HFS+ partitions' }
 
 # --- Check and repair -----------------------------------------------------------------------------
 
