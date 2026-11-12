@@ -1357,7 +1357,16 @@ Add-OpsRow 'ops.migrate-image-route' {
     $found = Get-CertReadPin -Role 'any'
     $media = Get-CertMedia -DiskNumber $found.number -Class 'virtual_machine' -Kind 'Windows on a VirtualBox VDI'
     Set-Content -LiteralPath 'C:\SAKCert\source-marker.txt' -Value $Script:RunId -Encoding ASCII
-    $step = Invoke-OpsStep -Disk $found.number -GivenPin $found.pin -Step 'migrate' -Operation 'MigrateOs' -Choices @{ verify_mode = 'Sample verification'; allow_no_snapshot = $false } -TimeoutSeconds 10800
+    $step = Invoke-OpsStep -Disk $found.number -GivenPin $found.pin -Step 'migrate' -Operation 'MigrateOs' -Choices @{ verify_mode = 'Sample verification'; allow_no_snapshot = $false } -TimeoutSeconds 10800 -ReadBackOnFailure
+    if ($null -eq $step) {
+        # What stopped it, from Windows' own records, kept before the VM goes back to its snapshot.
+        # On b36 DISM stopped with 225, "the file contains a virus or potentially unwanted
+        # software", and the log and Defender's list went with the snapshot.
+        $dism = @(Get-Content -LiteralPath "$env:SystemRoot\Logs\DISM\dism.log" -Tail 600 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'Error|Warning|0x8|virus|unwanted|blocked' } | Select-Object -Last 30)
+        $detections = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Sort-Object InitialDetectionTime -Descending | Select-Object -First 10 | ForEach-Object { "$($_.InitialDetectionTime.ToString('o')) $($_.ThreatID) $($_.ProcessName) $(@($_.Resources) -join ';')" })
+        $threats = @(Get-MpThreat -ErrorAction SilentlyContinue | ForEach-Object { "$($_.ThreatID) $($_.ThreatName)" })
+        return Complete-OpsRow -Media $media -Checks @() -Extra ([ordered]@{ dism_log = $dism; defender_detections = $detections; defender_threats = $threats })
+    }
     $plan = @($step.queued_operations)[0].payload.migration_plan
     $checks = @(New-OpsCheck -Name 'the plan took the Image route' -Passed ("$($plan.route)" -eq 'Image') -Detail "$($plan.route)")
     $after = Get-CertSnapshot -DiskNumber $found.number
