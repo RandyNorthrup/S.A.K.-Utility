@@ -866,11 +866,26 @@ QString emptyScanRefusal(const sak::PartitionInventory& inventory) {
         .arg(inventory.warnings.join(QStringLiteral("; ")));
 }
 
-Result<void> refreshInventory(sak::PartitionManagerController& controller, int timeout_seconds) {
-    const auto scanned = ControllerWait(controller, timeout_seconds).run([&controller]() {
-        controller.refreshInventory();
-        return true;
-    });
+/// The scan a step starts from. An operation-proof step on a non-Windows file system asks for the
+/// scan with administrator rights (choices.administrator_scan), because a standard scan cannot
+/// read a raw partition: in the panel that file system is known from the elevated scan of the
+/// Apply that wrote it, or from Scan Disks with administrator rights.
+bool wantsAdministratorScan(const StepJob& job) {
+    return job.operation_proof &&
+           job.choices.value(QLatin1String("administrator_scan")).toBool(false);
+}
+
+Result<void> refreshInventory(sak::PartitionManagerController& controller,
+                              int timeout_seconds,
+                              bool administrator_scan = false) {
+    const auto scanned =
+        ControllerWait(controller, timeout_seconds).run([&controller, administrator_scan]() {
+            if (administrator_scan) {
+                return controller.refreshInventoryWithAdministratorRights();
+            }
+            controller.refreshInventory();
+            return true;
+        });
     if (!scanned) {
         return refused(scanned.error());
     }
@@ -1611,7 +1626,9 @@ Result<void> runStep(sak::PartitionManagerController& controller,
     if (auto in_process = runInProcess(job, report)) {
         return *in_process;
     }
-    if (const auto scan = refreshInventory(controller, job.timeout_seconds); !scan) {
+    if (const auto scan =
+            refreshInventory(controller, job.timeout_seconds, wantsAdministratorScan(job));
+        !scan) {
         return scan;
     }
     const sak::PartitionInventory inventory = controller.inventory();
@@ -1786,6 +1803,12 @@ void selfTestOperationProof(const AddCheck& add) {
             panel_format->second.startsWith(QStringLiteral("replicated")) &&
             assistant_format->second == QStringLiteral("core partition_operation_requests") &&
             !proofBuilderFor(QStringLiteral("SetDriveLetter"), true).has_value());
+    StepJob scan_job;
+    scan_job.choices = QJsonObject{{"administrator_scan", true}};
+    const bool certification_scan = wantsAdministratorScan(scan_job);
+    scan_job.operation_proof = true;
+    add(QStringLiteral("step-administrator-scan-only-for-proof-jobs"),
+        !certification_scan && wantsAdministratorScan(scan_job));
     add(QStringLiteral("step-proof-format-adds-tool-fields-only-for-non-windows"),
         isPanelNonNativeFormat(QStringLiteral("ext4")) &&
             isPanelNonNativeFormat(QStringLiteral("Linux swap")) &&
