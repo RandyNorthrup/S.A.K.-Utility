@@ -167,6 +167,48 @@ enforces it.
 **Never `--no-verify`.** If a hook fails, fix the cause. A hook bypassed once becomes a hook
 nobody trusts.
 
+**Elevated code never follows a link, and nothing of S.A.K.'s lives outside its folder** (owner,
+2026-11-11). S.A.K. runs as administrator from a folder, often a flash drive, that other accounts
+may be able to write to, and nothing is copied to the PC, not even temporarily.
+
+- Every open, write, move or delete in a folder someone else could write to (a folder the user
+  picked, the program's data folder, a backup root) goes through `sak::no_follow`
+  (`include/sak/no_follow_fs.h`) in C++ and `[Sak.SafeFiles]` in PowerShell: hold the folder,
+  create with CREATE_NEW under a random name, publish by a rename relative to the held folder,
+  delete with `removeTree`. Never `QDir::removeRecursively`, `QFile::copy`/`rename` onto a chosen
+  path, `New-Item -Force`, `robocopy /MIR` into a chosen root, or `mklink`.
+- Temporary files go only in this run's folder under `data\temp`
+  (`app_paths::sessionTempDirectory()`; TEMP and TMP point there for the whole process, elevated
+  or not). A file another program reads by name (a diskpart `/s` script, a netsh profile, a
+  credential, a payload) is written with `app_paths::writeHeldSessionTempFile` or
+  `[Sak.SafeFiles]::WriteHeldReadOnly` and held read-only until that program is done. Scripts stay
+  in memory: never a `.ps1` on disk.
+- No `Add-Type` in a script. C# a script needs goes into
+  `src/core/partition_scripts/sak_script_types.cs` (C# 5, built into `sak_script_types.dll`) and is
+  loaded with `PartitionScriptBuilder::scriptTypesLoaderScript()`.
+- Every `.exe` and `.dll` the build ships is in the program manifest
+  (`cmake/program_manifest.cmake`), or an elevation refuses the folder;
+  `test_program_integrity` fails on a shipped file the manifest misses.
+- The test for any of this plants a junction to a canary (`tests/support/junction_fixture.h`) and
+  checks the canary afterwards.
+
+**A generated script's operation is not tested until the script itself has run it** (2026-11-11).
+The app's HFS+ Format and Repair and its Format to APFS of a Windows partition never worked, and
+every assertion on their script text passed: a function's call named a parameter it did not have,
+a function that returned a value also wrote to the pipeline, and a partition was written through
+the file system Windows had mounted on it. So:
+
+- A test of a generated PowerShell function runs the script's own function (against a stand-in
+  file or tool), not a copy and not a string match.
+  `generatedScripts_callTheirOwnFunctionsWithDeclaredParameters` checks every own-function call and
+  every `Sak.*` type statically.
+- A PowerShell function whose value a caller uses writes its progress with
+  `[Console]::Out.WriteLine`, never to the pipeline.
+- A partition is written only through a handle that took it first: extended DASD access, lock,
+  dismount (`openFileOrRawDeviceReadWrite` in C++, `[Sak.RawPartitionWrite]::Open` in a script).
+  Tests that write image files say nothing about this; `test_raw_partition_write` writes real
+  partitions.
+
 ---
 
 ## The gate

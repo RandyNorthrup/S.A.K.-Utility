@@ -13,8 +13,68 @@ Manager's certification now drives the app itself, and
 [docs/PARTITION_MANAGER_CERTIFICATION.md](docs/PARTITION_MANAGER_CERTIFICATION.md) says what its final run covered;
 a Windows install USB is FAT32 and starts UEFI PCs; Email Inspector reads whole Outlook files, NST files included;
 Reset Network keeps settings typed in by hand; Cancel no longer calls work Windows carries on with "cancelled"; the
-theme follows Windows; one S.A.K. Utility runs per folder; Qt 6.12 LTS and security updates to what ships; and a
-smaller download.
+theme follows Windows; one S.A.K. Utility runs per folder; Qt 6.12 LTS and security updates to what ships; a
+smaller download; and S.A.K. Utility running as administrator from a drive other accounts can write to, with nothing
+of its own put on the PC.
+
+- **Running as administrator from a flash drive is checked first** - S.A.K. Utility runs as administrator straight
+  from its folder, often a USB drive any account can write to. Before anything of it runs as administrator (Run as
+  Administrator, or the helper that partition, disk and repair work run in), every program file in its folder must be
+  one this release ships, byte for byte, or carry the same signature as S.A.K. Utility itself; anything else stops
+  the elevation with "S.A.K. won't run as administrator while <path> is in its folder; it isn't part of S.A.K.".
+  While the administrator side runs, its program files cannot be changed, replaced or deleted. It loads DLLs only
+  from its folder and Windows, and stops if anything else was loaded into it. Nothing is copied to the PC to do this.
+- **Nothing of S.A.K. Utility's is left on the PC, not even for a moment** - Temporary files now live only in a
+  folder of the run's own under the program's `data\temp`, which on NTFS only Administrators, SYSTEM and the person
+  running S.A.K. Utility can open, and which is removed at exit (a run that was killed is cleaned up at the next
+  start). Programs S.A.K. Utility starts get the same TEMP and TMP. The script diskpart runs, a Wi-Fi profile handed
+  to netsh, the FileVault password handed to the APFS writer and the payload of an HFS+ or APFS file change are
+  written new there and locked against change until the program reading them is done. Scripts' own types ship as
+  `sak_script_types.dll`; nothing is compiled into a temporary folder at run time.
+- **A link planted in a folder no longer redirects an administrator's writes or deletes** - File Organizer, backup
+  files, the profile backup and restore, Email Inspector's attachments, Partition Manager's backup copies and image
+  files, the Windows-via-UUP workspace, the log folder and the temporary-folder cleanup each open the folder they work
+  in without following a link (a junction or symbolic link) and refuse when there is one where a folder should be;
+  deleting a folder removes a link inside it as a link and never touches what it points to. Partition Manager's
+  backups copy with `/E`, never `/MIR`, so a chosen folder is never emptied to match.
+- **HFS+ format and repair work through the app, from an NTFS drive** - They had never worked through the app: since
+  August they stopped at their first step ("The property 'Value' cannot be found on this object."), and before that
+  they failed reading the Mac tool's result ("Cannot convert the "System.Object[]" value ... to type
+  "System.Int32"") and writing a partition Windows had a file system on. They stage an image of the partition in
+  S.A.K. Utility's own data folder, and only NTFS holds that image, so on a FAT32 or exFAT drive, or one without room
+  for the partition's data, they now say so before touching the target: run S.A.K. Utility from an NTFS-formatted
+  drive for them.
+- **Format to HFS+ or APFS of an NTFS, FAT32 or exFAT partition works** - Windows keeps the file system it knows
+  mounted on a partition, letter or not, and through it the partition's last sectors could not be written ("Unable
+  to zero APFS format target: Unknown error", or "Access to the path is denied."). S.A.K. Utility now takes the
+  partition first, locked and its file system dismounted, and says so when something else has it open: "The
+  partition is in use, so Windows will not hand it over: close File Explorer windows and programs using it, then try
+  again".
+- **ext format, grow, shrink and repair, Linux swap format and APFS repair work through the app** - The bundled
+  ext tools print their version to the error stream, and the script stopped at that first line; a partition with a
+  drive letter stopped earlier, at a command Windows PowerShell does not have; and Partition Manager offered APFS
+  repair only for a layout its own format no longer produced, so the option never appeared. The scripts now take the
+  partition (locked, its file system let go, refused while something else has it open), clear the old file system
+  before a format, and read each tool's exit code. APFS repair is offered for a container S.A.K. Utility formatted
+  that its repair can handle, up to 128 MiB; for any other the check says why: "S.A.K. can repair only APFS
+  containers it formatted itself, up to 128.0 MB." HFS+ staging no longer reads fsutil's translated output, so it
+  works on a Windows in any language. Merge Partitions makes its destination folder new and holds it while it copies.
+- **Windows no longer offers to format a Linux or Mac partition S.A.K. Utility just made** - Format to ext2/3/4,
+  Linux swap, HFS+ or APFS now removes the partition's drive letters and folder paths and gives it that file
+  system's own partition type (GPT: Linux file system, Linux swap, Apple HFS+, APFS; MBR: 0x83, 0x82, 0xAF), so
+  Windows leaves it alone instead of asking "You need to format the disk in drive T:". Format back to NTFS, FAT32 or
+  exFAT sets a Windows data type first, which also lets it format a Linux or Mac partition brought in from another
+  computer: Windows has no volume on such a partition to format.
+- **A Linux or Mac volume with a drive letter no longer stops Apply** - Windows can read neither the dirty bit nor
+  BitLocker on a volume it shows as RAW, and those two warnings made the scan after a good Format fail ("Post-apply
+  verification failed") and refused every later Apply; an ext repair of such a volume was not even added to the
+  queue ("BitLocker protection and lock state could not be determined"). The scan and the queue skip them for a
+  volume identified as ext, HFS+, APFS or Linux swap, and still refuse a RAW volume nothing could identify.
+- **Started from a PowerShell 7 window, S.A.K. Utility's scripts still find their commands** - Windows PowerShell
+  given PowerShell 7's module path cannot load `Get-FileHash`, which the HFS+ tool check and other partition scripts
+  use. The scripts S.A.K. Utility starts now get Windows PowerShell's own module path.
+- **A slow sender can no longer hold the administrator helper's connection** - Each message to or from the helper
+  must now arrive whole within one deadline; one sent a byte at a time no longer keeps it waiting.
 
 - **A cancelled step reads as cancelled** - The Log window's report listed a step a Cancel had stopped as "Failed:".
   It now reads "Cancelled:", in the report text, its HTML and its JSON, for a cancel from the Cancel button, a close,
@@ -161,7 +221,9 @@ smaller download.
 - **The About tab says what was tested** - It said Partition Manager had not been tested through the app on real
   hardware. It now says what the certification of this version found, in its words: what ran on virtual machines and
   virtual disks, the two real disks some operations were tested on, and the limits (internal SATA drives were not
-  tested; SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize). Back up before changing a disk.
+  tested; SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize). Back up before changing a disk. Of
+  Apple's file systems it says only what that evidence was: on earlier code (June to August 2026), S.A.K.'s HFS+
+  and APFS write engine was validated with Apple's own tools.
 - **File system support says plainly what is not available** - Partition Manager's Properties said XFS format and
   repair "remain blocked until the bundled tools have been tested" and listed xfs_repair as a required bundled tool,
   and Btrfs listed btrfs; neither ships. They now say these are not available because S.A.K. Utility includes no XFS
