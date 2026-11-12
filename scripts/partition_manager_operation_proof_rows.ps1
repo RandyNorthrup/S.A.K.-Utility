@@ -2113,6 +2113,10 @@ while (-not (Test-Path -LiteralPath $StopFile)) {
         Remove-Item -LiteralPath $churn -Force -ErrorAction SilentlyContinue
         $restored = (& vssadmin.exe resize shadowstorage /for=C: /on=C: /maxsize=10% 2>&1 | Out-String).Trim()
     }
+    # A step that did not do what the row expected comes back as nothing (its failure is a check of
+    # its own already); what it printed is still in its report beside the row.
+    $report = Join-Path $Script:RowDir 'migrate.client.json'
+    if ($null -eq $step -and (Test-Path -LiteralPath $report)) { $step = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json }
     $said = if ($null -ne $step) { (@($step.execution.steps) | ForEach-Object { "$($_.stdout)`n$($_.stderr)`n$($_.error_message)" }) -join "`n" } else { '' }
     $checks = @(New-OpsCheck -Name 'the fixture: shadow-copy storage for C: was set to its minimum' -Passed ($storageSmall -match '320 MB') -Detail $storageSmall)
     $preflight = @($said -split "`r?`n" | Where-Object { $_ -match 'Shadow-copy storage for C:|^WARNING: that leaves' })
