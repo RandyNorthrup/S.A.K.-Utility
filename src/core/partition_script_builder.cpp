@@ -2053,6 +2053,76 @@ QString createdPartitionFormatScript(const PartitionOperation& operation, const 
         .arg(format, uintArg(operation.target.disk_number.value()));
 }
 
+// Hide: every drive letter and folder path the partition has is removed while it is visible, then
+// it is hidden, and Windows is asked afterwards that it is hidden with no access path left.
+// Set-Partition -IsHidden drops the access paths itself on Windows 11 25H2, so the removal that
+// came after it failed with "The access path is not valid" and Hide failed on every lettered
+// partition (operation proof, 2026-11-11; on testpc1 the same on GPT and MBR, and a partition
+// hidden that way got its letter and folder path back on Unhide). The volume's own \\?\Volume{...}
+// path is not an access path to remove.
+QString hidePartitionScript(const PartitionOperation& operation) {
+    return QStringLiteral(
+               "$sakHideDisk = [uint32]%1\n"
+               "$sakHideNumber = [uint32]%2\n"
+               "$sakHide = Get-Partition -DiskNumber $sakHideDisk -PartitionNumber $sakHideNumber "
+               "-ErrorAction Stop\n"
+               "foreach ($sakAccessPath in @($sakHide.AccessPaths)) {\n"
+               "  if (-not [string]::IsNullOrWhiteSpace($sakAccessPath) -and "
+               "-not ([string]$sakAccessPath).StartsWith('\\\\?\\Volume{')) {\n"
+               "    Remove-PartitionAccessPath -DiskNumber $sakHideDisk -PartitionNumber "
+               "$sakHideNumber -AccessPath $sakAccessPath -ErrorAction Stop\n"
+               "    Write-Output ('Removed the partition''s access path {0}' -f $sakAccessPath)\n"
+               "  }\n"
+               "}\n"
+               "Set-Partition -DiskNumber %1 -PartitionNumber %2 -IsHidden $true "
+               "-NoDefaultDriveLetter $true -ErrorAction Stop\n"
+               "Update-HostStorageCache -ErrorAction Stop\n"
+               "$sakHidden = Get-Partition -DiskNumber $sakHideDisk -PartitionNumber "
+               "$sakHideNumber -ErrorAction Stop\n"
+               "if (-not $sakHidden.IsHidden) { throw 'Windows did not hide the partition' }\n"
+               "$sakLeft = @($sakHidden.AccessPaths | Where-Object { $_ -and -not "
+               "([string]$_).StartsWith('\\\\?\\Volume{') })\n"
+               "if ($sakLeft.Count -gt 0) { throw ('The partition is hidden, but can still be "
+               "reached at {0}' -f ($sakLeft -join ', ')) }\n"
+               "Write-Output 'The partition is hidden, with no drive letter or folder path'\n")
+        .arg(uintArg(operation.target.disk_number.value()),
+             uintArg(operation.target.partition_number.value()));
+}
+
+// Unhide, and a drive letter back when Windows reads the volume's file system: one that Hide took
+// the paths from comes back with none (testpc1, 2026-11-11), and a person unhiding a partition
+// expects to open it. A partition with no file system Windows reads gets none, which would only
+// have Windows offer to format it.
+QString unhidePartitionScript(const PartitionOperation& operation) {
+    return QStringLiteral(
+               "$sakShowDisk = [uint32]%1\n"
+               "$sakShowNumber = [uint32]%2\n"
+               "Set-Partition -DiskNumber %1 -PartitionNumber %2 -IsHidden $false "
+               "-NoDefaultDriveLetter $false -ErrorAction Stop\n"
+               "Update-HostStorageCache -ErrorAction Stop\n"
+               "$sakShown = Get-Partition -DiskNumber $sakShowDisk -PartitionNumber "
+               "$sakShowNumber -ErrorAction Stop\n"
+               "if ($sakShown.IsHidden) { throw 'Windows did not unhide the partition' }\n"
+               "$sakShownFileSystem = ''\n"
+               "try { $sakShownFileSystem = [string]($sakShown | Get-Volume -ErrorAction "
+               "Stop).FileSystem } catch { $sakShownFileSystem = '' }\n"
+               "if (-not $sakShown.DriveLetter -and $sakShownFileSystem) {\n"
+               "  Add-PartitionAccessPath -DiskNumber $sakShowDisk -PartitionNumber $sakShowNumber "
+               "-AssignDriveLetter -ErrorAction Stop\n"
+               "  Update-HostStorageCache -ErrorAction Stop\n"
+               "  $sakShown = Get-Partition -DiskNumber $sakShowDisk -PartitionNumber "
+               "$sakShowNumber -ErrorAction Stop\n"
+               "  if (-not $sakShown.DriveLetter) { throw 'Windows unhid the partition but gave it "
+               "no drive letter' }\n"
+               "}\n"
+               "Write-Output ('The partition is visible{0}' -f $(if ($sakShown.DriveLetter) { ' "
+               "as ' + $sakShown.DriveLetter + ':' } else { ', with no file system Windows reads, "
+               "so "
+               "no drive letter' }))\n")
+        .arg(uintArg(operation.target.disk_number.value()),
+             uintArg(operation.target.partition_number.value()));
+}
+
 // Format-Volume can write the start of a volume and then refuse (a FAT32 cluster size, measured
 // on testpc1, 2026-11-11), and the old file system is then gone: the message says it may be. The
 // partition is taken before the format (Sak.RawPartitionWrite: refused while anything has it
@@ -5992,21 +6062,7 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionHiddenScript(
                       .arg(operation.target.disk_number.value())
                       .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 QStringLiteral(
-                     "Set-Partition -DiskNumber %1 -PartitionNumber %2 "
-                     "-IsHidden $%3 -NoDefaultDriveLetter $%3\n")
-                     .arg(operation.target.disk_number.value())
-                     .arg(operation.target.partition_number.value())
-                     .arg(hidden ? QStringLiteral("true") : QStringLiteral("false"));
-    if (hidden && isValidDriveLetter(operation.target.drive_letter.left(1))) {
-        out.script += QStringLiteral(
-                          "Remove-PartitionAccessPath -DiskNumber %1 -PartitionNumber %2 "
-                          "-AccessPath %3 -ErrorAction Stop\n")
-                          .arg(operation.target.disk_number.value())
-                          .arg(operation.target.partition_number.value())
-                          .arg(quotePowerShell(operation.target.drive_letter.left(1).toUpper() +
-                                               QStringLiteral(":\\")));
-    }
+                 (hidden ? hidePartitionScript(operation) : unhidePartitionScript(operation));
     return out;
 }
 

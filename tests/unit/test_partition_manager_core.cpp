@@ -1607,6 +1607,7 @@ private Q_SLOTS:
     void generatedScripts_createIsAllOrNothing();
     void generatedScripts_windowsFormatTakesThePartitionFirst();
     void generatedScripts_mbrTypeReachesSetPartitionAsHex();
+    void generatedScripts_hideRemovesThePathsFirstAndUnhideGivesALetter();
     void strongIndex_valueSemanticsRoundTrip();                       // R5-G14-19
     void strongIndex_findersResolveByTypedIndexAndFailClosed();       // R5-G14-19
     void fileSystemDetector_detectsRawSignatures();
@@ -20445,9 +20446,10 @@ namespace {
 
 void verifyAdvancedScriptFailureReporting(const PartitionScript& hidden,
                                           const PartitionScript& surface) {
-    QVERIFY(hidden.script.contains(QStringLiteral(
-        "Remove-PartitionAccessPath -DiskNumber 1 -PartitionNumber 3 -AccessPath 'E:\\' "
-        "-ErrorAction Stop")));
+    // Each access path the partition has is removed, and a failure stops the script.
+    QVERIFY(hidden.script.contains(
+        QStringLiteral("Remove-PartitionAccessPath -DiskNumber $sakHideDisk -PartitionNumber "
+                       "$sakHideNumber -AccessPath $sakAccessPath -ErrorAction Stop")));
     QVERIFY(!hidden.script.contains(QStringLiteral("-ErrorAction SilentlyContinue")));
     QVERIFY(
         surface.script.contains(QStringLiteral("Get-StorageReliabilityCounter -ErrorAction Stop")));
@@ -20741,6 +20743,107 @@ void PartitionManagerCoreTests::generatedScripts_mbrTypeReachesSetPartitionAsHex
     // line, run against the same stand-in.
     const QString restored = runRestoredMbrTypeLine(builder);
     QVERIFY2(restored.contains(QStringLiteral("CALL Set mbr=131 gpt=")), qPrintable(restored));
+}
+
+namespace {
+
+/// Stand-ins for Hide and Unhide that do what Windows 11 25H2 did on testpc1 (2026-11-11): hiding
+/// drops every access path, removing a path that is not there fails "The access path is not
+/// valid.", and unhiding gives back only the volume's own path. The partition is Disk 4
+/// Partition 2, lettered T: with a folder path; its volume holds $global:fs.
+QString hideStandIns() {
+    return QStringLiteral(
+        "$global:part = [pscustomobject]@{ DiskNumber = 4; PartitionNumber = 2; Size = 268435456; "
+        "Offset = 1048576; Guid = ''; IsHidden = $false; DriveLetter = [char]'T'; AccessPaths = "
+        "@('T:\\', 'C:\\mnt\\data\\', '\\\\?\\Volume{0f1e2d3c-0000-0000-0000-000000000000}\\') }\n"
+        "function Get-Partition { param($DiskNumber, $PartitionNumber, $ErrorAction) $global:part "
+        "}\n"
+        "function Remove-PartitionAccessPath { param($DiskNumber, $PartitionNumber, $AccessPath, "
+        "$ErrorAction) if (@($global:part.AccessPaths) -notcontains $AccessPath) { throw 'The "
+        "access path is not valid.' }; Write-Host ('CALL Remove ' + $AccessPath); "
+        "$global:part.AccessPaths = @($global:part.AccessPaths | Where-Object { $_ -ne "
+        "$AccessPath }); if ($AccessPath -match '^[A-Z]:') { $global:part.DriveLetter = $null } "
+        "}\n"
+        "function Set-Partition { param($DiskNumber, $PartitionNumber, $IsHidden, "
+        "$NoDefaultDriveLetter, $ErrorAction) Write-Host ('CALL Set hidden=' + $IsHidden); "
+        "$global:part.IsHidden = $IsHidden; if ($IsHidden) { $global:part.AccessPaths = @(); "
+        "$global:part.DriveLetter = $null } else { $global:part.AccessPaths = "
+        "@('\\\\?\\Volume{0f1e2d3c-0000-0000-0000-000000000000}\\') } }\n"
+        "function Update-HostStorageCache { param($ErrorAction) }\n"
+        "function Get-Volume { param([Parameter(ValueFromPipeline = $true)]$InputObject) process "
+        "{ [pscustomobject]@{ FileSystem = $global:fs } } }\n"
+        "function Add-PartitionAccessPath { param($DiskNumber, $PartitionNumber, "
+        "[switch]$AssignDriveLetter, $ErrorAction) Write-Host 'CALL AssignLetter'; "
+        "$global:part.DriveLetter = [char]'T'; $global:part.AccessPaths = @('T:\\') + "
+        "@($global:part.AccessPaths) }\n");
+}
+
+/// The letter and the folder path went before the partition was hidden, its volume path stayed,
+/// and the script said it was hidden and ended.
+bool hidOnlyAfterRemovingEachPath(const QString& out) {
+    const qsizetype set_at = out.indexOf(QStringLiteral("CALL Set hidden=True"));
+    const qsizetype letter_at = out.indexOf(QStringLiteral("CALL Remove T:\\"));
+    const qsizetype folder_at = out.indexOf(QStringLiteral("CALL Remove C:\\mnt\\data\\"));
+    return letter_at >= 0 && folder_at >= 0 && letter_at < set_at && folder_at < set_at &&
+           !out.contains(QStringLiteral("CALL Remove \\\\?\\Volume")) &&
+           out.contains(QStringLiteral("The partition is hidden, with no drive letter")) &&
+           out.contains(QStringLiteral("DONE"));
+}
+
+QString runHideScript(const QString& script, const QString& prelude) {
+    int exit_code = -1;
+    return runWithScriptFunctions(
+        QString(),
+        hideStandIns() + prelude + QStringLiteral("try {\n") + script +
+            QStringLiteral("\n'DONE'\n} catch { 'THREW ' + $_.Exception.Message }\n"),
+        &exit_code);
+}
+
+}  // namespace
+
+// F8 (operation proof, 2026-11-11): Hide failed on every lettered partition, GPT and MBR: it ran
+// Set-Partition -IsHidden first, which drops the access paths on Windows 11 25H2, and the removal
+// after it stopped the script ("The access path is not valid"). Every path that exists goes while
+// the partition is visible, then it is hidden and read back. Unhide gives a letter back to a volume
+// Windows reads. Windows PowerShell 5.1 runs the whole scripts against stand-ins that behave as
+// Windows did on testpc1.
+void PartitionManagerCoreTests::generatedScripts_hideRemovesThePathsFirstAndUnhideGivesALetter() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{4};
+    target.partition_number = PartitionNumber{2};
+    target.offset_bytes = 1'048'576;
+    target.size_bytes = 268'435'456;
+    target.drive_letter = QStringLiteral("T");
+    const PartitionScriptBuilder builder;
+    const auto script = [&builder, &target](bool hidden) {
+        return builder
+            .buildScript(PartitionOperationPlanner::makeOperation(
+                PartitionOperationType::SetPartitionHidden,
+                target,
+                QJsonObject{{QStringLiteral("hidden"), hidden}}))
+            .script;
+    };
+    const QString hidden = runHideScript(script(true), QStringLiteral("$global:fs = 'NTFS'\n"));
+    QVERIFY2(hidOnlyAfterRemovingEachPath(hidden), qPrintable(hidden));
+
+    // Unhide after that Hide: Windows gives back no letter, so the script asks for one.
+    const QString hide_first = QStringLiteral(
+        "$global:fs = 'NTFS'\n$global:part.IsHidden = $true\n$global:part.DriveLetter = $null\n"
+        "$global:part.AccessPaths = @()\n");
+    const QString shown = runHideScript(script(false), hide_first);
+    QVERIFY2(shown.contains(QStringLiteral("CALL Set hidden=False")) &&
+                 shown.contains(QStringLiteral("CALL AssignLetter")) &&
+                 shown.contains(QStringLiteral("The partition is visible as T:")) &&
+                 shown.contains(QStringLiteral("DONE")),
+             qPrintable(shown));
+    QString raw = hide_first;
+    raw.replace(QStringLiteral("$global:fs = 'NTFS'"), QStringLiteral("$global:fs = ''"));
+    const QString unreadable = runHideScript(script(false), raw);
+    QVERIFY2(!unreadable.contains(QStringLiteral("CALL AssignLetter")) &&
+                 unreadable.contains(QStringLiteral("no file system Windows reads")) &&
+                 unreadable.contains(QStringLiteral("DONE")),
+             qPrintable(unreadable));
 }
 
 // F9 at queue time: a type the disk's table cannot hold is refused before anything is queued.
