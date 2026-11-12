@@ -324,4 +324,13 @@ bool PartitionFileSystemRegistry::identifiedNonWindowsVolume(const PartitionVolu
            capabilityFor(volume.file_system).non_native;
 }
 
+bool PartitionFileSystemRegistry::windowsResizesFileSystem(const QString& file_system) {
+    return matches(file_system.trimmed(),
+                   {QStringLiteral("NTFS"),
+                    QStringLiteral("ReFS"),
+                    QStringLiteral("FAT"),
+                    QStringLiteral("FAT32"),
+                    QStringLiteral("exFAT")});
+}
+
 }  // namespace sak

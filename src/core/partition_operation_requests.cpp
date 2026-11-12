@@ -194,6 +194,22 @@ QJsonObject resizePartitionPayload(uint64_t target_size_bytes, uint64_t adjacent
     return payload;
 }
 
+void bindResizeFileSystem(const PartitionInventory& inventory, PartitionOperation* operation) {
+    if (operation->type != PartitionOperationType::Resize ||
+        !operation->payload.value(QStringLiteral("file_system")).toString().trimmed().isEmpty()) {
+        return;
+    }
+    const auto* disk = PartitionSafetyValidator::findDisk(inventory, operation->target.disk_number);
+    const auto* partition =
+        disk == nullptr
+            ? nullptr
+            : PartitionSafetyValidator::findPartition(*disk, operation->target.partition_number);
+    if (partition != nullptr && partition->volume) {
+        operation->payload[QStringLiteral("file_system")] =
+            partition->volume->file_system.trimmed();
+    }
+}
+
 void addMovePartitionFields(QJsonObject* payload,
                             const PartitionInfoEx& partition,
                             uint64_t target_offset_bytes,

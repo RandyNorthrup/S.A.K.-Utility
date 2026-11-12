@@ -68,6 +68,11 @@ struct BackupRestoreChoices {
 [[nodiscard]] QJsonObject resizePartitionPayload(uint64_t target_size_bytes,
                                                  uint64_t adjacent_free_bytes);
 
+/// A Resize carries the file system the scan it is queued from found on the partition, unless it
+/// names one itself: the script checks the partition still holds it just before it resizes, and
+/// the safety validator refuses a resize whose file system is unknown or not the one it names.
+void bindResizeFileSystem(const PartitionInventory& inventory, PartitionOperation* operation);
+
 /// Adds what moving a partition's start needs to a resize's payload, or starts a payload for it.
 void addMovePartitionFields(QJsonObject* payload,
                             const PartitionInfoEx& partition,

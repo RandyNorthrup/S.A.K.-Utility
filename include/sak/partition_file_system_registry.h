@@ -34,6 +34,10 @@ public:
     /// or the volume. A RAW volume nothing identified is not one: that is what an unreadable
     /// volume looks like.
     [[nodiscard]] static bool identifiedNonWindowsVolume(const PartitionVolumeInfo& volume);
+    /// The file systems Windows resizes itself, with Resize-Partition: NTFS, ReFS, FAT, FAT32 and
+    /// exFAT (its supported-size answer then says how far). Any other is resized only with its own
+    /// tools, or not at all.
+    [[nodiscard]] static bool windowsResizesFileSystem(const QString& file_system);
 };
 
 }  // namespace sak

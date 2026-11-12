@@ -9,6 +9,7 @@
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/partition_operation_requests.h"
 #include "sak/partition_raw_device_io.h"
 #include "sak/partition_report_generator.h"
 
@@ -309,6 +310,7 @@ bool PartitionManagerController::queueOperations(
         bindDiskIdentity(m_inventory, &operation);
         bindRawPayloadTargetIdentity(m_inventory, &operation);
         bindBackupVolumeIdentity(&operation);
+        bindResizeFileSystem(m_inventory, &operation);
         const auto preview = m_planner.previewOperation(projected_inventory, operation);
         batch.operations.append(preview.operations);
         batch.blockers.append(preview.blockers);

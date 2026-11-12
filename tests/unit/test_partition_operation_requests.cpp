@@ -57,6 +57,7 @@ private Q_SLOTS:
     void moveCarriesWhereTheStartGoesAndTheBackup();
     void freeSpaceBeforeAPartitionMovesItsStart();
     void freeSpaceAfterAPartitionGrowsIt();
+    void resizeTakesTheFileSystemTheScanFound();
     void allocateNamesTheDonorAndTheAmount();
     void primaryLogicalNamesTheNewLayoutAndTheBackup();
     void serialAndClusterReformatWithTheVolumesOwnFacts();
@@ -165,6 +166,40 @@ void PartitionOperationRequestsTests::freeSpaceAfterAPartitionGrowsIt() {
     QCOMPARE(payload.value("target_size_bytes").toString(), QString::number(576 * kMiB));
     QCOMPARE(payload.value("adjacent_free_bytes").toString(), QString::number(128 * kMiB));
     QVERIFY(!payload.contains("target_offset_bytes"));
+}
+
+// F7: a Resize carries the file system the scan it is queued from found, which the script checks
+// again before it resizes. One the payload names is kept, for the safety validator to compare.
+void PartitionOperationRequestsTests::resizeTakesTheFileSystemTheScanFound() {
+    PartitionInventory inventory;
+    PartitionDiskInfo disk = dataDisk(QStringLiteral("GPT"));
+    disk.partitions.append(dataPartition());
+    inventory.disks.append(disk);
+    const auto selected = partitionSelectionTarget(dataPartition());
+    auto resize = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Resize, selected, resizePartitionPayload(600 * kMiB, 200 * kMiB));
+    bindResizeFileSystem(inventory, &resize);
+    QCOMPARE(resize.payload.value("file_system").toString(), QStringLiteral("NTFS"));
+
+    auto named = PartitionOperationPlanner::makeOperation(PartitionOperationType::Resize,
+                                                          selected,
+                                                          QJsonObject{{"file_system", "ext4"}});
+    bindResizeFileSystem(inventory, &named);
+    QCOMPARE(named.payload.value("file_system").toString(), QStringLiteral("ext4"));
+
+    auto format = PartitionOperationPlanner::makeOperation(PartitionOperationType::Format,
+                                                           selected,
+                                                           QJsonObject{});
+    bindResizeFileSystem(inventory, &format);
+    QVERIFY(!format.payload.contains("file_system"));
+
+    // Nothing found, nothing bound: the validator then refuses, and the builder too.
+    inventory.disks.first().partitions.first().volume.reset();
+    auto unknown = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::Resize, selected, resizePartitionPayload(600 * kMiB, 200 * kMiB));
+    bindResizeFileSystem(inventory, &unknown);
+    QVERIFY(!unknown.payload.contains("file_system"));
+    QVERIFY(!PartitionScriptBuilder().buildScript(unknown).valid());
 }
 
 void PartitionOperationRequestsTests::allocateNamesTheDonorAndTheAmount() {
@@ -397,10 +432,15 @@ void PartitionOperationRequestsTests::secureEraseSaysItWasConfirmed() {
 
 void PartitionOperationRequestsTests::everyRequestBuildsARunnableScript() {
     // Without a full inventory these only reach the script builder, which is where a field the
-    // builder wants and the payload lacks would turn into a refusal.
+    // builder wants and the payload lacks would turn into a refusal. What the queue binds from the
+    // scan (a resize's file system) is bound as the queue binds it.
     const PartitionScriptBuilder builder;
     const auto partition = dataPartition();
     const auto selected = partitionSelectionTarget(partition);
+    PartitionInventory inventory;
+    PartitionDiskInfo disk = dataDisk(QStringLiteral("GPT"));
+    disk.partitions.append(partition);
+    inventory.disks.append(disk);
     const QVector<PartitionOperationRequest> requests{
         {PartitionOperationType::Format,
          selected,
@@ -416,8 +456,9 @@ void PartitionOperationRequestsTests::everyRequestBuildsARunnableScript() {
          primaryLogicalPayload(partition, QStringLiteral("logical"), kBackup)},
     };
     for (const auto& request : requests) {
-        const auto operation =
+        auto operation =
             PartitionOperationPlanner::makeOperation(request.type, request.target, request.payload);
+        bindResizeFileSystem(inventory, &operation);
         const auto script = builder.buildScript(operation);
         QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
     }

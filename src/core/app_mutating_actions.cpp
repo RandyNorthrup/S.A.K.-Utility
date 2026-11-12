@@ -40,6 +40,7 @@
 #include "sak/partition_executor.h"
 #include "sak/partition_manager_types.h"
 #include "sak/partition_operation_planner.h"
+#include "sak/partition_operation_requests.h"
 #include "sak/partition_safety_validator.h"
 #include "sak/program_enumerator.h"
 #include "sak/pst_parser.h"
@@ -2014,8 +2015,9 @@ AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
     const PartitionTarget pt =
         buildPartitionOpTarget(args, static_cast<uint32_t>(disk_number), parsed.kind);
     const QJsonObject payload = args.value(QStringLiteral("payload")).toObject();
-    const PartitionOperation op =
-        PartitionOperationPlanner::makeOperation(parsed.type, pt, payload);
+    PartitionOperation op = PartitionOperationPlanner::makeOperation(parsed.type, pt, payload);
+    // The file system the scan found, which the script checks again before it resizes.
+    bindResizeFileSystem(inventory, &op);
 
     // Independent of the OS-disk guard: refuse an op the safety validator blocks (the
     // same rules preview_operation reports), so a knowingly-invalid or

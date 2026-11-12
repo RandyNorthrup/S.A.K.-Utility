@@ -848,6 +848,57 @@ bool resizeExtendsBeyondAdjacentFreeSpace(const PartitionDiskInfo& disk,
     return targetSize - partition.size_bytes > adjacentFreeBytesAfter(disk, partition);
 }
 
+// The file system the scan found on the partition: what Windows reports, or what S.A.K.'s own
+// probe identified. Empty, "RAW" and "Unknown" say nobody identified it.
+QString scannedFileSystem(const PartitionInfoEx& partition) {
+    const QString found = partition.volume ? partition.volume->file_system.trimmed() : QString();
+    return found.compare(QStringLiteral("RAW"), Qt::CaseInsensitive) == 0 ||
+                   found.compare(QStringLiteral("Unknown"), Qt::CaseInsensitive) == 0
+               ? QString()
+               : found;
+}
+
+// Nothing is resized unless S.A.K. knows what the partition holds and resizes that file system
+// with it. A Resize queued from a scan that could not identify an ext4 partition reached
+// Resize-Partition with no file-system tool, and cut a 128 MiB ext4 file system to 64 MiB
+// (operation proof, 2026-11-11). Checked again on Apply's own scan, and the script checks the
+// partition once more before it resizes.
+QString resizeFileSystemBlocker(const PartitionInfoEx& partition,
+                                const PartitionOperation& operation) {
+    if (operation.type != PartitionOperationType::Resize) {
+        return {};
+    }
+    const QString held = scannedFileSystem(partition);
+    if (held.isEmpty()) {
+        return QStringLiteral(
+            "S.A.K. could not identify this partition's file system, so it will not resize it. "
+            "Run Scan Disks as administrator first.");
+    }
+    const QString queued =
+        operation.payload.value(QStringLiteral("file_system")).toString().trimmed();
+    if (!queued.isEmpty() && queued.compare(held, Qt::CaseInsensitive) != 0) {
+        return QStringLiteral(
+                   "This resize was queued for %1, but the partition holds %2. Scan Disks again, "
+                   "then queue the resize again.")
+            .arg(queued, held);
+    }
+    if (isExtFileSystemToken(held)) {
+        return isNonNativeFileSystemToolOperation(operation)
+                   ? QString()
+                   : QStringLiteral(
+                         "This would resize the ext partition without resizing its file system. "
+                         "Resize it from Resize/Move Partition, which resizes ext2, ext3 and ext4 "
+                         "with S.A.K.'s bundled tools.");
+    }
+    if (!PartitionFileSystemRegistry::windowsResizesFileSystem(held)) {
+        return QStringLiteral(
+                   "S.A.K. cannot resize a %1 partition. Windows resizes NTFS and ReFS "
+                   "partitions, and S.A.K. resizes ext2, ext3 and ext4 with its bundled tools.")
+            .arg(held);
+    }
+    return {};
+}
+
 bool resizeRequestsStartMove(const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::Resize &&
            operation.payload.contains(QStringLiteral("target_offset_bytes"));
@@ -1863,6 +1914,8 @@ void validateNonNativeContentBlockers(const PartitionInfoEx& partition,
 void validateResizeContentBlockers(const PartitionInfoEx& partition,
                                    const PartitionOperation& operation,
                                    PartitionValidationResult* result) {
+    const QString fileSystemBlocker = resizeFileSystemBlocker(partition, operation);
+    addBlockerIf(result, !fileSystemBlocker.isEmpty(), fileSystemBlocker);
     addBlockerIf(result,
                  resizeTargetMissing(operation),
                  QStringLiteral("Resize target size is required"));

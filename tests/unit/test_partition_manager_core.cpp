@@ -1599,6 +1599,7 @@ private Q_SLOTS:
     void generatedScripts_sparseRangesComeFromTheFileSystem();
     void generatedScripts_partitionTypeStepsRunAgainstStandIns();
     void generatedScripts_windowsDataTypeStepRunsAgainstStandIns();
+    void generatedScripts_resizeChecksTheFileSystemFirst();
     void scriptBuilder_nonWindowsFormatTakesItsPartitionType();
     void scriptBuilder_windowsFormatRestoresAWindowsDataType();
     void strongIndex_valueSemanticsRoundTrip();                       // R5-G14-19
@@ -1934,6 +1935,7 @@ private Q_SLOTS:
     void safetyValidator_blocksNoopResize();
     void safetyValidator_blocksResizeStartMovePayload();
     void safetyValidator_blocksResizeDonorPayload();
+    void safetyValidator_resizesOnlyAnIdentifiedFileSystem();
     void safetyValidator_blocksOversizedCreate();
     void safetyValidator_blocksInvalidCreateTypePayload();
     void safetyValidator_blocksCreateOffsetOutsideSelectedRegion();
@@ -4361,6 +4363,127 @@ void PartitionManagerCoreTests::generatedScripts_windowsDataTypeStepRunsAgainstS
                              1000);
     QVERIFY2(never.contains(QStringLiteral("THREW Windows made no volume on the partition")),
              qPrintable(never));
+}
+
+namespace {
+
+/// Stand-ins for what a native resize script calls: Disk 2 Partition 1 of 1 GiB, whose volume
+/// holds $global:volume (none at all when it is $null); Resize-Partition records its call.
+QString resizeStandIns() {
+    return QStringLiteral(
+        "function Get-Partition { param($DiskNumber, $PartitionNumber, $ErrorAction) "
+        "[pscustomobject]@{ DiskNumber = 2; PartitionNumber = 1; Size = 1073741824; Offset = "
+        "1048576; Guid = '' } }\n"
+        "function Get-Volume { param([Parameter(ValueFromPipeline = $true)]$InputObject) "
+        "process { if ($null -eq $global:volume) { throw 'No matching MSFT_Volume objects "
+        "found' }; [pscustomobject]@{ FileSystem = $global:volume } } }\n"
+        "function Get-PartitionSupportedSize { param($DiskNumber, $PartitionNumber) "
+        "[pscustomobject]@{ SizeMin = 1048576; SizeMax = 2147483648 } }\n"
+        "function Resize-Partition { param($DiskNumber, $PartitionNumber, $Size) "
+        "Write-Host ('CALL Resize ' + $Size) }\n");
+}
+
+/// Runs the whole generated @p script against resizeStandIns() with the volume holding
+/// @p volume (a PowerShell expression); everything printed, "THREW <message>" if it threw.
+QString runResizeScript(const QString& script, const QString& volume) {
+    int exit_code = -1;
+    return runWithScriptFunctions(
+        QString(),
+        resizeStandIns() + QStringLiteral("$global:volume = %1\ntry {\n").arg(volume) + script +
+            QStringLiteral("\n'DONE'\n} catch { 'THREW ' + $_.Exception.Message }\n"),
+        &exit_code);
+}
+
+/// A 4 KiB stand-in for a partition's start, with an ext superblock's magic or without it.
+QString writePartitionStart(const QTemporaryDir& dir, const QString& name, bool ext_magic) {
+    constexpr qsizetype kStartBytes = 4096;
+    constexpr qsizetype kExtMagicOffset = 1080;
+    QByteArray start(kStartBytes, '\0');
+    if (ext_magic) {
+        start[kExtMagicOffset] = static_cast<char>(0x53);
+        start[kExtMagicOffset + 1] = static_cast<char>(0xEF);
+    }
+    const QString path = QDir::toNativeSeparators(dir.filePath(name));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(start) != start.size()) {
+        return {};
+    }
+    return path;
+}
+
+}  // namespace
+
+// F7, the script's own check (operation proof, 2026-11-11: a Resize queued from a scan that could
+// not identify an ext4 partition cut it in half). Just before it resizes, the script asks the
+// partition what it holds and stops, with nothing changed, unless it is the file system the
+// resize was queued for. Windows PowerShell 5.1: the whole native resize script against stand-in
+// Storage cmdlets, and the ext check against stand-in partition starts.
+void PartitionManagerCoreTests::generatedScripts_resizeChecksTheFileSystemFirst() {
+    const PartitionScriptBuilder builder;
+    PartitionTarget target = extToolPartitionTarget();
+    target.offset_bytes = 1'048'576;
+    QJsonObject native{{QStringLiteral("target_size_bytes"), QStringLiteral("536870912")}};
+    const auto unqueued = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Resize, target, native));
+    QVERIFY2(unqueued.blockers.join(' ').contains(QStringLiteral("file system it was queued for")),
+             qPrintable(unqueued.blockers.join(' ')));
+    native[QStringLiteral("file_system")] = QStringLiteral("NTFS");
+    const auto script = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Resize, target, native));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(' ')));
+
+    const QString ntfs = runResizeScript(script.script, QStringLiteral("'NTFS'"));
+    QVERIFY2(ntfs.contains(QStringLiteral("CALL Resize 536870912")) &&
+                 ntfs.contains(QStringLiteral("DONE")),
+             qPrintable(ntfs));
+    for (const QString& volume :
+         {QStringLiteral("''"), QStringLiteral("$null"), QStringLiteral("'FAT32'")}) {
+        const QString refused = runResizeScript(script.script, volume);
+        QVERIFY2(refused.contains(QStringLiteral("THREW Nothing was changed: this resize was "
+                                                 "queued for a NTFS partition")) &&
+                     !refused.contains(QStringLiteral("CALL Resize")),
+                 qPrintable(refused));
+    }
+
+    // ext: the superblock's magic, through the partition taken as the tools take it. The check
+    // comes before the partition or the file system is touched, growing or shrinking.
+    QJsonObject ext = baseExtToolPayload();
+    ext[QStringLiteral("target_size_bytes")] = QStringLiteral("536870912");
+    const auto shrink = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Resize, target, ext));
+    QVERIFY2(shrink.valid(), qPrintable(shrink.blockers.join(' ')));
+    const qsizetype checked = shrink.script.indexOf(QStringLiteral("\nAssert-SakExtFileSystem "));
+    QVERIFY(checked > 0 && checked < shrink.script.indexOf(QStringLiteral("e2fsck pre-shrink")) &&
+            checked < shrink.script.indexOf(QStringLiteral("Resize-Partition")));
+    ext[QStringLiteral("target_size_bytes")] = QStringLiteral("2147483648");
+    const auto grow = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Resize, target, ext));
+    QVERIFY2(grow.valid(), qPrintable(grow.blockers.join(' ')));
+    const qsizetype grow_checked =
+        grow.script.indexOf(QStringLiteral("\nAssert-SakExtFileSystem "));
+    QVERIFY(grow_checked > 0 &&
+            grow_checked < grow.script.indexOf(QStringLiteral("Resize-Partition")));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString ext4 = writePartitionStart(dir, QStringLiteral("ext4.img"), true);
+    const QString blank = writePartitionStart(dir, QStringLiteral("blank.img"), false);
+    QVERIFY(!ext4.isEmpty() && !blank.isEmpty());
+    int exit_code = -1;
+    const QString checks = runWithScriptFunctions(
+        shrink.script,
+        QStringLiteral("foreach ($path in @(%1, %2)) {\n"
+                       "  try { Assert-SakExtFileSystem $path 'ext4' | Out-Null; 'HOLDS ' + $path "
+                       "} catch { 'THREW ' + $_.Exception.Message }\n"
+                       "}\n")
+            .arg(PartitionScriptBuilder::quotePowerShell(ext4),
+                 PartitionScriptBuilder::quotePowerShell(blank)),
+        &exit_code);
+    QVERIFY2(checks.contains(QStringLiteral("HOLDS ") + ext4) &&
+                 checks.contains(QStringLiteral("THREW Nothing was changed: this resize was queued "
+                                                "for an ext4 partition, but the partition holds "
+                                                "no ext file system now")),
+             qPrintable(checks));
 }
 
 namespace {
@@ -19714,6 +19837,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsResizeScript() {
     target.size_bytes = 10 * 1024 * 1024;
     QJsonObject payload;
     payload[QStringLiteral("target_size_bytes")] = QStringLiteral("20971520");
+    payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
     auto operation =
         PartitionOperationPlanner::makeOperation(PartitionOperationType::Resize, target, payload);
 
@@ -19722,6 +19846,17 @@ void PartitionManagerCoreTests::scriptBuilder_buildsResizeScript() {
     QVERIFY(script.valid());
     QVERIFY(script.script.contains(QStringLiteral("Resize-Partition")));
     QVERIFY(script.script.contains(QStringLiteral("Get-PartitionSupportedSize")));
+    // F7: the partition is asked what it holds before Windows is asked how far it may resize it.
+    const qsizetype checked =
+        script.script.indexOf(QStringLiteral("\nAssert-SakWindowsFileSystem 1 3 'NTFS'"));
+    QVERIFY(checked > 0 &&
+            checked < script.script.indexOf(QStringLiteral("Get-PartitionSupportedSize")));
+    // A file system Windows does not resize is never handed to Resize-Partition.
+    payload[QStringLiteral("file_system")] = QStringLiteral("XFS");
+    QVERIFY(!builder
+                 .buildScript(PartitionOperationPlanner::makeOperation(
+                     PartitionOperationType::Resize, target, payload))
+                 .valid());
 }
 
 void PartitionManagerCoreTests::scriptBuilder_buildsMergeScript() {
@@ -23076,6 +23211,63 @@ void PartitionManagerCoreTests::safetyValidator_blocksResizeDonorPayload() {
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("Donor-space")));
 }
 
+// F7 (operation proof, 2026-11-11): a Resize queued from a scan that could not identify an ext4
+// partition reached Resize-Partition with no file-system tool and cut the file system in half.
+// Nothing is resized unless the scan identified the file system and S.A.K. resizes it with it.
+void PartitionManagerCoreTests::safetyValidator_resizesOnlyAnIdentifiedFileSystem() {
+    auto inventory = singleDataDiskInventory();
+    auto& partition = inventory.disks.first().partitions.first();
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = inventory.disks.first().disk_number;
+    target.partition_number = partition.partition_number;
+    target.offset_bytes = partition.offset_bytes;
+    target.size_bytes = partition.size_bytes;
+    QJsonObject shrink;
+    shrink[QStringLiteral("target_size_bytes")] = QString::number(partition.size_bytes / 2);
+    const auto blockers = [&inventory, &target](const QJsonObject& payload) {
+        return PartitionSafetyValidator::validate(
+                   inventory,
+                   PartitionOperationPlanner::makeOperation(
+                       PartitionOperationType::Resize, target, payload))
+            .blockers.join(QLatin1Char(' '));
+    };
+    const QString unidentified = QStringLiteral(
+        "S.A.K. could not identify this partition's file system, so it will not "
+        "resize it. Run Scan Disks as administrator first.");
+    QVERIFY2(!blockers(shrink).contains(QStringLiteral("identify")), qPrintable(blockers(shrink)));
+
+    // A standard scan of a Linux partition: no volume at all, or one Windows calls RAW.
+    for (const QString& found : {QString(), QStringLiteral("RAW"), QStringLiteral("Unknown")}) {
+        partition.volume->file_system = found;
+        QVERIFY2(blockers(shrink).contains(unidentified), qPrintable(blockers(shrink)));
+    }
+    const auto volume = partition.volume;
+    partition.volume.reset();
+    QVERIFY2(blockers(shrink).contains(unidentified), qPrintable(blockers(shrink)));
+    partition.volume = volume;
+
+    // Identified as ext4: only the bundled tools resize it, never Resize-Partition alone.
+    partition.volume->file_system = QStringLiteral("ext4");
+    partition.volume->drive_letter.clear();
+    QVERIFY2(blockers(shrink).contains(QStringLiteral("without resizing its file system")),
+             qPrintable(blockers(shrink)));
+    QJsonObject tool = baseExtToolPayload();  // its raw path is Disk 2 Partition 1's
+    tool[QStringLiteral("target_size_bytes")] = shrink.value(QStringLiteral("target_size_bytes"));
+    QVERIFY2(!blockers(tool).contains(QStringLiteral("file system")), qPrintable(blockers(tool)));
+
+    // A file system S.A.K. has no resize for, and one the resize was not queued for.
+    partition.volume->file_system = QStringLiteral("XFS");
+    QVERIFY2(blockers(shrink).contains(QStringLiteral("S.A.K. cannot resize a XFS partition")),
+             qPrintable(blockers(shrink)));
+    partition.volume->file_system = QStringLiteral("NTFS");
+    QJsonObject queued_ext = shrink;
+    queued_ext[QStringLiteral("file_system")] = QStringLiteral("ext4");
+    QVERIFY2(blockers(queued_ext)
+                 .contains(QStringLiteral("queued for ext4, but the partition holds NTFS")),
+             qPrintable(blockers(queued_ext)));
+}
+
 void PartitionManagerCoreTests::safetyValidator_blocksOversizedCreate() {
     auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
     auto& disk = inventory.disks.first();
@@ -24791,7 +24983,8 @@ void PartitionManagerCoreTests::scriptBuilder_longWorkOutlastsAWholeDiskPass() {
     QCOMPARE(timeoutOf(PartitionOperationType::Split, volume, split),
              kPartitionLongTaskTimeoutSeconds);
 
-    const QJsonObject shrink{{QStringLiteral("target_size_bytes"), QStringLiteral("52428800")}};
+    const QJsonObject shrink{{QStringLiteral("target_size_bytes"), QStringLiteral("52428800")},
+                             {QStringLiteral("file_system"), QStringLiteral("NTFS")}};
     QCOMPARE(timeoutOf(PartitionOperationType::Resize, volume, shrink),
              kPartitionLongTaskTimeoutSeconds);
 
@@ -26055,7 +26248,8 @@ struct ContinuedScriptCase {
 
 QVector<ContinuedScriptCase> windowsContinuedScriptCases() {
     const PartitionTarget partition = windowsContinuedPartitionTarget();
-    const QJsonObject shrink{{QStringLiteral("target_size_bytes"), QStringLiteral("536870912")}};
+    const QJsonObject shrink{{QStringLiteral("target_size_bytes"), QStringLiteral("536870912")},
+                             {QStringLiteral("file_system"), QStringLiteral("NTFS")}};
     const QJsonObject split{{QStringLiteral("first_size_bytes"), QStringLiteral("536870912")}};
     const QJsonObject ssd{{QStringLiteral("ssd_secure_erase"), true}};
     using Type = PartitionOperationType;
@@ -26259,7 +26453,8 @@ void PartitionManagerCoreTests::windowsContinued_everyOutlivingStepMarksItsPhase
 // and Clear-Disk end too quickly to matter: none of them takes Cancel away.
 void PartitionManagerCoreTests::windowsContinued_stepsThatStopWhenKilledCarryNoMarker() {
     const PartitionTarget partition = windowsContinuedPartitionTarget();
-    const QJsonObject extend{{QStringLiteral("target_size_bytes"), QStringLiteral("2147483648")}};
+    const QJsonObject extend{{QStringLiteral("target_size_bytes"), QStringLiteral("2147483648")},
+                             {QStringLiteral("file_system"), QStringLiteral("NTFS")}};
     using Type = PartitionOperationType;
     const QVector<QPair<QString, PartitionScript>> stops{
         {QStringLiteral("Wipe Free Space"), windowsContinuedScript(Type::WipeFreeSpace, partition)},

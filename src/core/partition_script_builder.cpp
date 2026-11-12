@@ -6,6 +6,7 @@
 
 #include "sak/partition_script_builder.h"
 
+#include "sak/partition_file_system_registry.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_os_migration.h"
 #include "sak/partition_raw_device_io.h"
@@ -3513,8 +3514,71 @@ struct ExternalFileSystemToolScriptRequest {
     PartitionFileSystemToolCommand command;
 };
 
+// Just before a resize, the partition is asked again what it holds, and the resize stops, with
+// nothing changed, unless it is the file system the resize was queued for. A Resize queued from a
+// scan that could not identify an ext4 partition reached Resize-Partition and cut the file system
+// in half (operation proof, 2026-11-11); the queue refuses that now, and this is the check that
+// does not depend on any scan.
+static QString windowsFileSystemCheckScript(const PartitionOperation& operation,
+                                            const QString& queuedFileSystem) {
+    return QStringLiteral(R"PS(
+function Assert-SakWindowsFileSystem([uint32]$Disk, [uint32]$Number, [string]$Queued) {
+  $found = ''
+  $why = ''
+  try {
+    $found = [string](Get-Partition -DiskNumber $Disk -PartitionNumber $Number -ErrorAction Stop | Get-Volume -ErrorAction Stop).FileSystem
+  } catch {
+    $why = $_.Exception.Message
+  }
+  if ($found -ne $Queued) {
+    $what = $(if ([string]::IsNullOrWhiteSpace($found)) { 'no file system Windows can read' } else { $found })
+    if ($why) { $what = '{0} ({1})' -f $what, $why }
+    throw ('Nothing was changed: this resize was queued for a {0} partition, but the partition holds {1} now. Run Scan Disks as administrator, then queue the resize again.' -f $Queued, $what)
+  }
+  Write-Output ('The partition still holds {0}, as queued' -f $found)
+}
+Assert-SakWindowsFileSystem %1 %2 %3
+)PS")
+        .arg(uintArg(operation.target.disk_number.value()),
+             uintArg(operation.target.partition_number.value()),
+             PartitionScriptBuilder::quotePowerShell(queuedFileSystem));
+}
+
+// The same check for an ext resize: the ext superblock's magic, read through the partition taken
+// as the tools take it (Sak.RawPartitionWrite), since Windows has no volume on a Linux partition.
+static QString extFileSystemCheckScript(const QString& targetPath,
+                                        const QString& queuedFileSystem) {
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
+           QStringLiteral(R"PS(
+function Assert-SakExtFileSystem([string]$Path, [string]$Queued) {
+  $head = New-Object byte[] 4096
+  $have = 0
+  $stream = [Sak.RawPartitionWrite]::Open($Path)
+  try {
+    [void]$stream.Seek(0, [System.IO.SeekOrigin]::Begin)
+    while ($have -lt $head.Length) {
+      $read = $stream.Read($head, $have, $head.Length - $have)
+      if ($read -le 0) { break }
+      $have += $read
+    }
+  } finally {
+    $stream.Dispose()
+  }
+  # The superblock starts 1024 bytes in, and its magic (0xEF53, little-endian) 56 bytes into it.
+  if ($have -lt 1082 -or $head[1080] -ne 0x53 -or $head[1081] -ne 0xEF) {
+    throw ('Nothing was changed: this resize was queued for an {0} partition, but the partition holds no ext file system now. Run Scan Disks as administrator, then queue the resize again.' -f $Queued)
+  }
+  Write-Output ('The partition still holds an ext file system, as queued ({0})' -f $Queued)
+}
+Assert-SakExtFileSystem %1 %2
+)PS")
+               .arg(PartitionScriptBuilder::quotePowerShell(targetPath),
+                    PartitionScriptBuilder::quotePowerShell(queuedFileSystem));
+}
+
 static PartitionScript buildNativeResizeScript(const PartitionOperation& operation,
-                                               uint64_t targetSize) {
+                                               uint64_t targetSize,
+                                               const QString& queuedFileSystem) {
     PartitionScript out;
     out.preview = QStringLiteral("Resize Disk %1 Partition %2 to %3")
                       .arg(operation.target.disk_number.value())
@@ -3529,6 +3593,7 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
     // An extend ends at once.
     const bool shrinks = targetSize < operation.target.size_bytes;
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+                 windowsFileSystemCheckScript(operation, queuedFileSystem) +
                  QStringLiteral(
                      "$s = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %2\n"
                      "if ([uint64]%3 -lt [uint64]$s.SizeMin -or [uint64]%3 -gt [uint64]$s.SizeMax) "
@@ -3545,17 +3610,20 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
 }
 
 static QString growExtResizePreToolScript(const PartitionOperation& operation,
+                                          const QString& fs,
+                                          const QString& targetPath,
                                           uint64_t targetSize) {
-    return QStringLiteral(
+    return extFileSystemCheckScript(targetPath, fs) +
+           QStringLiteral(
                "$targetSizeBytes = [uint64]%1\n"
                "Resize-Partition -DiskNumber %2 -PartitionNumber %3 -Size $targetSizeBytes\n"
                "Update-HostStorageCache -ErrorAction Stop\n"
                "$p = Get-Partition -DiskNumber %2 -PartitionNumber %3 -ErrorAction Stop\n"
                "if ([uint64]$p.Size -ne $targetSizeBytes) { throw 'Partition resize did not reach "
                "target size' }\n")
-        .arg(uintArg(targetSize))
-        .arg(operation.target.disk_number.value())
-        .arg(operation.target.partition_number.value());
+               .arg(uintArg(targetSize))
+               .arg(operation.target.disk_number.value())
+               .arg(operation.target.partition_number.value());
 }
 
 static ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionOperation& operation,
@@ -3570,7 +3638,7 @@ static ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionO
             .arg(operation.target.partition_number.value())
             .arg(fs.toLower());
     request.accepted_exit_codes = {QStringLiteral("0")};
-    request.pre_tool_script = growExtResizePreToolScript(operation, targetSize);
+    request.pre_tool_script = growExtResizePreToolScript(operation, fs, targetPath, targetSize);
     request.command = PartitionFileSystemToolRunner::buildResizeCommand(
         fs, targetPath, payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload)));
     return request;
@@ -3632,8 +3700,8 @@ static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& oper
             .arg(operation.target.partition_number.value())
             .arg(fs.toLower());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 filesystemToolFunctionScript() + extShrinkPreToolScript(targetSize) +
-                 takeSelectedPartitionScript(false) +
+                 extFileSystemCheckScript(targetPath, fs) + filesystemToolFunctionScript() +
+                 extShrinkPreToolScript(targetSize) + takeSelectedPartitionScript(false) +
                  filesystemToolCallScript(QStringLiteral("e2fsck pre-shrink repair"),
                                           e2fsck,
                                           {QStringLiteral("-p"), QStringLiteral("-f"), targetPath},
@@ -5858,13 +5926,16 @@ PartitionScript PartitionScriptBuilder::buildResizeScript(
     if (targetSize == 0) {
         return invalidScript(QStringLiteral("Resize requires target_size_bytes"));
     }
+    // The file system the resize was queued for: the script checks the partition still holds it.
+    const QString fs = payloadString(operation, QStringLiteral("file_system")).trimmed();
+    if (fs.isEmpty()) {
+        return invalidScript(QStringLiteral("Resize requires the file system it was queued for"));
+    }
     if (isNonNativeFileSystemToolOperation(operation)) {
         const QString targetBlocker = rawPartitionTargetPathBlocker(operation);
         if (!targetBlocker.isEmpty()) {
             return invalidScript(targetBlocker);
         }
-        const QString fs =
-            payloadString(operation, QStringLiteral("file_system"), QStringLiteral("ext4"));
         if (!isExtFileSystemToken(fs)) {
             return invalidScript(
                 QStringLiteral("Non-Windows resize currently supports ext2/ext3/ext4 only"));
@@ -5876,8 +5947,13 @@ PartitionScript PartitionScriptBuilder::buildResizeScript(
         const auto request = growExtResizeRequest(operation, fs, targetPath, targetSize);
         return buildExternalFileSystemToolScript(operation, request);
     }
-
-    return buildNativeResizeScript(operation, targetSize);
+    if (!PartitionFileSystemRegistry::windowsResizesFileSystem(fs)) {
+        return invalidScript(
+            QStringLiteral("Windows resizes NTFS, ReFS, FAT, FAT32 and exFAT partitions; a %1 "
+                           "partition is resized only with its own tools")
+                .arg(fs));
+    }
+    return buildNativeResizeScript(operation, targetSize, fs);
 }
 
 PartitionScript PartitionScriptBuilder::buildAllocateFreeSpaceScript(
