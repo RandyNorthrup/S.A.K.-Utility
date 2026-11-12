@@ -625,7 +625,13 @@ public static class OpsWindows {
         return found;
     }
 }'
-$samples = New-Object System.Collections.Generic.List[object]
+# Each sample is one JSON line, written as it is taken, so a watcher stopped hard still leaves
+# every sample it took. Frames are JPEG at no more than 1280 pixels wide: a full PNG of
+# testpc2's console was 6.4 MB.
+$jpeg = [Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+$quality = New-Object Drawing.Imaging.EncoderParameters 1
+$quality.Param[0] = New-Object Drawing.Imaging.EncoderParameter ([Drawing.Imaging.Encoder]::Quality), ([long]70)
+$lines = Join-Path $Dir 'samples.jsonl'
 $frame = 0
 while (-not (Test-Path -LiteralPath $StopFile) -and $frame -lt 900) {
     $started = Get-Date
@@ -637,22 +643,30 @@ while (-not (Test-Path -LiteralPath $StopFile) -and $frame -lt 900) {
         $graphics = [Drawing.Graphics]::FromImage($bitmap)
         try {
             $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bitmap.Size)
-            $shot = 'frame-{0:D3}.png' -f $frame
-            $bitmap.Save((Join-Path $Dir $shot), [Drawing.Imaging.ImageFormat]::Png)
+            $scale = [Math]::Min(1.0, 1280.0 / $bounds.Width)
+            $small = New-Object Drawing.Bitmap ([int]($bounds.Width * $scale)), ([int]($bounds.Height * $scale))
+            $drawing = [Drawing.Graphics]::FromImage($small)
+            try {
+                $drawing.DrawImage($bitmap, 0, 0, $small.Width, $small.Height)
+                $shot = 'frame-{0:D3}.jpg' -f $frame
+                $small.Save((Join-Path $Dir $shot), $jpeg, $quality)
+            } finally { $drawing.Dispose(); $small.Dispose() }
         } finally { $graphics.Dispose(); $bitmap.Dispose() }
     } catch { $shot = "error: $($_.Exception.Message)" }
-    $letters = @([IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name })
+    $letters = @([IO.DriveInfo]::GetDrives() | ForEach-Object { "$($_.Name)" })
+    $names = @{}
+    foreach ($p in Get-Process) { $names[[int]$p.Id] = "$($p.ProcessName)" }
     $windows = @([OpsWindows]::Visible() | ForEach-Object {
-        $parts = $_ -split '\|', 2
-        $owner = Get-Process -Id ([int]$parts[0]) -ErrorAction SilentlyContinue
-        "$(if ($owner) { $owner.ProcessName } else { $parts[0] })|$($parts[1])"
+        $parts = "$_" -split '\|', 2
+        $owner = $names[[int]$parts[0]]
+        "$(if ($owner) { $owner } else { $parts[0] })|$($parts[1])"
     } | Select-Object -Unique)
-    $samples.Add([ordered]@{ at = $started.ToString('HH:mm:ss.fff'); shot = $shot; letters = $letters; windows = $windows })
+    $sample = [ordered]@{ at = $started.ToString('HH:mm:ss.fff'); shot = $shot; letters = $letters; windows = $windows }
+    Add-Content -LiteralPath $lines -Value (ConvertTo-Json -InputObject $sample -Depth 3 -Compress)
     if ($frame -eq 1) { Set-Content -LiteralPath (Join-Path $Dir 'ready') -Value 'ready' }
     $rest = 1000 - ((Get-Date) - $started).TotalMilliseconds
     if ($rest -gt 0) { Start-Sleep -Milliseconds ([int]$rest) }
 }
-[IO.File]::WriteAllText((Join-Path $Dir 'samples.json'), (ConvertTo-Json -InputObject @($samples) -Depth 5))
 '@
 
 function Start-OpsConsoleWatch {
@@ -664,7 +678,8 @@ function Start-OpsConsoleWatch {
     Set-Content -LiteralPath $file -Value $Script:OpsWatchScript -Encoding ASCII
     $stop = Join-Path $dir 'stop'
     $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $process = Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$file`"", '-Dir', "`"$dir`"", '-StopFile', "`"$stop`"") -WindowStyle Hidden -PassThru
+    # What the watcher says goes beside its frames: a watcher that cannot start leaves its reason.
+    $process = Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$file`"", '-Dir', "`"$dir`"", '-StopFile', "`"$stop`"") -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $dir 'watch-out.txt') -RedirectStandardError (Join-Path $dir 'watch-err.txt')
     $deadline = (Get-Date).AddSeconds(60)
     while (-not (Test-Path -LiteralPath (Join-Path $dir 'ready')) -and -not $process.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
     return [pscustomobject]@{ dir = $dir; stop = $stop; process = $process }
@@ -674,10 +689,12 @@ function Stop-OpsConsoleWatch {
     # What changed on the console while the step ran, against the watcher's first sample.
     param([object]$Watch)
     Set-Content -LiteralPath $Watch.stop -Value 'stop'
-    if (-not $Watch.process.WaitForExit(30000)) { try { $Watch.process.Kill() } catch { Write-Host "Could not stop the console watcher: $($_.Exception.Message)" } }
-    $path = Join-Path $Watch.dir 'samples.json'
-    $samples = if (Test-Path -LiteralPath $path) { @(Get-Content -LiteralPath $path -Raw | ConvertFrom-Json) } else { @() }
-    $summary = [ordered]@{ folder = Split-Path -Leaf $Watch.dir; samples = $samples.Count; screenshots = 0; screenshot_errors = @(); first = ''; last = ''; letters_that_appeared = @(); windows_that_appeared = @() }
+    if (-not $Watch.process.WaitForExit(60000)) { try { $Watch.process.Kill() } catch { Write-Host "Could not stop the console watcher: $($_.Exception.Message)" } }
+    $path = Join-Path $Watch.dir 'samples.jsonl'
+    # @() around the whole if: an if statement hands on an empty array as nothing at all.
+    $samples = @(if (Test-Path -LiteralPath $path) { [IO.File]::ReadAllLines($path) | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json } })
+    $said = @(Get-ChildItem -LiteralPath $Watch.dir -Filter 'watch-*.txt' -ErrorAction SilentlyContinue | ForEach-Object { [IO.File]::ReadAllLines($_.FullName) } | Where-Object { $_ } | Select-Object -Last 20)
+    $summary = [ordered]@{ folder = Split-Path -Leaf $Watch.dir; samples = $samples.Count; watcher_said = $said; screenshots = 0; screenshot_errors = @(); first = ''; last = ''; letters_that_appeared = @(); windows_that_appeared = @() }
     if ($samples.Count -eq 0) { return [pscustomobject]$summary }
     $first = $samples[0]
     $summary.screenshots = @($samples | Where-Object { "$($_.shot)" -like 'frame-*' }).Count
@@ -782,7 +799,8 @@ Add-OpsRow 'ops.apfs-container-resize' {
     $grow = Invoke-OpsStep -Disk $disk -Step 'grow' -Operation 'Resize' -Select $select -Choices @{ target_size_mib = 256; administrator_scan = $true } -ReadBackOnFailure
     $checks = @(Test-OpsExtent -Name 'the partition grew in place to 256 MiB' -DiskNumber $disk -Offset $part.offset -SizeBytes (256 * $Script:OpsMiB))
     $checks += New-OpsCheck -Name 'the grow kept the APFS partition type' -Passed ("$((Get-Partition -DiskNumber $disk -PartitionNumber $part.partition_number).GptType)" -eq $typeBefore) -Detail $typeBefore
-    $preview = "$(@($grow.queued_operations)[0].summary) $(@($grow.execution.steps | ForEach-Object { $_.stdout }) -join ' ')"
+    # A grow that failed left no report to read (the failure is already a check of its own).
+    $preview = if ($null -ne $grow) { "$(@($grow.queued_operations)[0].summary) $(@($grow.execution.steps | ForEach-Object { $_.stdout }) -join ' ')" } else { '' }
     $checks += New-OpsCheck -Name 'the grow says to resize the container next' -Passed ($preview -match 'Resize container to fill partition') -Detail ($preview.Substring(0, [Math]::Min(300, $preview.Length)))
     $before = Copy-OpsPartitionImage -DiskNumber $disk -PartitionNumber $part.partition_number -Name 'before'
     $beforeBlocks = [BitConverter]::ToUInt64((Read-OpsImageBytes -Path $before.path -Offset 0 -Length 4096), 40)
