@@ -1365,7 +1365,9 @@ Add-OpsRow 'ops.migrate-image-route' {
         $dism = @(Get-Content -LiteralPath "$env:SystemRoot\Logs\DISM\dism.log" -Tail 600 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'Error|Warning|0x8|virus|unwanted|blocked' } | Select-Object -Last 30)
         $detections = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Sort-Object InitialDetectionTime -Descending | Select-Object -First 10 | ForEach-Object { "$($_.InitialDetectionTime.ToString('o')) $($_.ThreatID) $($_.ProcessName) $(@($_.Resources) -join ';')" })
         $threats = @(Get-MpThreat -ErrorAction SilentlyContinue | ForEach-Object { "$($_.ThreatID) $($_.ThreatName)" })
-        return Complete-OpsRow -Media $media -Checks @() -Extra ([ordered]@{ dism_log = $dism; defender_detections = $detections; defender_threats = $threats })
+        # Defender's own log names the file, the threat and the time (1116 detected, 1117 acted).
+        $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 1116, 1117; StartTime = (Get-Date).AddHours(-6) } -ErrorAction SilentlyContinue | Select-Object -First 20 | ForEach-Object { "$($_.TimeCreated.ToString('o')) $($_.Id) $(($_.Message -replace '\s+', ' ').Substring(0, [Math]::Min(900, ($_.Message -replace '\s+', ' ').Length)))" })
+        return Complete-OpsRow -Media $media -Checks @() -Extra ([ordered]@{ dism_log = $dism; defender_detections = $detections; defender_threats = $threats; defender_events = $events })
     }
     $plan = @($step.queued_operations)[0].payload.migration_plan
     $checks = @(New-OpsCheck -Name 'the plan took the Image route' -Passed ("$($plan.route)" -eq 'Image') -Detail "$($plan.route)")
