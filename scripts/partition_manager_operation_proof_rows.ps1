@@ -117,8 +117,12 @@ function Close-OpsRowVolumes {
         taken offline, so no volume is still mounted (and no paging I/O in flight) when its disk
         goes. The readers here close every handle they open, in their own finally blocks.
     #>
+    # Each lettered volume is flushed, then dismounted with its letter removed (mountvol /P), which
+    # does not wait on a scanner's handle the way taking the whole disk offline did (about three
+    # minutes a row on testpc2). A disk with no letters left is then taken offline.
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
+    $clock = [Diagnostics.Stopwatch]::StartNew()
     foreach ($path in @($Script:RowVhds)) {
         try {
             $image = Get-DiskImage -ImagePath $path -ErrorAction Stop
@@ -126,13 +130,17 @@ function Close-OpsRowVolumes {
             $number = [int]$image.Number
             foreach ($partition in @(Get-Partition -DiskNumber $number -ErrorAction SilentlyContinue)) {
                 if ($partition.DriveLetter -and [char]::IsLetter([char]$partition.DriveLetter)) {
-                    Write-VolumeCache -DriveLetter $partition.DriveLetter -ErrorAction SilentlyContinue
+                    $letter = "$($partition.DriveLetter)"
+                    Write-VolumeCache -DriveLetter $letter -ErrorAction SilentlyContinue
+                    $said = & mountvol.exe "${letter}:" /P 2>&1 | Out-String
+                    if ($LASTEXITCODE -ne 0) { Write-Host "mountvol ${letter}: /P said: $($said.Trim())" }
                 }
             }
             $disk = Get-Disk -Number $number -ErrorAction SilentlyContinue
             if ($disk -and -not $disk.IsOffline) { Set-Disk -Number $number -IsOffline $true -ErrorAction Stop }
         } catch { Write-Host "Could not take the volumes of $path down before detaching it: $($_.Exception.Message)" }
     }
+    Write-Host "$($Script:RowId): volumes down for detach in $([int]$clock.Elapsed.TotalSeconds) s"
     Start-Sleep -Seconds 2
 }
 
@@ -476,11 +484,11 @@ function Invoke-OpsExtResize {
     Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = $Kind; allocation_unit_bytes = 0; label = 'OPSRESIZE'; full_format = $false } | Out-Null
     $read = Test-OpsNonNativePartition -Prefix 'after format:' -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem $Kind -Label 'OPSRESIZE' -Name 'format'
     $checks = @($read.checks); $images += $read.image
-    Invoke-OpsStep -Disk $disk -Step 'grow' -Operation 'Resize' -Select $select -Choices @{ target_size_mib = 256 } | Out-Null
+    Invoke-OpsStep -Disk $disk -Step 'grow' -Operation 'Resize' -Select $select -Choices @{ target_size_mib = 256; administrator_scan = $true } | Out-Null
     $checks += Test-OpsExtent -Name 'grow: the raw table holds it at 256 MiB' -DiskNumber $disk -Offset $part.offset -SizeBytes (256 * $Script:OpsMiB)
     $read = Test-OpsNonNativePartition -Prefix 'after grow:' -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem $Kind -Label 'OPSRESIZE' -Name 'grow'
     $checks += $read.checks; $images += $read.image
-    Invoke-OpsStep -Disk $disk -Step 'shrink' -Operation 'Resize' -Select $select -Choices @{ target_size_mib = 160 } | Out-Null
+    Invoke-OpsStep -Disk $disk -Step 'shrink' -Operation 'Resize' -Select $select -Choices @{ target_size_mib = 160; administrator_scan = $true } | Out-Null
     $checks += Test-OpsExtent -Name 'shrink: the raw table holds it at 160 MiB' -DiskNumber $disk -Offset $part.offset -SizeBytes (160 * $Script:OpsMiB)
     $read = Test-OpsNonNativePartition -Prefix 'after shrink:' -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem $Kind -Label 'OPSRESIZE' -Name 'shrink'
     $checks += $read.checks; $images += $read.image
@@ -502,7 +510,7 @@ Add-OpsRow 'ops.apfs-container-resize' {
     Resize-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -Size (256 * $Script:OpsMiB)
     $before = Copy-OpsPartitionImage -DiskNumber $disk -PartitionNumber $part.partition_number -Name 'before'
     $beforeBlocks = [BitConverter]::ToUInt64((Read-OpsImageBytes -Path $before.path -Offset 0 -Length 4096), 40)
-    Invoke-OpsStep -Disk $disk -Step 'resize' -Operation 'ApfsResizeContainer' -Select $select | Out-Null
+    Invoke-OpsStep -Disk $disk -Step 'resize' -Operation 'ApfsResizeContainer' -Select $select -Choices @{ administrator_scan = $true } | Out-Null
     $read = Test-OpsNonNativePartition -Prefix 'after resize:' -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem 'APFS' -Name 'after'
     $block = Read-OpsImageBytes -Path $read.image.path -Offset 0 -Length 4096
     $blockSize = [uint64][BitConverter]::ToUInt32($block, 36)
@@ -545,9 +553,9 @@ function Invoke-OpsRepairNonNative {
     $select = @{ partition_number = $part.partition_number }
     Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = $FileSystem; allocation_unit_bytes = 0; label = 'OPSREPAIR'; full_format = $false } | Out-Null
     $checks = @()
-    $check = Invoke-OpsStep -Disk $disk -Step 'check' -Operation 'CheckNonNativeFileSystem' -Select $select
+    $check = Invoke-OpsStep -Disk $disk -Step 'check' -Operation 'CheckNonNativeFileSystem' -Select $select -Choices @{ administrator_scan = $true }
     $checks += New-OpsCheck -Name 'the read-only check ran its tool and it passed' -Passed ([bool]$check.file_system_check.success) -Detail $check.file_system_check
-    Invoke-OpsStep -Disk $disk -Step 'repair' -Operation 'RepairFileSystem' -Select $select | Out-Null
+    Invoke-OpsStep -Disk $disk -Step 'repair' -Operation 'RepairFileSystem' -Select $select -Choices @{ administrator_scan = $true } | Out-Null
     $read = Test-OpsNonNativePartition -Prefix 'after repair:' -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem $FileSystem -Name 'repaired'
     $checks += $read.checks
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ images = @($read.image | Where-Object { $_ }) })
@@ -1097,14 +1105,14 @@ Add-OpsRow 'ops.apfs-label-and-snapshots' {
     $select = @{ partition_number = $part.partition_number }
     $images = @()
     Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = 'APFS'; allocation_unit_bytes = 0; label = 'OPSAPFS'; full_format = $false } | Out-Null
-    Invoke-OpsStep -Disk $disk -Step 'label' -Operation 'ApfsChangeVolumeLabel' -Select $select -Choices @{ label = 'OPSRENAMED' } | Out-Null
+    Invoke-OpsStep -Disk $disk -Step 'label' -Operation 'ApfsChangeVolumeLabel' -Select $select -Choices @{ label = 'OPSRENAMED'; administrator_scan = $true } | Out-Null
     $read = Test-OpsNonNativePartition -Prefix 'after the label:' -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem 'APFS' -Name 'label'
     $checks = @($read.checks); $images += $read.image
     $probe = Get-Content -LiteralPath (Join-Path $OutputRoot "images\$($read.image.name).probe.json") -Raw -ErrorAction SilentlyContinue
     $checks += New-OpsCheck -Name "the probe reads the volume name OPSRENAMED" -Passed ("$probe" -match 'OPSRENAMED') -Detail ''
     foreach ($snap in @(@{ step = 'snap-create'; op = 'ApfsSnapshotCreate' }, @{ step = 'snap-revert'; op = 'ApfsSnapshotRevert' }, @{ step = 'snap-delete'; op = 'ApfsSnapshotDelete' })) {
         $wantedName = 'opsproof-snap'
-        Invoke-OpsStep -Disk $disk -Step $snap.step -Operation $snap.op -Select $select -Choices @{ apfs_snapshot_name = $wantedName } | Out-Null
+        Invoke-OpsStep -Disk $disk -Step $snap.step -Operation $snap.op -Select $select -Choices @{ apfs_snapshot_name = $wantedName; administrator_scan = $true } | Out-Null
         $read = Test-OpsNonNativePartition -Prefix "after $($snap.step):" -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem 'APFS' -Name $snap.step
         $checks += $read.checks; $images += $read.image
     }

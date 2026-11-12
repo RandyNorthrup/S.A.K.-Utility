@@ -386,6 +386,13 @@ try {
     $code = @"
 `$r = '$RemoteRoot\jobs'
 New-Item -ItemType Directory -Force -Path `$r, '$RemoteRoot\work', '$output' | Out-Null
+# A run that stopped (a crash, a restart) leaves its virtual disks behind, and a row refuses to reuse
+# one. Only this suite's own work folder is cleared.
+foreach (`$stale in @(Get-ChildItem -LiteralPath '$RemoteRoot\work' -File | Where-Object { `$_.Extension -in '.vhdx', '.vhd' })) {
+    Dismount-DiskImage -ImagePath `$stale.FullName -ErrorAction SilentlyContinue | Out-Null
+    Remove-Item -LiteralPath `$stale.FullName -Force
+    "removed a stale virtual disk: `$(`$stale.Name)"
+}
 foreach (`$f in 'runner-started.txt', 'runner-done.txt') { if (Test-Path "`$r\`$f") { Remove-Item "`$r\`$f" } }
 [IO.File]::WriteAllText("`$r\runner-job.ps1", @'
 $job
