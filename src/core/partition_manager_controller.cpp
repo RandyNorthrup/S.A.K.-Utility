@@ -91,6 +91,25 @@ bool requestWatcherCancellation(QFutureWatcher<ResultT>* watcher,
     return true;
 }
 
+// What a read-only file-system check's end says in the status bar. A check whose tool said more
+// than its exit code (e2fsck's "Abort? no") says that, in plain words.
+QString readOnlyCheckStatus(const PartitionFileSystemToolRunResult& result) {
+    if (result.cancelled) {
+        return QStringLiteral("Filesystem check cancelled");
+    }
+    if (result.blocked) {
+        return QStringLiteral("Filesystem check blocked: %1")
+            .arg(result.blockers.join(QStringLiteral("; ")));
+    }
+    if (result.success) {
+        return QStringLiteral("Filesystem check complete");
+    }
+    if (!result.problem.isEmpty()) {
+        return QStringLiteral("Filesystem check failed: %1").arg(result.problem);
+    }
+    return QStringLiteral("Filesystem check failed with exit code %1").arg(result.exit_code);
+}
+
 bool projectCreateOperation(PartitionDiskInfo* disk, const PartitionOperation& operation) {
     const uint64_t create_size =
         operation.payload.value(QStringLiteral("size_bytes")).toString().toULongLong();
@@ -1024,21 +1043,9 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
                 if (!result.std_err.trimmed().isEmpty()) {
                     Q_EMIT logOutput(result.std_err.trimmed());
                 }
-                if (result.cancelled) {
-                    Q_EMIT statusMessage(QStringLiteral("Filesystem check cancelled"),
-                                         sak::kTimerStatusDefaultMs);
-                } else if (result.blocked) {
-                    Q_EMIT statusMessage(QStringLiteral("Filesystem check blocked: %1")
-                                             .arg(result.blockers.join(QStringLiteral("; "))),
-                                         sak::kTimerStatusDefaultMs);
-                } else if (result.success) {
-                    Q_EMIT statusMessage(QStringLiteral("Filesystem check complete"),
-                                         sak::kTimerStatusDefaultMs);
-                } else {
-                    Q_EMIT statusMessage(QStringLiteral("Filesystem check failed with exit code %1")
-                                             .arg(result.exit_code),
-                                         sak::kTimerStatusDefaultMs);
-                }
+                Q_EMIT statusMessage(readOnlyCheckStatus(result),
+                                     result.problem.isEmpty() ? sak::kTimerStatusDefaultMs
+                                                              : sak::kTimerStatusLongMs);
                 Q_EMIT fileSystemCheckFinished(result);
                 const auto terminal_state = stableState();
                 QObject::disconnect(watcher, nullptr, this, nullptr);

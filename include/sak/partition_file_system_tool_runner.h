@@ -9,6 +9,7 @@
 #include "sak/partition_file_system_tool_manifest.h"
 #include "sak/process_runner.h"
 
+#include <QList>
 #include <QString>
 #include <QStringList>
 
@@ -51,6 +52,9 @@ struct PartitionFileSystemToolRunResult {
     QString std_out;
     QString std_err;
     QStringList blockers;
+    /// Why the run did not pass, in plain words, when the tool's own answer says more than its
+    /// exit code (e2fsck: PartitionFileSystemToolRunner::e2fsckProblem).
+    QString problem;
 };
 
 class PartitionFileSystemToolRunner {
@@ -82,6 +86,19 @@ public:
     [[nodiscard]] static PartitionFileSystemToolRunResult runReadOnlyCheck(
         const PartitionFileSystemReadOnlyCheckRequest& request,
         const CancelCheck& should_cancel = {});
+    /// Why an e2fsck run did not pass, in plain words, or empty when it did. Its output is read
+    /// first: e2fsck -n exits 0 after answering "no" to "Abort?" on a file system larger than its
+    /// partition ("Either the superblock or the partition table is likely to be corrupt!";
+    /// operation proof, 2026-11-11), so an exit code alone said healthy. Then the exit code, as
+    /// e2fsck defines it: 0 clean, 1 and 2 corrected (only a repair, -p or -y, corrects), 4 and up
+    /// errors left, an operational error, a usage error or a cancel. @p accepted_exit_codes are
+    /// the codes this run may end with.
+    [[nodiscard]] static QString e2fsckProblem(int exit_code,
+                                               const QString& output,
+                                               const QList<int>& accepted_exit_codes);
+    /// Get-SakE2fsckProblem: the same reading, in Windows PowerShell, for the generated scripts
+    /// that run e2fsck (a repair, and the checks before and after a shrink).
+    [[nodiscard]] static QString e2fsckProblemFunctionScript();
 };
 
 }  // namespace sak

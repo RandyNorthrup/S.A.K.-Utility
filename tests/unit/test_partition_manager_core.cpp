@@ -1594,6 +1594,7 @@ private Q_SLOTS:
     void hfsStaging_repairReadsTheToolsExitCode();
     void generatedScripts_callTheirOwnFunctionsWithDeclaredParameters();
     void generatedScripts_toolRunnerSurvivesStderrAndKeepsTheExitCode();
+    void generatedScripts_toolRunnerReadsWhatE2fsckSays();
     void generatedScripts_writerWrapperReportsTheHelpersExitCode();
     void generatedScripts_valueFunctionsReturnOnlyTheirValue();
     void generatedScripts_sparseRangesComeFromTheFileSystem();
@@ -1811,6 +1812,7 @@ private Q_SLOTS:
     void fileSystemToolRunner_buildsExtWriteCommandShapesWithConfirmationGate();
     void fileSystemToolRunner_blocksUnapprovedOrUnsupportedReadOnlyChecks();
     void fileSystemToolRunner_resolvesApprovedToolPath();
+    void fileSystemToolRunner_e2fsckOutputDecidesAsWellAsItsExitCode();
     void inventoryParser_parsesDiskAndPartition();
     void inventoryParser_offlineStateIsStrict_data();
     void inventoryParser_offlineStateIsStrict();
@@ -3481,7 +3483,7 @@ void verifyExtRepairScript(const PartitionScriptBuilder* builder, const Partitio
         PartitionOperationType::CheckFileSystem, target, baseExtToolPayload()));
     QVERIFY2(repair.valid(), qPrintable(repair.blockers.join(QStringLiteral("; "))));
     QVERIFY(repair.script.contains(QStringLiteral("e2fsck")));
-    QVERIFY(repair.script.contains(QStringLiteral("-AcceptedExitCodes @(0, 1)")));
+    QVERIFY(repair.script.contains(QStringLiteral("-AcceptedExitCodes @(0, 1, 2)")));
     QVERIFY(!repair.script.contains(QStringLiteral("Repair-Volume -DriveLetter")));
 }
 
@@ -4117,6 +4119,137 @@ void PartitionManagerCoreTests::generatedScripts_toolRunnerSurvivesStderrAndKeep
     QVERIFY2(out.contains(QStringLiteral("Filesystem tool exit code: 3")), qPrintable(out));
     QVERIFY2(!out.contains(QStringLiteral("NOT REACHED")), qPrintable(out));
     QCOMPARE(exit_code, 3);
+}
+
+namespace {
+
+/// e2fsck 1.47.4's answer, line for line, to "-fn" on a copy of a 128 MiB ext4 file system whose
+/// partition a Resize cut to 64 MiB (operation proof, b28, run-20261111-230420). It exited 0.
+QStringList e2fsckOnACutFileSystem() {
+    return {QStringLiteral("e2fsck 1.47.4 (6-Mar-2025)"),
+            QStringLiteral("The filesystem size (according to the superblock) is 131072 blocks"),
+            QStringLiteral("The physical size of the device is 65536 blocks"),
+            QStringLiteral("Either the superblock or the partition table is likely to be corrupt!"),
+            QStringLiteral("Abort? no"),
+            QStringLiteral("Pass 1: Checking inodes, blocks, and sizes"),
+            QStringLiteral("Pass 2: Checking directory structure"),
+            QStringLiteral("Pass 3: Checking directory connectivity"),
+            QStringLiteral("Pass 4: Checking reference counts"),
+            QStringLiteral("Pass 5: Checking group summary information"),
+            QStringLiteral("OPSKEEP: 12/32768 files (0.0% non-contiguous), 14011/131072 blocks")};
+}
+
+/// A stand-in e2fsck (a .cmd named e2fsck) that prints @p lines and exits with @p exit_code.
+QString writeStandInE2fsck(const QTemporaryDir& dir,
+                           const QString& folder,
+                           const QStringList& lines,
+                           int exit_code) {
+    if (!QDir(dir.path()).mkpath(folder)) {
+        return {};
+    }
+    const QString path =
+        QDir::toNativeSeparators(dir.filePath(folder + QStringLiteral("/e2fsck.cmd")));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return {};
+    }
+    QString batch = QStringLiteral("@echo off\r\n");
+    for (QString line : lines) {
+        batch += QStringLiteral("echo ") + line.replace(QLatin1Char('%'), QStringLiteral("%%")) +
+                 QStringLiteral("\r\n");
+    }
+    batch += QStringLiteral("exit /b %1\r\n").arg(exit_code);
+    file.write(batch.toLatin1());
+    return path;
+}
+
+}  // namespace
+
+// F11 (operation proof, 2026-11-11): e2fsck -fn on a file system larger than its partition exits
+// 0, after "Either the superblock or the partition table is likely to be corrupt!" and "Abort? no".
+// The read-only check took that for healthy. Its output now decides as well as its exit code, and
+// the code is read as e2fsck defines it.
+void PartitionManagerCoreTests::fileSystemToolRunner_e2fsckOutputDecidesAsWellAsItsExitCode() {
+    const QString cut = e2fsckOnACutFileSystem().join(QLatin1Char('\n'));
+    const QString corrupt = PartitionFileSystemToolRunner::e2fsckProblem(0, cut, {0});
+    QVERIFY2(corrupt.contains(QStringLiteral("likely corrupt")) &&
+                 corrupt.contains(QStringLiteral("did not pass")),
+             qPrintable(corrupt));
+    // A repair's accepted codes do not make it pass either.
+    QVERIFY(!PartitionFileSystemToolRunner::e2fsckProblem(1, cut, {0, 1, 2}).isEmpty());
+
+    QStringList asked = e2fsckOnACutFileSystem();
+    asked.removeAt(3);  // the "likely to be corrupt" line: "Abort? no" alone is enough
+    const QString abort =
+        PartitionFileSystemToolRunner::e2fsckProblem(0, asked.join(QLatin1Char('\n')), {0});
+    QVERIFY2(abort.contains(QStringLiteral("Abort?")), qPrintable(abort));
+
+    QStringList clean = e2fsckOnACutFileSystem();
+    clean.remove(1, 4);
+    const QString clean_text = clean.join(QLatin1Char('\n'));
+    QVERIFY(PartitionFileSystemToolRunner::e2fsckProblem(0, clean_text, {0}).isEmpty());
+    QVERIFY(PartitionFileSystemToolRunner::e2fsckProblem(1, clean_text, {0, 1, 2}).isEmpty());
+    QVERIFY(PartitionFileSystemToolRunner::e2fsckProblem(2, clean_text, {0, 1, 2}).isEmpty());
+    QVERIFY(PartitionFileSystemToolRunner::e2fsckProblem(4, clean_text, {0})
+                .contains(QStringLiteral("left them uncorrected (exit code 4)")));
+    QVERIFY(PartitionFileSystemToolRunner::e2fsckProblem(12, clean_text, {0, 1, 2})
+                .contains(QStringLiteral("operational error, exit code 12")));
+    QVERIFY(PartitionFileSystemToolRunner::e2fsckProblem(32, clean_text, {0, 1, 2})
+                .contains(QStringLiteral("stopped before it finished")));
+    QVERIFY(PartitionFileSystemToolRunner::e2fsckProblem(1, clean_text, {0})
+                .contains(QStringLiteral("does not accept")));
+}
+
+// F11 in the generated scripts: the repair, and the checks before and after a shrink, run e2fsck
+// through Invoke-SakFilesystemTool, which reads its output as e2fsckProblem does. Windows
+// PowerShell 5.1 with stand-in e2fsck programs: the cut file system's answer (exit 0) stops the
+// script with the plain message, a clean one goes on, exit 4 stops it, and another tool's output
+// is not read as e2fsck's.
+void PartitionManagerCoreTests::generatedScripts_toolRunnerReadsWhatE2fsckSays() {
+    const QString script = corpusScriptDefining(QStringLiteral("Invoke-SakFilesystemTool"));
+    QVERIFY2(!script.isEmpty(), "no generated script defines Invoke-SakFilesystemTool");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QStringList clean = e2fsckOnACutFileSystem();
+    clean.remove(1, 4);
+    const QString cut_tool =
+        writeStandInE2fsck(dir, QStringLiteral("cut"), e2fsckOnACutFileSystem(), 0);
+    const QString clean_tool = writeStandInE2fsck(dir, QStringLiteral("clean"), clean, 0);
+    const QString errors_tool = writeStandInE2fsck(dir, QStringLiteral("errors"), clean, 4);
+    QVERIFY(!cut_tool.isEmpty() && !clean_tool.isEmpty() && !errors_tool.isEmpty());
+    const QString other_tool = QDir::toNativeSeparators(dir.filePath(QStringLiteral("other.cmd")));
+    QVERIFY(QFile::copy(cut_tool, other_tool));
+    const auto run = [&script](const QString& tool, const QString& accepted) {
+        int exit_code = -1;
+        return runWithScriptFunctions(
+            script,
+            QStringLiteral(
+                "$hash = (Get-FileHash -LiteralPath %1 -Algorithm SHA256).Hash.ToLowerInvariant()\n"
+                "try {\n"
+                "  Invoke-SakFilesystemTool -Name 'e2fsck post-shrink read-only check' -ToolPath "
+                "%1 "
+                "-ExpectedHash $hash -ToolArgs @('-n', '-f') -AcceptedExitCodes @(%2)\n"
+                "  'WENT ON'\n"
+                "} catch { 'THREW ' + $_.Exception.Message }\n")
+                .arg(PartitionScriptBuilder::quotePowerShell(tool), accepted),
+            &exit_code);
+    };
+    const QString cut = run(cut_tool, QStringLiteral("0"));
+    QVERIFY2(cut.contains(QStringLiteral("THREW e2fsck post-shrink read-only check: e2fsck says "
+                                         "the superblock or the partition table is likely "
+                                         "corrupt")) &&
+                 !cut.contains(QStringLiteral("WENT ON")),
+             qPrintable(cut));
+    const QString repaired = run(cut_tool, QStringLiteral("0, 1, 2"));
+    QVERIFY2(repaired.contains(QStringLiteral("THREW")), qPrintable(repaired));
+    const QString fine = run(clean_tool, QStringLiteral("0"));
+    QVERIFY2(fine.contains(QStringLiteral("WENT ON")), qPrintable(fine));
+    const QString errors = run(errors_tool, QStringLiteral("0"));
+    QVERIFY2(errors.contains(QStringLiteral("left them uncorrected (exit code 4)")) &&
+                 !errors.contains(QStringLiteral("WENT ON")),
+             qPrintable(errors));
+    const QString other = run(other_tool, QStringLiteral("0"));
+    QVERIFY2(other.contains(QStringLiteral("WENT ON")), qPrintable(other));
 }
 
 // Audit e5: the writer helpers' wrappers. A helper that fails with a line on stderr reports its

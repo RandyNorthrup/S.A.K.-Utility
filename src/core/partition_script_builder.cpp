@@ -1914,24 +1914,41 @@ QString powerShellArrayLiteralWithTrailingExpression(const QStringList& values,
 
 QString filesystemToolFunctionScript() {
     return QStringLiteral(
-        "function Invoke-SakFilesystemTool([string]$Name, [string]$ToolPath, "
-        "[string]$ExpectedHash, [string[]]$ToolArgs, [int[]]$AcceptedExitCodes) {\n"
-        "  $actualHash = (Get-FileHash -LiteralPath $ToolPath -Algorithm SHA256).Hash."
-        "ToLowerInvariant()\n"
-        "  if ($actualHash -ne $ExpectedHash) { throw \"Filesystem tool hash mismatch: $Name\" }\n"
-        "  Write-Output ('Running approved filesystem tool: {0} {1}' -f $ToolPath, "
-        "($ToolArgs -join ' '))\n"
-        // e2fsprogs print their version banner to stderr (resize2fs always, e2fsck and mke2fs
-        // mostly); under Stop that first line threw NativeCommandError and ext format, grow,
-        // shrink and repair stopped there (audit e1). Stop is relaxed for the call only.
-        "  $oldPreference = $ErrorActionPreference\n"
-        "  $ErrorActionPreference = 'Continue'\n"
-        "  try { $toolOutput = & $ToolPath @ToolArgs 2>&1; $toolExitCode = [int]$LASTEXITCODE "
-        "} finally { $ErrorActionPreference = $oldPreference }\n"
-        "  $toolOutput | ForEach-Object { Write-Output ([string]$_) }\n"
-        "  Write-Output ('Filesystem tool exit code: {0}' -f $toolExitCode)\n"
-        "  if ($AcceptedExitCodes -notcontains $toolExitCode) { exit $toolExitCode }\n"
-        "}\n");
+               "function Invoke-SakFilesystemTool([string]$Name, [string]$ToolPath, "
+               "[string]$ExpectedHash, [string[]]$ToolArgs, [int[]]$AcceptedExitCodes) {\n"
+               "  $actualHash = (Get-FileHash -LiteralPath $ToolPath -Algorithm SHA256).Hash."
+               "ToLowerInvariant()\n"
+               "  if ($actualHash -ne $ExpectedHash) { throw \"Filesystem tool hash mismatch: "
+               "$Name\" }\n"
+               "  Write-Output ('Running approved filesystem tool: {0} {1}' -f $ToolPath, "
+               "($ToolArgs -join ' '))\n"
+               // e2fsprogs print their version banner to stderr (resize2fs always, e2fsck and
+               // mke2fs mostly); under Stop that first line threw NativeCommandError and ext
+               // format, grow, shrink and repair stopped there (audit e1). Stop is relaxed for the
+               // call only.
+               "  $oldPreference = $ErrorActionPreference\n"
+               "  $ErrorActionPreference = 'Continue'\n"
+               "  try { $toolOutput = & $ToolPath @ToolArgs 2>&1; $toolExitCode = "
+               "[int]$LASTEXITCODE "
+               "} finally { $ErrorActionPreference = $oldPreference }\n"
+               "  $toolOutput | ForEach-Object { Write-Output ([string]$_) }\n"
+               "  Write-Output ('Filesystem tool exit code: {0}' -f $toolExitCode)\n"
+               // e2fsck's answer is its output as well as its exit code: a check exits 0 after
+               // answering no to "Abort?" on a file system larger than its partition (2026-11-11).
+               "  if ([System.IO.Path]::GetFileNameWithoutExtension($ToolPath) -ieq 'e2fsck') {\n"
+               "    $problem = Get-SakE2fsckProblem $toolExitCode (($toolOutput | ForEach-Object { "
+               "[string]$_ }) -join \"`n\") $AcceptedExitCodes\n"
+               "    if ($problem) { throw ('{0}: {1}' -f $Name, $problem) }\n"
+               "  }\n"
+               "  if ($AcceptedExitCodes -notcontains $toolExitCode) { exit $toolExitCode }\n"
+               "}\n") +
+           PartitionFileSystemToolRunner::e2fsckProblemFunctionScript();
+}
+
+// What an e2fsck repair (-p) may end with: 0 clean, 1 corrected, 2 corrected and the system should
+// be rebooted (e2fsck(8)). 4 and up are errors left, an operational error, or a cancel.
+QStringList e2fsckRepairExitCodes() {
+    return {QStringLiteral("0"), QStringLiteral("1"), QStringLiteral("2")};
 }
 
 QString filesystemToolCallScript(const QString& name,
@@ -3705,7 +3722,7 @@ static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& oper
                  filesystemToolCallScript(QStringLiteral("e2fsck pre-shrink repair"),
                                           e2fsck,
                                           {QStringLiteral("-p"), QStringLiteral("-f"), targetPath},
-                                          {QStringLiteral("0"), QStringLiteral("1")}) +
+                                          e2fsckRepairExitCodes()) +
                  filesystemToolCallScript(QStringLiteral("resize2fs shrink"),
                                           resize2fs,
                                           {QStringLiteral("-p"), targetPath, resizeSizeArg},
@@ -5297,7 +5314,7 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
                 .arg(operation.target.partition_number.value())
                 .arg(fs.toLower(), command.tool_id);
         request.accepted_exit_codes = command.tool_id == QStringLiteral("e2fsck")
-                                          ? QStringList{QStringLiteral("0"), QStringLiteral("1")}
+                                          ? e2fsckRepairExitCodes()
                                           : QStringList{QStringLiteral("0")};
         request.command = command;
         return buildExternalFileSystemToolScript(operation, request);
