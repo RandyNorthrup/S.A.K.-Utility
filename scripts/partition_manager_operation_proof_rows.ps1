@@ -1224,6 +1224,8 @@ function Invoke-OpsVolumeChurnDrill {
     $media = $null
     $kept = ''
     $round = 0
+    $skipped = 0
+    $missedCreates = 0
     $write = { param([string]$Text) $line = "$((Get-Date).ToString('HH:mm:ss')) $Text"; $log.Add($line); Write-Host "  drill $line" }
     $run = {
         param([string]$StepName, [string]$OperationName, [hashtable]$Where, [hashtable]$With)
@@ -1262,6 +1264,16 @@ function Invoke-OpsVolumeChurnDrill {
             & $write "round $round"
             & $run "create-$round" 'Create' @{} @{ size_mib = 2048; free_before_mib = 0; file_system = 'NTFS'; allocation_unit_bytes = 4096; partition_type = $Script:GptBasicData; label = 'OPSCHURN'; full_format = $false }
             $part = @(Get-Partition -DiskNumber $disk | Where-Object { $_.Type -eq 'Basic' })
+            # A Create that made nothing (on a busy PC the app's disk scan can stall before it
+            # queues anything) costs its round, not the drill; three in a row stop it.
+            if ($part.Count -eq 0) {
+                $skipped++
+                $missedCreates++
+                & $write "round ${round}: Create made no partition; the round is skipped ($missedCreates in a row)"
+                if ($missedCreates -ge 3) { throw "round ${round}: three Creates in a row made no partition" }
+                continue
+            }
+            $missedCreates = 0
             if ($part.Count -ne 1) { throw "round ${round}: the drive holds $($part.Count) data partitions after Create" }
             $select = @{ partition_number = [int]$part[0].PartitionNumber }
             $letter = Wait-OpsLetter -DiskNumber $disk -Offset ([uint64]$part[0].Offset)
@@ -1303,7 +1315,7 @@ function Invoke-OpsVolumeChurnDrill {
         }
         Clear-OpsDestructiveDisk
     }
-    $checks = @(New-OpsCheck -Name 'the drill ran its time without stopping' -Passed (-not $stopped) -Detail $(if ($stopped) { $stopped } else { "$round rounds" }))
+    $checks = @(New-OpsCheck -Name 'the drill ran its time without stopping' -Passed (-not $stopped) -Detail $(if ($stopped) { $stopped } else { "$round rounds, $skipped skipped" }))
     $after = @(Get-Partition -DiskNumber $disk -ErrorAction SilentlyContinue | Sort-Object Offset | ForEach-Object { "$($_.Offset):$($_.Size)" }) -join ' '
     $checks += New-OpsCheck -Name "the drive's own partitions are as they were" -Passed ($after -eq $kept) -Detail "$kept / $after"
     # Every snapshot made during the drill, on the drive's volumes and on C:, and by whom: VSS's
@@ -1311,7 +1323,7 @@ function Invoke-OpsVolumeChurnDrill {
     $vss = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'VSS'; StartTime = $drillStarted } -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object { $said = $_.Message -replace '\s+', ' '; "$($_.TimeCreated.ToString('HH:mm:ss')) VSS $($_.Id) $($said.Substring(0, [Math]::Min(260, $said.Length)))" })
     $volsnap = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'volsnap'; StartTime = $drillStarted } -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object { $said = $_.Message -replace '\s+', ' '; "$($_.TimeCreated.ToString('HH:mm:ss')) volsnap $($_.Id) $($said.Substring(0, [Math]::Min(200, $said.Length)))" })
     $shadows = @(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction SilentlyContinue | ForEach-Object { "$($_.InstallDate) $($_.VolumeName) $($_.ID)" })
-    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ minutes = $Minutes; pause_seconds = $PauseSeconds; with_move = [bool]$WithMove; guard_removals = [bool]$GuardRemovals; rounds = $round; failed_steps = @($failed); log = @($log); vss_events = $vss; volsnap_events = $volsnap; shadow_copies = $shadows })
+    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ minutes = $Minutes; pause_seconds = $PauseSeconds; with_move = [bool]$WithMove; guard_removals = [bool]$GuardRemovals; rounds = $round; skipped_rounds = $skipped; failed_steps = @($failed); log = @($log); vss_events = $vss; volsnap_events = $volsnap; shadow_copies = $shadows })
 }
 
 Add-OpsRow 'ops.drill-a-scan-then-remove' { Invoke-OpsVolumeChurnDrill -Minutes 90 -PauseSeconds 0 -WithMove }
