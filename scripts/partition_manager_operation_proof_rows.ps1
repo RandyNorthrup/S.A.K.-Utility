@@ -1348,7 +1348,7 @@ function Invoke-OpsVhdDetachDrill {
         down with mountvol /P, the disk taken offline, the file detached and deleted. Every step's
         time goes to the runner's log and the row's evidence.
     #>
-    param([int]$Minutes)
+    param([int]$Minutes, [switch]$WithLoad)
     $drillStarted = Get-Date
     $log = [System.Collections.Generic.List[string]]::new()
     $failed = [System.Collections.Generic.List[string]]::new()
@@ -1359,12 +1359,18 @@ function Invoke-OpsVhdDetachDrill {
     $readbacks = 0
     $dirty = [System.Collections.Generic.List[string]]::new()
     $media = $null
+    $load = $null
+    $loadLog = @()
     $write = { param([string]$Text) $line = "$((Get-Date).ToString('HH:mm:ss')) $Text"; $log.Add($line); Write-Host "  drill $line" }
     try {
+        if ($WithLoad) {
+            $load = Start-OpsSyntheticLoad
+            & $write "load started (pid $($load.process.Id)); it fills memory over its first minutes"
+        }
         $deadline = (Get-Date).AddMinutes($Minutes)
         while ((Get-Date) -lt $deadline) {
             $round++
-            & $write "round $round"
+            & $write "round $round$(if ($load) { "; load: $(Get-OpsSyntheticLoadSample -Load $load)" })"
             $disk = New-OpsDisk -Name "round$round" -SizeMB 2048
             if ($null -eq $media) { $media = Get-OpsMedia -DiskNumber $disk }
             & $write "create-$round start"
@@ -1402,18 +1408,131 @@ function Invoke-OpsVhdDetachDrill {
     } catch {
         $stopped = $_.Exception.Message
         & $write "stopped: $stopped"
+    } finally {
+        if ($load) { $loadLog = Stop-OpsSyntheticLoad -Load $load; & $write 'load stopped' }
     }
     $checks = @(New-OpsCheck -Name 'the drill ran its time without stopping' -Passed (-not $stopped) -Detail $(if ($stopped) { $stopped } else { "$round rounds, $skipped skipped" }))
+    if ($WithLoad) {
+        # The load is part of what was asked: a drill whose load never reached A's levels is no answer.
+        $low = @($loadLog | Where-Object { $_ -match 'free (\d+) MB' -and [int]$Matches[1] -le 2500 }).Count
+        $checks += New-OpsCheck -Name 'the load held memory near A run 2 (2.5 GB free or less) for most samples' -Passed ($loadLog.Count -gt 0 -and $low -ge [Math]::Ceiling($loadLog.Count * 0.6)) -Detail "$low of $($loadLog.Count) samples"
+    }
     $checks += New-OpsCheck -Name "every readback found the volume as made, and chkdsk's scan clean" -Passed ($readbacks -gt 0 -and $dirty.Count -eq 0) -Detail "$readbacks readbacks; $(@($dirty) -join ' | ')"
     $left = @(Get-ChildItem -LiteralPath $WorkRoot -Filter "$($Script:RowId.Replace('ops.', ''))-round*.vhdx" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name })
     $checks += New-OpsCheck -Name 'no virtual disk file was left behind' -Passed ($left.Count -eq 0) -Detail $left
-    $extra = [ordered]@{ minutes = $Minutes; rounds = $round; skipped_rounds = $skipped; failed_steps = @($failed); log = @($log) }
+    $extra = [ordered]@{ minutes = $Minutes; with_load = [bool]$WithLoad; rounds = $round; skipped_rounds = $skipped; failed_steps = @($failed); log = @($log); load_samples = @($loadLog) }
     $events = Get-OpsDrillEvents -Since $drillStarted
     foreach ($key in $events.Keys) { $extra[$key] = $events[$key] }
     return Complete-OpsRow -Media $media -Checks $checks -Extra $extra
 }
 
-Add-OpsRow 'ops.drill-d-scan-then-detach-vhd' { Invoke-OpsVhdDetachDrill -Minutes 150 }
+# Drill D's synthetic load (coordinator, 2026-11-12), to match drill A run 2, which ran beside a
+# build: memory down to about 1.5 GB free, every CPU busy, steady writes on W: outside the virtual
+# disk folder. One process of its own, so it outlives no row: the drill stops it, and a bugcheck
+# ends it. Every 30 s it logs free memory, the commit headroom, CPU and W:'s write rate.
+$Script:OpsLoadScript = @'
+param([string]$Dir, [string]$StopFile, [int]$Spinners, [int]$WriteMBps)
+$ErrorActionPreference = 'Continue'
+Add-Type -TypeDefinition 'using System; using System.Diagnostics;
+public static class OpsLoad {
+    public static void Spin(int milliseconds) { Stopwatch clock = Stopwatch.StartNew(); double x = 1; while (clock.ElapsedMilliseconds < milliseconds) { x = Math.Sqrt(x + 12345.678); } }
+    public static void Touch(byte[] block) { for (int i = 0; i < block.Length; i += 4096) { block[i]++; } }
+}'
+$state = [hashtable]::Synchronized(@{ stop = $false })
+$shells = @()
+for ($i = 0; $i -lt $Spinners; $i++) {
+    $shell = [powershell]::Create()
+    [void]$shell.AddScript({ param($Shared) while (-not $Shared.stop) { [OpsLoad]::Spin(1000) } }).AddArgument($state)
+    $shells += [pscustomobject]@{ shell = $shell; handle = $shell.BeginInvoke() }
+}
+$writer = [powershell]::Create()
+[void]$writer.AddScript({
+        param($Shared, $Folder, $Rate)
+        $buffer = New-Object byte[] (4MB)
+        (New-Object Random 7).NextBytes($buffer)
+        $n = 0
+        while (-not $Shared.stop) {
+            $n++
+            $path = Join-Path $Folder ('load-{0}.bin' -f ($n % 2))
+            $stream = [IO.File]::Open($path, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+            try {
+                $written = 0
+                while (-not $Shared.stop -and $written -lt 2GB) {
+                    $started = [Diagnostics.Stopwatch]::StartNew()
+                    $stream.Write($buffer, 0, $buffer.Length)
+                    $written += $buffer.Length
+                    $wait = [int](1000 * $buffer.Length / ($Rate * 1MB)) - [int]$started.ElapsedMilliseconds
+                    if ($wait -gt 0) { Start-Sleep -Milliseconds $wait }
+                }
+            } finally { $stream.Dispose() }
+        }
+    }).AddArgument($state).AddArgument($Dir).AddArgument($WriteMBps)
+$writerHandle = $writer.BeginInvoke()
+$blocks = New-Object System.Collections.Generic.List[byte[]]
+$log = Join-Path $Dir 'load.log'
+$nextSample = Get-Date
+while (-not (Test-Path -LiteralPath $StopFile)) {
+    $os = Get-CimInstance -ClassName Win32_OperatingSystem
+    $freeMB = [int]($os.FreePhysicalMemory / 1KB)
+    $commitMB = [int]($os.FreeVirtualMemory / 1KB)
+    # Fill toward 1.5 GB free, never closer than 2.5 GB to the commit limit (the page file here is
+    # small), and give back when Windows runs short.
+    if ($freeMB -gt 2000 -and $commitMB -gt 3000) { $block = New-Object byte[] (256MB); [OpsLoad]::Touch($block); $blocks.Add($block) }
+    elseif (($freeMB -lt 1000 -or $commitMB -lt 2500) -and $blocks.Count -gt 0) { $blocks.RemoveAt($blocks.Count - 1); [GC]::Collect() }
+    foreach ($block in $blocks) { [OpsLoad]::Touch($block) }
+    if ((Get-Date) -ge $nextSample) {
+        $nextSample = (Get-Date).AddSeconds(30)
+        $cpu = $null; $w = $null
+        try {
+            $counters = (Get-Counter -Counter '\Processor(_Total)\% Processor Time', '\LogicalDisk(W:)\Disk Write Bytes/sec' -ErrorAction Stop).CounterSamples
+            $cpu = [int]$counters[0].CookedValue; $w = [int]($counters[1].CookedValue / 1MB)
+        } catch { }
+        Add-Content -LiteralPath $log -Value ('{0} free {1} MB, commit headroom {2} MB, held {3} MB, cpu {4}%, W: writes {5} MB/s' -f (Get-Date).ToString('HH:mm:ss'), $freeMB, $commitMB, ($blocks.Count * 256), $cpu, $w)
+    }
+    Start-Sleep -Seconds 2
+}
+$state.stop = $true
+foreach ($s in $shells) { try { [void]$s.shell.EndInvoke($s.handle) } catch { } ; $s.shell.Dispose() }
+try { [void]$writer.EndInvoke($writerHandle) } catch { }
+$writer.Dispose()
+Remove-Item -LiteralPath (Join-Path $Dir 'load-0.bin'), (Join-Path $Dir 'load-1.bin') -Force -ErrorAction SilentlyContinue
+'stopped' | Set-Content -LiteralPath (Join-Path $Dir 'stopped')
+'@
+
+function Start-OpsSyntheticLoad {
+    # The load's folder is beside the work folder, not in it: the drill's virtual disks stay alone.
+    $dir = Join-Path (Split-Path -Parent ((Resolve-Path -LiteralPath $WorkRoot).Path.TrimEnd('\'))) 'load'
+    if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $file = Join-Path $dir 'load.ps1'
+    Set-Content -LiteralPath $file -Value $Script:OpsLoadScript -Encoding ASCII
+    $stop = Join-Path $dir 'stop'
+    $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $spinners = [Math]::Max(1, [int](Get-CimInstance -ClassName Win32_ComputerSystem).NumberOfLogicalProcessors)
+    $process = Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$file`"", '-Dir', "`"$dir`"", '-StopFile', "`"$stop`"", '-Spinners', $spinners, '-WriteMBps', 22) -WindowStyle Hidden -PassThru
+    return [pscustomobject]@{ dir = $dir; stop = $stop; process = $process; log = (Join-Path $dir 'load.log') }
+}
+
+function Get-OpsSyntheticLoadSample {
+    param([object]$Load)
+    if ($Load.process.HasExited) { return 'the load process has exited' }
+    $last = @(Get-Content -LiteralPath $Load.log -ErrorAction SilentlyContinue | Select-Object -Last 1)
+    if ($last.Count -eq 0) { return 'no sample yet' }
+    return "$($last[0])"
+}
+
+function Stop-OpsSyntheticLoad {
+    # Returns every sample the load logged.
+    param([object]$Load)
+    Set-Content -LiteralPath $Load.stop -Value 'stop'
+    if (-not $Load.process.WaitForExit(120000)) { try { $Load.process.Kill() } catch { Write-Host "Could not stop the load: $($_.Exception.Message)" } }
+    $samples = @(Get-Content -LiteralPath $Load.log -ErrorAction SilentlyContinue)
+    Remove-Item -LiteralPath $Load.dir -Recurse -Force -ErrorAction SilentlyContinue
+    return , $samples
+}
+
+Add-OpsRow 'ops.drill-d-scan-then-detach-vhd' { Invoke-OpsVhdDetachDrill -Minutes 150 -WithLoad }
+Add-OpsRow 'ops.drill-d-idle' { Invoke-OpsVhdDetachDrill -Minutes 150 }
 
 function Invoke-OpsLockAndDismount {
     # FSCTL_LOCK_VOLUME, then FSCTL_DISMOUNT_VOLUME, on the volume's own device, then the handle is
