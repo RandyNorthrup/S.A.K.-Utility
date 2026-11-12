@@ -555,6 +555,35 @@ function Get-OpsRowSummary {
     return [pscustomobject]@{ id = $PlanRow.Id; operation = $PlanRow.Operation; variant = $PlanRow.Variant; build = $build; scripts = ($scripts -join ' '); helper = ($helper -join '; '); verifier = $verifier; verdict = $verdict; run = (Split-Path -Leaf (Split-Path -Parent $RowDir)) }
 }
 
+function Get-OpsRowDetails {
+    # Each check a row's readers made, and each step's own word, for the table's detail section.
+    param([string]$RowDir, [string]$Id, [string]$Verdict)
+    $lines = @("### $Id ($Verdict)", '')
+    $report = Get-Content -LiteralPath (Join-Path $RowDir 'report.json') -Raw | ConvertFrom-Json
+    if ($report.status -ne 'Passed') { $lines += "- row stopped: $("$($report.failure)".Trim())" }
+    foreach ($step in @($report.steps)) {
+        $path = Join-Path $RowDir "$($step.report)"
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $client = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $said = if ($client.status -eq 'Passed') { 'did what the row expected' } else { "FAILED: $("$($client.error)".Trim())" }
+        $lines += "- step $($step.id) ($($step.operation)): $said"
+    }
+    $checks = @()
+    $independentPath = Join-Path $RowDir 'independent.json'
+    if (Test-Path -LiteralPath $independentPath) {
+        $independent = Get-Content -LiteralPath $independentPath -Raw | ConvertFrom-Json
+        if ($independent.PSObject.Properties['checks']) { $checks += @($independent.checks) }
+    }
+    $hostPath = Join-Path $RowDir 'host-checks.json'
+    if (Test-Path -LiteralPath $hostPath) { $checks += @(Get-Content -LiteralPath $hostPath -Raw | ConvertFrom-Json) }
+    foreach ($check in $checks) {
+        $detail = if ($check.detail -is [string]) { $check.detail } else { ConvertTo-Json -InputObject $check.detail -Depth 4 -Compress }
+        if ($detail.Length -gt 300) { $detail = $detail.Substring(0, 300) + '...' }
+        $lines += "- $(if ($check.passed) { 'PASS' } else { 'FAIL' }) $($check.name): $detail"
+    }
+    return $lines + ''
+}
+
 function Write-OpsResults {
     <#
     .SYNOPSIS
@@ -566,19 +595,26 @@ function Write-OpsResults {
         "Generated $(Get-Date -Format 'yyyy-MM-dd HH:mm') by scripts/run_partition_manager_operation_proof.ps1 from the evidence under $root\runs.",
         'Each row is the newest run that has evidence for it. PASS means every step did what the row expected and every check a separate tool made held.',
         '', '| Row | Operation | Variant | Machine | Build | Script SHA-256 (step:first 12) | Helper result | Verifier | Verdict | Run |', '|---|---|---|---|---|---|---|---|---|---|')
+    $details = @()
+    $tally = @{ PASS = 0; FAIL = 0; 'NOT RUN' = 0 }
     foreach ($row in $Plan.Rows) {
         $found = $null
         foreach ($run in $runs) { $dir = Join-Path $run.FullName $row.Id; if (Test-Path -LiteralPath (Join-Path $dir 'report.json')) { $found = $dir; break } }
         if ($found) {
             $s = Get-OpsRowSummary -RowDir $found -PlanRow $row
+            $tally[$s.verdict]++
             $lines += "| $($s.id) | $($s.operation) | $($s.variant) | $($row.Machine) | $($s.build) | $($s.scripts) | $($s.helper) | $($s.verifier) | **$($s.verdict)** | $($s.run) |"
+            $details += Get-OpsRowDetails -RowDir $found -Id $row.Id -Verdict $s.verdict
         } else {
+            $tally['NOT RUN']++
             $why = if ($row.Pending) { "NOT RUN: $($row.Pending)" } else { 'NOT RUN' }
             $lines += "| $($row.Id) | $($row.Operation) | $($row.Variant) | $($row.Machine) | | | | | $why | |"
         }
     }
+    $lines = $lines[0..3] + @('', "Rows: $($Plan.Rows.Count). PASS $($tally.PASS), FAIL $($tally.FAIL), NOT RUN $($tally['NOT RUN']).") + $lines[4..($lines.Count - 1)]
     $lines += '', '## Not runnable', ''
     foreach ($item in $Plan.NotRunnable) { $lines += "- $($item.Operation): $($item.Reason)" }
+    $lines += @('', '## Every check, per row', '') + $details
     [IO.File]::WriteAllText($ResultsPath, (($lines -join "`n") + "`n"))
     return $ResultsPath
 }
