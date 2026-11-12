@@ -160,6 +160,11 @@ function Close-OpsRowVolumes {
     # minutes a row on testpc2). A disk with no letters left is then taken offline.
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
+    # A disk removed within seconds of an online scan (chkdsk /scan here, Repair-Volume -Scan in the
+    # app) can leave volsnap's timer queued in a freed device: testpc2 bugchecked so in Drill D and
+    # again in the final run at 11:59 (2026-11-12). Drill E's 10 s settle held for 60 minutes under
+    # load; the harness waits 15 s, as the product now does, before any volume goes down.
+    Start-Sleep -Seconds 15
     $clock = [Diagnostics.Stopwatch]::StartNew()
     foreach ($path in @($Script:RowVhds)) {
         try {
