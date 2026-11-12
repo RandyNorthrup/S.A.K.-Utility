@@ -560,6 +560,9 @@ set(SAK_PARTITION_LIVE_CERTIFIER_SOURCES
     ../include/sak/elevation_manager.h
     ../include/sak/file_hash.h
     ../include/sak/partition_manager_controller.h
+    # The assistant's create_restore_point engine, which the operation proof runs in-process.
+    ../src/core/restore_point_manager.cpp
+    ../include/sak/restore_point_manager.h
 )
 add_executable(partition_manager_live_certifier ${SAK_PARTITION_LIVE_CERTIFIER_SOURCES})
 set_target_properties(partition_manager_live_certifier PROPERTIES

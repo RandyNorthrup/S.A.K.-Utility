@@ -127,6 +127,13 @@ function Test-PureAdmissionContract {
         "step-execution-needs-every-queued-step", "step-execution-passes-with-every-step",
         "step-execution-refuses-a-skipped-step", "step-has-a-builder-for-each-operation"
     )
+    # The operation-proof steps (opsproof, 2026-11-11).
+    $expected += @(
+        "step-certification-job-refuses-a-route", "step-certification-job-refuses-a-stop",
+        "step-proof-job-may-stop", "step-proof-has-a-builder-for-each-panel-payload",
+        "step-proof-writes-through-the-panel-raw-path",
+        "step-proof-format-adds-tool-fields-only-for-non-windows"
+    )
     $checks = @($report.checks)
     Assert-Contract ($checks.Count -eq $expected.Count) "Pure guard check count changed"
     foreach ($name in $expected) {

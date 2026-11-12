@@ -20,10 +20,15 @@
 #include "sak/elevation_manager.h"
 #include "sak/file_hash.h"
 #include "sak/file_recovery_engine.h"
+#include "sak/partition_executor.h"
+#include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_manager_controller.h"
+#include "sak/partition_operation_planner.h"
 #include "sak/partition_operation_requests.h"
 #include "sak/partition_safety_validator.h"
 #include "sak/partition_script_builder.h"
+#include "sak/restore_point_manager.h"
+#include "sak/storage_inventory_worker.h"
 
 #include "partition_manager_code_digest.h"
 
@@ -34,10 +39,12 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QJsonDocument>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScopeGuard>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QTimer>
 
 #include <algorithm>
@@ -136,6 +143,14 @@ struct StepJob {
     QJsonObject choices;
     int timeout_seconds{kDefaultTimeoutSeconds};
     bool allow_elevated_client{false};
+    /// A job from scripts/run_partition_manager_operation_proof.ps1. Only such a job reaches the
+    /// operation-proof builders and routes below; a certification job never does.
+    bool operation_proof{false};
+    /// "panel" (the default: the controller's queue and Apply) or "assistant" (what the AI
+    /// assistant's partition.apply_operation runs). Operation proof only.
+    QString route;
+    /// Stop the Apply this long after it starts, as a person pressing Stop. Operation proof only.
+    int cancel_after_seconds{0};
 };
 
 Result<DiskPin> parsePin(const QJsonObject& object) {
@@ -156,24 +171,35 @@ QString expectedConfirmation(const DiskPin& pin) {
         .arg(pin.model, pin.serial_number, QString::number(pin.size_bytes));
 }
 
+/// What a job expects of its step. A stopped Apply is something only an operation-proof job asks
+/// for, and only it may pick a route or a stop.
+Result<void> checkJobExpectation(const StepJob& job) {
+    const QStringList expectations{QStringLiteral("success"),
+                                   QStringLiteral("refused"),
+                                   QStringLiteral("failed")};
+    const bool proof_cancel = job.operation_proof && job.expect == QStringLiteral("cancelled");
+    if (!expectations.contains(job.expect) && !proof_cancel) {
+        return refused(
+            QStringLiteral("A step job must say what it expects: success, refused or "
+                           "failed"));
+    }
+    if (job.expect != QStringLiteral("success") && !proof_cancel &&
+        job.refusal_contains.isEmpty()) {
+        return refused(QStringLiteral("A step that expects a refusal must name the reason"));
+    }
+    if (!job.operation_proof && (!job.route.isEmpty() || job.cancel_after_seconds != 0)) {
+        return refused(QStringLiteral("Only an operation-proof job picks a route or a stop"));
+    }
+    return {};
+}
+
 Result<void> checkJobFields(const StepJob& job) {
     if (job.scenario_id.isEmpty() || job.step.isEmpty() || job.run_id.isEmpty() ||
         job.operation.isEmpty() || job.report_path.isEmpty()) {
         return refused(QStringLiteral(
             "A step job needs a scenario, a step, a run id, an operation and a report path"));
     }
-    const QStringList expectations{QStringLiteral("success"),
-                                   QStringLiteral("refused"),
-                                   QStringLiteral("failed")};
-    if (!expectations.contains(job.expect)) {
-        return refused(
-            QStringLiteral("A step job must say what it expects: success, refused or "
-                           "failed"));
-    }
-    if (job.expect != QStringLiteral("success") && job.refusal_contains.isEmpty()) {
-        return refused(QStringLiteral("A step that expects a refusal must name the reason"));
-    }
-    return {};
+    return checkJobExpectation(job);
 }
 
 Result<void> readJobPins(const QJsonObject& root, StepJob* job) {
@@ -209,7 +235,10 @@ Result<StepJob> parseJob(const QJsonObject& root) {
                 .select = root.value(QLatin1String("select")).toObject(),
                 .choices = root.value(QLatin1String("choices")).toObject(),
                 .allow_elevated_client =
-                    root.value(QLatin1String("allow_elevated_client")).toBool(false)};
+                    root.value(QLatin1String("allow_elevated_client")).toBool(false),
+                .operation_proof = root.value(QLatin1String("operation_proof")).toBool(false),
+                .route = jsonString(root, "route"),
+                .cancel_after_seconds = root.value(QLatin1String("cancel_after_seconds")).toInt(0)};
     if (const auto fields = checkJobFields(job); !fields) {
         return refused(fields.error());
     }
@@ -722,6 +751,10 @@ QJsonObject stepJson(const sak::PartitionExecutionStep& step) {
             {"success", step.success},
             {"skipped", step.skipped},
             {"error_message", step.error_message},
+            {"cancelled", step.cancelled},
+            {"may_still_run_in_windows", step.may_still_run_in_windows},
+            {"stop_cleanup_removed", QJsonArray::fromStringList(step.stop_cleanup_removed)},
+            {"stop_cleanup_not_removed", QJsonArray::fromStringList(step.stop_cleanup_not_removed)},
             {"stdout", boundedText(step.stdout_text)},
             {"stderr", boundedText(step.stderr_text)}};
 }
@@ -911,6 +944,11 @@ bool expectedFailure(const StepJob& job, const sak::PartitionExecutionResult& re
            said.contains(job.refusal_contains, Qt::CaseInsensitive);
 }
 
+/// An operation-proof step that pressed Stop expects the batch to say it was stopped.
+bool expectedCancel(const StepJob& job, const sak::PartitionExecutionResult& result) {
+    return job.operation_proof && job.expect == QStringLiteral("cancelled") && result.cancelled;
+}
+
 Result<void> applyQueued(sak::PartitionManagerController& controller,
                          const StepJob& job,
                          QJsonObject* report) {
@@ -932,8 +970,18 @@ Result<void> applyQueued(sak::PartitionManagerController& controller,
         QObject::disconnect(on_refusal);
         QObject::disconnect(on_status);
     });
+    // Only an operation-proof job presses Stop; it says how long after the Apply starts.
+    QTimer stop;
+    stop.setSingleShot(true);
+    QObject::connect(&stop, &QTimer::timeout, &controller, [&controller]() {
+        controller.cancel();
+    });
     const auto execution = ControllerWait(controller, job.timeout_seconds).run([&]() {
-        return controller.applyQueue(token, false, true);
+        const bool started = controller.applyQueue(token, false, true);
+        if (started && job.cancel_after_seconds > 0) {
+            stop.start(job.cancel_after_seconds * kMillisecondsPerSecond);
+        }
+        return started;
     });
     if (!execution) {
         return refused(execution.error());
@@ -952,7 +1000,8 @@ Result<void> applyQueued(sak::PartitionManagerController& controller,
     const auto& result = **execution;
     report->insert("execution", executionJson(result));
     report->insert("helper_connected", sak::ElevationBroker::sessionBroker()->isConnected());
-    if (!executionPassed(result, queued) && !expectedFailure(job, result)) {
+    if (!executionPassed(result, queued) && !expectedFailure(job, result) &&
+        !expectedCancel(job, result)) {
         return refused(
             QStringLiteral("Apply did not do what the step expected: %1").arg(result.message));
     }
@@ -994,6 +1043,545 @@ Result<void> runFileRecovery(const StepJob& job, QJsonObject* report) {
     return {};
 }
 
+/// The panel's queue and Apply for requests already built: a refusal the step expected is its
+/// result, and anything else that is not queued stops the step.
+Result<void> queueAndApply(sak::PartitionManagerController& controller,
+                           const StepJob& job,
+                           const Requests& requests,
+                           QJsonObject* report) {
+    const QueueOutcome queued = queueRequests(controller, requests);
+    report->insert("queue_refusal_reasons", QJsonArray::fromStringList(queued.reasons));
+    if (!queued.queued) {
+        if (expectedRefusal(job, queued.reasons)) {
+            report->insert("refused_at", QStringLiteral("queue"));
+            report->insert("expectation_met", true);
+            return {};
+        }
+        return refused(QStringLiteral("Not added to the queue: %1")
+                           .arg(queued.reasons.join(QStringLiteral("; "))));
+    }
+    recordQueued(controller, report);
+    return applyQueued(controller, job, report);
+}
+
+// --- Operation proof ----------------------------------------------------------------------------
+// scripts/run_partition_manager_operation_proof.ps1 runs every operation a person can reach, not
+// only the ones the certification rows name. Its jobs say operation_proof, and only they reach
+// what follows, so no certification row's steps change.
+//
+// Where the panel builds a payload with a core function, so does this. Where the panel builds it
+// inline in src/gui/partition_manager_panel.cpp, this builds it the same way and the step's report
+// names the panel function it follows (payload_source), so a reader knows which payloads are
+// copies of the panel's and which are the panel's own code.
+
+using OpType = sak::PartitionOperationType;
+
+bool isPanelNonNativeFormat(const QString& file_system) {
+    // isExtFilesystem, isHfsFilesystem, isApfsFilesystem and isLinuxSwapFilesystem in the panel.
+    static const QStringList kNonNative{QStringLiteral("ext2"),
+                                        QStringLiteral("ext3"),
+                                        QStringLiteral("ext4"),
+                                        QStringLiteral("hfs+"),
+                                        QStringLiteral("hfsx"),
+                                        QStringLiteral("hfsplus"),
+                                        QStringLiteral("apfs"),
+                                        QStringLiteral("linux swap"),
+                                        QStringLiteral("linux-swap"),
+                                        QStringLiteral("swap")};
+    return kNonNative.contains(file_system.trimmed().toLower());
+}
+
+bool isPanelLinuxSwap(const QString& file_system) {
+    const QString token = file_system.trimmed().toLower();
+    return token == QStringLiteral("linux swap") || token == QStringLiteral("linux-swap") ||
+           token == QStringLiteral("swap");
+}
+
+bool isPanelExt(const QString& file_system) {
+    const QString token = file_system.trimmed().toLower();
+    return token == QStringLiteral("ext2") || token == QStringLiteral("ext3") ||
+           token == QStringLiteral("ext4");
+}
+
+/// nonNativeFilesystemWriteTargetPath in the panel: what a non-Windows tool writes through.
+QString panelRawPartitionPath(const sak::PartitionInfoEx& partition) {
+    return QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk%1\\Partition%2")
+        .arg(partition.disk_number.value())
+        .arg(partition.partition_number.value());
+}
+
+/// nonNativeFilesystemTargetPath in the panel: what a read-only check reads.
+QString panelReadOnlyCheckPath(const sak::PartitionTarget& target,
+                               const sak::PartitionInfoEx& partition) {
+    if (!target.drive_letter.trimmed().isEmpty()) {
+        return QStringLiteral("\\\\.\\%1:").arg(target.drive_letter.left(1).toUpper());
+    }
+    return panelRawPartitionPath(partition);
+}
+
+QString volumeFileSystem(const sak::PartitionInfoEx& partition) {
+    return partition.volume ? partition.volume->file_system.trimmed() : QString();
+}
+
+/// The fields every non-Windows tool payload carries, with the confirmation the dialog's check box
+/// gives.
+void addPanelNonNativeFields(QJsonObject* payload, const sak::PartitionInfoEx& partition) {
+    payload->insert(QStringLiteral("non_native_file_system_tool"), true);
+    payload->insert(QStringLiteral("target_path"), panelRawPartitionPath(partition));
+    payload->insert(QStringLiteral("target_wipe_confirmed"), true);
+}
+
+/// apfsContainerBasePayload in the panel.
+QJsonObject panelApfsBasePayload(const sak::PartitionInfoEx& partition) {
+    QJsonObject payload;
+    addPanelNonNativeFields(&payload, partition);
+    payload.insert(QStringLiteral("file_system"), QStringLiteral("APFS"));
+    payload.insert(QStringLiteral("apfs_cow_mutation_certified"), true);
+    return payload;
+}
+
+using ProofPayload = std::function<QJsonObject(const BuildContext&, const sak::PartitionInfoEx&)>;
+
+struct ProofBuilder {
+    RequestBuilder build;
+    QString payload_source;
+};
+
+ProofBuilder onSelectedPartition(OpType type, const ProofPayload& payload, const char* source) {
+    return {.build =
+                [type, payload](const BuildContext& context) {
+                    return buildOnPartition(context,
+                                            type,
+                                            [&](const sak::PartitionInfoEx& partition) {
+                                                return payload(context, partition);
+                                            });
+                },
+            .payload_source = QString::fromLatin1(source)};
+}
+
+/// The panel's withValue(key, value): one field, carried from the job with its JSON type.
+ProofBuilder withChoice(OpType type, const char* key, const char* source) {
+    return onSelectedPartition(
+        type,
+        [key](const BuildContext& context, const sak::PartitionInfoEx&) {
+            return QJsonObject{{QLatin1String(key), context.job.choices.value(QLatin1String(key))}};
+        },
+        source);
+}
+
+ProofBuilder onDisk(OpType type, const QJsonObject& payload, const char* source) {
+    return {.build =
+                [type, payload](const BuildContext& context) {
+                    return oneRequest(type, sak::diskOperationTarget(context.disk), payload);
+                },
+            .payload_source = QString::fromLatin1(source)};
+}
+
+QJsonObject panelFormatPayload(const BuildContext& context, const sak::PartitionInfoEx& partition) {
+    // formatPartitionPayload(widgets, partition): the core payload, and for a non-Windows file
+    // system the tool's fields. Additional APFS volumes and encryption are left at their defaults.
+    const QJsonObject& choices = context.job.choices;
+    QJsonObject payload = sak::formatPartitionPayload(formatChoices(choices));
+    const QString file_system = jsonString(choices, "file_system");
+    if (isPanelNonNativeFormat(file_system)) {
+        addPanelNonNativeFields(&payload, partition);
+    }
+    if (isPanelLinuxSwap(file_system)) {
+        payload.insert(QStringLiteral("linux_swap_page_size_bytes"),
+                       jsonString(choices, "linux_swap_page_size_bytes"));
+    }
+    return payload;
+}
+
+QJsonObject panelResizePayload(const BuildContext& context, const sak::PartitionInfoEx& partition) {
+    // resizePartitionPayload(widgets, partition): an ext volume adds the tool's fields.
+    QJsonObject payload =
+        sak::resizePartitionPayload(jsonMiB(context.job.choices, "target_size_mib"),
+                                    sak::adjacentFreeBytesAfter(context.disk, partition));
+    if (isPanelExt(volumeFileSystem(partition))) {
+        addPanelNonNativeFields(&payload, partition);
+        payload.insert(QStringLiteral("file_system"), volumeFileSystem(partition));
+    }
+    return payload;
+}
+
+QJsonObject panelRepairPayload(const BuildContext&, const sak::PartitionInfoEx& partition) {
+    // nonNativeRepairPayload in the panel, queued as Check File System with repair chosen.
+    QJsonObject payload{{QStringLiteral("file_system"), volumeFileSystem(partition)}};
+    addPanelNonNativeFields(&payload, partition);
+    return payload;
+}
+
+QJsonObject panelMergePayload(const BuildContext& context, const sak::PartitionInfoEx&) {
+    const int source = context.job.choices.value(QLatin1String("source_partition_number")).toInt();
+    return {{"source_partition_number", QString::number(source)},
+            {"target_folder", QStringLiteral("Merged-Partition-%1").arg(source)}};
+}
+
+QJsonObject panelSplitPayload(const BuildContext& context, const sak::PartitionInfoEx&) {
+    return {{"first_size_bytes", QString::number(jsonMiB(context.job.choices, "first_size_mib"))}};
+}
+
+QJsonObject panelApfsPayload(const BuildContext& context, const sak::PartitionInfoEx& partition) {
+    // apfsVolumeLabelPayload and apfsContainerActionPayload in the panel.
+    QJsonObject payload = panelApfsBasePayload(partition);
+    for (const char* key : {"label", "apfs_snapshot_name"}) {
+        if (context.job.choices.contains(QLatin1String(key))) {
+            payload.insert(QLatin1String(key), jsonString(context.job.choices, key));
+        }
+    }
+    return payload;
+}
+
+void addProofPartitionBuilders(std::map<QString, ProofBuilder>* builders) {
+    builders->emplace(
+        QStringLiteral("Format"),
+        onSelectedPartition(OpType::Format, panelFormatPayload, "formatPartitionPayload"));
+    builders->emplace(
+        QStringLiteral("Resize"),
+        onSelectedPartition(OpType::Resize, panelResizePayload, "resizePartitionPayload"));
+    builders->emplace(
+        QStringLiteral("RepairFileSystem"),
+        onSelectedPartition(OpType::CheckFileSystem, panelRepairPayload, "nonNativeRepairPayload"));
+    builders->emplace(QStringLiteral("Merge"),
+                      onSelectedPartition(OpType::Merge, panelMergePayload, "onMergePartitions"));
+    builders->emplace(QStringLiteral("Split"),
+                      onSelectedPartition(OpType::Split, panelSplitPayload, "onSplitPartition"));
+    for (const auto& [name, type] : std::initializer_list<std::pair<const char*, OpType>>{
+             {"ApfsChangeVolumeLabel", OpType::ApfsChangeVolumeLabel},
+             {"ApfsSnapshotCreate", OpType::ApfsSnapshotCreate},
+             {"ApfsSnapshotDelete", OpType::ApfsSnapshotDelete},
+             {"ApfsSnapshotRevert", OpType::ApfsSnapshotRevert},
+             {"ApfsResizeContainer", OpType::ApfsResizeContainer}}) {
+        builders->emplace(QString::fromLatin1(name),
+                          onSelectedPartition(type, panelApfsPayload, "apfsContainerBasePayload"));
+    }
+}
+
+void addProofValueBuilders(std::map<QString, ProofBuilder>* builders) {
+    builders->emplace(QStringLiteral("SetDriveLetter"),
+                      withChoice(OpType::SetDriveLetter, "new_drive_letter", "onSetDriveLetter"));
+    builders->emplace(QStringLiteral("SetPartitionLabel"),
+                      withChoice(OpType::SetPartitionLabel, "label", "onSetPartitionLabel"));
+    builders->emplace(QStringLiteral("SetPartitionHidden"),
+                      withChoice(OpType::SetPartitionHidden, "hidden", "onSetPartitionHidden"));
+    builders->emplace(QStringLiteral("SetPartitionActive"),
+                      withChoice(OpType::SetPartitionActive, "active", "onSetPartitionActive"));
+    builders->emplace(QStringLiteral("SetPartitionTypeId"),
+                      withChoice(OpType::SetPartitionTypeId, "type_id", "onSetPartitionTypeId"));
+    const auto no_payload = [](const BuildContext&, const sak::PartitionInfoEx&) {
+        return QJsonObject{};
+    };
+    builders->emplace(QStringLiteral("WipePartition"),
+                      onSelectedPartition(OpType::WipePartition, no_payload, "onWipeSelected"));
+    builders->emplace(QStringLiteral("WipeFreeSpace"),
+                      onSelectedPartition(OpType::WipeFreeSpace, no_payload, "onWipeSelected"));
+    builders->emplace(QStringLiteral("DeleteAllPartitions"),
+                      onDisk(OpType::DeleteAllPartitions, {}, "onDeleteAllPartitions"));
+}
+
+/// The builders only an operation-proof job reaches. A name here takes the place of the
+/// certification builder of the same name for that job.
+std::map<QString, ProofBuilder> operationProofBuilders() {
+    std::map<QString, ProofBuilder> builders;
+    addProofPartitionBuilders(&builders);
+    addProofValueBuilders(&builders);
+    // InitializeDisk takes the style the person picked, so it is built where the job is known.
+    const RequestBuilder initialize = [](const BuildContext& context) {
+        const QJsonObject payload{
+            {"target_style", jsonString(context.job.choices, "target_style")}};
+        return oneRequest(OpType::InitializeDisk, sak::diskOperationTarget(context.disk), payload);
+    };
+    builders.emplace(QStringLiteral("InitializeDisk"),
+                     ProofBuilder{.build = initialize,
+                                  .payload_source = QStringLiteral("onInitializeDisk")});
+    return builders;
+}
+
+/// The builder an operation-proof job runs, and where its payload comes from.
+Result<std::pair<RequestBuilder, QString>> proofBuilderFor(const QString& operation) {
+    const auto proof = operationProofBuilders();
+    if (const auto found = proof.find(operation); found != proof.cend()) {
+        return std::make_pair(found->second.build,
+                              QStringLiteral("replicated from PartitionManagerPanel %1")
+                                  .arg(found->second.payload_source));
+    }
+    const auto builders = requestBuilders();
+    if (const auto found = builders.find(operation); found != builders.cend()) {
+        return std::make_pair(found->second, QStringLiteral("core partition_operation_requests"));
+    }
+    return refused(QStringLiteral("No such operation: %1").arg(operation));
+}
+
+QJsonObject toolRunJson(const sak::PartitionFileSystemToolRunResult& result) {
+    return {{"success", result.success},
+            {"blocked", result.blocked},
+            {"tool_id", result.tool_id},
+            {"tool_path", result.tool_path},
+            {"arguments", QJsonArray::fromStringList(result.arguments)},
+            {"exit_code", result.exit_code},
+            {"timed_out", result.timed_out},
+            {"cancelled", result.cancelled},
+            {"stdout", boundedText(result.std_out)},
+            {"stderr", boundedText(result.std_err)},
+            {"blockers", QJsonArray::fromStringList(result.blockers)}};
+}
+
+/// The panel's read-only Check File System for a non-Windows file system, run now and not queued.
+Result<void> runNonNativeCheck(sak::PartitionManagerController& controller,
+                               const BuildContext& context,
+                               QJsonObject* report) {
+    const auto partition = selectPartition(context.disk, context.job.select);
+    if (!partition) {
+        return refused(partition.error());
+    }
+    const QString file_system = volumeFileSystem(**partition);
+    const QString path = panelReadOnlyCheckPath(sak::partitionSelectionTarget(**partition),
+                                                **partition);
+    std::optional<sak::PartitionFileSystemToolRunResult> finished;
+    QEventLoop loop;
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    QObject::connect(&controller,
+                     &sak::PartitionManagerController::fileSystemCheckFinished,
+                     &loop,
+                     [&](const auto& result) {
+                         finished = result;
+                         loop.quit();
+                     });
+    QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+    deadline.start(context.job.timeout_seconds * kMillisecondsPerSecond);
+    controller.runReadOnlyFileSystemCheck(file_system, path);
+    if (!finished) {
+        loop.exec();
+    }
+    report->insert("read_only_check", QJsonObject{{"file_system", file_system}, {"path", path}});
+    if (!finished) {
+        return refused(QStringLiteral("The file system check did not finish in time"));
+    }
+    report->insert("file_system_check", toolRunJson(*finished));
+    const QString said = finished->blockers.join(QStringLiteral("; ")) + QLatin1Char(' ') +
+                         finished->std_out + QLatin1Char(' ') + finished->std_err;
+    const bool met = context.job.expect == QStringLiteral("success")
+                         ? finished->success
+                         : !finished->success &&
+                               said.contains(context.job.refusal_contains, Qt::CaseInsensitive);
+    if (!met) {
+        return refused(QStringLiteral("The file system check did not do what the step expected: %1")
+                           .arg(said.trimmed()));
+    }
+    report->insert("expectation_met", true);
+    return {};
+}
+
+/// Check File System (Windows) and Scan File Systems: the panel runs these now, not from the queue.
+Result<void> runReadOnlyNow(sak::PartitionManagerController& controller,
+                            const BuildContext& context,
+                            OpType type,
+                            QJsonObject* report) {
+    sak::PartitionTarget target = sak::diskOperationTarget(context.disk);
+    if (type == OpType::CheckFileSystem) {
+        const auto partition = selectPartition(context.disk, context.job.select);
+        if (!partition) {
+            return refused(partition.error());
+        }
+        target = sak::partitionSelectionTarget(**partition);
+    }
+    const sak::PartitionScriptBuilder builder;
+    const auto script =
+        builder.buildScript(sak::PartitionOperationPlanner::makeOperation(type, target));
+    report->insert("queued_operations",
+                   QJsonArray{
+                       QJsonObject{{"type", sak::toDisplayString(type)},
+                                   {"target", targetJson(target)},
+                                   {"script_sha256",
+                                    script.valid() ? sha256OfText(script.script) : QString()}}});
+    const auto execution = ControllerWait(controller, context.job.timeout_seconds).run([&]() {
+        return controller.runReadOnlyOperation(type, target);
+    });
+    if (!execution) {
+        return refused(execution.error());
+    }
+    if (!execution->has_value()) {
+        return refused(QStringLiteral("The read-only run gave no result"));
+    }
+    report->insert("execution", executionJson(**execution));
+    if (!executionPassed(**execution, 1) && !expectedFailure(context.job, **execution)) {
+        return refused(QStringLiteral("The read-only run did not do what the step expected: %1")
+                           .arg((*execution)->message));
+    }
+    report->insert("expectation_met", true);
+    return {};
+}
+
+/// What the assistant's partition.apply_operation runs (runApplyOperation in
+/// src/core/app_mutating_actions.cpp): one operation from the planner, the safety validator, and
+/// the executor with elevation, on a thread of its own as PartitionApplyWorker runs it.
+Result<void> runAssistantRoute(const StepJob& job, const Requests& requests, QJsonObject* report) {
+    if (requests.size() != 1) {
+        return refused(QStringLiteral("The assistant applies one operation at a time"));
+    }
+    const auto operation = sak::PartitionOperationPlanner::makeOperation(
+        requests.constFirst().type, requests.constFirst().target, requests.constFirst().payload);
+    // The assistant reads the disks itself, without elevation, before it validates.
+    const sak::PartitionInventory inventory = sak::StorageInventoryWorker::scanCurrentSystem(false);
+    const auto validation = sak::PartitionSafetyValidator::validate(inventory, operation);
+    const sak::PartitionScriptBuilder builder;
+    const auto script = builder.buildScript(operation);
+    report->insert("queued_operations",
+                   QJsonArray{
+                       QJsonObject{{"type", sak::toDisplayString(operation.type)},
+                                   {"target", targetJson(operation.target)},
+                                   {"payload", withoutSecrets(operation.payload)},
+                                   {"script_sha256",
+                                    script.valid() ? sha256OfText(script.script) : QString()}}});
+    report->insert("assistant_blockers", QJsonArray::fromStringList(validation.blockers));
+    if (!validation.allowed()) {
+        if (expectedRefusal(job, validation.blockers)) {
+            report->insert("refused_at", QStringLiteral("assistant-validator"));
+            report->insert("expectation_met", true);
+            return {};
+        }
+        return refused(QStringLiteral("Operation is blocked by the safety validator: %1")
+                           .arg(validation.blockers.join(QStringLiteral("; "))));
+    }
+    sak::PartitionExecutor executor;
+    QFutureWatcher<sak::PartitionExecutionResult> watcher;
+    QEventLoop loop;
+    QObject::connect(&watcher,
+                     &QFutureWatcher<sak::PartitionExecutionResult>::finished,
+                     &loop,
+                     &QEventLoop::quit);
+    QTimer deadline;
+    deadline.setSingleShot(true);
+    QObject::connect(&deadline, &QTimer::timeout, &loop, [&executor]() { executor.cancel(); });
+    watcher.setFuture(QtConcurrent::run(
+        [&executor, operation]() { return executor.execute({operation}, false, true); }));
+    deadline.start(job.timeout_seconds * kMillisecondsPerSecond);
+    loop.exec();
+    watcher.waitForFinished();
+    const sak::PartitionExecutionResult result = watcher.result();
+    report->insert("execution", executionJson(result));
+    if (!executionPassed(result, 1) && !expectedFailure(job, result)) {
+        return refused(
+            QStringLiteral("Apply did not do what the step expected: %1").arg(result.message));
+    }
+    report->insert("expectation_met", true);
+    return {};
+}
+
+/// The assistant's diagnostics.create_restore_point: RestorePointManager in the app's own process,
+/// which has to be running as administrator. No helper is involved.
+Result<void> runRestorePoint(const StepJob& job, QJsonObject* report) {
+    const QString description = jsonString(job.choices, "description");
+    sak::RestorePointManager manager;
+    QString error_text;
+    QObject::connect(&manager,
+                     &sak::RestorePointManager::restorePointFailed,
+                     &manager,
+                     [&error_text](const QString& error) {
+                         if (error_text.isEmpty()) {
+                             error_text = error;
+                         }
+                     });
+    const bool enabled = manager.isSystemRestoreEnabled();
+    const bool created = enabled && manager.createRestorePoint(description);
+    report->insert("route", QStringLiteral("in-process"));
+    report->insert("restore_point",
+                   QJsonObject{{"description", description},
+                               {"system_restore_enabled", enabled},
+                               {"created", created},
+                               {"error", error_text}});
+    if (!created) {
+        return refused(QStringLiteral("No restore point was created: %1").arg(error_text));
+    }
+    report->insert("expectation_met", true);
+    return {};
+}
+
+/// The panel's Scan Disks with administrator rights: the inventory read through the helper.
+Result<void> runElevatedInventory(sak::PartitionManagerController& controller,
+                                  const StepJob& job,
+                                  QJsonObject* report) {
+    const auto scanned = ControllerWait(controller, job.timeout_seconds).run([&controller]() {
+        return controller.refreshInventoryWithAdministratorRights();
+    });
+    if (!scanned) {
+        return refused(scanned.error());
+    }
+    const sak::PartitionInventory& inventory = controller.inventory();
+    QJsonArray disks;
+    std::ranges::for_each(inventory.disks,
+                          [&disks](const auto& disk) { disks.append(diskJson(disk)); });
+    report->insert("elevated_inventory",
+                   QJsonObject{{"disks", disks},
+                               {"warnings", QJsonArray::fromStringList(inventory.warnings)},
+                               {"helper_connected",
+                                sak::ElevationBroker::sessionBroker()->isConnected()}});
+    if (inventory.isEmpty()) {
+        return refused(emptyScanRefusal(inventory));
+    }
+    report->insert("expectation_met", true);
+    return {};
+}
+
+/// The operations the panel runs at once instead of queueing, or that run with no disk at all.
+std::optional<Result<void>> runProofNow(sak::PartitionManagerController& controller,
+                                        const BuildContext& context,
+                                        QJsonObject* report) {
+    const QString& operation = context.job.operation;
+    if (operation == QStringLiteral("CheckFileSystem")) {
+        return runReadOnlyNow(controller, context, OpType::CheckFileSystem, report);
+    }
+    if (operation == QStringLiteral("ScanFileSystems")) {
+        return runReadOnlyNow(controller, context, OpType::SurfaceTest, report);
+    }
+    if (operation == QStringLiteral("CheckNonNativeFileSystem")) {
+        return runNonNativeCheck(controller, context, report);
+    }
+    if (operation == QStringLiteral("ElevatedInventoryScan")) {
+        return runElevatedInventory(controller, context.job, report);
+    }
+    return std::nullopt;
+}
+
+/// An operation-proof step on its pinned disk: one of the operations run now, or a request built
+/// as the panel builds it, then queued and applied, or handed to the assistant's route.
+Result<void> runProofStep(sak::PartitionManagerController& controller,
+                          const BuildContext& context,
+                          QJsonObject* report) {
+    report->insert("operation_proof", true);
+    report->insert("route_requested",
+                   context.job.route.isEmpty() ? QStringLiteral("panel") : context.job.route);
+    if (auto now = runProofNow(controller, context, report)) {
+        return *now;
+    }
+    const auto builder = proofBuilderFor(context.job.operation);
+    if (!builder) {
+        return refused(builder.error());
+    }
+    report->insert("payload_source", builder->second);
+    const auto requests = builder->first(context);
+    if (!requests) {
+        return refused(requests.error());
+    }
+    if (context.job.route == QStringLiteral("assistant")) {
+        return runAssistantRoute(context.job, *requests, report);
+    }
+    return queueAndApply(controller, context.job, *requests, report);
+}
+
+/// The steps the app runs in its own process, with no helper and no disk to find first.
+std::optional<Result<void>> runInProcess(const StepJob& job, QJsonObject* report) {
+    if (job.operation == QStringLiteral("FileRecovery")) {
+        return runFileRecovery(job, report);
+    }
+    if (job.operation_proof && job.operation == QStringLiteral("RestorePoint")) {
+        return runRestorePoint(job, report);
+    }
+    return std::nullopt;
+}
+
 Result<void> checkClient(const StepJob& job) {
     if (QFileInfo(QCoreApplication::applicationFilePath())
             .fileName()
@@ -1015,8 +1603,8 @@ Result<void> runStep(sak::PartitionManagerController& controller,
     if (const auto client = checkClient(job); !client) {
         return client;
     }
-    if (job.operation == QStringLiteral("FileRecovery")) {
-        return runFileRecovery(job, report);
+    if (auto in_process = runInProcess(job, report)) {
+        return *in_process;
     }
     if (const auto scan = refreshInventory(controller, job.timeout_seconds); !scan) {
         return scan;
@@ -1030,6 +1618,9 @@ Result<void> runStep(sak::PartitionManagerController& controller,
         return refused(disk.error());
     }
     report->insert("disk_before", diskJson(**disk));
+    if (job.operation_proof) {
+        return runProofStep(controller, BuildContext{job, inventory, **disk}, report);
+    }
     const auto builders = requestBuilders();
     const auto builder = builders.find(job.operation);
     if (builder == builders.cend()) {
@@ -1039,19 +1630,7 @@ Result<void> runStep(sak::PartitionManagerController& controller,
     if (!requests) {
         return refused(requests.error());
     }
-    const QueueOutcome queued = queueRequests(controller, *requests);
-    report->insert("queue_refusal_reasons", QJsonArray::fromStringList(queued.reasons));
-    if (!queued.queued) {
-        if (expectedRefusal(job, queued.reasons)) {
-            report->insert("refused_at", QStringLiteral("queue"));
-            report->insert("expectation_met", true);
-            return {};
-        }
-        return refused(QStringLiteral("Not added to the queue: %1")
-                           .arg(queued.reasons.join(QStringLiteral("; "))));
-    }
-    recordQueued(controller, report);
-    return applyQueued(controller, job, report);
+    return queueAndApply(controller, job, *requests, report);
 }
 
 int finish(const StepJob& job, const Result<void>& outcome, QJsonObject* report) {
@@ -1142,6 +1721,16 @@ void selfTestJobs(const AddCheck& add) {
     QJsonObject refusal = job;
     refusal["expect"] = QStringLiteral("refused");
     add(QStringLiteral("step-job-refused-needs-a-reason"), !parseJob(refusal).has_value());
+    // What only an operation-proof job may ask for stays out of a certification job.
+    QJsonObject routed = job;
+    routed["route"] = QStringLiteral("assistant");
+    add(QStringLiteral("step-certification-job-refuses-a-route"), !parseJob(routed).has_value());
+    QJsonObject stopped = job;
+    stopped["expect"] = QStringLiteral("cancelled");
+    add(QStringLiteral("step-certification-job-refuses-a-stop"), !parseJob(stopped).has_value());
+    stopped["operation_proof"] = true;
+    stopped["cancel_after_seconds"] = 5;
+    add(QStringLiteral("step-proof-job-may-stop"), parseJob(stopped).has_value());
 }
 
 void selfTestOutcomes(const AddCheck& add) {
@@ -1176,6 +1765,22 @@ void selfTestOutcomes(const AddCheck& add) {
     add(QStringLiteral("step-has-a-builder-for-each-operation"), requestBuilders().size() == 27);
 }
 
+void selfTestOperationProof(const AddCheck& add) {
+    add(QStringLiteral("step-proof-has-a-builder-for-each-panel-payload"),
+        operationProofBuilders().size() == 19);
+    sak::PartitionInfoEx partition;
+    partition.disk_number = sak::DiskNumber{3};
+    partition.partition_number = sak::PartitionNumber{2};
+    add(QStringLiteral("step-proof-writes-through-the-panel-raw-path"),
+        panelRawPartitionPath(partition) ==
+            QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk3\\Partition2"));
+    add(QStringLiteral("step-proof-format-adds-tool-fields-only-for-non-windows"),
+        isPanelNonNativeFormat(QStringLiteral("ext4")) &&
+            isPanelNonNativeFormat(QStringLiteral("Linux swap")) &&
+            !isPanelNonNativeFormat(QStringLiteral("exFAT")) &&
+            !isPanelNonNativeFormat(QStringLiteral("NTFS")));
+}
+
 }  // namespace
 
 void selfTestScenarioStep(QJsonArray* checks) {
@@ -1185,6 +1790,7 @@ void selfTestScenarioStep(QJsonArray* checks) {
     selfTestPins(add);
     selfTestJobs(add);
     selfTestOutcomes(add);
+    selfTestOperationProof(add);
 }
 
 }  // namespace certification
