@@ -499,6 +499,23 @@ Add-OpsRow 'ops.resize-ext2' { Invoke-OpsExtResize -Kind 'ext2' }
 Add-OpsRow 'ops.resize-ext3' { Invoke-OpsExtResize -Kind 'ext3' }
 Add-OpsRow 'ops.resize-ext4' { Invoke-OpsExtResize -Kind 'ext4' }
 
+Add-OpsRow 'ops.resize-unknown-fs-below-fs' {
+    # F7 (coordinator, 2026-11-11): a partition whose file system the app has not identified must
+    # never be resized, least of all shrunk. The step starts from the standard scan, which cannot
+    # read a raw partition, and asks to shrink a 128 MiB ext4 partition to 64 MiB. The row expects
+    # a refusal and reads the disk back either way: the extent, and e2fsck on a copy.
+    $disk = New-OpsDisk -Name 'disk'
+    $media = Get-OpsMedia -DiskNumber $disk
+    $part = New-OpsRawPartition -DiskNumber $disk -SizeMB 128
+    $select = @{ partition_number = $part.partition_number }
+    Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = 'ext4'; allocation_unit_bytes = 0; label = 'OPSKEEP'; full_format = $false } | Out-Null
+    Invoke-OpsStep -Disk $disk -Step 'shrink' -Operation 'Resize' -Select $select -Choices @{ target_size_mib = 64 } -Expect 'refused' -RefusalContains 'file system' -ReadBackOnFailure | Out-Null
+    $checks = @(Test-OpsExtent -Name 'the partition is still 128 MiB' -DiskNumber $disk -Offset $part.offset -SizeBytes (128 * $Script:OpsMiB))
+    $read = Test-OpsNonNativePartition -Prefix 'afterwards:' -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem 'ext4' -Label 'OPSKEEP' -Name 'after'
+    $checks += $read.checks
+    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ images = @($read.image | Where-Object { $_ }) })
+}
+
 Add-OpsRow 'ops.apfs-container-resize' {
     # An APFS container written into 128 MiB, the partition grown to 256 MiB with Windows' tools,
     # then the app's "Resize container to fill partition".
