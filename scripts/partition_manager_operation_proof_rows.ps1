@@ -1019,8 +1019,10 @@ function Invoke-OpsMove {
         foreach ($at in @($offset, $requested)) { if (-not $letter) { $letter = Wait-OpsLetter -DiskNumber $disk -Offset $at } }
     }
     $checks += New-OpsCheck -Name 'no shadow copy is left behind' -Passed (@(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction SilentlyContinue).Count -le $shadowsBefore) -Detail "$shadowsBefore before"
-    $mappings = @(Get-OpsShadowMappings)
-    $checks += New-OpsCheck -Name 'no drive letter is left mapped to a shadow copy' -Passed ($mappings.Count -eq 0) -Detail ($mappings -join ' | ')
+    # Get-OpsShadowMappings returns its list whole (return , $found): wrapped in @() again it was a
+    # list of one list, never empty, and this check failed with "System.Object[]" (b28).
+    $mappings = Get-OpsShadowMappings
+    $checks += New-OpsCheck -Name 'no drive letter is left mapped to a shadow copy' -Passed (@($mappings).Count -eq 0) -Detail (@($mappings) -join ' | ')
     if ($letter) {
         $checks += Test-OpsFilesSame -Name 'every file is there, byte for byte' -Before $files -After (Get-RbFileManifest -Root "${letter}:\fixture")
         $checks += Test-OpsWindowsVolume -Prefix 'afterwards:' -Letter $letter -FileSystem $FileSystem -Label 'OPSMOVE'
