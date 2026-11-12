@@ -1663,8 +1663,14 @@ bool primaryLogicalRequiresMbrDisk(const PartitionDiskInfo& disk,
 
 bool primaryLogicalRequiresSingleVolumeDisk(const PartitionDiskInfo& disk,
                                             const PartitionOperation& operation) {
-    return operation.type == PartitionOperationType::ConvertPrimaryLogical &&
-           disk.partitions.size() != 1;
+    // A logical partition lives in an extended container, which Windows lists as a partition of
+    // its own (Type "Extended"). Counted, it refused every logical-to-primary conversion
+    // (operation proof, 2026-11-12); the rule is about the data partitions.
+    const auto data_partitions =
+        std::ranges::count_if(disk.partitions, [](const PartitionInfoEx& partition) {
+            return !partition.type_name.contains(QStringLiteral("Extended"), Qt::CaseInsensitive);
+        });
+    return operation.type == PartitionOperationType::ConvertPrimaryLogical && data_partitions != 1;
 }
 
 bool dynamicToBasicMissingPayload(const PartitionOperation& operation) {

@@ -24843,6 +24843,25 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeOfflineRebuildOperat
             PartitionOperationType::ConvertPrimaryLogical, target, primaryPayload));
     QVERIFY(!preview.canApply());
     QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("single mounted")));
+
+    // A logical partition and the extended container Windows lists beside it are one data
+    // partition: every logical-to-primary conversion was refused for its container (operation
+    // proof, 2026-11-12).
+    auto logicalInventory = inventory;
+    PartitionInfoEx container = logicalInventory.disks.first().partitions.first();
+    container.partition_number = PartitionNumber{2};
+    container.type_name = QStringLiteral("Extended");
+    container.volume.reset();
+    logicalInventory.disks.first().partitions.first().type_name = QStringLiteral("Logical");
+    logicalInventory.disks.first().partitions.append(container);
+    QJsonObject toPrimary = primaryPayload;
+    toPrimary[QStringLiteral("target_layout")] = QStringLiteral("primary");
+    preview = planner.previewOperation(
+        logicalInventory,
+        PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::ConvertPrimaryLogical, target, toPrimary));
+    QVERIFY2(!preview.blockers.join(' ').contains(QStringLiteral("single mounted")),
+             qPrintable(preview.blockers.join(QStringLiteral("; "))));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_buildsChangeClusterSizeScript() {
