@@ -51,6 +51,40 @@ function Assert-OpsWorkRootOnSpare {
     if ($disk.IsBoot -or $disk.IsSystem) { throw "$WorkRoot is on the disk Windows runs from" }
 }
 
+$Script:RowDevice = $null
+
+function Get-OpsDestructiveDisk {
+    <#
+    .SYNOPSIS
+        The one physical drive the coordinator gave the suite for what a virtual disk file cannot
+        do (a full format: 2026-11-12). machine.json names it by model, serial and size, beside the
+        spare it already names; the row may use it only until Clear-OpsDestructiveDisk.
+    #>
+    if ($Script:InVirtualBox) { throw 'A VirtualBox guest has no destructive drive' }
+    $file = Join-Path (Split-Path -Parent ([IO.Path]::GetFullPath($WorkRoot))) 'machine.json'
+    $machine = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+    if (-not $machine.PSObject.Properties['destructive_serial']) { throw "$file names no destructive drive" }
+    $Script:RowDevice = [pscustomobject]@{ number = -1; model = "$($machine.destructive_model)"; serial = "$($machine.destructive_serial)"; bytes = "$($machine.destructive_bytes)" }
+    $found = @(Get-Disk | Where-Object { "$($_.FriendlyName)" -ceq $Script:RowDevice.model -and "$($_.SerialNumber)".Trim().TrimEnd('.') -ceq $Script:RowDevice.serial -and "$([uint64]$_.Size)" -eq $Script:RowDevice.bytes })
+    if ($found.Count -ne 1) { $Script:RowDevice = $null; throw "The destructive drive $file names is here $($found.Count) times, not once" }
+    $Script:RowDevice.number = [int]$found[0].Number
+    Assert-OpsDevicePin -DiskNumber $Script:RowDevice.number
+    return $Script:RowDevice.number
+}
+
+function Assert-OpsDevicePin {
+    # The destructive drive, pinned again by model, serial and size, and never the disk Windows runs from.
+    param([Parameter(Mandatory = $true)] [int]$DiskNumber)
+    if ($null -eq $Script:RowDevice -or $Script:RowDevice.number -ne $DiskNumber) { throw "Disk $DiskNumber is not the destructive drive this row was given" }
+    $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
+    if ("$($disk.FriendlyName)" -cne $Script:RowDevice.model -or "$($disk.SerialNumber)".Trim().TrimEnd('.') -cne $Script:RowDevice.serial -or "$([uint64]$disk.Size)" -ne $Script:RowDevice.bytes) {
+        throw "Disk $DiskNumber is no longer the destructive drive: $($disk.FriendlyName) $($disk.Size)"
+    }
+    if ($disk.IsBoot -or $disk.IsSystem -or $disk.IsReadOnly) { throw "Disk $DiskNumber is a boot, system or read-only disk" }
+}
+
+function Clear-OpsDestructiveDisk { $Script:RowDevice = $null }
+
 function Get-OpsVhdFor {
     param([Parameter(Mandatory = $true)] [int]$DiskNumber)
     foreach ($path in @($Script:RowVhds)) {
@@ -105,6 +139,10 @@ function Assert-OpsStepPins {
             if ("$($facts.unique_id)" -ceq "$($wanted.unique_id)" -and "$($facts.size_bytes)" -eq "$($wanted.size_bytes)") { $number = [int]$image.Number }
         }
         if ($number -ge 0) { Assert-OpsVhdPin -DiskNumber $number | Out-Null; continue }
+        if ($null -ne $Script:RowDevice -and $Script:RowDevice.number -ge 0) {
+            $facts = Get-RbDiskFacts -DiskNumber $Script:RowDevice.number
+            if ("$($facts.unique_id)" -ceq "$($wanted.unique_id)" -and "$($facts.size_bytes)" -eq "$($wanted.size_bytes)") { Assert-OpsDevicePin -DiskNumber $Script:RowDevice.number; continue }
+        }
         if ($Script:InVirtualBox) { continue }
         throw "A step names $($wanted.model) $($wanted.size_bytes) bytes, which is not one of this row's virtual disks"
     }
@@ -210,6 +248,8 @@ function Invoke-OpsStep {
     )
     if ($null -ne $GivenPin) {
         if (-not $Script:InVirtualBox) { throw 'Only a VirtualBox guest hands a row its disk' }
+    } elseif ($null -ne $Script:RowDevice -and $Script:RowDevice.number -eq $Disk) {
+        Assert-OpsDevicePin -DiskNumber $Disk
     } else { Assert-OpsVhdPin -DiskNumber $Disk | Out-Null }
     $pin = if ($null -ne $GivenPin) { $GivenPin } else { Get-CertPin -DiskNumber $Disk }
     $fields = @{ operation_proof = $true }
@@ -863,6 +903,48 @@ Add-OpsRow 'ops.wipe-disk' {
     $snapshot = Get-CertSnapshot -DiskNumber $disk
     $checks += New-OpsCheck -Name 'the partition table did not change' -Passed ("$($tableBefore.raw.gpt_entries_hex)" -eq "$($snapshot.raw.gpt_entries_hex)") -Detail @($snapshot.data_partitions).Count
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ snapshot = $snapshot })
+}
+
+Add-OpsRow 'ops.wipe-partition-physical' {
+    # Wipe Partition is a full format, which Windows allows only on a disk that is not
+    # thin-provisioned. The coordinator gave the suite the destructive-test drive machine.json
+    # names (2026-11-12): a 2 GiB partition in the free space near its start, a marker written
+    # there, the app's Wipe Partition, and the whole partition read back from the device for the
+    # marker. The drive reports pending sectors: an I/O error on it is the drive's, not the app's.
+    $disk = Get-OpsDestructiveDisk
+    $made = $null
+    try {
+        $media = Get-CertMedia -DiskNumber $disk -Class 'physical_disk' -Kind 'destructive-test drive'
+        $existing = @(Get-Partition -DiskNumber $disk -ErrorAction SilentlyContinue | Sort-Object Offset)
+        $end = [uint64]0
+        foreach ($p in $existing) { $end = [Math]::Max($end, [uint64]$p.Offset + [uint64]$p.Size) }
+        $start = [uint64]([Math]::Ceiling($end / $Script:OpsMiB) * $Script:OpsMiB)
+        if ($start -lt $Script:OpsMiB) { $start = $Script:OpsMiB }
+        if ($start -gt 1GB) { throw "No free space near the start of the destructive drive (first free byte $start); nothing was made" }
+        Assert-OpsDevicePin -DiskNumber $disk
+        $made = New-Partition -DiskNumber $disk -Offset $start -Size 2GB -AssignDriveLetter -ErrorAction Stop
+        Start-Sleep -Seconds 3
+        Format-Volume -Partition $made -FileSystem NTFS -NewFileSystemLabel 'OPSWIPE' -Confirm:$false -ErrorAction Stop | Out-Null
+        $partition = Get-Partition -DiskNumber $disk -PartitionNumber $made.PartitionNumber
+        Write-CertMarkerFile -Letter $partition.DriveLetter -Kilobytes 1024
+        $before = Find-OpsMarkerInRange -DiskNumber $disk -Offset ([uint64]$partition.Offset) -Length ([uint64]$partition.Size)
+        Invoke-OpsStep -Disk $disk -Step 'wipe' -Operation 'WipePartition' -Select @{ partition_number = $made.PartitionNumber } -TimeoutSeconds 3600 -ReadBackOnFailure | Out-Null
+        Assert-OpsDevicePin -DiskNumber $disk
+        $after = Find-OpsMarkerInRange -DiskNumber $disk -Offset ([uint64]$partition.Offset) -Length ([uint64]$partition.Size)
+        $checks = @(New-OpsCheck -Name 'the marker was on the partition before' -Passed ($before.marker_hits -gt 0) -Detail $before)
+        $checks += New-OpsCheck -Name 'no copy of the marker is left anywhere in the partition' -Passed ($after.marker_hits -eq 0) -Detail $after
+        $checks += Test-OpsExtent -Name 'the partition is where it was, the same size' -DiskNumber $disk -Offset ([uint64]$partition.Offset) -SizeBytes ([uint64]$partition.Size)
+        $kept = @(Get-Partition -DiskNumber $disk | Where-Object { $_.PartitionNumber -ne $made.PartitionNumber } | Sort-Object Offset | ForEach-Object { "$($_.Offset):$($_.Size)" }) -join ' '
+        $was = @($existing | ForEach-Object { "$($_.Offset):$($_.Size)" }) -join ' '
+        $checks += New-OpsCheck -Name "the drive's other partitions are unchanged" -Passed ($kept -eq $was) -Detail "$was / $kept"
+        return Complete-OpsRow -Media $media -Checks $checks
+    } finally {
+        if ($null -ne $made) {
+            Assert-OpsDevicePin -DiskNumber $disk
+            Remove-Partition -DiskNumber $disk -PartitionNumber $made.PartitionNumber -Confirm:$false -ErrorAction SilentlyContinue
+        }
+        Clear-OpsDestructiveDisk
+    }
 }
 
 # --- Rebuilds kept in a backup folder: current generated text, and the FAT/exFAT live-copy branch ---
