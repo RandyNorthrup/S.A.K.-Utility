@@ -1299,9 +1299,13 @@ std::map<QString, ProofBuilder> operationProofBuilders() {
 }
 
 /// The builder an operation-proof job runs, and where its payload comes from.
-Result<std::pair<RequestBuilder, QString>> proofBuilderFor(const QString& operation) {
+/// A panel-route job takes the panel's payload where the panel builds one inline. An
+/// assistant-route job never does: a model writes only the fields its tool documents, which are
+/// the core request functions' (coordinator, 2026-11-11), so it gets those or nothing.
+Result<std::pair<RequestBuilder, QString>> proofBuilderFor(const QString& operation,
+                                                           bool assistant_route) {
     const auto proof = operationProofBuilders();
-    if (const auto found = proof.find(operation); found != proof.cend()) {
+    if (const auto found = proof.find(operation); !assistant_route && found != proof.cend()) {
         return std::make_pair(found->second.build,
                               QStringLiteral("replicated from PartitionManagerPanel %1")
                                   .arg(found->second.payload_source));
@@ -1556,7 +1560,8 @@ Result<void> runProofStep(sak::PartitionManagerController& controller,
     if (auto now = runProofNow(controller, context, report)) {
         return *now;
     }
-    const auto builder = proofBuilderFor(context.job.operation);
+    const bool assistant_route = context.job.route == QStringLiteral("assistant");
+    const auto builder = proofBuilderFor(context.job.operation, assistant_route);
     if (!builder) {
         return refused(builder.error());
     }
@@ -1565,7 +1570,7 @@ Result<void> runProofStep(sak::PartitionManagerController& controller,
     if (!requests) {
         return refused(requests.error());
     }
-    if (context.job.route == QStringLiteral("assistant")) {
+    if (assistant_route) {
         return runAssistantRoute(context.job, *requests, report);
     }
     return queueAndApply(controller, context.job, *requests, report);
@@ -1774,6 +1779,13 @@ void selfTestOperationProof(const AddCheck& add) {
     add(QStringLiteral("step-proof-writes-through-the-panel-raw-path"),
         panelRawPartitionPath(partition) ==
             QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk3\\Partition2"));
+    const auto panel_format = proofBuilderFor(QStringLiteral("Format"), false);
+    const auto assistant_format = proofBuilderFor(QStringLiteral("Format"), true);
+    add(QStringLiteral("step-proof-assistant-route-takes-only-core-payloads"),
+        panel_format.has_value() && assistant_format.has_value() &&
+            panel_format->second.startsWith(QStringLiteral("replicated")) &&
+            assistant_format->second == QStringLiteral("core partition_operation_requests") &&
+            !proofBuilderFor(QStringLiteral("SetDriveLetter"), true).has_value());
     add(QStringLiteral("step-proof-format-adds-tool-fields-only-for-non-windows"),
         isPanelNonNativeFormat(QStringLiteral("ext4")) &&
             isPanelNonNativeFormat(QStringLiteral("Linux swap")) &&
