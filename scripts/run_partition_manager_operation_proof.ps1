@@ -580,14 +580,15 @@ function Get-OpsKnownFindings {
     .SYNOPSIS
         The findings already reported that account for every one of a row's failures, from
         -KnownFile (beside the results, outside the repository: it is about one build). Empty
-        when any failure is new.
+        when any failure is new. An entry may name the builds it holds for ('builds', a regex on
+        the run's build label): a finding one build fixes is no excuse for that build's rows.
     #>
-    param([string[]]$Failures, [string]$RowId)
+    param([string[]]$Failures, [string]$RowId, [string]$Build = '')
     if ($Failures.Count -eq 0 -or -not (Test-Path -LiteralPath $KnownFile -PathType Leaf)) { return @() }
     $known = @(Get-Content -LiteralPath $KnownFile -Raw | ConvertFrom-Json)
     $ids = @()
     foreach ($failure in $Failures) {
-        $match = @($known | Where-Object { $failure -match $_.match -and (-not $_.PSObject.Properties['rows'] -or $RowId -match $_.rows) } | Select-Object -First 1)
+        $match = @($known | Where-Object { $failure -match $_.match -and (-not $_.PSObject.Properties['rows'] -or $RowId -match $_.rows) -and (-not $_.PSObject.Properties['builds'] -or $Build -match $_.builds) } | Select-Object -First 1)
         if ($match.Count -eq 0) { return @() }
         $ids += "$($match[0].id)"
     }
@@ -625,7 +626,7 @@ function Get-OpsRowSummary {
         # A row whose every failure is one already reported says KNOWN and which, not FAIL again.
         $failures = @($checks | Where-Object { -not $_.passed } | ForEach-Object { "$($_.name): $(if ($_.detail -is [string]) { $_.detail } else { ConvertTo-Json -InputObject $_.detail -Depth 4 -Compress })" })
         if ($report.status -ne 'Passed') { $failures += "$($report.failure)" }
-        $known = @(Get-OpsKnownFindings -Failures $failures -RowId $PlanRow.Id)
+        $known = @(Get-OpsKnownFindings -Failures $failures -RowId $PlanRow.Id -Build "$($report.code.commit)")
         if ($known.Count -gt 0) { $verdict = "KNOWN $($known -join ',')" }
     }
     $verifier = if ($PlanRow.Id -like 'ops.*') { "$($checks.Count - $failed.Count)/$($checks.Count) checks" } else { "matrix: $(if ($certReasons.Count) { $certReasons -join '; ' } else { 'all checks hold' })" }
