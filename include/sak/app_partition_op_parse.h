@@ -109,7 +109,10 @@ struct ParsedPartitionOp {
         "set_partition_label: label. set_partition_hidden: hidden. set_partition_active: active. "
         "set_partition_type_id: type_id (MBR: one byte in hex, such as 07 or 83; GPT: a GUID). "
         "split: first_size_bytes, new_file_system. merge: source_partition_number, target_folder. "
-        "initialize_disk and convert_partition_style: target_style (GPT or MBR). Never send "
+        "initialize_disk and convert_partition_style: target_style (GPT or MBR). "
+        "move_partition and allocate_free_space are refused here: each copies the volume's files "
+        "to a backup folder first, which S.A.K. checks only when the person queues the operation "
+        "in Partition Manager, so ask the person to queue them there. Never send "
         "non_native_file_system_tool, target_wipe_confirmed or (for format, resize and "
         "check_file_system) target_path: S.A.K. sets them, and the person confirms a change to a "
         "disk in S.A.K.'s own dialog. A payload that carries one is refused.");

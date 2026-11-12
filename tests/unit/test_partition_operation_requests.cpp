@@ -4,6 +4,7 @@
 /// @file test_partition_operation_requests.cpp
 /// @brief What the panel and the certification runner both queue for a person's choices.
 
+#include "sak/app_partition_op_parse.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/partition_operation_requests.h"
 #include "sak/partition_script_builder.h"
@@ -64,6 +65,7 @@ private Q_SLOTS:
     void freeSpaceAfterAPartitionGrowsIt();
     void resizeTakesTheFileSystemTheScanFound();
     void assistantRequestStatesIntentOnly();
+    void assistantRefusesTheBackupOperationsPlainly();
     void backupFolderMustBeARealFolderWithRoom();
     void allocateNamesTheDonorAndTheAmount();
     void primaryLogicalNamesTheNewLayoutAndTheBackup();
@@ -285,6 +287,51 @@ void PartitionOperationRequestsTests::assistantRequestStatesIntentOnly() {
 // F19 (secfix, on the VM, 2026-11-11): a backup folder that did not exist was accepted by the
 // dialogs and refused only by the script at Apply. The queue now needs a real folder, reached
 // through no junction, with room for what the volume holds.
+// Move and Allocate Free Space (and the other operations that back the volume up first) copy its
+// files to a backup folder, whose volume Partition Manager's queue binds and checks again before
+// Apply. The assistant's route binds none, so the safety validator refused each with "requires an
+// off-volume backup directory" even when the model named one. Refused first, saying why and where
+// to do it instead, and the tool's description says so.
+void PartitionOperationRequestsTests::assistantRefusesTheBackupOperationsPlainly() {
+    PartitionInventory inventory;
+    PartitionDiskInfo disk = dataDisk(QStringLiteral("GPT"));
+    disk.partitions.append(dataPartition());
+    inventory.disks.append(disk);
+    PartitionTarget named;
+    named.kind = PartitionTargetKind::Partition;
+    named.disk_number = DiskNumber{3};
+    named.partition_number = PartitionNumber{2};
+    QTemporaryDir backup;
+    QVERIFY(backup.isValid());
+    const QJsonObject payload{{QStringLiteral("backup_directory"), backup.path()},
+                              {QStringLiteral("target_offset_bytes"), QStringLiteral("1048576")},
+                              {QStringLiteral("source_partition_number"), QStringLiteral("1")},
+                              {QStringLiteral("bytes_to_allocate"), QStringLiteral("1048576")}};
+    for (const auto type : {PartitionOperationType::MovePartition,
+                            PartitionOperationType::AllocateFreeSpace,
+                            PartitionOperationType::ChangeClusterSize,
+                            PartitionOperationType::ChangeVolumeSerialNumber,
+                            PartitionOperationType::ConvertPrimaryLogical,
+                            PartitionOperationType::ConvertDynamicDiskToBasic}) {
+        const auto refused = assistantPartitionOperation(type, named, payload, inventory);
+        QVERIFY2(!refused, qPrintable(toDisplayString(type)));
+        QVERIFY2(refused.error().startsWith(toDisplayString(type) +
+                                            QStringLiteral(" copies the volume's files to a "
+                                                           "backup folder first")),
+                 qPrintable(refused.error()));
+        QVERIFY2(refused.error().contains(QStringLiteral("queue it in Partition Manager")),
+                 qPrintable(refused.error()));
+    }
+    QVERIFY(partitionOperationPayloadDescription().contains(
+        QStringLiteral("move_partition and allocate_free_space are refused here")));
+    // The other operations still go through.
+    QVERIFY(
+        assistantPartitionOperation(PartitionOperationType::SetPartitionLabel,
+                                    named,
+                                    QJsonObject{{QStringLiteral("label"), QStringLiteral("Data")}},
+                                    inventory));
+}
+
 void PartitionOperationRequestsTests::backupFolderMustBeARealFolderWithRoom() {
     QTemporaryDir root;
     QVERIFY(root.isValid());

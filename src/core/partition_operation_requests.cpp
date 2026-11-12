@@ -342,6 +342,25 @@ std::expected<const PartitionInfoEx*, QString> scannedPartition(
 
 namespace {
 
+// The operations that copy the volume's files to a backup folder before they change it. Partition
+// Manager's queue binds that folder's volume (backup_volume_guid) when the person queues one and
+// checks it again before Apply; the safety validator refuses one without it. The assistant's route
+// binds none, so each was refused there with "requires an off-volume backup directory" even when
+// the model named one (merge round, 2026-11-12): it is refused first, saying why.
+bool backsTheVolumeUpFirst(PartitionOperationType type) {
+    switch (type) {
+    case PartitionOperationType::MovePartition:
+    case PartitionOperationType::AllocateFreeSpace:
+    case PartitionOperationType::ChangeClusterSize:
+    case PartitionOperationType::ChangeVolumeSerialNumber:
+    case PartitionOperationType::ConvertPrimaryLogical:
+    case PartitionOperationType::ConvertDynamicDiskToBasic:
+        return true;
+    default:
+        return false;
+    }
+}
+
 // A field only the app sets, in a model's payload: the reason it is refused, or empty.
 QString appOwnedFieldRefusal(PartitionOperationType type, const QJsonObject& payload) {
     for (const QString& field : payload.keys()) {
@@ -385,6 +404,14 @@ std::expected<PartitionOperation, QString> assistantPartitionOperation(
     const PartitionTarget& target,
     const QJsonObject& payload,
     const PartitionInventory& inventory) {
+    if (backsTheVolumeUpFirst(type)) {
+        return std::unexpected(
+            QStringLiteral("%1 copies the volume's files to a backup folder first, and S.A.K. "
+                           "checks that folder's drive only when the person queues the operation "
+                           "in Partition Manager, so the assistant does not run it. Ask the "
+                           "person to queue it in Partition Manager.")
+                .arg(toDisplayString(type)));
+    }
     if (const QString refusal = appOwnedFieldRefusal(type, payload); !refusal.isEmpty()) {
         return std::unexpected(refusal);
     }
