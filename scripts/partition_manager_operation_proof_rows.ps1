@@ -1413,7 +1413,7 @@ function Invoke-OpsVhdDetachDrill {
     return Complete-OpsRow -Media $media -Checks $checks -Extra $extra
 }
 
-Add-OpsRow 'ops.drill-d-scan-then-detach-vhd' { Invoke-OpsVhdDetachDrill -Minutes 90 }
+Add-OpsRow 'ops.drill-d-scan-then-detach-vhd' { Invoke-OpsVhdDetachDrill -Minutes 150 }
 
 function Invoke-OpsLockAndDismount {
     # FSCTL_LOCK_VOLUME, then FSCTL_DISMOUNT_VOLUME, on the volume's own device, then the handle is
