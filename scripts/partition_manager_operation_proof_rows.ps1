@@ -656,7 +656,12 @@ Add-OpsRow 'ops.check-ext4-larger-than-partition' {
     $part = New-OpsRawPartition -DiskNumber $disk -SizeMB 128
     $select = @{ partition_number = $part.partition_number }
     Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = 'ext4'; allocation_unit_bytes = 0; label = 'OPSCUT'; full_format = $false } | Out-Null
-    Resize-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -Size (64 * $Script:OpsMiB)
+    # Windows resizes only data partitions, and the app's ext4 Format gives it the Linux type: the
+    # fixture cuts it as basic data and puts the type back.
+    $linuxType = (Get-Partition -DiskNumber $disk -PartitionNumber $part.partition_number).GptType
+    Set-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -GptType "{$Script:OpsGptBasicData}" -ErrorAction Stop
+    Resize-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -Size (64 * $Script:OpsMiB) -ErrorAction Stop
+    Set-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -GptType $linuxType -ErrorAction Stop
     $before = Copy-OpsPartitionImage -DiskNumber $disk -PartitionNumber $part.partition_number -Name 'before'
     $check = Invoke-OpsStep -Disk $disk -Step 'check' -Operation 'CheckNonNativeFileSystem' -Select $select -Choices @{ administrator_scan = $true } -Expect 'failed' -RefusalContains 'physical size of the device' -ReadBackOnFailure
     $said = if ($null -ne $check) { $check.file_system_check } else { $null }
