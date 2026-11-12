@@ -1,0 +1,110 @@
+# The operation proof's plan: every Partition Manager operation a person can reach, and every other
+# feature that runs a generated script elevated, with the row that proves it, where that row runs,
+# and what reads it back. Owner ruling 2026-11-11: "Prove every one first."
+#
+# scripts/run_partition_manager_operation_proof.ps1 -PlanOnly prints it; the same script refuses a
+# plan whose rows have no body, and a body with no row here. A row whose id starts with vhd. or
+# external. is a certification row run again as a regression, judged by the certification matrix's
+# own checks; it is not selected as certification evidence and changes no claim.
+#
+# machine: testpc2 (virtual disk files on its spare NVMe only), vm (the VirtualBox "Windows 11"
+# guest on the Mac: anything whose target is the running Windows, a VDI, or a boot), device (the
+# final certification's own device rows on real drives; not duplicated here), or none (cannot be
+# run: the reason says why).
+@{
+    Rows = @(
+        @{ Id = 'ops.create-exfat'; Machine = 'testpc2'; Operation = 'Create (dialog)'; Variant = 'exFAT'; Reads = 'raw GPT entry; Get-Volume, Win32_Volume; chkdsk read-only' }
+        @{ Id = 'ops.create-fat32'; Machine = 'testpc2'; Operation = 'Create (dialog)'; Variant = 'FAT32'; Reads = 'raw GPT entry; Get-Volume, Win32_Volume; chkdsk read-only' }
+        @{ Id = 'ops.create-refs-assistant'; Machine = 'testpc2'; Operation = 'Create (assistant)'; Variant = 'ReFS'; Reads = 'raw GPT entry; Get-Volume; Repair-Volume -Scan' }
+        @{ Id = 'ops.create-ext2-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'ext2'; Reads = 'superblock parsed here; bundled e2fsck -fn on a copy; host Linux e2fsck -fn and dumpe2fs' }
+        @{ Id = 'ops.create-ext3-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'ext3'; Reads = 'superblock parsed here; bundled e2fsck -fn on a copy; host Linux e2fsck -fn and dumpe2fs' }
+        @{ Id = 'ops.create-ext4-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'ext4'; Reads = 'superblock parsed here; bundled e2fsck -fn on a copy; host Linux e2fsck -fn and dumpe2fs' }
+        @{ Id = 'ops.create-hfsplus-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'HFS+'; Reads = 'volume header parsed here; bundled fsck_hfs -n -f on a copy' }
+        @{ Id = 'ops.create-hfsx-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'HFSX'; Reads = 'volume header parsed here; bundled fsck_hfs -n -f on a copy' }
+        @{ Id = 'ops.create-apfs-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'APFS'; Reads = 'NXSB parsed here; probe certifier; host apfsck' }
+        @{ Id = 'ops.create-swap-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'Linux swap'; Reads = 'swap header read from the device; host blkid and swaplabel on a copy' }
+        @{ Id = 'ops.format-exfat'; Machine = 'testpc2'; Operation = 'Format'; Variant = 'exFAT over lettered NTFS'; Reads = 'raw extent; Get-Volume, Win32_Volume; chkdsk read-only' }
+        @{ Id = 'ops.format-fat32'; Machine = 'testpc2'; Operation = 'Format'; Variant = 'FAT32 over lettered NTFS'; Reads = 'raw extent; Get-Volume, Win32_Volume; chkdsk read-only' }
+        @{ Id = 'ops.format-ntfs'; Machine = 'testpc2'; Operation = 'Format'; Variant = 'NTFS (regression)'; Reads = 'raw extent; Get-Volume, Win32_Volume; chkdsk /scan' }
+        @{ Id = 'ops.format-ext2'; Machine = 'testpc2'; Operation = 'Format, non-Windows'; Variant = 'ext2 over lettered NTFS'; Reads = 'superblock; bundled e2fsck -fn on a copy; host Linux e2fsck and dumpe2fs' }
+        @{ Id = 'ops.format-ext3'; Machine = 'testpc2'; Operation = 'Format, non-Windows'; Variant = 'ext3 over lettered NTFS'; Reads = 'superblock; bundled e2fsck -fn on a copy; host Linux e2fsck and dumpe2fs' }
+        @{ Id = 'ops.format-ext4'; Machine = 'testpc2'; Operation = 'Format, non-Windows'; Variant = 'ext4 over lettered NTFS'; Reads = 'superblock; bundled e2fsck -fn on a copy; host Linux e2fsck and dumpe2fs' }
+        @{ Id = 'ops.format-swap'; Machine = 'testpc2'; Operation = 'Format, non-Windows'; Variant = 'Linux swap over lettered NTFS'; Reads = 'swap header from the device; host blkid and swaplabel' }
+        @{ Id = 'ops.format-hfsplus'; Machine = 'testpc2'; Operation = 'Format, non-Windows (staged)'; Variant = 'HFS+ over lettered NTFS'; Reads = 'volume header; bundled fsck_hfs -n -f on a copy' }
+        @{ Id = 'ops.format-hfsx'; Machine = 'testpc2'; Operation = 'Format, non-Windows (staged)'; Variant = 'HFSX over lettered NTFS'; Reads = 'volume header; bundled fsck_hfs -n -f on a copy' }
+        @{ Id = 'ops.format-apfs'; Machine = 'testpc2'; Operation = 'Format, non-Windows'; Variant = 'APFS over lettered NTFS'; Reads = 'NXSB; probe certifier; host apfsck' }
+        @{ Id = 'ops.shrink-ntfs'; Machine = 'testpc2'; Operation = 'Resize (shrink)'; Variant = 'NTFS'; Reads = 'raw extent; Get-Volume size; file manifest; chkdsk /scan' }
+        @{ Id = 'ops.shrink-fat32'; Machine = 'testpc2'; Operation = 'Resize (shrink)'; Variant = 'FAT32'; Reads = 'raw extent; Get-Volume size; file manifest; chkdsk read-only' }
+        @{ Id = 'ops.shrink-exfat'; Machine = 'testpc2'; Operation = 'Resize (shrink)'; Variant = 'exFAT'; Reads = 'raw extent; Get-Volume size; file manifest; chkdsk read-only' }
+        @{ Id = 'ops.shrink-refs'; Machine = 'testpc2'; Operation = 'Resize (shrink)'; Variant = 'ReFS'; Reads = 'raw extent; Get-Volume size; file manifest; Repair-Volume -Scan' }
+        @{ Id = 'ops.resize-ext2'; Machine = 'testpc2'; Operation = 'Resize, ext (grow, shrink)'; Variant = 'ext2'; Reads = 'raw extent; superblock size; bundled e2fsck -fn after each; host Linux e2fsck' }
+        @{ Id = 'ops.resize-ext3'; Machine = 'testpc2'; Operation = 'Resize, ext (grow, shrink)'; Variant = 'ext3'; Reads = 'raw extent; superblock size; bundled e2fsck -fn after each; host Linux e2fsck' }
+        @{ Id = 'ops.resize-ext4'; Machine = 'testpc2'; Operation = 'Resize, ext (grow, shrink)'; Variant = 'ext4'; Reads = 'raw extent; superblock size; bundled e2fsck -fn after each; host Linux e2fsck' }
+        @{ Id = 'ops.apfs-container-resize'; Machine = 'testpc2'; Operation = 'APFS container resize'; Variant = 'grow to fill the partition'; Reads = 'NXSB block count; probe certifier; host apfsck' }
+        @{ Id = 'ops.check-ntfs'; Machine = 'testpc2'; Operation = 'Check File System (Windows)'; Variant = 'NTFS'; Reads = 'raw table unchanged; file manifest unchanged; chkdsk /scan' }
+        @{ Id = 'ops.check-fat32'; Machine = 'testpc2'; Operation = 'Check File System (Windows)'; Variant = 'FAT32'; Reads = 'raw table unchanged; file manifest unchanged; chkdsk read-only' }
+        @{ Id = 'ops.check-exfat'; Machine = 'testpc2'; Operation = 'Check File System (Windows)'; Variant = 'exFAT'; Reads = 'raw table unchanged; file manifest unchanged; chkdsk read-only' }
+        @{ Id = 'ops.repair-ext2'; Machine = 'testpc2'; Operation = 'Check File System, read-only and repair'; Variant = 'ext2'; Reads = 'bundled e2fsck -fn on a copy; host Linux e2fsck' }
+        @{ Id = 'ops.repair-ext3'; Machine = 'testpc2'; Operation = 'Check File System, read-only and repair'; Variant = 'ext3'; Reads = 'bundled e2fsck -fn on a copy; host Linux e2fsck' }
+        @{ Id = 'ops.repair-ext4'; Machine = 'testpc2'; Operation = 'Check File System, read-only and repair'; Variant = 'ext4'; Reads = 'bundled e2fsck -fn on a copy; host Linux e2fsck' }
+        @{ Id = 'ops.repair-hfsplus'; Machine = 'testpc2'; Operation = 'Check File System, read-only and repair'; Variant = 'HFS+'; Reads = 'volume header; bundled fsck_hfs -n -f on a copy' }
+        @{ Id = 'ops.repair-hfsx'; Machine = 'testpc2'; Operation = 'Check File System, read-only and repair'; Variant = 'HFSX'; Reads = 'volume header; bundled fsck_hfs -n -f on a copy' }
+        @{ Id = 'ops.repair-apfs'; Machine = 'testpc2'; Operation = 'Check File System, read-only and repair'; Variant = 'APFS (queued as the panel queues it; the panel gate itself is not pressed)'; Reads = 'NXSB; probe certifier; host apfsck' }
+        @{ Id = 'ops.scan-file-systems'; Machine = 'testpc2'; Operation = 'Scan File Systems'; Variant = 'NTFS and FAT32 on one disk'; Reads = 'raw table unchanged; file manifests unchanged' }
+        @{ Id = 'ops.set-letter-and-label'; Machine = 'testpc2'; Operation = 'Set Drive Letter; Set Label'; Variant = 'NTFS'; Reads = 'Get-Partition letter; Get-Volume label; file manifest; chkdsk /scan' }
+        @{ Id = 'ops.hide-unhide-gpt'; Machine = 'testpc2'; Operation = 'Hide/Unhide'; Variant = 'GPT'; Reads = 'raw GPT entry attributes; Get-Partition' }
+        @{ Id = 'ops.hide-unhide-mbr'; Machine = 'testpc2'; Operation = 'Hide/Unhide'; Variant = 'MBR'; Reads = 'raw MBR type byte' }
+        @{ Id = 'ops.set-active-mbr'; Machine = 'testpc2'; Operation = 'Set Active/Inactive'; Variant = 'MBR'; Reads = 'raw MBR boot flag' }
+        @{ Id = 'ops.type-id-gpt'; Machine = 'testpc2'; Operation = 'Change Partition Type ID'; Variant = 'GPT GUID'; Reads = 'raw GPT entry type' }
+        @{ Id = 'ops.type-id-mbr'; Machine = 'testpc2'; Operation = 'Change Partition Type ID'; Variant = 'MBR, typed 0x83, 0x07 and 83'; Reads = 'raw MBR type byte' }
+        @{ Id = 'ops.initialize-gpt'; Machine = 'testpc2'; Operation = 'Initialize Disk'; Variant = 'GPT'; Reads = 'raw protective MBR and GPT header; Get-Disk' }
+        @{ Id = 'ops.initialize-mbr'; Machine = 'testpc2'; Operation = 'Initialize Disk'; Variant = 'MBR'; Reads = 'raw MBR signature; Get-Disk' }
+        @{ Id = 'ops.delete-all'; Machine = 'testpc2'; Operation = 'Delete All Partitions'; Variant = 'GPT, three volumes'; Reads = 'raw GPT entries' }
+        @{ Id = 'ops.merge'; Machine = 'testpc2'; Operation = 'Merge'; Variant = 'two NTFS volumes'; Reads = 'raw extent; both file manifests; chkdsk /scan' }
+        @{ Id = 'ops.split'; Machine = 'testpc2'; Operation = 'Split'; Variant = 'NTFS'; Reads = 'raw entries; file manifest; chkdsk /scan on both' }
+        @{ Id = 'ops.wipe-partition'; Machine = 'testpc2'; Operation = 'Wipe Partition'; Variant = 'entire partition'; Reads = 'marker search over the partition read from the device; the other volume''s manifest' }
+        @{ Id = 'ops.wipe-free-space'; Machine = 'testpc2'; Operation = 'Wipe Free Space (cipher /w)'; Variant = 'NTFS'; Reads = 'marker of a deleted file searched over the partition; live file manifest; chkdsk /scan' }
+        @{ Id = 'ops.wipe-disk'; Machine = 'testpc2'; Operation = 'Wipe Disk (regression)'; Variant = 'virtual disk'; Reads = 'marker search over the whole disk; raw table' }
+        @{ Id = 'ops.cluster-ntfs'; Machine = 'testpc2'; Operation = 'Change Cluster Size (current text)'; Variant = 'NTFS'; Reads = 'Win32_Volume cluster; file manifest; chkdsk /scan' }
+        @{ Id = 'ops.cluster-fat32'; Machine = 'testpc2'; Operation = 'Change Cluster Size (FAT live-copy branch)'; Variant = 'FAT32'; Reads = 'Win32_Volume cluster; file manifest; chkdsk read-only' }
+        @{ Id = 'ops.cluster-exfat'; Machine = 'testpc2'; Operation = 'Change Cluster Size (FAT live-copy branch)'; Variant = 'exFAT'; Reads = 'Win32_Volume cluster; file manifest; chkdsk read-only' }
+        @{ Id = 'ops.serial-ntfs'; Machine = 'testpc2'; Operation = 'Change Volume Serial (current text)'; Variant = 'NTFS'; Reads = 'Win32_Volume serial; file manifest; chkdsk /scan' }
+        @{ Id = 'ops.serial-fat32'; Machine = 'testpc2'; Operation = 'Change Volume Serial (FAT live-copy branch)'; Variant = 'FAT32'; Reads = 'Win32_Volume serial; file manifest; chkdsk read-only' }
+        @{ Id = 'ops.serial-exfat'; Machine = 'testpc2'; Operation = 'Change Volume Serial (FAT live-copy branch)'; Variant = 'exFAT'; Reads = 'Win32_Volume serial; file manifest; chkdsk read-only' }
+        @{ Id = 'ops.move-ntfs'; Machine = 'testpc2'; Operation = 'Move (current text: shadow copy, robocopy /E, held backup folder)'; Variant = 'NTFS'; Reads = 'raw extent; file manifest; no shadow copy or mapping left; chkdsk /scan' }
+        @{ Id = 'ops.move-fat32'; Machine = 'testpc2'; Operation = 'Move (FAT live-copy branch)'; Variant = 'FAT32'; Reads = 'raw extent; file manifest; chkdsk read-only' }
+        @{ Id = 'ops.allocate-after'; Machine = 'testpc2'; Operation = 'Allocate Free Space (current text)'; Variant = 'donor after target'; Reads = 'raw extents; both file manifests' }
+        @{ Id = 'ops.to-logical'; Machine = 'testpc2'; Operation = 'Primary/Logical (current text)'; Variant = 'primary to logical'; Reads = 'raw MBR and EBR chain; file manifest; chkdsk /scan' }
+        @{ Id = 'ops.to-primary'; Machine = 'testpc2'; Operation = 'Primary/Logical'; Variant = 'logical to primary'; Reads = 'raw MBR and EBR chain; file manifest; chkdsk /scan' }
+        @{ Id = 'ops.image-locked-volumes'; Machine = 'testpc2'; Operation = 'Create Image'; Variant = 'LockedVolumes (online disk, mounted volumes)'; Reads = 'image size; the image mounted read-only, file manifest' }
+        @{ Id = 'ops.recovery-full-scan-gpt'; Machine = 'testpc2'; Operation = 'Recovery Scan (Full); Restore Recovered Partition'; Variant = 'GPT'; Reads = 'scan output names the offset; raw extent; file manifest' }
+        @{ Id = 'ops.recovery-restore-mbr'; Machine = 'testpc2'; Operation = 'Recovery Scan; Restore Recovered Partition'; Variant = 'MBR'; Reads = 'scan output names the offset; raw extent; file manifest' }
+        @{ Id = 'ops.stop-cleanup-move'; Machine = 'testpc2'; Operation = 'Stop cleanup after a stopped step'; Variant = 'Move: shadow copy and DefineDosDevice mapping'; Reads = 'Win32_ShadowCopy; subst; file manifest' }
+        @{ Id = 'ops.stop-cleanup-wipe-free-space'; Machine = 'testpc2'; Operation = 'Stop cleanup after a stopped step'; Variant = 'cipher /w folder'; Reads = 'EFSTMPWP folder; cipher process; file manifest' }
+        @{ Id = 'ops.inventory-elevated'; Machine = 'testpc2'; Operation = 'Storage inventory scan (DLL-loaded), with administrator rights'; Variant = 'helper scan'; Reads = 'Get-Disk' }
+        @{ Id = 'ops.apfs-label-and-snapshots'; Machine = 'testpc2'; Operation = 'APFS label; snapshot create, revert, delete'; Variant = 'APFS'; Reads = 'probe certifier name; host apfsck after each' }
+        @{ Id = 'vhd.create-format-resize-delete'; Machine = 'testpc2'; Operation = 'Delete (regression; with Create, Format, Resize)'; Variant = 'NTFS'; Reads = 'certification matrix checks' }
+        @{ Id = 'vhd.fat32-to-ntfs'; Machine = 'testpc2'; Operation = 'Convert FS FAT32 to NTFS (regression)'; Variant = 'FAT32'; Reads = 'certification matrix checks' }
+        @{ Id = 'vhd.empty-style-conversion'; Machine = 'testpc2'; Operation = 'Convert MBR/GPT (regression)'; Variant = 'empty disk'; Reads = 'certification matrix checks' }
+        @{ Id = 'vhd.image-clone'; Machine = 'testpc2'; Operation = 'Clone Disk (regression)'; Variant = 'virtual disks'; Reads = 'certification matrix checks' }
+        @{ Id = 'vhd.partition-clone-region'; Machine = 'testpc2'; Operation = 'Clone Partition (regression)'; Variant = 'to free space'; Reads = 'certification matrix checks' }
+        @{ Id = 'vhd.image-restore'; Machine = 'testpc2'; Operation = 'Restore Image (regression)'; Variant = 'virtual disk'; Reads = 'certification matrix checks' }
+        @{ Id = 'external.bitlocker'; Machine = 'testpc2'; Operation = 'BitLocker-locked refusal (regression)'; Variant = 'locked data volume'; Reads = 'certification matrix checks' }
+        @{ Id = 'external.bitlocker-mutation'; Machine = 'testpc2'; Operation = 'BitLocker Unlock/Suspend/Resume (regression)'; Variant = 'data volume'; Reads = 'certification matrix checks' }
+        @{ Id = 'ops.dynamic-to-basic'; Machine = 'vm'; Operation = 'Dynamic to Basic (current text)'; Variant = 'VDI (Windows will not make a virtual disk file dynamic)'; Reads = 'raw table (no LDM entry); Get-Disk; file manifest; chkdsk /scan' }
+        @{ Id = 'ops.migrate-image-route'; Machine = 'vm'; Operation = 'Migrate OS'; Variant = 'Image route (DISM): a target smaller than the Windows partition'; Reads = 'route Image in the plan; the target starts alone in a VM of its own and carries the source marker' }
+        @{ Id = 'ops.migrate-mbr-bios'; Machine = 'vm'; Operation = 'Migrate OS'; Variant = 'MBR/BIOS, inside a BIOS VM'; Reads = 'raw MBR with one active partition; the target starts alone with BIOS firmware and carries the source marker' }
+        @{ Id = 'ops.repair-boot-attached-bios-no-active'; Machine = 'vm'; Operation = 'Repair Boot, attached'; Variant = 'BIOS, no active partition'; Reads = 'raw MBR boot flag and bootmgr before, broken, after; the disk starts alone before, not after the break, and again after the repair' }
+        @{ Id = 'ops.repair-boot-running-uefi'; Machine = 'vm'; Operation = 'Repair Boot, running Windows'; Variant = 'UEFI'; Reads = 'boot files on the ESP gone, then back and Microsoft-signed; BCD names bootmgfw.efi; the VM restarts and signs in' }
+        @{ Id = 'ops.repair-boot-running-bios'; Machine = 'vm'; Operation = 'Repair Boot, running Windows'; Variant = 'BIOS, inside a BIOS VM'; Reads = 'bootmgr gone, then back on the active partition; the VM restarts and signs in' }
+        @{ Id = 'ops.restore-point'; Machine = 'vm'; Operation = 'AI assistant restore point (diagnostics.create_restore_point)'; Variant = 'in-process, elevated'; Reads = 'Get-ComputerRestorePoint: one new point with the description, made during the step' }
+        @{ Id = 'external.ssd-retrim'; Machine = 'device'; Operation = 'SSD ReTrim (regression)'; Variant = 'real NVMe'; Reads = 'certification matrix checks'; Pending = 'needs a real SSD: the final certification''s ssd-device group runs it on the final code' }
+        @{ Id = 'external.hdd-defrag-execution'; Machine = 'device'; Operation = 'HDD Defrag (regression)'; Variant = 'real spinning drive'; Reads = 'certification matrix checks'; Pending = 'needs a real HDD: the final certification''s hdd-device group runs it on the final code' }
+    )
+    # What cannot be run, and why. Nothing is left out without a line here.
+    NotRunnable = @(
+        @{ Operation = 'APFS root file/dir/clone/hard-link operations'; Reason = 'not reachable from the app: the planner has them, no panel action or assistant action queues them' }
+        @{ Operation = 'HfsXxx staged-mutation family'; Reason = 'not reachable from the app: no panel action or assistant action queues them' }
+        @{ Operation = 'XFS/Btrfs write or repair'; Reason = 'no such operation exists: read-only detection only' }
+    )
+}

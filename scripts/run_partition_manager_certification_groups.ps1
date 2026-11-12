@@ -22,6 +22,9 @@
     usb-virtual  The USB row on a VDI behind a virtual USB controller, with no host device involved.
     ssd-device, hdd-device    The device rows on the pinned device.
     data-device  Data-volume rows, on small partitions of the pinned hard drive. No whole-disk pass.
+    ops-vm   Operation proof only (scripts/run_partition_manager_operation_proof.ps1), never
+             certification evidence: the ops.* rows whose target is the running Windows, a VDI or
+             a boot. Its rows run with -OperationProof.
 
 .PARAMETER ReuseBiosDisk
     For a trial: boot-bios starts from the BIOS install an earlier trial left, which takes over an hour
@@ -35,7 +38,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('vhd', 'data', 'boot-uefi', 'boot-bios', 'ssd-virtual', 'usb-virtual', 'ssd-device', 'hdd-device', 'data-device')]
+    [ValidateSet('vhd', 'data', 'boot-uefi', 'boot-bios', 'ssd-virtual', 'usb-virtual', 'ssd-device', 'hdd-device', 'data-device', 'ops-vm')]
     [string]$Group,
     [Parameter(Mandatory = $true)] [string]$EvidenceDir,
     [string[]]$Rows = @(),
@@ -47,7 +50,10 @@ param(
     [string]$Vm = 'Windows 11',
     # Overrides the job limit for this group (a trial). Without it the limit is the group's own:
     # Get-PmGroupJobMinutes, with ssd-device sized from its pinned drive.
-    [int]$RowMinutes = 0
+    [int]$RowMinutes = 0,
+    # ops-vm: the Image-route migration target, smaller than the guest's Windows partition and
+    # larger than what it holds.
+    [long]$MigrateTargetMiB = 61440
 )
 
 $ErrorActionPreference = 'Stop'
@@ -124,7 +130,85 @@ function Get-Proof {
 
 function Invoke-GuestRows {
     param([string[]]$Ids, [hashtable]$More = @{})
+    # The operation-proof group's rows are ops.* rows, which the runner loads only in that mode.
+    if ($Group -ceq 'ops-vm') { $More = $More + @{ OperationProof = $true } }
     Invoke-Rig -Action 'Rows' -More (@{ Rows = $Ids } + $More)
+}
+
+$Script:OpsBiosDisk = 'cert-bios'
+$Script:OpsBiosMiB = 102400
+$Script:OpsBiosBuilt = $false
+$Script:OpsBiosReady = $false
+
+function Invoke-OpsBiosDisk {
+    # The BIOS install the boot-bios group builds (or, with -ReuseBiosDisk, the one an earlier run
+    # left), made once for every ops-vm row that needs it. One this group built, it deletes.
+    if ($Script:OpsBiosReady) { return }
+    if (-not $ReuseBiosDisk) {
+        Invoke-Rig -Action 'Off'
+        Invoke-BuildBiosDisk -Disk $Script:OpsBiosDisk -SizeMiB $Script:OpsBiosMiB -ScratchMiB 40960
+        $Script:OpsBiosBuilt = $true
+    }
+    $Script:OpsBiosReady = $true
+}
+
+function Invoke-OpsInBiosVm {
+    <#
+    .SYNOPSIS
+        Runs an ops row inside a BIOS VM of its own started from the BIOS install: the running BIOS
+        Windows' boot repair, which must then start and sign in again; or Migrate OS onto a disk
+        attached to it, which must then start alone with BIOS firmware.
+    #>
+    param([string]$Id)
+    Invoke-OpsBiosDisk
+    $name = 'sakcert-opsbios'
+    $target = 'ops-bios-target'
+    # Larger than the source, so the target is the only disk of its size the row can be given.
+    $targetMiB = 112640
+    Invoke-Rig -Action 'Off'
+    Invoke-Rig -Action 'VmCreate' -More @{ Disk = $Script:OpsBiosDisk; ProofName = $name; Firmware = 'bios' }
+    try {
+        Invoke-Rig -Action 'Deploy' -More @{ Vm = $name; StageDir = $StageDir }
+        if ($Id -ceq 'ops.repair-boot-running-bios') {
+            Invoke-GuestRows -Ids @($Id) -More @{ Vm = $name }
+            Assert-RowPassed -Id $Id
+            Invoke-Rig -Action 'Off' -More @{ Vm = $name }
+            $signedIn = $true
+            $why = ''
+            try { Invoke-Rig -Action 'On' -More @{ Vm = $name } } catch { $signedIn = $false; $why = $_.Exception.Message }
+            Write-OpsHostCheck -Id $Id -Name 'host: the BIOS VM restarted after the repair and signed in' -Passed $signedIn -Detail $why
+            return
+        }
+        Invoke-Rig -Action 'NewDisk' -More @{ Disk = $target; SizeMiB = $targetMiB }
+        try {
+            Invoke-Rig -Action 'Off' -More @{ Vm = $name }
+            Invoke-Rig -Action 'AttachDisk' -More @{ Vm = $name; Disk = $target; Port = 1 }
+            Invoke-Rig -Action 'On' -More @{ Vm = $name }
+            Invoke-GuestRows -Ids @($Id) -More @{ Vm = $name; DataDiskBytes = [uint64]$targetMiB * $Script:MiB }
+            Assert-RowPassed -Id $Id
+            Invoke-Rig -Action 'Off' -More @{ Vm = $name }
+            Invoke-Rig -Action 'DetachDisk' -More @{ Vm = $name; Port = 1 }
+            $row = Join-Path $EvidenceDir $Id
+            $proof = Get-Proof -Disk $target -Name 'migrated-bios' -Firmware 'bios' -RowDir $row -MarkerPath 'C:\SAKCert\source-marker.txt'
+            $independent = Get-Content -LiteralPath (Join-Path $row 'independent.json') -Raw | ConvertFrom-Json
+            Write-OpsHostCheck -Id $Id -Name 'host: the migrated disk started alone with BIOS firmware and signed in' -Passed ([bool]$proof.reached_sign_in -and "$($proof.firmware)" -eq 'Legacy') -Detail $proof
+            Write-OpsHostCheck -Id $Id -Name "host: it is the source's Windows (its marker is there)" -Passed ("$($proof.source_marker)" -ceq "$($independent.source_marker)") -Detail "$($proof.source_marker)"
+        } finally {
+            Invoke-Rig -Action 'DeleteDisk' -More @{ Disk = $target }
+        }
+    } finally {
+        Invoke-Rig -Action 'VmRemove' -More @{ ProofName = $name }
+        Invoke-Rig -Action 'On'
+    }
+}
+
+function Write-OpsHostCheck {
+    # What only the host saw, as a check the operation proof's results table reads.
+    param([string]$Id, [string]$Name, [bool]$Passed, [object]$Detail)
+    $path = Join-Path (Join-Path $EvidenceDir $Id) 'host-checks.json'
+    $checks = @(if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Raw | ConvertFrom-Json })
+    $checks += [ordered]@{ name = $Name; passed = $Passed; detail = $Detail }
+    [IO.File]::WriteAllText($path, (ConvertTo-Json -InputObject @($checks) -Depth 8))
 }
 
 function Invoke-RowsOnThrowawayDisk {
@@ -330,6 +414,69 @@ switch ($Group) {
         $ids = if ($Rows.Count) { $Rows } else { @('external.usb-removable', 'external.hdd-defrag-execution') }
         Invoke-GuestRows -Ids $ids -More @{ PinFile = $PinFile }
         Assert-RowsPassed -Ids $ids
+    }
+    'ops-vm' {
+        $wanted = if ($Rows.Count) { $Rows } else { @('ops.dynamic-to-basic', 'ops.restore-point', 'ops.repair-boot-running-uefi', 'ops.migrate-image-route') }
+        # Each row is its own finding: one that fails does not stop the others.
+        $failed = @()
+        foreach ($id in $wanted) {
+            Say "operation proof: $id"
+            try {
+            switch ($id) {
+                'ops.dynamic-to-basic' { Invoke-RowsOnThrowawayDisk -Ids @($id) -Disk 'ops-dynamic' -SizeMiB 1024 -DiskBus 'Sata' }
+                'ops.restore-point' { Invoke-GuestRows -Ids @($id); Assert-RowPassed -Id $id }
+                'ops.repair-boot-running-uefi' {
+                    Invoke-GuestRows -Ids @($id)
+                    Assert-RowPassed -Id $id
+                    # The repaired Windows is the one this VM runs: it must start and sign in again.
+                    Invoke-Rig -Action 'Off'
+                    $signedIn = $true
+                    $why = ''
+                    try { Invoke-Rig -Action 'On' } catch { $signedIn = $false; $why = $_.Exception.Message }
+                    Write-OpsHostCheck -Id $id -Name 'host: the VM restarted after the repair and signed in' -Passed $signedIn -Detail $why
+                }
+                'ops.migrate-image-route' {
+                    $disk = 'ops-image-route'
+                    Invoke-Rig -Action 'NewDisk' -More @{ Disk = $disk; SizeMiB = $MigrateTargetMiB }
+                    Invoke-Rig -Action 'Off'
+                    Invoke-Rig -Action 'AttachDisk' -More @{ Disk = $disk; Port = 2 }
+                    Invoke-Rig -Action 'On'
+                    try {
+                        Invoke-GuestRows -Ids @($id) -More @{ DataDiskBytes = [uint64]$MigrateTargetMiB * $Script:MiB }
+                        Assert-RowPassed -Id $id
+                        Invoke-Rig -Action 'Off'
+                        Invoke-Rig -Action 'DetachDisk' -More @{ Port = 2 }
+                        $row = Join-Path $EvidenceDir $id
+                        $proof = Get-Proof -Disk $disk -Name 'migrated' -Firmware 'efi' -RowDir $row -MarkerPath 'C:\SAKCert\source-marker.txt'
+                        $independent = Get-Content -LiteralPath (Join-Path $row 'independent.json') -Raw | ConvertFrom-Json
+                        Write-OpsHostCheck -Id $id -Name 'host: the migrated disk started alone and signed in' -Passed ([bool]$proof.reached_sign_in) -Detail $proof
+                        Write-OpsHostCheck -Id $id -Name "host: it is the source's Windows (its marker is there)" -Passed ("$($proof.source_marker)" -ceq "$($independent.source_marker)") -Detail "$($proof.source_marker)"
+                    } finally {
+                        Invoke-Rig -Action 'Off'
+                        Invoke-Rig -Action 'DetachDisk' -More @{ Port = 2 }
+                        Invoke-Rig -Action 'DeleteDisk' -More @{ Disk = $disk }
+                        Invoke-Rig -Action 'On'
+                    }
+                }
+                'ops.repair-boot-attached-bios-no-active' {
+                    Invoke-OpsBiosDisk
+                    Invoke-Rig -Action 'Off'
+                    try {
+                        Invoke-BootRepairRow -Id $id -Disk $Script:OpsBiosDisk -Bytes ([uint64]$Script:OpsBiosMiB * $Script:MiB) -Firmware 'bios'
+                        $independent = Get-Content -LiteralPath (Join-Path (Join-Path $EvidenceDir $id) 'independent.json') -Raw | ConvertFrom-Json
+                        Write-OpsHostCheck -Id $id -Name 'host: the disk started before the break' -Passed ([bool]$independent.boot_before.reached_sign_in) -Detail $independent.boot_before
+                        Write-OpsHostCheck -Id $id -Name 'host: after the break it did not start' -Passed (-not [bool]$independent.boot_broken.reached_sign_in) -Detail $independent.boot_broken
+                        Write-OpsHostCheck -Id $id -Name 'host: after the repair it started and signed in' -Passed ([bool]$independent.boot_after.reached_sign_in) -Detail $independent.boot_after
+                    } finally { Invoke-Rig -Action 'On' }
+                }
+                'ops.repair-boot-running-bios' { Invoke-OpsInBiosVm -Id $id }
+                'ops.migrate-mbr-bios' { Invoke-OpsInBiosVm -Id $id }
+                default { throw "$id is not an ops-vm row" }
+            }
+            } catch { $failed += $id; Say "FAILED $id : $($_.Exception.Message)" }
+        }
+        if ($Script:OpsBiosBuilt) { Invoke-Rig -Action 'DeleteDisk' -More @{ Disk = $Script:OpsBiosDisk } }
+        if ($failed.Count) { throw "Operation-proof rows failed: $($failed -join ', ')" }
     }
     'data-device' {
         $ids = if ($Rows.Count) { $Rows } else { @('external.allocate-free-space', 'external.partition-move', 'external.cluster-size-change', 'external.volume-serial-number') }

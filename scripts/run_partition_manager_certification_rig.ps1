@@ -61,6 +61,8 @@ param(
     [uint64]$DataDiskBytes = 0,
     [string]$PinFile = '',
     [switch]$DataRowsOnDevice,
+    # Runs -Rows as operation-proof rows (scripts/run_partition_manager_operation_proof.ps1).
+    [switch]$OperationProof,
     [ValidateSet('efi', 'bios')] [string]$Firmware = 'efi',
     [string]$ProofName = '',
     [string]$ProofOutput = '',
@@ -428,7 +430,8 @@ function Send-RigStage {
     Send-ToGuest -LocalPaths @($zip) -GuestFolder $Script:GuestRoot -VmName $VmName
     Invoke-GuestPS -Code "Expand-Archive -LiteralPath '$Script:GuestRoot\$(Split-Path -Leaf $zip)' -DestinationPath '$Script:GuestRoot\stage' -Force; (Get-ChildItem '$Script:GuestRoot\stage').Count" -VmName $VmName
     $scripts = @('run_partition_manager_app_certification.ps1', 'partition_manager_certification_row_bodies.ps1', 'partition_manager_readback.ps1',
-        'partition_manager_row_evidence.ps1', 'partition_manager_certification_bios_fixture.ps1') |
+        'partition_manager_row_evidence.ps1', 'partition_manager_certification_bios_fixture.ps1',
+        'partition_manager_operation_proof_rows.ps1', 'partition_manager_operation_proof_checks.ps1') |
         ForEach-Object { Join-Path $ProjectRoot "scripts\$_" }
     $scripts += (Join-Path $ProjectRoot 'src\core\partition_scripts\os_migration_native.cs')
     Send-ToGuest -LocalPaths $scripts -GuestFolder "$Script:GuestRoot\scripts" -VmName $VmName
@@ -442,6 +445,7 @@ function Invoke-RigRows {
     if ($Phase) { $extra += " -Phase '$Phase'" }
     if ($DataDiskBytes -gt 0) { $extra += " -DataDiskBytes $DataDiskBytes" }
     if ($DataRowsOnDevice) { $extra += ' -DataRowsOnDevice' }
+    if ($OperationProof) { $extra += ' -OperationProof' }
     if ($PinFile) {
         Send-ToGuest -LocalPaths @((Resolve-RigPath $PinFile)) -GuestFolder "$Script:GuestRoot\jobs" -VmName $VmName
         $extra += " -PhysicalPins '$Script:GuestRoot\jobs\$(Split-Path -Leaf $PinFile)'"

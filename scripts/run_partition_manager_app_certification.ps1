@@ -40,7 +40,10 @@ param(
     [string]$PhysicalPins = '',
     [string]$Phase = '',
     [uint64]$DataDiskBytes = 0,
-    [switch]$DataRowsOnDevice
+    [switch]$DataRowsOnDevice,
+    # Operation proof (scripts/run_partition_manager_operation_proof.ps1): also loads its rows, and
+    # runs every row asked for even after one fails. It changes no certification row.
+    [switch]$OperationProof
 )
 
 $ErrorActionPreference = 'Stop'
@@ -296,8 +299,12 @@ function Invoke-CertStep {
         [string]$Expect = 'success',
         [string]$RefusalContains = '',
         [int]$TimeoutSeconds = 1800,
-        [switch]$Elevated
+        [switch]$Elevated,
+        # Fields only an operation-proof job carries (operation_proof, route, cancel_after_seconds).
+        [hashtable]$ProofFields = @{}
     )
+    # Operation proof pins every disk a step names, immediately before the step (rows file).
+    if ($OperationProof) { Assert-OpsStepPins -Pin $Pin -SecondPin $SecondPin }
     $name = "$Step.client"
     $reportPath = Join-Path $Script:RowDir "$name.json"
     $jobPath = Join-Path $WorkRoot "$($Script:RowId)-$Step.job.json"
@@ -317,6 +324,7 @@ function Invoke-CertStep {
         allow_elevated_client = [bool]$Elevated
     }
     if ($null -ne $SecondPin) { $job.second_pin = $SecondPin }
+    foreach ($key in $ProofFields.Keys) { $job[$key] = $ProofFields[$key] }
     [IO.File]::WriteAllText($jobPath, ($job | ConvertTo-Json -Depth 8))
     Write-Host "[$(Get-Date -Format HH:mm:ss)] $($Script:RowId) $Step ($Operation)"
     $seen = if ($Elevated) { Invoke-CertElevatedClient -JobPath $jobPath -TimeoutSeconds $TimeoutSeconds } else { Invoke-CertClient -JobPath $jobPath -TimeoutSeconds $TimeoutSeconds }
@@ -460,6 +468,7 @@ function Get-CertVolumesSummary {
 }
 
 . (Join-Path $PSScriptRoot 'partition_manager_certification_row_bodies.ps1')
+if ($OperationProof) { . (Join-Path $PSScriptRoot 'partition_manager_operation_proof_rows.ps1') }
 
 function Invoke-CertRow {
     param([Parameter(Mandatory = $true)] [string]$Id)
@@ -498,8 +507,9 @@ $summaries = @()
 foreach ($row in $Rows) {
     $report = Invoke-CertRow -Id $row
     $summaries += [pscustomobject]@{ id = $row; status = $report.status; failure = $report.failure }
-    # A failed row fails the run, so the rows after it would only take time.
-    if ($report.status -ne 'Passed') { break }
+    # A failed row fails the run, so the rows after it would only take time. Operation proof runs
+    # them all: each row is its own finding.
+    if ($report.status -ne 'Passed' -and -not $OperationProof) { break }
 }
 $summaries | ForEach-Object { "ROW $($_.id): $($_.status) $($_.failure)" }
 @($Rows | Where-Object { @($summaries.id) -notcontains $_ }) | ForEach-Object { "ROW ${_}: not run, a row before it failed" }
