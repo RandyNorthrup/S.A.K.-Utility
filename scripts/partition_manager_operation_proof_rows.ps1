@@ -1879,6 +1879,16 @@ function Get-OpsBiosSystemPartition {
     # The partition holding the BIOS boot files on an MBR Windows disk, found by its files and not
     # by its flag: a row clears the flag on purpose.
     param([int]$DiskNumber)
+    # An attached Windows disk can come up offline (another disk holds its disk id, or the SAN
+    # policy), and its volumes are out of reach until it is online, as the certification's own
+    # boot rows found. If two disks share an id Windows gives this one a new id as it comes
+    # online, which its BCD would not know: what the id was and is goes with the result.
+    $disk = Get-Disk -Number $DiskNumber
+    $online = [ordered]@{ was_offline = [bool]$disk.IsOffline; offline_reason = "$($disk.OfflineReason)"; was_read_only = [bool]$disk.IsReadOnly; disk_id_before = ('{0:X8}' -f [uint32]$disk.Signature); disk_id_after = '' }
+    if ($disk.IsOffline) { Set-Disk -Number $DiskNumber -IsOffline $false; Start-Sleep -Seconds 3 }
+    if ($disk.IsReadOnly) { Set-Disk -Number $DiskNumber -IsReadOnly $false }
+    $online.disk_id_after = '{0:X8}' -f [uint32](Get-Disk -Number $DiskNumber).Signature
+    $seen = @()
     foreach ($partition in @(Get-Partition -DiskNumber $DiskNumber | Sort-Object Offset)) {
         $added = $false
         if (-not ($partition.DriveLetter -and [char]::IsLetter([char]$partition.DriveLetter))) {
@@ -1890,11 +1900,12 @@ function Get-OpsBiosSystemPartition {
         $letter = "$($partition.DriveLetter)"
         $hasLetter = $letter -and [char]::IsLetter([char]$letter)
         if ($hasLetter -and ((Test-Path -LiteralPath "${letter}:\Boot\BCD") -or @(Get-ChildItem -LiteralPath "${letter}:\" -Filter 'bootmgr*' -Force -ErrorAction SilentlyContinue).Count -gt 0)) {
-            return [pscustomobject]@{ number = [int]$partition.PartitionNumber; letter = $letter; offset = [uint64]$partition.Offset; letter_added = $added }
+            return [pscustomobject]@{ number = [int]$partition.PartitionNumber; letter = $letter; offset = [uint64]$partition.Offset; letter_added = $added; online = $online }
         }
+        $seen += "partition $($partition.PartitionNumber) $($partition.Type) letter '$letter'"
         if ($added -and $hasLetter) { Remove-PartitionAccessPath -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -AccessPath "${letter}:\" -ErrorAction SilentlyContinue }
     }
-    throw "Disk $DiskNumber has no partition with BIOS boot files"
+    throw "Disk $DiskNumber has no partition with BIOS boot files ($(@($seen) -join '; '); $(($online.GetEnumerator() | ForEach-Object { "$($_.Key) $($_.Value)" }) -join ', '))"
 }
 
 function Get-OpsBiosBootFacts {
@@ -1934,8 +1945,12 @@ Add-OpsRow 'ops.repair-boot-attached-bios-no-active' {
         Remove-OpsAddedLetter -DiskNumber $found.number -System $system
         $kept | Add-Member -NotePropertyName facts_before -NotePropertyValue $before -Force
         $kept | Add-Member -NotePropertyName facts_broken -NotePropertyValue $broken -Force
+        $kept | Add-Member -NotePropertyName disk_online -NotePropertyValue $system.online -Force
         ($kept | ConvertTo-Json -Depth 8) | Set-Content -LiteralPath $state
         $checks = @(New-OpsCheck -Name 'break: no partition is active and bootmgr is gone' -Passed ($broken.active_partitions -eq 0 -and -not $broken.bootmgr_present) -Detail $broken)
+        # A new disk id would stop the disk starting by itself, and the next phase would not be
+        # telling the break's effect from that one.
+        $checks += New-OpsCheck -Name 'break: the disk kept its disk id coming online, so only the break can stop it starting' -Passed ($system.online.disk_id_before -eq $system.online.disk_id_after) -Detail $system.online
         return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ phase = 'break'; kept = $kept })
     }
     if ($Phase -ne 'repair') { throw "This row runs one phase at a time, break or repair, not '$Phase'" }
