@@ -29,6 +29,7 @@
 . (Join-Path $PSScriptRoot 'partition_manager_operation_proof_checks.ps1')
 
 $Script:OpsPinLog = New-Object System.Collections.ArrayList
+$Script:OpsStepFailures = New-Object System.Collections.ArrayList
 
 function Assert-OpsWorkRootOnSpare {
     # On a physical PC the virtual disks live on the one drive the owner gave to this, which
@@ -149,7 +150,11 @@ function Invoke-OpsStep {
         [int]$TimeoutSeconds = 1800,
         [switch]$Elevated,
         # A disk the VM rig gave the row (a VDI), already pinned by Get-CertReadPin. Only in a guest.
-        [object]$GivenPin = $null
+        [object]$GivenPin = $null,
+        # A step whose failure still leaves something worth reading back (a Format whose tool ran
+        # and whose Apply then failed for another reason): the failure becomes a failed check and
+        # the row reads the disk anyway. The row's verdict is FAIL either way.
+        [switch]$ReadBackOnFailure
     )
     if ($null -ne $GivenPin) {
         if (-not $Script:InVirtualBox) { throw 'Only a VirtualBox guest hands a row its disk' }
@@ -163,7 +168,9 @@ function Invoke-OpsStep {
             -Expect $Expect -RefusalContains $RefusalContains -TimeoutSeconds $TimeoutSeconds -Elevated:$Elevated -ProofFields $fields
     } catch {
         Save-OpsFailureReadback -DiskNumber $Disk -Step $Step
-        throw
+        if (-not $ReadBackOnFailure) { throw }
+        [void]$Script:OpsStepFailures.Add([pscustomobject]@{ row = $Script:RowId; check = (New-OpsCheck -Name "step $Step ($Operation) did what the row expected" -Passed $false -Detail $_.Exception.Message) })
+        return $null
     }
 }
 
@@ -236,9 +243,12 @@ function Test-OpsExtent {
 
 function Complete-OpsRow {
     param([object]$Media, [object[]]$Checks, [System.Collections.IDictionary]$Extra = @{})
-    $independent = [ordered]@{ checks = @($Checks | ForEach-Object { $_ }); pins = @($Script:OpsPinLog) }
+    # Only this row's: a row that stopped early never reached here to clear its own.
+    $all = @($Script:OpsStepFailures | Where-Object { $_.row -ceq $Script:RowId } | ForEach-Object { $_.check }) + @($Checks | ForEach-Object { $_ })
+    $independent = [ordered]@{ checks = $all; pins = @($Script:OpsPinLog) }
     foreach ($key in $Extra.Keys) { $independent[$key] = $Extra[$key] }
     $Script:OpsPinLog.Clear()
+    $Script:OpsStepFailures.Clear()
     return @{ media = $Media; independent = $independent }
 }
 
@@ -263,7 +273,7 @@ function Invoke-OpsCreateWindows {
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk
     $mib = Get-OpsVolumeMiB -FileSystem $FileSystem -MiB 256
-    Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route $Route -Choices @{
+    Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route $Route -ReadBackOnFailure -Choices @{
         size_mib = $mib; free_before_mib = 0; file_system = $FileSystem; allocation_unit_bytes = $ClusterBytes
         partition_type = $Script:GptBasicData; label = $Label; full_format = $false
     } | Out-Null
@@ -286,7 +296,7 @@ function Invoke-OpsCreateNonNative {
     param([string]$FileSystem, [object]$Label)
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk
-    Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route 'assistant' -Choices @{
+    Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route 'assistant' -ReadBackOnFailure -Choices @{
         size_mib = 128; free_before_mib = 0; file_system = $FileSystem; allocation_unit_bytes = 0
         partition_type = ''; label = "$Label"; full_format = $false
     } | Out-Null
@@ -328,7 +338,7 @@ function Invoke-OpsFormat {
     $offset = [uint64](Get-Partition -DiskNumber $disk -PartitionNumber $old.partition_number).Offset
     $choices = @{ file_system = $FileSystem; allocation_unit_bytes = $ClusterBytes; label = "$Label"; full_format = $false }
     if ($FileSystem -eq 'Linux swap') { $choices.linux_swap_page_size_bytes = '4096' }
-    Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select @{ partition_number = $old.partition_number } -Choices $choices | Out-Null
+    Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select @{ partition_number = $old.partition_number } -Choices $choices -ReadBackOnFailure | Out-Null
     $checks = @(Test-OpsExtent -Name 'the partition kept its place and size' -DiskNumber $disk -Offset $offset -SizeBytes ([uint64]$mib * $Script:OpsMiB))
     $images = @()
     if ($FileSystem -in 'NTFS', 'exFAT', 'FAT32') {
