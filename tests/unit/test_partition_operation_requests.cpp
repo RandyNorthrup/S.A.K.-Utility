@@ -8,8 +8,13 @@
 #include "sak/partition_operation_requests.h"
 #include "sak/partition_script_builder.h"
 
+#include "../support/junction_fixture.h"
+
 #include <QJsonArray>
+#include <QTemporaryDir>
 #include <QtTest>
+
+#include <limits>
 
 using namespace sak;
 
@@ -59,6 +64,7 @@ private Q_SLOTS:
     void freeSpaceAfterAPartitionGrowsIt();
     void resizeTakesTheFileSystemTheScanFound();
     void assistantRequestStatesIntentOnly();
+    void backupFolderMustBeARealFolderWithRoom();
     void allocateNamesTheDonorAndTheAmount();
     void primaryLogicalNamesTheNewLayoutAndTheBackup();
     void serialAndClusterReformatWithTheVolumesOwnFacts();
@@ -274,6 +280,45 @@ void PartitionOperationRequestsTests::assistantRequestStatesIntentOnly() {
     named.size_bytes = 100 * kMiB;
     QVERIFY(!assistantPartitionOperation(
         PartitionOperationType::CheckFileSystem, named, QJsonObject{}, inventory));
+}
+
+// F19 (secfix, on the VM, 2026-11-11): a backup folder that did not exist was accepted by the
+// dialogs and refused only by the script at Apply. The queue now needs a real folder, reached
+// through no junction, with room for what the volume holds.
+void PartitionOperationRequestsTests::backupFolderMustBeARealFolderWithRoom() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString folder = QDir::toNativeSeparators(root.path());
+    QVERIFY(backupDirectoryBlocker(folder, kMiB).isEmpty());
+    const QString missing = QDir::toNativeSeparators(root.filePath(QStringLiteral("not-made")));
+    QVERIFY(backupDirectoryBlocker(missing, 0).contains(QStringLiteral("does not exist")));
+    const QString link = QDir::toNativeSeparators(root.filePath(QStringLiteral("link")));
+    QVERIFY(test::createJunction(link, root.path()));
+    QVERIFY(backupDirectoryBlocker(link, 0).contains(QStringLiteral("not a real folder")));
+    QVERIFY(backupDirectoryBlocker(folder, std::numeric_limits<uint64_t>::max() / 2)
+                .contains(QStringLiteral("Choose a folder on a volume with more room")));
+
+    // Queued: the folder of a Reformat for New Serial Number, with room for the volume's files.
+    PartitionInventory inventory;
+    PartitionDiskInfo disk = dataDisk(QStringLiteral("GPT"));
+    disk.partitions.append(dataPartition());
+    inventory.disks.append(disk);
+    const auto serial = [&](const QString& backup) {
+        return PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::ChangeVolumeSerialNumber,
+            partitionIdentityTarget(dataPartition()),
+            volumeSerialPayload(*dataPartition().volume,
+                                {.backup_directory = backup, .confirmed = true}));
+    };
+    QVERIFY(queuedBackupBlocker(inventory, serial(folder)).isEmpty());
+    QVERIFY(
+        queuedBackupBlocker(inventory, serial(missing)).contains(QStringLiteral("does not exist")));
+    QVERIFY(queuedBackupBlocker(
+                inventory,
+                PartitionOperationPlanner::makeOperation(PartitionOperationType::Format,
+                                                         partitionIdentityTarget(dataPartition()),
+                                                         QJsonObject{}))
+                .isEmpty());
 }
 
 void PartitionOperationRequestsTests::allocateNamesTheDonorAndTheAmount() {

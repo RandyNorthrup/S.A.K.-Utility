@@ -6,13 +6,16 @@
 
 #include "sak/partition_operation_requests.h"
 
+#include "sak/no_follow_fs.h"
 #include "sak/partition_file_system_registry.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/partition_os_migration.h"
 #include "sak/partition_raw_device_io.h"
 #include "sak/partition_safety_validator.h"
 
+#include <QDir>
 #include <QJsonArray>
+#include <QStorageInfo>
 
 #include <algorithm>
 #include <limits>
@@ -210,6 +213,62 @@ void bindResizeFileSystem(const PartitionInventory& inventory, PartitionOperatio
         operation->payload[QStringLiteral("file_system")] =
             partition->volume->file_system.trimmed();
     }
+}
+
+QString backupDirectoryBlocker(const QString& backup_directory, uint64_t needed_bytes) {
+    const QString path = QDir::toNativeSeparators(backup_directory.trimmed());
+    if (path.isEmpty()) {
+        return QStringLiteral("Choose a backup folder.");
+    }
+    if (no_follow::entryKind(path) == no_follow::EntryKind::Missing) {
+        return QStringLiteral(
+                   "The backup folder %1 does not exist. Create it, or choose a folder "
+                   "that does.")
+            .arg(path);
+    }
+    if (const auto held = no_follow::HeldDirectory::open(path); !held) {
+        return QStringLiteral(
+                   "The backup folder %1 is not a real folder that S.A.K. can write "
+                   "into without following a link: %2 Choose another folder.")
+            .arg(path, held.error());
+    }
+    const QStorageInfo storage(path);
+    const auto available = static_cast<uint64_t>(std::max<qint64>(0, storage.bytesAvailable()));
+    if (needed_bytes != 0 && available < needed_bytes) {
+        return QStringLiteral(
+                   "The backup folder's volume has %1 free, and the backup needs %2. "
+                   "Choose a folder on a volume with more room.")
+            .arg(formatPartitionBytes(available), formatPartitionBytes(needed_bytes));
+    }
+    return {};
+}
+
+QString queuedBackupBlocker(const PartitionInventory& inventory,
+                            const PartitionOperation& operation) {
+    const QString backup =
+        operation.payload.value(QStringLiteral("backup_directory")).toString().trimmed();
+    if (backup.isEmpty()) {
+        return {};
+    }
+    uint64_t needed = 0;
+    const auto* disk = PartitionSafetyValidator::findDisk(inventory, operation.target.disk_number);
+    if (const auto* partition =
+            disk == nullptr
+                ? nullptr
+                : PartitionSafetyValidator::findPartition(*disk, operation.target.partition_number);
+        partition != nullptr) {
+        needed = usedBytes(*partition);
+    }
+    const auto donor_number = static_cast<uint32_t>(
+        operation.payload.value(QStringLiteral("source_partition_number")).toString().toUInt());
+    if (const auto* donor =
+            disk == nullptr || donor_number == 0
+                ? nullptr
+                : PartitionSafetyValidator::findPartition(*disk, PartitionNumber{donor_number});
+        operation.type == PartitionOperationType::AllocateFreeSpace && donor != nullptr) {
+        needed += usedBytes(*donor);
+    }
+    return backupDirectoryBlocker(backup, needed);
 }
 
 namespace {

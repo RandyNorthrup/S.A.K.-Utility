@@ -110,6 +110,16 @@ QString readOnlyCheckStatus(const PartitionFileSystemToolRunResult& result) {
     return QStringLiteral("Filesystem check failed with exit code %1").arg(result.exit_code);
 }
 
+// The backup folder must be one the backup can be written into now, not only at Apply
+// (queuedBackupBlocker).
+void appendQueuedBackupBlocker(const PartitionInventory& inventory,
+                               const PartitionOperation& operation,
+                               OperationPreview* preview) {
+    if (const QString backup = queuedBackupBlocker(inventory, operation); !backup.isEmpty()) {
+        preview->blockers.append(backup);
+    }
+}
+
 bool projectCreateOperation(PartitionDiskInfo* disk, const PartitionOperation& operation) {
     const uint64_t create_size =
         operation.payload.value(QStringLiteral("size_bytes")).toString().toULongLong();
@@ -330,7 +340,8 @@ bool PartitionManagerController::queueOperations(
         bindRawPayloadTargetIdentity(m_inventory, &operation);
         bindBackupVolumeIdentity(&operation);
         bindResizeFileSystem(m_inventory, &operation);
-        const auto preview = m_planner.previewOperation(projected_inventory, operation);
+        auto preview = m_planner.previewOperation(projected_inventory, operation);
+        appendQueuedBackupBlocker(m_inventory, operation, &preview);
         batch.operations.append(preview.operations);
         batch.blockers.append(preview.blockers);
         batch.warnings.append(preview.warnings);
