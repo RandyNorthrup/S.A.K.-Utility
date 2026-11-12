@@ -7427,6 +7427,14 @@ add_test(NAME test_defender_clean
                  "$<TARGET_FILE_DIR:sak_utility>")
 set_tests_properties(test_defender_clean PROPERTIES TIMEOUT 900)
 
+# ... and never passes where Defender is not running: with its antivirus answering "off" it fails,
+# or with -AllowMissingDefender passes saying nothing was scanned (the nightly turns that into a
+# warning). Starts no scan, so it runs in T2.
+add_test(NAME test_defender_clean_status
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_defender_clean_status.ps1")
+set_tests_properties(test_defender_clean_status PROPERTIES TIMEOUT 120)
+
 add_test(NAME test_release_archive_recovery
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
@@ -7599,7 +7607,7 @@ set(_sak_labels_tooling
     test_dialog_buttons_deferred
     test_run_folder_retention test_run_folder_retention_windows_powershell
     test_powershell_syntax_gate test_powershell_syntax_gate_windows_powershell
-    test_bundle_smartmontools)
+    test_bundle_smartmontools test_defender_clean_status)
 set(_sak_labels_cert test_apple_filesystem_capability_matrix
     test_partition_manager_code_digest test_partition_manager_row_evidence
     test_partition_manager_certification_status test_partition_manager_matrix_generated

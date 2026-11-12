@@ -7,8 +7,10 @@
 # Trojan:PowerShell/Fleisnam.E (2026-11-11), which broke the build there, and would break any
 # builder or CI runner with Defender on; a file S.A.K. ships or generates that Defender flags would
 # break a technician's run the same way. Each folder is scanned with -DisableRemediation, so a
-# detection is reported and nothing is quarantined. The scanner must be there: a machine without
-# Defender proves nothing, and says so, unless -AllowMissingDefender is given.
+# detection is reported and nothing is quarantined. Defender must be there and running: a machine
+# without it, or with its antivirus service off, proves nothing and fails, unless
+# -AllowMissingDefender is given, when it says so plainly and passes (the nightly job then writes a
+# warning into its summary).
 #
 # Usage (paths positional; see AGENTS.md on -File array binding):
 #   pwsh -File scripts/test_defender_clean.ps1 <folder> [<folder> ...] [-AllowMissingDefender]
@@ -21,12 +23,27 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $Folders -or $Folders.Count -eq 0) { throw 'Name at least one folder to scan' }
 $scanner = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+$why = ''
 if (-not (Test-Path -LiteralPath $scanner -PathType Leaf)) {
+    $why = "its scanner is not at $scanner"
+} else {
+    try {
+        $status = Get-MpComputerStatus -ErrorAction Stop
+        if (-not ($status.AMServiceEnabled -and $status.AntivirusEnabled)) {
+            $why = "its service is $(if ($status.AMServiceEnabled) { 'on' } else { 'off' }) and its antivirus $(if ($status.AntivirusEnabled) { 'on' } else { 'off' })"
+        } else {
+            Write-Host "Microsoft Defender: engine $($status.AMEngineVersion), signatures $($status.AntivirusSignatureVersion), real-time protection $(if ($status.RealTimeProtectionEnabled) { 'on' } else { 'off' })"
+        }
+    } catch {
+        $why = "Get-MpComputerStatus failed: $($_.Exception.Message)"
+    }
+}
+if ($why) {
     if ($AllowMissingDefender) {
-        Write-Host "Microsoft Defender is not installed ($scanner): nothing was scanned"
+        Write-Host "Microsoft Defender is not running here ($why): NOTHING WAS SCANNED"
         exit 0
     }
-    throw "Microsoft Defender's scanner is not at $scanner, so nothing was scanned"
+    throw "Microsoft Defender is not running here ($why), so nothing was scanned"
 }
 $failed = @()
 foreach ($folder in $Folders) {

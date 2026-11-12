@@ -72,7 +72,8 @@ jobs:
       shell: pwsh
       run: |
         $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
-        $targets = @($plan.build_targets) -join ';'
+        # The program and its helper too: the Defender step below scans the built Release folder.
+        $targets = @(@($plan.build_targets) + 'sak_utility' + 'sak_elevated_helper' | Select-Object -Unique) -join ';'
         msbuild build/SAK_Utility.sln /m /nologo /verbosity:minimal /p:Configuration=Release /p:Platform=x64 "/t:$targets"
         $buildExit = $LASTEXITCODE
         "BUILD EXIT: $buildExit"
@@ -90,10 +91,38 @@ jobs:
       shell: pwsh
       run: |
         & scripts/invoke_unelevated.ps1 -FilePath ctest -- --test-dir build -C Release `
-          -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error -L $env:T4_LABELS
+          -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error -L $env:T4_LABELS `
+          -E '^test_defender_clean$'
         $ctestExit = $LASTEXITCODE
         "CTEST EXIT: $ctestExit"
         exit $ctestExit
+
+    # test_defender_clean (tooling-extended) runs here instead of in the ctest step above: it scans
+    # the repository's tests and scripts trees and the built Release folder (minutes, so not in T2),
+    # and a hosted runner may have no Defender running. Then the scan proves nothing, and this step
+    # says so as a warning in the run's summary instead of passing quietly.
+    - name: Defender scan (tests, scripts, build/Release)
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $why = ''
+        try {
+          $status = Get-MpComputerStatus -ErrorAction Stop
+          if (-not ($status.AMServiceEnabled -and $status.AntivirusEnabled)) {
+            $why = "service enabled: $($status.AMServiceEnabled), antivirus enabled: $($status.AntivirusEnabled)"
+          }
+        } catch {
+          $why = "Get-MpComputerStatus failed: $($_.Exception.Message)"
+        }
+        if (-not $why) {
+          & pwsh -NoProfile -NonInteractive -File scripts/test_defender_clean.ps1 tests scripts build/Release
+          exit $LASTEXITCODE
+        }
+        $note = "Microsoft Defender is not running on this runner ($why), so test_defender_clean scanned nothing tonight."
+        Write-Host "::warning title=Defender scan not run::$note"
+        Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### Defender scan`n`n**Not run.** $note`n"
+        & pwsh -NoProfile -NonInteractive -File scripts/test_defender_clean.ps1 tests scripts build/Release -AllowMissingDefender
+        exit $LASTEXITCODE
 
     - name: Upload test logs
       if: ${{ failure() && steps.build.outcome == 'success' }}

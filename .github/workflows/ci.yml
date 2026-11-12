@@ -337,6 +337,64 @@ jobs:
         Select-String -LiteralPath $log -Pattern '^PASS\s+:' | ForEach-Object { $_.Line } |
           Set-Content -LiteralPath build/elevated-proof/test_fat_volumes.txt -Encoding ascii
 
+    # test_raw_partition_write makes NTFS, FAT32 and exFAT VHDX volumes and writes them raw, as the
+    # partition writers do (the take, the flush read-back, the app's own Format and Restore Image
+    # scripts): administrator only, so ctest skips it under the standard-user token
+    # (tests/skip_baseline.txt) and this step runs the whole suite elevated. A skip exits 0 too, so
+    # the step needs a PASS line for every case and the totals to show nothing failed or skipped.
+    - name: Raw partition writes (elevated)
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        if (@($plan.tests) -notcontains 'test_raw_partition_write') {
+          'test_raw_partition_write is not in this shard'
+          exit 0
+        }
+        $log = Join-Path $env:RUNNER_TEMP 'test_raw_partition_write.txt'
+        $test = Start-Process -FilePath build/Release/test_raw_partition_write.exe -ArgumentList '-o', "$log,txt" -NoNewWindow -Wait -PassThru
+        Get-Content -LiteralPath $log
+        if ($test.ExitCode -ne 0) { exit $test.ExitCode }
+        $cases = @(foreach ($case in 'refusedWhileSomethingHasItOpen', 'nativeWriterReachesTheWholePartition',
+                                     'scriptWriterReachesTheWholePartition', 'scriptReleaseAndClearTakeThePartition') {
+                     foreach ($row in 'NTFS', 'FAT32', 'exFAT') { "$case($row)" }
+                   }) + 'formatRoundTripSetsAndRestoresThePartitionType()' + 'restoreImageThroughTheGeneratedScript()'
+        foreach ($case in $cases) {
+          if (-not (Select-String -LiteralPath $log -Quiet -Pattern "^PASS\s+: RawPartitionWriteTests::$([regex]::Escape($case))\s*$")) {
+            throw "test_raw_partition_write did not pass ${case}: a skip exits 0 too"
+          }
+        }
+        if (-not (Select-String -LiteralPath $log -Quiet -Pattern '^Totals: \d+ passed, 0 failed, 0 skipped')) {
+          throw 'test_raw_partition_write failed or skipped a case'
+        }
+        New-Item -ItemType Directory -Force -Path build/elevated-proof | Out-Null
+        Select-String -LiteralPath $log -Pattern '^PASS\s+:' | ForEach-Object { $_.Line } |
+          Set-Content -LiteralPath build/elevated-proof/test_raw_partition_write.txt -Encoding ascii
+
+    # A script too long for a command line runs from standard input (sak::powerShellInvocation, the
+    # same path the helper's RunPowerShell task takes); this case starts one for real and checks its
+    # exit code and its Stop reach the Storage cmdlets. ctest runs it unelevated too; this step runs
+    # it with the runner's elevated token, as the helper would, and needs its PASS line.
+    - name: Long scripts from standard input (elevated)
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        if (@($plan.tests) -notcontains 'test_process_runner') {
+          'test_process_runner is not in this shard'
+          exit 0
+        }
+        $log = Join-Path $env:RUNNER_TEMP 'test_process_runner_elevated.txt'
+        $test = Start-Process -FilePath build/Release/test_process_runner.exe -ArgumentList 'runPowerShell_longScriptRunsAndKeepsItsExitCode', '-o', "$log,txt" -NoNewWindow -Wait -PassThru
+        Get-Content -LiteralPath $log
+        if ($test.ExitCode -ne 0) { exit $test.ExitCode }
+        if (-not (Select-String -LiteralPath $log -Quiet -Pattern '^PASS\s+: ProcessRunnerTests::runPowerShell_longScriptRunsAndKeepsItsExitCode\(\)')) {
+          throw 'runPowerShell_longScriptRunsAndKeepsItsExitCode did not run: a skip exits 0 too'
+        }
+        New-Item -ItemType Directory -Force -Path build/elevated-proof | Out-Null
+        Select-String -LiteralPath $log -Pattern '^PASS\s+:' | ForEach-Object { $_.Line } |
+          Set-Content -LiteralPath build/elevated-proof/test_process_runner.txt -Encoding ascii
+
     # The skip audit runs once over every shard's logs in the T2 result job. It needs each
     # shard's registration: a test's command resolves only where its executable was built.
     - name: Record this shard's test registration
@@ -429,9 +487,16 @@ jobs:
                                       'programFolderOnTheVolume', 'scriptSafeFilesWithTempOnTheVolume') {
           foreach ($row in 'FAT32', 'exFAT') { "FatVolumeTests::$case($row)" }
         }
+        $rawCases = @(foreach ($case in 'refusedWhileSomethingHasItOpen', 'nativeWriterReachesTheWholePartition',
+                                        'scriptWriterReachesTheWholePartition', 'scriptReleaseAndClearTakeThePartition') {
+                        foreach ($row in 'NTFS', 'FAT32', 'exFAT') { "RawPartitionWriteTests::$case($row)" }
+                      }) + 'RawPartitionWriteTests::formatRoundTripSetsAndRestoresThePartitionType()' +
+                      'RawPartitionWriteTests::restoreImageThroughTheGeneratedScript()'
         $required = [ordered]@{
           test_elevated_helper_connection = @('ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe()')
           test_fat_volumes = @($fatCases)
+          test_raw_partition_write = @($rawCases)
+          test_process_runner = @('ProcessRunnerTests::runPowerShell_longScriptRunsAndKeepsItsExitCode()')
         }
         $shards = @(Get-ChildItem -LiteralPath shards -Directory)
         $problems = [System.Collections.Generic.List[string]]::new()
