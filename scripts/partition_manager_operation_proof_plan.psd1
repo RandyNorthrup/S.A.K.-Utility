@@ -15,6 +15,8 @@
     Rows = @(
         @{ Id = 'ops.create-exfat'; Machine = 'testpc2'; Operation = 'Create (dialog)'; Variant = 'exFAT'; Reads = 'raw GPT entry; Get-Volume, Win32_Volume; chkdsk read-only' }
         @{ Id = 'ops.create-fat32'; Machine = 'testpc2'; Operation = 'Create (dialog)'; Variant = 'FAT32'; Reads = 'raw GPT entry; Get-Volume, Win32_Volume; chkdsk read-only' }
+        @{ Id = 'ops.quick-partition-exfat'; Machine = 'testpc2'; Operation = 'Create (Quick Partition)'; Variant = 'exFAT, three equal'; Reads = 'raw GPT entries; Get-Volume, Win32_Volume; chkdsk read-only on each' }
+        @{ Id = 'ops.quick-partition-fat32'; Machine = 'testpc2'; Operation = 'Create (Quick Partition)'; Variant = 'FAT32, three equal'; Reads = 'raw GPT entries; Get-Volume, Win32_Volume; chkdsk read-only on each' }
         @{ Id = 'ops.create-refs-assistant'; Machine = 'testpc2'; Operation = 'Create (assistant)'; Variant = 'ReFS'; Reads = 'raw GPT entry; Get-Volume; Repair-Volume -Scan' }
         @{ Id = 'ops.create-ext2-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'ext2'; Reads = 'superblock parsed here; bundled e2fsck -fn on a copy; host Linux e2fsck -fn and dumpe2fs' }
         @{ Id = 'ops.create-ext3-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'ext3'; Reads = 'superblock parsed here; bundled e2fsck -fn on a copy; host Linux e2fsck -fn and dumpe2fs' }
@@ -74,6 +76,7 @@
         @{ Id = 'ops.move-ntfs'; Machine = 'testpc2'; Operation = 'Move (current text: shadow copy, robocopy /E, held backup folder)'; Variant = 'NTFS'; Reads = 'raw extent; file manifest; no shadow copy or mapping left; chkdsk /scan' }
         @{ Id = 'ops.move-fat32'; Machine = 'testpc2'; Operation = 'Move (FAT live-copy branch)'; Variant = 'FAT32'; Reads = 'raw extent; file manifest; chkdsk read-only' }
         @{ Id = 'ops.allocate-after'; Machine = 'testpc2'; Operation = 'Allocate Free Space (current text)'; Variant = 'donor after target'; Reads = 'raw extents; both file manifests' }
+        @{ Id = 'ops.allocate-after-fat32'; Machine = 'testpc2'; Operation = 'Allocate Free Space (FAT live-copy branch)'; Variant = 'FAT32 donor after target'; Reads = 'raw extents; both file manifests; chkdsk read-only on the donor' }
         @{ Id = 'ops.to-logical'; Machine = 'testpc2'; Operation = 'Primary/Logical (current text)'; Variant = 'primary to logical'; Reads = 'raw MBR and EBR chain; file manifest; chkdsk /scan' }
         @{ Id = 'ops.to-primary'; Machine = 'testpc2'; Operation = 'Primary/Logical'; Variant = 'logical to primary'; Reads = 'raw MBR and EBR chain; file manifest; chkdsk /scan' }
         @{ Id = 'ops.image-locked-volumes'; Machine = 'testpc2'; Operation = 'Create Image'; Variant = 'LockedVolumes (online disk, mounted volumes)'; Reads = 'image size; the image mounted read-only, file manifest' }
@@ -98,6 +101,7 @@
         @{ Id = 'ops.repair-boot-running-uefi'; Machine = 'vm'; Operation = 'Repair Boot, running Windows'; Variant = 'UEFI'; Reads = 'boot files on the ESP gone, then back and Microsoft-signed; BCD names bootmgfw.efi; the VM restarts and signs in' }
         @{ Id = 'ops.repair-boot-running-bios'; Machine = 'vm'; Operation = 'Repair Boot, running Windows'; Variant = 'BIOS, inside a BIOS VM'; Reads = 'bootmgr gone, then back on the active partition; the VM restarts and signs in' }
         @{ Id = 'ops.restore-point'; Machine = 'vm'; Operation = 'AI assistant restore point (diagnostics.create_restore_point)'; Variant = 'in-process, elevated'; Reads = 'Get-ComputerRestorePoint: one new point with the description, made during the step' }
+        @{ Id = 'external.system-mbr2gpt'; Machine = 'vm'; Operation = 'Convert MBR/GPT of the running Windows (regression)'; Variant = 'BIOS to UEFI'; Reads = 'certification matrix checks; the VM starts with EFI'; Pending = 'the final certification''s boot-bios group runs it on the final code' }
         @{ Id = 'external.ssd-retrim'; Machine = 'device'; Operation = 'SSD ReTrim (regression)'; Variant = 'real NVMe'; Reads = 'certification matrix checks'; Pending = 'needs a real SSD: the final certification''s ssd-device group runs it on the final code' }
         @{ Id = 'external.hdd-defrag-execution'; Machine = 'device'; Operation = 'HDD Defrag (regression)'; Variant = 'real spinning drive'; Reads = 'certification matrix checks'; Pending = 'needs a real HDD: the final certification''s hdd-device group runs it on the final code' }
     )

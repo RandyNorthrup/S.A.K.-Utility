@@ -818,14 +818,16 @@ Add-OpsRow 'ops.stop-cleanup-wipe-free-space' {
     return Complete-OpsRow -Media $media -Checks $checks
 }
 
-Add-OpsRow 'ops.allocate-after' {
-    # Free space after the partition: grown in place.
+function Invoke-OpsAllocate {
+    # The donor after the target is backed up, shrunk or recreated, and restored; the target grows
+    # in place. A FAT32 donor takes the live-copy branch (no shadow copy on FAT).
+    param([string]$DonorFileSystem)
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk
     $target = New-CertVolume -DiskNumber $disk -SizeBytes (192 * $Script:OpsMiB) -Label 'OPSTARGET'
     $offset = [uint64](Get-Partition -DiskNumber $disk -PartitionNumber $target.partition_number).Offset
     $files = Write-RbFixtureTree -Root "$($target.letter):\fixture" -FileCount 8
-    $donor = New-CertVolume -DiskNumber $disk -SizeBytes (384 * $Script:OpsMiB) -Label 'OPSDONOR'
+    $donor = New-CertVolume -DiskNumber $disk -SizeBytes (384 * $Script:OpsMiB) -FileSystem $DonorFileSystem -Label 'OPSDONOR'
     $donorFiles = Write-RbFixtureTree -Root "$($donor.letter):\fixture" -FileCount 8
     Invoke-OpsStep -Disk $disk -Step 'allocate' -Operation 'AllocateFreeSpace' -Select @{ partition_number = $target.partition_number } -Choices @{
         allocate_mib = 64; backup_directory = (New-CertBackupFolder); confirmed = $true
@@ -838,9 +840,32 @@ Add-OpsRow 'ops.allocate-after' {
     $checks += New-OpsCheck -Name 'the donor is 64 MiB smaller' -Passed ($donorNow.Count -eq 1 -and [uint64]$donorNow[0].size_bytes -eq 320 * $Script:OpsMiB) -Detail @($donorNow | ForEach-Object { $_.size_bytes })
     if ($donorNow.Count -eq 1 -and $donorNow[0].drive_letter) {
         $checks += Test-OpsFilesSame -Name "the donor's files came back, byte for byte" -Before $donorFiles -After (Get-RbFileManifest -Root "$($donorNow[0].drive_letter):\fixture")
+        $checks += Test-OpsWindowsVolume -Prefix 'the donor:' -Letter "$($donorNow[0].drive_letter)" -FileSystem $DonorFileSystem -Label 'OPSDONOR'
     }
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ snapshot = $snapshot })
 }
+
+Add-OpsRow 'ops.allocate-after' { Invoke-OpsAllocate -DonorFileSystem 'NTFS' }
+Add-OpsRow 'ops.allocate-after-fat32' { Invoke-OpsAllocate -DonorFileSystem 'FAT32' }
+
+function Invoke-OpsQuickPartition {
+    # Quick Partition with a FAT file system: the certification rows ran it with NTFS only.
+    param([string]$FileSystem, [string]$Prefix)
+    $run = Invoke-CertQuickPartition -Style 'GPT' -Name "qp-$($FileSystem.ToLowerInvariant())" -Options @{
+        partition_count = 3; partition_scheme = 'GPT'; size_mode = 'equal'; file_system = $FileSystem
+        allocation_unit_bytes = '4096'; label_prefix = $Prefix; full_format = $false
+    }
+    $data = @($run.after.data_partitions)
+    $checks = @(New-OpsCheck -Name 'three data partitions' -Passed ($data.Count -eq 3) -Detail $data.Count)
+    foreach ($partition in @($run.after.partitions | Where-Object { $_.volume })) {
+        $checks += Test-OpsWindowsVolume -Prefix "$($partition.drive_letter):" -Letter "$($partition.drive_letter)" -FileSystem $FileSystem -ClusterBytes 4096
+    }
+    $checks += New-OpsCheck -Name 'the old volume is gone' -Passed (@($run.after.partitions | Where-Object { $_.volume -and $_.volume.label -ceq 'SAKOLD' }).Count -eq 0) -Detail ''
+    return Complete-OpsRow -Media $run.media -Checks $checks -Extra ([ordered]@{ after = $run.after })
+}
+
+Add-OpsRow 'ops.quick-partition-exfat' { Invoke-OpsQuickPartition -FileSystem 'exFAT' -Prefix 'OPSQX' }
+Add-OpsRow 'ops.quick-partition-fat32' { Invoke-OpsQuickPartition -FileSystem 'FAT32' -Prefix 'OPSQF' }
 
 function Invoke-OpsPrimaryLogical {
     param([ValidateSet('logical', 'primary')] [string]$To)
