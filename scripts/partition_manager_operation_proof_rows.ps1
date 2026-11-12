@@ -576,7 +576,12 @@ Add-OpsRow 'ops.apfs-container-resize' {
     $part = New-OpsRawPartition -DiskNumber $disk -SizeMB 128
     $select = @{ partition_number = $part.partition_number }
     Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = 'APFS'; allocation_unit_bytes = 0; label = 'OPSAPFS'; full_format = $false } | Out-Null
-    Resize-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -Size (256 * $Script:OpsMiB)
+    # Windows resizes only data partitions, and since opsfix the app's APFS Format gives the
+    # partition Apple's APFS type: the fixture grows it as basic data, then puts the type back.
+    $apfsType = (Get-Partition -DiskNumber $disk -PartitionNumber $part.partition_number).GptType
+    Set-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -GptType "{$Script:OpsGptBasicData}" -ErrorAction Stop
+    Resize-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -Size (256 * $Script:OpsMiB) -ErrorAction Stop
+    Set-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -GptType $apfsType -ErrorAction Stop
     $before = Copy-OpsPartitionImage -DiskNumber $disk -PartitionNumber $part.partition_number -Name 'before'
     $beforeBlocks = [BitConverter]::ToUInt64((Read-OpsImageBytes -Path $before.path -Offset 0 -Length 4096), 40)
     Invoke-OpsStep -Disk $disk -Step 'resize' -Operation 'ApfsResizeContainer' -Select $select -Choices @{ administrator_scan = $true } | Out-Null
