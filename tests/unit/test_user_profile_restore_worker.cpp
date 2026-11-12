@@ -22,6 +22,7 @@
 #include "sak/user_profile_types.h"
 
 #include "../support/junction_fixture.h"
+#include "../support/link_following_calls.h"
 
 #include <QDir>
 #include <QMutex>
@@ -154,7 +155,8 @@ private Q_SLOTS:
 
     // ---- Core restore flow ----
     void singleFileRestoreSucceeds();
-    void restoreNeverWritesThroughAJunction();  // security brief 4b B2
+    void restoreNeverWritesThroughAJunction();    // security brief 4b B2
+    void restoreCopiesWithNoLinkFollowingCall();  // security brief 4b B2
     void unselectedMappingSkipped();
     void sourceUserNotInManifest();
     void multipleFoldersRestored();
@@ -628,6 +630,18 @@ void UserProfileRestoreWorkerTests::restoreNeverWritesThroughAJunction() {
                  .entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System),
              QStringList{QStringLiteral("canary.txt")});
     QCOMPARE(completeSpy.first().at(0).toBool(), false);
+}
+
+// Security brief 4b B2, the copy itself: the test above is refused before any copy (the worker
+// checks the target and its folder for a link first), so it passes with a copy that follows one
+// too. What is left is a link planted at the target's name between that check and the copy, which
+// no test can time: the worker's copies and renames go through sak::no_follow, and its source has
+// no Qt copy or rename, which would follow such a link.
+void UserProfileRestoreWorkerTests::restoreCopiesWithNoLinkFollowingCall() {
+    const QString source = QFINDTESTDATA("../../src/core/user_profile_restore_worker.cpp");
+    QVERIFY2(!source.isEmpty(), "cannot find the worker's source from the test's");
+    const QStringList calls = sak::test::linkFollowingFileCalls(source);
+    QVERIFY2(calls.isEmpty(), qPrintable(calls.join(QLatin1Char('\n'))));
 }
 
 // ---------------------------------------------------------------------------

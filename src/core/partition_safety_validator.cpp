@@ -1734,6 +1734,18 @@ bool apfsEncryptedFormatMissingPassword(const PartitionOperation& operation) {
                .isEmpty();
 }
 
+// The writer refuses an APFS volume without a name ("APFS format requires a non-empty volume
+// name"), and the Format dialog starts from the partition's current label, which a RAW or
+// unlabelled volume does not have: the VM proof (2026-11-11) failed at Apply with only "APFS
+// writer helper failed with exit code 1". Refused at Add to Queue instead, saying what to do.
+bool apfsFormatWithoutVolumeName(const PartitionOperation& operation) {
+    return operation.type == PartitionOperationType::Format &&
+           isApfsFileSystemToken(
+               operation.payload.value(QStringLiteral("file_system")).toString()) &&
+           operation.payload.contains(QStringLiteral("label")) &&
+           operation.payload.value(QStringLiteral("label")).toString().trimmed().isEmpty();
+}
+
 bool apfsEncryptedFormatWrongFileSystem(const PartitionOperation& operation) {
     return apfsEncryptedFormatRequested(operation) &&
            !isApfsFileSystemToken(
@@ -1747,6 +1759,9 @@ void validateNonNativeToolContentBlockers(const PartitionInfoEx& partition,
                  operation.type == PartitionOperationType::Format &&
                      operation.target.partition_number.value() == 0,
                  QStringLiteral("Format requires a partition identity"));
+    addBlockerIf(result,
+                 apfsFormatWithoutVolumeName(operation),
+                 QStringLiteral("An APFS volume needs a name: type one in Volume label"));
     addBlockerIf(
         result,
         nonNativeToolUnsupportedOperation(operation),

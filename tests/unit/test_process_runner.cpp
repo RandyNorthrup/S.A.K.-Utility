@@ -620,8 +620,8 @@ void ProcessRunnerTests::powerShellInvocation_longScriptReadsItselfFromStandardI
     QVERIFY(large.args.join(u' ').size() < sak::kMaxPowerShellCommandLineScriptChars);
     // Dot-sourced: run as a child scriptblock, a long script's $ErrorActionPreference never
     // reached the Storage cmdlets (operation proof, 2026-11-12).
-    QVERIFY(
-        large.args.join(u' ').contains(QStringLiteral(". ([scriptblock]::Create($sakScript))")));
+    QVERIFY(large.args.join(u' ').contains(
+        QStringLiteral("Remove-Variable -Name sakReader, sakScript; . $sakStdinScriptBlock")));
 }
 
 void ProcessRunnerTests::runProcessStreaming_standardInputReachesTheChild() {
@@ -661,6 +661,14 @@ void ProcessRunnerTests::runPowerShell_longScriptRunsAndKeepsItsExitCode() {
         60'000);
     QVERIFY(storage.exit_code != 0);
     QVERIFY2(!storage.std_out.contains(QStringLiteral("went on")), qPrintable(storage.std_out));
+    // Dot-sourced, the script shares the reader's scope: the reader's own variables are gone
+    // before it runs, so it finds nothing a short script would not.
+    const auto scope = sak::runPowerShell(
+        padding + QStringLiteral("'LEFT ' + @(Get-Variable -Name sakReader, sakScript "
+                                 "-ErrorAction SilentlyContinue).Count"),
+        60'000);
+    QVERIFY2(scope.std_out.contains(QStringLiteral("LEFT 0")),
+             qPrintable(scope.std_out + scope.std_err));
 }
 
 // Windows PowerShell 5.1 started with PowerShell 7's module path (S.A.K. started from a PowerShell

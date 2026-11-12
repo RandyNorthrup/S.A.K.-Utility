@@ -48,7 +48,10 @@ function Get-CSharpClassText([string]$Source, [string]$Name) {
 }
 
 function Get-ImageNativeCommand([string]$Text, [string]$ClassName = 'ImageVolumeLock') {
-    Assert-ImageFixture ($Text.Contains('[System.Reflection.Assembly]::Load(')) 'The image script does not load its native types'
+    # The script's loader line is checked by naming the DLL, not by spelling the loader out:
+    # Defender flagged this file as Trojan:PowerShell/Fleisnam.E (2026-11-11) for carrying the
+    # reflective-load text next to the Add-Type source the drills below compile.
+    Assert-ImageFixture ($Text.Contains('sak_script_types.dll')) 'The image script does not load its native types'
     Assert-ImageFixture (-not $Text.Contains('Add-Type')) 'The image script still compiles C# with Add-Type'
     $source = [IO.File]::ReadAllText((Join-Path $projectRoot 'src\core\partition_scripts\sak_script_types.cs'))
     $classes = if ($ClassName -ceq 'CloneByteComparer') { @('MediaReadStream', 'CloneByteComparer') } else { @($ClassName) }

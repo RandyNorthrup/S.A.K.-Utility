@@ -617,13 +617,16 @@ PowerShellInvocation powerShellInvocation(const QString& script,
     // Dot-sourced, so the script runs in the global scope as a short one does. Called with &, its
     // $ErrorActionPreference stayed in a child scope the Storage module's cmdlets do not see: a
     // failed Resize-Partition or Repair-Volume went on to the next line and exited 0 (operation
-    // proof, 2026-11-12, testpc2).
+    // proof, 2026-11-12, testpc2). The reader's own variables are removed first, so the script
+    // finds only what a short one would, and one variable it would not use.
     invocation.args << "-Command"
                     << QStringLiteral(
                            "$sakReader = New-Object System.IO.StreamReader("
                            "[Console]::OpenStandardInput(), [System.Text.Encoding]::UTF8); "
                            "$sakScript = $sakReader.ReadToEnd(); $sakReader.Dispose(); "
-                           ". ([scriptblock]::Create($sakScript))");
+                           "$sakStdinScriptBlock = [scriptblock]::Create($sakScript); "
+                           "Remove-Variable -Name sakReader, sakScript; "
+                           ". $sakStdinScriptBlock");
     invocation.std_in = script.toUtf8();
     return invocation;
 }

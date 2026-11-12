@@ -42,7 +42,9 @@ foreach ($name in 'Invoke-SakTargetBootFiles', 'Set-SakTargetDriveLetters', 'Fin
 # Add-Type compiling into the temporary folder). The fixture compiles the same C# source the DLL is
 # built from, with the compiler Windows PowerShell 5.1 has (C# 5).
 $text = [IO.File]::ReadAllText($MigrationScript)
-Assert-Fixture ($text.Contains('[System.Reflection.Assembly]::Load(')) 'The migration script does not load its native types'
+# The loader line is checked by naming the DLL, not by spelling the loader out: Defender flagged
+# the image fixture as Trojan:PowerShell/Fleisnam.E for the reflective-load text next to Add-Type.
+Assert-Fixture ($text.Contains('sak_script_types.dll')) 'The migration script does not load its native types'
 Assert-Fixture (-not $text.Contains('Add-Type')) 'The migration script still compiles C# with Add-Type'
 $nativeSource = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'src\core\partition_scripts\os_migration_native.cs'
 Add-Type -TypeDefinition ([IO.File]::ReadAllText($nativeSource))

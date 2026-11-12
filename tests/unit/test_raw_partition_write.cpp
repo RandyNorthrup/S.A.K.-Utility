@@ -25,12 +25,14 @@
 
 #include "../support/test_hardware_guard.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QIODevice>
 #include <QJsonObject>
 #include <QRandomGenerator>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -216,6 +218,7 @@ private Q_SLOTS:
     void scriptReleaseAndClearTakeThePartition_data();
     void scriptReleaseAndClearTakeThePartition();
     void formatRoundTripSetsAndRestoresThePartitionType();
+    void restoreImageThroughTheGeneratedScript();
 
 private:
     void addVolumeRows();
@@ -568,6 +571,38 @@ QString partitionState(const PartitionVolume& volume) {
     return state.std_out + state.std_err;
 }
 
+/// The Restore Image the panel queues: @p image_path (holding @p image) onto the whole disk
+/// @p disk_fields names (Number|UniqueId|SerialNumber|Size), its identity pinned as the panel pins
+/// it.
+sak::PartitionOperation restoreImageOperation(const QStringList& disk_fields,
+                                              const QString& image_path,
+                                              const QByteArray& image) {
+    const uint64_t disk_size = disk_fields[3].toULongLong();
+    sak::PartitionTarget target;
+    target.kind = sak::PartitionTargetKind::Disk;
+    target.disk_number = sak::DiskNumber{disk_fields[0].toUInt()};
+    target.size_bytes = disk_size;
+    target.disk_unique_id = disk_fields[1].trimmed();
+    target.disk_serial_number = disk_fields[2].trimmed();
+    target.disk_size_bytes = disk_size;
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = image_path;
+    payload[QStringLiteral("target_path")] =
+        QStringLiteral("\\\\.\\PhysicalDrive%1").arg(disk_fields[0]);
+    payload[QStringLiteral("source_size_bytes")] = QString::number(image.size());
+    payload[QStringLiteral("target_size_bytes")] = QString::number(disk_size);
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    payload[QStringLiteral("overwrite_confirmed")] = true;
+    payload[QStringLiteral("source_sha256")] =
+        QString::fromLatin1(QCryptographicHash::hash(image, QCryptographicHash::Sha256).toHex());
+    payload[QStringLiteral("target_disk_unique_id")] = target.disk_unique_id;
+    payload[QStringLiteral("target_disk_serial_number")] = target.disk_serial_number;
+    payload[QStringLiteral("target_disk_size_bytes")] = QString::number(disk_size);
+    return sak::PartitionOperationPlanner::makeOperation(sak::PartitionOperationType::RestoreImage,
+                                                         target,
+                                                         payload);
+}
+
 }  // namespace
 
 // Owner ruling 2026-11-11 (through the coordinator): a partition S.A.K. formats with a file system
@@ -603,6 +638,61 @@ void RawPartitionWriteTests::formatRoundTripSetsAndRestoresThePartitionType() {
     QVERIFY2(partitionState(volume).startsWith(QStringLiteral("7 ")) &&
                  partitionState(volume).endsWith(QStringLiteral(" NTFS")),
              qPrintable(partitionState(volume)));
+}
+
+// Opsproof F20 (2026-11-12): every Restore Image stopped at once with "Unable to find type
+// [SakLockedFilePath]", the script naming a type before loading the DLL that defines it. The
+// app's own Restore Image script, image file to a whole virtual disk with its identity pinned as
+// the panel pins it; the disk's first bytes then read back as the image.
+void RawPartitionWriteTests::restoreImageThroughTheGeneratedScript() {
+    const QString vhd =
+        QDir::toNativeSeparators(QDir(m_vhds).filePath(QStringLiteral("restore.vhdx")));
+    const QString made =
+        diskpart(*m_work,
+                 {QStringLiteral("create vdisk file=\"%1\" maximum=%2 type=expandable")
+                      .arg(vhd)
+                      .arg(kVirtualDiskMiB),
+                  QStringLiteral("select vdisk file=\"%1\"").arg(vhd),
+                  QStringLiteral("attach vdisk")});
+    const auto detach = qScopeGuard([this, &vhd] {
+        (void)diskpart(*m_work,
+                       {QStringLiteral("select vdisk file=\"%1\"").arg(vhd),
+                        QStringLiteral("detach vdisk")});
+    });
+    const sak::ProcessResult found = sak::runPowerShell(
+        QStringLiteral("$d = Get-DiskImage -ImagePath %1 | Get-Disk\n"
+                       "'DISK ' + $d.Number + '|' + $d.UniqueId + '|' + $d.SerialNumber + '|' + "
+                       "$d.Size\n")
+            .arg(sak::PartitionScriptBuilder::quotePowerShell(vhd)),
+        kScriptTimeoutMs);
+    const QString line = found.std_out.section(QStringLiteral("DISK "), 1)
+                             .section(QLatin1Char('\n'), 0, 0)
+                             .trimmed();
+    const QStringList fields = line.split(QLatin1Char('|'));
+    QVERIFY2(fields.size() == 4, qPrintable(made + found.std_out + found.std_err));
+    const uint32_t disk = fields[0].toUInt();
+    QVERIFY2(disk > 0 && fields[3].toULongLong() > 0, qPrintable(line));
+
+    const QByteArray image = pattern('\x6B') + pattern('\x2D');
+    const QString image_path =
+        QDir::toNativeSeparators(QDir(m_work->path()).filePath(QStringLiteral("restore.img")));
+    QFile image_file(image_path);
+    QVERIFY(image_file.open(QIODevice::WriteOnly));
+    QCOMPARE(image_file.write(image), image.size());
+    image_file.close();
+
+    const sak::PartitionScript script =
+        sak::PartitionScriptBuilder().buildScript(restoreImageOperation(fields, image_path, image));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
+    const sak::ProcessResult restored = sak::runPowerShell(script.script, kToolScriptTimeoutMs);
+    QVERIFY2(restored.exit_code == 0, qPrintable(restored.std_out + restored.std_err));
+
+    QString error;
+    auto device = sak::openFileOrRawDeviceReadOnly(
+        QStringLiteral("\\\\.\\PhysicalDrive%1").arg(disk), &error);
+    QVERIFY2(device, qPrintable(error));
+    QVERIFY(device->seek(0));
+    QVERIFY2(device->read(image.size()) == image, "the disk does not read back as the image");
 }
 
 QTEST_GUILESS_MAIN(RawPartitionWriteTests)

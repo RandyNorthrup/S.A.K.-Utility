@@ -78,6 +78,13 @@ public:
     [[nodiscard]] static QString recoveredPartitionFitFunctionScript();
     /// PowerShell function: a drive letter nothing holds, the preferred one if it is free.
     [[nodiscard]] static QString freeBootLetterFunctionScript();
+    /// PowerShell that removes a partition's drive letters and folder paths (its own
+    /// \\?\Volume{...}\ path is not one). A non-Windows Format runs it before it takes the
+    /// partition: a lettered RAW volume is what Explorer holds open to offer "You need to format
+    /// the disk", and the APFS writer could not lock one (VM proof, 2026-11-11). Public so a test
+    /// can run it.
+    [[nodiscard]] static QString removePartitionAccessPathsScript(const QString& disk,
+                                                                  const QString& partition);
     /// PowerShell run after S.A.K. formats or creates a partition with a file system Windows does
     /// not mount (ext2/3/4, Linux swap, HFS+, APFS): removes the partition's drive letters and
     /// folder paths, then sets that file system's own partition type (GPT: Linux file system,

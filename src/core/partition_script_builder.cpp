@@ -374,6 +374,14 @@ std::optional<NonWindowsPartitionType> nonWindowsPartitionType(const QString& fi
     return std::nullopt;
 }
 
+/// The letters and folder paths of the partition a non-Windows Format targets, removed before it
+/// takes the partition (PartitionScriptBuilder::removePartitionAccessPathsScript).
+QString accessPathsOffTarget(const PartitionOperation& operation) {
+    return PartitionScriptBuilder::removePartitionAccessPathsScript(
+        uintArg(operation.target.disk_number.value()),
+        uintArg(operation.target.partition_number.value()));
+}
+
 /// The type step (PartitionScriptBuilder::nonWindowsPartitionTypeScript) for the partition a
 /// Format targets.
 QString nonWindowsTypeForTarget(const PartitionOperation& operation, const QString& fileSystem) {
@@ -564,6 +572,7 @@ PartitionScript buildLinuxSwapFormatScript(const PartitionOperation& operation, 
                       .arg(operation.target.disk_number.value())
                       .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+                 accessPathsOffTarget(operation) +
                  linuxSwapFormatBodyScript(PartitionScriptBuilder::quotePowerShell(targetPath),
                                            QStringLiteral("[uint64]$p.Size"),
                                            label,
@@ -695,7 +704,8 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
                                : QStringLiteral("FileVault-encrypted"));
     out.credential_files = encryption.credentials;
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 takeSelectedPartitionScript(false) + apfsWriterCliFunctionScript() +
+                 accessPathsOffTarget(operation) + takeSelectedPartitionScript(false) +
+                 apfsWriterCliFunctionScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
                      "$targetSizeBytes = [uint64]$p.Size\n"
@@ -4353,7 +4363,7 @@ static PartitionScript buildStagedHfsFormatScript(
     out.preview = request.preview + QStringLiteral(" using sparse staging");
     const QStringList formatArgs = request.command.arguments;
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 hfsStagedFunctionsScript() +
+                 accessPathsOffTarget(operation) + hfsStagedFunctionsScript() +
                  QStringLiteral(
                      "$targetPath = %1\n"
                      "$targetSizeBytes = [uint64]$p.Size\n")
@@ -4900,15 +4910,8 @@ QString PartitionScriptBuilder::scriptTypesLoaderScript() {
         .arg(quotePowerShell(dll));
 }
 
-QString PartitionScriptBuilder::nonWindowsPartitionTypeScript(const QString& file_system,
-                                                              const QString& disk,
-                                                              const QString& partition) {
-    const auto type = nonWindowsPartitionType(file_system);
-    if (!type) {
-        return {};
-    }
-    // Letters and folder paths first, while Windows still has the volume they name; the type
-    // change then takes the volume away (Windows would otherwise keep the letter for it).
+QString PartitionScriptBuilder::removePartitionAccessPathsScript(const QString& disk,
+                                                                 const QString& partition) {
     return QStringLiteral(
                "$sakTypeDisk = [uint32](%1)\n"
                "$sakTypeNumber = [uint32](%2)\n"
@@ -4921,25 +4924,40 @@ QString PartitionScriptBuilder::nonWindowsPartitionTypeScript(const QString& fil
                "$sakTypeNumber -AccessPath $sakAccessPath -ErrorAction Stop\n"
                "    Write-Output ('Removed the partition''s access path {0}' -f $sakAccessPath)\n"
                "  }\n"
-               "}\n"
+               "}\n")
+        .arg(disk, partition);
+}
+
+QString PartitionScriptBuilder::nonWindowsPartitionTypeScript(const QString& file_system,
+                                                              const QString& disk,
+                                                              const QString& partition) {
+    const auto type = nonWindowsPartitionType(file_system);
+    if (!type) {
+        return {};
+    }
+    // Letters and folder paths first (again: the format may have brought one back), while
+    // Windows still has the volume they name; the type change then takes the volume away
+    // (Windows would otherwise keep the letter for it).
+    return removePartitionAccessPathsScript(disk, partition) +
+           QStringLiteral(
                "$sakPartitionTable = [string](Get-Disk -Number $sakTypeDisk -ErrorAction "
                "Stop).PartitionStyle\n"
                "if ($sakPartitionTable -eq 'GPT') {\n"
                "  Set-Partition -DiskNumber $sakTypeDisk -PartitionNumber $sakTypeNumber -GptType "
-               "%3 -ErrorAction Stop\n"
+               "%1 -ErrorAction Stop\n"
                "} elseif ($sakPartitionTable -eq 'MBR') {\n"
                "  Set-Partition -DiskNumber $sakTypeDisk -PartitionNumber $sakTypeNumber -MbrType "
-               "%4 -ErrorAction Stop\n"
+               "%2 -ErrorAction Stop\n"
                "} else {\n"
                "  throw ('Disk {0} has no partition table ({1}), so the partition type could not "
                "be set' -f $sakTypeDisk, $sakPartitionTable)\n"
                "}\n"
-               "Write-Output ('Partition type set for %5 ({0} {1}), so Windows does not offer to "
-               "format it' -f $sakPartitionTable, $(if ($sakPartitionTable -eq 'GPT') { %3 } else "
-               "{ %4 }))\n")
-        .arg(disk, partition, quotePowerShell(type->gpt))
-        .arg(type->mbr)
-        .arg(QString(file_system).replace(QLatin1Char('\''), QStringLiteral("''")));
+               "Write-Output ('Partition type set for %3 ({0} {1}), so Windows does not offer to "
+               "format it' -f $sakPartitionTable, $(if ($sakPartitionTable -eq 'GPT') { %1 } else "
+               "{ %2 }))\n")
+               .arg(quotePowerShell(type->gpt))
+               .arg(type->mbr)
+               .arg(QString(file_system).replace(QLatin1Char('\''), QStringLiteral("''")));
 }
 
 QString PartitionScriptBuilder::windowsDataPartitionTypeScript(const QString& file_system,
@@ -5477,7 +5495,10 @@ PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
     out.preview = request.preview;
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  request.pre_tool_script + filesystemToolFunctionScript() +
-                 // A format clears the old file system first; a check or resize only takes it.
+                 // A format clears the old file system first, its letters gone so Explorer has no
+                 // RAW volume to hold open; a check or resize only takes it.
+                 (operation.type == PartitionOperationType::Format ? accessPathsOffTarget(operation)
+                                                                   : QString()) +
                  takeSelectedPartitionScript(operation.type == PartitionOperationType::Format) +
                  filesystemToolCallScript(request.command.tool_id,
                                           resolution,

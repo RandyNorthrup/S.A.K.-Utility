@@ -1363,6 +1363,11 @@ void queueApfsFormatAndVerify() {
         auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
         QVERIFY(fileSystem != nullptr);
         QCOMPARE(fileSystem->currentText(), QStringLiteral("APFS"));
+        // The fixture's volume has no label, and an APFS volume needs a name (Add to Queue
+        // refuses one without: the writer would at Apply).
+        auto* label = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("Volume label"));
+        QVERIFY(label != nullptr);
+        label->setText(QStringLiteral("SAKAPFS"));
         auto* confirm = findAccessibleWidget<QCheckBox>(dialog,
                                                         QStringLiteral("Confirm APFS format"));
         QVERIFY(confirm != nullptr);

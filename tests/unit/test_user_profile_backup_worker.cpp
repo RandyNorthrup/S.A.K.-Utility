@@ -5,6 +5,8 @@
 #include "sak/user_profile_backup_worker.h"
 #include "sak/user_profile_progress.h"
 
+#include "../support/link_following_calls.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -48,7 +50,8 @@ private Q_SLOTS:
     // -- B7-20: incomplete backups must not report a clean success --
     void backupMissingSelectedFolderReportsFailure();
     void backupExistingFolderReportsSuccess();
-    void backupNeverWritesThroughAJunction();  // security brief 4b B3
+    void backupNeverWritesThroughAJunction();    // security brief 4b B3
+    void backupCopiesWithNoLinkFollowingCall();  // security brief 4b B3
     void windowsCompatibilityLinkIsSkippedNotCounted();
     void anyOtherLinkStillCountsAsAnError();
 
@@ -339,6 +342,18 @@ void TestUserProfileBackupWorker::backupNeverWritesThroughAJunction() {
                  .isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System),
              "the backup left something in the folder the junction points at");
     QVERIFY2(!run.success, "a backup that could not store its file reported success");
+}
+
+// Security brief 4b B3, the copy itself: the test above is refused before any copy (the worker
+// will not make a folder through a link), so it passes with a copy that follows one too. What is
+// left is a link planted at the file's own name between that check and the copy, which no test
+// can time: the worker's copies go through sak::no_follow, and its source has no Qt copy or
+// rename, which would follow such a link.
+void TestUserProfileBackupWorker::backupCopiesWithNoLinkFollowingCall() {
+    const QString source = QFINDTESTDATA("../../src/core/user_profile_backup_worker.cpp");
+    QVERIFY2(!source.isEmpty(), "cannot find the worker's source from the test's");
+    const QStringList calls = sak::test::linkFollowingFileCalls(source);
+    QVERIFY2(calls.isEmpty(), qPrintable(calls.join(QLatin1Char('\n'))));
 }
 
 // ============================================================================

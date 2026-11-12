@@ -79,6 +79,17 @@ QString processImagePath(DWORD pid) {
     }
     return QString::fromWCharArray(buffer, static_cast<int>(size));
 }
+
+// Every kPipeConnectProgressMs of the wait for the helper's pipe, say so: a slow USB drive or a
+// first virus scan of the helper can take most of the 30 s, and the log should show the wait.
+void logHelperStartWait(int elapsed_ms) {
+    if (elapsed_ms % kPipeConnectProgressMs == 0 && elapsed_ms < kPipeConnectTimeoutMs) {
+        sak::logInfo(
+            "ElevationBroker: still waiting for the administrator helper to start ({} s of {} s)",
+            elapsed_ms / kMillisecondsPerSecond,
+            kPipeConnectTimeoutMs / kMillisecondsPerSecond);
+    }
+}
 }  // namespace
 
 // ======================================================================
@@ -431,6 +442,7 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
 
         QThread::msleep(kRetryIntervalMs);
         elapsed += kRetryIntervalMs;
+        logHelperStartWait(elapsed);
     }
 
     sak::logError("ElevationBroker: pipe connection timed out");

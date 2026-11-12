@@ -353,7 +353,10 @@ private Q_SLOTS:
         QCOMPARE(sak::kPipeHeaderSize, 5);
         QCOMPARE(sak::kPipeMaxPayload, 4u * 1024u * 1024u);
         QCOMPARE(sak::kHelperTimeoutMs, 300'000);  // 5 min inactivity timeout
-        QCOMPARE(sak::kPipeConnectTimeoutMs, 10'000);
+        // 30 s: Driver Verifier on testpc2 ran a helper start past the 10 s this was (opsproof
+        // F13, 2026-11-12); the VM's first start after unpacking with Defender on took 1.4 s.
+        QCOMPARE(sak::kPipeConnectTimeoutMs, 30'000);
+        QCOMPARE(sak::kPipeConnectProgressMs, 5000);
         QCOMPARE(sak::kPipeIoTimeoutMs, 30'000);
     }
 

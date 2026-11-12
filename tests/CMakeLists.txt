@@ -7378,6 +7378,16 @@ add_test(NAME test_stage_portable_release
                  -BuildDirectory "${CMAKE_BINARY_DIR}" -SkipArchiveContracts)
 set_tests_properties(test_stage_portable_release PROPERTIES TIMEOUT 240)
 
+# Defender must find nothing in the tests and scripts trees or in the program folder a package is
+# staged from: it quarantined a test fixture on testpc2 (2026-11-11), and a flagged file breaks
+# any builder, CI runner or technician PC with Defender on.
+add_test(NAME test_defender_clean
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_defender_clean.ps1"
+                 "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts"
+                 "$<TARGET_FILE_DIR:sak_utility>")
+set_tests_properties(test_defender_clean PROPERTIES TIMEOUT 900)
+
 add_test(NAME test_release_archive_recovery
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
@@ -7565,7 +7575,7 @@ set(_sak_labels_tooling_extended
     test_process_capture_environment test_process_capture_environment_windows_powershell
     test_false_green_command_propagation test_false_green_command_propagation_windows_powershell
     test_stage_portable_release test_release_archive_recovery test_linux_iso_catalog_live
-    test_bundle_smartmontools_rebundle)
+    test_bundle_smartmontools_rebundle test_defender_clean)
 set(_sak_labels_mutation test_mutation_runner)
 set(_sak_labels_coverage test_coverage_runners test_coverage_runners_windows_powershell)
 set(_sak_labels_tidy test_clang_tidy_naming_gate)

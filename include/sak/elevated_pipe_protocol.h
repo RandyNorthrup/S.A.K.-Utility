@@ -64,8 +64,16 @@ inline constexpr char kPipeBasePath[] = "\\\\.\\pipe\\SAK_Elevated_";
 /// @brief Helper inactivity timeout (5 minutes)
 inline constexpr int kHelperTimeoutMs = 5 * 60 * 1000;
 
-/// @brief Pipe connection timeout from client side
-inline constexpr int kPipeConnectTimeoutMs = 10'000;
+/// @brief How long the client waits for a helper it started to open its pipe, and the helper for
+///        the client to connect. The helper checks every program file before it opens the pipe;
+///        it took about 1.4 s from a fresh unpack on the VM with Defender on (2026-11-12), but a
+///        slow USB drive, Defender's first scan of the helper or a busy PC can take far longer,
+///        and Driver Verifier on testpc2 ran past the 10 s this was ("Elevated helper did not
+///        respond in time"). A wait this long says so in the log every kPipeConnectProgressMs.
+inline constexpr int kPipeConnectTimeoutMs = 30'000;
+
+/// @brief How often a client still waiting for the helper's pipe says so in the log.
+inline constexpr int kPipeConnectProgressMs = 5000;
 
 /// @brief Pipe read/write timeout
 inline constexpr int kPipeIoTimeoutMs = 30'000;
