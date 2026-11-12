@@ -1150,7 +1150,9 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
                                                     .tools_root = tools_root,
                                                     .file_system = file_system,
                                                     .target_path = target_path,
-                                                    .timeout_ms = 0};
+                                                    .timeout_ms = 0,
+                                                    .helper_operation = std::nullopt,
+                                                    .helper_blockers = {}};
     if (const auto* partition = rawPathPartition(m_inventory, target_path); partition != nullptr) {
         auto operation = PartitionOperationPlanner::makeOperation(
             PartitionOperationType::CheckFileSystem,
