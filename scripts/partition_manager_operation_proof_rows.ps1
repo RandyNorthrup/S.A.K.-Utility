@@ -873,12 +873,20 @@ function Invoke-OpsRepairNonNative {
     $select = @{ partition_number = $part.partition_number }
     Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = $FileSystem; allocation_unit_bytes = 0; label = 'OPSREPAIR'; full_format = $false } | Out-Null
     $checks = @()
-    $check = Invoke-OpsStep -Disk $disk -Step 'check' -Operation 'CheckNonNativeFileSystem' -Select $select -Choices @{ administrator_scan = $true }
-    $checks += New-OpsCheck -Name 'the read-only check ran its tool and it passed' -Passed ([bool]$check.file_system_check.success) -Detail $check.file_system_check
+    # The panel offers APFS no read-only tool: its Check Non-Windows File System shows the
+    # container's metadata at once (showImmediateMetadataCheck), which the step client does not
+    # drive, and the tool route it would take says "No approved read-only checker is mapped for
+    # 'apfs'" (final run, 2026-11-12). So APFS gets the repair only.
+    $readOnly = 'not offered for APFS: the panel shows the container metadata instead'
+    if ($FileSystem -ne 'APFS') {
+        $check = Invoke-OpsStep -Disk $disk -Step 'check' -Operation 'CheckNonNativeFileSystem' -Select $select -Choices @{ administrator_scan = $true }
+        $checks += New-OpsCheck -Name 'the read-only check ran its tool and it passed' -Passed ([bool]$check.file_system_check.success) -Detail $check.file_system_check
+        $readOnly = 'run'
+    }
     Invoke-OpsStep -Disk $disk -Step 'repair' -Operation 'RepairFileSystem' -Select $select -Choices @{ administrator_scan = $true } | Out-Null
     $read = Test-OpsNonNativePartition -Prefix 'after repair:' -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem $FileSystem -Name 'repaired'
     $checks += $read.checks
-    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ images = @($read.image | Where-Object { $_ }) })
+    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ read_only_check = $readOnly; images = @($read.image | Where-Object { $_ }) })
 }
 
 Add-OpsRow 'ops.repair-ext2' { Invoke-OpsRepairNonNative -FileSystem 'ext2' }
