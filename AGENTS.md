@@ -183,6 +183,11 @@ may be able to write to, and nothing is copied to the PC, not even temporarily.
   credential, a payload) is written with `app_paths::writeHeldSessionTempFile` or
   `[Sak.SafeFiles]::WriteHeldReadOnly` and held read-only until that program is done. Scripts stay
   in memory: never a `.ps1` on disk.
+- Work files (downloads, unpacked packages, staging) go in a new folder in the run folder
+  (`QDir::tempPath()`; `OfflineDeploymentWorker::newWorkDirPath`), never beside the user's chosen
+  output (`<output>\_work` was one, 2026-11-12). Check the free space there first and refuse
+  plainly; the output may be on another drive, so a finished file is placed by a copy that is
+  read back (`OfflineDeploymentWorker::placeVerifiedCopy`), never a rename.
 - No `Add-Type` in a script. C# a script needs goes into
   `src/core/partition_scripts/sak_script_types.cs` (C# 5, built into `sak_script_types.dll`) and is
   loaded with `PartitionScriptBuilder::scriptTypesLoaderScript()`.
@@ -266,6 +271,13 @@ the real thing proves it. A PowerShell test that runs the application exits 77, 
 as skipped, and one that aims a writer or certifier at a real drive, to prove it refuses, leaves that
 check out. The guard is not in those programs, so a script test that names a real drive needs the
 same test of the variable. Do not set that variable on a person's PC.
+
+A test that only an elevated run proves (test_fat_volumes, test_raw_partition_write, the real
+helper, test_process_runner's long-script case) is skipped by ctest under CI's standard-user token
+and run by an elevated step in ci.yml, and the T2 result job's "must-run-elevated" list requires
+its PASS lines: a new one goes on both. Run such a suite against a package only with that same
+build's test programs: `sak_script_types.dll` is not byte-for-byte repeatable and each build pins
+its own, so newer test programs refuse an older package's DLL ("it isn't part of S.A.K.").
 
 On a PC someone is working at, run suites through `scripts/run_ctest_no_dialogs.ps1`, which takes
 ctest's own arguments. A plain `ctest` resets the error mode its children inherit, whatever its parent

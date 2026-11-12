@@ -97,6 +97,34 @@ of its own put on the PC.
   use. The scripts S.A.K. Utility starts now get Windows PowerShell's own module path.
 - **A slow sender can no longer hold the administrator helper's connection** - Each message to or from the helper
   must now arrive whole within one deadline; one sent a byte at a time no longer keeps it waiting.
+- **The network test servers listen on one adapter** - The iPerf3 server and the LAN Transfer server
+  listened on every network the PC was on. Each now has a "Listen on" list of the connected
+  adapters' addresses: it starts on the adapter holding the default route and remembers the one
+  you last used for that server. The iPerf3 server drops a peer that connects and goes quiet, and
+  starts only when its Windows Firewall rule is in place: run as a standard user, it no longer
+  starts half-working while Windows asks whether to let iperf3 through, and says it needs S.A.K.
+  running as administrator instead.
+- **Offline installer downloads no longer fill memory** - Bundling a package read each installer
+  whole into memory, up to 4 GiB, before checking it. Downloads now go to disk as they arrive and
+  are checked as they are copied into the bundle, so only a file that matches its checksum lands
+  there; an installer whose package declares no usable checksum is refused before it is
+  downloaded.
+- **Crafted disk images and mail files are refused sooner** - An HFS+ image whose B-tree leaves
+  loop, an APFS image with overlapping B-tree entries or two copies of one extended attribute, and
+  a compressed APFS or HFS+ file or Outlook block that inflates past its declared size are now
+  refused before they can repeat records or use large amounts of memory.
+- **The assistant says plainly why it does not move a partition or allocate free space** - Both copy the
+  volume's files to a backup folder first, and S.A.K. Utility checks that folder only when you queue the operation
+  in Partition Manager, so the assistant was always refused with "requires an off-volume backup directory", even
+  when it had named one. It now says the operation backs the volume up first and asks you to queue it in Partition
+  Manager.
+- **Offline deployment keeps its work files in S.A.K. Utility's own folder** - Building a bundle and Direct
+  Download kept their work folders (`_work`, `_sak_temp_...`) in the output folder you chose. They now live in
+  S.A.K. Utility's own run folder, and only the finished bundle or installers go to the output folder: a
+  downloaded installer is checked as it is copied there, and one taken from inside a package is read back after
+  the copy. With less than 1 GB free on the drive S.A.K. Utility runs from it says so before it starts, and a
+  download whose size the server gives must fit there before it begins: "Not enough free space for the work
+  files: S.A.K. keeps them in its own folder (...)". Removing a work folder no longer follows a link inside it.
 
 - **A cancelled step reads as cancelled** - The Log window's report listed a step a Cancel had stopped as "Failed:".
   It now reads "Cancelled:", in the report text, its HTML and its JSON, for a cancel from the Cancel button, a close,

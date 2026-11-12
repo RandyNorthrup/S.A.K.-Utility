@@ -3044,6 +3044,144 @@ Residual risks (stated):
 - The TSan row now runs the logger through an in-memory sink (`test_logger_concurrency`); the Windows file sink
   itself is covered by `test_logger` under the normal suite.
 
+### Security round sec2: listeners, hostile remote data, signing and gate pins (2026-11-11)
+
+A parallel round to the one above, on the same owner rulings: items 5 and 6 of the security brief (the network
+and IPC listeners; treating the remote side as hostile) and the two items "also inside the digest" (`sign-exe.ps1`,
+`requirements-gates.txt`). It was built on its own branch from 5585dca5 and cherry-picked onto this round's tree in
+the merge round below. Every finding was re-read in the code at 77a92478 before it was fixed; all were real. Each
+fix has a test that went red with the fix taken out and green with it restored.
+
+#### 5. Network and IPC listeners
+
+**iPerf3 server.** It listened on every address the PC had, kept a peer that connected and went
+quiet for as long as it liked, and started whether or not its inbound firewall rule was added
+(unelevated, `netsh` refuses, and Windows then asked the user whether to let `iperf3.exe` through,
+public networks included). Now (`bandwidth_tester.cpp`): `-B <address>` binds it to the one
+adapter address chosen in the panel, `--idle-timeout 30` drops a silent peer and goes back to
+listening, and a server other PCs can reach starts only after its rule is in place. The rule also
+names the bound address (`localip=`). Without the rule the server is not started and the panel
+says why: "iPerf3 server not started: Windows Firewall did not add its inbound rule (...). Adding
+it needs S.A.K. running as administrator." A loopback server needs no rule (Windows Firewall does
+not filter loopback). Tests: `test_bandwidth_tester` (the argv; Windows' own listener table shows
+127.0.0.1 alone; with the rule refused, no server and the message).
+
+**LAN Transfer server.** It listened on `QHostAddress::Any`. It now listens on the chosen adapter
+address and refuses a wildcard. Test: `test_network_diagnostic_controller` (the listener table
+shows 127.0.0.1 alone; Any refused).
+
+**"Listen on" (new UI, small).** Neither server had any choice of interface, so each server row in
+the Network Diagnostics panel gains a "Listen on:" list of the connected adapters' IPv4 addresses
+(Bandwidth tab, iPerf3 group, before Start Server; LAN Transfer tab, server group, before Listen
+Port). Each list starts on the adapter holding the default route and remembers the address that
+server was last started on (`data/config/ui_state.ini`, `NetworkDiagnostics/*ServerListenAddress`).
+Tests: `test_network_diagnostic_controller` (choices, preference), `test_network_diagnostic_panel`
+(default, per-server memory). Screens to retake: Network Diagnostics > Bandwidth, and Network
+Diagnostics > LAN Transfer.
+
+**Browser bridge pipe.** The handshake read the first frame against the 64 MiB native-messaging
+limit and checked the token, and only then the peer: any same-user process that opened the pipe
+held its single instance for the 30 s deadline and could make the server allocate up to 64 MiB.
+Now the peer (our own binary, launched by Chrome) is checked the moment it connects, before a byte
+is read, and the hello's length prefix is refused above 4 KiB before anything is allocated.
+Replies keep the full limit (they may carry screenshots). Tests: `test_browser_bridge_pipe` (a
+60 MiB prefix is dropped at once with no allocation of 1 MiB or more; Windows PowerShell as a
+foreign peer is dropped at once and the real relay is admitted right after).
+
+#### 6. Treating the remote side as hostile
+
+**Installer downloads.** The internalization engine (installers and `.nupkg`s) and the direct
+downloader held each download whole in RAM, up to 4 GiB, to hash it before writing. They now share
+`PackageInternalizationEngine::downloadVerifiedFile`: the body streams to a file in the process's
+temp folder (`QDir::tempPath()`, the per-run folder the app points TEMP at), then is copied into
+place through a `QSaveFile` while it is hashed, so the bytes that land are the bytes that were
+checked, and nothing is committed on a mismatch. An installer with no usable checksum is now
+refused before it is downloaded rather than after. `runNetworkTransfer` gained a body sink, and
+refuses to hold any response that may exceed 512 MiB in memory: a caller that could get one must
+stream it. Tests: `test_package_internalization_engine` (64 MiB over loopback with no Qt allocation
+of 1 MiB or more, staged in the temp folder and never beside the target; a mismatch leaves
+nothing; the cap stops a streamed body), `test_bandwidth_tester` (the in-memory ceiling).
+
+**HFS+ leaf chains.** None of the four leaf walks (extents overflow, catalog listing, catalog
+consistency scan, attributes scan) remembered the nodes it had visited, so a leaf linking back
+into the chain re-read the same records up to the 200,000-node cap: a listing repeated entries, a
+scan counted them again, and the extents load appended them to every fork's extent list. Each walk
+now stops at a node reached twice: "HFS+ <tree> leaf chain loops back to node N". Test:
+`test_partition_manager_core` (`hfsFileSystemReader_refusesLeafChainLoops`, all four walks).
+
+**zlib.** The APFS decmpfs decoder (inline and ZLIB_RSRC chunks) used `qUncompress`, which grows
+its buffer to whatever the stream holds, and compared the size afterwards. The same shape was in
+the HFS+ decmpfs chunk decoder and the PST 4K block reader. All three now use one
+`inflateZlibExactly` that inflates into the declared size plus one byte and stops there. Tests:
+`test_bounded_inflate`, `test_partition_manager_core` (APFS and HFS+ bombs), `test_pst_parser`
+(a 32 MiB bomb declaring 4 KiB: no allocation of 1 MiB or more).
+
+**APFS extended attributes.** A B-tree node's table entries were bounds-checked one by one but
+never against each other, so many entries could point at one record: a 1 MiB leaf of 100,000
+entries naming one 64 KiB attribute value had the scan hold 100,000 copies (gigabytes). And two
+records for one attribute both survived, with the decmpfs one (the file's content) decided by scan
+order. Now a node whose entries overlap is structurally invalid, and a second record for one
+(object, name) is refused. Test: `test_partition_manager_core`
+(`apfsFileSystemReader_refusesAliasedOrRepeatedXattrs`, both on writer-made images patched and
+re-checksummed).
+
+#### Also inside the digest
+
+**sign-exe.ps1.** It accepted any valid signature on the Artifact Signing dlib, which signtool runs
+with signing rights, and any valid signature on the exe it had just signed. Now every DLL in the
+dlib's folder must be signed by Microsoft (the client's own DLLs are "Microsoft Corporation", the
+VC runtime it carries "Microsoft Windows"), and the signed exe must be signed by
+`CN=Randy Northrup, O=Randy Northrup` (the publisher `verify_authenticode_signatures.ps1` requires
+of every packaged binary) and timestamped. Test: `test_sign_exe_signers` (release-tooling): the
+checks on real signed files, and `sign-exe.ps1` itself run in a sandbox with a stand-in `az`,
+stopping at a Chocolatey-signed dlib.
+
+**requirements-gates.txt.** Every package pip installs from it, the three tools and the twelve they
+pull in, is pinned to one version and to the SHA-256 of every file PyPI publishes for it, so pip
+runs in hash-checking mode. Proved on testpc2 in a fresh venv: installs and runs clang-format
+23.1.3, lizard 1.24.3 and pre-commit 4.7.0; a wrong hash and an unlisted dependency are both
+refused. The CI action that reads the clang-format pin parsed `clang-format==(.+)$`, which the new
+line continuation would have broken (" \" captured with the version); it now reads the version
+only.
+
+#### Proof (testpc2, W:\sak at the sec2 tree)
+
+- Build: Visual Studio 2022 / Qt 6.12.0, Release, BUILD EXIT 0, 293 executables.
+- Targeted tests (console session, standard-user token): 15/15 green.
+- Drills: 26 guards, each broken alone, red, restored byte for byte, rebuilt, green: 23 C++
+  (zlib x4, HFS+ walks x4, APFS x2, downloads x4, pipe x2, servers and panel x7) and 3 PowerShell
+  (sign-exe). One first attempt (iPerf3 `-B` removed) did not compile, so its green proved
+  nothing; it was rewritten to compile and went red.
+- T2 labels (product, release-tooling, tooling, cert), `-j 6`: 323 of 324 passed;
+  `test_partition_manager_rig_pc_target` failed for testpc2's own state, not this change: the
+  final certification left `C:\SAKCert\disposable-machine.json` there, so the rig script passes
+  its disposable-machine check and stops at its administrator check, where the test expects the
+  "runs only in a VirtualBox" refusal. sec2 changes none of the scripts involved.
+- clang-tidy naming gate, both passes (LLVM 23.1.3): non-core 155/155 TUs clean; core 171/171
+  healthy, 15 ratcheted TUs clean.
+- ci.yml static gates, whole tree: all pass (hygiene, registration, qrc, PowerShell syntax,
+  clang-format, lizard, ASCII, secret regex, licenses, blocking, GUI tokens / magic numbers /
+  stylesheet literals, magic numbers, dialog buttons, logged message boxes, error-message
+  uniqueness, build-system lint).
+
+#### Residual risks
+
+- Before the merge, `QDir::tempPath()` was the user's %TEMP%, so a partial download was staged
+  there. Resolved in the merge round (follow-up c): it is the app's per-run folder.
+- The offline deployment build kept its work folders in the chosen output folder
+  (`<output>\_work`, `<output>\_sak_temp_XXXXXX`). Resolved in the merge round (follow-up b).
+- iPerf3 and the LAN server bind IPv4 adapter addresses only (the list offers no IPv6).
+- The LAN transfer server still adds no firewall rule of its own; bound to one address, Windows
+  asks about it as before.
+- An oversized embedded APFS extended attribute is not refused; the memory it takes is now linear
+  in its size (no aliasing).
+- https download callers are proven at the shared helper (`downloadVerifiedFile`), not each caller:
+  the tests have no TLS loopback server.
+- iperf3's own handling of a hostile client is upstream's; the idle limit and the bind narrow who
+  can reach it and for how long.
+- The exe timestamp check moved into `authenticode_signer.ps1` unchanged; no validly signed file
+  without a timestamp was at hand to drill it.
+
 ### Release signing isolation and workflow pinning (2026-11-11)
 
 From the security audit of a brief forwarded by the owner, who ruled that signing moves to OIDC.
@@ -3075,6 +3213,104 @@ From the security audit of a brief forwarded by the owner, who ruled that signin
   SHA-256 rather than the same release's checksums file; OpenCppCoverage installed as 0.9.9; Python as 3.14.10
   rather than "3.14"; and expressions moved out of `run:` blocks into `env:` (the version in release, the shard
   numbers and job results in ci). The old single job's unused `id-token: write` is gone with it.
+
+### Merge round: the security rounds, the workflow hardening and the operation fixes on one tree (2026-11-12)
+
+On lane2 at 8e33392b (the security round above, gate green), in this order: sec2's seven commits and the workflow
+hardening's five, cherry-picked; the follow-ups below, each with a test that fails without it, drilled red with the
+fix broken in the source and green with every byte restored; then opsfix's branch, merged; then one gate.
+
+**Cherry-picks.** sec2 (a991c37e, 7d43b936, 3eb68a6d, 8bdfea89, 6fa760d2, 567354ed, 5c85add1) and gh-hardening
+(5f776451, a2fc5a43, 0adf96cc, 10040c24, acff82a8). Git merged every file the brief expected to conflict
+(`CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/README.md`, `test_partition_manager_core.cpp`, and
+`.github/actions/windows-build-env/action.yml`, where sec2's clang-format pin regex for the hashed requirements file
+and the hardening's tool pins both stand) without a conflict; the one conflict was this file, where both rounds
+added a section at the same place: both are kept, the security round first. sec2's notes are folded into the sec2
+section above and the CHANGELOG, and `docs/security-sec2-notes.md` is gone (it said nothing they do not). The merged
+tree built (0 errors, 0 warnings) and passed T2, 330 of 330, before any follow-up.
+
+| Follow-up | Fix | Test | Drill (red, then green) |
+| --- | --- | --- | --- |
+| a. sec2's four `removeRecursively` tree deletes | `sak::no_follow::removeTree` in `OfflineDeploymentWorker::removeOwnedWorkDir` and in the internalization engine's work-folder reset and its `_rels` and `package` cleanup. | `removeOwnedWorkDir_neverFollowsAJunctionInside`, `cleanNugetArtifacts_neverFollowsAJunction` (`_rels` itself a junction, and one inside `package`), `resetWorkFolder_neverFollowsAJunction`: a canary behind each junction survives. | `a-offline-work-removetree`, `a-engine-reset-removetree`, `a-engine-rels-removetree`, `a-engine-package-removetree` |
+| b. Offline Deployment's work folders (owner: no work file outside the app's folder) | A bundle's and a direct download's work folders are new ones in the run folder (`newWorkDirPath`, under `QDir::tempPath()`), not `<output>\_work` or `<output>\_sak_temp_*`. Before either starts, when no installer's size is known yet, the drive holding the run folder needs 1 GiB free; then each download whose server declares its size (Content-Length) is checked before its body is taken, for that size, twice when its copy into place lands on the same drive, plus 64 MiB (`downloadWorkBytes`, asked through the transfer's new `on_size_declared`). Either refusal reads: "Not enough free space for the work files: S.A.K. keeps them in its own folder (...), and that drive has ... free; at least 1.00 GB is needed. Free some space on the drive S.A.K. runs from, or run it from a larger one." An installer taken from inside a package is placed by a no-follow copy that is read back (`placeVerifiedCopy`); a downloaded one was already hashed as it was copied into place. | `newWorkDirPath_isANewFolderInTheRunFolder`; `bundle_refusesWhenTheRunFolderIsShortOfSpace` and `directDownload_refusesWhenTheRunFolderIsShortOfSpace` (the refusal names the run folder, not the output, and nothing is made in either); `placeVerifiedCopy_keepsOnlyACopyThatReadsBack`; `downloadVerifiedFile_needsRoomForItsDeclaredSize` (a stand-in for the free space: one byte short of the need is refused before the body is taken, nothing left at the target or staged; exactly the need downloads) | `b-bundle-work-in-run-folder(-2)`, `b-space-check-shared`, `b-bundle-runs-the-check`, `b-direct-runs-the-check`, `b-work-dir-root`, `b-placed-copy-verified-2` (the first version of that drill did not compile, so it proved nothing and was rewritten), `b-size-declared-hookup`, `b-download-checks-declared-size`, `b-download-second-copy`, `b-download-margin` |
+| c. Downloads stage in `data\temp\run-*` | Nothing new to fix: the test runs the app's own startup step (`app_paths::establishSessionTempDirectory`), so it proves Qt reads the TEMP the app set and the partial file is in the run folder while the download runs. | `downloadVerifiedFile_stagesInTheRunFolderTheAppSetsAtStartup` | `c-run-folder-temp` (TEMP and TMP not set), `c-download-staging-dir` (staged beside the target) |
+| d. `test_partition_manager_rig_pc_target` on an approved PC | The rows script takes `-ApprovalPath` (same default); the test names a missing file of its own (the refusal on any machine) and one naming another machine (refused for that, so the file named is the one read). The approval on testpc2 is left alone. | the test itself | `d-rig-approval-path` |
+| f. The Defender guard in CI | The nightly T4 job builds the program too and runs `test_defender_clean` over `tests`, `scripts` and `build\Release` in its own step, excluded from its ctest step. Where Defender is not running the step writes a warning into the job summary and passes with `-AllowMissingDefender`; `test_defender_clean.ps1` now also fails where Defender's service or antivirus is off, not only where its scanner is missing. Whether a hosted runner has Defender running is not known yet: it shows on the first nightly. | `test_defender_clean_status` (tooling, T2): with `Get-MpComputerStatus` answering "off", the scan fails, or passes saying NOTHING WAS SCANNED only when allowed | `f-defender-not-running` |
+| i. Must-run-elevated | `ci.yml` runs `test_raw_partition_write` whole and `test_process_runner::runPowerShell_longScriptRunsAndKeepsItsExitCode` elevated in their shard, reads every case's PASS line, and uploads the proof; the T2 result job requires it, as for `test_fat_volumes` and the real-helper test. | On testpc1 with the b38 package and its test programs, the workflow's own step bodies (taken from `ci.yml` unchanged, run in Windows PowerShell 5.1 there): FAT 10/10, raw writes 16/16, the long-script case 3/3; the result job's check then printed OK for the three, and a problem only for the real-helper test, which that run did not plan. | The same check with the Restore Image PASS line deleted from the proof: "test_raw_partition_write: no PASS for RawPartitionWriteTests::restoreImageThroughTheGeneratedScript()" |
+
+**Sweep for work files beside a chosen destination.** Fixed: Offline Deployment (above). Found and left, being the
+output itself under construction rather than work files, each published only when complete: `QSaveFile`'s
+temporary sibling (the verified download, the manifest, the AI store's atomic writes), `no_follow::StagedFile`'s
+`.sakpart` (backups and restores), and the Windows-via-UUP converter's `<iso>.partial` beside the chosen ISO (its
+workspace is already in the app's data folder). The disk benchmark and stress test write their test files to the
+drive under test by design. Everything else temporary uses `QDir::tempPath()` or `QDir::temp()`, the run folder.
+
+**Residual 5 (the C# DLL is not byte-for-byte repeatable).** The release workflow is consistent: its build job
+builds `sak_utility` (with the helper and `sak_script_types.dll`, whose pin `cmake/script_types_pin.cmake` writes
+from the DLL that build made) and the probe certifier the signed readiness gate drives in one `cmake --build`, stages
+the package from that same `build\Release`, and builds `sak_filesystem_manifest_check` on its own, which compiles
+only the filesystem tool manifest code (no program integrity, no DLL pin) and checks the repository's own manifest.
+After signing, the DLL's bytes change and the same-signer rule accepts it. Only a person mixing builds (newer test
+programs on an older package) hits the mismatch; AGENTS.md now says so.
+
+**opsfix (h).** Merged at e5664dc2, its 20 commits since f39224a7, as 34ab4a62. One file conflicted,
+`test_partition_manager_core.cpp`, six hunks, each kept both sides: the slot list (this round's corpus tests and
+opsfix's Resize tests), the corpus (this round's coverage inputs and opsfix's writer-names payloads, both appended),
+the generated-script checker (both counters, a summary line printing " ORDERED n STORAGE-VERBOSE n", and opsfix's
+writer stand-in checker after it), and the guard's assertions (neither count may be 0). Everything else merged
+without a conflict; opsfix's Windows Format already set this round's Windows data type back before its take. The
+merged tree built clean and passed T2, 331 of 331.
+
+**Hide on the shared removal (g).** Hide's own loop over the access paths is gone: it runs
+`PartitionScriptBuilder::removePartitionAccessPathsScript`, the function a non-Windows Format runs before it takes
+the partition, then hides and reads the result back as opsfix wrote it. Tests: opsfix's
+`generatedScripts_hideRemovesThePathsFirstAndUnhideGivesALetter` (the whole Hide and Unhide scripts in Windows
+PowerShell 5.1 against stand-ins) and the Hide text check, which now requires the shared function's text before
+`-IsHidden $true`. Drill: `g-hide-uses-shared-removal`.
+
+**opsfix's open items (j, k, l).**
+- j. clang-tidy's naming check found 24 camelCase parameters and local constants on lines opsfix wrote in
+  `partition_script_builder.cpp` and `partition_safety_validator.cpp` (opsfix counted 25). Each is renamed with its
+  uses, by the check's own fixes for those declarations only: the two files go from 216 findings after the merge to
+  192, below the 208 before it. `filesystemToolCallScriptWithArgsExpression`, left without a caller when opsfix
+  removed the non-Windows Create builders and reported unused by clang (which fails the tidy gate), is removed.
+- k. The ext VM gate and the physical cross-file-system validation read only `e2fsck`'s exit code. The shared
+  storage helper gains `Get-SakE2fsckOutputProblem` ("likely to be corrupt", "physical size of the device", or
+  "Abort? no" is a failure, opsfix's F11 rule) and `Assert-SakE2fsckPassed`, and all ten `e2fsck` runs in the two
+  scripts go through it. Test: `test_partition_manager_storage_helpers` (the operation proof's output, each line
+  alone, a clean run, and every call in both scripts). Drills: `k-e2fsck-corrupt-line`, `k-e2fsck-physical-size`,
+  `k-e2fsck-abort-no`, `k-ext-gate-reads-output`, `k-physical-reads-output`.
+- l. In practice the assistant could not run any backup-first operation: Move and Allocate Free Space (the only two
+  in its list; Change Cluster Size, Serial, Primary/Logical and Dynamic to Basic are not) were refused by the safety
+  validator with "requires an off-volume backup directory" even when the model named one, because only Partition
+  Manager's queue binds the backup folder's volume (`backup_volume_guid`, an app-owned field the model may not send)
+  and checks it again before Apply. Not a weaker run, a refusal with a misleading reason. `assistantPartitionOperation`
+  now refuses all six first: "Move Partition copies the volume's files to a backup folder first, and S.A.K. checks
+  that folder's drive only when the person queues the operation in Partition Manager, so the assistant does not run
+  it. Ask the person to queue it in Partition Manager.", and the tool's payload description says so.
+  `overwrite_confirmed` matters only to Create Image's existing-file check, not an assistant operation. Test:
+  `assistantRefusesTheBackupOperationsPlainly`. Drills: `l-assistant-backup-refusal`, `l-assistant-description`.
+
+**Screens to retake.** Network Diagnostics > Bandwidth (iPerf3's "Listen on" list, the refusal when Windows
+Firewall did not add the rule: "iPerf3 server not started: Windows Firewall did not add its inbound rule (...).
+Adding it needs S.A.K. running as administrator.", and a silent peer dropped after 30 s); Network Diagnostics >
+LAN Transfer ("Listen on"); the About tab (its Testing item's sentence on Apple's own tools); Offline Deployment's
+two new refusals ("Not enough free space for the work files: ...", and "Nothing was started: S.A.K. keeps the work
+files in its own folder (...), and could not tell how much free space that drive has."); and the
+assistant's new refusal of the backup-first operations (j, k, l above), which shows in its chat.
+
+**Residuals recorded, not fixed.** "Listen on" lists IPv4 addresses only; the LAN server adds no firewall rule of
+its own; an oversized embedded APFS extended attribute is not refused (its memory is now linear in its size); https
+download callers are proven at the shared helper, not each caller (no TLS loopback in the tests); whether a hosted
+runner has Defender running shows on the first nightly.
+
+**Gate.** One run, alone on the PC, on 1af44e9c: full build, 0 errors and 0 compiler warnings; T2 labels at -j 6, 331 of
+331; cert-tooling 6 of 6; tooling-extended 17 of 17 (test_defender_clean among them); both clang-tidy passes,
+non-core 155 of 155 TUs clean, core 174 of 174 healthy with 5,291 measured findings (5,304 before the merge round)
+and 21 ratcheted clean; every ci.yml static gate, 18 of 18; the hooks on every commit; the pre-push secret scan.
+The first attempt stopped at clang-tidy's core pass: "missing field 'helper_operation' initializer" in the
+designated initializer opsfix's read-only check route builds in partition_manager_controller.cpp (a compile
+diagnostic MSVC does not give); the fields are named (1af44e9c) and the whole gate ran again.
 
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
