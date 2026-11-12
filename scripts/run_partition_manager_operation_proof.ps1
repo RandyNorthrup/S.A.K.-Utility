@@ -69,6 +69,9 @@ param(
     [string]$VmCredFile = 'temp\vm-auth\sak-capture-technician.json',
     [string]$MachineFile = 'E:\SAK-Utility-Test-Scratch\opsproof\testpc2.machine.json',
     [string]$BuildLabel = '',
+    # Report: count only runs of this build for the operation rows (drills keep their newest run): a
+    # regex on the run's build label (testpc2) or on the step clients' code commit (the VM's rows).
+    [string]$ResultsBuild = '',
     [string]$EvidenceDir = '',
     [string]$ResultsPath = 'E:\SAK-Utility-Test-Scratch\opsproof\results.md',
     # Findings already reported, as [{ "id", "title", "match" (regex), "rows" (optional regex) }].
@@ -668,6 +671,17 @@ function Get-OpsRowDetails {
     return $lines + ''
 }
 
+function Test-OpsRunOfBuild {
+    # Whether a row's run was of the build -ResultsBuild names: the label the run was given, or the
+    # code commit its step clients were built from.
+    param([string]$RowDir, [string]$Pattern)
+    $names = @("$((Get-Content -LiteralPath (Join-Path $RowDir 'report.json') -Raw | ConvertFrom-Json).code.commit)")
+    foreach ($client in @(Get-ChildItem -LiteralPath $RowDir -Filter '*.client.json' -ErrorAction SilentlyContinue)) {
+        try { $names += "$((Get-Content -LiteralPath $client.FullName -Raw | ConvertFrom-Json).code_commit)" } catch { }
+    }
+    return @($names | Where-Object { $_ -match $Pattern }).Count -gt 0
+}
+
 function Write-OpsResults {
     <#
     .SYNOPSIS
@@ -680,23 +694,34 @@ function Write-OpsResults {
         'Each row is the newest run that has evidence for it. PASS means every step did what the row expected and every check a separate tool made held.',
         '', '| Row | Operation | Variant | Machine | Build | Script SHA-256 (step:first 12) | Helper result | Verifier | Verdict | Run |', '|---|---|---|---|---|---|---|---|---|---|')
     $details = @()
-    $tally = @{ PASS = 0; FAIL = 0; KNOWN = 0; 'NOT RUN' = 0 }
+    $tally = @{ PASS = 0; FAIL = 0; KNOWN = 0; 'NOT RUN' = 0; IMPOSSIBLE = 0 }
     foreach ($row in $Plan.Rows) {
         $found = $null
-        foreach ($run in $runs) { $dir = Join-Path $run.FullName $row.Id; if (Test-Path -LiteralPath (Join-Path $dir 'report.json')) { $found = $dir; break } }
+        foreach ($run in $runs) {
+            $dir = Join-Path $run.FullName $row.Id
+            $reportPath = Join-Path $dir 'report.json'
+            if (-not (Test-Path -LiteralPath $reportPath)) { continue }
+            if ($ResultsBuild -and -not $row.Drill -and -not (Test-OpsRunOfBuild -RowDir $dir -Pattern $ResultsBuild)) { continue }
+            $found = $dir
+            break
+        }
         # A row no machine can run says why, whatever an earlier attempt left behind.
         if ($found -and $row.Machine -ne 'none') {
             $s = Get-OpsRowSummary -RowDir $found -PlanRow $row
             $tally[($s.verdict -split ' ')[0]]++
             $lines += "| $($s.id) | $($s.operation) | $($s.variant) | $($row.Machine) | $($s.build) | $($s.scripts) | $($s.helper) | $($s.verifier) | **$($s.verdict)** | $($s.run) |"
             $details += Get-OpsRowDetails -RowDir $found -Id $row.Id -Verdict $s.verdict
+        } elseif ($row.Machine -eq 'none') {
+            $tally.IMPOSSIBLE++
+            $lines += "| $($row.Id) | $($row.Operation) | $($row.Variant) | none | | | | | IMPOSSIBLE: $($row.Pending) | |"
         } else {
             $tally['NOT RUN']++
-            $why = if ($row.Pending) { "NOT RUN: $($row.Pending)" } else { 'NOT RUN' }
+            $why = if ($row.Pending) { "NOT RUN: $($row.Pending)" } elseif ($ResultsBuild -and -not $row.Drill) { "NOT RUN on $ResultsBuild" } else { 'NOT RUN' }
             $lines += "| $($row.Id) | $($row.Operation) | $($row.Variant) | $($row.Machine) | | | | | $why | |"
         }
     }
-    $lines = $lines[0..3] + @('', "Rows: $($Plan.Rows.Count). PASS $($tally.PASS), FAIL $($tally.FAIL), KNOWN $($tally.KNOWN) (only repeats a reported finding), NOT RUN $($tally['NOT RUN']).") + $lines[4..($lines.Count - 1)]
+    $scope = if ($ResultsBuild) { " Operation rows count only runs of build $ResultsBuild; drills keep their newest run." } else { '' }
+    $lines = $lines[0..3] + @('', "Rows: $($Plan.Rows.Count). PASS $($tally.PASS), FAIL $($tally.FAIL), KNOWN $($tally.KNOWN) (only repeats a reported finding), IMPOSSIBLE $($tally.IMPOSSIBLE), NOT RUN $($tally['NOT RUN']).$scope") + $lines[4..($lines.Count - 1)]
     $lines += '', '## Not runnable', ''
     foreach ($item in $Plan.NotRunnable) { $lines += "- $($item.Operation): $($item.Reason)" }
     $lines += @('', '## Every check, per row', '') + $details
