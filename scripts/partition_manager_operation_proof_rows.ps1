@@ -1128,9 +1128,9 @@ function Invoke-OpsVolumeChurnDrill {
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ minutes = $Minutes; pause_seconds = $PauseSeconds; with_move = [bool]$WithMove; guard_removals = [bool]$GuardRemovals; rounds = $round; failed_steps = @($failed); log = @($log); vss_events = $vss; volsnap_events = $volsnap; shadow_copies = $shadows })
 }
 
-Add-OpsRow 'ops.drill-a-scan-then-remove' { Invoke-OpsVolumeChurnDrill -Minutes 120 -PauseSeconds 0 -WithMove }
-Add-OpsRow 'ops.drill-b-pause-before-remove' { Invoke-OpsVolumeChurnDrill -Minutes 120 -PauseSeconds 180 }
-Add-OpsRow 'ops.drill-c-guarded-remove' { Invoke-OpsVolumeChurnDrill -Minutes 120 -PauseSeconds 0 -GuardRemovals }
+Add-OpsRow 'ops.drill-a-scan-then-remove' { Invoke-OpsVolumeChurnDrill -Minutes 90 -PauseSeconds 0 -WithMove }
+Add-OpsRow 'ops.drill-b-pause-before-remove' { Invoke-OpsVolumeChurnDrill -Minutes 90 -PauseSeconds 180 }
+Add-OpsRow 'ops.drill-c-guarded-remove' { Invoke-OpsVolumeChurnDrill -Minutes 90 -PauseSeconds 0 -GuardRemovals }
 
 function Invoke-OpsLockAndDismount {
     # FSCTL_LOCK_VOLUME, then FSCTL_DISMOUNT_VOLUME, on the volume's own device, then the handle is
