@@ -164,6 +164,9 @@ function Invoke-OpsVmRun {
         if ($LASTEXITCODE -ne 0) { throw 'The rig could not stage the build' }
         & pwsh -NoProfile -File $rig -Action On -CredFile $VmCredFile
         if ($LASTEXITCODE -ne 0) { throw 'The VM did not start and sign in' }
+        # The restored snapshot has Windows Update on; quieten it before any row (see the script).
+        & pwsh -NoProfile -File $rig -Action GuestJob -JobFile (Join-Path $PSScriptRoot 'partition_manager_operation_proof_vm_hygiene.ps1') -JobMinutes 10 -CredFile $VmCredFile
+        if ($LASTEXITCODE -ne 0) { throw 'The guest hygiene did not run' }
         & pwsh -NoProfile -File $rig -Action Deploy -StageDir $stage -CredFile $VmCredFile
         if ($LASTEXITCODE -ne 0) { throw 'The rig could not deploy to the VM' }
         & pwsh -NoProfile -File $groups -Group 'ops-vm' -Rows ($RowIds -join ',') -EvidenceDir $LocalDir -StageDir $stage -CredFile $VmCredFile @(if ($ReuseBiosDisk) { '-ReuseBiosDisk' })

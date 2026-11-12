@@ -43,7 +43,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('Stage', 'Deploy', 'On', 'Off', 'Snapshot', 'Restore', 'NewDisk', 'AttachDisk', 'DetachDisk', 'DeleteDisk',
         'Rows', 'BootProof', 'VmCreate', 'VmFirmware', 'VmRemove', 'VmFacts', 'UsbList', 'UsbOn', 'UsbOff', 'GuestJob',
-        'RootWrapper', 'RootTidy', 'PcPrepare', 'WritePins', 'CloneSystemDisk')]
+        'RootWrapper', 'RootTidy', 'PcPrepare', 'WritePins', 'CloneSystemDisk', 'Fetch')]
     [string]$Action,
     [string]$CredFile = 'temp\vm-auth\sak-capture-technician.json',
     [string]$Vm = 'Windows 11',
@@ -70,6 +70,9 @@ param(
     [int]$WaitMinutes = 20,
     [switch]$ExpectNoBoot,
     [string]$JobFile = '',
+    # Fetch: one file from the guest, into -StageDir (the operation proof keeps a failed row's logs
+    # this way before the VM goes back to its snapshot).
+    [string]$GuestPath = '',
     [int]$JobMinutes = 240,
     [string]$PcFile = '',
     [string]$PinSpec = ''
@@ -757,6 +760,13 @@ S=`$("`$V" showvminfo '$Vm' --machinereadable | grep '^"SATA-ImageUUID-0-0"=' | 
         $result | ConvertTo-Json
     }
     'GuestJob' { Invoke-GuestElevated -LocalScript (Resolve-RigPath $JobFile) -Minutes $JobMinutes }
+    'Fetch' {
+        if (-not $GuestPath) { throw 'Fetch needs -GuestPath' }
+        $into = Resolve-RigPath $StageDir
+        New-Item -ItemType Directory -Force -Path $into | Out-Null
+        Get-FromGuest -GuestPath $GuestPath -LocalFolder $into
+        Get-ChildItem -LiteralPath $into -Filter (Split-Path -Leaf $GuestPath) | Select-Object Name, Length
+    }
     'RootWrapper' {
         # umask 022: what root copies out of the guest has to be readable by this user afterwards.
         Invoke-MacVBox @"
