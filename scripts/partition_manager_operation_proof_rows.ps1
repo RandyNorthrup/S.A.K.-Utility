@@ -810,7 +810,7 @@ function Invoke-OpsResizeRefused {
     return Complete-OpsRow -Media $media -Checks $checks
 }
 
-Add-OpsRow 'ops.resize-apfs-shrink-refused' { Invoke-OpsResizeRefused -FileSystem 'APFS' -FromMiB 256 -ToMiB 128 -Says 'S.A.K. cannot resize APFS partitions' }
+Add-OpsRow 'ops.resize-apfs-shrink-refused' { Invoke-OpsResizeRefused -FileSystem 'APFS' -FromMiB 256 -ToMiB 128 -Says 'S.A.K. cannot shrink APFS partitions' }
 Add-OpsRow 'ops.resize-hfsplus-refused' { Invoke-OpsResizeRefused -FileSystem 'HFS+' -FromMiB 128 -ToMiB 256 -Says 'S.A.K. cannot resize HFS+ partitions' }
 
 # --- Check and repair -----------------------------------------------------------------------------
