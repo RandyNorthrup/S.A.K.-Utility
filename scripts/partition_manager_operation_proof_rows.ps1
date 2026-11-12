@@ -815,10 +815,13 @@ Add-OpsRow 'ops.wipe-partition' {
     $kept = Write-RbFixtureTree -Root "$($keep.letter):\fixture" -FileCount 6
     $partition = Get-Partition -DiskNumber $disk -PartitionNumber $volume.partition_number
     $before = Find-OpsMarkerInRange -DiskNumber $disk -Offset ([uint64]$partition.Offset) -Length ([uint64]$partition.Size)
-    Invoke-OpsStep -Disk $disk -Step 'wipe' -Operation 'WipePartition' -Select @{ partition_number = $volume.partition_number } -TimeoutSeconds 3600 | Out-Null
+    # A wipe is a full format, which Windows refuses on a thin-provisioned disk, and a virtual
+    # disk file is one: the app says so and changes nothing (seen on testpc2, 2026-11-12). The
+    # wipe itself needs a real disk: external.wipe-partition-physical.
+    Invoke-OpsStep -Disk $disk -Step 'wipe' -Operation 'WipePartition' -Select @{ partition_number = $volume.partition_number } -TimeoutSeconds 3600 -Expect 'failed' -RefusalContains 'thin-provisioned' -ReadBackOnFailure | Out-Null
     $after = Find-OpsMarkerInRange -DiskNumber $disk -Offset ([uint64]$partition.Offset) -Length ([uint64]$partition.Size)
     $checks = @(New-OpsCheck -Name 'the marker was on the partition before' -Passed ($before.marker_hits -gt 0) -Detail $before)
-    $checks += New-OpsCheck -Name 'no copy of the marker is left anywhere in the partition' -Passed ($after.marker_hits -eq 0) -Detail $after
+    $checks += New-OpsCheck -Name 'the refused wipe left the marker where it was' -Passed ($after.marker_hits -eq $before.marker_hits) -Detail $after
     $checks += Test-OpsFilesSame -Name 'the other volume is unchanged' -Before $kept -After (Get-RbFileManifest -Root "$($keep.letter):\fixture")
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ after = (Get-CertSnapshot -DiskNumber $disk) })
 }
@@ -850,12 +853,15 @@ Add-OpsRow 'ops.wipe-disk' {
     $volume = New-CertVolume -DiskNumber $disk -SizeBytes (256 * $Script:OpsMiB) -Label 'OPSWIPED'
     Write-CertMarkerFile -Letter $volume.letter -Kilobytes 1024
     $before = Find-RbMarkerAnywhere -DiskNumber $disk -Marker $Script:Marker
-    Invoke-OpsStep -Disk $disk -Step 'wipe' -Operation 'WipeDisk' -TimeoutSeconds 3600 | Out-Null
+    $tableBefore = Get-CertSnapshot -DiskNumber $disk
+    # Refused on a virtual disk file, as Wipe Partition is (above); the wipe itself is
+    # external.wipe-disk-physical.
+    Invoke-OpsStep -Disk $disk -Step 'wipe' -Operation 'WipeDisk' -TimeoutSeconds 3600 -Expect 'failed' -RefusalContains 'thin-provisioned' -ReadBackOnFailure | Out-Null
     $after = Find-RbMarkerAnywhere -DiskNumber $disk -Marker $Script:Marker
     $checks = @(New-OpsCheck -Name 'the marker was on the disk before' -Passed ($before.marker_hits -gt 0) -Detail $before)
-    $checks += New-OpsCheck -Name 'no copy of the marker is left on the disk' -Passed ($after.marker_hits -eq 0) -Detail $after
+    $checks += New-OpsCheck -Name 'the refused wipe left the marker where it was' -Passed ($after.marker_hits -eq $before.marker_hits) -Detail $after
     $snapshot = Get-CertSnapshot -DiskNumber $disk
-    $checks += New-OpsCheck -Name 'no data partition is left' -Passed (@($snapshot.data_partitions).Count -eq 0) -Detail @($snapshot.data_partitions).Count
+    $checks += New-OpsCheck -Name 'the partition table did not change' -Passed ("$($tableBefore.raw.gpt_entries_hex)" -eq "$($snapshot.raw.gpt_entries_hex)") -Detail @($snapshot.data_partitions).Count
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ snapshot = $snapshot })
 }
 
