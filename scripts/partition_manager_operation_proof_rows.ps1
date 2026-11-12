@@ -1010,7 +1010,8 @@ function Invoke-OpsVolumeChurnDrill {
         row's evidence; a step that fails is noted and the round goes on. The drive is the
         destructive one machine.json names, pinned before every step and before the cleanup.
     #>
-    param([int]$Minutes, [int]$PauseSeconds, [switch]$WithMove)
+    param([int]$Minutes, [int]$PauseSeconds, [switch]$WithMove, [switch]$GuardRemovals)
+    $drillStarted = Get-Date
     $disk = Get-OpsDestructiveDisk
     $log = [System.Collections.Generic.List[string]]::new()
     $failed = [System.Collections.Generic.List[string]]::new()
@@ -1024,6 +1025,26 @@ function Invoke-OpsVolumeChurnDrill {
         & $write "$StepName start"
         $report = Invoke-OpsStep -Disk $disk -Step $StepName -Operation $OperationName -Select $Where -Choices $With -TimeoutSeconds 3600 -ReadBackOnFailure
         if ($null -eq $report) { $failed.Add($StepName); & $write "$StepName FAILED" } else { & $write "$StepName done" }
+    }
+    # Drill C's candidate defence: before a volume is removed, wait until no snapshot is being
+    # made (no VSS 'snapshot creation initiated' in the last 15 s, and the volume's shadow copies
+    # unchanged over 2 s), then lock and dismount the volume, which flushes it through volsnap.
+    $guard = {
+        param([hashtable]$Where, [string]$Before)
+        $part = Get-Partition -DiskNumber $disk -PartitionNumber $Where.partition_number -ErrorAction SilentlyContinue
+        $volumePath = @($part.AccessPaths | Where-Object { $_ -like '\\?\Volume*' }) | Select-Object -First 1
+        if (-not $volumePath) { & $write "guard before ${Before}: no volume to guard"; return }
+        $waitedFrom = Get-Date
+        while ($true) {
+            $recent = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'VSS'; Id = 8231; StartTime = (Get-Date).AddSeconds(-15) } -ErrorAction SilentlyContinue)
+            $first = @(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction SilentlyContinue | Where-Object { $_.VolumeName -eq $volumePath }).Count
+            Start-Sleep -Seconds 2
+            $second = @(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction SilentlyContinue | Where-Object { $_.VolumeName -eq $volumePath }).Count
+            if ($recent.Count -eq 0 -and $first -eq $second) { break }
+            if (((Get-Date) - $waitedFrom).TotalMinutes -gt 10) { & $write "guard before ${Before}: a snapshot still looked in flight after 10 min"; break }
+        }
+        $result = Invoke-OpsLockAndDismount -VolumePath $volumePath
+        & $write ("guard before {0}: waited {1:N1} s, {2}" -f $Before, ((Get-Date) - $waitedFrom).TotalSeconds, $result)
     }
     try {
         $media = Get-CertMedia -DiskNumber $disk -Class 'physical_disk' -Kind 'destructive-test drive'
@@ -1042,8 +1063,10 @@ function Invoke-OpsVolumeChurnDrill {
             if ($letter) { Write-RbFixtureTree -Root "${letter}:\fixture" -FileCount 12 -MaxKilobytes 2048 | Out-Null; Write-VolumeCache -DriveLetter $letter }
             & $run "scan-$round" 'CheckFileSystem' $select @{}
             if ($PauseSeconds -gt 0) { & $write "pause $PauseSeconds s"; Start-Sleep -Seconds $PauseSeconds }
+            if ($GuardRemovals) { & $guard $select "hide-$round" }
             & $run "hide-$round" 'SetPartitionHidden' $select @{ hidden = $true }
             & $run "unhide-$round" 'SetPartitionHidden' $select @{ hidden = $false }
+            if ($GuardRemovals) { & $guard $select "ext4-$round" }
             & $run "ext4-$round" 'Format' $select @{ file_system = 'ext4'; allocation_unit_bytes = 0; label = 'OPSCHURN'; full_format = $false }
             & $run "ntfs-$round" 'Format' $select @{ file_system = 'NTFS'; allocation_unit_bytes = 4096; label = 'OPSCHURN'; full_format = $false; administrator_scan = $true }
             if ($WithMove) {
@@ -1055,6 +1078,7 @@ function Invoke-OpsVolumeChurnDrill {
                 $part = @(Get-Partition -DiskNumber $disk | Where-Object { $_.Type -eq 'Basic' })
                 if ($part.Count -eq 1) { $select = @{ partition_number = [int]$part[0].PartitionNumber } }
             }
+            if ($GuardRemovals) { & $guard $select "delete-$round" }
             & $run "delete-$round" 'Delete' $select @{}
             foreach ($left in @(Get-Partition -DiskNumber $disk -ErrorAction SilentlyContinue | Where-Object { $_.Type -eq 'Basic' -or $_.Type -eq 'Unknown' })) {
                 Assert-OpsDevicePin -DiskNumber $disk
@@ -1077,11 +1101,50 @@ function Invoke-OpsVolumeChurnDrill {
     $checks = @(New-OpsCheck -Name 'the drill ran its time without stopping' -Passed (-not $stopped) -Detail $(if ($stopped) { $stopped } else { "$round rounds" }))
     $after = @(Get-Partition -DiskNumber $disk -ErrorAction SilentlyContinue | Sort-Object Offset | ForEach-Object { "$($_.Offset):$($_.Size)" }) -join ' '
     $checks += New-OpsCheck -Name "the drive's own partitions are as they were" -Passed ($after -eq $kept) -Detail "$kept / $after"
-    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ minutes = $Minutes; pause_seconds = $PauseSeconds; with_move = [bool]$WithMove; rounds = $round; failed_steps = @($failed); log = @($log) })
+    # Every snapshot made during the drill, on the drive's volumes and on C:, and by whom: VSS's
+    # 'creation initiated' (8231, with the process), its other events, and volsnap's.
+    $vss = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'VSS'; StartTime = $drillStarted } -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object { $said = $_.Message -replace '\s+', ' '; "$($_.TimeCreated.ToString('HH:mm:ss')) VSS $($_.Id) $($said.Substring(0, [Math]::Min(260, $said.Length)))" })
+    $volsnap = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'volsnap'; StartTime = $drillStarted } -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object { $said = $_.Message -replace '\s+', ' '; "$($_.TimeCreated.ToString('HH:mm:ss')) volsnap $($_.Id) $($said.Substring(0, [Math]::Min(200, $said.Length)))" })
+    $shadows = @(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction SilentlyContinue | ForEach-Object { "$($_.InstallDate) $($_.VolumeName) $($_.ID)" })
+    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ minutes = $Minutes; pause_seconds = $PauseSeconds; with_move = [bool]$WithMove; guard_removals = [bool]$GuardRemovals; rounds = $round; failed_steps = @($failed); log = @($log); vss_events = $vss; volsnap_events = $volsnap; shadow_copies = $shadows })
 }
 
 Add-OpsRow 'ops.drill-a-scan-then-remove' { Invoke-OpsVolumeChurnDrill -Minutes 120 -PauseSeconds 0 -WithMove }
 Add-OpsRow 'ops.drill-b-pause-before-remove' { Invoke-OpsVolumeChurnDrill -Minutes 120 -PauseSeconds 180 }
+Add-OpsRow 'ops.drill-c-guarded-remove' { Invoke-OpsVolumeChurnDrill -Minutes 120 -PauseSeconds 0 -GuardRemovals }
+
+function Invoke-OpsLockAndDismount {
+    # FSCTL_LOCK_VOLUME, then FSCTL_DISMOUNT_VOLUME, on the volume's own device, then the handle is
+    # closed: the file system flushes and lets go, and the volume stays dismounted until next used.
+    param([string]$VolumePath)
+    if (-not ('OpsVolumeLock' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class OpsVolumeLock {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool DeviceIoControl(SafeFileHandle device, uint code, IntPtr input, uint inputSize, IntPtr output, uint outputSize, out uint returned, IntPtr overlapped);
+    public static string LockAndDismount(string path) {
+        using (var handle = CreateFile(path, 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+            if (handle.IsInvalid) { return "open failed " + Marshal.GetLastWin32Error(); }
+            uint returned;
+            bool locked = false;
+            for (int attempt = 0; attempt < 20 && !locked; attempt++) {
+                locked = DeviceIoControl(handle, 0x00090018, IntPtr.Zero, 0, IntPtr.Zero, 0, out returned, IntPtr.Zero);
+                if (!locked) { System.Threading.Thread.Sleep(500); }
+            }
+            bool dismounted = DeviceIoControl(handle, 0x00090020, IntPtr.Zero, 0, IntPtr.Zero, 0, out returned, IntPtr.Zero);
+            return "locked " + locked + ", dismounted " + dismounted;
+        }
+    }
+}
+'@
+    }
+    return [OpsVolumeLock]::LockAndDismount($VolumePath.TrimEnd('\'))
+}
 
 # --- Rebuilds kept in a backup folder: current generated text, and the FAT/exFAT live-copy branch ---
 
