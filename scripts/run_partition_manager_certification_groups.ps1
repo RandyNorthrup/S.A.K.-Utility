@@ -146,7 +146,18 @@ function Invoke-OpsBiosDisk {
     if ($Script:OpsBiosReady) { return }
     if (-not $ReuseBiosDisk) {
         Invoke-Rig -Action 'Off'
-        Invoke-BuildBiosDisk -Disk $Script:OpsBiosDisk -SizeMiB $Script:OpsBiosMiB -ScratchMiB 40960
+        try {
+            Invoke-BuildBiosDisk -Disk $Script:OpsBiosDisk -SizeMiB $Script:OpsBiosMiB -ScratchMiB 40960
+        } catch {
+            # The capture stopped once with DISM exit 225 (Defender), and the records went with the
+            # snapshot: read them now, before anything else, while the guest still holds them.
+            $why = $_
+            try {
+                Invoke-Rig -Action 'On'
+                Invoke-Rig -Action 'GuestJob' -More @{ JobFile = (Join-Path $PSScriptRoot 'partition_manager_operation_proof_defender_records.ps1'); JobMinutes = 15 }
+            } catch { Write-Host "the guest's Defender and DISM records could not be read: $($_.Exception.Message)" } finally { Invoke-Rig -Action 'Off' }
+            throw $why
+        }
         $Script:OpsBiosBuilt = $true
     }
     $Script:OpsBiosReady = $true
