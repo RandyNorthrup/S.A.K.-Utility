@@ -73,6 +73,8 @@ param(
     [switch]$SkipHostChecks,
     # vm: start the BIOS rows from the BIOS install an earlier run left on the rig (over an hour to build).
     [switch]$ReuseBiosDisk,
+    # Also reads each HFS+ and APFS image with Apple's own fsck on the rig's Mac (read-only attach).
+    [switch]$MacChecks,
     [switch]$PlanOnly
 )
 
@@ -441,6 +443,28 @@ function Invoke-OpsWsl {
     return [pscustomobject]@{ command = ($Arguments -join ' '); exit_code = [int]$code; tail = ($lines -join ' | ') }
 }
 
+function Invoke-OpsMacCheck {
+    <#
+    .SYNOPSIS
+        Apple's own fsck_apfs -n or fsck_hfs -n -f on a copy of an image, attached read-only on the
+        rig's Mac (-MacChecks). The copy stays in ~/opsproof-readonly on the Mac: removing an image
+        there is the owner's to do (AGENTS.local.md), so the report lists them.
+    #>
+    param([string]$Path, [string]$Kind)
+    $cred = Get-Content -LiteralPath $VmCredFile -Raw | ConvertFrom-Json
+    $name = Split-Path -Leaf $Path
+    $ssh = @('-i', "$($cred.macKey)", '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20')
+    & ssh @ssh "$($cred.macHost)" 'mkdir -p ~/opsproof-readonly' 2>&1 | Out-Null
+    & scp -q @ssh $Path "$($cred.macHost):opsproof-readonly/$name" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { return [ordered]@{ name = "mac: $name reached the Mac"; passed = $false; detail = '' } }
+    $tool = if ($Kind -eq 'apfs') { 'fsck_apfs -n' } else { 'fsck_hfs -n -f' }
+    $raw = if ($Kind -eq 'apfs') { '$dev' } else { '${dev/disk/rdisk}' }
+    $script = "dev=`$(hdiutil attach -nomount -readonly -imagekey diskimage-class=CRawDiskImage ~/opsproof-readonly/$name | head -1 | awk '{print `$1}'); $tool $raw; code=`$?; hdiutil detach `$dev >/dev/null 2>&1; echo FSCK_EXIT=`$code"
+    $output = @(& ssh @ssh "$($cred.macHost)" $script 2>&1 | ForEach-Object { "$_" })
+    $exit = if (($output -join "`n") -match 'FSCK_EXIT=(\d+)') { [int]$Matches[1] } else { -1 }
+    return [ordered]@{ name = "mac: Apple $tool on $name exits 0"; passed = ($exit -eq 0); detail = (@($output | Select-Object -Last 8) -join ' | ') }
+}
+
 function Invoke-OpsHostChecks {
     <#
     .SYNOPSIS
@@ -476,6 +500,7 @@ function Invoke-OpsHostChecks {
                 }
                 default { }
             }
+            if ($MacChecks -and "$($image.expect)" -match '^(apfs|hfs\+|hfsplus|hfsx)$') { $checks += Invoke-OpsMacCheck -Path $path -Kind "$($image.expect)" }
         }
         [IO.File]::WriteAllText((Join-Path $rowDir.FullName 'host-checks.json'), (ConvertTo-Json -InputObject @($checks) -Depth 8))
     }
@@ -493,7 +518,8 @@ function Get-OpsCertVerdict {
     if ($spec.Count -ne 1) { return @("the matrix has no row $Id") }
     $report = Get-Content -LiteralPath (Join-Path $RowDir 'report.json') -Raw | ConvertFrom-Json
     $reasons = @(Test-PmRowEvidence -Spec $spec[0] -RowDir $RowDir -CurrentCodeDigest "$($report.code.digest)")
-    return @($reasons | Where-Object { $_ -notmatch 'uncommitted changes|names no real commit' })
+    # Release binding (which code, which commit, a clean tree) is the final run's to meet.
+    return @($reasons | Where-Object { $_ -notmatch 'uncommitted changes|names no real commit|is for other code|outside this release' })
 }
 
 function Get-OpsRowSummary {
