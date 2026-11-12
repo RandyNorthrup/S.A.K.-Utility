@@ -23218,6 +23218,12 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAllocateFreeSpaceScript() {
     QVERIFY(script.script.contains(QStringLiteral("robocopy.exe $from $to /E /COPYALL")));
     QVERIFY(!script.script.contains(QStringLiteral("/MIR")));
     QVERIFY(script.script.contains(QStringLiteral("New-SakBackupFolder $backupPath")));
+    // PowerShell knows a function only once its definition has run: every one of these stopped
+    // on "The term 'New-SakBackupFolder' is not recognized" (operation proof, 2026-11-12).
+    QVERIFY2(script.script.indexOf(QStringLiteral("function New-SakBackupFolder")) >= 0 &&
+                 script.script.indexOf(QStringLiteral("function New-SakBackupFolder")) <
+                     script.script.indexOf(QStringLiteral("New-SakBackupFolder $backupPath")),
+             "New-SakBackupFolder is called before it is defined");
     QVERIFY(!script.script.contains(QStringLiteral("New-Item -ItemType Directory -Force")));
     QVERIFY(script.script.contains(QStringLiteral("Get-SakFileManifest")));
     QVERIFY(script.script.contains(QStringLiteral("Remove-Partition -DiskNumber 2")));
@@ -23854,6 +23860,12 @@ void PartitionManagerCoreTests::scriptBuilder_buildsChangeClusterSizeScript() {
     QVERIFY(script.script.contains(QStringLiteral("robocopy.exe $from $to /E /COPYALL")));
     QVERIFY(!script.script.contains(QStringLiteral("/MIR")));
     QVERIFY(script.script.contains(QStringLiteral("New-SakBackupFolder $backupPath")));
+    // PowerShell knows a function only once its definition has run: every one of these stopped
+    // on "The term 'New-SakBackupFolder' is not recognized" (operation proof, 2026-11-12).
+    QVERIFY2(script.script.indexOf(QStringLiteral("function New-SakBackupFolder")) >= 0 &&
+                 script.script.indexOf(QStringLiteral("function New-SakBackupFolder")) <
+                     script.script.indexOf(QStringLiteral("New-SakBackupFolder $backupPath")),
+             "New-SakBackupFolder is called before it is defined");
     QVERIFY(!script.script.contains(QStringLiteral("New-Item -ItemType Directory -Force")));
     QVERIFY(script.script.contains(QStringLiteral("Get-SakFileManifest")));
     QVERIFY(script.script.contains(QStringLiteral("Format-Volume -DriveLetter $drive")));

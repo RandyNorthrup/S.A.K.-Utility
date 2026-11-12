@@ -5900,10 +5900,13 @@ PartitionScript PartitionScriptBuilder::buildAllocateFreeSpaceScript(
                       .arg(operation.target.disk_number.value())
                       .arg(payload.source_partition)
                       .arg(operation.target.partition_number.value());
+    // The functions go first: the setup ends by calling New-SakBackupFolder, and PowerShell
+    // knows a function only once its definition has run.
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  sakVolumeGuidFunctionScript() + optionalPartitionVolumeFunctionScript() +
+                 robocopyManifestFunctionsScript() +
                  allocateSetupScript(operation, payload, targetSize, donorRemainingBytes) +
-                 robocopyManifestFunctionsScript() + allocateExecutionScript(operation, payload);
+                 allocateExecutionScript(operation, payload);
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -6116,9 +6119,10 @@ PartitionScript PartitionScriptBuilder::buildChangeClusterSizeScript(
     out.preview = QStringLiteral("Change %1: cluster size to %2 bytes")
                       .arg(payload.drive.toUpper())
                       .arg(uintArg(payload.allocation_unit));
+    // The functions go first: the setup ends by calling New-SakBackupFolder.
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 sakVolumeGuidFunctionScript() + clusterSetupScript(payload) +
-                 robocopyManifestFunctionsScript() + clusterExecutionScript();
+                 sakVolumeGuidFunctionScript() + robocopyManifestFunctionsScript() +
+                 clusterSetupScript(payload) + clusterExecutionScript();
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
