@@ -1433,10 +1433,20 @@ function Invoke-OpsVhdDetachDrill {
 $Script:OpsLoadScript = @'
 param([string]$Dir, [string]$StopFile, [int]$Spinners, [int]$WriteMBps)
 $ErrorActionPreference = 'Continue'
-Add-Type -TypeDefinition 'using System; using System.Diagnostics;
+Add-Type -ReferencedAssemblies 'System.Core' -TypeDefinition 'using System; using System.Collections.Generic; using System.Diagnostics; using System.IO; using System.IO.MemoryMappedFiles;
 public static class OpsLoad {
     public static void Spin(int milliseconds) { Stopwatch clock = Stopwatch.StartNew(); double x = 1; while (clock.ElapsedMilliseconds < milliseconds) { x = Math.Sqrt(x + 12345.678); } }
     public static void Touch(byte[] block) { for (int i = 0; i < block.Length; i += 4096) { block[i]++; } }
+    // File-backed memory, as a linker maps its inputs: it holds physical memory without commit.
+    static MemoryMappedFile map;
+    static List<MemoryMappedViewAccessor> views = new List<MemoryMappedViewAccessor>();
+    public static void Open(string path, long bytes) { using (FileStream file = new FileStream(path, FileMode.Create, FileAccess.ReadWrite)) { file.SetLength(bytes); } map = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, bytes, MemoryMappedFileAccess.ReadWrite); }
+    public static int Views { get { return views.Count; } }
+    public static void Grow(long viewBytes) { MemoryMappedViewAccessor view = map.CreateViewAccessor((long)views.Count * viewBytes, viewBytes, MemoryMappedFileAccess.Read); views.Add(view); TouchView(view, viewBytes); }
+    public static void Shrink() { MemoryMappedViewAccessor view = views[views.Count - 1]; views.RemoveAt(views.Count - 1); view.Dispose(); }
+    static long TouchView(MemoryMappedViewAccessor view, long viewBytes) { long sum = 0; for (long i = 0; i < viewBytes; i += 4096) { sum += view.ReadByte(i); } return sum; }
+    public static long TouchViews(long viewBytes) { long sum = 0; foreach (MemoryMappedViewAccessor view in views) { sum += TouchView(view, viewBytes); } return sum; }
+    public static void Close() { foreach (MemoryMappedViewAccessor view in views) { view.Dispose(); } views.Clear(); if (map != null) { map.Dispose(); } }
 }'
 $state = [hashtable]::Synchronized(@{ stop = $false })
 $shells = @()
@@ -1469,17 +1479,23 @@ $writer = [powershell]::Create()
     }).AddArgument($state).AddArgument($Dir).AddArgument($WriteMBps)
 $writerHandle = $writer.BeginInvoke()
 $blocks = New-Object System.Collections.Generic.List[byte[]]
+$mapViews = 32
+[OpsLoad]::Open((Join-Path $Dir 'map.bin'), [long]$mapViews * 256MB)
 $log = Join-Path $Dir 'load.log'
 $nextSample = Get-Date
 while (-not (Test-Path -LiteralPath $StopFile)) {
     $os = Get-CimInstance -ClassName Win32_OperatingSystem
     $freeMB = [int]($os.FreePhysicalMemory / 1KB)
     $commitMB = [int]($os.FreeVirtualMemory / 1KB)
-    # Fill toward 1.5 GB free, never closer than 2.5 GB to the commit limit (the page file here is
-    # small), and give back when Windows runs short.
+    # Fill toward 1.5 GB free: private memory while the commit limit allows it (never closer than
+    # 2.5 GB to it: the page file here is small), then a mapped file, which needs no commit; give
+    # back when Windows runs short.
     if ($freeMB -gt 2000 -and $commitMB -gt 3000) { $block = New-Object byte[] (256MB); [OpsLoad]::Touch($block); $blocks.Add($block) }
+    elseif ($freeMB -gt 1800 -and [OpsLoad]::Views -lt $mapViews) { [OpsLoad]::Grow(256MB) }
+    elseif ($freeMB -lt 1000 -and [OpsLoad]::Views -gt 0) { [OpsLoad]::Shrink() }
     elseif (($freeMB -lt 1000 -or $commitMB -lt 2500) -and $blocks.Count -gt 0) { $blocks.RemoveAt($blocks.Count - 1); [GC]::Collect() }
     foreach ($block in $blocks) { [OpsLoad]::Touch($block) }
+    [void][OpsLoad]::TouchViews(256MB)
     if ((Get-Date) -ge $nextSample) {
         $nextSample = (Get-Date).AddSeconds(30)
         $cpu = $null; $w = $null
@@ -1487,15 +1503,16 @@ while (-not (Test-Path -LiteralPath $StopFile)) {
             $counters = (Get-Counter -Counter '\Processor(_Total)\% Processor Time', '\LogicalDisk(W:)\Disk Write Bytes/sec' -ErrorAction Stop).CounterSamples
             $cpu = [int]$counters[0].CookedValue; $w = [int]($counters[1].CookedValue / 1MB)
         } catch { }
-        Add-Content -LiteralPath $log -Value ('{0} free {1} MB, commit headroom {2} MB, held {3} MB, cpu {4}%, W: writes {5} MB/s' -f (Get-Date).ToString('HH:mm:ss'), $freeMB, $commitMB, ($blocks.Count * 256), $cpu, $w)
+        Add-Content -LiteralPath $log -Value ('{0} free {1} MB, commit headroom {2} MB, held {3} MB private and {4} MB mapped, cpu {5}%, W: writes {6} MB/s' -f (Get-Date).ToString('HH:mm:ss'), $freeMB, $commitMB, ($blocks.Count * 256), ([OpsLoad]::Views * 256), $cpu, $w)
     }
     Start-Sleep -Seconds 2
 }
 $state.stop = $true
+[OpsLoad]::Close()
 foreach ($s in $shells) { try { [void]$s.shell.EndInvoke($s.handle) } catch { } ; $s.shell.Dispose() }
 try { [void]$writer.EndInvoke($writerHandle) } catch { }
 $writer.Dispose()
-Remove-Item -LiteralPath (Join-Path $Dir 'load-0.bin'), (Join-Path $Dir 'load-1.bin') -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $Dir 'load-0.bin'), (Join-Path $Dir 'load-1.bin'), (Join-Path $Dir 'map.bin') -Force -ErrorAction SilentlyContinue
 'stopped' | Set-Content -LiteralPath (Join-Path $Dir 'stopped')
 '@
 
@@ -1992,6 +2009,77 @@ Add-OpsRow 'ops.migrate-image-route' {
     $after = Get-CertSnapshot -DiskNumber $found.number
     $checks += New-OpsCheck -Name 'the target holds a partition table with a Windows-sized data partition' -Passed (@($after.data_partitions).Count -ge 1) -Detail @($after.data_partitions | ForEach-Object { "$($_.type) $($_.size_bytes)" })
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ source_marker = $Script:RunId; after = $after })
+}
+
+Add-OpsRow 'ops.migrate-image-shadow-full' {
+    <#
+    .SYNOPSIS
+        F23 (opsfix e142bd5b, coordinator 2026-11-12): the Image route when Windows deletes the
+        capture's snapshot because shadow-copy storage on C: is full, as Windows Update did on the
+        VM. Before anything is written the script must report C:'s shadow-copy storage and warn that
+        it is small; the capture must then stop with S.A.K.'s own account of why, and C: must not
+        change.
+    .DESCRIPTION
+        The fixture: shadow-copy storage for C: at its minimum (vssadmin, 320 MB), and a 3 GB file
+        on C: that a separate process overwrites in place, over and over, for the whole step. A
+        block overwritten after the snapshot is made is copied into shadow storage first, so the
+        storage fills within seconds of the capture starting and volsnap deletes the snapshot. The
+        VM goes back to its snapshot after the run; the row still puts the storage limit back.
+    #>
+    Assert-CertBootRowInVm
+    $found = Get-CertReadPin -Role 'any'
+    $media = Get-CertMedia -DiskNumber $found.number -Class 'virtual_machine' -Kind 'Windows on a VirtualBox VDI'
+    $source = [int](@(Get-Disk | Where-Object IsBoot)[0].Number)
+    $sourceBefore = Get-CertSnapshot -DiskNumber $source
+    $shadowsBefore = @(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction SilentlyContinue).Count
+    $storageBefore = (& vssadmin.exe list shadowstorage /for=C: 2>&1 | Out-String).Trim()
+    $resized = (& vssadmin.exe resize shadowstorage /for=C: /on=C: /maxsize=320MB 2>&1 | Out-String).Trim()
+    $storageSmall = (& vssadmin.exe list shadowstorage /for=C: 2>&1 | Out-String).Trim()
+    $churn = 'C:\SAKCert\churn.bin'
+    $buffer = New-Object byte[] (4MB)
+    (New-Object Random 11).NextBytes($buffer)
+    $stream = [IO.File]::Open($churn, [IO.FileMode]::Create, [IO.FileAccess]::Write)
+    try { for ($i = 0; $i -lt 768; $i++) { $stream.Write($buffer, 0, $buffer.Length) } } finally { $stream.Dispose() }
+    $writer = Join-Path $OutputRoot 'churn-writer.ps1'
+    $stop = Join-Path $OutputRoot 'churn-stop'
+    Remove-Item -LiteralPath $stop -Force -ErrorAction SilentlyContinue
+    Set-Content -LiteralPath $writer -Encoding ASCII -Value @'
+param([string]$File, [string]$StopFile)
+$buffer = New-Object byte[] (4MB)
+$pass = 0
+while (-not (Test-Path -LiteralPath $StopFile)) {
+    $pass++
+    for ($i = 0; $i -lt $buffer.Length; $i += 4096) { $buffer[$i] = [byte]($pass % 251) }
+    $stream = [IO.File]::Open($File, [IO.FileMode]::Open, [IO.FileAccess]::Write)
+    try {
+        while ($stream.Position -lt $stream.Length -and -not (Test-Path -LiteralPath $StopFile)) { $stream.Write($buffer, 0, $buffer.Length); $stream.Flush($true) }
+    } finally { $stream.Dispose() }
+}
+'@
+    $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $process = Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$writer`"", '-File', "`"$churn`"", '-StopFile', "`"$stop`"") -WindowStyle Hidden -PassThru
+    $started = Get-Date
+    $step = $null
+    try {
+        $step = Invoke-OpsStep -Disk $found.number -GivenPin $found.pin -Step 'migrate' -Operation 'MigrateOs' -Choices @{ verify_mode = 'Sample verification'; allow_no_snapshot = $false } -Expect 'failed' -RefusalContains 'Windows deleted the snapshot S.A.K. was copying from because shadow-copy storage on C: was full' -TimeoutSeconds 10800 -ReadBackOnFailure
+    } finally {
+        Set-Content -LiteralPath $stop -Value 'stop'
+        if (-not $process.WaitForExit(60000)) { try { $process.Kill() } catch { Write-Host "Could not stop the churn writer: $($_.Exception.Message)" } }
+        Remove-Item -LiteralPath $churn -Force -ErrorAction SilentlyContinue
+        $restored = (& vssadmin.exe resize shadowstorage /for=C: /on=C: /maxsize=10% 2>&1 | Out-String).Trim()
+    }
+    $said = if ($null -ne $step) { (@($step.execution.steps) | ForEach-Object { "$($_.stdout)`n$($_.stderr)`n$($_.error_message)" }) -join "`n" } else { '' }
+    $checks = @(New-OpsCheck -Name 'the fixture: shadow-copy storage for C: was set to its minimum' -Passed ($storageSmall -match '320 MB') -Detail $storageSmall)
+    $preflight = @($said -split "`r?`n" | Where-Object { $_ -match 'Shadow-copy storage for C:|^WARNING: that leaves' })
+    $checks += New-OpsCheck -Name "before writing, the script reported C:'s shadow-copy storage" -Passed ($said -match 'Shadow-copy storage for C: ') -Detail $preflight
+    $checks += New-OpsCheck -Name 'and warned that what is left is under a quarter of the bytes in use' -Passed ($said -match 'WARNING: that leaves .* less than a quarter of the') -Detail $preflight
+    $volsnap = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'volsnap'; StartTime = $started } -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object { $text = $_.Message -replace '\s+', ' '; "$($_.TimeCreated.ToString('HH:mm:ss')) volsnap $($_.Id) $($text.Substring(0, [Math]::Min(240, $text.Length)))" })
+    $checks += New-OpsCheck -Name 'Windows logged that it deleted the snapshot (volsnap 33 or 36)' -Passed (@($volsnap | Where-Object { $_ -match ' volsnap (33|36) ' }).Count -gt 0) -Detail $volsnap
+    $sourceAfter = Get-CertSnapshot -DiskNumber $source
+    $checks += New-OpsCheck -Name "C:'s disk table is as it was" -Passed ((ConvertTo-Json -InputObject $sourceBefore.table -Depth 6 -Compress) -eq (ConvertTo-Json -InputObject $sourceAfter.table -Depth 6 -Compress)) -Detail "$(@($sourceAfter.table.partitions).Count) partitions"
+    $shadowsAfter = @(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction SilentlyContinue).Count
+    $checks += New-OpsCheck -Name 'no shadow copy of the attempt was left' -Passed ($shadowsAfter -le $shadowsBefore) -Detail "$shadowsBefore before, $shadowsAfter after"
+    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ storage_before = $storageBefore; resize = $resized; storage_small = $storageSmall; storage_restored = $restored; volsnap_events = $volsnap; preflight = $preflight })
 }
 
 function Get-OpsBiosSystemPartition {
