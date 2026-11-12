@@ -589,7 +589,11 @@ function Invoke-OpsCheckWindows {
     $step = Invoke-OpsStep -Disk $disk -Step 'check' -Operation 'CheckFileSystem' -Select @{ partition_number = $volume.partition_number }
     $tableAfter = Get-CertSnapshot -DiskNumber $disk
     $said = (@($step.execution.steps) | ForEach-Object { "$($_.stdout)" }) -join ' '
-    $checks = @(New-OpsCheck -Name 'the check reported a result' -Passed ([bool]$said.Trim()) -Detail ($said.Substring(0, [Math]::Min(400, $said.Length))))
+    $complained = (@($step.execution.steps) | ForEach-Object { "$($_.stderr)" }) -join ' '
+    # The preview line alone is not a result: on b28 a FAT32 or exFAT check reported success with
+    # stderr "Repair-Volume : The specified file system is not supported" and checked nothing (F16).
+    $checks = @(New-OpsCheck -Name 'the check ran and said the file system is clean' -Passed ($said -match 'NoErrorsFound|found no problems') -Detail ($said.Substring(0, [Math]::Min(400, $said.Length))))
+    $checks += New-OpsCheck -Name 'the check wrote nothing to stderr' -Passed (-not $complained.Trim()) -Detail ($complained.Substring(0, [Math]::Min(300, $complained.Length)))
     $checks += New-OpsCheck -Name 'the partition table did not change' -Passed ($tableBefore.raw.lba0_hex -eq $tableAfter.raw.lba0_hex -and "$($tableBefore.raw.gpt_entries_hex)" -eq "$($tableAfter.raw.gpt_entries_hex)") -Detail ''
     $checks += Test-OpsFilesSame -Name 'every file is unchanged' -Before $before -After (Get-RbFileManifest -Root "$($volume.letter):\fixture")
     $checks += Test-OpsWindowsVolume -Prefix 'after the check:' -Letter $volume.letter -FileSystem $FileSystem -Label 'OPSCHECK'
