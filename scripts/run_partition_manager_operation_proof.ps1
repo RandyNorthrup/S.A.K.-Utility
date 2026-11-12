@@ -24,6 +24,8 @@
 
     Actions:
       Run       Preflight, stage, run, fetch, verify and report. The default.
+      Collect   For a run already going on testpc2 (-RunId): follows it to the end, then fetches,
+                verifies and reports as Run does. For when this side lost the PC for a while.
       Claim     Writes this run's lines to the PC's claim file, after reading every other claim.
       Release   Removes this run's lines from the PC's claim file.
       Report    Rebuilds the results table from evidence already fetched.
@@ -52,7 +54,9 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Run', 'Claim', 'Release', 'Report', 'HostChecks')] [string]$Action = 'Run',
+    [ValidateSet('Run', 'Collect', 'Claim', 'Release', 'Report', 'HostChecks')] [string]$Action = 'Run',
+    # Collect: the run to follow and fetch, as its evidence folder is named (run-yyyyMMdd-HHmmss).
+    [string]$RunId = '',
     [ValidateSet('testpc2', 'vm')] [string]$Machine = 'testpc2',
     [string[]]$Rows = @(),
     [string]$PackageZip = '',
@@ -408,18 +412,43 @@ Register-ScheduledTask -TaskName '$Script:RunnerTask' -Action `$action -Principa
 "RUN `$started"
 "@
     Invoke-OpsRemote -Code $code | Write-Host
+    return Wait-OpsRows -RunId $RunId
+}
+
+function Wait-OpsRows {
+    <#
+    .SYNOPSIS
+        Follows a run's log until its runner says it is done. A PC too busy to answer ssh for a
+        while (a build beside the rows, Driver Verifier) is waited for; a PC that restarted is not,
+        because its runner died with it.
+    #>
+    param([string]$RunId)
+    $output = "$RemoteRoot\evidence\$RunId"
     $deadline = (Get-Date).AddMinutes($JobMinutes)
     $startBy = (Get-Date).AddMinutes(3)
     $seen = 0
+    $boot = ''
+    $unanswered = 0
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 30
-        $state = Invoke-OpsRemote -AllowFailure -Code @"
+        try {
+            $state = Invoke-OpsRemote -AllowFailure -Code @"
 `$r = '$RemoteRoot\jobs'
 `$log = "`$r\runner-$RunId.log"
+'BOOT ' + (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime.ToString('o')
 if (Test-Path "`$r\runner-done.txt") { 'STATE DONE' } elseif (Test-Path "`$r\runner-started.txt") { 'STATE RUNNING' } else { 'STATE WAITING' }
 if (Test-Path `$log) { Get-Content -LiteralPath `$log | Select-Object -Skip $seen }
 "@
-        $lines = @($state | Where-Object { $_ -notmatch '^STATE ' })
+            $unanswered = 0
+        } catch {
+            $unanswered++
+            Write-Host "  (no answer from $SshHost, $unanswered of 20: $($_.Exception.Message))"
+            if ($unanswered -ge 20) { throw }
+            continue
+        }
+        $bootNow = "$(@($state | Where-Object { "$_" -like 'BOOT *' }) | Select-Object -First 1)"
+        if (-not $boot) { $boot = $bootNow } elseif ($bootNow -and $bootNow -cne $boot) { throw "$SshHost restarted during the run ($boot, now $bootNow): a bugcheck? Its runner died with it" }
+        $lines = @($state | Where-Object { "$_" -notmatch '^(STATE|BOOT) ' })
         $lines | ForEach-Object { Write-Host "  | $_" }
         $seen += $lines.Count
         if ($state -contains 'STATE DONE') { return $output }
@@ -673,14 +702,22 @@ try {
         'Release' { Set-OpsClaim -Remove | Write-Host }
         'Report' { Write-OpsResults }
         'HostChecks' { if (-not $EvidenceDir) { throw 'HostChecks needs -EvidenceDir' }; Invoke-OpsHostChecks -LocalDir $EvidenceDir; Write-OpsResults }
+        'Collect' {
+            if ($RunId -notmatch '^run-\d{8}-\d{6}$') { throw 'Collect needs -RunId run-yyyyMMdd-HHmmss' }
+            $local = if ($EvidenceDir) { $EvidenceDir } else { Join-Path (Split-Path -Parent $ResultsPath) "runs\$RunId" }
+            $remote = Wait-OpsRows -RunId $RunId
+            Get-OpsEvidence -RemoteOutput $remote -LocalDir $local
+            if (-not $SkipHostChecks) { Invoke-OpsHostChecks -LocalDir $local }
+            Write-OpsResults
+        }
         'Run' {
             $wanted = if ($Rows.Count) { $Rows } else { @(Get-OpsPlanRows -For $Machine | Where-Object { -not $_.Pending } | ForEach-Object { $_.Id }) }
             foreach ($id in $wanted) {
                 $row = @($Plan.Rows | Where-Object { $_.Id -ceq $id })
                 if ($row.Count -ne 1 -or $row[0].Machine -ne $Machine -or $row[0].Pending) { throw "$id is not a ready $Machine row in the plan" }
             }
-            $runId = "run-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-            $local = if ($EvidenceDir) { $EvidenceDir } else { Join-Path (Split-Path -Parent $ResultsPath) "runs\$runId" }
+            $newRunId = "run-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            $local = if ($EvidenceDir) { $EvidenceDir } else { Join-Path (Split-Path -Parent $ResultsPath) "runs$newRunId" }
             if ($Machine -eq 'vm') {
                 Invoke-OpsVmRun -RowIds $wanted -LocalDir $local
                 Write-OpsResults
@@ -688,7 +725,7 @@ try {
             }
             Invoke-OpsPreflight | Write-Host
             $stage = Invoke-OpsStage
-            $remote = Invoke-OpsRows -Stage $stage -RunId $runId -RowIds $wanted
+            $remote = Invoke-OpsRows -Stage $stage -RunId $newRunId -RowIds $wanted
             Get-OpsEvidence -RemoteOutput $remote -LocalDir $local
             if (-not $SkipHostChecks) { Invoke-OpsHostChecks -LocalDir $local }
             Write-OpsResults
