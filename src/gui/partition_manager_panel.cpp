@@ -753,13 +753,12 @@ PartitionActionAvailability fileSystemActionAvailability(const QString& file_sys
                               .arg(file_system)};
     }
 
-    if (policy.resize_filesystem && capability.non_native && !isExtFilesystem(file_system)) {
+    // ext is resized with the bundled tools, and APFS grows in place; the queue's own sentence
+    // says why anything else is not.
+    if (policy.resize_filesystem && capability.non_native && !isExtFilesystem(file_system) &&
+        !PartitionFileSystemRegistry::isApfs(file_system)) {
         return {.enabled = false,
-                .reason =
-                    QObject::tr(
-                        "%1 resize is not supported yet. Non-Windows resize currently supports "
-                        "ext2/ext3/ext4 only.")
-                        .arg(file_system)};
+                .reason = PartitionFileSystemRegistry::windowsResizeBlocker(file_system, 0, 1)};
     }
 
     return {};
@@ -6010,9 +6009,27 @@ QString inPlaceResizeRefusal(const ResizePartitionWidgets& widgets) {
                                                              selectedResizeTargetBytes(widgets));
 }
 
+// An APFS partition grows in place only, and the container is grown into it afterwards: what the
+// dialog says for one, refusal or note. For any other file system, inPlaceResizeRefusal.
+QString resizeRefusalOrApfsNote(const ResizePartitionWidgets& widgets) {
+    if (!PartitionFileSystemRegistry::isApfs(widgets.file_system)) {
+        return inPlaceResizeRefusal(widgets);
+    }
+    if (selectedResizeMode(widgets) != adjacentResizeMode()) {
+        return QObject::tr(
+            "APFS partitions grow in place only. Move and donor rebuild are not available for "
+            "APFS partitions.");
+    }
+    if (const QString refusal = inPlaceResizeRefusal(widgets); !refusal.isEmpty()) {
+        return refusal;
+    }
+    return selectedResizeTargetChanged(widgets) ? PartitionFileSystemRegistry::apfsGrowNote()
+                                                : QString();
+}
+
 QString resizeModeStatusText(const ResizePartitionWidgets& widgets) {
     const QString mode = selectedResizeMode(widgets);
-    if (const QString refusal = inPlaceResizeRefusal(widgets); !refusal.isEmpty()) {
+    if (const QString refusal = resizeRefusalOrApfsNote(widgets); !refusal.isEmpty()) {
         return refusal;
     }
     if (widgets.non_native_ext) {
@@ -6089,7 +6106,8 @@ bool resizeMoveReady(const ResizePartitionWidgets& widgets,
                      bool move_mode,
                      uint64_t target_bytes,
                      uint64_t target_offset_bytes) {
-    if (!move_mode) {
+    // An APFS partition is never moved: only grown in place.
+    if (!move_mode || PartitionFileSystemRegistry::isApfs(widgets.file_system)) {
         return false;
     }
     const bool changed = target_offset_bytes != widgets.current_offset_bytes ||
@@ -6159,10 +6177,15 @@ void updateResizePartitionPreview(PartitionOperationDialog& dialog,
     }
     widgets.mode_status->setText(resizeModeStatusText(widgets));
     dialog.setAcceptEnabled(queueable);
+    const bool apfs_grow = PartitionFileSystemRegistry::isApfs(widgets.file_system) &&
+                           target_bytes > widgets.current_bytes;
     dialog.setPreviewText(QObject::tr("%1 from %2 to %3.")
                               .arg(resizeActionText(target_bytes, widgets.current_bytes),
                                    formatPartitionBytes(widgets.current_bytes),
-                                   formatPartitionBytes(target_bytes)));
+                                   formatPartitionBytes(target_bytes)) +
+                          (apfs_grow
+                               ? QStringLiteral(" ") + PartitionFileSystemRegistry::apfsGrowNote()
+                               : QString()));
 }
 
 void connectResizePartitionControls(PartitionOperationDialog& dialog,

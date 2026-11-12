@@ -52,10 +52,16 @@ public:
     /// resizes (its supported-size answer then says how far). Measured on testpc1 (2026-11-12):
     /// Resize-Partition answered "Not Supported" for FAT32 and exFAT, shrinking and growing, while
     /// Get-PartitionSupportedSize offered room to grow them. ext is resized with S.A.K.'s bundled
-    /// tools, not here; any other file system is not resized at all.
+    /// tools, not here. An APFS partition may grow in place, never shrink: the container is then
+    /// grown into it by APFS container actions (apfsGrowNote). Any other file system is not
+    /// resized at all.
     [[nodiscard]] static QString windowsResizeBlocker(const QString& file_system,
                                                       uint64_t current_bytes,
                                                       uint64_t target_bytes);
+    /// What an APFS partition's grow says: the partition grows, and the container does not until
+    /// the person runs the container action.
+    [[nodiscard]] static QString apfsGrowNote();
+    [[nodiscard]] static bool isApfs(const QString& file_system);
 
     /// Why Windows' Format-Volume would refuse @p choice, or drop its label, in plain words;
     /// empty when it would make what was asked. Format-Volume writes the start of the volume

@@ -1605,6 +1605,7 @@ private Q_SLOTS:
     void generatedScripts_windowsDataTypeStepRunsAgainstStandIns();
     void generatedScripts_resizeChecksTheFileSystemFirst();
     void generatedScripts_resizeGivesANonDataPartitionItsTypeBack();
+    void resize_growsAnApfsPartitionInPlaceOnly();
     void scriptBuilder_nonWindowsFormatTakesItsPartitionType();
     void scriptBuilder_windowsFormatRestoresAWindowsDataType();
     void generatedScripts_formatChoiceCheckAgreesWithTheQueue();
@@ -4939,6 +4940,111 @@ void PartitionManagerCoreTests::generatedScripts_resizeGivesANonDataPartitionIts
                                           "-PartitionNumber 1 -GptType '%1'")
                                .arg(linux_type)),
              qPrintable(out));
+}
+
+namespace {
+
+/// Windows PowerShell 5.1: @p script's Assert-SakApfsContainer on a partition start holding the
+/// container's magic ("NXSB" 32 bytes in), whose path goes to @p apfs_path, and on one without it.
+/// "HOLDS <path>" or "THREW <message>" for each.
+QString runApfsContainerChecks(const QString& script, QString* apfs_path) {
+    QTemporaryDir dir;
+    QByteArray container(4096, '\0');
+    container.replace(32, 4, "NXSB");
+    const QString apfs = QDir::toNativeSeparators(dir.filePath(QStringLiteral("apfs.img")));
+    const QString blank = writePartitionStart(dir, QStringLiteral("blank.img"), false);
+    QFile file(apfs);
+    if (!dir.isValid() || blank.isEmpty() || !file.open(QIODevice::WriteOnly) ||
+        file.write(container) != container.size()) {
+        return QStringLiteral("NO PARTITION STARTS");
+    }
+    file.close();
+    *apfs_path = apfs;
+    int exit_code = -1;
+    return runWithScriptFunctions(
+        script,
+        QStringLiteral("foreach ($path in @(%1, %2)) {\n"
+                       "  try { Assert-SakApfsContainer $path | Out-Null; 'HOLDS ' + $path } catch "
+                       "{ 'THREW ' + $_.Exception.Message }\n"
+                       "}\n")
+            .arg(PartitionScriptBuilder::quotePowerShell(apfs),
+                 PartitionScriptBuilder::quotePowerShell(blank)),
+        &exit_code);
+}
+
+}  // namespace
+
+// An APFS partition grows in place, never shrinks and never moves (coordinator, 2026-11-12, for
+// opsproof's APFS container resize row): the partition grows as a data partition for the moment of
+// the resize and gets its Apple type back (F24), and APFS container actions then grow the container
+// into it. HFS+ and HFSX stay refused. The sentence names file systems in the plural.
+void PartitionManagerCoreTests::resize_growsAnApfsPartitionInPlaceOnly() {
+    auto inventory = singleDataDiskInventory();
+    auto& partition = inventory.disks.first().partitions.first();
+    partition.volume->file_system = QStringLiteral("APFS");
+    partition.volume->drive_letter.clear();
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = inventory.disks.first().disk_number;
+    target.partition_number = partition.partition_number;
+    target.offset_bytes = partition.offset_bytes;
+    target.size_bytes = partition.size_bytes;
+    const auto blockers = [&inventory, &target](uint64_t size) {
+        const QJsonObject payload{{QStringLiteral("target_size_bytes"), QString::number(size)},
+                                  {QStringLiteral("file_system"), QStringLiteral("APFS")}};
+        return PartitionSafetyValidator::validate(
+                   inventory,
+                   PartitionOperationPlanner::makeOperation(
+                       PartitionOperationType::Resize, target, payload))
+            .blockers.join(QLatin1Char(' '));
+    };
+    const uint64_t grown = partition.size_bytes + 64ULL * 1024ULL * 1024ULL;
+    const uint64_t shrunk = partition.size_bytes - 64ULL * 1024ULL * 1024ULL;
+    QVERIFY2(!blockers(grown).contains(QStringLiteral("APFS")) &&
+                 !blockers(grown).contains(QStringLiteral("cannot")),
+             qPrintable(blockers(grown)));
+    const QString shrink_refusal = QStringLiteral(
+        "S.A.K. cannot shrink APFS partitions. It grows one in place; then use APFS container "
+        "actions > Resize container to fill partition.");
+    QVERIFY2(blockers(shrunk).contains(shrink_refusal), qPrintable(blockers(shrunk)));
+    for (const char* file_system : {"HFS+", "HFSX"}) {
+        QCOMPARE(PartitionFileSystemRegistry::windowsResizeBlocker(
+                     QString::fromLatin1(file_system), 1, 2),
+                 QStringLiteral("S.A.K. cannot resize %1 partitions. Windows resizes NTFS and "
+                                "ReFS partitions, S.A.K. resizes ext2, ext3 and ext4 with its "
+                                "bundled tools, and grows APFS partitions in place.")
+                     .arg(QString::fromLatin1(file_system)));
+    }
+
+    // The script checks the container is still there, then grows the partition as a data
+    // partition, and says what comes next.
+    const PartitionScriptBuilder builder;
+    const QJsonObject grow{{QStringLiteral("target_size_bytes"), QString::number(grown)},
+                           {QStringLiteral("file_system"), QStringLiteral("APFS")}};
+    const auto script = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Resize, target, grow));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(' ')));
+    const qsizetype checked = script.script.indexOf(QStringLiteral(
+        "\nAssert-SakApfsContainer '\\\\?\\GLOBALROOT\\Device\\Harddisk2\\Partition1'"));
+    const qsizetype resized = script.script.indexOf(
+        QStringLiteral("Invoke-SakResizeAsDataPartition -Disk 2 -Number 1 -Size %1").arg(grown));
+    QVERIFY2(checked > 0 && checked < resized, qPrintable(script.script));
+    QVERIFY(script.preview.contains(PartitionFileSystemRegistry::apfsGrowNote()));
+    QJsonObject shrink = grow;
+    shrink[QStringLiteral("target_size_bytes")] = QString::number(shrunk);
+    QVERIFY(builder
+                .buildScript(PartitionOperationPlanner::makeOperation(
+                    PartitionOperationType::Resize, target, shrink))
+                .blockers.join(' ')
+                .contains(shrink_refusal));
+
+    QString apfs;
+    const QString checks = runApfsContainerChecks(script.script, &apfs);
+    QVERIFY2(!apfs.isEmpty() && checks.contains(QStringLiteral("HOLDS ") + apfs) &&
+                 checks.contains(QStringLiteral("THREW Nothing was changed: this resize was queued "
+                                                "for an APFS partition, but the partition holds "
+                                                "no APFS container now")),
+             qPrintable(checks));
 }
 
 namespace {
@@ -24500,7 +24606,7 @@ void PartitionManagerCoreTests::safetyValidator_resizesOnlyAnIdentifiedFileSyste
 
     // A file system S.A.K. has no resize for, and one the resize was not queued for.
     partition.volume->file_system = QStringLiteral("XFS");
-    QVERIFY2(blockers(shrink).contains(QStringLiteral("S.A.K. cannot resize a XFS partition")),
+    QVERIFY2(blockers(shrink).contains(QStringLiteral("S.A.K. cannot resize XFS partitions.")),
              qPrintable(blockers(shrink)));
     partition.volume->file_system = QStringLiteral("NTFS");
     QJsonObject queued_ext = shrink;
@@ -24602,7 +24708,7 @@ void PartitionManagerCoreTests::safetyValidator_refusesResizingFat32OrExfat() {
     QVERIFY(
         PartitionFileSystemRegistry::windowsResizeBlocker(QStringLiteral("ReFS"), 1, 2).isEmpty());
     QVERIFY(PartitionFileSystemRegistry::windowsResizeBlocker(QStringLiteral("FAT"), 2, 1)
-                .contains(QStringLiteral("cannot resize a FAT partition")));
+                .contains(QStringLiteral("S.A.K. cannot resize FAT partitions.")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksOversizedCreate() {

@@ -3827,6 +3827,64 @@ function Invoke-SakResizeAsDataPartition([uint32]$Disk, [uint32]$Number, [uint64
 )PS");
 }
 
+// The F7 check for an APFS grow: the container superblock's magic, "NXSB" 32 bytes into the
+// partition, read through the partition as the writer reads it, since Windows has no volume there.
+static QString apfsContainerCheckScript(const PartitionOperation& operation) {
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
+           QStringLiteral(R"PS(
+function Assert-SakApfsContainer([string]$Path) {
+  $head = New-Object byte[] 4096
+  $have = 0
+  $stream = [Sak.RawPartitionWrite]::Open($Path)
+  try {
+    [void]$stream.Seek(0, [System.IO.SeekOrigin]::Begin)
+    while ($have -lt $head.Length) {
+      $read = $stream.Read($head, $have, $head.Length - $have)
+      if ($read -le 0) { break }
+      $have += $read
+    }
+  } finally {
+    $stream.Dispose()
+  }
+  if ($have -lt 36 -or [Text.Encoding]::ASCII.GetString($head, 32, 4) -cne 'NXSB') {
+    throw 'Nothing was changed: this resize was queued for an APFS partition, but the partition holds no APFS container now. Run Scan Disks as administrator, then queue the resize again.'
+  }
+  Write-Output 'The partition still holds an APFS container, as queued'
+}
+Assert-SakApfsContainer %1
+)PS")
+               .arg(PartitionScriptBuilder::quotePowerShell(
+                   QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk%1\\Partition%2")
+                       .arg(operation.target.disk_number.value())
+                       .arg(operation.target.partition_number.value())));
+}
+
+// An APFS partition grows into the free space after it, as a data partition for the moment of the
+// resize, with its Apple type back afterwards. The container does not grow with it: APFS container
+// actions > Resize container to fill partition does that.
+static PartitionScript buildApfsGrowScript(const PartitionOperation& operation,
+                                           uint64_t targetSize) {
+    PartitionScript out;
+    out.preview = QStringLiteral("Grow Disk %1 Partition %2 (APFS) to %3. %4")
+                      .arg(operation.target.disk_number.value())
+                      .arg(operation.target.partition_number.value())
+                      .arg(formatPartitionBytes(targetSize),
+                           PartitionFileSystemRegistry::apfsGrowNote());
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+                 apfsContainerCheckScript(operation) + resizeAsDataPartitionFunctionScript() +
+                 QStringLiteral(
+                     "Invoke-SakResizeAsDataPartition -Disk %1 -Number %2 -Size %3\n"
+                     "Update-HostStorageCache -ErrorAction Stop\n"
+                     "Write-Output %4\n")
+                     .arg(operation.target.disk_number.value())
+                     .arg(operation.target.partition_number.value())
+                     .arg(uintArg(targetSize),
+                          PartitionScriptBuilder::quotePowerShell(
+                              PartitionFileSystemRegistry::apfsGrowNote()));
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
+    return out;
+}
+
 static PartitionScript buildNativeResizeScript(const PartitionOperation& operation,
                                                uint64_t targetSize,
                                                const QString& queuedFileSystem) {
@@ -6092,6 +6150,9 @@ PartitionScript PartitionScriptBuilder::buildResizeScript(
             fs, operation.target.size_bytes, targetSize);
         !blocker.isEmpty()) {
         return invalidScript(blocker);
+    }
+    if (PartitionFileSystemRegistry::isApfs(fs)) {
+        return buildApfsGrowScript(operation, targetSize);
     }
     return buildNativeResizeScript(operation, targetSize, fs);
 }

@@ -604,10 +604,30 @@ QString PartitionFileSystemRegistry::windowsResizeBlocker(const QString& file_sy
                    "and recreate the partition at the size you want.")
             .arg(target_bytes < current_bytes ? QStringLiteral("shrink") : QStringLiteral("grow"));
     }
+    // An APFS partition grows into the free space after it, as a data partition for the moment of
+    // the resize (Invoke-SakResizeAsDataPartition); the container is grown into it afterwards.
+    if (isApfs(fs)) {
+        return target_bytes > current_bytes
+                   ? QString()
+                   : QStringLiteral(
+                         "S.A.K. cannot shrink APFS partitions. It grows one in place; then use "
+                         "APFS container actions > Resize container to fill partition.");
+    }
     return QStringLiteral(
-               "S.A.K. cannot resize a %1 partition. Windows resizes NTFS and ReFS partitions, and "
-               "S.A.K. resizes ext2, ext3 and ext4 with its bundled tools.")
+               "S.A.K. cannot resize %1 partitions. Windows resizes NTFS and ReFS partitions, "
+               "S.A.K. resizes ext2, ext3 and ext4 with its bundled tools, and grows APFS "
+               "partitions in place.")
         .arg(fs);
+}
+
+QString PartitionFileSystemRegistry::apfsGrowNote() {
+    return QStringLiteral(
+        "This grows the partition only. Then use APFS container actions > Resize container to "
+        "fill partition.");
+}
+
+bool PartitionFileSystemRegistry::isApfs(const QString& file_system) {
+    return file_system.trimmed().compare(QStringLiteral("APFS"), Qt::CaseInsensitive) == 0;
 }
 
 }  // namespace sak
