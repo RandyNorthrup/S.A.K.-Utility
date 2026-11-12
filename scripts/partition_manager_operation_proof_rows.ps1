@@ -891,7 +891,8 @@ Add-OpsRow 'ops.image-locked-volumes' {
     if (Test-Path -LiteralPath $image) { Remove-Item -LiteralPath $image -Force }
     $step = Invoke-OpsStep -Disk $disk -Step 'image' -Operation 'CreateImage' -Choices @{ image_path = $image } -TimeoutSeconds 3600
     $checks = @(New-OpsCheck -Name 'the image file exists and is the disk size' -Passed ((Test-Path -LiteralPath $image) -and [uint64](Get-Item -LiteralPath $image).Length -eq [uint64](Get-Disk -Number $disk).Size) -Detail $(if (Test-Path -LiteralPath $image) { (Get-Item -LiteralPath $image).Length } else { 0 }))
-    $checks += New-OpsCheck -Name 'the step ran with the volumes locked' -Passed ("$(@($step.queued_operations)[0].payload | ConvertTo-Json -Compress)" -match 'Locked') -Detail @($step.queued_operations)[0].payload
+    $mode = "$(@($step.queued_operations)[0].payload.source_capture_mode)"
+    $checks += New-OpsCheck -Name 'the step captured in LockedVolumes mode' -Passed ($mode -ceq 'LockedVolumes') -Detail $mode
     if (Test-Path -LiteralPath $image) {
         # The image's own table and file system, read by mounting a copy read-only as a VHD.
         $copy = Join-Path $WorkRoot "$($Script:RowId)-image-check.vhd"
@@ -900,10 +901,14 @@ Add-OpsRow 'ops.image-locked-volumes' {
         & diskpart.exe /s $vhd | Out-Null
         $stream = [IO.File]::Open($copy, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite)
         try { $source = [IO.File]::OpenRead($image); try { $source.CopyTo($stream) } finally { $source.Dispose() } } finally { $stream.Dispose() }
+        # The copy carries the source's disk id, and Windows takes a disk offline when two share
+        # one: the source goes first.
+        Dismount-DiskImage -ImagePath (Get-OpsVhdFor -DiskNumber $disk).ImagePath | Out-Null
         Mount-DiskImage -ImagePath $copy -Access ReadOnly | Out-Null
         $Script:RowVhds.Add($copy)
         Start-Sleep -Seconds 3
         $number = [int](Get-DiskImage -ImagePath $copy).Number
+        if ((Get-Disk -Number $number).IsOffline) { Set-Disk -Number $number -IsOffline $false; Start-Sleep -Seconds 2 }
         $part = @(Get-Partition -DiskNumber $number | Where-Object { $_.Type -eq 'Basic' })[0]
         if (-not $part.DriveLetter -or [int][char]$part.DriveLetter -eq 0) { Add-PartitionAccessPath -DiskNumber $number -PartitionNumber $part.PartitionNumber -AssignDriveLetter -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2 }
         $part = Get-Partition -DiskNumber $number -PartitionNumber $part.PartitionNumber
@@ -925,7 +930,8 @@ function Invoke-OpsRecovery {
     Start-Sleep -Seconds 2
     $scan = Invoke-OpsStep -Disk $disk -Step 'scan' -Operation 'PartitionRecoveryScan' -Choices @{ scan_mode = $ScanMode } -TimeoutSeconds 3600
     $said = (@($scan.execution.steps) | ForEach-Object { "$($_.stdout)" }) -join "`n"
-    $typeId = if ($Style -eq 'GPT') { "{$($old.type)}" } else { "$($old.type)" }
+    # As a person types it from the scan: a GPT type in braces, an MBR type in hex.
+    $typeId = if ($Style -eq 'GPT') { "{$($old.type)}" } else { "0x$($old.type)" }
     Invoke-OpsStep -Disk $disk -Step 'restore' -Operation 'RestoreRecoveredPartition' -Choices @{ offset_bytes = "$($old.offset_bytes)"; size_bytes = "$($old.size_bytes)"; type_id = $typeId } | Out-Null
     $checks = @(New-OpsCheck -Name 'the scan named the lost partition' -Passed ($said -match "$($old.offset_bytes)") -Detail "offset $($old.offset_bytes)")
     $checks += Test-OpsExtent -Name 'the raw table holds it again, same place and size' -DiskNumber $disk -Offset ([uint64]$old.offset_bytes) -SizeBytes ([uint64]$old.size_bytes)
