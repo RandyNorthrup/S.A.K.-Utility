@@ -72,3 +72,43 @@ function Dismount-SakDiskImageIfAttached {
         Dismount-DiskImage -ImagePath $Path -ErrorAction Stop | Out-Null
     }
 }
+
+function Get-SakE2fsckOutputProblem {
+    <#
+    .SYNOPSIS
+        Why e2fsck's output says the file system did not pass whatever its exit code, or ''.
+    .DESCRIPTION
+        A check (-n) answers no to every question and exits 0 even when e2fsck asked to abort: on
+        a 128 MiB ext4 cut to a 64 MiB partition it printed "The physical size of the device is
+        ... blocks", "... the partition table is likely to be corrupt!" and "Abort? no", and
+        exited 0 (operation proof, 2026-11-11; the app's own rule since then,
+        PartitionFileSystemToolRunner::e2fsckProblem). Any of the three is a failure.
+    #>
+    param([AllowEmptyString()] [string]$Output)
+
+    if ($Output -match '(?im)likely to be corrupt') {
+        return 'e2fsck says the superblock or the partition table is likely corrupt'
+    }
+    if ($Output -match '(?im)physical size of the device') {
+        return 'e2fsck says the file system is larger than its device'
+    }
+    if ($Output -match '(?im)^\s*Abort\? no\b') {
+        return 'e2fsck asked to stop ("Abort?") and went on only because a check answers no'
+    }
+    return ''
+}
+
+function Assert-SakE2fsckPassed {
+    <#
+    .SYNOPSIS
+        Throws when an e2fsck run's output says the file system did not pass (see
+        Get-SakE2fsckOutputProblem); returns the run otherwise. The exit code is the caller's.
+    #>
+    param([Parameter(Mandatory = $true, ValueFromPipeline = $true)] [object]$Run)
+
+    process {
+        $problem = Get-SakE2fsckOutputProblem -Output ([string]$Run.output)
+        if ($problem) { throw "$($Run.name): exit code $($Run.exit_code), but $problem. $($Run.output)" }
+        $Run
+    }
+}
