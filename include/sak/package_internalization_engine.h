@@ -243,13 +243,32 @@ public:
         QString error;          ///< why it failed, when none of the above
     };
 
+    /// @brief Free bytes on the drive holding a folder, or -1 when Windows cannot say.
+    using FreeSpaceProbe = std::function<qint64(const QString& folder)>;
+
+    /// @brief Replace how free space is read (QStorageInfo), so a test can stand a drive of any
+    ///        size in; returns the probe it replaced. An empty probe restores QStorageInfo.
+    static FreeSpaceProbe setFreeSpaceProbeForTesting(FreeSpaceProbe probe);
+
+    /// @brief Why work files cannot go under @p work_root, or empty when they can: the drive
+    ///        holding it needs @p needed_bytes free. Names the folder and both sizes.
+    [[nodiscard]] static QString workSpaceRefusal(const QString& work_root, qint64 needed_bytes);
+
+    /// @brief What a download of @p declared_bytes needs on the drive it is staged on: the staged
+    ///        file, a second copy when its target is on that drive too, and
+    ///        offline::kWorkSpaceMarginBytes.
+    [[nodiscard]] static qint64 downloadWorkBytes(qint64 declared_bytes, bool target_on_same_drive);
+
     /// @brief Download @p url and put it at @p output_path only when its bytes match @p digest.
     ///
     /// Memory stays bounded at any size up to offline::kMaxBinarySizeBytes: the body streams to a
     /// file in the process's temp folder (QDir::tempPath, the per-run folder the app points TEMP
     /// at), and is then copied into place through a QSaveFile while being hashed, so the bytes
     /// that land are exactly the bytes that were checked and nothing is committed on a mismatch.
-    /// Callers decide which URLs are acceptable (isAllowedInstallerUrl) before calling.
+    /// When the server declares the size, the drive the file is staged on must have
+    /// downloadWorkBytes free before the body is taken, or the download stops with
+    /// workSpaceRefusal's message. Callers decide which URLs are acceptable
+    /// (isAllowedInstallerUrl) before calling.
     [[nodiscard]] static VerifiedDownload downloadVerifiedFile(
         const QUrl& url,
         const QString& output_path,

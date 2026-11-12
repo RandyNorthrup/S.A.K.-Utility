@@ -55,6 +55,10 @@ struct NetworkTransferRequest {
     /// transfer's own thread while runNetworkTransfer's caller waits, and max_response_bytes
     /// still caps the total.
     NetworkBodySink body_sink{};
+    /// When set, called once with the response's declared length (Content-Length) as soon as a
+    /// successful (2xx) response's headers arrive, before its body is taken; never when no length
+    /// is declared. A non-empty answer aborts the transfer with that answer as its error.
+    std::function<QString(qint64 declared_bytes)> on_size_declared{};
 };
 
 struct NetworkTransferResult {

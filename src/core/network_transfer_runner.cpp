@@ -232,6 +232,11 @@ public:
         auto* timeout_timer = createTimeoutTimer(reply);
         auto* cancel_timer = createCancelTimer(reply);
         connectProgress(reply);
+        if (m_request.on_size_declared) {
+            QObject::connect(reply, &QNetworkReply::metaDataChanged, this, [this, reply]() {
+                checkDeclaredSize(reply);
+            });
+        }
         QObject::connect(reply, &QNetworkReply::finished, this, [=, this]() {
             finish(reply, timeout_timer, cancel_timer);
         });
@@ -353,6 +358,25 @@ private:
         m_sinks.result->body = std::move(body);
     }
 
+    // Ask the caller, once, whether the declared length fits where the body is going; a refusal
+    // aborts the transfer before its body is taken. A redirect's own headers are not asked about.
+    void checkDeclaredSize(QNetworkReply* reply) {
+        constexpr int kFirstSuccess = 200;
+        constexpr int kPastSuccess = 300;
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QVariant declared = reply->header(QNetworkRequest::ContentLengthHeader);
+        if (m_size_asked || status < kFirstSuccess || status >= kPastSuccess ||
+            !declared.isValid()) {
+            return;
+        }
+        m_size_asked = true;
+        const QString refusal = m_request.on_size_declared(declared.toLongLong());
+        if (!refusal.isEmpty()) {
+            m_sinks.result->error_message = refusal;
+            reply->abort();
+        }
+    }
+
     // Hand what the reply holds to the body sink, a bounded chunk at a time. False once the
     // transfer is aborted: the total passed the cap, or the sink could not take a chunk.
     bool drainToSink(QNetworkReply* reply) {
@@ -397,8 +421,9 @@ private:
     NetworkProgressCallback m_progress;
     NetworkTransferSinks m_sinks;
     QElapsedTimer m_elapsed;
-    QByteArray m_chunk;    // the one buffer a streamed body passes through
-    qint64 m_streamed{0};  // bytes handed to the body sink
+    QByteArray m_chunk;        // the one buffer a streamed body passes through
+    qint64 m_streamed{0};      // bytes handed to the body sink
+    bool m_size_asked{false};  // on_size_declared has been asked
 };
 
 }  // namespace

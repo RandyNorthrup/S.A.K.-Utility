@@ -7,6 +7,7 @@
 #include "sak/package_internalization_engine.h"
 
 #include "sak/file_explorer_archive_service.h"
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 #include "sak/network_transfer_runner.h"
 #include "sak/no_follow_fs.h"
@@ -21,6 +22,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
+#include <QStorageInfo>
 #include <QTemporaryFile>
 #include <QThread>
 #include <QUrl>
@@ -29,7 +31,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <optional>
+#include <utility>
 
 namespace sak {
 
@@ -329,7 +333,67 @@ QString semverMaxVersion(const QStringList& versions) {
     }
     return best;
 }
+
+PackageInternalizationEngine::FreeSpaceProbe& freeSpaceProbe() {
+    static PackageInternalizationEngine::FreeSpaceProbe probe;
+    return probe;
+}
+
+qint64 freeBytesIn(const QString& folder) {
+    if (const auto& probe = freeSpaceProbe(); probe) {
+        return probe(folder);
+    }
+    const QStorageInfo volume(folder);
+    return volume.isValid() && volume.isReady() ? volume.bytesAvailable() : -1;
+}
+
+// A drive Windows cannot name counts as the same one, so the larger need is checked.
+bool onSameDrive(const QString& first_folder, const QString& second_folder) {
+    const QStorageInfo first(first_folder);
+    const QStorageInfo second(second_folder);
+    return !first.isValid() || !second.isValid() ||
+           first.rootPath().compare(second.rootPath(), Qt::CaseInsensitive) == 0;
+}
 }  // namespace
+
+// ============================================================================
+// Work space
+// ============================================================================
+
+PackageInternalizationEngine::FreeSpaceProbe
+PackageInternalizationEngine::setFreeSpaceProbeForTesting(FreeSpaceProbe probe) {
+    return std::exchange(freeSpaceProbe(), std::move(probe));
+}
+
+QString PackageInternalizationEngine::workSpaceRefusal(const QString& work_root,
+                                                       qint64 needed_bytes) {
+    const qint64 available = freeBytesIn(work_root);
+    if (available >= needed_bytes) {
+        return {};
+    }
+    const QString folder = QDir::toNativeSeparators(work_root);
+    if (available < 0) {
+        return QStringLiteral(
+                   "Nothing was started: S.A.K. keeps the work files in its own folder (%1), and "
+                   "could not tell how much free space that drive has.")
+            .arg(folder);
+    }
+    return QStringLiteral(
+               "Not enough free space for the work files: S.A.K. keeps them in its own folder "
+               "(%1), and that drive has %2 free; at least %3 is needed. Free some space on the "
+               "drive S.A.K. runs from, or run it from a larger one.")
+        .arg(folder, formatBytes(available), formatBytes(needed_bytes));
+}
+
+qint64 PackageInternalizationEngine::downloadWorkBytes(qint64 declared_bytes,
+                                                       bool target_on_same_drive) {
+    const qint64 copies = target_on_same_drive ? 2 : 1;
+    const qint64 room = std::numeric_limits<qint64>::max() - offline::kWorkSpaceMarginBytes;
+    if (declared_bytes < 0 || declared_bytes > room / copies) {
+        return std::numeric_limits<qint64>::max();  // a size no drive holds: refused
+    }
+    return declared_bytes * copies + offline::kWorkSpaceMarginBytes;
+}
 
 // ============================================================================
 // Construction / Destruction
@@ -1009,6 +1073,12 @@ PackageInternalizationEngine::VerifiedDownload PackageInternalizationEngine::dow
     NetworkTransferRequest request = makeBinaryDownloadRequest(url);
     request.body_sink = [&staged](const char* data, qint64 size) {
         return staged.write(data, size) == size;
+    };
+    // Once the server says how big the file is, the drive it is staged on must hold it (twice
+    // when the copy into place lands on that drive too) before a byte is taken.
+    const bool same_drive = onSameDrive(staging_dir, QFileInfo(output_path).absolutePath());
+    request.on_size_declared = [staging_dir, same_drive](qint64 declared_bytes) {
+        return workSpaceRefusal(staging_dir, downloadWorkBytes(declared_bytes, same_drive));
     };
     const NetworkTransferResult transfer = runNetworkTransfer(request, cancel, progress);
     outcome.http_status = transfer.http_status;

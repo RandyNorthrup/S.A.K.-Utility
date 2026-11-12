@@ -30,7 +30,6 @@
 #include <QSaveFile>
 #include <QScopeGuard>
 #include <QSet>
-#include <QStorageInfo>
 #include <QtConcurrent>
 #include <QTextStream>
 #include <QUrl>
@@ -300,26 +299,6 @@ QString OfflineDeploymentWorker::newWorkDirPath(const QString& purpose) {
     // outside the app's folder (owner ruling 2026-11-11).
     return QDir(QDir::tempPath())
         .filePath(purpose + QLatin1Char('-') + QUuid::createUuid().toString(QUuid::Id128));
-}
-
-QString OfflineDeploymentWorker::workSpaceRefusal(const QString& work_root, qint64 needed_bytes) {
-    const QStorageInfo volume(work_root);
-    const qint64 available = volume.isValid() && volume.isReady() ? volume.bytesAvailable() : -1;
-    if (available >= needed_bytes) {
-        return {};
-    }
-    const QString folder = QDir::toNativeSeparators(work_root);
-    if (available < 0) {
-        return QStringLiteral(
-                   "Nothing was started: S.A.K. keeps the work files in its own folder (%1), and "
-                   "could not tell how much free space that drive has.")
-            .arg(folder);
-    }
-    return QStringLiteral(
-               "Not enough free space for the work files: S.A.K. keeps them in its own folder "
-               "(%1), and that drive has %2 free; at least %3 is needed. Free some space on the "
-               "drive S.A.K. runs from, or run it from a larger one.")
-        .arg(folder, formatBytes(available), formatBytes(needed_bytes));
 }
 
 std::expected<void, QString> OfflineDeploymentWorker::placeVerifiedCopy(
@@ -1493,7 +1472,8 @@ void OfflineDeploymentWorker::finishDirectDownload(int total, int completed, int
 }
 
 bool OfflineDeploymentWorker::workCanStartIn(const QString& work_dir, bool owned_folder) {
-    QString refusal = workSpaceRefusal(QFileInfo(work_dir).absolutePath(), m_min_work_free_bytes);
+    QString refusal = PackageInternalizationEngine::workSpaceRefusal(
+        QFileInfo(work_dir).absolutePath(), m_min_work_free_bytes);
     if (refusal.isEmpty() && (!owned_folder || prepareOwnedWorkDir(work_dir, refusal))) {
         return true;
     }

@@ -221,10 +221,6 @@ public:
     ///        at startup), never the output folder. The folder is not made here.
     [[nodiscard]] static QString newWorkDirPath(const QString& purpose);
 
-    /// @brief Why work files cannot go under @p work_root, or empty when they can: the drive
-    ///        holding it needs @p needed_bytes free. Names the folder and both sizes.
-    [[nodiscard]] static QString workSpaceRefusal(const QString& work_root, qint64 needed_bytes);
-
     /// @brief Copy @p source to @p target (a new file; an existing name, link or not, is
     ///        refused and never followed), then read the copy back: unless its SHA-256 is
     ///        @p expected_sha256 the copy is removed. The work folder and the output can be on
@@ -232,8 +228,11 @@ public:
     [[nodiscard]] static std::expected<void, QString> placeVerifiedCopy(
         const QString& source, const QString& target, const QByteArray& expected_sha256);
 
-    /// @brief The free space a build or a download needs where its work goes
-    ///        (offline::kMinWorkFreeBytes). A test sets more than any drive has.
+    /// @brief The free space a build or a direct download needs where its work goes before it
+    ///        starts, when no installer's size is known yet (offline::kMinWorkFreeBytes); each
+    ///        download whose size is declared is checked for its own room as well
+    ///        (PackageInternalizationEngine::downloadVerifiedFile). A test sets more than any drive
+    ///        has.
     void setMinimumWorkSpaceForTesting(qint64 bytes) { m_min_work_free_bytes = bytes; }
 
     /// @brief Reduce a URL-derived name to a single safe path segment, returning
@@ -349,7 +348,8 @@ private:
     /// @brief End a direct download run and report its counts.
     void finishDirectDownload(int total, int completed, int failed);
 
-    /// @brief Whether work can start in @p work_dir: room on its drive (workSpaceRefusal), and,
+    /// @brief Whether work can start in @p work_dir: room on its drive
+    ///        (PackageInternalizationEngine::workSpaceRefusal), and,
     ///        when @p owned_folder, the folder made and stamped as ours before anything is written
     ///        there. Otherwise the run ends with the refusal as its error.
     [[nodiscard]] bool workCanStartIn(const QString& work_dir, bool owned_folder);

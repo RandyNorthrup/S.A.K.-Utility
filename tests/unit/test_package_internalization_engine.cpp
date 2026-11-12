@@ -6,7 +6,9 @@
 
 #include "sak/app_paths.h"
 #include "sak/file_explorer_archive_service.h"
+#include "sak/format_utils.h"
 #include "sak/network_transfer_runner.h"
+#include "sak/offline_deployment_constants.h"
 #include "sak/package_internalization_engine.h"
 
 #include "../support/junction_fixture.h"
@@ -60,6 +62,7 @@ private Q_SLOTS:
     void cleanNugetArtifacts_neverFollowsAJunction();
     void resetWorkFolder_neverFollowsAJunction();
     void downloadVerifiedFile_stagesInTheRunFolderTheAppSetsAtStartup();
+    void downloadVerifiedFile_needsRoomForItsDeclaredSize();
 };
 
 namespace {
@@ -1028,6 +1031,60 @@ void TestPackageInternalizationEngine::
     QVERIFY2(seen_in_run.load(), "the partial download was not in the app's run folder");
     QCOMPARE(fileSha256(target), sha256);
     QVERIFY(stagedDownloadsIn(run).isEmpty());
+}
+
+// Once the server declares a download's size, the drive it is staged on must hold it, twice when
+// the copy into place lands on that drive too, plus offline::kWorkSpaceMarginBytes; the 1 GiB floor
+// is only for before any size is known. A stand-in for the free space shows the boundary: one byte
+// short is refused before the body is taken, leaving nothing at the target or in the staging
+// folder, and exactly enough downloads.
+void TestPackageInternalizationEngine::downloadVerifiedFile_needsRoomForItsDeclaredSize() {
+    constexpr qint64 kBodyBytes = 4LL * 1024 * 1024;
+    QCOMPARE(PackageInternalizationEngine::downloadWorkBytes(kBodyBytes, true),
+             2 * kBodyBytes + offline::kWorkSpaceMarginBytes);
+    QCOMPARE(PackageInternalizationEngine::downloadWorkBytes(kBodyBytes, false),
+             kBodyBytes + offline::kWorkSpaceMarginBytes);
+    const QByteArray sha256 = sak::test::LoopbackHttpServer::patternSha256(kBodyBytes);
+    const auto digest = PackageInternalizationEngine::installerDigest(
+        QString::fromLatin1(sha256.toHex()), QStringLiteral("sha256"));
+    QVERIFY(digest.has_value());
+    QTemporaryDir out;
+    QTemporaryDir run_temp;
+    QVERIFY(out.isValid() && run_temp.isValid());
+    const ScopedProcessTemp process_temp(run_temp.path());
+    const qint64 needed = PackageInternalizationEngine::downloadWorkBytes(kBodyBytes, true);
+    qint64 free_bytes = needed - 1;
+    QStringList asked;
+    const auto previous = PackageInternalizationEngine::setFreeSpaceProbeForTesting(
+        [&free_bytes, &asked](const QString& folder) {
+            asked.append(folder);
+            return free_bytes;
+        });
+    const auto restore = qScopeGuard(
+        [&previous] { (void)PackageInternalizationEngine::setFreeSpaceProbeForTesting(previous); });
+    const sak::test::LoopbackHttpServer server(kBodyBytes);
+    QVERIFY(server.listening());
+    const QString target = out.filePath(QStringLiteral("setup.exe"));
+
+    const auto refused = PackageInternalizationEngine::downloadVerifiedFile(
+        server.url(QStringLiteral("setup.exe")), target, *digest, {});
+    QVERIFY(!refused.ok);
+    QVERIFY2(refused.error.startsWith(QStringLiteral("Not enough free space for the work files")),
+             qPrintable(refused.error));
+    QVERIFY2(refused.error.contains(sak::formatBytes(needed)), qPrintable(refused.error));
+    QVERIFY(!QFileInfo::exists(target));
+    QVERIFY(stagedDownloadsIn(run_temp.path()).isEmpty());
+    QVERIFY(!asked.isEmpty());
+    QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(asked.first())).toLower(),
+             QDir::cleanPath(run_temp.path()).toLower());
+
+    free_bytes = needed;
+    const sak::test::LoopbackHttpServer second(kBodyBytes);  // a server answers once
+    QVERIFY(second.listening());
+    const auto taken = PackageInternalizationEngine::downloadVerifiedFile(
+        second.url(QStringLiteral("setup.exe")), target, *digest, {});
+    QVERIFY2(taken.ok, qPrintable(taken.error));
+    QCOMPARE(fileSha256(target), sha256);
 }
 
 QTEST_GUILESS_MAIN(TestPackageInternalizationEngine)
