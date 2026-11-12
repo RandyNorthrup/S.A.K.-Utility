@@ -1545,7 +1545,10 @@ function Stop-OpsSyntheticLoad {
     param([object]$Load)
     Set-Content -LiteralPath $Load.stop -Value 'stop'
     if (-not $Load.process.WaitForExit(120000)) { try { $Load.process.Kill() } catch { Write-Host "Could not stop the load: $($_.Exception.Message)" } }
-    $samples = @(Get-Content -LiteralPath $Load.log -ErrorAction SilentlyContinue)
+    # Plain strings: a line from Get-Content carries its PSDrive and PSProvider, which ConvertTo-Json
+    # follows to the depth the evidence is written at (32): Drill E's report ran for 15 minutes
+    # and 7 GB before it was stopped (2026-11-12).
+    $samples = @(if (Test-Path -LiteralPath $Load.log) { [IO.File]::ReadAllLines($Load.log) })
     Remove-Item -LiteralPath $Load.dir -Recurse -Force -ErrorAction SilentlyContinue
     return , $samples
 }
@@ -2001,7 +2004,7 @@ Add-OpsRow 'ops.migrate-image-route' {
         # What stopped it, from Windows' own records, kept before the VM goes back to its snapshot.
         # On b36 DISM stopped with 225, "the file contains a virus or potentially unwanted
         # software", and the log and Defender's list went with the snapshot.
-        $dism = @(Get-Content -LiteralPath "$env:SystemRoot\Logs\DISM\dism.log" -Tail 600 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'Error|Warning|0x8|virus|unwanted|blocked' } | Select-Object -Last 30)
+        $dism = @(Get-Content -LiteralPath "$env:SystemRoot\Logs\DISM\dism.log" -Tail 600 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'Error|Warning|0x8|virus|unwanted|blocked' } | Select-Object -Last 30 | ForEach-Object { "$_" })
         $detections = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Sort-Object InitialDetectionTime -Descending | Select-Object -First 10 | ForEach-Object { "$($_.InitialDetectionTime.ToString('o')) $($_.ThreatID) $($_.ProcessName) $(@($_.Resources) -join ';')" })
         $threats = @(Get-MpThreat -ErrorAction SilentlyContinue | ForEach-Object { "$($_.ThreatID) $($_.ThreatName)" })
         # Defender's own log names the file, the threat and the time (1116 detected, 1117 acted).
