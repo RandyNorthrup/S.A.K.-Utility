@@ -565,6 +565,192 @@ Add-OpsRow 'ops.resize-ext2' { Invoke-OpsExtResize -Kind 'ext2' }
 Add-OpsRow 'ops.resize-ext3' { Invoke-OpsExtResize -Kind 'ext3' }
 Add-OpsRow 'ops.resize-ext4' { Invoke-OpsExtResize -Kind 'ext4' }
 
+function Get-OpsTableEntry {
+    # The raw table's entry at an offset, plus what the snapshot does not parse: on GPT the
+    # attribute bits and the name, read from the entry's own bytes.
+    param([int]$DiskNumber, [uint64]$Offset)
+    $found = Get-OpsRawPartition -DiskNumber $DiskNumber -Offset $Offset
+    if (-not $found.raw) { return $null }
+    $entry = [ordered]@{ type = "$($found.raw.type)"; size_bytes = [uint64]$found.raw.size_bytes; partition_id = ''; attributes = ''; name = '' }
+    if ($found.snapshot.table.style -eq 'GPT') {
+        $bytes = ConvertFrom-RbHex -Hex ([string]$found.snapshot.raw.gpt_entries_hex)
+        $at = ([int]$found.raw.slot - 1) * $Script:RbGptEntryBytes
+        $entry.partition_id = "$($found.raw.partition_id)"
+        $entry.attributes = '0x{0:X16}' -f [BitConverter]::ToUInt64($bytes, $at + 48)
+        $entry.name = [Text.Encoding]::Unicode.GetString($bytes, $at + 56, 72).TrimEnd([char]0)
+    }
+    return [pscustomobject]$entry
+}
+
+function Get-OpsPartitionLetters {
+    # Every drive-letter path Windows has for the partition at an offset.
+    param([int]$DiskNumber, [uint64]$Offset)
+    Update-HostStorageCache
+    $partition = Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | Where-Object { [uint64]$_.Offset -eq $Offset } | Select-Object -First 1
+    if (-not $partition) { return @('(Windows lists no partition there)') }
+    $letters = @()
+    if ($partition.DriveLetter -and [char]::IsLetter([char]$partition.DriveLetter)) { $letters += "$($partition.DriveLetter):\" }
+    $letters += @($partition.AccessPaths | Where-Object { $_ -match '^[A-Za-z]:\\' })
+    return @($letters | Select-Object -Unique)
+}
+
+# The console watcher: a separate process, so a step that blocks the runner does not stop it. Every
+# second until the stop file appears: a screenshot of the whole console, the drive letters Windows
+# shows, and each visible titled top-level window with its process.
+$Script:OpsWatchScript = @'
+param([string]$Dir, [string]$StopFile)
+$ErrorActionPreference = 'Continue'
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+Add-Type -TypeDefinition 'using System; using System.Collections.Generic; using System.Runtime.InteropServices; using System.Text;
+public static class OpsWindows {
+    private delegate bool EnumProc(IntPtr window, IntPtr data);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc proc, IntPtr data);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder text, int most);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+    public static List<string> Visible() {
+        List<string> found = new List<string>();
+        EnumWindows(delegate(IntPtr window, IntPtr data) {
+            if (!IsWindowVisible(window)) { return true; }
+            StringBuilder text = new StringBuilder(256);
+            GetWindowText(window, text, 256);
+            if (text.Length == 0) { return true; }
+            uint process;
+            GetWindowThreadProcessId(window, out process);
+            found.Add(process.ToString() + "|" + text.ToString());
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+}'
+$samples = New-Object System.Collections.Generic.List[object]
+$frame = 0
+while (-not (Test-Path -LiteralPath $StopFile) -and $frame -lt 900) {
+    $started = Get-Date
+    $frame++
+    $shot = ''
+    try {
+        $bounds = [Windows.Forms.SystemInformation]::VirtualScreen
+        $bitmap = New-Object Drawing.Bitmap $bounds.Width, $bounds.Height
+        $graphics = [Drawing.Graphics]::FromImage($bitmap)
+        try {
+            $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bitmap.Size)
+            $shot = 'frame-{0:D3}.png' -f $frame
+            $bitmap.Save((Join-Path $Dir $shot), [Drawing.Imaging.ImageFormat]::Png)
+        } finally { $graphics.Dispose(); $bitmap.Dispose() }
+    } catch { $shot = "error: $($_.Exception.Message)" }
+    $letters = @([IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name })
+    $windows = @([OpsWindows]::Visible() | ForEach-Object {
+        $parts = $_ -split '\|', 2
+        $owner = Get-Process -Id ([int]$parts[0]) -ErrorAction SilentlyContinue
+        "$(if ($owner) { $owner.ProcessName } else { $parts[0] })|$($parts[1])"
+    } | Select-Object -Unique)
+    $samples.Add([ordered]@{ at = $started.ToString('HH:mm:ss.fff'); shot = $shot; letters = $letters; windows = $windows })
+    if ($frame -eq 1) { Set-Content -LiteralPath (Join-Path $Dir 'ready') -Value 'ready' }
+    $rest = 1000 - ((Get-Date) - $started).TotalMilliseconds
+    if ($rest -gt 0) { Start-Sleep -Milliseconds ([int]$rest) }
+}
+[IO.File]::WriteAllText((Join-Path $Dir 'samples.json'), (ConvertTo-Json -InputObject @($samples) -Depth 5))
+'@
+
+function Start-OpsConsoleWatch {
+    # Starts the watcher and waits for its first sample, which is what the rest are compared with.
+    param([string]$Name)
+    $dir = Join-Path $Script:RowDir "watch-$Name"
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $file = Join-Path $dir 'watch.ps1'
+    Set-Content -LiteralPath $file -Value $Script:OpsWatchScript -Encoding ASCII
+    $stop = Join-Path $dir 'stop'
+    $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $process = Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$file`"", '-Dir', "`"$dir`"", '-StopFile', "`"$stop`"") -WindowStyle Hidden -PassThru
+    $deadline = (Get-Date).AddSeconds(60)
+    while (-not (Test-Path -LiteralPath (Join-Path $dir 'ready')) -and -not $process.HasExited -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
+    return [pscustomobject]@{ dir = $dir; stop = $stop; process = $process }
+}
+
+function Stop-OpsConsoleWatch {
+    # What changed on the console while the step ran, against the watcher's first sample.
+    param([object]$Watch)
+    Set-Content -LiteralPath $Watch.stop -Value 'stop'
+    if (-not $Watch.process.WaitForExit(30000)) { try { $Watch.process.Kill() } catch { Write-Host "Could not stop the console watcher: $($_.Exception.Message)" } }
+    $path = Join-Path $Watch.dir 'samples.json'
+    $samples = if (Test-Path -LiteralPath $path) { @(Get-Content -LiteralPath $path -Raw | ConvertFrom-Json) } else { @() }
+    $summary = [ordered]@{ folder = Split-Path -Leaf $Watch.dir; samples = $samples.Count; screenshots = 0; screenshot_errors = @(); first = ''; last = ''; letters_that_appeared = @(); windows_that_appeared = @() }
+    if ($samples.Count -eq 0) { return [pscustomobject]$summary }
+    $first = $samples[0]
+    $summary.screenshots = @($samples | Where-Object { "$($_.shot)" -like 'frame-*' }).Count
+    $summary.screenshot_errors = @($samples | Where-Object { "$($_.shot)" -like 'error:*' } | ForEach-Object { "$($_.shot)" } | Select-Object -Unique)
+    $summary.first = "$($first.at)"
+    $summary.last = "$($samples[-1].at)"
+    $appeared = [System.Collections.Generic.List[string]]::new()
+    foreach ($sample in $samples) {
+        foreach ($letter in @($sample.letters)) { if ($letter -notin @($first.letters) -and -not ($appeared -like "letter $letter *")) { $appeared.Add("letter $letter first seen $($sample.at)") } }
+    }
+    $summary.letters_that_appeared = @($appeared)
+    $windows = [System.Collections.Generic.List[string]]::new()
+    foreach ($sample in $samples) {
+        foreach ($window in @($sample.windows)) { if ($window -notin @($first.windows) -and -not ($windows -like "$([WildcardPattern]::Escape($window)) (first seen *")) { $windows.Add("$window (first seen $($sample.at))") } }
+    }
+    $summary.windows_that_appeared = @($windows)
+    return [pscustomobject]$summary
+}
+
+function Invoke-OpsExtResizeKept {
+    <#
+    .SYNOPSIS
+        ext4 grown and shrunk through the app, reading what a resize must keep: the partition's
+        type, on GPT also its attribute bits, id and name; no drive letter; a file system that
+        fills the new size and checks whole.
+    .DESCRIPTION
+        Windows resizes only a data partition, so a build that gives the partition a Windows type
+        for the resize and puts its own back could let Windows mount it on the way, and Explorer
+        would then offer to format it. Every second of each resize the console is photographed and
+        the drive letters and windows Windows shows are listed (watch-grow, watch-shrink).
+    #>
+    param([ValidateSet('GPT', 'MBR')] [string]$Style)
+    $disk = New-OpsDisk -Name 'disk' -Style $Style
+    $media = Get-OpsMedia -DiskNumber $disk
+    $part = New-OpsRawPartition -DiskNumber $disk -SizeMB 128
+    $select = @{ partition_number = $part.partition_number }
+    $wantedType = if ($Style -eq 'GPT') { '0fc63daf-8483-4772-8e79-3d69d8477de4' } else { '83' }
+    Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = 'ext4'; allocation_unit_bytes = 0; label = 'OPSKEPT'; full_format = $false } | Out-Null
+    $formatted = Get-OpsTableEntry -DiskNumber $disk -Offset $part.offset
+    $checks = @(New-OpsCheck -Name "after format: the table gives it type $wantedType" -Passed ("$($formatted.type)" -eq $wantedType) -Detail $formatted)
+    $letters = @(Get-OpsPartitionLetters -DiskNumber $disk -Offset $part.offset)
+    $checks += New-OpsCheck -Name 'after format: the partition has no drive letter' -Passed ($letters.Count -eq 0) -Detail $letters
+    $read = Test-OpsNonNativePartition -Prefix 'after format:' -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem 'ext4' -Label 'OPSKEPT' -Name 'format'
+    $checks += $read.checks
+    $images = @($read.image)
+    $watched = [ordered]@{}
+    foreach ($resize in @(@{ name = 'grow'; mib = 256 }, @{ name = 'shrink'; mib = 160 })) {
+        $name = $resize.name
+        $watch = Start-OpsConsoleWatch -Name $name
+        try {
+            Invoke-OpsStep -Disk $disk -Step $name -Operation 'Resize' -Select $select -Choices @{ target_size_mib = $resize.mib; administrator_scan = $true } -ReadBackOnFailure | Out-Null
+        } finally { $seen = Stop-OpsConsoleWatch -Watch $watch }
+        $watched[$name] = $seen
+        $checks += New-OpsCheck -Name "${name}: the console was photographed every second of it" -Passed ($seen.screenshots -ge 2 -and @($seen.screenshot_errors).Count -eq 0) -Detail $seen
+        $checks += New-OpsCheck -Name "${name}: no drive letter appeared while it ran" -Passed (@($seen.letters_that_appeared).Count -eq 0) -Detail @($seen.letters_that_appeared)
+        $checks += New-OpsCheck -Name "${name}: no Explorer window or prompt opened while it ran" -Passed (@($seen.windows_that_appeared | Where-Object { $_ -like 'explorer|*' }).Count -eq 0) -Detail @($seen.windows_that_appeared)
+        $checks += Test-OpsExtent -Name "${name}: the raw table holds it at $($resize.mib) MiB" -DiskNumber $disk -Offset $part.offset -SizeBytes ([uint64]$resize.mib * $Script:OpsMiB)
+        $entry = Get-OpsTableEntry -DiskNumber $disk -Offset $part.offset
+        $checks += New-OpsCheck -Name "${name}: the type is still $wantedType" -Passed ("$($entry.type)" -eq $wantedType) -Detail $entry
+        if ($Style -eq 'GPT') {
+            $kept = ($null -ne $entry -and $entry.attributes -eq $formatted.attributes -and $entry.partition_id -eq $formatted.partition_id -and $entry.name -ceq $formatted.name)
+            $checks += New-OpsCheck -Name "${name}: the attribute bits, id and name are as Format left them" -Passed $kept -Detail "$($formatted.attributes) $($formatted.partition_id) '$($formatted.name)' / $($entry.attributes) $($entry.partition_id) '$($entry.name)'"
+        }
+        $letters = @(Get-OpsPartitionLetters -DiskNumber $disk -Offset $part.offset)
+        $checks += New-OpsCheck -Name "${name}: the partition has no drive letter" -Passed ($letters.Count -eq 0) -Detail $letters
+        $read = Test-OpsNonNativePartition -Prefix "after ${name}:" -DiskNumber $disk -PartitionNumber $part.partition_number -FileSystem 'ext4' -Label 'OPSKEPT' -Name $name
+        $checks += $read.checks
+        $images += $read.image
+    }
+    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ images = @($images | Where-Object { $_ }); formatted_entry = $formatted; console = $watched })
+}
+
+Add-OpsRow 'ops.resize-ext4-gpt-kept' { Invoke-OpsExtResizeKept -Style 'GPT' }
+Add-OpsRow 'ops.resize-ext4-mbr-watched' { Invoke-OpsExtResizeKept -Style 'MBR' }
+
 Add-OpsRow 'ops.resize-unknown-fs-below-fs' {
     # F7 (coordinator, 2026-11-11): a partition whose file system the app has not identified must
     # never be resized, least of all shrunk. The step starts from the standard scan, which cannot
