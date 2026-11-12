@@ -585,6 +585,27 @@ Add-OpsRow 'ops.repair-hfsplus' { Invoke-OpsRepairNonNative -FileSystem 'HFS+' }
 Add-OpsRow 'ops.repair-hfsx' { Invoke-OpsRepairNonNative -FileSystem 'HFSX' }
 Add-OpsRow 'ops.repair-apfs' { Invoke-OpsRepairNonNative -FileSystem 'APFS' }
 
+Add-OpsRow 'ops.check-ext4-larger-than-partition' {
+    # F11 (coordinator, 2026-11-11): e2fsck -n exits 0 on an ext file system longer than its
+    # partition and says so only in words. The app's read-only check must not call that healthy,
+    # and must not write. The fixture is what F7 left on b28: a 128 MiB ext4 written by the app,
+    # its partition cut to 64 MiB, here with Windows' own Resize-Partition.
+    $disk = New-OpsDisk -Name 'disk'
+    $media = Get-OpsMedia -DiskNumber $disk
+    $part = New-OpsRawPartition -DiskNumber $disk -SizeMB 128
+    $select = @{ partition_number = $part.partition_number }
+    Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Select $select -Choices @{ file_system = 'ext4'; allocation_unit_bytes = 0; label = 'OPSCUT'; full_format = $false } | Out-Null
+    Resize-Partition -DiskNumber $disk -PartitionNumber $part.partition_number -Size (64 * $Script:OpsMiB)
+    $before = Copy-OpsPartitionImage -DiskNumber $disk -PartitionNumber $part.partition_number -Name 'before'
+    $check = Invoke-OpsStep -Disk $disk -Step 'check' -Operation 'CheckNonNativeFileSystem' -Select $select -Choices @{ administrator_scan = $true } -Expect 'failed' -RefusalContains 'physical size of the device' -ReadBackOnFailure
+    $said = if ($null -ne $check) { $check.file_system_check } else { $null }
+    $checks = @(New-OpsCheck -Name 'the read-only check did not call it healthy' -Passed ($null -ne $said -and -not [bool]$said.success) -Detail $said)
+    $after = Copy-OpsPartitionImage -DiskNumber $disk -PartitionNumber $part.partition_number -Name 'after'
+    $checks += New-OpsCheck -Name 'the read-only check wrote nothing' -Passed ($before.sha256 -eq $after.sha256) -Detail "$($before.sha256) / $($after.sha256)"
+    Remove-Item -LiteralPath $before.path, $after.path -Force -ErrorAction SilentlyContinue
+    return Complete-OpsRow -Media $media -Checks $checks
+}
+
 Add-OpsRow 'ops.scan-file-systems' {
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk

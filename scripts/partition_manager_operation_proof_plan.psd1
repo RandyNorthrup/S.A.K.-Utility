@@ -60,6 +60,7 @@
         @{ Id = 'ops.repair-hfsplus'; Machine = 'testpc2'; Operation = 'Check File System, read-only and repair'; Variant = 'HFS+'; Reads = 'volume header; bundled fsck_hfs -n -f on a copy' }
         @{ Id = 'ops.repair-hfsx'; Machine = 'testpc2'; Operation = 'Check File System, read-only and repair'; Variant = 'HFSX'; Reads = 'volume header; bundled fsck_hfs -n -f on a copy' }
         @{ Id = 'ops.repair-apfs'; Machine = 'testpc2'; Operation = 'Check File System, read-only and repair'; Variant = 'APFS (queued as the panel queues it; the panel gate itself is not pressed)'; Reads = 'NXSB; probe certifier; host apfsck' }
+        @{ Id = 'ops.check-ext4-larger-than-partition'; Machine = 'testpc2'; Operation = 'Check File System, read-only'; Variant = 'ext4 longer than its partition: must not be called healthy (F11)'; Reads = 'the check step''s own tool result; image hash before and after' }
         @{ Id = 'ops.scan-file-systems'; Machine = 'testpc2'; Operation = 'Scan File Systems'; Variant = 'NTFS and FAT32 on one disk'; Reads = 'raw table unchanged; file manifests unchanged' }
         @{ Id = 'ops.set-letter-and-label'; Machine = 'testpc2'; Operation = 'Set Drive Letter; Set Label'; Variant = 'NTFS'; Reads = 'Get-Partition letter; Get-Volume label; file manifest; chkdsk /scan' }
         @{ Id = 'ops.hide-unhide-gpt'; Machine = 'testpc2'; Operation = 'Hide/Unhide'; Variant = 'GPT'; Reads = 'raw GPT entry attributes; Get-Partition' }
