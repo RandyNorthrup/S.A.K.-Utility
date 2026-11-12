@@ -1346,7 +1346,7 @@ Add-OpsRow 'ops.repair-boot-running-uefi' {
     & mountvol.exe "${esp}:" /d 2>&1 | Out-Null
     $checks = @(New-OpsCheck -Name 'the break removed both boot files' -Passed (@($broken | Where-Object { $_.present }).Count -eq 0) -Detail $broken)
     $checks += New-OpsCheck -Name 'the repair put both back, signed by Microsoft and valid' -Passed (@($after | Where-Object { $_.present -and $_.status -eq 'Valid' -and $_.signed_by -match 'Microsoft' }).Count -eq 2) -Detail $after
-    $checks += New-OpsCheck -Name 'the boot manager entry points at bootmgfw.efi' -Passed ($bcd -match '(?i)\EFI\Microsoft\Boot\bootmgfw\.efi') -Detail ($bcd.Trim() -split "`r?`n" | Select-Object -First 8)
+    $checks += New-OpsCheck -Name 'the boot manager entry points at bootmgfw.efi' -Passed ($bcd -match '(?i)\\EFI\\Microsoft\\Boot\\bootmgfw\.efi') -Detail ($bcd.Trim() -split "`r?`n" | Select-Object -First 8)
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ files_before = $before })
 }
 
