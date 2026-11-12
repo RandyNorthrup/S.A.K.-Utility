@@ -705,7 +705,12 @@ Add-OpsRow 'ops.scan-file-systems' {
     $step = Invoke-OpsStep -Disk $disk -Step 'scan' -Operation 'ScanFileSystems'
     $tableAfter = Get-CertSnapshot -DiskNumber $disk
     $said = (@($step.execution.steps) | ForEach-Object { "$($_.stdout)" }) -join ' '
-    $checks = @(New-OpsCheck -Name 'the scan reported a result' -Passed ([bool]$said.Trim()) -Detail ($said.Substring(0, [Math]::Min(400, $said.Length))))
+    $complained = (@($step.execution.steps) | ForEach-Object { "$($_.stderr)" }) -join ' '
+    # Both volumes must have been checked: the NTFS one by Repair-Volume, and the FAT32 one, which
+    # Repair-Volume refuses (F16), by whatever the app uses for FAT. Text alone proved nothing.
+    $verdicts = ([regex]::Matches($said, 'NoErrorsFound|found no problems')).Count
+    $checks = @(New-OpsCheck -Name 'the scan said each of the two volumes is clean' -Passed ($verdicts -ge 2) -Detail "$verdicts verdicts: $($said.Substring(0, [Math]::Min(300, $said.Length)))")
+    $checks += New-OpsCheck -Name 'the scan wrote nothing to stderr' -Passed (-not $complained.Trim()) -Detail ($complained.Substring(0, [Math]::Min(300, $complained.Length)))
     $checks += New-OpsCheck -Name 'the partition table did not change' -Passed ("$($tableBefore.raw.gpt_entries_hex)" -eq "$($tableAfter.raw.gpt_entries_hex)") -Detail ''
     $checks += Test-OpsFilesSame -Name 'NTFS files unchanged' -Before $filesOne -After (Get-RbFileManifest -Root "$($one.letter):\fixture")
     $checks += Test-OpsFilesSame -Name 'FAT32 files unchanged' -Before $filesTwo -After (Get-RbFileManifest -Root "$($two.letter):\fixture")
