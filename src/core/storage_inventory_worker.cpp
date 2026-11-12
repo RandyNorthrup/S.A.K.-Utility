@@ -28,9 +28,27 @@
 #include <optional>
 #include <thread>
 
+#include <windows.h>
+
 namespace sak {
 
 namespace {
+
+// Windows' own name for its edition ("Professional", "Enterprise", "ServerStandard", ...), which
+// decides whether it formats ReFS. Empty when it cannot be read: then ReFS is not offered.
+QString windowsEditionId() {
+    constexpr DWORD kEditionIdChars = 128;
+    wchar_t value[kEditionIdChars] = {};
+    DWORD bytes = sizeof(value);
+    const LSTATUS status = RegGetValueW(HKEY_LOCAL_MACHINE,
+                                        L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+                                        L"EditionID",
+                                        RRF_RT_REG_SZ,
+                                        nullptr,
+                                        value,
+                                        &bytes);
+    return status == ERROR_SUCCESS ? QString::fromWCharArray(value) : QString();
+}
 
 constexpr auto kHelperScanCancelPoll = std::chrono::milliseconds(200);
 constexpr int kMsPerSecond = 1000;
@@ -1035,6 +1053,8 @@ StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResul
     }
 
     auto inventory = parseInventory(result.std_out.toUtf8(), level, VolumeStateWarnings::Later);
+    inventory.refs_format_available =
+        PartitionFileSystemRegistry::editionFormatsRefs(windowsEditionId());
     applyRawFileSystemDetection(
         &inventory, allow_elevation, should_cancel, level == ReadLevel::WhatAStandardUserCanRead);
     appendVolumeStateWarnings(&inventory);

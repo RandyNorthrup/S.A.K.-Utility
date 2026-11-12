@@ -820,6 +820,38 @@ void validateCreateUnallocatedPayload(const PartitionOperation& operation,
                  QStringLiteral("Create partition type is incompatible with the file system"));
 }
 
+// A Windows format a queued operation asks for (Create, Format, Change Cluster Size), against
+// what Format-Volume does (PartitionFileSystemRegistry::windowsFormatBlocker): it writes the
+// start of the volume before it refuses a FAT32 cluster size, and drops a label it cannot use.
+void validateWindowsFormatChoice(const PartitionInventory& inventory,
+                                 const PartitionDiskInfo& disk,
+                                 const PartitionOperation& operation,
+                                 PartitionValidationResult* result) {
+    const bool create = operation.type == PartitionOperationType::Create;
+    if ((!create && operation.type != PartitionOperationType::Format &&
+         operation.type != PartitionOperationType::ChangeClusterSize) ||
+        isNonNativeFileSystemToolOperation(operation)) {
+        return;
+    }
+    uint64_t partition_bytes = payloadUInt64(operation, QStringLiteral("size_bytes"));
+    if (!create) {
+        const auto* partition =
+            PartitionSafetyValidator::findPartition(disk, operation.target.partition_number);
+        partition_bytes = partition == nullptr ? 0 : partition->size_bytes;
+    }
+    if (partition_bytes == 0) {
+        return;  // the operation's own checks say what is missing
+    }
+    const QString blocker = PartitionFileSystemRegistry::windowsFormatBlocker(
+        {.file_system = operation.payload.value(QStringLiteral("file_system"))
+                            .toString(QStringLiteral("NTFS")),
+         .partition_bytes = partition_bytes,
+         .allocation_unit_bytes = payloadUInt64(operation, QStringLiteral("allocation_unit_bytes")),
+         .label = operation.payload.value(QStringLiteral("label")).toString(QStringLiteral("Data")),
+         .refs_available = inventory.refs_format_available});
+    addBlockerIf(result, !blocker.isEmpty(), blocker);
+}
+
 bool resizeTargetMissing(const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::Resize &&
            payloadUInt64(operation, QStringLiteral("target_size_bytes")) == 0;
@@ -2247,6 +2279,7 @@ PartitionValidationResult PartitionSafetyValidator::validate(const PartitionInve
         result.blockers.append(QStringLiteral("Unknown partition target kind"));
         break;
     }
+    validateWindowsFormatChoice(inventory, *disk, operation, &result);
 
     return result;
 }

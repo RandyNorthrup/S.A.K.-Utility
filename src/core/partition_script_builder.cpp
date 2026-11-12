@@ -1999,6 +1999,81 @@ QString takeSelectedPartitionScript(bool clearFileSystem) {
                 : QStringLiteral("[Sak.RawPartitionWrite]::Release($sakTakenPartition)\n"));
 }
 
+// What Format-Volume would refuse (PartitionFileSystemRegistry::windowsFormatBlocker), found
+// before the script is made: the file system, the cluster size for the partition's size, and
+// the label. The edition (ReFS) is the script's to check, on the PC that runs it.
+QString windowsFormatChoiceBlocker(const QString& fileSystem,
+                                   uint64_t partitionBytes,
+                                   uint64_t allocationUnit,
+                                   const QString& label) {
+    return PartitionFileSystemRegistry::windowsFormatBlocker(
+        {.file_system = fileSystem,
+         .partition_bytes = partitionBytes,
+         .allocation_unit_bytes = allocationUnit,
+         .label = label,
+         .refs_available = true});
+}
+
+// The script's own check, just before it writes: the same rules on the partition as it is then,
+// with this PC's edition and the disk's physical sector size.
+QString windowsFormatCheckScript(const QString& disk,
+                                 const QString& sizeExpression,
+                                 const QString& fileSystem,
+                                 uint64_t allocationUnit) {
+    return PartitionFileSystemRegistry::windowsFormatCheckFunctionScript() +
+           QStringLiteral("Assert-SakWindowsFormatChoice %1 %2 %3 %4\n")
+               .arg(disk,
+                    sizeExpression,
+                    PartitionScriptBuilder::quotePowerShell(fileSystem.trimmed()),
+                    uintArg(allocationUnit));
+}
+
+// Create is all or nothing: when Windows cannot format the partition it has just made, the
+// partition is removed again and the disk is as it was. A failed ReFS or FAT32 format left a RAW,
+// lettered partition behind (operation proof, 2026-11-11).
+QString createdPartitionFormatScript(const PartitionOperation& operation, const QString& format) {
+    return QStringLiteral(
+               "try {\n"
+               "%1"
+               "} catch {\n"
+               "  $sakFormatError = $_.Exception.Message\n"
+               "  $sakUndo = 'The new partition was removed, so the disk is as it was.'\n"
+               "  try {\n"
+               "Remove-Partition -DiskNumber %2 -PartitionNumber $p.PartitionNumber "
+               "-Confirm:$false -ErrorAction Stop\n"
+               "  } catch {\n"
+               "    $sakUndo = ('The new partition could not be removed ({0}): delete Disk %2 "
+               "Partition {1} before you use the disk.' -f $_.Exception.Message, "
+               "$p.PartitionNumber)\n"
+               "  }\n"
+               "  throw ('Windows could not format the new partition: {0} {1}' -f $sakFormatError, "
+               "$sakUndo)\n"
+               "}\n")
+        .arg(format, uintArg(operation.target.disk_number.value()));
+}
+
+// Format-Volume can write the start of a volume and then refuse (a FAT32 cluster size, measured
+// on testpc1, 2026-11-11), and the old file system is then gone: the message says it may be. The
+// partition is taken before the format (Sak.RawPartitionWrite: refused while anything has it
+// open, and Windows lets go of the old file system), and let go of again after a failure, so a
+// half-written volume is not left mounted.
+QString windowsFormatOrReportScript(const QString& format) {
+    return QStringLiteral(
+               "try {\n"
+               "%1"
+               "} catch {\n"
+               "  $sakFormatError = $_.Exception.Message\n"
+               "  $sakLetGo = ''\n"
+               "  try { [Sak.RawPartitionWrite]::Release($sakTakenPartition) } catch { $sakLetGo = "
+               "' Windows would not let go of the partition afterwards either: ' + "
+               "$_.Exception.Message }\n"
+               "  throw ('Windows could not format the partition: {0} Format-Volume can write the "
+               "start of the partition before it refuses, so the old file system may already be "
+               "gone.{1}' -f $sakFormatError, $sakLetGo)\n"
+               "}\n")
+        .arg(format);
+}
+
 QString diskPartLabel(QString label) {
     // A diskpart label is a single-line command token. Strip every control
     // character (< 0x20 and DEL) as well as the wrapping double-quote: an
@@ -5109,6 +5184,14 @@ PartitionScript PartitionScriptBuilder::buildCreateScript(
         return buildCreateNonNativeFormatScript(operation, spec);
     }
 
+    // What Format-Volume would refuse is refused here, before anything is created (the edition
+    // and the disk's sector size are checked by the script).
+    if (const QString formatBlocker = windowsFormatChoiceBlocker(
+            spec.file_system, spec.size, spec.allocation_unit, spec.label);
+        !formatBlocker.isEmpty()) {
+        return invalidScript(formatBlocker);
+    }
+
     const QString driveArg = isValidDriveLetter(spec.drive_letter)
                                  ? QStringLiteral("-DriveLetter %1").arg(spec.drive_letter)
                                  : QStringLiteral("-AssignDriveLetter");
@@ -5126,17 +5209,24 @@ PartitionScript PartitionScriptBuilder::buildCreateScript(
                  allocationUnitArg(operation));
     // A full format is a storage job Windows finishes even if this script is killed; a quick one
     // ends at once.
-    out.script = commonHeader(out.preview) +
-                 (spec.full_format_arg.isEmpty()
-                      ? QString()
-                      : fullFormatAllowedScript(operation.target.disk_number.value(),
-                                                QStringLiteral("This new partition"))) +
-                 newPartitionCommandScript(operation, spec, QStringLiteral(" ") + driveArg) +
-                 (spec.full_format_arg.isEmpty()
-                      ? format + QLatin1Char('\n')
-                      : windowsContinuedLine(
-                            WindowsContinuedWork::FullFormat, QStringLiteral("$p.Size"), format)) +
-                 QStringLiteral("$p | ConvertTo-Json -Compress\n");
+    out.script =
+        commonHeader(out.preview) +
+        windowsFormatCheckScript(uintArg(operation.target.disk_number.value()),
+                                 uintArg(spec.size),
+                                 spec.file_system,
+                                 spec.allocation_unit) +
+        (spec.full_format_arg.isEmpty()
+             ? QString()
+             : fullFormatAllowedScript(operation.target.disk_number.value(),
+                                       QStringLiteral("This new partition"))) +
+        newPartitionCommandScript(operation, spec, QStringLiteral(" ") + driveArg) +
+        createdPartitionFormatScript(operation,
+                                     spec.full_format_arg.isEmpty()
+                                         ? format + QLatin1Char('\n')
+                                         : windowsContinuedLine(WindowsContinuedWork::FullFormat,
+                                                                QStringLiteral("$p.Size"),
+                                                                format)) +
+        QStringLiteral("$p | ConvertTo-Json -Compress\n");
     return out;
 }
 
@@ -5175,6 +5265,13 @@ PartitionScript buildWindowsFormatScript(const PartitionOperation& operation,
     if (!isSupportedAllocationUnitSize(allocationUnit)) {
         return invalidPartitionScript(QStringLiteral("Unsupported allocation unit size"));
     }
+    // What Format-Volume would refuse is refused before the script exists: it writes the start of
+    // the volume before it refuses a FAT32 cluster size (testpc1, 2026-11-11).
+    if (const QString blocker =
+            windowsFormatChoiceBlocker(fs, operation.target.size_bytes, allocationUnit, label);
+        !blocker.isEmpty()) {
+        return invalidPartitionScript(blocker);
+    }
 
     PartitionScript out;
     out.preview = QStringLiteral("Format Disk %1 Partition %2 as %3")
@@ -5189,23 +5286,29 @@ PartitionScript buildWindowsFormatScript(const PartitionOperation& operation,
                  fullArg,
                  allocationUnitArg(operation));
     // A full format is a storage job Windows finishes even if this script is killed; a quick one
-    // ends at once. A partition S.A.K. gave a Linux or Apple type (or a Linux or Mac disk brought
-    // in) has no Windows volume until its type is a Windows data partition again.
+    // ends at once.
+    const QString formatLine = fullArg.isEmpty()
+                                   ? format + QLatin1Char('\n')
+                                   : windowsContinuedLine(WindowsContinuedWork::FullFormat,
+                                                          uintArg(operation.target.size_bytes),
+                                                          format);
+    // A partition S.A.K. gave a Linux or Apple type (or a Linux or Mac disk brought in) has no
+    // Windows volume until its type is a Windows data partition again. Then the choices are
+    // checked on the partition as it is, and the partition is taken before Format-Volume.
     const QString disk = uintArg(operation.target.disk_number.value());
     const QString number = uintArg(operation.target.partition_number.value());
-    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 PartitionScriptBuilder::windowsDataPartitionTypeScript(fs, disk, number) +
-                 QStringLiteral(
-                     "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 "
-                     "-ErrorAction Stop\n")
-                     .arg(disk, number) +
-                 (fullArg.isEmpty() ? QString()
-                                    : fullFormatAllowedScript(operation.target.disk_number.value(),
-                                                              QStringLiteral("This format"))) +
-                 (fullArg.isEmpty() ? format + QLatin1Char('\n')
-                                    : windowsContinuedLine(WindowsContinuedWork::FullFormat,
-                                                           uintArg(operation.target.size_bytes),
-                                                           format));
+    out.script =
+        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+        PartitionScriptBuilder::windowsDataPartitionTypeScript(fs, disk, number) +
+        QStringLiteral(
+            "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 "
+            "-ErrorAction Stop\n")
+            .arg(disk, number) +
+        windowsFormatCheckScript(disk, QStringLiteral("([uint64]$p.Size)"), fs, allocationUnit) +
+        (fullArg.isEmpty() ? QString()
+                           : fullFormatAllowedScript(operation.target.disk_number.value(),
+                                                     QStringLiteral("This format"))) +
+        takeSelectedPartitionScript(false) + windowsFormatOrReportScript(formatLine);
     out.timeout_seconds = fullArg.isEmpty() ? kPartitionFormatTaskTimeoutSeconds
                                             : kPartitionLongTaskTimeoutSeconds;
     return out;

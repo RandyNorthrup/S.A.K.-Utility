@@ -1603,6 +1603,9 @@ private Q_SLOTS:
     void generatedScripts_resizeChecksTheFileSystemFirst();
     void scriptBuilder_nonWindowsFormatTakesItsPartitionType();
     void scriptBuilder_windowsFormatRestoresAWindowsDataType();
+    void generatedScripts_formatChoiceCheckAgreesWithTheQueue();
+    void generatedScripts_createIsAllOrNothing();
+    void generatedScripts_windowsFormatTakesThePartitionFirst();
     void strongIndex_valueSemanticsRoundTrip();                       // R5-G14-19
     void strongIndex_findersResolveByTypedIndexAndFailClosed();       // R5-G14-19
     void fileSystemDetector_detectsRawSignatures();
@@ -1806,6 +1809,7 @@ private Q_SLOTS:
     void apfsWriter_crashDuringReplaceKeepsTheOldFile();  // M-A4-6
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemRegistry_requiresOnlyToolsThatShip();
+    void fileSystemRegistry_knowsWhatWindowsFormats();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
     void fileSystemToolRunner_buildsReadOnlyCheckCommands();
@@ -1938,6 +1942,7 @@ private Q_SLOTS:
     void safetyValidator_blocksResizeStartMovePayload();
     void safetyValidator_blocksResizeDonorPayload();
     void safetyValidator_resizesOnlyAnIdentifiedFileSystem();
+    void safetyValidator_refusesWhatFormatVolumeWouldRefuse();
     void safetyValidator_blocksOversizedCreate();
     void safetyValidator_blocksInvalidCreateTypePayload();
     void safetyValidator_blocksCreateOffsetOutsideSelectedRegion();
@@ -4718,6 +4723,376 @@ void PartitionManagerCoreTests::scriptBuilder_windowsFormatRestoresAWindowsDataT
         QVERIFY2(script.script.contains(QStringLiteral("-MbrType %1 ").arg(mbr)),
                  qPrintable(file_system + QStringLiteral(": ") + script.script));
     }
+}
+
+namespace {
+
+constexpr uint64_t kMiBytes = 1024ULL * 1024ULL;
+
+/// What Format-Volume did on Windows 11 Pro 25H2 (testpc1, 2026-11-11, one VHDX): FAT32 sizes
+/// and cluster sizes it refused (true) or formatted (false). 0 is Windows' own default.
+struct MeasuredFat32Format {
+    uint64_t partition_bytes;
+    uint64_t cluster_bytes;
+    bool refused;
+};
+const QVector<MeasuredFat32Format>& measuredFat32Formats() {
+    static const QVector<MeasuredFat32Format> kMeasured = {{256 * kMiBytes, 4096, true},
+                                                           {257 * kMiBytes, 4096, true},
+                                                           {33 * kMiBytes, 512, true},
+                                                           {32 * kMiBytes, 512, true},
+                                                           {32 * kMiBytes, 0, true},
+                                                           {2049 * kMiBytes, 32'768, true},
+                                                           {2049 * kMiBytes, 65'536, true},
+                                                           {256 * kMiBytes, 2048, false},
+                                                           {256 * kMiBytes, 512, false},
+                                                           {256 * kMiBytes, 0, false},
+                                                           {2049 * kMiBytes, 4096, false},
+                                                           {40 * kMiBytes, 0, false},
+                                                           {65 * kMiBytes, 0, false},
+                                                           {129 * kMiBytes, 0, false},
+                                                           {257 * kMiBytes, 0, false},
+                                                           {300 * kMiBytes, 0, false},
+                                                           {40ULL * 1024ULL * kMiBytes, 0, false}};
+    return kMeasured;
+}
+
+QString formatBlocker(const QString& file_system,
+                      uint64_t partition_bytes,
+                      uint64_t cluster_bytes,
+                      const QString& label = QStringLiteral("PROBE"),
+                      bool refs = true) {
+    return PartitionFileSystemRegistry::windowsFormatBlocker(
+        {.file_system = file_system,
+         .partition_bytes = partition_bytes,
+         .allocation_unit_bytes = cluster_bytes,
+         .label = label,
+         .refs_available = refs});
+}
+
+}  // namespace
+
+// F3/F5 (operation proof and testpc1, 2026-11-11): Format-Volume writes the start of a volume
+// before it refuses a FAT32 cluster size, and drops a label it cannot use. What it refuses is
+// known before anything is queued, and agrees with every format measured.
+void PartitionManagerCoreTests::fileSystemRegistry_knowsWhatWindowsFormats() {
+    for (const auto& measured : measuredFat32Formats()) {
+        const QString blocker = formatBlocker(QStringLiteral("FAT32"),
+                                              measured.partition_bytes,
+                                              measured.cluster_bytes);
+        QVERIFY2(blocker.isEmpty() != measured.refused,
+                 qPrintable(QStringLiteral("%1 bytes, %2-byte clusters: %3")
+                                .arg(measured.partition_bytes)
+                                .arg(measured.cluster_bytes)
+                                .arg(blocker)));
+    }
+    QVERIFY(formatBlocker(QStringLiteral("FAT32"), 256 * kMiBytes, 4096)
+                .contains(QStringLiteral("with 4096-byte clusters")));
+    QVERIFY(formatBlocker(QStringLiteral("FAT32"), 32 * kMiBytes, 0)
+                .contains(QStringLiteral("too small for FAT32")));
+    QVERIFY(formatBlocker(QStringLiteral("exFAT"), 40ULL * 1024ULL * kMiBytes, 512).isEmpty());
+    QVERIFY(formatBlocker(QStringLiteral("exFAT"), 4ULL * 1024ULL * 1024ULL * kMiBytes, 512)
+                .contains(QStringLiteral("more clusters than exFAT can hold")));
+    QVERIFY(formatBlocker(QStringLiteral("NTFS"), 17ULL * 1024ULL * 1024ULL * kMiBytes, 4096)
+                .contains(QStringLiteral("more clusters than NTFS can hold")));
+
+    // ReFS: only where this edition formats it, and only with 4 or 64 KB clusters.
+    QVERIFY(formatBlocker(QStringLiteral("ReFS"), 256 * kMiBytes, 0, QStringLiteral("R"), false)
+                .contains(QStringLiteral("cannot format ReFS")));
+    QVERIFY(formatBlocker(QStringLiteral("ReFS"), 256 * kMiBytes, 65'536).isEmpty());
+    QVERIFY(formatBlocker(QStringLiteral("ReFS"), 256 * kMiBytes, 8192)
+                .contains(QStringLiteral("4 KB or 64 KB")));
+    QVERIFY(!PartitionFileSystemRegistry::editionFormatsRefs(QStringLiteral("Professional")));
+    QVERIFY(!PartitionFileSystemRegistry::editionFormatsRefs(QStringLiteral("Core")));
+    QVERIFY(!PartitionFileSystemRegistry::editionFormatsRefs(QStringLiteral("Education")));
+    QVERIFY(!PartitionFileSystemRegistry::editionFormatsRefs(QString()));
+    for (const QString& edition : {QStringLiteral("Enterprise"),
+                                   QStringLiteral("EnterpriseS"),
+                                   QStringLiteral("ProfessionalWorkstation"),
+                                   QStringLiteral("IoTEnterprise"),
+                                   QStringLiteral("ServerStandard")}) {
+        QVERIFY2(PartitionFileSystemRegistry::editionFormatsRefs(edition), qPrintable(edition));
+    }
+
+    // Labels Windows drops without an error (measured): FAT32 and exFAT over 11 characters, a
+    // FAT32 label with *, NTFS over 32.
+    QVERIFY(formatBlocker(QStringLiteral("FAT32"), 256 * kMiBytes, 0, QStringLiteral("ABCDEFGHIJK"))
+                .isEmpty());
+    QVERIFY(formatBlocker(QStringLiteral("FAT32"), 256 * kMiBytes, 0, QStringLiteral("abc def"))
+                .isEmpty());
+    QVERIFY(
+        !formatBlocker(QStringLiteral("FAT32"), 256 * kMiBytes, 0, QStringLiteral("ABCDEFGHIJKL"))
+             .isEmpty());
+    QVERIFY(!formatBlocker(QStringLiteral("FAT32"), 256 * kMiBytes, 0, QStringLiteral("A*B"))
+                 .isEmpty());
+    QVERIFY(formatBlocker(QStringLiteral("exFAT"), 256 * kMiBytes, 0, QStringLiteral("ABCDEFGHIJK"))
+                .isEmpty());
+    QVERIFY(
+        !formatBlocker(QStringLiteral("exFAT"), 256 * kMiBytes, 0, QStringLiteral("ABCDEFGHIJKL"))
+             .isEmpty());
+    QVERIFY(formatBlocker(QStringLiteral("NTFS"), 256 * kMiBytes, 0, QString(32, QLatin1Char('L')))
+                .isEmpty());
+    QVERIFY(!formatBlocker(QStringLiteral("NTFS"), 256 * kMiBytes, 0, QString(33, QLatin1Char('L')))
+                 .isEmpty());
+    QVERIFY(!formatBlocker(QStringLiteral("NTFS"), 256 * kMiBytes, 0, QStringLiteral("A\tB"))
+                 .isEmpty());
+    QVERIFY(formatBlocker(QStringLiteral("ext4"), 256 * kMiBytes, 0)
+                .contains(QStringLiteral("NTFS, FAT32, exFAT and ReFS only")));
+}
+
+// The script's own check (Assert-SakWindowsFormatChoice), in Windows PowerShell 5.1 with stand-in
+// Get-ItemProperty and Get-Disk: it agrees with the queue's on every FAT32 format measured, and
+// checks the edition and the disk's physical sector size, which only the PC that runs it knows.
+void PartitionManagerCoreTests::generatedScripts_formatChoiceCheckAgreesWithTheQueue() {
+    QString cases;
+    for (const auto& measured : measuredFat32Formats()) {
+        cases += QStringLiteral("Try-Choice 'FAT32' %1 %2\n")
+                     .arg(measured.partition_bytes)
+                     .arg(measured.cluster_bytes);
+    }
+    int exit_code = -1;
+    const QString out = runWithScriptFunctions(
+        PartitionFileSystemRegistry::windowsFormatCheckFunctionScript(),
+        QStringLiteral(
+            "function Get-ItemProperty { param($LiteralPath, $ErrorAction) [pscustomobject]@{ "
+            "EditionID = $global:edition } }\n"
+            "function Get-Disk { param($Number, $ErrorAction) [pscustomobject]@{ "
+            "PhysicalSectorSize = 4096 } }\n"
+            "function Try-Choice([string]$Fs, [uint64]$Size, [uint64]$Unit) {\n"
+            "  try { Assert-SakWindowsFormatChoice 4 $Size $Fs $Unit | Out-Null; 'OK ' + $Fs + ' ' "
+            "+ $Size + ' ' + $Unit } catch { 'REFUSED ' + $Fs + ' ' + $Size + ' ' + $Unit + ' :: ' "
+            "+ $_.Exception.Message }\n"
+            "}\n"
+            "$global:edition = 'Professional'\n"
+            "%1"
+            "Try-Choice 'ReFS' 268435456 0\n"
+            "Try-Choice 'NTFS' 268435456 512\n"
+            "Try-Choice 'NTFS' 268435456 4096\n"
+            "$global:edition = 'Enterprise'\n"
+            "Try-Choice 'ReFS' 268435456 65536\n")
+            .arg(cases),
+        &exit_code);
+    for (const auto& measured : measuredFat32Formats()) {
+        const QString line = QStringLiteral("%1 FAT32 %2 %3")
+                                 .arg(measured.refused ? QStringLiteral("REFUSED")
+                                                       : QStringLiteral("OK"))
+                                 .arg(measured.partition_bytes)
+                                 .arg(measured.cluster_bytes);
+        QVERIFY2(out.contains(line), qPrintable(line + QStringLiteral("\n") + out));
+    }
+    QVERIFY2(out.contains(QStringLiteral("REFUSED ReFS 268435456 0 :: Nothing was changed: This "
+                                         "edition of Windows cannot format ReFS")),
+             qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("REFUSED NTFS 268435456 512 :: Nothing was changed: "
+                                         "Windows formats NTFS on this disk only with clusters of "
+                                         "at least 4096 bytes")),
+             qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("OK NTFS 268435456 4096")), qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("OK ReFS 268435456 65536")), qPrintable(out));
+}
+
+namespace {
+
+/// Stand-ins for a Windows Create or Format script: Disk 4 (GPT, 4 KiB physical sectors) and its
+/// partition 2 of 256 MiB at 1 MiB, a basic-data partition. Format-Volume fails with
+/// $global:formatError when it is set, Remove-Partition with $global:removeError; each records
+/// its call, as Release (Sak.RawPartitionWrite) does in place of the real one.
+QString windowsFormatStandIns() {
+    return QStringLiteral(
+        "$global:part = [pscustomobject]@{ DiskNumber = 4; PartitionNumber = 2; Size = "
+        "268435456; Offset = 1048576; Guid = ''; GptType = "
+        "'{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}'; MbrType = $null; AccessPaths = @('T:\\') }\n"
+        "function Get-Partition { param($DiskNumber, $PartitionNumber, $ErrorAction) $global:part "
+        "}\n"
+        "function New-Partition { param($DiskNumber, $Size, $Offset, $DriveLetter, "
+        "[switch]$AssignDriveLetter, $GptType, $MbrType) Write-Host ('CALL New ' + $Size); "
+        "$global:part }\n"
+        "function Get-Disk { param($Number, $ErrorAction) [pscustomobject]@{ PartitionStyle = "
+        "'GPT'; PhysicalSectorSize = 4096; UniqueId = ''; SerialNumber = ''; Size = 0 } }\n"
+        "function Get-ItemProperty { param($LiteralPath, $ErrorAction) [pscustomobject]@{ "
+        "EditionID = 'Professional' } }\n"
+        "function Format-Volume { param([Parameter(ValueFromPipeline = $true)]$InputObject, "
+        "$Partition, $FileSystem, $NewFileSystemLabel, $AllocationUnitSize, [switch]$Full, "
+        "[switch]$Confirm) process { Write-Host ('CALL Format ' + $FileSystem + ' ' + "
+        "$AllocationUnitSize); if ($global:formatError) { throw $global:formatError } } }\n"
+        "function Remove-Partition { param($DiskNumber, $PartitionNumber, [switch]$Confirm, "
+        "$ErrorAction) Write-Host ('CALL Remove ' + $DiskNumber + ' ' + $PartitionNumber); if "
+        "($global:removeError) { throw $global:removeError } }\n"
+        "function Update-HostStorageCache { param($ErrorAction) }\n"
+        "function Release-SakStandIn([string]$Path) { Write-Host ('CALL Release ' + $Path) }\n");
+}
+
+/// Runs a generated Windows Create or Format @p script against windowsFormatStandIns(), with
+/// what Format-Volume and Remove-Partition throw (empty: nothing).
+QString runWindowsFormatScript(QString script,
+                               const QString& format_error,
+                               const QString& remove_error = {}) {
+    script.replace(QStringLiteral("[Sak.RawPartitionWrite]::Release("),
+                   QStringLiteral("Release-SakStandIn("));
+    int exit_code = -1;
+    return runWithScriptFunctions(
+        QString(),
+        windowsFormatStandIns() +
+            QStringLiteral("$global:formatError = %1\n$global:removeError = %2\ntry {\n")
+                .arg(PartitionScriptBuilder::quotePowerShell(format_error),
+                     PartitionScriptBuilder::quotePowerShell(remove_error)) +
+            script + QStringLiteral("\n'DONE'\n} catch { 'THREW ' + $_.Exception.Message }\n"),
+        &exit_code);
+}
+
+}  // namespace
+
+// F3 (operation proof, 2026-11-11): a Create whose format Windows refused (ReFS on Pro, FAT32
+// with 4 KiB clusters on 256 MiB) left a RAW, lettered partition behind. Create is all or nothing:
+// the partition it made is removed again, and the message says so. Windows PowerShell 5.1 runs the
+// whole generated script against stand-in Storage cmdlets.
+void PartitionManagerCoreTests::generatedScripts_createIsAllOrNothing() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Unallocated;
+    target.disk_number = DiskNumber{4};
+    target.offset_bytes = 1'048'576;
+    target.size_bytes = 512 * kMiBytes;
+    QJsonObject payload{{QStringLiteral("size_bytes"), QStringLiteral("268435456")},
+                        {QStringLiteral("file_system"), QStringLiteral("NTFS")},
+                        {QStringLiteral("label"), QStringLiteral("DATA")}};
+    const PartitionScriptBuilder builder;
+    const auto script = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Create, target, payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(' ')));
+
+    const QString made = runWindowsFormatScript(script.script, QString());
+    QVERIFY2(made.contains(QStringLiteral("CALL Format NTFS")) &&
+                 made.contains(QStringLiteral("DONE")) &&
+                 !made.contains(QStringLiteral("CALL Remove")),
+             qPrintable(made));
+    const QString undone = runWindowsFormatScript(
+        script.script, QStringLiteral("The specified cluster size is invalid"));
+    QVERIFY2(undone.contains(QStringLiteral("CALL Remove 4 2")) &&
+                 undone.contains(QStringLiteral(
+                     "THREW Windows could not format the new partition: The specified cluster size "
+                     "is invalid The new partition was removed, so the disk is as it was.")),
+             qPrintable(undone));
+    const QString left =
+        runWindowsFormatScript(script.script,
+                               QStringLiteral("The specified cluster size is invalid"),
+                               QStringLiteral("Access denied"));
+    QVERIFY2(left.contains(QStringLiteral("The new partition could not be removed (Access denied): "
+                                          "delete Disk 4 Partition 2 before you use the disk.")),
+             qPrintable(left));
+
+    // What Windows would refuse is refused before anything is created.
+    payload[QStringLiteral("file_system")] = QStringLiteral("FAT32");
+    payload[QStringLiteral("allocation_unit_bytes")] = QStringLiteral("4096");
+    const auto refused = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Create, target, payload));
+    QVERIFY2(refused.blockers.join(' ').contains(QStringLiteral("with 4096-byte clusters")),
+             qPrintable(refused.blockers.join(' ')));
+    payload[QStringLiteral("file_system")] = QStringLiteral("ReFS");
+    payload[QStringLiteral("allocation_unit_bytes")] = QStringLiteral("0");
+    const auto refs = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Create, target, payload));
+    QVERIFY2(refs.valid(), qPrintable(refs.blockers.join(' ')));
+    const QString pro = runWindowsFormatScript(refs.script, QString());
+    QVERIFY2(pro.contains(QStringLiteral("THREW Nothing was changed: This edition of Windows "
+                                         "cannot format ReFS")) &&
+                 !pro.contains(QStringLiteral("CALL New")),
+             qPrintable(pro));
+}
+
+// F5 (operation proof, 2026-11-11): Format-Volume ran on a mounted NTFS volume without the
+// partition taken first, and a refused format left a RAW volume where NTFS had been. The partition
+// is taken (Sak.RawPartitionWrite.Release) after the choices are checked and before Format-Volume,
+// and a failure says the old file system may already be gone.
+void PartitionManagerCoreTests::generatedScripts_windowsFormatTakesThePartitionFirst() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{4};
+    target.partition_number = PartitionNumber{2};
+    target.offset_bytes = 1'048'576;
+    target.size_bytes = 256 * kMiBytes;
+    QJsonObject payload{{QStringLiteral("file_system"), QStringLiteral("FAT32")},
+                        {QStringLiteral("allocation_unit_bytes"), QStringLiteral("2048")},
+                        {QStringLiteral("label"), QStringLiteral("DATA")}};
+    const PartitionScriptBuilder builder;
+    const auto script = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Format, target, payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(' ')));
+
+    const QString formatted = runWindowsFormatScript(script.script, QString());
+    const qsizetype released = formatted.indexOf(
+        QStringLiteral("CALL Release \\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition2"));
+    QVERIFY2(released >= 0 &&
+                 released < formatted.indexOf(QStringLiteral("CALL Format FAT32 2048")) &&
+                 formatted.contains(QStringLiteral("DONE")),
+             qPrintable(formatted));
+    const QString failed = runWindowsFormatScript(
+        script.script, QStringLiteral("The specified cluster size is invalid"));
+    QVERIFY2(failed.contains(QStringLiteral(
+                 "THREW Windows could not format the partition: The specified cluster size is "
+                 "invalid Format-Volume can write the start of the partition before it refuses, so "
+                 "the old file system may already be gone.")) &&
+                 failed.count(QStringLiteral("CALL Release")) == 2,
+             qPrintable(failed));
+
+    payload[QStringLiteral("allocation_unit_bytes")] = QStringLiteral("4096");
+    const auto refused = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::Format, target, payload));
+    QVERIFY2(refused.blockers.join(' ').contains(QStringLiteral("with 4096-byte clusters")),
+             qPrintable(refused.blockers.join(' ')));
+}
+
+// F3/F5 at queue time: Create, Format and Change Cluster Size are refused, with Windows' reason,
+// when Format-Volume would refuse them; ReFS only where this edition formats it.
+void PartitionManagerCoreTests::safetyValidator_refusesWhatFormatVolumeWouldRefuse() {
+    auto inventory = singleDataDiskInventory();
+    auto& partition = inventory.disks.first().partitions.first();
+    partition.size_bytes = 256 * kMiBytes;
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = inventory.disks.first().disk_number;
+    target.partition_number = partition.partition_number;
+    target.offset_bytes = partition.offset_bytes;
+    target.size_bytes = partition.size_bytes;
+    target.drive_letter = QStringLiteral("T");
+    const auto blockers = [&inventory, &target](PartitionOperationType type,
+                                                const QJsonObject& payload) {
+        return PartitionSafetyValidator::validate(
+                   inventory, PartitionOperationPlanner::makeOperation(type, target, payload))
+            .blockers.join(QLatin1Char(' '));
+    };
+    QJsonObject fat32{{QStringLiteral("file_system"), QStringLiteral("FAT32")},
+                      {QStringLiteral("allocation_unit_bytes"), QStringLiteral("4096")},
+                      {QStringLiteral("label"), QStringLiteral("DATA")}};
+    QVERIFY(blockers(PartitionOperationType::Format, fat32)
+                .contains(QStringLiteral("with 4096-byte clusters")));
+    fat32[QStringLiteral("allocation_unit_bytes")] = QStringLiteral("2048");
+    QVERIFY2(!blockers(PartitionOperationType::Format, fat32).contains(QStringLiteral("cluster")),
+             qPrintable(blockers(PartitionOperationType::Format, fat32)));
+    fat32[QStringLiteral("label")] = QStringLiteral("TOO LONG NAME");
+    QVERIFY(blockers(PartitionOperationType::Format, fat32)
+                .contains(QStringLiteral("at most 11 characters")));
+
+    const QJsonObject refs{{QStringLiteral("file_system"), QStringLiteral("ReFS")},
+                           {QStringLiteral("label"), QStringLiteral("DATA")}};
+    QVERIFY(blockers(PartitionOperationType::Format, refs)
+                .contains(QStringLiteral("cannot format ReFS")));
+    inventory.refs_format_available = true;
+    QVERIFY(!blockers(PartitionOperationType::Format, refs).contains(QStringLiteral("ReFS")));
+
+    // Create: the size it asks for decides.
+    target = {};
+    target.kind = PartitionTargetKind::Unallocated;
+    const auto& region = inventory.disks.first().unallocated_regions.first();
+    target.disk_number = region.disk_number;
+    target.offset_bytes = region.offset_bytes;
+    target.size_bytes = region.size_bytes;
+    const QJsonObject create{{QStringLiteral("size_bytes"), QString::number(256 * kMiBytes)},
+                             {QStringLiteral("file_system"), QStringLiteral("FAT32")},
+                             {QStringLiteral("allocation_unit_bytes"), QStringLiteral("4096")},
+                             {QStringLiteral("label"), QStringLiteral("DATA")}};
+    QVERIFY2(blockers(PartitionOperationType::Create, create)
+                 .contains(QStringLiteral("with 4096-byte clusters")),
+             qPrintable(blockers(PartitionOperationType::Create, create)));
 }
 
 namespace {}  // namespace

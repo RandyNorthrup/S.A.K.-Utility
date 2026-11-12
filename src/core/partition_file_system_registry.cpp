@@ -9,11 +9,174 @@
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_manager_types.h"
 
+#include <QRegularExpression>
+
+#include <algorithm>
 #include <optional>
 
 namespace sak {
 
 namespace {
+
+// Windows' format rules (windowsFormatBlocker). FAT32 holds 65,525 to 268,435,445 clusters.
+// Windows lays FAT32 out with its first data cluster past a reserved area and two FATs, and the
+// clusters it counts are fewer than size / cluster: within 2 MiB plus both FATs of the size, the
+// rule every measurement above fits (256 MiB with 4 KiB clusters, refused, holds 64,896 here).
+constexpr uint64_t kFat32MinimumClusters = 65'525;
+constexpr uint64_t kFat32MaximumClusters = 268'435'445;
+constexpr uint64_t kFat32LayoutReserveBytes = 2ULL * 1024ULL * 1024ULL;
+constexpr uint64_t kFat32EntryBytes = 4;
+constexpr uint64_t kFat32Copies = 2;
+constexpr uint64_t kSmallestClusterBytes = 512;
+constexpr uint64_t kLargestClusterBytes = 64ULL * 1024ULL;
+constexpr uint64_t kExfatMaximumClusters = 4'294'967'285ULL;
+constexpr uint64_t kNtfsMaximumClusters = 4'294'967'295ULL;
+constexpr uint64_t kRefsSmallClusterBytes = 4ULL * 1024ULL;
+constexpr qsizetype kFatLabelMaxChars = 11;
+constexpr qsizetype kNtfsLabelMaxChars = 32;
+constexpr char16_t kFirstPrintableAscii = 0x20;
+constexpr char16_t kLastPrintableAscii = 0x7E;
+constexpr auto kFatLabelForbidden = "*?.,;:/\\|+=<>[]\"";
+constexpr auto kExfatLabelForbidden = "*?/\\|:<>\"";
+constexpr auto kRefsEditionPattern = "^(Enterprise|ProfessionalWorkstation|IoTEnterprise|Server)";
+
+constexpr auto kNotWindowsFormatMessage = "Windows formats NTFS, FAT32, exFAT and ReFS only.";
+constexpr auto kRefsEditionMessage =
+    "This edition of Windows cannot format ReFS: Windows formats it on its Enterprise, Pro for "
+    "Workstations and Server editions. Choose NTFS.";
+constexpr auto kRefsClusterMessage = "ReFS uses 4 KB or 64 KB clusters.";
+constexpr auto kFat32TooSmallMessage =
+    "The partition is too small for FAT32: Windows needs room for at least 65,525 clusters. "
+    "Choose exFAT or NTFS, or a larger partition.";
+constexpr auto kFat32FewClustersMessage =
+    "Windows cannot format this partition as FAT32 with {0}-byte clusters: that makes fewer than "
+    "the 65,525 clusters FAT32 needs. Choose a smaller cluster size.";
+constexpr auto kTooManyClustersMessage =
+    "Windows cannot format this partition as {0} with {1}-byte clusters: that makes more clusters "
+    "than {0} can hold. Choose a larger cluster size.";
+constexpr auto kSectorMessage =
+    "Windows formats {0} on this disk only with clusters of at least {1} bytes, its physical "
+    "sector size. Choose a larger cluster size.";
+constexpr auto kLabelLengthMessage =
+    "A {0} label has at most {1} characters, and Windows drops a longer one without saying so. "
+    "Choose a shorter label.";
+constexpr auto kFatLabelMessage =
+    "A FAT32 label can use letters A to Z, digits, spaces and plain marks, but not * ? . , ; : / "
+    "\\ | + = < > [ ] or \", and Windows drops any other label without saying so. Choose another "
+    "label.";
+constexpr auto kExfatLabelMessage =
+    "An exFAT label cannot contain * ? / \\ | : < > \" or control characters, and Windows drops "
+    "such a label without saying so. Choose another label.";
+constexpr auto kNtfsLabelMessage =
+    "A {0} label cannot contain control characters, and Windows drops such a label without "
+    "saying so. Choose another label.";
+
+QString formatMessage(const char* message, const QStringList& values) {
+    QString text = QString::fromLatin1(message);
+    for (qsizetype index = 0; index < values.size(); ++index) {
+        text.replace(QStringLiteral("{%1}").arg(index), values.at(index));
+    }
+    return text;
+}
+
+QString powerShellQuoted(const char* text) {
+    return QStringLiteral("'") +
+           QString::fromLatin1(text).replace(QLatin1Char('\''), QStringLiteral("''")) +
+           QStringLiteral("'");
+}
+
+/// The clusters Windows' FAT32 layout leaves for data (see kFat32LayoutReserveBytes).
+uint64_t fat32DataClusters(uint64_t size_bytes, uint64_t cluster_bytes) {
+    const uint64_t total = size_bytes / cluster_bytes;
+    const uint64_t layout = kFat32LayoutReserveBytes + kFat32Copies * kFat32EntryBytes * total;
+    return size_bytes > layout ? (size_bytes - layout) / cluster_bytes : 0;
+}
+
+QString fat32ClusterBlocker(uint64_t size_bytes, uint64_t cluster_bytes) {
+    if (fat32DataClusters(size_bytes, kSmallestClusterBytes) < kFat32MinimumClusters) {
+        return QString::fromLatin1(kFat32TooSmallMessage);
+    }
+    if (cluster_bytes != 0 &&
+        fat32DataClusters(size_bytes, cluster_bytes) < kFat32MinimumClusters) {
+        return formatMessage(kFat32FewClustersMessage, {QString::number(cluster_bytes)});
+    }
+    const uint64_t upper_cluster = cluster_bytes == 0 ? kLargestClusterBytes : cluster_bytes;
+    if (size_bytes / upper_cluster > kFat32MaximumClusters) {
+        return formatMessage(kTooManyClustersMessage,
+                             {QStringLiteral("FAT32"), QString::number(upper_cluster)});
+    }
+    return {};
+}
+
+QString clusterBlocker(const QString& fs, uint64_t size_bytes, uint64_t cluster_bytes) {
+    if (fs == QStringLiteral("FAT32")) {
+        return fat32ClusterBlocker(size_bytes, cluster_bytes);
+    }
+    if (cluster_bytes == 0) {
+        return {};
+    }
+    if (fs == QStringLiteral("REFS") && cluster_bytes != kRefsSmallClusterBytes &&
+        cluster_bytes != kLargestClusterBytes) {
+        return QString::fromLatin1(kRefsClusterMessage);
+    }
+    const uint64_t maximum = fs == QStringLiteral("EXFAT") ? kExfatMaximumClusters
+                                                           : kNtfsMaximumClusters;
+    if (size_bytes / cluster_bytes > maximum) {
+        return formatMessage(kTooManyClustersMessage,
+                             {fs == QStringLiteral("EXFAT") ? QStringLiteral("exFAT")
+                                                            : QStringLiteral("NTFS"),
+                              QString::number(cluster_bytes)});
+    }
+    return {};
+}
+
+bool hasControlCharacter(const QString& text) {
+    return std::ranges::any_of(text,
+                               [](QChar ch) { return ch.category() == QChar::Other_Control; });
+}
+
+bool fatLabelRefuses(QChar ch) {
+    return ch.unicode() < kFirstPrintableAscii || ch.unicode() > kLastPrintableAscii ||
+           QString::fromLatin1(kFatLabelForbidden).contains(ch);
+}
+
+bool exfatLabelRefuses(QChar ch) {
+    return ch.category() == QChar::Other_Control ||
+           QString::fromLatin1(kExfatLabelForbidden).contains(ch);
+}
+
+/// The name a person knows @p fs (upper case) by.
+QString windowsFormatName(const QString& fs) {
+    if (fs == QStringLiteral("EXFAT")) {
+        return QStringLiteral("exFAT");
+    }
+    return fs == QStringLiteral("REFS") ? QStringLiteral("ReFS") : fs;
+}
+
+QString labelCharacterBlocker(const QString& fs, const QString& label) {
+    if (fs == QStringLiteral("FAT32")) {
+        return std::ranges::any_of(label, fatLabelRefuses) ? QString::fromLatin1(kFatLabelMessage)
+                                                           : QString();
+    }
+    if (fs == QStringLiteral("EXFAT")) {
+        return std::ranges::any_of(label, exfatLabelRefuses)
+                   ? QString::fromLatin1(kExfatLabelMessage)
+                   : QString();
+    }
+    return hasControlCharacter(label) ? formatMessage(kNtfsLabelMessage, {windowsFormatName(fs)})
+                                      : QString();
+}
+
+QString labelBlocker(const QString& fs, const QString& label) {
+    const qsizetype maximum = fs == QStringLiteral("FAT32") || fs == QStringLiteral("EXFAT")
+                                  ? kFatLabelMaxChars
+                                  : kNtfsLabelMaxChars;
+    if (label.size() > maximum) {
+        return formatMessage(kLabelLengthMessage,
+                             {windowsFormatName(fs), QString::number(maximum)});
+    }
+    return labelCharacterBlocker(fs, label);
+}
 
 QString token(const QString& value) {
     return value.trimmed().toLower();
@@ -322,6 +485,81 @@ bool PartitionFileSystemRegistry::identifiedNonWindowsVolume(const PartitionVolu
                                         PartitionFileSystemDetector::inferredProtectedSource();
     return found_by_raw_probe && !volume.file_system.trimmed().isEmpty() &&
            capabilityFor(volume.file_system).non_native;
+}
+
+QString PartitionFileSystemRegistry::windowsFormatBlocker(const WindowsFormatChoice& choice) {
+    const QString fs = choice.file_system.trimmed().toUpper();
+    if (fs != QStringLiteral("NTFS") && fs != QStringLiteral("FAT32") &&
+        fs != QStringLiteral("EXFAT") && fs != QStringLiteral("REFS")) {
+        return QString::fromLatin1(kNotWindowsFormatMessage);
+    }
+    if (fs == QStringLiteral("REFS") && !choice.refs_available) {
+        return QString::fromLatin1(kRefsEditionMessage);
+    }
+    if (const QString cluster =
+            clusterBlocker(fs, choice.partition_bytes, choice.allocation_unit_bytes);
+        !cluster.isEmpty()) {
+        return cluster;
+    }
+    return labelBlocker(fs, choice.label);
+}
+
+bool PartitionFileSystemRegistry::editionFormatsRefs(const QString& edition_id) {
+    static const QRegularExpression kEditions(QString::fromLatin1(kRefsEditionPattern),
+                                              QRegularExpression::CaseInsensitiveOption);
+    return kEditions.match(edition_id.trimmed()).hasMatch();
+}
+
+QString PartitionFileSystemRegistry::windowsFormatCheckFunctionScript() {
+    // The rules of windowsFormatBlocker that depend on the partition and the PC: its size, the
+    // edition, and the disk's physical sector size. A label does not change, so it is checked
+    // before the script is made. Placeholders: the edition pattern and messages.
+    return QStringLiteral(R"PS(
+function Get-SakFat32DataClusters([uint64]$SizeBytes, [uint64]$ClusterBytes) {
+  $total = [math]::Floor($SizeBytes / $ClusterBytes)
+  $layout = [double]%1 + [double]%2 * $total
+  if ([double]$SizeBytes -le $layout) { return 0 }
+  return [math]::Floor(([double]$SizeBytes - $layout) / $ClusterBytes)
+}
+function Assert-SakWindowsFormatChoice([uint32]$DiskNumber, [uint64]$SizeBytes, [string]$FileSystem, [uint64]$AllocationUnit) {
+  $fs = $FileSystem.Trim()
+  $problem = ''
+  if ($fs -eq 'ReFS') {
+    $edition = [string](Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop).EditionID
+    if ($edition -notmatch %3) { $problem = %4 }
+  }
+  if (-not $problem -and ($fs -eq 'NTFS' -or $fs -eq 'ReFS') -and $AllocationUnit -gt 0) {
+    $sector = [uint64](Get-Disk -Number $DiskNumber -ErrorAction Stop).PhysicalSectorSize
+    if ($sector -gt 0 -and $AllocationUnit -lt $sector) { $problem = (%5 -f $fs, $sector) }
+  }
+  if (-not $problem -and $fs -eq 'FAT32') {
+    $upper = $(if ($AllocationUnit -gt 0) { $AllocationUnit } else { %6 })
+    if ((Get-SakFat32DataClusters $SizeBytes %7) -lt %8) { $problem = %9 }
+    elseif ($AllocationUnit -gt 0 -and (Get-SakFat32DataClusters $SizeBytes $AllocationUnit) -lt %8) { $problem = (%10 -f $AllocationUnit) }
+    elseif ([math]::Floor($SizeBytes / $upper) -gt %11) { $problem = (%12 -f 'FAT32', $upper) }
+  }
+  if (-not $problem -and $AllocationUnit -gt 0) {
+    if ($fs -eq 'exFAT' -and [math]::Floor($SizeBytes / $AllocationUnit) -gt %13) { $problem = (%12 -f 'exFAT', $AllocationUnit) }
+    if ($fs -eq 'NTFS' -and [math]::Floor($SizeBytes / $AllocationUnit) -gt %14) { $problem = (%12 -f 'NTFS', $AllocationUnit) }
+  }
+  if ($problem) { throw ('Nothing was changed: ' + $problem) }
+  Write-Output ('Windows formats {0} with these choices on this partition' -f $fs)
+}
+)PS")
+        .arg(QString::number(kFat32LayoutReserveBytes),
+             QString::number(kFat32Copies * kFat32EntryBytes),
+             powerShellQuoted(kRefsEditionPattern),
+             powerShellQuoted(kRefsEditionMessage),
+             powerShellQuoted(kSectorMessage),
+             QString::number(kLargestClusterBytes),
+             QString::number(kSmallestClusterBytes),
+             QString::number(kFat32MinimumClusters),
+             powerShellQuoted(kFat32TooSmallMessage))
+        .arg(powerShellQuoted(kFat32FewClustersMessage),
+             QString::number(kFat32MaximumClusters),
+             powerShellQuoted(kTooManyClustersMessage),
+             QString::number(kExfatMaximumClusters),
+             QString::number(kNtfsMaximumClusters));
 }
 
 bool PartitionFileSystemRegistry::windowsResizesFileSystem(const QString& file_system) {

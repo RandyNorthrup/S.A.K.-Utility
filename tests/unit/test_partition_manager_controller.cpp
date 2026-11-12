@@ -509,9 +509,7 @@ void PartitionManagerControllerTests::quickPartitionBatchUsesSequentialProjected
     create_target.size_bytes = kProjectedCreateBytes;
     QJsonObject create_payload;
     create_payload[QStringLiteral("size_bytes")] = QString::number(kProjectedCreateBytes);
-    create_payload[QStringLiteral("file_system")] = QStringLiteral("APFS");
-    create_payload[QStringLiteral("filesystem_tool")] = true;
-    create_payload[QStringLiteral("target_wipe_confirmed")] = true;
+    create_payload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
     const QVector<sak::PartitionOperationRequest> requests = {
         {.type = sak::PartitionOperationType::InitializeDisk,
          .target = testDiskTarget(),

@@ -287,6 +287,10 @@ struct PartitionInventory {
     /// It lists no disk, its warning says why, and the panel says it did not finish, not that the
     /// PC has no disks.
     bool scan_did_not_finish{false};
+    /// This edition of Windows formats ReFS (PartitionFileSystemRegistry::editionFormatsRefs):
+    /// Windows 11 Pro has ReFS only as a Dev Drive, and Format-Volume refuses it there. False
+    /// until a scan of this PC says otherwise.
+    bool refs_format_available{false};
 
     [[nodiscard]] bool isEmpty() const noexcept { return disks.isEmpty(); }
 

@@ -4103,6 +4103,41 @@ QString selectedAllocationUnitText(const QComboBox* combo) {
                : QObject::tr("%1 cluster size").arg(combo->currentText());
 }
 
+// Offers only the cluster sizes Windows formats @p file_system with on @p partition_bytes, and
+// says why Format-Volume would refuse what is chosen (empty when it would not). Format-Volume
+// writes the start of the volume before it refuses a FAT32 cluster size: an NTFS volume asked for
+// FAT32 with 4 KiB clusters on 256 MiB was left RAW (operation proof, 2026-11-11).
+QString offerWindowsFormatChoices(QComboBox* allocation_unit,
+                                  const QString& file_system,
+                                  uint64_t partition_bytes,
+                                  const QString& label) {
+    const auto choice = [&](uint64_t unit, const QString& text) {
+        return PartitionFileSystemRegistry::windowsFormatBlocker(
+            {.file_system = file_system,
+             .partition_bytes = partition_bytes,
+             .allocation_unit_bytes = unit,
+             .label = text,
+             .refs_available = true});
+    };
+    if (auto* model = qobject_cast<QStandardItemModel*>(allocation_unit->model());
+        model != nullptr) {
+        for (int index = 0; index < allocation_unit->count(); ++index) {
+            if (auto* item = model->item(index); item != nullptr) {
+                item->setEnabled(
+                    choice(allocation_unit->itemData(index).toULongLong(), QString()).isEmpty());
+            }
+        }
+        const auto* current = model->item(allocation_unit->currentIndex());
+        const auto* fallback = model->item(0);
+        if (current != nullptr && !current->isEnabled() && fallback != nullptr &&
+            fallback->isEnabled()) {
+            const QSignalBlocker blocker(allocation_unit);
+            allocation_unit->setCurrentIndex(0);
+        }
+    }
+    return choice(selectedAllocationUnitBytes(allocation_unit), label);
+}
+
 QString selectedPartitionTypeText(const QComboBox* combo) {
     return combo->currentData().toString().isEmpty() ? QObject::tr("default type")
                                                      : combo->currentText();
@@ -4266,6 +4301,10 @@ void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
                       .arg(formatPartitionBytes(requested_bytes),
                            formatPartitionBytes(before_bytes + after_bytes)),
           .offset_bytes = before_bytes}});
+    const QString refusal = offerWindowsFormatChoices(widgets.allocation_unit,
+                                                      widgets.file_system->currentText(),
+                                                      requested_bytes,
+                                                      widgets.label->text());
     const QString format_text =
         QObject::tr(" Format with %1.").arg(selectedAllocationUnitText(widgets.allocation_unit));
     dialog.setPreviewText(QObject::tr("Create %1 MB %2 %3 partition labeled \"%4\".")
@@ -4273,7 +4312,9 @@ void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
                               .arg(selectedPartitionTypeText(widgets.partition_type),
                                    widgets.file_system->currentText(),
                                    widgets.label->text()) +
-                          format_text);
+                          format_text +
+                          (refusal.isEmpty() ? QString() : QStringLiteral("\n") + refusal));
+    dialog.setAcceptEnabled(refusal.isEmpty());
 }
 
 QJsonObject createPartitionPayload(const CreatePartitionWidgets& widgets) {
@@ -4474,6 +4515,8 @@ struct FormatPartitionWidgets {
     QLineEdit* apfs_recovery_key{nullptr};
     QCheckBox* full_format{nullptr};
     QCheckBox* raw_format_confirm{nullptr};
+    /// The partition's size, which decides the cluster sizes Windows formats it with.
+    uint64_t partition_bytes{0};
 };
 
 RawFormatKind rawFormatKindForFileSystem(const QString& file_system) {
@@ -4570,6 +4613,7 @@ QComboBox* createLinuxSwapPageSizeSelector(QWidget* parent) {
 FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dialog,
                                                   const PartitionInfoEx& partition) {
     FormatPartitionWidgets widgets;
+    widgets.partition_bytes = partition.size_bytes;
     widgets.file_system = new QComboBox(&dialog);
     widgets.file_system->addItems({QStringLiteral("NTFS"),
                                    QStringLiteral("exFAT"),
@@ -4665,9 +4709,16 @@ void updateFormatPartitionPreview(PartitionOperationDialog& dialog,
     }
     nameConfirmationBox(widgets.raw_format_confirm, rawFormatConfirmationAccessibleName(raw_kind));
     const bool encrypt_ready = !encrypt_checked || !widgets.apfs_volume_password->text().isEmpty();
+    const QString refusal = raw_selected
+                                ? QString()
+                                : offerWindowsFormatChoices(widgets.allocation_unit,
+                                                            widgets.file_system->currentText(),
+                                                            widgets.partition_bytes,
+                                                            widgets.label->text());
     dialog.setAcceptEnabled((!raw_selected || widgets.raw_format_confirm->isChecked()) &&
-                            encrypt_ready);
-    dialog.setPreviewText(formatPartitionPreviewText(widgets, raw_kind));
+                            encrypt_ready && refusal.isEmpty());
+    dialog.setPreviewText(formatPartitionPreviewText(widgets, raw_kind) +
+                          (refusal.isEmpty() ? QString() : QStringLiteral("\n") + refusal));
 }
 
 void connectFormatPartitionControls(PartitionOperationDialog& dialog,
