@@ -1968,7 +1968,10 @@ Add-OpsRow 'ops.repair-boot-attached-bios-no-active' {
     $system = Get-OpsBiosSystemPartition -DiskNumber $found.number
     $after = Get-OpsBiosBootFacts -DiskNumber $found.number -System $system
     Remove-OpsAddedLetter -DiskNumber $found.number -System $system
-    $checks = @(New-OpsCheck -Name 'break (earlier phase): no partition was active and bootmgr was gone' -Passed ([int]$kept.facts_broken.active_partitions -eq 0 -and -not $kept.facts_broken.bootmgr_present) -Detail $kept.facts_broken)
+    # A break phase that stopped kept nothing: that is a failed check here, and the repair's own
+    # readback still goes into the evidence.
+    $wasBroken = if ($kept.PSObject.Properties['facts_broken']) { $kept.facts_broken } else { $null }
+    $checks = @(New-OpsCheck -Name 'break (earlier phase): no partition was active and bootmgr was gone' -Passed ($null -ne $wasBroken -and [int]$wasBroken.active_partitions -eq 0 -and -not $wasBroken.bootmgr_present) -Detail $(if ($null -ne $wasBroken) { $wasBroken } else { 'the break phase kept no facts: it stopped (see its failure in the runner log)' }))
     $checks += New-OpsCheck -Name 'repair: the system partition is active again' -Passed ($after.system_partition_boot_flag -eq '80' -and $after.active_partitions -eq 1) -Detail $after
     $checks += New-OpsCheck -Name 'repair: bootmgr and the BCD store are there' -Passed ($after.bootmgr_present -and $after.bcd_present) -Detail $after
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ phase = 'repair'; kept = $kept })
