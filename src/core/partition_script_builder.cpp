@@ -6151,6 +6151,10 @@ PartitionScript PartitionScriptBuilder::buildCloneOrImageScript(
             payloadBool(operation, QStringLiteral("overwrite_confirmed")));
     }
     if (operation.type == PartitionOperationType::RestoreImage) {
+        // The content pin names [SakLockedFilePath], which sak_script_types.dll defines since
+        // 19b982d1: without the DLL loaded first every Restore Image stopped on "Unable to find
+        // type" (operation proof, 2026-11-12).
+        out.script += PartitionScriptBuilder::scriptTypesLoaderScript();
         out.script += restoreImageSourceAdmissionScript(spec.source);
         out.script += restoreImageContentPinScript(
             spec.source, payloadString(operation, QStringLiteral("source_sha256")));

@@ -21127,6 +21127,13 @@ void PartitionManagerCoreTests::scriptBuilder_restoreImagePinsSourceContent() {
                        "[System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)")));
     QVERIFY(pinned.script.contains(QStringLiteral("$sha256.ComputeHash($in)")));
     QVERIFY(pinned.script.contains(QStringLiteral("GetFinalPathNameByHandle")));
+    // [SakLockedFilePath] comes from sak_script_types.dll, so the script loads it first: every
+    // Restore Image stopped on "Unable to find type [SakLockedFilePath]" (operation proof,
+    // 2026-11-12).
+    const qsizetype loaded =
+        pinned.script.indexOf(QStringLiteral("[System.Reflection.Assembly]::Load("));
+    QVERIFY2(loaded >= 0 && loaded < pinned.script.indexOf(QStringLiteral("[SakLockedFilePath]")),
+             qPrintable(pinned.script));
     QVERIFY(pinned.script.contains(QStringLiteral("$imgSrc = $imgLockedPath")));
     QVERIFY(!pinned.script.contains(QStringLiteral("$srcVerify = Open-SakRead $src")));
     QVERIFY(pinned.script.contains(
