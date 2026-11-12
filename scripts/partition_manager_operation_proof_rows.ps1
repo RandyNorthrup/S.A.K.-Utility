@@ -334,60 +334,66 @@ function Invoke-OpsCreateWindows {
     return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ snapshot = $snapshot })
 }
 
-function Invoke-OpsCreateNonNative {
-    # The panel's Create offers NTFS, exFAT and FAT32. These file systems are created only by the
-    # assistant's partition.apply_operation, so that is the route the step takes. The Create script
-    # makes a non-Windows file system only when the payload also says non_native_file_system_tool
-    # and target_wipe_confirmed, which the model has to write itself (nothing in the assistant's
-    # tool schema names them): the step adds them as a model would.
+function Invoke-OpsAssistantCreateRefused {
+    # The assistant's partition.apply_operation, asked to Create a non-Windows file system from
+    # the fields its tool documents (file system, label, size). Coordinator's ruling, 2026-11-11:
+    # the app refuses that early, says to create a Windows file system and then Format, and writes
+    # nothing. The expected words follow that guidance ("Format").
     param([string]$FileSystem, [object]$Label)
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk
-    Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route 'assistant' -ReadBackOnFailure -Choices @{
+    $before = Get-CertSnapshot -DiskNumber $disk
+    Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route 'assistant' -ReadBackOnFailure -Expect 'refused' -RefusalContains 'Format' -Choices @{
         size_mib = 128; free_before_mib = 0; file_system = $FileSystem; allocation_unit_bytes = 0
         partition_type = ''; label = "$Label"; full_format = $false
-        assistant_payload = @{ non_native_file_system_tool = $true; target_wipe_confirmed = $true }
     } | Out-Null
-    $snapshot = Get-CertSnapshot -DiskNumber $disk
-    $data = @($snapshot.data_partitions)
-    $checks = @(New-OpsCheck -Name 'the raw table holds one data partition' -Passed ($data.Count -eq 1) -Detail $data.Count)
-    $image = $null
-    if ($data.Count -eq 1) {
-        $checks += New-OpsCheck -Name 'it is 128 MiB' -Passed ([uint64]$data[0].size_bytes -eq 128 * $Script:OpsMiB) -Detail "$($data[0].size_bytes)"
-        $number = [int](@($snapshot.partitions | Where-Object { [uint64]$_.offset_bytes -eq [uint64]$data[0].offset_bytes })[0].partition_number)
-        $read = Test-OpsNonNativePartition -Prefix "the new $FileSystem`:" -DiskNumber $disk -PartitionNumber $number -FileSystem $FileSystem -Label $Label -Name 'created'
-        $checks += $read.checks
-        $image = $read.image
-    }
-    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ snapshot = $snapshot; images = @($image | Where-Object { $_ }) })
+    $after = Get-CertSnapshot -DiskNumber $disk
+    $unchanged = "$($before.raw.gpt_entries_hex)" -eq "$($after.raw.gpt_entries_hex)" -and "$($before.raw.lba0_hex)" -eq "$($after.raw.lba0_hex)"
+    $checks = @(New-OpsCheck -Name 'nothing was written: the partition table is as it was' -Passed $unchanged -Detail @($after.data_partitions).Count)
+    return Complete-OpsRow -Media $media -Checks $checks
+}
+
+function Invoke-OpsAssistantTwoStep {
+    # What the assistant does instead: Create a Windows file system, then Format it as the
+    # non-Windows one, each from its tool's documented fields only (the core request functions'
+    # payloads), then read back like the panel's Format rows.
+    param([string]$FileSystem, [object]$Label)
+    $disk = New-OpsDisk -Name 'disk'
+    $media = Get-OpsMedia -DiskNumber $disk
+    Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route 'assistant' -Choices @{
+        size_mib = 128; free_before_mib = 0; file_system = 'NTFS'; allocation_unit_bytes = 0
+        partition_type = $Script:GptBasicData; label = 'OPSSTEP1'; full_format = $false
+    } | Out-Null
+    $data = @((Get-CertSnapshot -DiskNumber $disk).data_partitions)
+    if ($data.Count -ne 1) { throw "The assistant's Create left $($data.Count) data partitions" }
+    $offset = [uint64]$data[0].offset_bytes
+    $number = [int](Get-Partition -DiskNumber $disk | Where-Object { [uint64]$_.Offset -eq $offset }).PartitionNumber
+    Invoke-OpsStep -Disk $disk -Step 'format' -Operation 'Format' -Route 'assistant' -ReadBackOnFailure -Select @{ partition_number = $number } -Choices @{
+        file_system = $FileSystem; allocation_unit_bytes = 0; label = "$Label"; full_format = $false
+    } | Out-Null
+    $checks = @(Test-OpsExtent -Name 'the partition kept its place and size' -DiskNumber $disk -Offset $offset -SizeBytes (128 * $Script:OpsMiB))
+    $read = Test-OpsNonNativePartition -Prefix "the formatted $FileSystem`:" -DiskNumber $disk -PartitionNumber $number -FileSystem $FileSystem -Label $Label -Name 'two-step'
+    $checks += $read.checks
+    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ images = @($read.image | Where-Object { $_ }) })
 }
 
 Add-OpsRow 'ops.create-exfat' { Invoke-OpsCreateWindows -FileSystem 'exFAT' -Label 'OPSEXFAT' -ClusterBytes 4096 }
 Add-OpsRow 'ops.create-fat32' { Invoke-OpsCreateWindows -FileSystem 'FAT32' -Label 'OPSFAT32' -ClusterBytes 4096 }
 Add-OpsRow 'ops.create-refs-assistant' { Invoke-OpsCreateWindows -FileSystem 'ReFS' -Label 'OPSREFS' -ClusterBytes 4096 -Route 'assistant' }
-Add-OpsRow 'ops.create-ext2-assistant' { Invoke-OpsCreateNonNative -FileSystem 'ext2' -Label 'OPSEXT2' }
-Add-OpsRow 'ops.create-ext3-assistant' { Invoke-OpsCreateNonNative -FileSystem 'ext3' -Label 'OPSEXT3' }
-Add-OpsRow 'ops.create-ext4-assistant' { Invoke-OpsCreateNonNative -FileSystem 'ext4' -Label 'OPSEXT4' }
-Add-OpsRow 'ops.create-hfsplus-assistant' { Invoke-OpsCreateNonNative -FileSystem 'HFS+' -Label 'OPSHFS' }
-Add-OpsRow 'ops.create-hfsx-assistant' { Invoke-OpsCreateNonNative -FileSystem 'HFSX' -Label 'OPSHFSX' }
-Add-OpsRow 'ops.create-apfs-assistant' { Invoke-OpsCreateNonNative -FileSystem 'APFS' -Label 'OPSAPFS' }
-Add-OpsRow 'ops.create-swap-assistant' { Invoke-OpsCreateNonNative -FileSystem 'Linux swap' -Label 'OPSSWAP' }
-
-Add-OpsRow 'ops.create-ext4-assistant-plain' {
-    # The request a model writes from the tool schema alone: file system and label, no tool
-    # fields. The Create script refuses it ("Unsupported file system"); the row proves that it does
-    # so before anything is written.
-    $disk = New-OpsDisk -Name 'disk'
-    $media = Get-OpsMedia -DiskNumber $disk
-    $before = Get-CertSnapshot -DiskNumber $disk
-    Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route 'assistant' -Expect 'failed' -RefusalContains 'Unsupported file system' -Choices @{
-        size_mib = 128; free_before_mib = 0; file_system = 'ext4'; allocation_unit_bytes = 0
-        partition_type = ''; label = 'OPSPLAIN'; full_format = $false
-    } | Out-Null
-    $after = Get-CertSnapshot -DiskNumber $disk
-    $checks = @(New-OpsCheck -Name 'nothing was written: the partition table is as it was' -Passed ("$($before.raw.gpt_entries_hex)" -eq "$($after.raw.gpt_entries_hex)" -and "$($before.raw.lba0_hex)" -eq "$($after.raw.lba0_hex)") -Detail @($after.data_partitions).Count)
-    return Complete-OpsRow -Media $media -Checks $checks
-}
+Add-OpsRow 'ops.create-ext2-assistant' { Invoke-OpsAssistantCreateRefused -FileSystem 'ext2' -Label 'OPSEXT2' }
+Add-OpsRow 'ops.create-ext3-assistant' { Invoke-OpsAssistantCreateRefused -FileSystem 'ext3' -Label 'OPSEXT3' }
+Add-OpsRow 'ops.create-ext4-assistant' { Invoke-OpsAssistantCreateRefused -FileSystem 'ext4' -Label 'OPSEXT4' }
+Add-OpsRow 'ops.create-hfsplus-assistant' { Invoke-OpsAssistantCreateRefused -FileSystem 'HFS+' -Label 'OPSHFS' }
+Add-OpsRow 'ops.create-hfsx-assistant' { Invoke-OpsAssistantCreateRefused -FileSystem 'HFSX' -Label 'OPSHFSX' }
+Add-OpsRow 'ops.create-apfs-assistant' { Invoke-OpsAssistantCreateRefused -FileSystem 'APFS' -Label 'OPSAPFS' }
+Add-OpsRow 'ops.create-swap-assistant' { Invoke-OpsAssistantCreateRefused -FileSystem 'Linux swap' -Label 'OPSSWAP' }
+Add-OpsRow 'ops.assistant-two-step-ext2' { Invoke-OpsAssistantTwoStep -FileSystem 'ext2' -Label 'OPSEXT2' }
+Add-OpsRow 'ops.assistant-two-step-ext3' { Invoke-OpsAssistantTwoStep -FileSystem 'ext3' -Label 'OPSEXT3' }
+Add-OpsRow 'ops.assistant-two-step-ext4' { Invoke-OpsAssistantTwoStep -FileSystem 'ext4' -Label 'OPSEXT4' }
+Add-OpsRow 'ops.assistant-two-step-hfsplus' { Invoke-OpsAssistantTwoStep -FileSystem 'HFS+' -Label 'OPSHFS' }
+Add-OpsRow 'ops.assistant-two-step-hfsx' { Invoke-OpsAssistantTwoStep -FileSystem 'HFSX' -Label 'OPSHFSX' }
+Add-OpsRow 'ops.assistant-two-step-apfs' { Invoke-OpsAssistantTwoStep -FileSystem 'APFS' -Label 'OPSAPFS' }
+Add-OpsRow 'ops.assistant-two-step-swap' { Invoke-OpsAssistantTwoStep -FileSystem 'Linux swap' -Label 'OPSSWAP' }
 
 # --- Format ---------------------------------------------------------------------------------------
 
