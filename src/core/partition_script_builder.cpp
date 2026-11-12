@@ -145,6 +145,29 @@ QString volumeScanLine(const QString& statement) {
     return windowsContinuedLine(WindowsContinuedWork::VolumeScan, QStringLiteral("0"), statement);
 }
 
+// The scan of the volume at drive letter @p drive (a PowerShell expression). Repair-Volume -Scan
+// reads NTFS and ReFS only, and says "The specified file system is not supported" on FAT32 and
+// exFAT, which get chkdsk without /f: it only reads. Either stops the script on a problem. A
+// Storage cmdlet given -Verbose no longer stops on $ErrorActionPreference, so the scan says
+// -ErrorAction Stop itself (operation proof, 2026-11-12: Check File System on FAT32 and exFAT
+// reported success having checked nothing, and Move of a FAT32 volume failed after moving it).
+// chkdsk's output is captured with Stop relaxed for the call, as the bundled tools' is: under Stop
+// a line on stderr would be a NativeCommandError, and the exit code is read before anything else
+// runs. The drive is held in a variable, since @p drive may be $_ of an enclosing pipeline.
+QString volumeScanStatement(const QString& drive, bool verbose = false) {
+    return QStringLiteral(
+               "if (@('NTFS', 'ReFS') -contains (Get-Volume -DriveLetter %1 -ErrorAction "
+               "Stop).FileSystem) { Repair-Volume -DriveLetter %1 -Scan%2 -ErrorAction Stop } else "
+               "{ $sakScanDrive = %1; $sakScanPreference = $ErrorActionPreference; "
+               "$ErrorActionPreference = 'Continue'; try { $sakScanOutput = & "
+               "([Environment]::SystemDirectory + '\\chkdsk.exe') ('{0}:' -f $sakScanDrive) 2>&1; "
+               "$sakScanExit = [int]$LASTEXITCODE } finally { $ErrorActionPreference = "
+               "$sakScanPreference }; $sakScanOutput | ForEach-Object { Write-Output ([string]$_) "
+               "}; if ($sakScanExit -ne 0) { throw ('chkdsk found a problem on {0}: (exit {1})' -f "
+               "$sakScanDrive, $sakScanExit) } }")
+        .arg(drive, verbose ? QStringLiteral(" -Verbose") : QString());
+}
+
 QString requirePartitionIdentity(const PartitionTarget& target) {
     // Runtime TOCTOU guard: pin the target between preview and apply. Size alone let a
     // deleted-then-recreated same-sized partition at the same number pass, so we also pin
@@ -3992,12 +4015,12 @@ static QString allocateExecutionScript(const PartitionOperation& operation,
                 "if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
                 "'Restored donor manifest differs from backup' }\n"
                 "if ($targetVolume -and $targetVolume.DriveLetter) { ") +
-            windowsContinuedStatement(
-                WindowsContinuedWork::VolumeScan,
-                QStringLiteral("0"),
-                QStringLiteral("Repair-Volume -DriveLetter $targetVolume.DriveLetter -Scan")) +
+            windowsContinuedStatement(WindowsContinuedWork::VolumeScan,
+                                      QStringLiteral("0"),
+                                      volumeScanStatement(
+                                          QStringLiteral("$targetVolume.DriveLetter"))) +
             QStringLiteral(" }\n") +
-            volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $sourceDrive -Scan")) +
+            volumeScanLine(volumeScanStatement(QStringLiteral("$sourceDrive"))) +
             QStringLiteral("Get-Partition -DiskNumber %1 | Sort-Object Offset | Format-Table "
                            "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))
         .arg(operation.target.disk_number.value())
@@ -4097,7 +4120,7 @@ static QString clusterExecutionScript() {
                "$restoredManifest -Property RelativePath,Length,Hash)\n"
                "if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
                "'Restored file manifest differs from backup' }\n") +
-           volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+           volumeScanLine(volumeScanStatement(QStringLiteral("$drive"))) +
            QStringLiteral(
                "fsutil.exe fsinfo volumeinfo $targetDrive\n"
                "if ($fileSystem -eq 'NTFS') { fsutil.exe fsinfo ntfsinfo $targetDrive }\n");
@@ -5280,12 +5303,10 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
 
     PartitionScript out;
     out.preview = QStringLiteral("Check file system on %1:").arg(letter.toUpper());
-    out.script =
-        commonHeader(out.preview) +
-        windowsContinuedLine(
-            WindowsContinuedWork::VolumeScan,
-            uintArg(operation.target.size_bytes),
-            QStringLiteral("Repair-Volume -DriveLetter %1 -Scan -Verbose").arg(letter.toUpper()));
+    out.script = commonHeader(out.preview) +
+                 windowsContinuedLine(WindowsContinuedWork::VolumeScan,
+                                      uintArg(operation.target.size_bytes),
+                                      volumeScanStatement(quotePowerShell(letter.toUpper()), true));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -5558,8 +5579,7 @@ PartitionScript PartitionScriptBuilder::buildSurfaceTestScript(
             .arg(operation.target.disk_number.value()) +
         windowsContinuedLine(WindowsContinuedWork::VolumeScan,
                              QStringLiteral("$_.Size"),
-                             QStringLiteral("Repair-Volume -DriveLetter $_.DriveLetter -Scan "
-                                            "-Verbose")) +
+                             volumeScanStatement(QStringLiteral("$_.DriveLetter"), true)) +
         QStringLiteral("}\n");
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
@@ -6425,10 +6445,11 @@ PartitionScript PartitionScriptBuilder::buildOptimizeSsdScript(
     // killed.
     out.script =
         commonHeader(out.preview) + QStringLiteral("fsutil behavior query DisableDeleteNotify\n") +
-        windowsContinuedLine(WindowsContinuedWork::Retrim,
-                             uintArg(operation.target.size_bytes),
-                             QStringLiteral("Optimize-Volume -DriveLetter %1 -ReTrim -Verbose")
-                                 .arg(letter.toUpper()));
+        windowsContinuedLine(
+            WindowsContinuedWork::Retrim,
+            uintArg(operation.target.size_bytes),
+            QStringLiteral("Optimize-Volume -DriveLetter %1 -ReTrim -Verbose -ErrorAction Stop")
+                .arg(letter.toUpper()));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -6467,17 +6488,18 @@ PartitionScript PartitionScriptBuilder::buildDefragVolumeScript(
             "        throw \"Could not confirm HDD media classification: $mediaText\"\n"
             "    }\n"
             "}\n"
-            "Optimize-Volume -DriveLetter $driveLetter -Analyze -Verbose\n")
+            "Optimize-Volume -DriveLetter $driveLetter -Analyze -Verbose -ErrorAction Stop\n")
             .arg(quotePowerShell(letter.toUpper())) +
         // The defrag and the scan are storage jobs Windows finishes even if this script
         // is killed; the analysis ends too quickly to matter.
         windowsContinuedLine(WindowsContinuedWork::Defragment,
                              uintArg(operation.target.size_bytes),
                              QStringLiteral(
-                                 "Optimize-Volume -DriveLetter $driveLetter -Defrag -Verbose")) +
+                                 "Optimize-Volume -DriveLetter $driveLetter -Defrag -Verbose "
+                                 "-ErrorAction Stop")) +
         windowsContinuedLine(WindowsContinuedWork::VolumeScan,
                              uintArg(operation.target.size_bytes),
-                             QStringLiteral("Repair-Volume -DriveLetter $driveLetter -Scan"));
+                             volumeScanStatement(QStringLiteral("$driveLetter")));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -6668,7 +6690,7 @@ PartitionScript PartitionScriptBuilder::buildMovePartitionScript(
                         "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
          windowsContinuedLine(WindowsContinuedWork::VolumeScan,
                               QStringLiteral("$targetSize"),
-                              QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+                              volumeScanStatement(QStringLiteral("$drive"))) +
          QStringLiteral("Get-Partition -DiskNumber %7 | Sort-Object Offset | Format-Table "
                         "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))
             .arg(quotePowerShell(payload.drive),
@@ -6732,7 +6754,7 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
              "Invoke-SakRobocopy $backupPath $sourceRoot\n"
              "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
              "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
-         volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+         volumeScanLine(volumeScanStatement(QStringLiteral("$drive"))) +
          QStringLiteral("Get-Partition -DiskNumber %7 | Sort-Object Offset | Format-Table "
                         "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))
             .arg(quotePowerShell(payload.drive),
@@ -6801,7 +6823,7 @@ PartitionScript PartitionScriptBuilder::buildChangeVolumeSerialNumberScript(
              "Invoke-SakRobocopy $backupPath $sourceRoot\n"
              "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
              "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
-         volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+         volumeScanLine(volumeScanStatement(QStringLiteral("$drive"))) +
          QStringLiteral("Write-Output ('Volume serial changed from {0} to {1}' -f $beforeSerial, "
                         "$afterSerial)\n"))
             .arg(quotePowerShell(drive),
@@ -6893,7 +6915,7 @@ PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
              "Invoke-SakRobocopy $backupPath $sourceRoot\n"
              "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
              "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
-         volumeScanLine(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")) +
+         volumeScanLine(volumeScanStatement(QStringLiteral("$drive"))) +
          QStringLiteral("Get-Disk -Number %6 | Format-List "
                         "Number,PartitionStyle,IsBoot,IsSystem,IsReadOnly\n"))
             .arg(quotePowerShell(drive),

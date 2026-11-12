@@ -1593,6 +1593,8 @@ private Q_SLOTS:
     void hfsStaging_everyCallerRunsTheStagingFunction();
     void hfsStaging_repairReadsTheToolsExitCode();
     void generatedScripts_callTheirOwnFunctionsWithDeclaredParameters();
+    void generatedScripts_checkerNamesAStorageCmdletThatWouldNotStop();
+    void generatedScripts_volumeScanStopsOnWhatItFinds();
     void generatedScripts_toolRunnerSurvivesStderrAndKeepsTheExitCode();
     void generatedScripts_toolRunnerReadsWhatE2fsckSays();
     void generatedScripts_writerWrapperReportsTheHelpersExitCode();
@@ -3919,20 +3921,47 @@ QString callProblemsScript() {
 /// does not define itself is one Windows PowerShell 5.1 has (Dismount-Volume, which it does not
 /// have, stopped every lettered target until 2026-11-11, audit e2); and no script assigns to an
 /// automatic variable ($args, $input, $_, $PSItem, $this; the writer wrappers built their
-/// argument list in $args, audit e8).
+/// argument list in $args, audit e8). And every call to a Storage-module cmdlet that passes
+/// -Verbose passes -ErrorAction Stop too: given -Verbose, those cmdlets no longer stop on
+/// $ErrorActionPreference, and Check File System on FAT32 and exFAT reported success having
+/// checked nothing (operation proof, 2026-11-12, F15).
 QString commandProblemsScript() {
     return QStringLiteral(
         "$script:knownCommands = @{}\n"
+        "$script:storageCommands = @{}\n"
+        "function Test-SakStopsOnError($c) {\n"
+        "  $elements = @($c.CommandElements)\n"
+        "  for ($i = 1; $i -lt $elements.Count; $i++) {\n"
+        "    $e = $elements[$i]\n"
+        "    if ($e -isnot [System.Management.Automation.Language.CommandParameterAst] -or "
+        "@('ErrorAction', 'EA') -notcontains $e.ParameterName) { continue }\n"
+        "    $value = $(if ($e.Argument) { $e.Argument } elseif ($i + 1 -lt $elements.Count) { "
+        "$elements[$i + 1] })\n"
+        "    return ($value -and ($value.Extent.Text -replace \"['\"\"]\", '') -eq 'Stop')\n"
+        "  }\n"
+        "  return $false\n"
+        "}\n"
         "function Get-SakCommandProblems($name, $ast, $functions) {\n"
         "  foreach ($c in $ast.FindAll({ param($n) $n -is "
         "[System.Management.Automation.Language.CommandAst] }, $true)) {\n"
         "    $called = $c.GetCommandName()\n"
         "    if (-not $called -or $functions.ContainsKey($called)) { continue }\n"
         "    if (-not $script:knownCommands.ContainsKey($called)) {\n"
-        "      $script:knownCommands[$called] = [bool](Get-Command -Name $called -ErrorAction "
-        "SilentlyContinue) }\n"
+        "      $command = Get-Command -Name $called -ErrorAction SilentlyContinue | Select-Object "
+        "-First 1\n"
+        "      $script:knownCommands[$called] = [bool]$command\n"
+        "      $script:storageCommands[$called] = [bool]$command -and \"$($command.ModuleName)\" "
+        "-eq 'Storage' }\n"
         "    if (-not $script:knownCommands[$called]) {\n"
         "      $name + ': calls ' + $called + ', which Windows PowerShell 5.1 does not have' }\n"
+        "    $verbose = @($c.CommandElements | Where-Object { $_ -is "
+        "[System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq "
+        "'Verbose' }).Count -gt 0\n"
+        "    if (-not ($script:storageCommands[$called] -and $verbose)) { continue }\n"
+        "    $script:storageVerboseCalls++\n"
+        "    if (-not (Test-SakStopsOnError $c)) {\n"
+        "      $name + ': ' + $c.Extent.Text + ': a Storage cmdlet given -Verbose stops only on "
+        "-ErrorAction Stop' }\n"
         "  }\n"
         "  foreach ($a in $ast.FindAll({ param($n) $n -is "
         "[System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {\n"
@@ -3957,6 +3986,7 @@ QString ownFunctionCallChecker(const QString& folder) {
            QStringLiteral(
                "$ErrorActionPreference = 'Stop'\n"
                "$problems = @(); $checked = 0; $script:calls = 0; $types = @{}\n"
+               "$script:storageVerboseCalls = 0\n"
                "$typePattern = '\\[(Sak\\.\\w+|SakMigration\\.\\w+|SakLockedFilePath)\\]|"
                "New-Object\\s+(?:-TypeName\\s+)?(Sak\\.\\w+)'\n"
                "foreach ($file in Get-ChildItem -LiteralPath %1 -Filter *.ps1) {\n"
@@ -3996,7 +4026,8 @@ QString ownFunctionCallChecker(const QString& folder) {
                "foreach ($n in @($types.Keys)) { if (-not ($n -as [type])) { "
                "$problems += ($types[$n] + ': uses ' + $n + ', which sak_script_types.dll does not "
                "define') } }\n"
-               "'CHECKED ' + $checked + ' CALLS ' + $script:calls + ' TYPES ' + $types.Count\n"
+               "'CHECKED ' + $checked + ' CALLS ' + $script:calls + ' TYPES ' + $types.Count + "
+               "' STORAGE-VERBOSE ' + $script:storageVerboseCalls\n"
                "$problems | ForEach-Object { 'PROBLEM ' + $_ }\n")
                .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(folder)));
 }
@@ -5130,7 +5161,140 @@ void PartitionManagerCoreTests::generatedScripts_callTheirOwnFunctionsWithDeclar
     const QString out = (proc.std_out + proc.std_err).trimmed();
     QVERIFY2(out.contains(QStringLiteral("CHECKED %1 ").arg(seen.size())), qPrintable(out));
     QVERIFY2(!out.contains(QStringLiteral(" TYPES 0")), qPrintable(out));
+    // The scans, ReTrim and defrag the corpus runs pass -Verbose to Storage cmdlets.
+    QVERIFY2(!out.contains(QStringLiteral(" STORAGE-VERBOSE 0")), qPrintable(out));
     QVERIFY2(!out.contains(QStringLiteral("PROBLEM")), qPrintable(out));
+}
+
+// F15 (operation proof, 2026-11-12): a Storage cmdlet given -Verbose no longer stops on
+// $ErrorActionPreference, so the checker above names each call to one that passes -Verbose
+// without -ErrorAction Stop. This plants such calls, and the ways of saying Stop, in one script.
+void PartitionManagerCoreTests::generatedScripts_checkerNamesAStorageCmdletThatWouldNotStop() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray planted =
+        "$ErrorActionPreference = 'Stop'\r\n"
+        "Repair-Volume -DriveLetter E -Scan -Verbose\r\n"
+        "Optimize-Volume -DriveLetter E -ReTrim -Verbose -ErrorAction SilentlyContinue\r\n"
+        "Repair-Volume -DriveLetter E -Scan -Verbose -ErrorAction Stop\r\n"
+        "Optimize-Volume -DriveLetter E -Analyze -Verbose:$true -EA 'Stop'\r\n"
+        "Optimize-Volume -DriveLetter E -Defrag -ErrorAction:Stop -Verbose\r\n"
+        "Get-Volume -DriveLetter E\r\n";
+    QFile file(dir.filePath(QStringLiteral("planted.ps1")));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(planted), planted.size());
+    file.close();
+
+    const ProcessResult proc = sak::runPowerShell(ownFunctionCallChecker(dir.path()), 120'000);
+    const QString out = (proc.std_out + proc.std_err).trimmed();
+    QVERIFY2(out.contains(QStringLiteral("CHECKED 1 ")) &&
+                 out.contains(QStringLiteral(" STORAGE-VERBOSE 5")),
+             qPrintable(out));
+    QVERIFY2(out.count(QStringLiteral("PROBLEM ")) == 2, qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("PROBLEM planted.ps1: Repair-Volume -DriveLetter E -Scan "
+                                         "-Verbose: a Storage cmdlet given -Verbose stops only on "
+                                         "-ErrorAction Stop")),
+             qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("PROBLEM planted.ps1: Optimize-Volume -DriveLetter E "
+                                         "-ReTrim -Verbose -ErrorAction SilentlyContinue: a "
+                                         "Storage cmdlet given -Verbose stops only on "
+                                         "-ErrorAction Stop")),
+             qPrintable(out));
+}
+
+namespace {
+
+/// Runs a generated Check File System @p script for E: against stand-ins. Get-Volume says the
+/// volume holds @p file_system. Repair-Volume finds @p repair_error (empty: nothing), and reports
+/// it as Windows' does when it is given -Verbose: it stops the script only when -ErrorAction Stop
+/// is passed as well. chkdsk is a stand-in .cmd that prints a line to stdout and one to stderr and
+/// exits with @p chkdsk_exit. "DONE" when the script ran to its end, "THREW <message>" when not.
+QString runVolumeScanScript(QString script,
+                            const QString& file_system,
+                            const QString& repair_error,
+                            int chkdsk_exit) {
+    QTemporaryDir dir;
+    const QString chkdsk = QStringLiteral("([Environment]::SystemDirectory + '\\chkdsk.exe')");
+    if (!dir.isValid() || !script.contains(chkdsk)) {
+        // Never the real chkdsk: the script must name it where the stand-in replaces it.
+        return QStringLiteral("NO STAND-IN FOR CHKDSK");
+    }
+    const QString tool = QDir::toNativeSeparators(dir.filePath(QStringLiteral("chkdsk.cmd")));
+    QFile file(tool);
+    const QByteArray bytes = QStringLiteral(
+                                 "@echo off\r\necho The type of the file system is %1.\r\necho "
+                                 "stand-in chkdsk stderr line 1>&2\r\nexit /b %2\r\n")
+                                 .arg(file_system)
+                                 .arg(chkdsk_exit)
+                                 .toLatin1();
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+        return QStringLiteral("NO STAND-IN FOR CHKDSK");
+    }
+    file.close();
+    script.replace(chkdsk, PartitionScriptBuilder::quotePowerShell(tool));
+    int exit_code = -1;
+    return runWithScriptFunctions(
+        QString(),
+        QStringLiteral(
+            "function Get-Volume { param($DriveLetter, $ErrorAction) [pscustomobject]@{ "
+            "FileSystem = %1 } }\n"
+            "function Repair-Volume { [CmdletBinding()] param($DriveLetter, [switch]$Scan) "
+            "Write-Host ('CALL Repair ' + $DriveLetter); if (-not %2) { 'NoErrorsFound'; return "
+            "}; if ([string]$PSBoundParameters['ErrorAction'] -eq 'Stop' -or -not "
+            "$PSBoundParameters.ContainsKey('Verbose')) { throw %2 }; Write-Host ('NOT STOPPED "
+            "BY ' + %2) }\n"
+            "try {\n")
+                .arg(PartitionScriptBuilder::quotePowerShell(file_system),
+                     PartitionScriptBuilder::quotePowerShell(repair_error)) +
+            script + QStringLiteral("\n'DONE'\n} catch { 'THREW ' + $_.Exception.Message }\n"),
+        &exit_code);
+}
+
+}  // namespace
+
+// F15 and F16 (operation proof, 2026-11-12): Check File System on FAT32 and exFAT reported success
+// having checked nothing (Repair-Volume refuses both, and given -Verbose it did not stop the
+// script), and the closing scan of a FAT32 rebuild failed after the files were back. NTFS and ReFS
+// get Repair-Volume with -ErrorAction Stop; FAT32 and exFAT get chkdsk, which only reads without
+// /f, and its exit code stops the script. Windows PowerShell 5.1 runs the whole generated script.
+void PartitionManagerCoreTests::generatedScripts_volumeScanStopsOnWhatItFinds() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{2};
+    target.drive_letter = QStringLiteral("E");
+    target.size_bytes = 256 * kMiBytes;
+    const PartitionScriptBuilder builder;
+    const auto check = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::CheckFileSystem, target));
+    QVERIFY2(check.valid(), qPrintable(check.blockers.join(' ')));
+    QVERIFY2(check.script.contains(
+                 QStringLiteral("Repair-Volume -DriveLetter 'E' -Scan -Verbose -ErrorAction Stop")),
+             qPrintable(check.script));
+    QVERIFY(check.script.contains(QStringLiteral("$sakScanDrive = 'E';")));
+    QVERIFY(check.script.contains(QStringLiteral(
+        "& ([Environment]::SystemDirectory + '\\chkdsk.exe') ('{0}:' -f $sakScanDrive) 2>&1")));
+
+    const QString clean = runVolumeScanScript(check.script, QStringLiteral("NTFS"), QString(), 0);
+    QVERIFY2(clean.contains(QStringLiteral("CALL Repair E")) &&
+                 clean.contains(QStringLiteral("DONE")),
+             qPrintable(clean));
+    const QString corrupt = runVolumeScanScript(
+        check.script, QStringLiteral("NTFS"), QStringLiteral("The volume has corruption"), 0);
+    QVERIFY2(corrupt.contains(QStringLiteral("THREW The volume has corruption")) &&
+                 !corrupt.contains(QStringLiteral("DONE")),
+             qPrintable(corrupt));
+
+    const QString fat = runVolumeScanScript(check.script, QStringLiteral("FAT32"), QString(), 0);
+    QVERIFY2(fat.contains(QStringLiteral("The type of the file system is FAT32.")) &&
+                 fat.contains(QStringLiteral("stand-in chkdsk stderr line")) &&
+                 fat.contains(QStringLiteral("DONE")) &&
+                 !fat.contains(QStringLiteral("CALL Repair")),
+             qPrintable(fat));
+    const QString exfat = runVolumeScanScript(check.script, QStringLiteral("exFAT"), QString(), 3);
+    QVERIFY2(exfat.contains(QStringLiteral("THREW chkdsk found a problem on E: (exit 3)")) &&
+                 !exfat.contains(QStringLiteral("DONE")),
+             qPrintable(exfat));
 }
 
 // The staged HFS+ format and repair run fsck_hfs through Invoke-SakCheckedHfsTool and read its exit
@@ -20451,12 +20615,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
     partitionTarget.size_bytes = 10 * 1024 * 1024;
     partitionTarget.drive_letter = QStringLiteral("E");
 
+    // Check File System: generatedScripts_volumeScanStopsOnWhatItFinds.
     PartitionScriptBuilder builder;
-    auto check = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::CheckFileSystem, partitionTarget));
-    QVERIFY(check.valid());
-    QVERIFY(check.script.contains(QStringLiteral("Repair-Volume -DriveLetter E -Scan")));
-
     auto hidden = builder.buildScript(
         PartitionOperationPlanner::makeOperation(PartitionOperationType::SetPartitionHidden,
                                                  partitionTarget,
@@ -24894,6 +25054,11 @@ void PartitionManagerCoreTests::scriptBuilder_buildsChangeClusterSizeScript() {
     QVERIFY(script.script.contains(QStringLiteral("-AllocationUnitSize $allocationUnitBytes")));
     QVERIFY(script.script.contains(QStringLiteral("Compare-Object")));
     QVERIFY(script.script.contains(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")));
+    // The closing scan of a FAT32 or exFAT rebuild is chkdsk: Repair-Volume refuses both, and a
+    // FAT32 move failed there after its files were back (operation proof, 2026-11-12).
+    QVERIFY(script.script.contains(
+        QStringLiteral("Repair-Volume -DriveLetter $drive -Scan -ErrorAction Stop } else")));
+    QVERIFY(script.script.contains(QStringLiteral("$sakScanDrive = $drive;")));
     // P03-10: target backup-root exclusion compares volume identity.
     QVERIFY(script.script.contains(QStringLiteral("function Get-SakVolumeGuid")));
     QVERIFY(
