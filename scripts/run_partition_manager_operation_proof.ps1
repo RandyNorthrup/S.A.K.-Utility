@@ -717,7 +717,7 @@ try {
                 if ($row.Count -ne 1 -or $row[0].Machine -ne $Machine -or $row[0].Pending) { throw "$id is not a ready $Machine row in the plan" }
             }
             $newRunId = "run-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-            $local = if ($EvidenceDir) { $EvidenceDir } else { Join-Path (Split-Path -Parent $ResultsPath) "runs$newRunId" }
+            $local = if ($EvidenceDir) { $EvidenceDir } else { Join-Path (Split-Path -Parent $ResultsPath) "runs\$newRunId" }
             if ($Machine -eq 'vm') {
                 Invoke-OpsVmRun -RowIds $wanted -LocalDir $local
                 Write-OpsResults
