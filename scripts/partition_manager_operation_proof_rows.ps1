@@ -427,7 +427,21 @@ function Invoke-OpsAssistantTwoStep {
 
 Add-OpsRow 'ops.create-exfat' { Invoke-OpsCreateWindows -FileSystem 'exFAT' -Label 'OPSEXFAT' -ClusterBytes 4096 }
 Add-OpsRow 'ops.create-fat32' { Invoke-OpsCreateWindows -FileSystem 'FAT32' -Label 'OPSFAT32' -ClusterBytes 4096 }
-Add-OpsRow 'ops.create-refs-assistant' { Invoke-OpsCreateWindows -FileSystem 'ReFS' -Label 'OPSREFS' -ClusterBytes 4096 -Route 'assistant' }
+Add-OpsRow 'ops.create-refs-assistant' {
+    # Windows 11 Pro cannot format ReFS outside a Dev Drive. Since opsfix (F4) the assistant's Create
+    # is refused before anything is written, and says why; b28 made a partition and left it RAW.
+    $disk = New-OpsDisk -Name 'disk'
+    $media = Get-OpsMedia -DiskNumber $disk
+    $before = Get-CertSnapshot -DiskNumber $disk
+    Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route 'assistant' -ReadBackOnFailure -Expect 'refused' -RefusalContains 'cannot format ReFS' -Choices @{
+        size_mib = 256; free_before_mib = 0; file_system = 'ReFS'; allocation_unit_bytes = 4096
+        partition_type = $Script:GptBasicData; label = 'OPSREFS'; full_format = $false
+    } | Out-Null
+    $after = Get-CertSnapshot -DiskNumber $disk
+    $checks = @(New-OpsCheck -Name 'the raw table holds no data partition' -Passed (@($after.data_partitions).Count -eq 0) -Detail @($after.data_partitions).Count)
+    $checks += New-OpsCheck -Name 'the partition table did not change' -Passed ("$($before.raw.gpt_entries_hex)" -eq "$($after.raw.gpt_entries_hex)") -Detail ''
+    return Complete-OpsRow -Media $media -Checks $checks
+}
 Add-OpsRow 'ops.create-ext2-assistant' { Invoke-OpsAssistantCreateRefused -FileSystem 'ext2' -Label 'OPSEXT2' }
 Add-OpsRow 'ops.create-ext3-assistant' { Invoke-OpsAssistantCreateRefused -FileSystem 'ext3' -Label 'OPSEXT3' }
 Add-OpsRow 'ops.create-ext4-assistant' { Invoke-OpsAssistantCreateRefused -FileSystem 'ext4' -Label 'OPSEXT4' }
