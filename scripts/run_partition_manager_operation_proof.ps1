@@ -562,8 +562,14 @@ function Get-OpsCertVerdict {
     if ($spec.Count -ne 1) { return @("the matrix has no row $Id") }
     $report = Get-Content -LiteralPath (Join-Path $RowDir 'report.json') -Raw | ConvertFrom-Json
     $reasons = @(Test-PmRowEvidence -Spec $spec[0] -RowDir $RowDir -CurrentCodeDigest "$($report.code.digest)")
-    # Release binding (which code, which commit, a clean tree) is the final run's to meet.
-    return @($reasons | Where-Object { $_ -notmatch 'uncommitted changes|names no real commit|is for other code|outside this release' })
+    # Release binding (which code, which commit, a clean tree) is the final run's to meet. An
+    # operation-proof report names no digest of its own (each step client names the code it was
+    # built from), so "built from other code" is that binding too; what stays is that every step
+    # of the row came from one build.
+    $kept = @($reasons | Where-Object { $_ -notmatch 'uncommitted changes|names no real commit|is for other code|outside this release|was built from other code' })
+    $digests = @(Get-ChildItem -LiteralPath $RowDir -Filter '*.client.json' -File | ForEach-Object { "$((Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json).code_digest)" } | Sort-Object -Unique)
+    if ($digests.Count -ne 1 -or -not $digests[0]) { $kept += "the row's steps name $($digests.Count) builds, not one" }
+    return $kept
 }
 
 function Get-OpsKnownFindings {
