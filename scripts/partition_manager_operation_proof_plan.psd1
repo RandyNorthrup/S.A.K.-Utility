@@ -25,6 +25,7 @@
         @{ Id = 'ops.create-hfsx-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'HFSX'; Reads = 'volume header parsed here; bundled fsck_hfs -n -f on a copy' }
         @{ Id = 'ops.create-apfs-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'APFS'; Reads = 'NXSB parsed here; probe certifier; host apfsck' }
         @{ Id = 'ops.create-swap-assistant'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'Linux swap'; Reads = 'swap header read from the device; host blkid and swaplabel on a copy' }
+        @{ Id = 'ops.create-ext4-assistant-plain'; Machine = 'testpc2'; Operation = 'Create, non-Windows (assistant)'; Variant = 'ext4 from the tool schema alone (no tool fields): must be refused before writing'; Reads = 'raw partition table unchanged' }
         @{ Id = 'ops.format-exfat'; Machine = 'testpc2'; Operation = 'Format'; Variant = 'exFAT over lettered NTFS'; Reads = 'raw extent; Get-Volume, Win32_Volume; chkdsk read-only' }
         @{ Id = 'ops.format-fat32'; Machine = 'testpc2'; Operation = 'Format'; Variant = 'FAT32 over lettered NTFS'; Reads = 'raw extent; Get-Volume, Win32_Volume; chkdsk read-only' }
         @{ Id = 'ops.format-ntfs'; Machine = 'testpc2'; Operation = 'Format'; Variant = 'NTFS (regression)'; Reads = 'raw extent; Get-Volume, Win32_Volume; chkdsk /scan' }

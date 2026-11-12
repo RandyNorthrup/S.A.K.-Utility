@@ -336,13 +336,17 @@ function Invoke-OpsCreateWindows {
 
 function Invoke-OpsCreateNonNative {
     # The panel's Create offers NTFS, exFAT and FAT32. These file systems are created only by the
-    # assistant's partition.apply_operation, so that is the route the step takes.
+    # assistant's partition.apply_operation, so that is the route the step takes. The Create script
+    # makes a non-Windows file system only when the payload also says non_native_file_system_tool
+    # and target_wipe_confirmed, which the model has to write itself (nothing in the assistant's
+    # tool schema names them): the step adds them as a model would.
     param([string]$FileSystem, [object]$Label)
     $disk = New-OpsDisk -Name 'disk'
     $media = Get-OpsMedia -DiskNumber $disk
     Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route 'assistant' -ReadBackOnFailure -Choices @{
         size_mib = 128; free_before_mib = 0; file_system = $FileSystem; allocation_unit_bytes = 0
         partition_type = ''; label = "$Label"; full_format = $false
+        assistant_payload = @{ non_native_file_system_tool = $true; target_wipe_confirmed = $true }
     } | Out-Null
     $snapshot = Get-CertSnapshot -DiskNumber $disk
     $data = @($snapshot.data_partitions)
@@ -368,6 +372,22 @@ Add-OpsRow 'ops.create-hfsplus-assistant' { Invoke-OpsCreateNonNative -FileSyste
 Add-OpsRow 'ops.create-hfsx-assistant' { Invoke-OpsCreateNonNative -FileSystem 'HFSX' -Label 'OPSHFSX' }
 Add-OpsRow 'ops.create-apfs-assistant' { Invoke-OpsCreateNonNative -FileSystem 'APFS' -Label 'OPSAPFS' }
 Add-OpsRow 'ops.create-swap-assistant' { Invoke-OpsCreateNonNative -FileSystem 'Linux swap' -Label 'OPSSWAP' }
+
+Add-OpsRow 'ops.create-ext4-assistant-plain' {
+    # The request a model writes from the tool schema alone: file system and label, no tool
+    # fields. The Create script refuses it ("Unsupported file system"); the row proves that it does
+    # so before anything is written.
+    $disk = New-OpsDisk -Name 'disk'
+    $media = Get-OpsMedia -DiskNumber $disk
+    $before = Get-CertSnapshot -DiskNumber $disk
+    Invoke-OpsStep -Disk $disk -Step 'create' -Operation 'Create' -Route 'assistant' -Expect 'failed' -RefusalContains 'Unsupported file system' -Choices @{
+        size_mib = 128; free_before_mib = 0; file_system = 'ext4'; allocation_unit_bytes = 0
+        partition_type = ''; label = 'OPSPLAIN'; full_format = $false
+    } | Out-Null
+    $after = Get-CertSnapshot -DiskNumber $disk
+    $checks = @(New-OpsCheck -Name 'nothing was written: the partition table is as it was' -Passed ("$($before.raw.gpt_entries_hex)" -eq "$($after.raw.gpt_entries_hex)" -and "$($before.raw.lba0_hex)" -eq "$($after.raw.lba0_hex)") -Detail @($after.data_partitions).Count)
+    return Complete-OpsRow -Media $media -Checks $checks
+}
 
 # --- Format ---------------------------------------------------------------------------------------
 
