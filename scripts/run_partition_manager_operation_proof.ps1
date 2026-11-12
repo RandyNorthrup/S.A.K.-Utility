@@ -710,8 +710,7 @@ function Write-OpsResults {
             $s = Get-OpsRowSummary -RowDir $found -PlanRow $row
             $tally[($s.verdict -split ' ')[0]]++
             # One table row a line: a tool's output can hold line breaks and bars.
-            $cell = { param($Text) ("$Text" -replace '[
-]+', ' ' -replace '\|', '/').Trim() }
+            $cell = { param($Text) ("$Text" -replace '[\r\n]+', ' ' -replace '\|', '/').Trim() }
             $lines += "| $($s.id) | $($s.operation) | $($s.variant) | $($row.Machine) | $(& $cell $s.build) | $(& $cell $s.scripts) | $(& $cell $s.helper) | $(& $cell $s.verifier) | **$($s.verdict)** | $($s.run) |"
             $details += Get-OpsRowDetails -RowDir $found -Id $row.Id -Verdict $s.verdict
         } elseif ($row.Machine -eq 'none') {
