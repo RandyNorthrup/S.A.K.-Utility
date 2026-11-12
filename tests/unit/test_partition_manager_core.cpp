@@ -1945,6 +1945,7 @@ private Q_SLOTS:
     void safetyValidator_blocksResizeDonorPayload();
     void safetyValidator_resizesOnlyAnIdentifiedFileSystem();
     void safetyValidator_refusesResizingFat32OrExfat();
+    void safetyValidator_refusesAFullFormatOnAThinDisk();
     void safetyValidator_refusesWhatFormatVolumeWouldRefuse();
     void safetyValidator_refusesAPartitionTypeTheTableCannotHold();
     void safetyValidator_blocksOversizedCreate();
@@ -24000,6 +24001,60 @@ void PartitionManagerCoreTests::safetyValidator_resizesOnlyAnIdentifiedFileSyste
     QVERIFY2(blockers(queued_ext)
                  .contains(QStringLiteral("queued for ext4, but the partition holds NTFS")),
              qPrintable(blockers(queued_ext)));
+}
+
+// F12 (operation proof, 2026-11-11): Wipe Partition and Wipe Disk were offered on a VHD and refused
+// only at Apply, because Windows allows no full format on a thin-provisioned disk. The queue
+// refuses them, and a full Format or Create, with the script's own sentence, when the scan says the
+// disk is thin; a disk it did not say about is left to the script's check.
+void PartitionManagerCoreTests::safetyValidator_refusesAFullFormatOnAThinDisk() {
+    auto inventory = singleDataDiskInventory();
+    auto& disk = inventory.disks.first();
+    const auto& partition = disk.partitions.first();
+    PartitionTarget part;
+    part.kind = PartitionTargetKind::Partition;
+    part.disk_number = disk.disk_number;
+    part.partition_number = partition.partition_number;
+    part.offset_bytes = partition.offset_bytes;
+    part.size_bytes = partition.size_bytes;
+    part.drive_letter = QStringLiteral("T");
+    PartitionTarget whole;
+    whole.kind = PartitionTargetKind::Disk;
+    whole.disk_number = disk.disk_number;
+    const QJsonObject full_format{{QStringLiteral("file_system"), QStringLiteral("NTFS")},
+                                  {QStringLiteral("label"), QStringLiteral("DATA")},
+                                  {QStringLiteral("full_format"), true}};
+    const struct {
+        PartitionOperationType type{PartitionOperationType::WipePartition};
+        const PartitionTarget* target{nullptr};
+        QJsonObject payload;
+        QString subject;
+    } cases[] = {
+        {PartitionOperationType::WipePartition, &part, {}, QStringLiteral("Wiping a partition")},
+        {PartitionOperationType::WipeDisk, &whole, {}, QStringLiteral("Wipe Disk")},
+        {PartitionOperationType::Format, &part, full_format, QStringLiteral("This format")}};
+    for (const QString& provisioning :
+         {QStringLiteral("Thin"), QStringLiteral("Fixed"), QString()}) {
+        disk.provisioning_type = provisioning;
+        for (const auto& item : cases) {
+            const QString blockers =
+                PartitionSafetyValidator::validate(
+                    inventory,
+                    PartitionOperationPlanner::makeOperation(item.type, *item.target, item.payload))
+                    .blockers.join(QLatin1Char(' '));
+            const QString sentence = item.subject +
+                                     QStringLiteral(
+                                         " needs a full format, and Windows does not allow "
+                                         "one on a thin-provisioned disk, such as a virtual "
+                                         "disk file. Nothing was changed.");
+            QVERIFY2(blockers.contains(sentence) == (provisioning == QStringLiteral("Thin")),
+                     qPrintable(provisioning + QStringLiteral(" / ") + item.subject +
+                                QStringLiteral(": ") + blockers));
+        }
+    }
+    // The scan reads it: Get-Disk's ProvisioningType.
+    QVERIFY(StorageInventoryWorker::inventoryPowerShellScript(false).contains(
+        QStringLiteral("ProvisioningType = \"$($disk.ProvisioningType)\"")));
 }
 
 // F4 (operation proof, 2026-11-11): Shrink was offered for FAT32 and exFAT and refused only at

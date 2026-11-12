@@ -238,6 +238,9 @@ struct PartitionDiskInfo {
     QString serial_number;
     QString bus_type;
     QString media_type;
+    /// Get-Disk's ProvisioningType: "Thin" for a virtual disk file, on which Windows allows no
+    /// full format; "Fixed"; empty when the scan did not say.
+    QString provisioning_type;
     /// What the drive itself reports through the bundled smartctl. Asked only when Windows says
     /// "Unspecified", and only with administrator rights. Zero means it reported none.
     int rotation_rate_rpm{0};

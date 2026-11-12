@@ -567,6 +567,7 @@ PartitionDiskInfo parseDisk(const QJsonObject& object) {
     disk.serial_number = object.value(QStringLiteral("SerialNumber")).toString();
     disk.bus_type = object.value(QStringLiteral("BusType")).toString();
     disk.media_type = object.value(QStringLiteral("MediaType")).toString();
+    disk.provisioning_type = object.value(QStringLiteral("ProvisioningType")).toString().trimmed();
     disk.rotation_rate_rpm = std::max(0, object.value(QStringLiteral("RotationRateRpm")).toInt(0));
     QString partitionStyleText = object.value(QStringLiteral("PartitionStyle")).toString();
     if (partitionStyleText.isEmpty()) {
@@ -1294,6 +1295,7 @@ static QString inventoryPowerShellDiskQueriesScript() {
     HealthStatus = "$($disk.HealthStatus)"
     OperationalStatus = @($disk.OperationalStatus) -join ', '
     BusType = "$($disk.BusType)"
+    ProvisioningType = "$($disk.ProvisioningType)"
     # Get-Disk has no media type. Only the physical disk says HDD, SSD or Unspecified.
     MediaType = if ($physical) { "$($physical.MediaType)" } else { '' }
     RotationRateRpm = $rotationRateRpm

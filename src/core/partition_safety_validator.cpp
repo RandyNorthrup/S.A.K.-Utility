@@ -839,6 +839,39 @@ void validateCreateUnallocatedPayload(const PartitionOperation& operation,
                  QStringLiteral("Create partition type is incompatible with the file system"));
 }
 
+// What a full-formatting operation is called in the refusal, or empty for one that does not
+// full-format: Wipe Partition and Wipe Disk always, Format and Create when asked to.
+QString fullFormatSubject(const PartitionOperation& operation) {
+    switch (operation.type) {
+    case PartitionOperationType::WipePartition:
+        return QStringLiteral("Wiping a partition");
+    case PartitionOperationType::WipeDisk:
+        return QStringLiteral("Wipe Disk");
+    case PartitionOperationType::Format:
+        return payloadBool(operation, QStringLiteral("full_format")) ? QStringLiteral("This format")
+                                                                     : QString();
+    case PartitionOperationType::Create:
+        return payloadBool(operation, QStringLiteral("full_format"))
+                   ? QStringLiteral("This new partition")
+                   : QString();
+    default:
+        return {};
+    }
+}
+
+// Windows allows no full format on a thin-provisioned disk (a VHD or VHDX file), and the script
+// refused only at Apply (operation proof, 2026-11-11). Refused at queue time when the scan says
+// the disk is thin; when it did not say, the script's own check stays the backstop.
+void validateFullFormatOnThinDisk(const PartitionDiskInfo& disk,
+                                  const PartitionOperation& operation,
+                                  PartitionValidationResult* result) {
+    const QString subject = fullFormatSubject(operation);
+    addBlockerIf(result,
+                 !subject.isEmpty() && disk.provisioning_type.compare(QStringLiteral("Thin"),
+                                                                      Qt::CaseInsensitive) == 0,
+                 PartitionSafetyValidator::thinDiskFullFormatRefusal(subject));
+}
+
 // Create makes a partition with a Windows file system only, whatever its payload asks for; a
 // bundled tool's file system is made by Formatting it afterwards (an assistant's ext4 Create
 // reached the builder's "Unsupported file system", operation proof, 2026-11-11).
@@ -2260,6 +2293,12 @@ QString PartitionSafetyValidator::partitionTypeBlocker(const QString& partition_
     return QStringLiteral("Changing a partition type needs an MBR or GPT disk.");
 }
 
+QString PartitionSafetyValidator::thinDiskFullFormatRefusal(const QString& what) {
+    return what + QStringLiteral(
+                      " needs a full format, and Windows does not allow one on a thin-provisioned "
+                      "disk, such as a virtual disk file. Nothing was changed.");
+}
+
 bool PartitionSafetyValidator::isSystemProtectedPartition(const PartitionInfoEx& partition) {
     return partition.is_system || partition.is_boot || partition.is_efi || partition.is_msr ||
            partition.is_recovery;
@@ -2352,6 +2391,7 @@ PartitionValidationResult PartitionSafetyValidator::validate(const PartitionInve
         break;
     }
     validateWindowsFormatChoice(inventory, *disk, operation, &result);
+    validateFullFormatOnThinDisk(*disk, operation, &result);
 
     return result;
 }

@@ -106,6 +106,10 @@ public:
     /// words, or empty when it is one.
     [[nodiscard]] static QString partitionTypeBlocker(const QString& partition_style,
                                                       const QString& typed);
+    /// Why @p what (an operation that full-formats, named as a sentence's subject) cannot run on a
+    /// thin-provisioned disk: Windows allows no full format there, which is how it reports a
+    /// virtual disk file, and says only "Not Supported". One text for the queue and the script.
+    [[nodiscard]] static QString thinDiskFullFormatRefusal(const QString& what);
 
 private:
     static void validateDiskOperation(const PartitionInventory& inventory,

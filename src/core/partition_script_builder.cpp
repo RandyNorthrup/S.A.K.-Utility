@@ -2958,9 +2958,7 @@ QString fullFormatAllowedScript(uint32_t disk_number, const QString& what) {
                "throw %2 }\n")
         .arg(disk_number)
         .arg(PartitionScriptBuilder::quotePowerShell(
-            what + QStringLiteral(" needs a full format, and Windows does not allow one on a "
-                                  "thin-provisioned disk, such as a virtual disk file. Nothing "
-                                  "was changed.")));
+            PartitionSafetyValidator::thinDiskFullFormatRefusal(what)));
 }
 
 QString cloneTransferRawTargetFunctionsScript(const PartitionOperation& operation) {
