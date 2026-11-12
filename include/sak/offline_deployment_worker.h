@@ -11,6 +11,7 @@
 #pragma once
 
 #include "sak/nuget_dependency_resolver.h"
+#include "sak/offline_deployment_constants.h"
 #include "sak/package_internalization_engine.h"
 
 #include <QFuture>
@@ -21,6 +22,7 @@
 #include <QVector>
 
 #include <atomic>
+#include <expected>
 #include <optional>
 
 namespace sak {
@@ -208,6 +210,32 @@ public:
                                                   bool is_reparse_point,
                                                   bool has_ownership_marker);
 
+    /// @brief Delete a work directory ONLY when workDirSafeToDelete permits it (not a reparse
+    ///        point, bears our ownership marker); a missing dir is a successful no-op. Nothing
+    ///        inside is followed: a link in the tree is removed itself, never what it points at
+    ///        (sak::no_follow::removeTree). Returns false when it refused or could not delete.
+    static bool removeOwnedWorkDir(const QString& work_dir);
+
+    /// @brief A new folder path for one build's or one download's work files, inside the
+    ///        process's run folder (QDir::tempPath(), which the app points at data\temp\run-*
+    ///        at startup), never the output folder. The folder is not made here.
+    [[nodiscard]] static QString newWorkDirPath(const QString& purpose);
+
+    /// @brief Why work files cannot go under @p work_root, or empty when they can: the drive
+    ///        holding it needs @p needed_bytes free. Names the folder and both sizes.
+    [[nodiscard]] static QString workSpaceRefusal(const QString& work_root, qint64 needed_bytes);
+
+    /// @brief Copy @p source to @p target (a new file; an existing name, link or not, is
+    ///        refused and never followed), then read the copy back: unless its SHA-256 is
+    ///        @p expected_sha256 the copy is removed. The work folder and the output can be on
+    ///        different drives, so a finished file is placed by a checked copy, never a rename.
+    [[nodiscard]] static std::expected<void, QString> placeVerifiedCopy(
+        const QString& source, const QString& target, const QByteArray& expected_sha256);
+
+    /// @brief The free space a build or a download needs where its work goes
+    ///        (offline::kMinWorkFreeBytes). A test sets more than any drive has.
+    void setMinimumWorkSpaceForTesting(qint64 bytes) { m_min_work_free_bytes = bytes; }
+
     /// @brief Reduce a URL-derived name to a single safe path segment, returning
     ///        @p fallback when it would escape the output dir (empty, ".", "..",
     ///        or containing a path separator after basename reduction). Pure;
@@ -277,11 +305,6 @@ private:
     ///        a recursive cleanup can never wipe unrelated user data (B10-13).
     [[nodiscard]] bool prepareOwnedWorkDir(const QString& work_dir, QString& error_out);
 
-    /// @brief Recursively delete a work directory ONLY when workDirSafeToDelete permits it (not a
-    ///        reparse point, bears our ownership marker); a missing dir is a successful no-op.
-    ///        Returns false (no delete performed) otherwise.
-    bool removeOwnedWorkDir(const QString& work_dir);
-
     /// @brief Execute a Bundle (self-contained) build on a background thread:
     ///        resolve the closure, internalize + pack every installer.
     void executeBuildBundle(const QString& output_dir, const QString& description);
@@ -322,6 +345,14 @@ private:
     /// @brief Execute direct download on a background thread
     void executeDirectDownload(const QVector<QPair<QString, QString>>& packages,
                                const QString& output_dir);
+
+    /// @brief End a direct download run and report its counts.
+    void finishDirectDownload(int total, int completed, int failed);
+
+    /// @brief Whether work can start in @p work_dir: room on its drive (workSpaceRefusal), and,
+    ///        when @p owned_folder, the folder made and stamped as ours before anything is written
+    ///        there. Otherwise the run ends with the refusal as its error.
+    [[nodiscard]] bool workCanStartIn(const QString& work_dir, bool owned_folder);
 
     /// @brief Internalize a single package within the batch loop
     [[nodiscard]] bool internalizeOnePackage(int idx,
@@ -523,6 +554,7 @@ private:
 
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_cancelled{false};
+    qint64 m_min_work_free_bytes{offline::kMinWorkFreeBytes};
 };
 
 }  // namespace sak

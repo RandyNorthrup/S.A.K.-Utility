@@ -343,6 +343,17 @@ public:
     ///        NOT treated as download indicators. Pure; unit-testable.
     [[nodiscard]] static bool scriptHasNetworkDownload(const QString& script_text);
 
+    /// @brief Remove NuGet-specific metadata files from the extracted package.
+    ///        Returns false if any removal failed, so the caller can fail closed
+    ///        rather than repack leftover NuGet metadata into the output nupkg. A folder is
+    ///        removed without following a link inside it (sak::no_follow::removeTree).
+    [[nodiscard]] static bool cleanNugetArtifacts(const QString& extract_dir);
+
+    /// @brief Make @p dir an empty folder: whatever a crashed earlier build left there is removed
+    ///        without following a link inside it (sak::no_follow::removeTree), then the folder is
+    ///        made again. False if either step failed.
+    [[nodiscard]] static bool resetWorkFolder(const QString& dir);
+
 private:
     struct InternalizationPaths {
         QString extract_dir;
@@ -409,11 +420,6 @@ private:
     /// @brief Build URL-to-local-filename map from parsed resources
     [[nodiscard]] QHash<QString, QString> buildLocalFilenameMap(
         const ParsedInstallScript& parsed) const;
-
-    /// @brief Remove NuGet-specific metadata files from the extracted package.
-    ///        Returns false if any removal failed, so the caller can fail closed
-    ///        rather than repack leftover NuGet metadata into the output nupkg.
-    [[nodiscard]] bool cleanNugetArtifacts(const QString& extract_dir) const;
 
     /// @brief Compute SHA-256 checksum of a file
     [[nodiscard]] QString computeChecksum(const QString& file_path) const;

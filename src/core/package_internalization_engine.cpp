@@ -9,6 +9,7 @@
 #include "sak/file_explorer_archive_service.h"
 #include "sak/logger.h"
 #include "sak/network_transfer_runner.h"
+#include "sak/no_follow_fs.h"
 #include "sak/nuget_version_range.h"
 #include "sak/offline_deployment_constants.h"
 
@@ -537,9 +538,22 @@ PackageInternalizationEngine::prepareInternalizationPaths(const QString& package
     // reuse: .NET ExtractToDirectory throws if a file already exists, and stray
     // unrelated files would otherwise be repacked into the output nupkg. The dir is
     // our own work tree (validated id/version components), never a user path.
-    QDir(paths.extract_dir).removeRecursively();
-    QDir(paths.extract_dir).mkpath(".");
+    if (!resetWorkFolder(paths.extract_dir)) {
+        sak::logWarning("[InternalizationEngine] Could not empty the work folder {}",
+                        paths.extract_dir.toStdString());
+    }
     return paths;
+}
+
+bool PackageInternalizationEngine::resetWorkFolder(const QString& dir) {
+    // Not QDir::removeRecursively: it walks into a junction and deletes what it points at.
+    const auto removed = no_follow::removeTree(dir);
+    if (!removed) {
+        sak::logError("[InternalizationEngine] Could not remove {}: {}",
+                      dir.toStdString(),
+                      removed.error().toStdString());
+    }
+    return removed.has_value() && QDir().mkpath(dir);
 }
 
 bool PackageInternalizationEngine::downloadAndExtractNupkg(const InternalizationPaths& paths,
@@ -1272,25 +1286,19 @@ QString PackageInternalizationEngine::findInstallScript(const QString& extract_d
 // NuGet Artifact Cleanup
 // ============================================================================
 
-bool PackageInternalizationEngine::cleanNugetArtifacts(const QString& extract_dir) const {
+bool PackageInternalizationEngine::cleanNugetArtifacts(const QString& extract_dir) {
     // Remove NuGet metadata not needed in internalized packages, tracking every
     // removal so a failure is surfaced instead of silently repacking the leftover.
-    bool ok = true;
-
-    QDir rels_dir(extract_dir + "/_rels");
-    if (rels_dir.exists()) {
-        ok = rels_dir.removeRecursively();
-    }
+    // Not QDir::removeRecursively: it walks into a junction and deletes what it points at.
+    bool ok = no_follow::removeTree(extract_dir + "/_rels").has_value();
 
     const QString content_types = extract_dir + "/[Content_Types].xml";
     if (QFile::exists(content_types)) {
         ok = QFile::remove(content_types) && ok;
     }
 
-    QDir pkg_dir(extract_dir + "/package");  // NuGet services metadata
-    if (pkg_dir.exists()) {
-        ok = pkg_dir.removeRecursively() && ok;
-    }
+    // NuGet services metadata
+    ok = no_follow::removeTree(extract_dir + "/package").has_value() && ok;
 
     QDirIterator iter(extract_dir, {"*.psmdcp"}, QDir::Files, QDirIterator::Subdirectories);
     while (iter.hasNext()) {

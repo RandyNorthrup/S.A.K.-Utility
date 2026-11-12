@@ -6,7 +6,10 @@
 ///        (B10-13 work-dir ownership, B10-14 installer-filename confinement,
 ///        B10-18 manifest filename/checksum/size verification before install).
 
+#include "sak/offline_deployment_constants.h"
 #include "sak/offline_deployment_worker.h"
+
+#include "../support/junction_fixture.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -15,6 +18,8 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QtTest/QtTest>
+
+#include <limits>
 
 using namespace sak;
 using WorkDirDisposition = OfflineDeploymentWorker::WorkDirDisposition;
@@ -32,6 +37,11 @@ private Q_SLOTS:
     void classifyWorkDir_reusesOwnedMarkedDir();
     void classifyWorkDir_refusesForeignNonEmptyDir();
     void workDirSafeToDelete_guardsReparseAndOwnership();
+    void removeOwnedWorkDir_neverFollowsAJunctionInside();
+    void newWorkDirPath_isANewFolderInTheRunFolder();
+    void bundle_refusesWhenTheRunFolderIsShortOfSpace();
+    void directDownload_refusesWhenTheRunFolderIsShortOfSpace();
+    void placeVerifiedCopy_keepsOnlyACopyThatReadsBack();
     void safeInstallerFilename_keepsPlainNames();
     void safeInstallerFilename_confinesTraversalNames();
     void sanitizeManifestFilename_rejectsPathsAndTraversal();
@@ -84,6 +94,28 @@ void TestOfflineDeploymentWorker::workDirSafeToDelete_guardsReparseAndOwnership(
     QVERIFY(!W::workDirSafeToDelete(true, true, true));    // reparse point -> refuse
     QVERIFY(!W::workDirSafeToDelete(true, false, false));  // no ownership marker -> refuse
     QVERIFY(!W::workDirSafeToDelete(true, true, false));   // reparse + unmarked -> refuse
+}
+
+// The work folder is ours, but a junction inside it is not: removing the folder removes the
+// junction itself and leaves the folder it points at alone. QDir::removeRecursively walked into it
+// and emptied it.
+void TestOfflineDeploymentWorker::removeOwnedWorkDir_neverFollowsAJunctionInside() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString work = root.filePath(QStringLiteral("work"));
+    const QString outside = root.filePath(QStringLiteral("outside"));
+    const QByteArray canary = QByteArrayLiteral("must stay exactly this");
+    QVERIFY(sak::test::createCanary(outside, QStringLiteral("canary.txt"), canary));
+    QVERIFY(QDir().mkpath(work));
+    QFile marker(QDir(work).filePath(QString::fromLatin1(offline::kWorkDirOwnershipMarker)));
+    QVERIFY(marker.open(QIODevice::WriteOnly) && marker.write("ours\n") == 5);
+    marker.close();
+    QVERIFY(sak::test::createJunction(QDir(work).filePath(QStringLiteral("link")), outside));
+
+    QVERIFY(OfflineDeploymentWorker::removeOwnedWorkDir(work));
+    QVERIFY(!QFileInfo::exists(work));
+    QVERIFY2(sak::test::canaryIntact(outside, QStringLiteral("canary.txt"), canary),
+             "removing the work folder deleted what a junction inside it points at");
 }
 
 void TestOfflineDeploymentWorker::safeInstallerFilename_keepsPlainNames() {
@@ -732,5 +764,159 @@ void TestOfflineDeploymentWorker::thinBundle_buildsAndNamesTheRealPlaceToInstall
     QVERIFY(!text.contains("App Management > Offline Deploy tab"));
 }
 
-QTEST_APPLESS_MAIN(TestOfflineDeploymentWorker)
+namespace {
+
+/// TEMP and TMP name @p folder while this lives, as the app points them at its run folder at
+/// startup (app_paths::establishSessionTempDirectory), and are put back after.
+class ScopedRunTemp {
+public:
+    explicit ScopedRunTemp(const QString& folder) : m_tmp(qgetenv("TMP")), m_temp(qgetenv("TEMP")) {
+        const QByteArray native = QDir::toNativeSeparators(folder).toLocal8Bit();
+        qputenv("TMP", native);
+        qputenv("TEMP", native);
+    }
+    ~ScopedRunTemp() {
+        qputenv("TMP", m_tmp);
+        qputenv("TEMP", m_temp);
+    }
+    ScopedRunTemp(const ScopedRunTemp&) = delete;
+    ScopedRunTemp& operator=(const ScopedRunTemp&) = delete;
+
+private:
+    QByteArray m_tmp;
+    QByteArray m_temp;
+};
+
+bool sameFolder(const QString& left, const QString& right) {
+    return QDir::cleanPath(QDir::fromNativeSeparators(left))
+               .compare(QDir::cleanPath(QDir::fromNativeSeparators(right)), Qt::CaseInsensitive) ==
+           0;
+}
+
+bool emptyFolder(const QString& folder) {
+    return QDir(folder).isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden |
+                                QDir::System);
+}
+
+/// Waits for the worker's one refusal and returns it (empty if none came).
+QString refusalOf(const OfflineDeploymentWorker& worker, QSignalSpy& errors) {
+    QElapsedTimer waited;
+    waited.start();
+    while ((errors.isEmpty() || worker.isRunning()) && waited.elapsed() < 30'000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    }
+    return errors.isEmpty() ? QString() : errors.first().at(0).toString();
+}
+
+}  // namespace
+
+// Owner ruling 2026-11-11 (no work file on the user's PC outside the app's folder): a build's or a
+// download's work folder is a new one in the run folder (QDir::tempPath(), which the app points at
+// data\temp\run-*), never the output folder the user chose.
+void TestOfflineDeploymentWorker::newWorkDirPath_isANewFolderInTheRunFolder() {
+    QTemporaryDir run;
+    QVERIFY(run.isValid());
+    const ScopedRunTemp scoped(run.path());
+    const QString first = OfflineDeploymentWorker::newWorkDirPath(QStringLiteral("offline-bundle"));
+    const QString second =
+        OfflineDeploymentWorker::newWorkDirPath(QStringLiteral("offline-bundle"));
+    QVERIFY2(sameFolder(QFileInfo(first).absolutePath(), run.path()), qPrintable(first));
+    QVERIFY(QFileInfo(first).fileName().startsWith(QStringLiteral("offline-bundle-")));
+    QVERIFY(first != second);
+    QVERIFY(!QFileInfo::exists(first));
+}
+
+// A bundle keeps its work files in the run folder, so it checks the free space there first and
+// refuses plainly, before it makes anything, naming that folder and not the output folder.
+void TestOfflineDeploymentWorker::bundle_refusesWhenTheRunFolderIsShortOfSpace() {
+    QTemporaryDir run;
+    QTemporaryDir out;
+    QVERIFY(run.isValid() && out.isValid());
+    const ScopedRunTemp scoped(run.path());
+    OfflineDeploymentWorker worker;
+    worker.setMinimumWorkSpaceForTesting(std::numeric_limits<qint64>::max());
+    QSignalSpy errors(&worker, &OfflineDeploymentWorker::operationError);
+    worker.buildDeploymentBundle({{QStringLiteral("sak-no-such-package-for-tests"),
+                                   QStringLiteral("1.0.0")}},
+                                 out.path(),
+                                 QStringLiteral("test"),
+                                 PayloadMode::Bundle);
+    const QString message = refusalOf(worker, errors);
+    QVERIFY(!worker.isRunning());
+    QVERIFY2(message.startsWith(QStringLiteral("Not enough free space for the work files")),
+             qPrintable(message));
+    QVERIFY2(message.contains(QDir::toNativeSeparators(QDir::cleanPath(run.path())),
+                              Qt::CaseInsensitive),
+             qPrintable(message));
+    QVERIFY2(!message.contains(QDir::toNativeSeparators(out.path()), Qt::CaseInsensitive),
+             qPrintable(message));
+    QVERIFY(emptyFolder(out.path()));
+    QVERIFY(emptyFolder(run.path()));
+}
+
+// The same for Direct Download: each package unpacks in a work folder in the run folder.
+void TestOfflineDeploymentWorker::directDownload_refusesWhenTheRunFolderIsShortOfSpace() {
+    QTemporaryDir run;
+    QTemporaryDir out;
+    QVERIFY(run.isValid() && out.isValid());
+    const ScopedRunTemp scoped(run.path());
+    OfflineDeploymentWorker worker;
+    worker.setMinimumWorkSpaceForTesting(std::numeric_limits<qint64>::max());
+    QSignalSpy errors(&worker, &OfflineDeploymentWorker::operationError);
+    const QString installers = out.filePath(QStringLiteral("installers"));
+    worker.directDownload(
+        {{QStringLiteral("sak-no-such-package-for-tests"), QStringLiteral("1.0.0")}}, installers);
+    const QString message = refusalOf(worker, errors);
+    QVERIFY(!worker.isRunning());
+    QVERIFY2(message.startsWith(QStringLiteral("Not enough free space for the work files")),
+             qPrintable(message));
+    QVERIFY2(message.contains(QDir::toNativeSeparators(QDir::cleanPath(run.path())),
+                              Qt::CaseInsensitive),
+             qPrintable(message));
+    QVERIFY(!QFileInfo::exists(installers));
+    QVERIFY(emptyFolder(run.path()));
+}
+
+// The work folder and the output can be on different drives, so a finished file is placed by a
+// copy that is read back: one that does not match is removed, and a name already there is never
+// written through.
+void TestOfflineDeploymentWorker::placeVerifiedCopy_keepsOnlyACopyThatReadsBack() {
+    QTemporaryDir work;
+    QTemporaryDir out;
+    QVERIFY(work.isValid() && out.isValid());
+    const QByteArray bytes = QByteArrayLiteral("an installer's bytes");
+    const QString source = work.filePath(QStringLiteral("setup.exe"));
+    {
+        QFile file(source);
+        QVERIFY(file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size());
+    }
+    const QByteArray sha = QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+
+    const QString placed = out.filePath(QStringLiteral("setup.exe"));
+    const auto good = OfflineDeploymentWorker::placeVerifiedCopy(source, placed, sha);
+    QVERIFY2(good, qPrintable(good ? QString() : good.error()));
+    QFile copy(placed);
+    QVERIFY(copy.open(QIODevice::ReadOnly));
+    QCOMPARE(copy.readAll(), bytes);
+    copy.close();
+
+    const QString taken = out.filePath(QStringLiteral("taken.exe"));
+    {
+        QFile file(taken);
+        QVERIFY(file.open(QIODevice::WriteOnly) && file.write("keep") == 4);
+    }
+    QVERIFY(!OfflineDeploymentWorker::placeVerifiedCopy(source, taken, sha));
+    QFile kept(taken);
+    QVERIFY(kept.open(QIODevice::ReadOnly));
+    QCOMPARE(kept.readAll(), QByteArray("keep"));
+
+    const QString mismatched = out.filePath(QStringLiteral("other.exe"));
+    const auto bad = OfflineDeploymentWorker::placeVerifiedCopy(
+        source, mismatched, QCryptographicHash::hash("other", QCryptographicHash::Sha256));
+    QVERIFY(!bad);
+    QVERIFY2(bad.error().contains(QStringLiteral("does not read back")), qPrintable(bad.error()));
+    QVERIFY(!QFileInfo::exists(mismatched));
+}
+
+QTEST_GUILESS_MAIN(TestOfflineDeploymentWorker)
 #include "test_offline_deployment_worker.moc"

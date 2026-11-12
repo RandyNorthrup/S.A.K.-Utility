@@ -4,10 +4,12 @@
 /// @file test_package_internalization_engine.cpp
 /// @brief Unit tests for PackageInternalizationEngine pure seams (B10-11).
 
+#include "sak/app_paths.h"
 #include "sak/file_explorer_archive_service.h"
 #include "sak/network_transfer_runner.h"
 #include "sak/package_internalization_engine.h"
 
+#include "../support/junction_fixture.h"
 #include "../support/large_allocation_counter.h"
 #include "../support/loopback_http_server.h"
 
@@ -55,6 +57,9 @@ private Q_SLOTS:
     void downloadVerifiedFile_streamsALargeInstallerToDiskInBoundedMemory();
     void downloadVerifiedFile_commitsNothingWhenTheBytesDoNotMatch();
     void streamedTransfer_stopsAtTheResponseCap();
+    void cleanNugetArtifacts_neverFollowsAJunction();
+    void resetWorkFolder_neverFollowsAJunction();
+    void downloadVerifiedFile_stagesInTheRunFolderTheAppSetsAtStartup();
 };
 
 namespace {
@@ -930,6 +935,99 @@ void TestPackageInternalizationEngine::streamedTransfer_stopsAtTheResponseCap() 
     QCOMPARE(result.error_message, QStringLiteral("Response exceeded the maximum allowed size"));
     QVERIFY(result.body.isEmpty());
     QVERIFY2(streamed <= kCapBytes, qPrintable(QString::number(streamed)));
+}
+
+// The NuGet metadata folders are removed without following a junction: _rels itself a junction,
+// and one inside package\. QDir::removeRecursively walked into each and emptied what it points at.
+void TestPackageInternalizationEngine::cleanNugetArtifacts_neverFollowsAJunction() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString extract = root.filePath(QStringLiteral("extract"));
+    const QString rels_target = root.filePath(QStringLiteral("outside-rels"));
+    const QString package_target = root.filePath(QStringLiteral("outside-package"));
+    const QString canary_name = QStringLiteral("canary.txt");
+    const QByteArray canary = QByteArrayLiteral("must stay exactly this");
+    QVERIFY(sak::test::createCanary(rels_target, canary_name, canary));
+    QVERIFY(sak::test::createCanary(package_target, canary_name, canary));
+    QVERIFY(QDir().mkpath(extract + QStringLiteral("/package/services")));
+    QVERIFY(sak::test::createJunction(extract + QStringLiteral("/_rels"), rels_target));
+    QVERIFY(sak::test::createJunction(extract + QStringLiteral("/package/services/link"),
+                                      package_target));
+    writeFixtureFile(extract + QStringLiteral("/tools/chocolateyInstall.ps1"), "Write-Host hi");
+
+    QVERIFY(PackageInternalizationEngine::cleanNugetArtifacts(extract));
+    QVERIFY(!QFileInfo::exists(extract + QStringLiteral("/_rels")));
+    QVERIFY(!QFileInfo::exists(extract + QStringLiteral("/package")));
+    QVERIFY(QFileInfo::exists(extract + QStringLiteral("/tools/chocolateyInstall.ps1")));
+    QVERIFY2(sak::test::canaryIntact(rels_target, canary_name, canary),
+             "removing _rels deleted what the junction points at");
+    QVERIFY2(sak::test::canaryIntact(package_target, canary_name, canary),
+             "removing package deleted what a junction inside it points at");
+}
+
+// A package's work folder is emptied before it is reused without following a junction inside.
+void TestPackageInternalizationEngine::resetWorkFolder_neverFollowsAJunction() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString work = root.filePath(QStringLiteral("pkg.1.0.0"));
+    const QString outside = root.filePath(QStringLiteral("outside"));
+    const QString canary_name = QStringLiteral("canary.txt");
+    const QByteArray canary = QByteArrayLiteral("must stay exactly this");
+    QVERIFY(sak::test::createCanary(outside, canary_name, canary));
+    writeFixtureFile(work + QStringLiteral("/leftover.txt"), "from a crashed build");
+    QVERIFY(sak::test::createJunction(work + QStringLiteral("/link"), outside));
+
+    QVERIFY(PackageInternalizationEngine::resetWorkFolder(work));
+    QVERIFY(QFileInfo(work).isDir());
+    QVERIFY(
+        QDir(work).isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System));
+    QVERIFY2(sak::test::canaryIntact(outside, canary_name, canary),
+             "emptying the work folder deleted what a junction inside it points at");
+}
+
+// The app points TEMP and TMP at its own run folder (data\temp\run-<pid>-...) at startup, and a
+// download stages its partial file in QDir::tempPath(). This runs that startup step itself, so it
+// proves Qt reads the folder the app set, and the partial file is in the run folder while the
+// download runs, not in the user's %TEMP%.
+void TestPackageInternalizationEngine::
+    downloadVerifiedFile_stagesInTheRunFolderTheAppSetsAtStartup() {
+    constexpr qint64 kBodyBytes = 8LL * 1024 * 1024;
+    const QByteArray sha256 = sak::test::LoopbackHttpServer::patternSha256(kBodyBytes);
+    const auto digest = PackageInternalizationEngine::installerDigest(
+        QString::fromLatin1(sha256.toHex()), QStringLiteral("sha256"));
+    QVERIFY(digest.has_value());
+    QTemporaryDir out;
+    QVERIFY(out.isValid());
+    const QByteArray original_tmp = qgetenv("TMP");
+    const QByteArray original_temp = qgetenv("TEMP");
+    const auto restore = qScopeGuard([&] {
+        qputenv("TMP", original_tmp);
+        qputenv("TEMP", original_temp);
+    });
+    const auto established = sak::app_paths::establishSessionTempDirectory();
+    QVERIFY2(established, qPrintable(established ? QString() : established.error()));
+    const QString run = QDir::cleanPath(QDir::fromNativeSeparators(*established));
+    QVERIFY2(QFileInfo(run).fileName().startsWith(
+                 QStringLiteral("run-%1-").arg(QCoreApplication::applicationPid())),
+             qPrintable(run));
+    QVERIFY2(run.startsWith(QDir::cleanPath(sak::app_paths::tempDirectory()) + QLatin1Char('/'),
+                            Qt::CaseInsensitive),
+             qPrintable(run));
+
+    const QString target = out.filePath(QStringLiteral("setup.exe"));
+    const sak::test::LoopbackHttpServer server(kBodyBytes);
+    QVERIFY(server.listening());
+    std::atomic<bool> seen_in_run{false};
+    const auto download = PackageInternalizationEngine::downloadVerifiedFile(
+        server.url(QStringLiteral("setup.exe")), target, *digest, {}, [&](qint64 received, qint64) {
+            if (received > 0 && !seen_in_run.load()) {
+                seen_in_run = !stagedDownloadsIn(run).isEmpty();
+            }
+        });
+    QVERIFY2(download.ok, qPrintable(download.error));
+    QVERIFY2(seen_in_run.load(), "the partial download was not in the app's run folder");
+    QCOMPARE(fileSha256(target), sha256);
+    QVERIFY(stagedDownloadsIn(run).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(TestPackageInternalizationEngine)
