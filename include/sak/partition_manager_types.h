@@ -197,6 +197,12 @@ struct PartitionVolumeInfo {
     /// refuses there, so this leaves nothing unchecked. Only that scan sets it.
     bool administrator_state_pending{false};
     QString bitlocker_state_error;
+    /// The volume's shadow-copy storage, as Win32_ShadowStorage reports it. Windows answers an
+    /// administrator only, so a scan without those rights leaves shadow_storage_known false. A
+    /// maximum of UINT64_MAX means no limit.
+    bool shadow_storage_known{false};
+    uint64_t shadow_storage_max_bytes{0};
+    uint64_t shadow_storage_used_bytes{0};
 
     [[nodiscard]] bool hasDriveLetter() const noexcept { return !drive_letter.isEmpty(); }
 };

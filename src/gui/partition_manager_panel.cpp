@@ -8788,6 +8788,7 @@ QString osMigrationWizardSizingText(const OsMigrationPlan& plan) {
         text += QStringLiteral(
             "\nThis target is smaller than the Windows partition, so Windows goes through a "
             "temporary image on the target. Allow extra time, and room for it.");
+        text += QStringLiteral("\n") + osMigrationShadowStorageText(plan);
     }
     for (const auto& blocker : plan.blockers) {
         text += QStringLiteral("\nBlocked: %1").arg(blocker);

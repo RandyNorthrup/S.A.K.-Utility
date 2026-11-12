@@ -87,6 +87,67 @@ function Assert-SakWindowsFits {
   try { $used = [SakMigration.Copy]::UsedBytes($volume) } finally { $volume.Dispose() }
   Write-Output ('Windows volume in use: {0} bytes; room on the target: {1} bytes' -f $used, $windows.InitialSize)
   if ($used -gt $windows.InitialSize) { throw 'The Windows volume grew past what this target was planned to hold, so nothing was written' }
+  Write-SakShadowStorageReport (Get-SakShadowStorage "$($windows.VolumePath)") "$($windows.Letter)" ([uint64]$used)
+}
+
+# The image route captures from a snapshot Windows keeps in the volume's shadow-copy storage, and
+# Windows deletes it when that storage fills (operation proof, 2026-11-12). The storage is reported
+# before anything is written, with a warning when it is small; S.A.K. never changes it.
+function Get-SakShadowStorage([string]$volumePath) {
+  try { $all = @(Get-CimInstance -ClassName Win32_ShadowStorage -ErrorAction Stop) } catch { return $null }
+  return @($all | Where-Object { "$($_.Volume.DeviceID)" -eq $volumePath }) | Select-Object -First 1
+}
+# partition_os_migration.cpp's shadowStorageTooSmallForCapture: under a quarter of the bytes captured.
+function Test-SakShadowStorageSmall([uint64]$max, [uint64]$used, [uint64]$windowsUsed) {
+  if ($max -eq [uint64]::MaxValue) { return $false }
+  $left = if ($max -gt $used) { $max - $used } else { [uint64]0 }
+  return $left -lt [Math]::Floor($windowsUsed / 4)
+}
+function Write-SakShadowStorageReport($storage, [string]$letter, [uint64]$windowsUsed) {
+  $volume = if ($letter) { "${letter}:" } else { 'the Windows volume' }
+  if (-not $storage) { Write-Output "Shadow-copy storage for $volume could not be read; Windows sizes it when it keeps the snapshot."; return }
+  $max = [uint64]$storage.MaxSpace
+  $used = [uint64]$storage.UsedSpace
+  $limit = if ($max -eq [uint64]::MaxValue) { 'no limit' } else { 'up to {0:N1} GB' -f ($max / 1GB) }
+  Write-Output ('Shadow-copy storage for {0} {1}, {2:N1} GB in use' -f $volume, $limit, ($used / 1GB))
+  if (Test-SakShadowStorageSmall $max $used $windowsUsed) {
+    Write-Output ('WARNING: that leaves {0:N1} GB for the capture, less than a quarter of the {1:N1} GB in use on {2}. While DISM reads every file, Windows keeps the old copy of each block that changes on {2} there, and if it fills, Windows deletes the snapshot and the capture stops (Windows Update can change several GB). Let Windows Update finish first, or give it more room: vssadmin resize shadowstorage /for={2} /on={2} /maxsize=10%' -f ((($max - [Math]::Min($max, $used))) / 1GB), ($windowsUsed / 1GB), $volume)
+  }
+}
+
+# Why a capture stopped, when Windows says: DISM reports only its own code. 433 (ERROR_NO_SUCH_DEVICE)
+# with a volsnap 33 or 36 for the volume is the snapshot Windows deleted; 225 (ERROR_VIRUS_INFECTED)
+# is an antivirus blocking a file, which dism.log names. Empty when neither says more.
+function Get-SakVolsnapLimitEvents([datetime]$since) {
+  @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'volsnap'; Id = 33, 36; StartTime = $since } -ErrorAction SilentlyContinue)
+}
+function Get-SakDismFileErrors([string]$logPath, [datetime]$since) {
+  if (-not $logPath -or -not (Test-Path -LiteralPath $logPath)) { return }
+  $stream = New-Object IO.FileStream($logPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+  $reader = New-Object IO.StreamReader($stream)
+  try { $lines = $reader.ReadToEnd() -split "`r?`n" } finally { $reader.Dispose() }
+  $pattern = '^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}), Error\s+DISM\s+DISM WIM Provider: PID=\d+ (.+) \(HRESULT=(0x[0-9A-Fa-f]{8})\) - CWimManager::WimProviderMsgLogCallback'
+  foreach ($line in $lines) {
+    if ($line -notmatch $pattern) { continue }
+    $when = [datetime]::ParseExact($Matches[1], 'yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
+    if ($when -ge $since) { [pscustomobject]@{ Time = $when; Path = $Matches[2]; HResult = $Matches[3] } }
+  }
+}
+function Get-SakCaptureFailureMessage([int]$Code, [datetime]$Since, [string]$SourceLetter, [string]$SnapshotLetter, [string]$DismLog, [object[]]$VolsnapEvents) {
+  $volume = if ($SourceLetter) { "${SourceLetter}:" } else { 'the Windows volume' }
+  if ($Code -eq 433) {
+    $deleted = @($VolsnapEvents | Where-Object { $_ -and @(33, 36) -contains [int]$_.Id -and $_.TimeCreated -ge $Since -and "$($_.Message)" -match ('volume ' + [regex]::Escape($volume)) })
+    if ($deleted.Count -eq 0) { return '' }
+    return ('Windows deleted the snapshot S.A.K. was copying from because shadow-copy storage on {0} was full (Windows Update or restore points can use it). Nothing on {0} changed. Try again after Windows Update finishes, enlarge shadow storage (vssadmin resize shadowstorage /for={0} /on={0} /maxsize=10%), or migrate to a target at least as large as the Windows partition, which is copied block by block instead of through an image.' -f $volume)
+  }
+  if ($Code -eq 225) {
+    $blocked = @(Get-SakDismFileErrors $DismLog $Since | Where-Object { $_.HResult -eq '0x800700E1' }) | Select-Object -First 1
+    $file = if ($blocked) { [string]$blocked.Path } else { '' }
+    if ($file -and $SnapshotLetter -and $file.StartsWith("${SnapshotLetter}:\", [StringComparison]::OrdinalIgnoreCase)) { $file = $volume + $file.Substring(2) }
+    $what = if ($file) { $file } else { "a file (DISM names it in $DismLog)" }
+    return ('Your antivirus (Microsoft Defender on most PCs) blocked {0} while DISM was capturing Windows, so the capture stopped. Nothing on {1} changed. Look the file up in Windows Security''s protection history: if it is a threat, deal with it before you migrate this Windows; if you trust it, allow it there, then run Migrate OS again.' -f $what, $volume)
+  }
+  return ''
 }
 
 # A partition that will be formatted must not get a letter while raw, or Windows offers on screen to
@@ -219,6 +280,7 @@ function Invoke-SakDism([string[]]$toolArgs) {
     }
     $code = $LASTEXITCODE
   } finally { $ErrorActionPreference = $previous }
+  $script:sakDismExit = $code
   if ($code -ne 0) { throw ('DISM failed with exit code {0}: {1}' -f $code, (($tail | Select-Object -Last 4) -join ' ')) }
 }
 function Format-SakTargetVolume($partition, [string]$label) {
@@ -259,7 +321,15 @@ function Invoke-SakImageRoute {
   # Files in the Compact state are stored whole in an image, so a plain apply makes them larger than
   # the volume they came from.
   $applyCompact = if ([SakMigration.Io]::IsExternallyBacked((Join-Path $script:sakSystem32 'cmd.exe'))) { @('/Compact') } else { @() }
-  Invoke-SakDism (@('/Capture-Image', "/ImageFile:$image", "/CaptureDir:${snapshotLetter}:\", '/Name:SAK Migrate OS', '/Compress:fast', '/EA', "/ConfigFile:$config") + $verifyArgs)
+  $captureStart = (Get-Date).AddSeconds(-5)
+  $script:sakDismExit = 0
+  try {
+    Invoke-SakDism (@('/Capture-Image', "/ImageFile:$image", "/CaptureDir:${snapshotLetter}:\", '/Name:SAK Migrate OS', '/Compress:fast', '/EA', "/ConfigFile:$config") + $verifyArgs)
+  } catch {
+    $explained = Get-SakCaptureFailureMessage -Code $script:sakDismExit -Since $captureStart -SourceLetter "$($windows.Letter)" -SnapshotLetter $snapshotLetter -DismLog (Join-Path $env:SystemRoot 'Logs\DISM\dism.log') -VolsnapEvents (Get-SakVolsnapLimitEvents $captureStart)
+    if ($explained) { throw ('{0} (DISM exit code {1})' -f $explained, $script:sakDismExit) }
+    throw
+  }
   [SakMigration.Io]::UnmapDrive($script:sakMappedLetter, $script:sakMappedDevice)
   $script:sakMappedLetter = $null
   Write-Output 'Applying the image to the new Windows partition'

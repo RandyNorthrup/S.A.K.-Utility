@@ -149,6 +149,11 @@ PartitionVolumeInfo parseVolume(const QJsonObject& object) {
     volume.dirty_bit_set = volume.dirty_bit_known &&
                            jsonBool(object, QStringLiteral("DirtyBitSet"));
     volume.dirty_bit_error = object.value(QStringLiteral("DirtyBitError")).toString().trimmed();
+    volume.shadow_storage_known = jsonBool(object, QStringLiteral("ShadowStorageKnown"));
+    if (volume.shadow_storage_known) {
+        volume.shadow_storage_max_bytes = jsonUInt64(object, QStringLiteral("ShadowStorageMax"));
+        volume.shadow_storage_used_bytes = jsonUInt64(object, QStringLiteral("ShadowStorageUsed"));
+    }
     return volume;
 }
 
@@ -1166,6 +1171,16 @@ if (-not $answer.Finished) {
 } else {
   $physicalDisks = @($answer.Items)
 }
+# Shadow-copy storage, which Migrate OS's image route depends on. Windows answers an administrator
+# only ("Initialization failure" otherwise); the sizes go out as text, since no limit is UINT64_MAX.
+$sakShadowStorage = @()
+if ($sakReadAdministratorState) {
+  Write-SakScanProgress 'shadow-copy storage'
+  $answer = Invoke-SakBoundedCall -Step 'shadow-copy storage' -Script {
+    Get-CimInstance -ClassName Win32_ShadowStorage -ErrorAction Stop | ForEach-Object {
+      [pscustomobject]@{ Volume = "$($_.Volume.DeviceID)"; Max = "$([uint64]$_.MaxSpace)"; Used = "$([uint64]$_.UsedSpace)" } } }
+  if ($answer.Finished -and -not ($answer.ErrorId -or $answer.Error)) { $sakShadowStorage = @($answer.Items) }
+}
 )PS");
 }
 
@@ -1361,14 +1376,17 @@ static QString inventoryPowerShellPartitionProbeScript() {
           }
         }
       }
+      $shadowStorage = if ($volume) {
+        @($sakShadowStorage | Where-Object { $_.Volume -and ($_.Volume -eq "$($volume.UniqueId)" -or $_.Volume -eq "$($volume.Path)") }) | Select-Object -First 1
+      } else { $null }
+      $dirty = $false
+      $dirtyKnown = $false
+      $dirtyError = ''
 )PS");
 }
 
 static QString inventoryPowerShellPartitionResultScript() {
     return QStringLiteral(R"PS(
-      $dirty = $false
-      $dirtyKnown = $false
-      $dirtyError = ''
       if ($volume -and $volume.DriveLetter -and $sakReadAdministratorState) {
         $dirtyStep = "dirty bit of partition $($partition.PartitionNumber) of disk $sakDiskIndex"
         Write-SakScanProgress $dirtyStep
@@ -1428,6 +1446,9 @@ static QString inventoryPowerShellPartitionResultScript() {
             DirtyBitKnown = [bool]$dirtyKnown
             DirtyBitSet = [bool]$dirty
             DirtyBitError = "$dirtyError"
+            ShadowStorageKnown = [bool]$shadowStorage
+            ShadowStorageMax = if ($shadowStorage) { $shadowStorage.Max } else { '0' }
+            ShadowStorageUsed = if ($shadowStorage) { $shadowStorage.Used } else { '0' }
           }
         } else { $null }
       }

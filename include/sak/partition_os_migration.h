@@ -95,6 +95,11 @@ struct OsMigrationPlan {
     /// Image route: where the temporary partition holding the image goes, and how large it is.
     uint64_t scratch_offset{0};
     uint64_t scratch_size{0};
+    /// The Windows volume's shadow-copy storage, from a scan with administrator rights (see
+    /// PartitionVolumeInfo): the image route captures from a snapshot Windows keeps there.
+    bool windows_shadow_storage_known{false};
+    uint64_t windows_shadow_storage_max_bytes{0};
+    uint64_t windows_shadow_storage_used_bytes{0};
     /// Why this cannot run. Empty means it can.
     QStringList blockers;
 
@@ -124,6 +129,21 @@ struct OsMigrationPlan {
 
 /// What a Dry Run shows: the plan in words, one line per partition.
 [[nodiscard]] QString osMigrationPlanSummary(const OsMigrationPlan& plan);
+
+/// True when the shadow-copy storage left (@p max_bytes less @p used_bytes) is under a quarter of
+/// the @p windows_used_bytes the image route captures. While DISM reads every file, Windows keeps
+/// the old copy of each block that changes on the volume there, and deletes the snapshot when it
+/// is full (operation proof, 2026-11-12: a 1% limit of 5.10 GB filled while Windows Update ran, and
+/// the capture of 24.6 GB stopped with "A device which does not exist was specified"). A quarter
+/// covers a cumulative update's several GB on a typical Windows. No limit (UINT64_MAX) is never
+/// too small. os_migration.ps1's Test-SakShadowStorageSmall is the same rule.
+[[nodiscard]] bool shadowStorageTooSmallForCapture(uint64_t max_bytes,
+                                                   uint64_t used_bytes,
+                                                   uint64_t windows_used_bytes);
+
+/// What the image route's review says about the Windows volume's shadow-copy storage, with a
+/// warning when shadowStorageTooSmallForCapture. Empty for the block route.
+[[nodiscard]] QString osMigrationShadowStorageText(const OsMigrationPlan& plan);
 
 /// PowerShell functions shared with Boot Repair: temporary letters on a disk that is not the one
 /// Windows runs from, and rebuilding that disk's boot files.
