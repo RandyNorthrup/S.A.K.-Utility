@@ -127,6 +127,16 @@ function Test-PureAdmissionContract {
         "step-execution-needs-every-queued-step", "step-execution-passes-with-every-step",
         "step-execution-refuses-a-skipped-step", "step-has-a-builder-for-each-operation"
     )
+    # The operation-proof steps (opsproof, 2026-11-11), and the step client recording its own
+    # program file so the elevation check has something to compare with.
+    $expected += @(
+        "step-certification-job-refuses-a-route", "step-certification-job-refuses-a-stop",
+        "step-proof-job-may-stop", "step-proof-has-a-builder-for-each-panel-payload",
+        "step-proof-writes-through-the-panel-raw-path",
+        "step-proof-format-adds-tool-fields-only-for-non-windows", "step-client-vouches-for-itself",
+        "step-proof-assistant-route-takes-only-core-payloads", "step-administrator-scan-only-for-proof-jobs",
+        "step-an-apply-that-ran-is-no-refusal"
+    )
     $checks = @($report.checks)
     Assert-Contract ($checks.Count -eq $expected.Count) "Pure guard check count changed"
     foreach ($name in $expected) {

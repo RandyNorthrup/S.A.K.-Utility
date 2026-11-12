@@ -964,6 +964,19 @@ bool expectedCancel(const StepJob& job, const sak::PartitionExecutionResult& res
     return job.operation_proof && job.expect == QStringLiteral("cancelled") && result.cancelled;
 }
 
+/// Whether an Apply that ran did what the step expected. A step that expected a refusal, a
+/// failure or a stop and saw the operation run to the end did not: a refusal comes before Apply
+/// and is answered there. Until 2026-11-11 a run that succeeded met every expectation, and a
+/// shrink the row expected refused, which cut an ext4 file system short, reported Passed.
+bool executionMetExpectation(const StepJob& job,
+                             const sak::PartitionExecutionResult& result,
+                             qsizetype queued) {
+    if (job.expect == QStringLiteral("success")) {
+        return executionPassed(result, queued);
+    }
+    return expectedFailure(job, result) || expectedCancel(job, result);
+}
+
 Result<void> applyQueued(sak::PartitionManagerController& controller,
                          const StepJob& job,
                          QJsonObject* report) {
@@ -1015,8 +1028,7 @@ Result<void> applyQueued(sak::PartitionManagerController& controller,
     const auto& result = **execution;
     report->insert("execution", executionJson(result));
     report->insert("helper_connected", sak::ElevationBroker::sessionBroker()->isConnected());
-    if (!executionPassed(result, queued) && !expectedFailure(job, result) &&
-        !expectedCancel(job, result)) {
+    if (!executionMetExpectation(job, result, queued)) {
         return refused(
             QStringLiteral("Apply did not do what the step expected: %1").arg(result.message));
     }
@@ -1425,7 +1437,7 @@ Result<void> runReadOnlyNow(sak::PartitionManagerController& controller,
         return refused(QStringLiteral("The read-only run gave no result"));
     }
     report->insert("execution", executionJson(**execution));
-    if (!executionPassed(**execution, 1) && !expectedFailure(context.job, **execution)) {
+    if (!executionMetExpectation(context.job, **execution, 1)) {
         return refused(QStringLiteral("The read-only run did not do what the step expected: %1")
                            .arg((*execution)->message));
     }
@@ -1481,7 +1493,7 @@ Result<void> runAssistantRoute(const StepJob& job, const Requests& requests, QJs
     watcher.waitForFinished();
     const sak::PartitionExecutionResult result = watcher.result();
     report->insert("execution", executionJson(result));
-    if (!executionPassed(result, 1) && !expectedFailure(job, result)) {
+    if (!executionMetExpectation(job, result, 1)) {
         return refused(
             QStringLiteral("Apply did not do what the step expected: %1").arg(result.message));
     }
@@ -1782,6 +1794,11 @@ void selfTestOutcomes(const AddCheck& add) {
     step.success = true;
     result.steps.append(step);
     add(QStringLiteral("step-execution-passes-with-every-step"), executionPassed(result, 1));
+    // An Apply that ran to the end is what a success step expects, and never a refusal.
+    const StepJob success_job{.expect = QStringLiteral("success")};
+    add(QStringLiteral("step-an-apply-that-ran-is-no-refusal"),
+        executionMetExpectation(success_job, result, 1) &&
+            !executionMetExpectation(refused_job, result, 1));
     result.steps.first().skipped = true;
     add(QStringLiteral("step-execution-refuses-a-skipped-step"), !executionPassed(result, 1));
     add(QStringLiteral("step-has-a-builder-for-each-operation"), requestBuilders().size() == 27);
