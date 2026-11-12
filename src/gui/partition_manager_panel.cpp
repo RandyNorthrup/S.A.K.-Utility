@@ -11910,13 +11910,20 @@ void PartitionManagerPanel::onSetPartitionTypeId() {
         return;
     }
     const QString expected_layout_hash = m_controller->inventory().layout_hash;
+    // As the disk's table holds a type: one byte in hex on MBR (as diskpart's SET ID reads it),
+    // a GUID on GPT.
+    const auto* disk = selectedDisk();
+    const QString table = disk == nullptr ? QString() : disk->partition_style.trimmed().toUpper();
+    const QString prompt =
+        table == QStringLiteral("MBR")
+            ? tr("New MBR type, one byte in hex, such as 07 (NTFS, exFAT) or 83 (Linux); 83, "
+                 "0x83 and 83h all mean 83:")
+        : table == QStringLiteral("GPT")
+            ? tr("New GPT type GUID, such as {ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}:")
+            : tr("New MBR type (one byte in hex, such as 83) or GPT type GUID:");
     bool ok = false;
-    const QString type_id = QInputDialog::getText(this,
-                                                  tr("Change Partition Type ID"),
-                                                  tr("New MBR type or GPT GUID:"),
-                                                  QLineEdit::Normal,
-                                                  QString(),
-                                                  &ok);
+    const QString type_id = QInputDialog::getText(
+        this, tr("Change Partition Type ID"), prompt, QLineEdit::Normal, QString(), &ok);
     if (ok && !type_id.trimmed().isEmpty()) {
         queueOperation(PartitionOperationType::SetPartitionTypeId,
                        *target,

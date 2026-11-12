@@ -1606,6 +1606,7 @@ private Q_SLOTS:
     void generatedScripts_formatChoiceCheckAgreesWithTheQueue();
     void generatedScripts_createIsAllOrNothing();
     void generatedScripts_windowsFormatTakesThePartitionFirst();
+    void generatedScripts_mbrTypeReachesSetPartitionAsHex();
     void strongIndex_valueSemanticsRoundTrip();                       // R5-G14-19
     void strongIndex_findersResolveByTypedIndexAndFailClosed();       // R5-G14-19
     void fileSystemDetector_detectsRawSignatures();
@@ -1943,6 +1944,7 @@ private Q_SLOTS:
     void safetyValidator_blocksResizeDonorPayload();
     void safetyValidator_resizesOnlyAnIdentifiedFileSystem();
     void safetyValidator_refusesWhatFormatVolumeWouldRefuse();
+    void safetyValidator_refusesAPartitionTypeTheTableCannotHold();
     void safetyValidator_blocksOversizedCreate();
     void safetyValidator_blocksInvalidCreateTypePayload();
     void safetyValidator_blocksCreateOffsetOutsideSelectedRegion();
@@ -20490,6 +20492,29 @@ void verifyScanIsNamedForWhatItDoes(const PartitionTarget& partitionTarget,
 
 }  // namespace
 
+namespace {
+
+// An MBR type is hex as a technician types it: "83", "0x83" and "83h" are all Linux (0x83), never
+// decimal 83 (0x53), which is what Set-Partition made of a quoted "83" (operation proof).
+void verifyMbrTypeIdScripts(const PartitionScriptBuilder& builder,
+                            const PartitionTarget& partitionTarget,
+                            const PartitionScript& guidType) {
+    for (const QString& typed :
+         {QStringLiteral("83"), QStringLiteral("0x83"), QStringLiteral("83h")}) {
+        const auto mbr = builder.buildScript(PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::SetPartitionTypeId,
+            partitionTarget,
+            QJsonObject{{QStringLiteral("type_id"), typed}}));
+        QVERIFY(mbr.valid());
+        QVERIFY2(mbr.script.contains(QStringLiteral("$mbrType = 0x83")), qPrintable(mbr.script));
+        QVERIFY(mbr.script.contains(QStringLiteral("-MbrType $mbrType")));
+    }
+    // A GUID, or anything that is not one byte, is no MBR type: on an MBR disk the script stops.
+    QVERIFY(guidType.script.contains(QStringLiteral("$mbrType = $null")));
+}
+
+}  // namespace
+
 void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
     PartitionTarget partitionTarget;
     partitionTarget.kind = PartitionTargetKind::Partition;
@@ -20527,6 +20552,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
     QVERIFY(type.valid());
     QVERIFY(type.script.contains(QStringLiteral("Set-Partition")));
     QVERIFY(type.script.contains(QStringLiteral("-GptType $typeId")));
+    verifyMbrTypeIdScripts(builder, partitionTarget, type);
 
     PartitionTarget diskTarget;
     diskTarget.kind = PartitionTargetKind::Disk;
@@ -20580,6 +20606,184 @@ void PartitionManagerCoreTests::scriptBuilder_buildsRecoveredPartitionRestoreScr
     QVERIFY(script.script.contains(QStringLiteral("-Offset 1048576000")));
     QVERIFY(script.script.contains(QStringLiteral("-GptType")));
     QVERIFY(script.script.contains(QStringLiteral("Candidate overlaps existing partition")));
+
+    // An MBR type goes on by Set-Partition, as hex: New-Partition's -MbrType is an enum of six
+    // types that read "0x07" as none of them and has no Linux byte (operation proof, 2026-11-11).
+    payload[QStringLiteral("partition_style")] = QStringLiteral("MBR");
+    for (const QString& typed : {QStringLiteral("83"), QStringLiteral("0x83")}) {
+        payload[QStringLiteral("type_id")] = typed;
+        const auto mbr = builder.buildScript(PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::RestoreRecoveredPartition, target, payload));
+        QVERIFY2(mbr.valid(), qPrintable(mbr.blockers.join(QLatin1Char(' '))));
+        QVERIFY2(mbr.script.contains(QStringLiteral(
+                     "Set-Partition -DiskNumber 4 -PartitionNumber $sakNew.PartitionNumber "
+                     "-MbrType 0x83 -ErrorAction Stop")),
+                 qPrintable(mbr.script));
+        QVERIFY(!mbr.script.contains(QStringLiteral("-MbrType '")));
+    }
+    payload[QStringLiteral("type_id")] = QStringLiteral("Linux");
+    QVERIFY(!builder
+                 .buildScript(PartitionOperationPlanner::makeOperation(
+                     PartitionOperationType::RestoreRecoveredPartition, target, payload))
+                 .valid());
+    // An extended or protective type would break the table.
+    payload[QStringLiteral("type_id")] = QStringLiteral("0F");
+    QVERIFY(builder
+                .buildScript(PartitionOperationPlanner::makeOperation(
+                    PartitionOperationType::RestoreRecoveredPartition, target, payload))
+                .blockers.join(' ')
+                .contains(QStringLiteral("would break the disk's partition table")));
+}
+
+namespace {
+
+/// Runs @p script, made for Disk 4 Partition 2, against stand-ins: the partition's identity, a disk
+/// of @p style, and a Set-Partition whose -MbrType is a UInt16, as the real one's is, recording
+/// what it was given.
+QString runPartitionTypeIdScript(const QString& script, const QString& style) {
+    int exit_code = -1;
+    return runWithScriptFunctions(
+        QString(),
+        QStringLiteral(
+            "function Get-Partition { param($DiskNumber, $PartitionNumber, $ErrorAction) "
+            "[pscustomobject]@{ Size = 268435456; Offset = 1048576; Guid = '' } }\n"
+            "function Get-Disk { param($Number, $ErrorAction) [pscustomobject]@{ PartitionStyle = "
+            "'%1' } }\n"
+            "function Set-Partition { param($DiskNumber, $PartitionNumber, $GptType, "
+            "[uint16]$MbrType, $ErrorAction) Write-Host ('CALL Set mbr=' + $MbrType + ' gpt=' + "
+            "$GptType) }\n"
+            "try {\n")
+                .arg(style) +
+            script + QStringLiteral("\n'DONE'\n} catch { 'THREW ' + $_.Exception.Message }\n"),
+        &exit_code);
+}
+
+/// Restore Recovered Partition's Set-Partition line for an MBR candidate typed "83h", run against
+/// runPartitionTypeIdScript's stand-in; "NO LINE" when the script has none.
+QString runRestoredMbrTypeLine(const PartitionScriptBuilder& builder) {
+    PartitionTarget disk;
+    disk.kind = PartitionTargetKind::Disk;
+    disk.disk_number = DiskNumber{4};
+    pinDiskTargetIdentity(&disk);
+    const auto restore = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::RestoreRecoveredPartition,
+        disk,
+        QJsonObject{{QStringLiteral("offset_bytes"), QStringLiteral("1048576000")},
+                    {QStringLiteral("size_bytes"), QStringLiteral("209715200")},
+                    {QStringLiteral("type_id"), QStringLiteral("83h")},
+                    {QStringLiteral("partition_style"), QStringLiteral("MBR")}}));
+    const QRegularExpression set_line(QStringLiteral(
+                                          "^Set-Partition [^\\r\\n]*-MbrType [^\\r\\n]*$"),
+                                      QRegularExpression::MultilineOption);
+    const auto line = set_line.match(restore.script);
+    if (!restore.valid() || !line.hasMatch()) {
+        return QStringLiteral("NO LINE: ") + restore.blockers.join(' ') + restore.script;
+    }
+    return runPartitionTypeIdScript(
+        QStringLiteral("$sakNew = [pscustomobject]@{ PartitionNumber = 3 }\n") + line.captured(0),
+        QStringLiteral("MBR"));
+}
+
+}  // namespace
+
+// F9 (operation proof, 2026-11-11): Change Partition Type ID with "83" set MBR type 0x53: the type
+// reached Set-Partition -MbrType, a UInt16, as the string '83', which PowerShell reads as decimal.
+// "83", "0x83" and "83h" all mean 0x83 now, as diskpart's SET ID reads them, and the script hands
+// Set-Partition a number. Windows PowerShell 5.1 runs the whole script against stand-ins.
+void PartitionManagerCoreTests::generatedScripts_mbrTypeReachesSetPartitionAsHex() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{4};
+    target.partition_number = PartitionNumber{2};
+    target.offset_bytes = 1'048'576;
+    target.size_bytes = 268'435'456;
+    const PartitionScriptBuilder builder;
+    const auto typeScript = [&builder, &target](const QString& typed) {
+        return builder
+            .buildScript(PartitionOperationPlanner::makeOperation(
+                PartitionOperationType::SetPartitionTypeId,
+                target,
+                QJsonObject{{QStringLiteral("type_id"), typed}}))
+            .script;
+    };
+    for (const QString& typed :
+         {QStringLiteral("83"), QStringLiteral("0x83"), QStringLiteral("83h")}) {
+        const QString out = runPartitionTypeIdScript(typeScript(typed), QStringLiteral("MBR"));
+        QVERIFY2(out.contains(QStringLiteral("CALL Set mbr=131 gpt=")) &&
+                     out.contains(QStringLiteral("DONE")),
+                 qPrintable(typed + QStringLiteral(": ") + out));
+    }
+    const QString gpt_on_mbr = runPartitionTypeIdScript(
+        typeScript(QStringLiteral("{0fc63daf-8483-4772-8e79-3d69d8477de4}")),
+        QStringLiteral("MBR"));
+    QVERIFY2(gpt_on_mbr.contains(
+                 QStringLiteral("THREW An MBR partition type is one byte in hex")) &&
+                 !gpt_on_mbr.contains(QStringLiteral("CALL Set")),
+             qPrintable(gpt_on_mbr));
+    const QString extended = runPartitionTypeIdScript(typeScript(QStringLiteral("05")),
+                                                      QStringLiteral("MBR"));
+    QVERIFY2(extended.contains(QStringLiteral("THREW That MBR partition type would break")) &&
+                 !extended.contains(QStringLiteral("CALL Set")),
+             qPrintable(extended));
+    const QString guid = runPartitionTypeIdScript(
+        typeScript(QStringLiteral("{0fc63daf-8483-4772-8e79-3d69d8477de4}")),
+        QStringLiteral("GPT"));
+    QVERIFY2(guid.contains(
+                 QStringLiteral("CALL Set mbr=0 gpt={0fc63daf-8483-4772-8e79-3d69d8477de4}")),
+             qPrintable(guid));
+    const QString byte_on_gpt = runPartitionTypeIdScript(typeScript(QStringLiteral("83")),
+                                                         QStringLiteral("GPT"));
+    QVERIFY2(byte_on_gpt.contains(QStringLiteral("THREW A GPT partition type is a GUID")) &&
+                 !byte_on_gpt.contains(QStringLiteral("CALL Set")),
+             qPrintable(byte_on_gpt));
+
+    // Restore Recovered Partition gives an MBR partition its byte the same way: its Set-Partition
+    // line, run against the same stand-in.
+    const QString restored = runRestoredMbrTypeLine(builder);
+    QVERIFY2(restored.contains(QStringLiteral("CALL Set mbr=131 gpt=")), qPrintable(restored));
+}
+
+// F9 at queue time: a type the disk's table cannot hold is refused before anything is queued.
+void PartitionManagerCoreTests::safetyValidator_refusesAPartitionTypeTheTableCannotHold() {
+    auto inventory = singleDataDiskInventory();  // MBR
+    const auto& partition = inventory.disks.first().partitions.first();
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = inventory.disks.first().disk_number;
+    target.partition_number = partition.partition_number;
+    target.offset_bytes = partition.offset_bytes;
+    target.size_bytes = partition.size_bytes;
+    const auto blockers = [&inventory, &target](const QString& typed) {
+        return PartitionSafetyValidator::validate(
+                   inventory,
+                   PartitionOperationPlanner::makeOperation(
+                       PartitionOperationType::SetPartitionTypeId,
+                       target,
+                       QJsonObject{{QStringLiteral("type_id"), typed}}))
+            .blockers.join(QLatin1Char(' '));
+    };
+    QVERIFY2(!blockers(QStringLiteral("0x83")).contains(QStringLiteral("type")),
+             qPrintable(blockers(QStringLiteral("0x83"))));
+    for (const QString& breaking : {QStringLiteral("00"),
+                                    QStringLiteral("05"),
+                                    QStringLiteral("0F"),
+                                    QStringLiteral("85h"),
+                                    QStringLiteral("0xEE")}) {
+        QVERIFY2(blockers(breaking).contains(
+                     QStringLiteral("would break the disk's partition table")),
+                 qPrintable(breaking));
+    }
+    for (const QString& wrong : {QStringLiteral("100"),
+                                 QStringLiteral("Linux"),
+                                 QString(),
+                                 QStringLiteral("{0fc63daf-8483-4772-8e79-3d69d8477de4}")}) {
+        QVERIFY2(blockers(wrong).contains(QStringLiteral("one byte in hex")), qPrintable(wrong));
+    }
+    QCOMPARE(PartitionSafetyValidator::mbrPartitionType(QStringLiteral("83")).value_or(0), 0x83);
+    QCOMPARE(PartitionSafetyValidator::mbrPartitionType(QStringLiteral("0x07")).value_or(0), 0x07);
+    QVERIFY(PartitionSafetyValidator::partitionTypeBlocker(
+                QStringLiteral("GPT"), QStringLiteral("{00000000-0000-0000-0000-000000000000}"))
+                .contains(QStringLiteral("GUID")));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_buildsCloneVerificationScript() {
@@ -22743,6 +22947,7 @@ void PartitionManagerCoreTests::safetyValidator_requiresRecoveredPartitionRestor
     payload[QStringLiteral("offset_bytes")] = QStringLiteral("85899345920");
     payload[QStringLiteral("size_bytes")] = QStringLiteral("104857600");
     payload[QStringLiteral("type_id")] = QStringLiteral("EBD0A0A2-B9E5-4433-87C0-68B6B72699C7");
+    payload[QStringLiteral("partition_style")] = QStringLiteral("GPT");
     auto operation = PartitionOperationPlanner::makeOperation(
         PartitionOperationType::RestoreRecoveredPartition, target, payload);
 
@@ -22772,6 +22977,7 @@ void PartitionManagerCoreTests::safetyValidator_refusesARecoveredPartitionOverAL
         payload[QStringLiteral("offset_bytes")] = QString::number(offset);
         payload[QStringLiteral("size_bytes")] = QString::number(size);
         payload[QStringLiteral("type_id")] = QStringLiteral("EBD0A0A2-B9E5-4433-87C0-68B6B72699C7");
+        payload[QStringLiteral("partition_style")] = QStringLiteral("GPT");
         payload[QStringLiteral("restore_acknowledged")] = true;
         return PartitionOperationPlanner().previewOperation(
             inventory,

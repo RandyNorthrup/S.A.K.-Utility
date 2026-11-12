@@ -8,6 +8,8 @@
 
 #include "sak/partition_manager_types.h"
 
+#include <optional>
+
 namespace sak {
 
 struct PartitionValidationResult {
@@ -94,6 +96,16 @@ public:
     [[nodiscard]] static const PartitionInfoEx* findPartition(const PartitionDiskInfo& disk,
                                                               PartitionNumber partition_number);
     [[nodiscard]] static bool isSystemProtectedPartition(const PartitionInfoEx& partition);
+    /// An MBR partition type as a technician writes it: one byte in hex ("83", "0x83" and "83h"
+    /// are all 0x83, as diskpart's SET ID reads it). Empty when the text is not one byte, or names
+    /// a type that would break the table: 00 an empty entry; 05, 0F and 85 an extended partition;
+    /// EE a GPT disk's protective partition. A quoted "83" reached Set-Partition -MbrType as
+    /// decimal 83, which is 0x53 (operation proof, 2026-11-11).
+    [[nodiscard]] static std::optional<int> mbrPartitionType(const QString& typed);
+    /// Why @p typed is no partition type for a disk of @p partition_style (MBR or GPT), in plain
+    /// words, or empty when it is one.
+    [[nodiscard]] static QString partitionTypeBlocker(const QString& partition_style,
+                                                      const QString& typed);
 
 private:
     static void validateDiskOperation(const PartitionInventory& inventory,

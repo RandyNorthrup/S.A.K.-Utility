@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QSet>
 #include <QStringList>
+#include <QUuid>
 
 #include <algorithm>
 #include <cmath>
@@ -92,6 +93,28 @@ constexpr auto kHfsPayloadText = "hfs_payload_text";
 constexpr auto kHfsFileIdPayload = "hfs_file_id";
 constexpr auto kHfsAttributeNamePayload = "hfs_attribute_name";
 constexpr auto kHfsSecureWipeReleasedBlocksPayload = "hfs_secure_wipe_released_blocks";
+// MBR types that would break the partition table: 00 an empty entry; 05, 0F and 85 an extended
+// partition, which holds logical ones; EE a GPT disk's protective partition.
+constexpr int kTableBreakingMbrTypes[] = {0x00, 0x05, 0x0F, 0x85, 0xEE};
+
+// One byte in hex, as a technician writes an MBR type: "83", "0x83" or "83h".
+std::optional<int> mbrTypeByte(const QString& typed) {
+    constexpr int kHexBase = 16;
+    constexpr uint kLargestByte = 0xFF;
+    const QString hex_prefix = QStringLiteral("0x");
+    QString digits = typed.trimmed();
+    if (digits.startsWith(hex_prefix, Qt::CaseInsensitive)) {
+        digits = digits.mid(hex_prefix.size());
+    } else if (digits.endsWith(QLatin1Char('h'), Qt::CaseInsensitive)) {
+        digits.chop(1);
+    }
+    bool ok = false;
+    const uint value = digits.toUInt(&ok, kHexBase);
+    if (!ok || digits.isEmpty() || value > kLargestByte) {
+        return std::nullopt;
+    }
+    return static_cast<int>(value);
+}
 
 bool isDestructiveDiskOperation(PartitionOperationType type) {
     static const QSet<int> kTypes = {
@@ -1738,11 +1761,13 @@ void validatePartitionMetadataOperation(const PartitionDiskInfo& disk,
                  operation.type == PartitionOperationType::SetPartitionActive &&
                      disk.partition_style.compare(QStringLiteral("MBR"), Qt::CaseInsensitive) != 0,
                  QStringLiteral("Active flag is only valid on MBR disks"));
-    addBlockerIf(
-        result,
-        operation.type == PartitionOperationType::SetPartitionTypeId &&
-            operation.payload.value(QStringLiteral("type_id")).toString().trimmed().isEmpty(),
-        QStringLiteral("Partition type change requires a type ID"));
+    const QString type_blocker =
+        operation.type == PartitionOperationType::SetPartitionTypeId
+            ? PartitionSafetyValidator::partitionTypeBlocker(
+                  disk.partition_style,
+                  operation.payload.value(QStringLiteral("type_id")).toString())
+            : QString();
+    addBlockerIf(result, !type_blocker.isEmpty(), type_blocker);
     addBlockerIf(result,
                  operation.type == PartitionOperationType::DefragVolume && diskLooksSsd(disk),
                  QStringLiteral("HDD defrag is blocked on SSD/NVMe media"));
@@ -2188,6 +2213,43 @@ const PartitionInfoEx* PartitionSafetyValidator::findPartition(const PartitionDi
     return it == disk.partitions.end() ? nullptr : &(*it);
 }
 
+std::optional<int> PartitionSafetyValidator::mbrPartitionType(const QString& typed) {
+    const auto value = mbrTypeByte(typed);
+    if (!value ||
+        std::ranges::find(kTableBreakingMbrTypes, *value) != std::end(kTableBreakingMbrTypes)) {
+        return std::nullopt;
+    }
+    return value;
+}
+
+QString PartitionSafetyValidator::partitionTypeBlocker(const QString& partition_style,
+                                                       const QString& typed) {
+    const QString table = partition_style.trimmed().toUpper();
+    if (table == QStringLiteral("MBR")) {
+        if (mbrPartitionType(typed)) {
+            return {};
+        }
+        return mbrTypeByte(typed)
+                   ? QStringLiteral(
+                         "That MBR partition type would break the disk's partition table: 00 marks "
+                         "an empty entry, 05, 0F and 85 an extended partition, and EE a GPT disk's "
+                         "protective partition.")
+                   : QStringLiteral(
+                         "An MBR partition type is one byte in hex, such as 07 or 83 "
+                         "(83, 0x83 and 83h all mean 83).");
+    }
+    if (table == QStringLiteral("GPT")) {
+        const QUuid type(typed.trimmed());
+        if (type.isNull()) {
+            return QStringLiteral(
+                "A GPT partition type is a GUID other than all zeros, such as "
+                "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}.");
+        }
+        return {};
+    }
+    return QStringLiteral("Changing a partition type needs an MBR or GPT disk.");
+}
+
 bool PartitionSafetyValidator::isSystemProtectedPartition(const PartitionInfoEx& partition) {
     return partition.is_system || partition.is_boot || partition.is_efi || partition.is_msr ||
            partition.is_recovery;
@@ -2441,6 +2503,20 @@ static void validateDiskRecoveryBlockers(const PartitionDiskInfo& disk,
     addBlockerIf(result,
                  missingRecoveryCandidateFields(operation),
                  QStringLiteral("Recovered partition restore requires offset, size, and type ID"));
+    // The type goes on as the disk's table holds it: one hex byte on MBR, a GUID on GPT.
+    const QString type_id = operation.payload.value(QStringLiteral("type_id")).toString();
+    const QString payload_table =
+        operation.payload.value(QStringLiteral("partition_style")).toString();
+    if (operation.type == PartitionOperationType::RestoreRecoveredPartition &&
+        !type_id.trimmed().isEmpty()) {
+        addBlockerIf(result,
+                     payload_table.compare(disk.partition_style, Qt::CaseInsensitive) != 0,
+                     QStringLiteral("The recovered partition's table style does not match the "
+                                    "disk's; scan the disk again"));
+        const QString type_blocker =
+            PartitionSafetyValidator::partitionTypeBlocker(disk.partition_style, type_id);
+        addBlockerIf(result, !type_blocker.isEmpty(), type_blocker);
+    }
     addBlockerIf(result,
                  recoveryCandidateOverlapsExistingPartition(disk, operation),
                  QStringLiteral("Recovered partition candidate overlaps an existing partition"));

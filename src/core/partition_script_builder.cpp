@@ -10,6 +10,7 @@
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_os_migration.h"
 #include "sak/partition_raw_device_io.h"
+#include "sak/partition_safety_validator.h"
 #include "sak/partition_stop_cleanup.h"
 #include "sak/windows_continued_work.h"
 
@@ -5857,23 +5858,73 @@ PartitionScript PartitionScriptBuilder::buildPartitionRecoveryScanScript(
 namespace {
 // More than Windows blanks of a partition it creates, measured at about 33 KB.
 constexpr uint64_t kRecoveredPartitionHeadBytes = 1024ULL * 1024ULL;
+
+/// An MBR partition type as Set-Partition -MbrType has to have it: a number, written in hex
+/// (0x83). A quoted "83" reached it as decimal 83, which is 0x53 (operation proof, 2026-11-11).
+/// Empty when @p typed is no MBR type PartitionSafetyValidator accepts.
+QString mbrTypeLiteral(const QString& typed);
+
+struct RecoveredPartitionType {
+    QString new_partition_argument;
+    QString set_mbr_type;
+};
+
+// What Restore Recovered Partition needs before it writes: where, how large, and a type the
+// disk's table holds (PartitionSafetyValidator::partitionTypeBlocker).
+QString recoveredPartitionBlocker(const PartitionOperation& operation) {
+    const QString typeId = payloadString(operation, QStringLiteral("type_id")).trimmed();
+    if (operation.target.kind != PartitionTargetKind::Disk ||
+        payloadUInt64(operation, QStringLiteral("offset_bytes")) == 0 ||
+        payloadUInt64(operation, QStringLiteral("size_bytes")) == 0 || typeId.isEmpty()) {
+        return QStringLiteral(
+            "Recovered partition restore requires disk, offset, size, and type_id");
+    }
+    return PartitionSafetyValidator::partitionTypeBlocker(
+        payloadString(operation, QStringLiteral("partition_style")), typeId);
+}
+
+// New-Partition's -MbrType is an enum of six named types: it read "0x07" as none of them and has
+// no Linux byte at all. So an MBR partition is made, then given its byte by Set-Partition, which
+// takes any; a GPT partition is made with its type.
+RecoveredPartitionType recoveredPartitionType(const PartitionOperation& operation,
+                                              const QString& typeId,
+                                              bool gpt) {
+    if (gpt) {
+        return {
+            .new_partition_argument =
+                QStringLiteral("-GptType %1").arg(PartitionScriptBuilder::quotePowerShell(typeId)),
+            .set_mbr_type = {}};
+    }
+    return {.new_partition_argument = {},
+            .set_mbr_type =
+                QStringLiteral("Set-Partition -DiskNumber %1 -PartitionNumber "
+                               "$sakNew.PartitionNumber -MbrType %2 -ErrorAction Stop\n")
+                    .arg(uintArg(operation.target.disk_number.value()), mbrTypeLiteral(typeId))};
+}
+
+QString mbrTypeLiteral(const QString& typed) {
+    constexpr int kHexBase = 16;
+    constexpr int kMbrTypeDigits = 2;
+    const auto value = PartitionSafetyValidator::mbrPartitionType(typed);
+    if (!value) {
+        return {};
+    }
+    const QString hex = QString::number(*value, kHexBase).toUpper();
+    return QStringLiteral("0x%1").arg(hex.rightJustified(kMbrTypeDigits, QLatin1Char('0')));
+}
 }  // namespace
 
 PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
     const PartitionOperation& operation) const {
+    if (const QString blocker = recoveredPartitionBlocker(operation); !blocker.isEmpty()) {
+        return invalidScript(blocker);
+    }
     const uint64_t offset = payloadUInt64(operation, QStringLiteral("offset_bytes"));
     const uint64_t size = payloadUInt64(operation, QStringLiteral("size_bytes"));
     const QString typeId = payloadString(operation, QStringLiteral("type_id")).trimmed();
-    if (operation.target.kind != PartitionTargetKind::Disk || offset == 0 || size == 0 ||
-        typeId.isEmpty()) {
-        return invalidScript(
-            QStringLiteral("Recovered partition restore requires disk, offset, size, and type_id"));
-    }
-
     const bool gpt = payloadString(operation, QStringLiteral("partition_style"))
                          .compare(QStringLiteral("GPT"), Qt::CaseInsensitive) == 0;
-    const QString typeArg = gpt ? QStringLiteral("-GptType %1").arg(quotePowerShell(typeId))
-                                : QStringLiteral("-MbrType %1").arg(quotePowerShell(typeId));
+    const auto [typeArg, setMbrType] = recoveredPartitionType(operation, typeId, gpt);
     PartitionScript out;
     out.preview = QStringLiteral("Restore recovered partition on Disk %1 at %2")
                       .arg(operation.target.disk_number.value())
@@ -5910,6 +5961,7 @@ PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
             "} finally { $sakRaw.Dispose() }\n"
             "$sakNew = New-Partition -DiskNumber %1 -Offset %2 -Size %3 %4 -ErrorAction "
             "Stop\n"
+            "%6"
             "$sakRaw = [System.IO.File]::Open($sakDiskPath, 'Open', 'ReadWrite', "
             "'ReadWrite')\n"
             "try {\n"
@@ -5922,7 +5974,11 @@ PartitionScript PartitionScriptBuilder::buildRestoreRecoveredPartitionScript(
             "| Out-Null }\n"
             "Update-HostStorageCache -ErrorAction Stop\n")
             .arg(operation.target.disk_number.value())
-            .arg(uintArg(offset), uintArg(size), typeArg, uintArg(kRecoveredPartitionHeadBytes));
+            .arg(uintArg(offset),
+                 uintArg(size),
+                 typeArg,
+                 uintArg(kRecoveredPartitionHeadBytes),
+                 setMbrType);
     out.timeout_seconds = kPartitionMediumTaskTimeoutSeconds;
     return out;
 }
@@ -5976,6 +6032,13 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionTypeIdScript(
     if (typeId.isEmpty()) {
         return invalidScript(QStringLiteral("Partition type change requires type_id"));
     }
+    // The disk's style is read when the script runs, so text that is no type for it (a GPT GUID
+    // on an MBR disk, a byte on a GPT one) stops it there, before Set-Partition.
+    const QString mbrType = mbrTypeLiteral(typeId);
+    const QString mbrRefusal = PartitionSafetyValidator::partitionTypeBlocker(QStringLiteral("MBR"),
+                                                                              typeId);
+    const QString gptRefusal = PartitionSafetyValidator::partitionTypeBlocker(QStringLiteral("GPT"),
+                                                                              typeId);
 
     PartitionScript out;
     out.preview = QStringLiteral("Change Disk %1 Partition %2 type ID to %3")
@@ -5986,14 +6049,21 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionTypeIdScript(
                  QStringLiteral(
                      "$d = Get-Disk -Number %1 -ErrorAction Stop\n"
                      "$typeId = %2\n"
+                     "$mbrType = %4\n"
                      "if ($d.PartitionStyle -eq 'GPT') {\n"
+                     "  if (%6) { throw %6 }\n"
                      "  Set-Partition -DiskNumber %1 -PartitionNumber %3 -GptType $typeId\n"
                      "} elseif ($d.PartitionStyle -eq 'MBR') {\n"
-                     "  Set-Partition -DiskNumber %1 -PartitionNumber %3 -MbrType $typeId\n"
+                     "  if ($null -eq $mbrType) { throw %5 }\n"
+                     "  Set-Partition -DiskNumber %1 -PartitionNumber %3 -MbrType $mbrType\n"
                      "} else { throw 'Partition type ID requires MBR or GPT disk' }\n")
-                     .arg(operation.target.disk_number.value())
-                     .arg(quotePowerShell(typeId))
-                     .arg(operation.target.partition_number.value());
+                     // One pass, so a %n in the typed text is never read as a placeholder.
+                     .arg(QString::number(operation.target.disk_number.value()),
+                          quotePowerShell(typeId),
+                          QString::number(operation.target.partition_number.value()),
+                          mbrType.isEmpty() ? QStringLiteral("$null") : mbrType,
+                          quotePowerShell(mbrRefusal),
+                          quotePowerShell(gptRefusal));
     return out;
 }
 
