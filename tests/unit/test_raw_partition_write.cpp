@@ -219,6 +219,9 @@ private Q_SLOTS:
     void scriptReleaseAndClearTakeThePartition();
     void formatRoundTripSetsAndRestoresThePartitionType();
     void restoreImageThroughTheGeneratedScript();
+    void resizeAsDataGivesAnExtPartitionItsTypeBack();
+    void hfsReadOnlyCheckStagesAndWritesNothing();
+    void hideOnMbrHidesOnlyThatPartition();
 
 private:
     void addVolumeRows();
@@ -228,6 +231,9 @@ private:
     /// Attach @p volume's new VHDX, give it one MBR partition on its letter and format it. Prints
     /// FORMATTED when done.
     QString makeVolume(const PartitionVolume& volume);
+    /// Attach @p volume's new VHDX, give it one NTFS partition on GPT at its letter, then the
+    /// app's own HFS+ Format of it, as the panel queues it. Prints HFS FORMATTED when done.
+    QString makeHfsVolume(PartitionVolume* volume);
     std::unique_ptr<QTemporaryDir> m_work;
     QString m_vhds;  ///< the virtual disks' folder
     QList<PartitionVolume> m_volumes;
@@ -693,6 +699,428 @@ void RawPartitionWriteTests::restoreImageThroughTheGeneratedScript() {
     QVERIFY2(device, qPrintable(error));
     QVERIFY(device->seek(0));
     QVERIFY2(device->read(image.size()) == image, "the disk does not read back as the image");
+}
+
+namespace {
+
+constexpr auto kLinuxGptType = "{0fc63daf-8483-4772-8e79-3d69d8477de4}";
+constexpr qint64 kResizeStartBytes = 16LL * 1024 * 1024;
+constexpr qint64 kResizeGrownBytes = 32LL * 1024 * 1024;
+constexpr qint64 kResizeRefusedBytes = 1024LL * 1024 * 1024;  ///< more than the disk holds
+constexpr qint64 kHfsHeadBytes = 4096;  ///< the sectors that hold the volume header
+constexpr qint64 kHfsHeaderOffset = 1024;
+constexpr qint64 kHfsFileCountOffset = kHfsHeaderOffset + 32;   ///< fileCount, big-endian
+constexpr qint64 kHfsFreeBlocksOffset = kHfsHeaderOffset + 48;  ///< freeBlocks, big-endian
+
+/// The text after @p prefix on the first line of @p out that starts with it, or "" when none does.
+QString lineAfter(const QString& out, const QString& prefix) {
+    for (const QString& line : out.split(QLatin1Char('\n'))) {
+        if (line.trimmed().startsWith(prefix)) {
+            return line.trimmed().mid(prefix.size());
+        }
+    }
+    return {};
+}
+
+/// PowerShell: a line "<tag> <GPT type> <no-default-letter> <hidden> <read-only> <size> [<paths
+/// other than its \\?\Volume{...}\ path>]" for $sakDisk's partition $sakPart, as Windows reads it.
+QString partitionFactsLine(const QString& tag) {
+    return QStringLiteral(
+               "Update-HostStorageCache\n"
+               "$q = Get-Partition -DiskNumber $sakDisk -PartitionNumber $sakPart\n"
+               "'%1 ' + \"$($q.GptType)\".ToLowerInvariant() + ' ' + [bool]$q.NoDefaultDriveLetter "
+               "+ "
+               "' ' + [bool]$q.IsHidden + ' ' + [bool]$q.IsReadOnly + ' ' + $q.Size + ' [' + "
+               "((@($q.AccessPaths) | Where-Object { $_ -and -not "
+               "\"$_\".StartsWith('\\\\?\\Volume{') "
+               "}) -join ',') + ']'\n")
+        .arg(tag);
+}
+
+/// The app's resize-as-data function on @p disk's partition @p number, to @p size bytes: "DONE" or
+/// "THREW <message>" after RESULT, and the partition's facts after STATE (partitionFactsLine).
+QString resizeAsData(uint32_t disk, uint32_t number, qint64 size) {
+    const sak::ProcessResult run = sak::runPowerShell(
+        QStringLiteral("$ErrorActionPreference = 'Stop'\n$sakDisk = %1\n$sakPart = %2\n")
+                .arg(disk)
+                .arg(number) +
+            sak::PartitionScriptBuilder::resizeAsDataPartitionFunctionScript() +
+            QStringLiteral("try { Invoke-SakResizeAsDataPartition -Disk %1 -Number %2 -Size %3 | "
+                           "Out-Null; 'RESULT DONE' } catch { 'RESULT THREW ' + "
+                           "$_.Exception.Message }\n")
+                .arg(disk)
+                .arg(number)
+                .arg(size) +
+            partitionFactsLine(QStringLiteral("STATE")),
+        kScriptTimeoutMs);
+    return run.std_out + run.std_err;
+}
+
+/// @p facts (partitionFactsLine, without its tag) with the size field set to @p size.
+QString withSize(const QString& facts, qint64 size) {
+    QStringList fields = facts.split(QLatin1Char(' '));
+    constexpr qsizetype kSizeField = 4;
+    if (fields.size() > kSizeField) {
+        fields[kSizeField] = QString::number(size);
+    }
+    return fields.join(QLatin1Char(' '));
+}
+
+/// SHA-256 of @p volume's whole partition, read through the read-only opener; empty on a failure.
+QByteArray partitionHash(const PartitionVolume& volume, QString* error) {
+    auto device = sak::openFileOrRawDeviceReadOnly(volume.partition, error);
+    if (!device || !device->seek(0)) {
+        return {};
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    qint64 remaining = volume.size;
+    while (remaining > 0) {
+        const QByteArray block = device->read(std::min(remaining, kEdgeBytes));
+        if (block.isEmpty()) {
+            *error = QStringLiteral("the partition read ended %1 bytes short").arg(remaining);
+            return {};
+        }
+        hash.addData(block);
+        remaining -= block.size();
+    }
+    return hash.result();
+}
+
+/// The app's own read-only check of @p volume's partition as HFS+, as Check Non-Windows File
+/// System has the helper build it.
+sak::PartitionScript hfsReadOnlyCheckScript(const PartitionVolume& volume) {
+    sak::PartitionTarget target;
+    target.kind = sak::PartitionTargetKind::Partition;
+    target.disk_number = sak::DiskNumber{volume.disk};
+    target.partition_number = sak::PartitionNumber{volume.partitionNumber};
+    target.size_bytes = static_cast<uint64_t>(volume.size);
+    const QJsonObject payload{{QStringLiteral("non_native_file_system_tool"), true},
+                              {QStringLiteral("read_only_check"), true},
+                              {QStringLiteral("file_system"), QStringLiteral("HFS+")},
+                              {QStringLiteral("target_path"), volume.partition}};
+    return sak::PartitionScriptBuilder().buildScript(sak::PartitionOperationPlanner::makeOperation(
+        sak::PartitionOperationType::CheckFileSystem, target, payload));
+}
+
+/// The staged images a check left in @p folder.
+QStringList stagedCheckImages(const QString& folder) {
+    return QDir(folder).entryList({QStringLiteral("sak-hfs-check-*")}, QDir::Files);
+}
+
+/// Damages @p volume's HFS+ volume header: its file count and free-block count no longer match the
+/// volume. A raw partition is written in whole sectors: the first 4 KiB, changed in memory.
+bool damageHfsHeader(const PartitionVolume& volume, QString* error) {
+    auto device = sak::openFileOrRawDeviceReadWrite(volume.partition, error);
+    if (!device || !device->seek(0)) {
+        return false;
+    }
+    QByteArray head = device->read(kHfsHeadBytes);
+    if (head.size() != kHfsHeadBytes || head.mid(kHfsHeaderOffset, 2) != QByteArray("H+")) {
+        *error = QStringLiteral("no HFS+ volume header (%1)")
+                     .arg(QString::fromLatin1(head.mid(kHfsHeaderOffset, 2).toHex()));
+        return false;
+    }
+    head.replace(kHfsFileCountOffset, 4, QByteArray("\xFF\xFF\xFF\xF0", 4));
+    head.replace(kHfsFreeBlocksOffset, 4, QByteArray(4, '\0'));
+    return device->seek(0) && device->write(head) == kHfsHeadBytes &&
+           sak::flushDeviceBuffers(device.get(), error);
+}
+
+}  // namespace
+
+// Opsproof F27 (merged build 9170b149): every ext Resize on GPT failed, "Windows did not give the
+// partition its type back ... This operation is only supported on data partitions", the partition
+// unchanged. The resize-as-data function set GPT's no-default-letter attribute before the data
+// type, and Windows sets that attribute on a data partition only (StorageWMI 42011); the unit
+// test's stand-in took it on any type, so only Windows could show it. A Linux-typed GPT partition
+// on a VHDX, as S.A.K.'s ext Format leaves one (no letter, the attribute set), goes through the
+// app's own function: grown, then refused a size the disk cannot hold; each time its type,
+// attributes, letters and size are read back.
+void RawPartitionWriteTests::resizeAsDataGivesAnExtPartitionItsTypeBack() {
+    const QString vhd =
+        QDir::toNativeSeparators(QDir(m_vhds).filePath(QStringLiteral("resize.vhdx")));
+    const QString made =
+        diskpart(*m_work,
+                 {QStringLiteral("create vdisk file=\"%1\" maximum=%2 type=expandable")
+                      .arg(vhd)
+                      .arg(kVirtualDiskMiB),
+                  QStringLiteral("select vdisk file=\"%1\"").arg(vhd),
+                  QStringLiteral("attach vdisk")});
+    const auto detach = qScopeGuard([this, &vhd] {
+        (void)diskpart(*m_work,
+                       {QStringLiteral("select vdisk file=\"%1\"").arg(vhd),
+                        QStringLiteral("detach vdisk")});
+    });
+    const sak::ProcessResult setup = sak::runPowerShell(
+        QStringLiteral(
+            "$ErrorActionPreference = 'Stop'\n"
+            "$sakDisk = (Get-DiskImage -ImagePath %1 | Get-Disk).Number\n"
+            "Initialize-Disk -Number $sakDisk -PartitionStyle GPT\n"
+            "$sakPart = (New-Partition -DiskNumber $sakDisk -Size %2).PartitionNumber\n"
+            "Set-Partition -DiskNumber $sakDisk -PartitionNumber $sakPart -NoDefaultDriveLetter "
+            "$true\n"
+            "Set-Partition -DiskNumber $sakDisk -PartitionNumber $sakPart -GptType %3\n"
+            "Update-HostStorageCache\n"
+            "foreach ($a in @((Get-Partition -DiskNumber $sakDisk -PartitionNumber "
+            "$sakPart).AccessPaths | Where-Object { $_ -match '^[A-Z]:\\\\$' })) { "
+            "Remove-PartitionAccessPath -DiskNumber $sakDisk -PartitionNumber $sakPart "
+            "-AccessPath $a }\n"
+            "'MADE ' + $sakDisk + ' ' + $sakPart\n")
+                .arg(sak::PartitionScriptBuilder::quotePowerShell(vhd))
+                .arg(kResizeStartBytes)
+                .arg(sak::PartitionScriptBuilder::quotePowerShell(
+                    QString::fromLatin1(kLinuxGptType))) +
+            partitionFactsLine(QStringLiteral("BEFORE")),
+        kScriptTimeoutMs);
+    const QString setup_out = made + setup.std_out + setup.std_err;
+    const QStringList numbers = lineAfter(setup_out, QStringLiteral("MADE ")).split(u' ');
+    const QString before = lineAfter(setup_out, QStringLiteral("BEFORE "));
+    QVERIFY2(numbers.size() == 2 && numbers[0].toUInt() > 0 && !before.isEmpty(),
+             qPrintable(setup_out));
+    const uint32_t disk = numbers[0].toUInt();
+    const uint32_t number = numbers[1].toUInt();
+    // Windows reads a Linux-typed partition's attribute bits its own way (testpc1: the
+    // no-default-letter attribute set before the type change reads False, and the partition reads
+    // hidden), so what is checked afterwards is that the partition reads as it did here.
+    QVERIFY2(before.startsWith(QString::fromLatin1(kLinuxGptType) + QLatin1Char(' ')) &&
+                 before.endsWith(QStringLiteral(" %1 []").arg(kResizeStartBytes)),
+             qPrintable(setup_out));
+
+    // Grown: its own type, attributes and letters back, at the new size.
+    const QString grown = resizeAsData(disk, number, kResizeGrownBytes);
+    QVERIFY2(lineAfter(grown, QStringLiteral("RESULT ")) == QStringLiteral("DONE"),
+             qPrintable(grown));
+    QVERIFY2(lineAfter(grown, QStringLiteral("STATE ")) == withSize(before, kResizeGrownBytes),
+             qPrintable(before + QStringLiteral(" | ") + grown));
+
+    // Refused by Windows: Windows' own reason, and the partition as it was.
+    const QString refused = resizeAsData(disk, number, kResizeRefusedBytes);
+    const QString result = lineAfter(refused, QStringLiteral("RESULT "));
+    QVERIFY2(result.startsWith(QStringLiteral("THREW ")) &&
+                 !result.contains(QStringLiteral("did not give the partition its type back")),
+             qPrintable(refused));
+    QVERIFY2(lineAfter(refused, QStringLiteral("STATE ")) == withSize(before, kResizeGrownBytes),
+             qPrintable(before + QStringLiteral(" | ") + refused));
+}
+
+QString RawPartitionWriteTests::makeHfsVolume(PartitionVolume* volume) {
+    QString out = diskpart(*m_work,
+                           {QStringLiteral("create vdisk file=\"%1\" maximum=%2 type=expandable")
+                                .arg(volume->vhd)
+                                .arg(kVirtualDiskMiB),
+                            QStringLiteral("select vdisk file=\"%1\"").arg(volume->vhd),
+                            QStringLiteral("attach vdisk")});
+    const sak::ProcessResult ntfs = sak::runPowerShell(
+        QStringLiteral("$ErrorActionPreference = 'Stop'\n"
+                       "$disk = Get-DiskImage -ImagePath %1 | Get-Disk\n"
+                       "Initialize-Disk -Number $disk.Number -PartitionStyle GPT\n"
+                       "$p = New-Partition -DiskNumber $disk.Number -UseMaximumSize "
+                       "-DriveLetter %2\n"
+                       "Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel SAKHFS "
+                       "-Force -Confirm:$false | Out-Null\n"
+                       "'NTFS READY'\n")
+            .arg(sak::PartitionScriptBuilder::quotePowerShell(volume->vhd), volume->letter),
+        kDiskpartTimeoutMs);
+    out += ntfs.std_out + ntfs.std_err;
+    if (!out.contains(QStringLiteral("NTFS READY")) || !partitionOfLetter(volume->letter, volume)) {
+        return out;
+    }
+    // The app's own HFS+ Format of it, as the panel queues it.
+    const sak::PartitionScript hfs = formatScript(*volume, QStringLiteral("HFS+"), true);
+    if (!hfs.valid()) {
+        return out + hfs.blockers.join(QStringLiteral("; "));
+    }
+    const sak::ProcessResult formatted = sak::runPowerShell(hfs.script, kToolScriptTimeoutMs);
+    out += formatted.std_out + formatted.std_err;
+    if (formatted.exit_code == 0) {
+        out += QStringLiteral("\nHFS FORMATTED\n");
+    }
+    return out;
+}
+
+// Opsproof F28 (merged build 9170b149): Check Non-Windows File System failed on every healthy HFS+
+// volume, "fsck_hfs -n -f //?/GLOBALROOT/... Device is not a block device ... exit code 8":
+// fsck_hfs opens a block device or a file, and the check gave it the partition's path. The check
+// now reads the partition into a staged image in the run folder and checks that, writing nothing
+// back. An HFS+ partition the app's own Format made on a GPT VHDX, checked through the app's own
+// script: healthy passes, a damaged volume header fails, the partition's bytes are the same after
+// each check, and no image is left; with the run folder on a FAT32 drive the check refuses in
+// plain words before it makes an image.
+void RawPartitionWriteTests::hfsReadOnlyCheckStagesAndWritesNothing() {
+    // The FAT32 volume, formatted again (an earlier case cleared it), for the refusal.
+    PartitionVolume& fat = m_volumes[1];
+    QCOMPARE(fat.name, QStringLiteral("FAT32"));
+    const QString fat_formatted = format(fat, true);
+    QVERIFY2(fat_formatted.contains(QStringLiteral("FORMATTED")), qPrintable(fat_formatted));
+
+    const QStringList letters = freeDriveLetters(1);
+    QCOMPARE(letters.size(), 1);
+    PartitionVolume volume;
+    volume.name = QStringLiteral("HFS+");
+    volume.letter = letters.first();
+    volume.vhd = QDir::toNativeSeparators(QDir(m_vhds).filePath(QStringLiteral("hfs.vhdx")));
+    const auto detach = qScopeGuard([this, &volume] {
+        (void)diskpart(*m_work,
+                       {QStringLiteral("select vdisk file=\"%1\"").arg(volume.vhd),
+                        QStringLiteral("detach vdisk")});
+    });
+    const QString made = makeHfsVolume(&volume);
+    QVERIFY2(made.contains(QStringLiteral("HFS FORMATTED")), qPrintable(made));
+
+    const sak::PartitionScript check = hfsReadOnlyCheckScript(volume);
+    QVERIFY2(check.valid(), qPrintable(check.blockers.join(QStringLiteral("; "))));
+    const QString temp = QDir::tempPath();
+    QString error;
+
+    // Healthy: the check passes, and the partition reads the same.
+    const QByteArray healthy = partitionHash(volume, &error);
+    QVERIFY2(!healthy.isEmpty(), qPrintable(error));
+    const sak::ProcessResult passed = sak::runPowerShell(check.script, kToolScriptTimeoutMs);
+    const QString passed_out = passed.std_out + passed.std_err;
+    QVERIFY2(passed.exit_code == 0 &&
+                 passed_out.contains(QStringLiteral("Filesystem tool exit code: 0")),
+             qPrintable(passed_out));
+    QCOMPARE(partitionHash(volume, &error), healthy);
+    QVERIFY2(stagedCheckImages(temp).isEmpty(), qPrintable(stagedCheckImages(temp).join(u' ')));
+
+    // A damaged volume header: its file count and free-block count no longer match the volume.
+    QVERIFY2(damageHfsHeader(volume, &error), qPrintable(error));
+    const QByteArray damaged = partitionHash(volume, &error);
+    QVERIFY2(!damaged.isEmpty() && damaged != healthy, qPrintable(error));
+    const sak::ProcessResult failed = sak::runPowerShell(check.script, kToolScriptTimeoutMs);
+    const QString failed_out = failed.std_out + failed.std_err;
+    QVERIFY2(failed.exit_code != 0 &&
+                 failed_out.contains(QStringLiteral("Filesystem tool exit code: ")) &&
+                 !failed_out.contains(QStringLiteral("Filesystem tool exit code: 0")),
+             qPrintable(failed_out));
+    QCOMPARE(partitionHash(volume, &error), damaged);
+    QVERIFY2(stagedCheckImages(temp).isEmpty(), qPrintable(stagedCheckImages(temp).join(u' ')));
+
+    // The run folder on a FAT32 drive: refused in plain words, before an image is made.
+    const QString fat_root = fat.letter + QStringLiteral(":\\");
+    const sak::ProcessResult on_fat =
+        sak::runPowerShell(QStringLiteral("$env:TMP = %1\n$env:TEMP = %1\n")
+                                   .arg(sak::PartitionScriptBuilder::quotePowerShell(fat_root)) +
+                               check.script,
+                           kToolScriptTimeoutMs);
+    const QString on_fat_out = on_fat.std_out + on_fat.std_err;
+    QVERIFY2(on_fat.exit_code != 0 &&
+                 on_fat_out.contains(QStringLiteral("FAT32 has no sparse files")) &&
+                 on_fat_out.contains(QStringLiteral("Run S.A.K. from an NTFS-formatted drive")),
+             qPrintable(on_fat_out));
+    QCOMPARE(partitionHash(volume, &error), damaged);
+    QVERIFY2(stagedCheckImages(fat_root).isEmpty(),
+             qPrintable(stagedCheckImages(fat_root).join(u' ')));
+}
+
+namespace {
+
+/// PowerShell: a line "P<n> <hidden> <letter or -> <MBR type, hex>" for partitions 1 and 2 of
+/// $sakDisk, as Windows reads them.
+QString mbrPartitionsFactsScript() {
+    return QStringLiteral(
+        "Update-HostStorageCache\n"
+        "foreach ($n in 1, 2) { $q = Get-Partition -DiskNumber $sakDisk -PartitionNumber $n; 'P' "
+        "+ $n + ' ' + [bool]$q.IsHidden + ' ' + $(if ([string]$q.DriveLetter -match "
+        "'^[A-Za-z]$') { [string]$q.DriveLetter } else { '-' }) + ' ' + ('{0:X2}' -f "
+        "[int]$q.MbrType) }\n");
+}
+
+/// The app's own Hide (@p hidden) or Unhide script for partition @p number of @p disk, with
+/// its identity pinned as the panel pins it.
+sak::PartitionScript hideScript(uint32_t disk,
+                                uint32_t number,
+                                const QStringList& identity,
+                                bool hidden) {
+    sak::PartitionTarget target;
+    target.kind = sak::PartitionTargetKind::Partition;
+    target.disk_number = sak::DiskNumber{disk};
+    target.partition_number = sak::PartitionNumber{number};
+    target.offset_bytes = identity.value(0).toULongLong();
+    target.size_bytes = identity.value(1).toULongLong();
+    return sak::PartitionScriptBuilder().buildScript(sak::PartitionOperationPlanner::makeOperation(
+        sak::PartitionOperationType::SetPartitionHidden,
+        target,
+        QJsonObject{{QStringLiteral("hidden"), hidden}}));
+}
+
+}  // namespace
+
+// Opsproof F30 (testpc2, merged build 9170b149): on an MBR disk, Hide hid every partition on the
+// disk and took all their letters: Set-Partition -IsHidden and -NoDefaultDriveLetter are the whole
+// disk's attributes there. One MBR partition is hidden by its type's hidden form (0x07 -> 0x17).
+// The app's own Hide and Unhide scripts on partition 1 of a two-partition MBR VHDX: partition 1 is
+// hidden with no letter while partition 2 keeps its letter and stays visible, and Unhide gives
+// partition 1 its type and a letter back.
+void RawPartitionWriteTests::hideOnMbrHidesOnlyThatPartition() {
+    const QStringList letters = freeDriveLetters(2);
+    QCOMPARE(letters.size(), 2);
+    const QString vhd =
+        QDir::toNativeSeparators(QDir(m_vhds).filePath(QStringLiteral("hide.vhdx")));
+    const QString made =
+        diskpart(*m_work,
+                 {QStringLiteral("create vdisk file=\"%1\" maximum=%2 type=expandable")
+                      .arg(vhd)
+                      .arg(kVirtualDiskMiB),
+                  QStringLiteral("select vdisk file=\"%1\"").arg(vhd),
+                  QStringLiteral("attach vdisk")});
+    const auto detach = qScopeGuard([this, &vhd] {
+        (void)diskpart(*m_work,
+                       {QStringLiteral("select vdisk file=\"%1\"").arg(vhd),
+                        QStringLiteral("detach vdisk")});
+    });
+    const sak::ProcessResult setup = sak::runPowerShell(
+        QStringLiteral(
+            "$ErrorActionPreference = 'Stop'\n"
+            "$sakDisk = (Get-DiskImage -ImagePath %1 | Get-Disk).Number\n"
+            "Initialize-Disk -Number $sakDisk -PartitionStyle MBR\n"
+            "$p1 = New-Partition -DiskNumber $sakDisk -Size 24MB -DriveLetter %2\n"
+            "Format-Volume -Partition $p1 -FileSystem NTFS -NewFileSystemLabel SAKHIDE1 -Force "
+            "-Confirm:$false | Out-Null\n"
+            "$p2 = New-Partition -DiskNumber $sakDisk -UseMaximumSize -DriveLetter %3\n"
+            "Format-Volume -Partition $p2 -FileSystem NTFS -NewFileSystemLabel SAKHIDE2 -Force "
+            "-Confirm:$false | Out-Null\n"
+            "'MADE ' + $sakDisk + ' ' + $p1.PartitionNumber + ' ' + $p1.Offset + ' ' + "
+            "$p1.Size\n")
+                .arg(sak::PartitionScriptBuilder::quotePowerShell(vhd), letters[0], letters[1]) +
+            mbrPartitionsFactsScript(),
+        kDiskpartTimeoutMs);
+    const QString setup_out = made + setup.std_out + setup.std_err;
+    const QStringList fields = lineAfter(setup_out, QStringLiteral("MADE ")).split(u' ');
+    QVERIFY2(fields.size() == 4 && fields[1] == QStringLiteral("1"), qPrintable(setup_out));
+    const uint32_t disk = fields[0].toUInt();
+    QVERIFY2(lineAfter(setup_out, QStringLiteral("P1 ")) ==
+                     QStringLiteral("False %1 07").arg(letters[0]) &&
+                 lineAfter(setup_out, QStringLiteral("P2 ")) ==
+                     QStringLiteral("False %1 07").arg(letters[1]),
+             qPrintable(setup_out));
+    const QString facts = QStringLiteral("$sakDisk = %1\n").arg(disk) + mbrPartitionsFactsScript();
+
+    const sak::PartitionScript hide = hideScript(disk, 1, fields.mid(2), true);
+    QVERIFY2(hide.valid(), qPrintable(hide.blockers.join(QStringLiteral("; "))));
+    const sak::ProcessResult hidden = sak::runPowerShell(hide.script, kScriptTimeoutMs);
+    const sak::ProcessResult after_hide = sak::runPowerShell(facts, kScriptTimeoutMs);
+    const QString hidden_out = hidden.std_out + hidden.std_err + after_hide.std_out;
+    QVERIFY2(hidden.exit_code == 0, qPrintable(hidden_out));
+    QVERIFY2(lineAfter(after_hide.std_out, QStringLiteral("P1 ")) == QStringLiteral("True - 17"),
+             qPrintable(hidden_out));
+    QVERIFY2(lineAfter(after_hide.std_out, QStringLiteral("P2 ")) ==
+                 QStringLiteral("False %1 07").arg(letters[1]),
+             qPrintable(hidden_out));
+
+    const sak::PartitionScript show = hideScript(disk, 1, fields.mid(2), false);
+    QVERIFY2(show.valid(), qPrintable(show.blockers.join(QStringLiteral("; "))));
+    const sak::ProcessResult shown = sak::runPowerShell(show.script, kScriptTimeoutMs);
+    const sak::ProcessResult after_show = sak::runPowerShell(facts, kScriptTimeoutMs);
+    const QString shown_out = shown.std_out + shown.std_err + after_show.std_out;
+    QVERIFY2(shown.exit_code == 0, qPrintable(shown_out));
+    const QString first = lineAfter(after_show.std_out, QStringLiteral("P1 "));
+    QVERIFY2(first.startsWith(QStringLiteral("False ")) && first.endsWith(QStringLiteral(" 07")) &&
+                 !first.contains(QStringLiteral(" - ")),
+             qPrintable(shown_out));
+    QVERIFY2(lineAfter(after_show.std_out, QStringLiteral("P2 ")) ==
+                 QStringLiteral("False %1 07").arg(letters[1]),
+             qPrintable(shown_out));
 }
 
 QTEST_GUILESS_MAIN(RawPartitionWriteTests)

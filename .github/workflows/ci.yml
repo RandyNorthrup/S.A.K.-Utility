@@ -358,7 +358,9 @@ jobs:
         $cases = @(foreach ($case in 'refusedWhileSomethingHasItOpen', 'nativeWriterReachesTheWholePartition',
                                      'scriptWriterReachesTheWholePartition', 'scriptReleaseAndClearTakeThePartition') {
                      foreach ($row in 'NTFS', 'FAT32', 'exFAT') { "$case($row)" }
-                   }) + 'formatRoundTripSetsAndRestoresThePartitionType()' + 'restoreImageThroughTheGeneratedScript()'
+                   }) + 'formatRoundTripSetsAndRestoresThePartitionType()' + 'restoreImageThroughTheGeneratedScript()' +
+                   'resizeAsDataGivesAnExtPartitionItsTypeBack()' + 'hfsReadOnlyCheckStagesAndWritesNothing()' +
+                   'hideOnMbrHidesOnlyThatPartition()'
         foreach ($case in $cases) {
           if (-not (Select-String -LiteralPath $log -Quiet -Pattern "^PASS\s+: RawPartitionWriteTests::$([regex]::Escape($case))\s*$")) {
             throw "test_raw_partition_write did not pass ${case}: a skip exits 0 too"
@@ -491,7 +493,10 @@ jobs:
                                         'scriptWriterReachesTheWholePartition', 'scriptReleaseAndClearTakeThePartition') {
                         foreach ($row in 'NTFS', 'FAT32', 'exFAT') { "RawPartitionWriteTests::$case($row)" }
                       }) + 'RawPartitionWriteTests::formatRoundTripSetsAndRestoresThePartitionType()' +
-                      'RawPartitionWriteTests::restoreImageThroughTheGeneratedScript()'
+                      'RawPartitionWriteTests::restoreImageThroughTheGeneratedScript()' +
+                      'RawPartitionWriteTests::resizeAsDataGivesAnExtPartitionItsTypeBack()' +
+                      'RawPartitionWriteTests::hfsReadOnlyCheckStagesAndWritesNothing()' +
+                      'RawPartitionWriteTests::hideOnMbrHidesOnlyThatPartition()'
         $required = [ordered]@{
           test_elevated_helper_connection = @('ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe()')
           test_fat_volumes = @($fatCases)

@@ -2098,15 +2098,45 @@ QString createdPartitionFormatScript(const PartitionOperation& operation, const 
 // partition (operation proof, 2026-11-11; on testpc1 the same on GPT and MBR, and a partition
 // hidden that way got its letter and folder path back on Unhide). The volume's own \\?\Volume{...}
 // path is not an access path to remove.
+// The MBR types S.A.K. hides, each with its hidden form: FAT12, FAT16 (small and large), NTFS or
+// exFAT, FAT32 (CHS and LBA) and FAT16 LBA.
+QString mbrHiddenTypeMapScript() {
+    return QStringLiteral(
+        "$sakMbrHiddenType = @{ 0x01 = 0x11; 0x04 = 0x14; 0x06 = 0x16; 0x07 = 0x17; 0x0B = 0x1B; "
+        "0x0C = 0x1C; 0x0E = 0x1E }\n");
+}
+
 QString hidePartitionScript(const PartitionOperation& operation) {
     const QString disk = uintArg(operation.target.disk_number.value());
     const QString number = uintArg(operation.target.partition_number.value());
     // The same removal a non-Windows Format runs before it takes the partition (merge round,
     // 2026-11-12: one function, not two copies of the loop).
-    return PartitionScriptBuilder::removePartitionAccessPathsScript(disk, number) +
+    // On MBR the hidden and no-default-letter attributes are the whole disk's: Set-Partition
+    // -IsHidden on one partition hid every partition on the disk and took their letters (testpc2,
+    // merged build 9170b149, F30). One MBR partition is hidden by its own type byte, the hidden
+    // variant of its type (0x07 -> 0x17), which Windows reports as hidden for that one alone. A
+    // type with no hidden form is refused before anything changes.
+    return mbrHiddenTypeMapScript() +
            QStringLiteral(
-               "Set-Partition -DiskNumber %1 -PartitionNumber %2 -IsHidden $true "
+               "$sakHideMbr = \"$((Get-Disk -Number %1 -ErrorAction Stop).PartitionStyle)\" -eq "
+               "'MBR'\n"
+               "if ($sakHideMbr) {\n"
+               "  $sakType = [int](Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction "
+               "Stop).MbrType\n"
+               "  if (-not $sakMbrHiddenType.ContainsKey($sakType)) { throw ('S.A.K. hides an MBR "
+               "partition by its type, and type {0:X2} has no hidden form, so nothing was "
+               "changed' -f $sakType) }\n"
+               "}\n")
+               .arg(disk, number) +
+           PartitionScriptBuilder::removePartitionAccessPathsScript(disk, number) +
+           QStringLiteral(
+               "if ($sakHideMbr) {\n"
+               "  Set-Partition -DiskNumber %1 -PartitionNumber %2 -MbrType "
+               "$sakMbrHiddenType[$sakType] -ErrorAction Stop\n"
+               "} else {\n"
+               "  Set-Partition -DiskNumber %1 -PartitionNumber %2 -IsHidden $true "
                "-NoDefaultDriveLetter $true -ErrorAction Stop\n"
+               "}\n"
                "Update-HostStorageCache -ErrorAction Stop\n"
                "$sakHidden = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
                "if (-not $sakHidden.IsHidden) { throw 'Windows did not hide the partition' }\n"
@@ -2123,11 +2153,21 @@ QString hidePartitionScript(const PartitionOperation& operation) {
 // expects to open it. A partition with no file system Windows reads gets none, which would only
 // have Windows offer to format it.
 QString unhidePartitionScript(const PartitionOperation& operation) {
-    return QStringLiteral(
+    return mbrHiddenTypeMapScript() +
+           QStringLiteral(
                "$sakShowDisk = [uint32]%1\n"
                "$sakShowNumber = [uint32]%2\n"
-               "Set-Partition -DiskNumber %1 -PartitionNumber %2 -IsHidden $false "
+               "if (\"$((Get-Disk -Number %1 -ErrorAction Stop).PartitionStyle)\" -eq 'MBR') {\n"
+               "  $sakType = [int](Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction "
+               "Stop).MbrType\n"
+               "  $sakShownType = @($sakMbrHiddenType.Keys | Where-Object { "
+               "$sakMbrHiddenType[$_] -eq $sakType }) | Select-Object -First 1\n"
+               "  if ($null -ne $sakShownType) { Set-Partition -DiskNumber %1 -PartitionNumber %2 "
+               "-MbrType $sakShownType -ErrorAction Stop }\n"
+               "} else {\n"
+               "  Set-Partition -DiskNumber %1 -PartitionNumber %2 -IsHidden $false "
                "-NoDefaultDriveLetter $false -ErrorAction Stop\n"
+               "}\n"
                "Update-HostStorageCache -ErrorAction Stop\n"
                "$sakShown = Get-Partition -DiskNumber $sakShowDisk -PartitionNumber "
                "$sakShowNumber -ErrorAction Stop\n"
@@ -2148,8 +2188,8 @@ QString unhidePartitionScript(const PartitionOperation& operation) {
                "as ' + $sakShown.DriveLetter + ':' } else { ', with no file system Windows reads, "
                "so "
                "no drive letter' }))\n")
-        .arg(uintArg(operation.target.disk_number.value()),
-             uintArg(operation.target.partition_number.value()));
+               .arg(uintArg(operation.target.disk_number.value()),
+                    uintArg(operation.target.partition_number.value()));
 }
 
 // Format-Volume can write the start of a volume and then refuse (a FAT32 cluster size, measured
@@ -3753,10 +3793,14 @@ Assert-SakExtFileSystem %1 %2
 // Linux type once S.A.K. has formatted it, so every ext resize failed there (operation proof,
 // 2026-11-12, F24). A partition of another type is resized as a data partition and given its own
 // type and attributes back in a finally, so the type comes back when the resize fails too. Its
-// letters are held off while it has the data type: GPT's no-default-letter attribute, and on MBR,
+// letters are held off while it has the data type: GPT's no-default-letter attribute, which
+// Windows sets on a data partition only, so it is set after the data type and put back before the
+// partition's own type (on the merged build every GPT ext resize stopped there, F27); and on MBR,
 // which has none, any path Windows gives it is removed. Afterwards it is read back: its own type,
 // no path it did not have, and the new size.
-static QString resizeAsDataPartitionFunctionScript() {
+// The two steps it repeats: removing the access paths Windows gave the partition while it had the
+// data type, and setting its type with the attribute in the order Windows takes them.
+static QString resizeAsDataPartitionHelpersScript() {
     return QStringLiteral(R"PS(
 function Remove-SakNewAccessPaths([uint32]$Disk, [uint32]$Number, [string[]]$Keep) {
   Update-HostStorageCache -ErrorAction Stop
@@ -3769,12 +3813,22 @@ function Remove-SakNewAccessPaths([uint32]$Disk, [uint32]$Number, [string[]]$Kee
 }
 function Set-SakPartitionType([uint32]$Disk, [uint32]$Number, [bool]$Gpt, $Type, [bool]$NoLetter) {
   if ($Gpt) {
+    # Windows sets the no-default-letter attribute on a data partition only (StorageWMI 42011),
+    # so it goes back while the partition still has the data type, and the type after it.
+    $now = Get-Partition -DiskNumber $Disk -PartitionNumber $Number -ErrorAction Stop
+    if ("$($now.GptType)" -eq '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}') {
+      Set-Partition -DiskNumber $Disk -PartitionNumber $Number -NoDefaultDriveLetter $NoLetter -ErrorAction Stop
+    }
     Set-Partition -DiskNumber $Disk -PartitionNumber $Number -GptType $Type -ErrorAction Stop
-    Set-Partition -DiskNumber $Disk -PartitionNumber $Number -NoDefaultDriveLetter $NoLetter -ErrorAction Stop
   } else {
     Set-Partition -DiskNumber $Disk -PartitionNumber $Number -MbrType $Type -ErrorAction Stop
   }
 }
+)PS");
+}
+
+QString PartitionScriptBuilder::resizeAsDataPartitionFunctionScript() {
+    return resizeAsDataPartitionHelpersScript() + QStringLiteral(R"PS(
 function Invoke-SakResizeAsDataPartition([uint32]$Disk, [uint32]$Number, [uint64]$Size) {
   $basicData = '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}'
   $before = Get-Partition -DiskNumber $Disk -PartitionNumber $Number -ErrorAction Stop
@@ -3792,8 +3846,8 @@ function Invoke-SakResizeAsDataPartition([uint32]$Disk, [uint32]$Number, [uint64
   $restoreError = ''
   try {
     if ($gpt) {
-      Set-Partition -DiskNumber $Disk -PartitionNumber $Number -NoDefaultDriveLetter $true -ErrorAction Stop
       Set-Partition -DiskNumber $Disk -PartitionNumber $Number -GptType $basicData -ErrorAction Stop
+      Set-Partition -DiskNumber $Disk -PartitionNumber $Number -NoDefaultDriveLetter $true -ErrorAction Stop
     } else {
       Set-Partition -DiskNumber $Disk -PartitionNumber $Number -MbrType 7 -ErrorAction Stop
     }
@@ -3808,6 +3862,12 @@ function Invoke-SakResizeAsDataPartition([uint32]$Disk, [uint32]$Number, [uint64
     } catch { $restoreError = $_.Exception.Message }
   }
   if ($restoreError) {
+    $current = Get-Partition -DiskNumber $Disk -PartitionNumber $Number -ErrorAction SilentlyContinue
+    $typeBack = if ($gpt) { "$($current.GptType)" } else { [int]$current.MbrType }
+    if ($current -and $typeBack -eq $type) {
+      if ($failure) { throw $failure }
+      throw ('The partition has its own type ({0}) again, but its attributes could not be set back: {1}' -f $shown, $restoreError)
+    }
     $how = if ($gpt) { "-GptType '$type'" } else { "-MbrType 0x$shown" }
     throw ('Windows did not give the partition its type back ({0}): {1} Set it back before the disk is used: Set-Partition -DiskNumber {2} -PartitionNumber {3} {4}' -f $shown, $restoreError, $Disk, $Number, $how)
   }
@@ -3868,7 +3928,8 @@ static PartitionScript buildApfsGrowScript(const PartitionOperation& operation,
                       .arg(formatPartitionBytes(targetSize),
                            PartitionFileSystemRegistry::apfsGrowNote());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 apfsContainerCheckScript(operation) + resizeAsDataPartitionFunctionScript() +
+                 apfsContainerCheckScript(operation) +
+                 PartitionScriptBuilder::resizeAsDataPartitionFunctionScript() +
                  QStringLiteral(
                      "Invoke-SakResizeAsDataPartition -Disk %1 -Number %2 -Size %3\n"
                      "Update-HostStorageCache -ErrorAction Stop\n"
@@ -3900,7 +3961,7 @@ static PartitionScript buildNativeResizeScript(const PartitionOperation& operati
     const bool shrinks = target_size < operation.target.size_bytes;
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
                  windowsFileSystemCheckScript(operation, queued_file_system) +
-                 resizeAsDataPartitionFunctionScript() +
+                 PartitionScriptBuilder::resizeAsDataPartitionFunctionScript() +
                  QStringLiteral(
                      "$s = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %2\n"
                      "if ([uint64]%3 -lt [uint64]$s.SizeMin -or [uint64]%3 -gt [uint64]$s.SizeMax) "
@@ -3920,7 +3981,8 @@ static QString growExtResizePreToolScript(const PartitionOperation& operation,
                                           const QString& fs,
                                           const QString& target_path,
                                           uint64_t targetSize) {
-    return extFileSystemCheckScript(target_path, fs) + resizeAsDataPartitionFunctionScript() +
+    return extFileSystemCheckScript(target_path, fs) +
+           PartitionScriptBuilder::resizeAsDataPartitionFunctionScript() +
            QStringLiteral(
                "$targetSizeBytes = [uint64]%1\n"
                "Invoke-SakResizeAsDataPartition -Disk %2 -Number %3 -Size $targetSizeBytes\n"
@@ -4017,7 +4079,8 @@ static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& oper
                                           resize2fs,
                                           {QStringLiteral("-p"), targetPath, resizeSizeArg},
                                           {QStringLiteral("0")}) +
-                 resizeAsDataPartitionFunctionScript() + extShrinkPartitionScript(operation) +
+                 PartitionScriptBuilder::resizeAsDataPartitionFunctionScript() +
+                 extShrinkPartitionScript(operation) +
                  filesystemToolCallScript(QStringLiteral("e2fsck post-shrink read-only check"),
                                           e2fsck,
                                           {QStringLiteral("-n"), QStringLiteral("-f"), targetPath},
@@ -4330,10 +4393,10 @@ static QString hfsSparseFileFunctionsScript() {
         "  $format = if ($null -ne $drive) { [string]$drive.DriveFormat } else { 'unknown' }\n"
         "  if (@('NTFS', 'ReFS') -notcontains $format) {\n"
         "    $cap = if ($format -eq 'FAT32') { ', and FAT32 caps a file at 4 GiB' } else { '' }\n"
-        "    throw ('S.A.K. stages HFS+ format, repair and file changes as an image of the "
+        "    throw ('S.A.K. stages HFS+ format, check, repair and file changes as an image of the "
         "partition in its own data folder, and the drive it runs from ({0}, {1}) cannot hold "
         "that image: {1} has no sparse files{2}. Run S.A.K. from an NTFS-formatted drive for "
-        "HFS+ format, repair and file changes.' -f $root.TrimEnd('\\'), $format, $cap)\n"
+        "HFS+ format, check, repair and file changes.' -f $root.TrimEnd('\\'), $format, $cap)\n"
         "  }\n"
         "  if ([uint64]$drive.AvailableFreeSpace -lt $RequiredBytes) {\n"
         "    throw ('Staging this HFS+ partition needs about {0:N0} MiB on the drive S.A.K. runs "
@@ -4818,6 +4881,60 @@ static bool isHfsRepairRequest(const ExternalFileSystemToolScriptRequest& reques
            request.command.tool_id == QStringLiteral("fsck_hfs");
 }
 
+static bool isHfsReadOnlyCheckRequest(const ExternalFileSystemToolScriptRequest& request) {
+    return request.operation_name == PartitionFileSystemToolRunner::readOnlyCheckOperation() &&
+           request.command.tool_id == QStringLiteral("fsck_hfs");
+}
+
+// fsck_hfs opens a block device or a file, nothing else: given the partition's Windows path it
+// says "Device is not a block device" and exits 8, so every read-only HFS+ and HFSX check failed
+// on a healthy volume (operation proof, merged build 9170b149, F28). The check reads the partition
+// into a sparse image, as the repair does, checks the image with fsck_hfs -n -f, and writes
+// nothing back. The image is in the run folder (TEMP, which S.A.K. sets to it), and a run folder
+// on a FAT32 or exFAT drive is refused before anything is read (Assert-SakStagingVolume).
+static PartitionScript buildStagedHfsReadOnlyCheckScript(
+    const PartitionOperation& operation,
+    const ExternalFileSystemToolScriptRequest& request,
+    const PartitionFileSystemToolResolution& fsckResolution,
+    const QString& rawTargetPath) {
+    PartitionScript out;
+    out.preview = request.preview + QStringLiteral(" using sparse staging");
+    const QString fsckPath =
+        PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(fsckResolution.tool_path));
+    const QString fsckHash =
+        PartitionScriptBuilder::quotePowerShell(fsckResolution.tool.binary_sha256.toLower());
+    out.script =
+        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+        hfsStagedFunctionsScript() +
+        QStringLiteral(
+            "$targetPath = %1\n"
+            "$targetSizeBytes = [uint64]$p.Size\n")
+            .arg(PartitionScriptBuilder::quotePowerShell(rawTargetPath)) +
+        hfsStagedImagePathScript(QStringLiteral("sak-hfs-check")) +
+        QStringLiteral(
+            "$stagingRequiredBytes = Get-SakHfsAllocatedBytes -RawTarget $targetPath "
+            "-PartitionSizeBytes $targetSizeBytes\n"
+            "try {\n"
+            "  New-SakSparseImageFile -Path $stagedImagePath -SizeBytes $targetSizeBytes "
+            "-RequiredBytes $stagingRequiredBytes\n"
+            "  Copy-SakRawTargetToImage -RawTarget $targetPath -ImagePath $stagedImagePath "
+            "-SizeBytes $targetSizeBytes\n"
+            "  [void](Invoke-SakCheckedHfsTool -Name 'fsck_hfs read-only check' -FilePath %1 "
+            "-ExpectedHash %2 -Arguments @('-n', '-f', $stagedImagePath) "
+            "-AcceptedExitCodes @(0))\n"
+            "} finally {\n"
+            "  Remove-SakTemporaryPath $stagedImagePath\n"
+            "}\n")
+            .arg(fsckPath, fsckHash);
+    out.dry_run_script = out.preview + QStringLiteral("\nStage raw HFS target, check with ") +
+                         PartitionScriptBuilder::quotePowerShell(fsckResolution.tool_path) +
+                         QStringLiteral(" -n -f on the staged image; nothing is written to ") +
+                         PartitionScriptBuilder::quotePowerShell(rawTargetPath);
+    // Staging reads the partition's whole data, as the repair's does.
+    out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
+    return out;
+}
+
 static PartitionFileSystemToolResolution resolveFsckHfsTool(const QString& manifestPath,
                                                             const QString& toolsRoot,
                                                             const QString& fileSystem) {
@@ -4847,6 +4964,10 @@ static std::optional<PartitionScript> maybeBuildStagedRawHfsScript(
     }
     if (isHfsRepairRequest(request)) {
         return buildStagedHfsRepairScript(
+            *input.operation, request, *input.resolution, input.raw_target_path);
+    }
+    if (isHfsReadOnlyCheckRequest(request)) {
+        return buildStagedHfsReadOnlyCheckScript(
             *input.operation, request, *input.resolution, input.raw_target_path);
     }
     if (!isHfsFormatRequest(request)) {

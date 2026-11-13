@@ -101,6 +101,11 @@ public:
     [[nodiscard]] static QString windowsDataPartitionTypeScript(const QString& file_system,
                                                                 const QString& disk,
                                                                 const QString& partition);
+    /// PowerShell functions every Resize and APFS grow runs: Invoke-SakResizeAsDataPartition
+    /// resizes a partition of any type, as a data partition for the moment of the resize when it
+    /// is not one, and gives it its own type, attributes and letters back afterwards, the resize
+    /// failed or not. Public so a test can run it against Windows itself.
+    [[nodiscard]] static QString resizeAsDataPartitionFunctionScript();
 
 private:
     using Builder = PartitionScript (PartitionScriptBuilder::*)(const PartitionOperation&) const;

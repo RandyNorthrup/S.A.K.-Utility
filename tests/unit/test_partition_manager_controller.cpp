@@ -3,6 +3,7 @@
 
 #include "sak/partition_manager_controller.h"
 #include "sak/partition_report_generator.h"
+#include "sak/partition_script_builder.h"
 #include "sak/process_runner.h"
 
 #include <QCoreApplication>
@@ -185,6 +186,7 @@ private Q_SLOTS:
     void finishedInventoryFutureCannotBeRetroactivelyCancelled();
     void filesystemCheckCanBeCancelled();
     void readOnlyCheckRunsInTheElevatedHelper();
+    void hfsReadOnlyCheckRunsTheStagedScript();
     void windowsPhaseTakesCancelAwayUntilItEnds();
     void destructorCancelsAndJoinsInventoryScan();
     void storageInventoryPassesCancellationToProcessRunner();
@@ -1156,6 +1158,52 @@ void PartitionManagerControllerTests::readOnlyCheckRunsInTheElevatedHelper() {
         });
     QVERIFY(blocked.blocked && !called);
     QVERIFY(blocked.blockers.join(u' ').contains(QStringLiteral("not in the current scan")));
+}
+
+// F28 (operation proof, merged build 9170b149): the helper's HFS+ read-only check gave fsck_hfs
+// the partition's path, which it cannot open ("Device is not a block device", exit 8). The
+// operation the controller hands the helper now builds the staged check (the partition read into
+// an image in the run folder, nothing written back), and what that run says reaches the result:
+// its output, and its failure in its own words.
+void PartitionManagerControllerTests::hfsReadOnlyCheckRunsTheStagedScript() {
+    auto inventory = volumeInventory();
+    auto& partition = inventory.disks[0].partitions[0];
+    partition.volume->file_system = QStringLiteral("HFS+");
+    partition.volume->drive_letter.clear();
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(inventory);
+    std::optional<sak::PartitionFileSystemReadOnlyCheckRequest> seen;
+    controller.setFileSystemCheckRunnerForTesting(
+        [&seen](const sak::PartitionFileSystemReadOnlyCheckRequest& request,
+                const sak::CancelCheck&) {
+            seen = request;
+            return sak::PartitionFileSystemToolRunResult{};
+        });
+    const QString raw_path = QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk7\\Partition1");
+    controller.runReadOnlyFileSystemCheck(QStringLiteral("HFS+"), raw_path);
+    QVERIFY(waitUntil([&seen]() { return seen.has_value(); }));
+    QVERIFY(seen->helper_operation.has_value());
+    QVERIFY2(seen->helper_blockers.isEmpty(), qPrintable(seen->helper_blockers.join(u';')));
+
+    sak::PartitionExecutionStep step;
+    step.stdout_text = QStringLiteral("Filesystem tool exit code: 8");
+    step.error_message = QStringLiteral("The script exited with code 8");
+    sak::PartitionExecutionResult failed_run;
+    failed_run.message = QStringLiteral("batch failed");
+    failed_run.steps.append(step);
+    QString script;
+    const auto result = sak::PartitionManagerController::runReadOnlyCheckThroughHelper(
+        *seen, [&script, &failed_run](const sak::PartitionOperation& run) {
+            script = sak::PartitionScriptBuilder().buildScript(run).script;
+            return failed_run;
+        });
+    QVERIFY2(script.contains(QStringLiteral("Copy-SakRawTargetToImage -RawTarget $targetPath")) &&
+                 script.contains(QStringLiteral("-Arguments @('-n', '-f', $stagedImagePath)")) &&
+                 !script.contains(QStringLiteral("Copy-SakSparseImageToRawTarget -ImagePath")),
+             qPrintable(script));
+    QVERIFY(!result.success && !result.blocked);
+    QCOMPARE(result.std_out, step.stdout_text);
+    QCOMPARE(result.problem, step.error_message);
 }
 
 void PartitionManagerControllerTests::destructorCancelsAndJoinsInventoryScan() {

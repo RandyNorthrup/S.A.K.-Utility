@@ -1617,6 +1617,7 @@ private Q_SLOTS:
     void generatedScripts_toolRunnerSurvivesStderrAndKeepsTheExitCode();
     void generatedScripts_toolRunnerReadsWhatE2fsckSays();
     void fileSystemTools_sayWhenTheyCouldNotOpenThePartition();
+    void fileSystemTools_hfsReadOnlyCheckIsStaged();
     void generatedScripts_writerWrapperReportsTheHelpersExitCode();
     void generatedScripts_valueFunctionsReturnOnlyTheirValue();
     void generatedScripts_sparseRangesComeFromTheFileSystem();
@@ -1636,6 +1637,7 @@ private Q_SLOTS:
     void generatedScripts_windowsFormatTakesThePartitionFirst();
     void generatedScripts_mbrTypeReachesSetPartitionAsHex();
     void generatedScripts_hideRemovesThePathsFirstAndUnhideGivesALetter();
+    void generatedScripts_mbrHideAndUnhideUseTheTypeByte();
     void strongIndex_valueSemanticsRoundTrip();                       // R5-G14-19
     void strongIndex_findersResolveByTypedIndexAndFailClosed();       // R5-G14-19
     void fileSystemDetector_detectsRawSignatures();
@@ -1885,6 +1887,7 @@ private Q_SLOTS:
     void scriptBuilder_formatsByPartitionIdentity();
     void scriptBuilder_setsPartitionLabelByMountedDriveLetter();
     void scriptBuilder_buildsAdvancedParityScripts();
+    void scriptBuilder_hideOnMbrUsesTheTypeByte();
     void scriptBuilder_buildsRecoveredPartitionRestoreScript();
     void scriptBuilder_buildsCloneVerificationScript();
     void scriptBuilder_buildsOffsetPartitionCloneScript();
@@ -3312,7 +3315,7 @@ void verifyHfsStagingVolumeCheck(const QString& script) {
             script.indexOf(QStringLiteral("New-Item -ItemType File -Path $Path"), start));
     QVERIFY(
         script.contains(QStringLiteral("Run S.A.K. from an NTFS-formatted drive for HFS+ "
-                                       "format, repair and file changes.")));
+                                       "format, check, repair and file changes.")));
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString made = QDir::toNativeSeparators(dir.filePath(QStringLiteral("made.img")));
@@ -3804,6 +3807,9 @@ void PartitionManagerCoreTests::hfsStaging_everyCallerRunsTheStagingFunction() {
     format_payload[QStringLiteral("label")] = QStringLiteral("SAK_HFSX");
     QJsonObject repair_payload = baseExtToolPayload();
     repair_payload[QStringLiteral("file_system")] = QStringLiteral("HFS+");
+    // The read-only check stages too (F28): fsck_hfs opens a file or a block device only.
+    QJsonObject check_payload = repair_payload;
+    check_payload[QStringLiteral("read_only_check")] = true;
 
     const struct {
         const char* name{nullptr};
@@ -3815,6 +3821,9 @@ void PartitionManagerCoreTests::hfsStaging_everyCallerRunsTheStagingFunction() {
         {"repair",
          PartitionOperationPlanner::makeOperation(
              PartitionOperationType::CheckFileSystem, partition, repair_payload)},
+        {"read-only check",
+         PartitionOperationPlanner::makeOperation(
+             PartitionOperationType::CheckFileSystem, partition, check_payload)},
         {"file change",
          PartitionOperationPlanner::makeOperation(
              PartitionOperationType::HfsReplaceFile, partition, baseHfsFileMutationPayload())},
@@ -4831,6 +4840,35 @@ void PartitionManagerCoreTests::fileSystemTools_sayWhenTheyCouldNotOpenThePartit
     QVERIFY2(out.contains(QStringLiteral("THREW ") + not_opened), qPrintable(out));
 }
 
+// F28 (operation proof, merged build 9170b149): fsck_hfs opens a block device or a file, and said
+// "Device is not a block device" of the partition's path, so every read-only HFS+ check failed.
+// The check reads the partition into a staged image and checks that, writing nothing.
+void PartitionManagerCoreTests::fileSystemTools_hfsReadOnlyCheckIsStaged() {
+    const QJsonObject hfs_payload{{QStringLiteral("non_native_file_system_tool"), true},
+                                  {QStringLiteral("read_only_check"), true},
+                                  {QStringLiteral("file_system"), QStringLiteral("hfs+")},
+                                  {QStringLiteral("target_path"), extToolRawTargetPath()}};
+    const auto hfs_operation = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CheckFileSystem, extToolPartitionTarget(), hfs_payload);
+    const auto hfs_check = PartitionScriptBuilder().buildScript(hfs_operation);
+    QVERIFY2(hfs_check.valid(), qPrintable(hfs_check.blockers.join(' ')));
+    QVERIFY2(hfs_check.script.contains(
+                 QStringLiteral("Copy-SakRawTargetToImage -RawTarget $targetPath")) &&
+                 hfs_check.script.contains(
+                     QStringLiteral("-Arguments @('-n', '-f', $stagedImagePath)")) &&
+                 !hfs_check.script.contains(
+                     QStringLiteral("Copy-SakSparseImageToRawTarget -ImagePath")),
+             qPrintable(hfs_check.script));
+    // The image is a work file in the run folder (TEMP, which S.A.K. sets to it), removed after,
+    // and the run folder's drive is checked before anything is read (owner ruling 2026-11-11).
+    QVERIFY(hfs_check.script.contains(
+        QStringLiteral("$stagedImagePath = Join-Path ([System.IO.Path]::GetTempPath()) "
+                       "('sak-hfs-check-")));
+    QVERIFY(hfs_check.script.contains(QStringLiteral("Remove-SakTemporaryPath $stagedImagePath")));
+    QVERIFY(hfs_check.script.contains(QStringLiteral("Assert-SakStagingVolume -Path $Path")));
+    QCOMPARE(hfs_check.timeout_seconds, sak::kPartitionLongTaskTimeoutSeconds);
+}
+
 // Audit e5: the writer helpers' wrappers. A helper that fails with a line on stderr reports its
 // exit code and its output reaches the log, instead of a NativeCommandError for the first line.
 void PartitionManagerCoreTests::generatedScripts_writerWrapperReportsTheHelpersExitCode() {
@@ -5423,13 +5461,15 @@ constexpr auto kLinuxGptType = "{0fc63daf-8483-4772-8e79-3d69d8477de4}";
 /// Stand-ins for a resize of Disk 2 Partition 1 (1 GiB) on a $global:style disk, typed
 /// $global:startType (GPT) or $global:startMbr (MBR). Resize-Partition refuses anything but a data
 /// partition, as Windows' does, and fails with $global:resizeError when set; Set-Partition fails to
-/// give a GPT partition back any type but basic data when $global:failRestore is set; on MBR,
-/// Windows gives the partition the letter Q: when its type becomes 07. Every change is recorded.
+/// give a GPT partition back any type but basic data when $global:failRestore is set, and refuses
+/// the no-default-letter attribute on a GPT partition that is not basic data, as Windows does
+/// (F27); Remove-PartitionAccessPath fails when $global:failRemove is set; on MBR, Windows gives
+/// the partition the letter Q: when its type becomes 07. Every change is recorded.
 QString resizeTypeStandIns() {
     return QStringLiteral(
         "function Reset-SakStandIn($style, $gptType, $mbr, $resizeError, $failRestore) {\n"
         "  $global:style = $style; $global:resizeError = $resizeError; $global:failRestore = "
-        "$failRestore\n"
+        "$failRestore; $global:failRemove = $false\n"
         "  $global:calls = New-Object System.Collections.ArrayList\n"
         "  $global:part = [pscustomobject]@{ DiskNumber = 2; PartitionNumber = 1; Size = "
         "[uint64]1073741824; GptType = $gptType; MbrType = $mbr; NoDefaultDriveLetter = $false; "
@@ -5450,11 +5490,15 @@ QString resizeTypeStandIns() {
         "$MbrType); $global:part.MbrType = [int]$MbrType; if ([int]$MbrType -eq 7) { "
         "$global:part.AccessPaths += 'Q:\\' } }\n"
         "  if ($PSBoundParameters.ContainsKey('NoDefaultDriveLetter')) { "
+        "if ($global:style -eq 'GPT' -and $global:part.GptType -ne "
+        "'{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}') { throw 'This operation is only supported on "
+        "data partitions.' }; "
         "[void]$global:calls.Add('noletter ' + $NoDefaultDriveLetter); "
         "$global:part.NoDefaultDriveLetter = [bool]$NoDefaultDriveLetter }\n"
         "}\n"
         "function Remove-PartitionAccessPath { param($DiskNumber, $PartitionNumber, $AccessPath, "
-        "$ErrorAction) [void]$global:calls.Add('remove ' + $AccessPath); $global:part.AccessPaths "
+        "$ErrorAction) if ($global:failRemove) { throw 'The access path is in use.' }; "
+        "[void]$global:calls.Add('remove ' + $AccessPath); $global:part.AccessPaths "
         "= @($global:part.AccessPaths | Where-Object { $_ -ne $AccessPath }) }\n"
         "function Resize-Partition { param($DiskNumber, $PartitionNumber, $Size, $ErrorAction)\n"
         "  $data = if ($global:style -eq 'GPT') { $global:part.GptType -eq "
@@ -5482,6 +5526,28 @@ QString caseLine(const QString& out, const QString& name) {
         }
     }
     return {};
+}
+
+/// Windows PowerShell 5.1 runs @p script's Invoke-SakResizeAsDataPartition against the stand-ins
+/// above, case by case: a Linux partition grown (LINUXOK) and refused (LINUXFAIL) on GPT, an 83 on
+/// MBR (MBR83), a basic-data one (DATA), a type Windows will not give back (NORESTORE), and an MBR
+/// path Windows will not remove (MBRPATHS).
+QString runResizeTypeCases(const QString& script) {
+    int exit_code = -1;
+    return runWithScriptFunctions(
+        script,
+        resizeTypeStandIns() +
+            QStringLiteral("Reset-SakStandIn 'GPT' %1 $null '' $false; Invoke-SakCase LINUXOK\n"
+                           "Reset-SakStandIn 'GPT' %1 $null 'Not enough space on the disk.' "
+                           "$false; Invoke-SakCase LINUXFAIL\n"
+                           "Reset-SakStandIn 'MBR' $null 131 '' $false; Invoke-SakCase MBR83\n"
+                           "Reset-SakStandIn 'GPT' '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}' $null "
+                           "'' $false; Invoke-SakCase DATA\n"
+                           "Reset-SakStandIn 'GPT' %1 $null '' $true; Invoke-SakCase NORESTORE\n"
+                           "Reset-SakStandIn 'MBR' $null 131 '' $false; $global:failRemove = "
+                           "$true; Invoke-SakCase MBRPATHS\n")
+                .arg(PartitionScriptBuilder::quotePowerShell(QString::fromLatin1(kLinuxGptType))),
+        &exit_code);
 }
 
 }  // namespace
@@ -5513,25 +5579,13 @@ void PartitionManagerCoreTests::generatedScripts_resizeGivesANonDataPartitionIts
     QVERIFY(grown > 0 &&
             grown < grow.script.indexOf(QStringLiteral("Invoke-SakFilesystemTool -Name"), grown));
 
-    int exit_code = -1;
     const QString linux_type = QString::fromLatin1(kLinuxGptType);
-    const QString out = runWithScriptFunctions(
-        shrink.script,
-        resizeTypeStandIns() +
-            QStringLiteral("Reset-SakStandIn 'GPT' %1 $null '' $false; Invoke-SakCase LINUXOK\n"
-                           "Reset-SakStandIn 'GPT' %1 $null 'Not enough space on the disk.' "
-                           "$false; Invoke-SakCase LINUXFAIL\n"
-                           "Reset-SakStandIn 'MBR' $null 131 '' $false; Invoke-SakCase MBR83\n"
-                           "Reset-SakStandIn 'GPT' '{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}' $null "
-                           "'' $false; Invoke-SakCase DATA\n"
-                           "Reset-SakStandIn 'GPT' %1 $null '' $true; Invoke-SakCase NORESTORE\n")
-                .arg(PartitionScriptBuilder::quotePowerShell(linux_type)),
-        &exit_code);
+    const QString out = runResizeTypeCases(shrink.script);
     const QString ok = caseLine(out, QStringLiteral("LINUXOK"));
     QVERIFY2(ok == QStringLiteral("LINUXOK DONE | type=%1 | paths=\\\\?\\Volume{1}\\ | "
-                                  "size=536870912 | calls=noletter True;type "
-                                  "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7};resize 536870912;type "
-                                  "%1;noletter False")
+                                  "size=536870912 | calls=type "
+                                  "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7};noletter True;resize "
+                                  "536870912;noletter False;type %1")
                        .arg(linux_type),
              qPrintable(out));
     // The resize failed, and the partition still has its own type.
@@ -5539,7 +5593,7 @@ void PartitionManagerCoreTests::generatedScripts_resizeGivesANonDataPartitionIts
     QVERIFY2(failed.startsWith(QStringLiteral("LINUXFAIL THREW Not enough space on the disk. | "
                                               "type=%1 | ")
                                    .arg(linux_type)) &&
-                 failed.endsWith(QStringLiteral("type %1;noletter False").arg(linux_type)),
+                 failed.endsWith(QStringLiteral("noletter False;type %1").arg(linux_type)),
              qPrintable(out));
     // MBR has no attribute to hold letters off: the one Windows gave it is removed.
     QVERIFY2(caseLine(out, QStringLiteral("MBR83")) ==
@@ -5556,6 +5610,12 @@ void PartitionManagerCoreTests::generatedScripts_resizeGivesANonDataPartitionIts
                                           "the disk is used: Set-Partition -DiskNumber 2 "
                                           "-PartitionNumber 1 -GptType '%1'")
                                .arg(linux_type)),
+             qPrintable(out));
+    // F27: the type came back and only a later step failed, so the message says what failed and
+    // does not claim the type is still wrong.
+    QVERIFY2(caseLine(out, QStringLiteral("MBRPATHS"))
+                 .startsWith(
+                     QStringLiteral("MBRPATHS THREW The access path is in use. | type=131 | ")),
              qPrintable(out));
 }
 
@@ -22177,6 +22237,29 @@ void verifyMbrTypeIdScripts(const PartitionScriptBuilder& builder,
 
 }  // namespace
 
+// F30 (testpc2, merged build 9170b149): on MBR, Set-Partition -IsHidden hid every partition on the
+// disk. One MBR partition is hidden by its type byte, and shown again by it.
+void PartitionManagerCoreTests::scriptBuilder_hideOnMbrUsesTheTypeByte() {
+    {
+        PartitionTarget hide_target;
+        hide_target.kind = PartitionTargetKind::Partition;
+        hide_target.disk_number = DiskNumber{2};
+        hide_target.partition_number = PartitionNumber{1};
+        const PartitionScriptBuilder hide_builder;
+        for (const bool hidden : {true, false}) {
+            const auto script = hide_builder.buildScript(PartitionOperationPlanner::makeOperation(
+                PartitionOperationType::SetPartitionHidden,
+                hide_target,
+                QJsonObject{{QStringLiteral("hidden"), hidden}}));
+            QVERIFY2(script.valid(), qPrintable(script.blockers.join(' ')));
+            QVERIFY2(script.script.contains(QStringLiteral("0x07 = 0x17")) &&
+                         script.script.contains(QStringLiteral("-eq 'MBR'")) &&
+                         script.script.contains(QStringLiteral("-MbrType ")),
+                     qPrintable(script.script));
+        }
+    }
+}
+
 void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
     PartitionTarget partitionTarget;
     partitionTarget.kind = PartitionTargetKind::Partition;
@@ -22410,8 +22493,12 @@ namespace {
 QString hideStandIns() {
     return QStringLiteral(
         "$global:part = [pscustomobject]@{ DiskNumber = 4; PartitionNumber = 2; Size = 268435456; "
-        "Offset = 1048576; Guid = ''; IsHidden = $false; DriveLetter = [char]'T'; AccessPaths = "
-        "@('T:\\', 'C:\\mnt\\data\\', '\\\\?\\Volume{0f1e2d3c-0000-0000-0000-000000000000}\\') }\n"
+        "Offset = 1048576; Guid = ''; IsHidden = $false; DriveLetter = [char]'T'; MbrType = 7; "
+        "AccessPaths = @('T:\\', 'C:\\mnt\\data\\', "
+        "'\\\\?\\Volume{0f1e2d3c-0000-0000-0000-000000000000}\\') }\n"
+        "$global:style = 'GPT'\n"
+        "function Get-Disk { param($Number, $ErrorAction) [pscustomobject]@{ PartitionStyle = "
+        "$global:style } }\n"
         "function Get-Partition { param($DiskNumber, $PartitionNumber, $ErrorAction) $global:part "
         "}\n"
         "function Remove-PartitionAccessPath { param($DiskNumber, $PartitionNumber, $AccessPath, "
@@ -22421,8 +22508,14 @@ QString hideStandIns() {
         "$AccessPath }); if ($AccessPath -match '^[A-Z]:') { $global:part.DriveLetter = $null } "
         "}\n"
         "function Set-Partition { param($DiskNumber, $PartitionNumber, $IsHidden, "
-        "$NoDefaultDriveLetter, $ErrorAction) Write-Host ('CALL Set hidden=' + $IsHidden); "
-        "$global:part.IsHidden = $IsHidden; if ($IsHidden) { $global:part.AccessPaths = @(); "
+        "$NoDefaultDriveLetter, $MbrType, $ErrorAction)\n"
+        // On MBR one partition is hidden by its type's hidden form (0x07 -> 0x17), as Windows reads
+        // it (F30); -IsHidden there would hide the whole disk.
+        "  if ($PSBoundParameters.ContainsKey('MbrType')) { Write-Host ('CALL Set mbr=' + "
+        "('{0:X2}' -f [int]$MbrType)); $global:part.MbrType = [int]$MbrType; $IsHidden = "
+        "(([int]$MbrType -band 0x10) -ne 0) }\n"
+        "  else { Write-Host ('CALL Set hidden=' + $IsHidden) }\n"
+        "  $global:part.IsHidden = $IsHidden; if ($IsHidden) { $global:part.AccessPaths = @(); "
         "$global:part.DriveLetter = $null } else { $global:part.AccessPaths = "
         "@('\\\\?\\Volume{0f1e2d3c-0000-0000-0000-000000000000}\\') } }\n"
         "function Update-HostStorageCache { param($ErrorAction) }\n"
@@ -22500,6 +22593,55 @@ void PartitionManagerCoreTests::generatedScripts_hideRemovesThePathsFirstAndUnhi
                  unreadable.contains(QStringLiteral("no file system Windows reads")) &&
                  unreadable.contains(QStringLiteral("DONE")),
              qPrintable(unreadable));
+}
+
+// F30 (testpc2, merged build 9170b149): on MBR, -IsHidden and -NoDefaultDriveLetter are the whole
+// disk's, and Hide hid every partition on it. One MBR partition is hidden by its type's hidden form
+// and shown by its own; a type with no hidden form is refused in plain words, before anything
+// changes. The same stand-ins, on an MBR disk.
+void PartitionManagerCoreTests::generatedScripts_mbrHideAndUnhideUseTheTypeByte() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{4};
+    target.partition_number = PartitionNumber{2};
+    target.offset_bytes = 1'048'576;
+    target.size_bytes = 268'435'456;
+    target.drive_letter = QStringLiteral("T");
+    const PartitionScriptBuilder builder;
+    const auto script = [&builder, &target](bool hidden) {
+        return builder
+            .buildScript(PartitionOperationPlanner::makeOperation(
+                PartitionOperationType::SetPartitionHidden,
+                target,
+                QJsonObject{{QStringLiteral("hidden"), hidden}}))
+            .script;
+    };
+    const QString mbr = QStringLiteral("$global:fs = 'NTFS'\n$global:style = 'MBR'\n");
+    const QString mbr_hidden = runHideScript(script(true), mbr);
+    const qsizetype mbr_set_at = mbr_hidden.indexOf(QStringLiteral("CALL Set mbr=17"));
+    QVERIFY2(mbr_set_at > mbr_hidden.indexOf(QStringLiteral("CALL Remove T:\\")) &&
+                 !mbr_hidden.contains(QStringLiteral("CALL Set hidden=")) &&
+                 mbr_hidden.contains(
+                     QStringLiteral("The partition is hidden, with no drive letter")) &&
+                 mbr_hidden.contains(QStringLiteral("DONE")),
+             qPrintable(mbr_hidden));
+    const QString mbr_shown = runHideScript(
+        script(false),
+        mbr + QStringLiteral("$global:part.IsHidden = $true\n$global:part.MbrType = 0x17\n"
+                             "$global:part.DriveLetter = $null\n$global:part.AccessPaths = @()\n"));
+    QVERIFY2(mbr_shown.contains(QStringLiteral("CALL Set mbr=07")) &&
+                 !mbr_shown.contains(QStringLiteral("CALL Set hidden=")) &&
+                 mbr_shown.contains(QStringLiteral("The partition is visible as T:")) &&
+                 mbr_shown.contains(QStringLiteral("DONE")),
+             qPrintable(mbr_shown));
+    const QString linux_mbr = runHideScript(script(true),
+                                            mbr + QStringLiteral("$global:part.MbrType = 0x83\n"));
+    QVERIFY2(linux_mbr.contains(QStringLiteral("THREW S.A.K. hides an MBR partition by its type, "
+                                               "and type 83 has no hidden form, so nothing was "
+                                               "changed")) &&
+                 !linux_mbr.contains(QStringLiteral("CALL Set ")) &&
+                 !linux_mbr.contains(QStringLiteral("CALL Remove ")),
+             qPrintable(linux_mbr));
 }
 
 // F9 at queue time: a type the disk's table cannot hold is refused before anything is queued.
