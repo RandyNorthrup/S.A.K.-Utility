@@ -158,13 +158,16 @@ function Close-OpsRowVolumes {
     # Each lettered volume is flushed, then dismounted with its letter removed (mountvol /P), which
     # does not wait on a scanner's handle the way taking the whole disk offline did (about three
     # minutes a row on testpc2). A disk with no letters left is then taken offline.
+    # -NoSettle: the volsnap drills time the removal themselves (Drill D none, E 10 s, F only the
+    # product's own settle), so they take the disk down at once.
+    param([switch]$NoSettle)
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
     # A disk removed within seconds of an online scan (chkdsk /scan here, Repair-Volume -Scan in the
     # app) can leave volsnap's timer queued in a freed device: testpc2 bugchecked so in Drill D and
     # again in the final run at 11:59 (2026-11-12). Drill E's 10 s settle held for 60 minutes under
     # load; the harness waits 15 s, as the product now does, before any volume goes down.
-    Start-Sleep -Seconds 15
+    if (-not $NoSettle) { Start-Sleep -Seconds 15 }
     $clock = [Diagnostics.Stopwatch]::StartNew()
     foreach ($path in @($Script:RowVhds)) {
         try {
@@ -1420,7 +1423,7 @@ function Invoke-OpsVhdDetachDrill {
                 $skipped++
                 $missedCreates++
                 & $write "round ${round}: Create made $($part.Count) data partitions; the disk is detached and the round skipped ($missedCreates in a row)"
-                Close-OpsRowVolumes
+                Close-OpsRowVolumes -NoSettle
                 Remove-CertVhds
                 if ($missedCreates -ge 3) { throw "round ${round}: three Creates in a row made no partition" }
                 continue
@@ -1444,7 +1447,7 @@ function Invoke-OpsVhdDetachDrill {
             # Drill E: a settle after the last online scan of the round, before the disk goes.
             if ($SettleSeconds -gt 0) { & $write "settle $SettleSeconds s"; Start-Sleep -Seconds $SettleSeconds }
             & $write "detach-$round start"
-            Close-OpsRowVolumes
+            Close-OpsRowVolumes -NoSettle
             Remove-CertVhds
             & $write "detach-$round done"
         }
