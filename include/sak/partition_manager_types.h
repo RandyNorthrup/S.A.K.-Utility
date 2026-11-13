@@ -397,5 +397,14 @@ struct PartitionExecutionResult {
 [[nodiscard]] QString toDisplayString(PartitionManagerState state);
 [[nodiscard]] QString makePartitionOperationId();
 [[nodiscard]] QString formatPartitionBytes(uint64_t bytes);
+/// Windows lists the extended container that holds MBR logical partitions as a partition of its
+/// own (Get-Partition's Type "Extended"), and it holds no data. A rule about a disk's data
+/// partitions leaves it out through these two: the safety validator on the scan's Type, a script on
+/// the disk's Type at Apply. One rule, so the two cannot disagree again (F18: the validator learned
+/// it, the script did not, and every logical-to-primary conversion stopped at Apply).
+[[nodiscard]] bool isExtendedPartitionContainer(const QString& type_name);
+/// PowerShell, one pipeline step: passes on the Get-Partition objects isExtendedPartitionContainer
+/// would not take, by the same test ("Extended" anywhere in Type, in any case).
+[[nodiscard]] QString dataPartitionsOnlyPowerShell();
 
 }  // namespace sak

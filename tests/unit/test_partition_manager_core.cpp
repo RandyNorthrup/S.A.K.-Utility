@@ -1992,6 +1992,7 @@ private Q_SLOTS:
     void scriptBuilder_buildsAllocateFreeSpaceScript();
     void safetyValidator_blocksUnsafeAllocateFreeSpacePayloads();
     void scriptBuilder_buildsOfflineMoveAndMetadataScripts();
+    void generatedScripts_logicalToPrimaryCountsDataPartitionsOnly();
     void safetyValidator_allowsConfirmedOfflineRebuildOperations();
     void safetyValidator_blocksUnsafeOfflineRebuildOperations();
     void scriptBuilder_buildsChangeClusterSizeScript();
@@ -26551,6 +26552,76 @@ void PartitionManagerCoreTests::scriptBuilder_manifestSkipsWhatWindowsKeepsOnAVo
     QVERIFY2(!move.script.contains(
                  QStringLiteral("Get-ChildItem -LiteralPath $rootFull -Recurse -Force -File")),
              "a recursive listing from the root stops at System Volume Information");
+}
+
+namespace {
+
+/// Windows PowerShell 5.1 runs the two lines of a Primary/Logical @p script that count the disk's
+/// partitions and refuse more than one, against a stand-in Get-Partition: a logical partition with
+/// the extended container that holds it (LOGICAL), one primary partition (PRIMARY), and two
+/// logical partitions in one container (TWO). "<case> ONE" when the count passed, "<case> THREW
+/// <message>" when not. The safety validator asks the same rule of the scan
+/// (isExtendedPartitionContainer; the logical-with-container layout is checked with it below).
+QString runPrimaryLogicalPartitionCount(const QString& script) {
+    const qsizetype start = script.indexOf(QStringLiteral("$parts = @(Get-Partition"));
+    const qsizetype check = script.indexOf(QStringLiteral("if ($parts.Count -ne 1)"), start);
+    const qsizetype end = script.indexOf(QLatin1Char('\n'), check);
+    if (start < 0 || check < 0 || end < 0) {
+        return QStringLiteral("NO PARTITION COUNT IN THE SCRIPT");
+    }
+    const QString lines = script.mid(start, end - start + 1);
+    int exit_code = -1;
+    return runWithScriptFunctions(
+        QString(),
+        QStringLiteral(
+            "function Get-Partition { param($DiskNumber, $ErrorAction) $global:layout | "
+            "ForEach-Object { [pscustomobject]@{ PartitionNumber = $_[0]; Type = $_[1] } } }\n"
+            "function Invoke-SakCount([string]$name, $layout) {\n"
+            "  $global:layout = $layout\n"
+            "  try {\n") +
+            lines +
+            QStringLiteral("    $name + ' ONE'\n"
+                           "  } catch { $name + ' THREW ' + $_.Exception.Message }\n"
+                           "}\n"
+                           "Invoke-SakCount LOGICAL (@(,@(1, 'Extended')) + @(,@(5, 'Logical')))\n"
+                           "Invoke-SakCount PRIMARY @(,@(1, 'IFS'))\n"
+                           "Invoke-SakCount TWO (@(,@(1, 'Extended')) + @(,@(5, 'Logical')) + "
+                           "@(,@(6, 'Logical')))\n"),
+        &exit_code);
+}
+
+}  // namespace
+
+// F18 (operation proof, merged build 9170b149): the extended container that holds a logical
+// partition is not a second data partition, at Apply as in the safety validator: every
+// logical-to-primary conversion stopped there.
+void PartitionManagerCoreTests::generatedScripts_logicalToPrimaryCountsDataPartitionsOnly() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{2};
+    target.partition_number = PartitionNumber{1};
+    target.size_bytes = 1024ULL * 1024ULL * 1024ULL;
+    target.drive_letter = QStringLiteral("T");
+    const QJsonObject payload{{QStringLiteral("target_layout"), QStringLiteral("primary")},
+                              {QStringLiteral("source_size_bytes"), QStringLiteral("1073741824")},
+                              {QStringLiteral("target_offset_bytes"), QStringLiteral("2147483648")},
+                              {QStringLiteral("target_size_bytes"), QStringLiteral("1073741824")},
+                              {QStringLiteral("drive_letter"), QStringLiteral("T")},
+                              {QStringLiteral("file_system"), QStringLiteral("NTFS")},
+                              {QStringLiteral("label"), QStringLiteral("Data")},
+                              {QStringLiteral("backup_directory"),
+                               QStringLiteral("Z:\\SAKBackups")},
+                              {QStringLiteral("target_wipe_confirmed"), true}};
+    const auto script =
+        PartitionScriptBuilder().buildScript(PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::ConvertPrimaryLogical, target, payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(' ')));
+    const QString counted = runPrimaryLogicalPartitionCount(script.script);
+    QVERIFY2(counted.contains(QStringLiteral("LOGICAL ONE")) &&
+                 counted.contains(QStringLiteral("PRIMARY ONE")) &&
+                 counted.contains(QStringLiteral("TWO THREW Primary/logical conversion requires a "
+                                                 "single data partition on the disk")),
+             qPrintable(counted));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_buildsOfflineMoveAndMetadataScripts() {

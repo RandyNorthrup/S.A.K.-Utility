@@ -7053,7 +7053,11 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
              "$fileSystem = %4\n"
              "$label = %5\n"
              "$makeLogical = %6\n"
-             "$parts = @(Get-Partition -DiskNumber %7 -ErrorAction Stop)\n"
+             // A logical partition sits in an extended container, which Windows lists as a
+             // partition of its own: only the data partitions count, by the rule the safety
+             // validator applies to the scan (dataPartitionsOnlyPowerShell; operation proof, merged
+             // build 9170b149, F18 in the script after fix9 took it out of the validator).
+             "$parts = @(Get-Partition -DiskNumber %7 -ErrorAction Stop | %8)\n"
              "if ($parts.Count -ne 1) { throw 'Primary/logical conversion requires a single data "
              "partition on the disk' }\n"
              "$backupRootFull = Assert-SakBackupRoot $backupRoot @($sourceRoot)\n"
@@ -7083,7 +7087,8 @@ PartitionScript PartitionScriptBuilder::buildConvertPrimaryLogicalScript(
                  quotePowerShell(payload.file_system),
                  quotePowerShell(payload.label),
                  logicalBranch,
-                 QString::number(operation.target.disk_number.value()));
+                 QString::number(operation.target.disk_number.value()),
+                 dataPartitionsOnlyPowerShell());
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
