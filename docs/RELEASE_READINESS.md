@@ -3355,20 +3355,22 @@ found that on Windows 11 26100 removing a whole disk within seconds of an online
 `Repair-Volume -Scan`) can leave a volsnap timer queued in a freed volume device object: five bugchecks across
 testpc1, testpc2 and the VM. A scan-then-detach loop crashed testpc2 in its second round; with 10 s between the scan
 and the detach, 24 rounds under the same load did not. After every online scan S.A.K. runs, the script now says
-"Letting Windows finish with the volume before reporting done (a drive removed right after a scan can crash
-Windows)." and waits `kVolumeScanSettleSeconds` (15) before it goes on or reports done: Check File System
+"Letting Windows finish with the volume before reporting the result (a drive removed right after a scan can crash
+Windows)." and waits `kVolumeScanSettleSeconds` (15) before it goes on or reports the result: Check File System
 (Repair-Volume for NTFS and ReFS, chkdsk without /f for FAT32 and exFAT), Scan File Systems (after each volume), the
 closing scans of Defragment and of Allocate Free Space, Change Cluster Size, Move, Primary/Logical, Serial and
 Dynamic to Basic, and Check Disk Errors. Check File System's result on a drive that can be unplugged (Windows calls
 it removable, or it is on USB, SD, MMC or 1394) ends with "Wait a few seconds after this finishes before unplugging
-the drive."; a drive inside the PC gets no such line. The settle runs on the success path: a scan that fails stops
-its script at once, as before.
+the drive."; a drive inside the PC gets no such line. The settle runs in a finally around the scan
+(`volumeScanSettledStatement`), passed or thrown, and a scan that threw then stops its script with its own words
+(the coordinator's call the same day: a person who reads "failed" is as likely to pull the drive at once; the first
+commit, 70b478cf, waited on the success path only).
 
 | Test | What it proves |
 | --- | --- |
-| `generatedScripts_volumeScanSettlesBeforeDone` | The whole Check File System script in Windows PowerShell 5.1, NTFS and FAT32: the scan, its End marker, the message, `Start-Sleep -Seconds 15`, then the end, in that order. |
-| `generatedScripts_everyOnlineScanSettles` | Every script the corpus builds: each Repair-Volume -Scan or chkdsk call sits between volume-scan markers, Begin and End pair up, and the settle follows each End marker at once. Check File System and Allocate Free Space must be among the scripts with scans. |
-| `buildScanVolumeScript_isReadOnly` | Check Disk Errors: the settle right after the End marker, before the result line. |
+| `generatedScripts_volumeScanSettlesBeforeDone` | The whole Check File System script in Windows PowerShell 5.1, NTFS and FAT32 passing, NTFS and exFAT throwing: the scan, its End marker, the message, `Start-Sleep -Seconds 15`, then the result in that order; a throw surfaces with its own words after the wait, and the script goes no further. |
+| `generatedScripts_everyOnlineScanSettles` | Every script the corpus builds: each Repair-Volume -Scan or chkdsk call sits between volume-scan markers, Begin and End pair up, the Begin marker opens the settle's try, and its finally, right after the End marker, is the settle. Check File System and Allocate Free Space must be among the scripts with scans. |
+| `buildScanVolumeScript_isReadOnly` | Check Disk Errors: the scan in the settle's try, the settle in its finally, before the result line. |
 | `checkFileSystemSaysToWaitBeforeUnplugging` | The result's line for USB and for a removable SATA drive, none for NVMe. |
 
 Drills, each red then green with every byte restored: `vs-settle-removed-from-scan-line` (both new core tests),
@@ -3444,7 +3446,13 @@ not grow due to a user imposed limit") and DISM exited 3 ("The system cannot fin
 so `Get-SakCaptureFailureMessage` (opsfix e142bd5b) said nothing of the snapshot. Opsproof's patch, as written:
 433 or 3, still only with a volsnap 33 or 36 for that volume since the capture began; exit 2 still gets nothing.
 Test: `test_partition_os_migration::imageCaptureFailureSaysWhatStoppedIt` gains the ABORTED case (exit 3 with a
-volsnap 36). Drill: `f29-exit-3`.
+volsnap 36). Drill: `f29-exit-3`. The VM's rerun on the settle build (26e12127) still failed F29: Windows
+aborted the snapshot (volsnap 36 at 18:34:58) before the capture began (DISM's error at 18:35:08; the shadow
+storage filled while the target was being formatted), and the catch read volsnap's events and dism.log from the
+capture's start, so the only event was dropped. Opsproof's fix19, as written: `Open-SakSnapshots` records
+`$script:sakSnapshotTaken` just before the snapshot is created, and the catch reads from then, falling back to the
+capture's start. Test: `imageCaptureFailureReadsFromTheSnapshot` checks the script reads from the snapshot's time.
+Drills: `f29b-events-from-capture-start`, `f29b-snapshot-time-not-recorded`.
 
 **F30 (serious): Hide on an MBR disk hid every partition on it.** Opsproof on testpc2 with a two-partition MBR VHDX:
 Set-Partition -IsHidden and -NoDefaultDriveLetter are the whole disk's attributes on MBR, so Hide of one partition
@@ -3479,9 +3487,26 @@ a read-only file and a junction to a folder with a canary, then on a folder that
 goes, the canary stays. Drills: `f32-removal-follows-links` (the canary behind the junction was deleted),
 `f32-remove-item-recurse`.
 
-Not changed: the certification readback harness (`Test-RbVolumeHealth` in `scripts/partition_manager_readback.ps1`)
-runs Repair-Volume -Scan and `chkdsk /scan` itself, and the app certification detaches its VHDX files afterwards,
-the pattern of crashes 3 and 4. It is test tooling, not a script S.A.K. runs, and is left for the owner's call.
+**The settle in the certification tooling, and on the failure path.** The readback harness (`Test-RbVolumeHealth`
+in `scripts/partition_manager_readback.ps1`) runs Repair-Volume -Scan and `chkdsk /scan`, and the rows then detach
+their VHDX: the pattern of crashes 3 and 4, and very likely the VM's 0x139s during earlier certification runs. The
+coordinator's call: wherever scripts/ runs an online scan and then takes a volume or disk down, wait 15 s first,
+through one shared helper. `Wait-RbVolumeScanSettle` (the readback) logs "Letting Windows finish with the volume
+before going on (15 s; a disk removed right after a scan can crash Windows)" and waits; `Test-RbVolumeHealth`'s two
+scans run in a try whose finally calls it, and the certification rig's boot-facts job, which runs Repair-Volume -Scan
+inside a throwaway VM that is then powered off and its disk detached, does the same with the function's text copied
+from the readback (`Get-RigReadbackFunctionText`), not a second definition. Those are the only online scans in
+scripts/. `test_partition_manager_scan_settle` (cert-tooling, pwsh and Windows PowerShell 5.1) reads every script in
+scripts/: each online scan, as code or as a job's text, sits in a try whose finally calls `Wait-RbVolumeScanSettle`,
+with no take-down (Dismount-DiskImage, -IsOffline $true, mountvol, a VirtualBox detach or controlvm, Remove-
+PartitionAccessPath) between the scan and that finally; then it runs the readback's scan against stand-ins, passing
+(scan, chkdsk, the wait, then the dirty bit) and throwing (the wait, then the same error), and runs the rig's copy of
+the wait on its own. In the product, the same call put the settle in a finally around every online scan (above).
+Drills, each red then green with every byte restored: `pf-settle-success-only` (the product's
+wait after the scan, not in a finally: the runtime test's throwing routes, the corpus guard and Check Disk Errors'
+test), `pf-settle-swallows-the-error` (a catch in the settle's try: the scan's error no longer stopped the script),
+`h-readback-no-settle`, `h-readback-settle-success-only`, `h-takedown-before-settle` (a mountvol line between the scan
+and its wait), `h-rig-no-settle`.
 
 **Gate.** One run, alone on the PC, on 2cc767d5 (the code; the naming commit and this section came after):
 configure; full build, 0 errors and 0 compiler warnings; T2 labels at -j 6, 331 of 331; cert-tooling 6 of 6;

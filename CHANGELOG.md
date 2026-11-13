@@ -89,10 +89,9 @@ of its own put on the PC.
 - **A drive checked for errors is given time before it is unplugged** - On Windows 11 a disk removed within seconds
   of an online file system scan can crash Windows (a timer the volume snapshot driver leaves behind). After every
   such scan S.A.K. Utility runs (Check File System, Scan File Systems, Check Disk Errors, and the scan that ends a
-  defragmentation or a rebuild) it says "Letting Windows finish with the volume before reporting done" and waits 15
-  seconds. Check File
-  System on a USB or removable drive also ends with "Wait a few seconds after this finishes before unplugging the
-  drive."
+  defragmentation or a rebuild), passed or failed, it says "Letting Windows finish with the volume before reporting
+  the result" and waits 15 seconds; a scan that failed is then reported as before. Check File System on a USB or
+  removable drive also ends with "Wait a few seconds after this finishes before unplugging the drive."
 - **Resize of a Linux partition works on a GPT disk** - Every ext Resize on a GPT disk failed with "Windows did not
   give the partition its type back ... This operation is only supported on data partitions", nothing changed:
   the partition's no-letter attribute was set before it had the data type Windows resizes, and Windows takes that
@@ -117,7 +116,7 @@ of its own put on the PC.
 - **A Migrate OS capture says when Windows dropped its snapshot** - When Windows aborted the snapshot the image is
   captured from (its shadow-copy storage full), DISM sometimes stops with "The system cannot find the path
   specified"; S.A.K. Utility now says the snapshot was deleted and what to do, as it already did for DISM's other
-  code.
+  code, also when Windows deleted it before the capture began.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.

@@ -528,17 +528,37 @@ function New-RigThrowawayVm {
 "@
 }
 
+function Get-RigReadbackFunctionText {
+    # The text of one function of partition_manager_readback.ps1, for a job that runs where that
+    # file is not: one definition, copied, never a second one written here.
+    param([Parameter(Mandatory = $true)] [string]$Name)
+    $tokens = $null
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'partition_manager_readback.ps1'), [ref]$tokens, [ref]$errors)
+    $found = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $Name }, $true)
+    if (-not $found) { throw "partition_manager_readback.ps1 has no function $Name" }
+    return $found.Extent.Text
+}
+
 function Get-RigBootFacts {
-    # Windows' own account of itself, from inside the VM.
+    # Windows' own account of itself, from inside the VM. Its repair scan is an online scan, and
+    # the throwaway VM is powered off and its disk detached after it, so the scan settles first
+    # (Wait-RbVolumeScanSettle, copied from the readback).
     param([string]$VmName)
     $job = Join-Path ([IO.Path]::GetTempPath()) "sakcert-check-$PID.ps1"
     $marker = if ($MarkerPath) { "'$MarkerPath'" } else { '$null' }
+    $settle = Get-RigReadbackFunctionText -Name 'Wait-RbVolumeScanSettle'
     [IO.File]::WriteAllText($job, @"
+$settle
 `$marker = $marker
+`$repairScan = ''
+try {
+    `$repairScan = "`$(Repair-Volume -DriveLetter (`$env:SystemDrive.Substring(0,1)) -Scan)"
+} finally { Wait-RbVolumeScanSettle }
 `$facts = [ordered]@{
     firmware = "`$env:firmware_type"
     system_drive = "`$env:SystemDrive"
-    repair_scan = "`$(Repair-Volume -DriveLetter (`$env:SystemDrive.Substring(0,1)) -Scan)"
+    repair_scan = `$repairScan
     disk_count = @(Get-Disk).Count
     source_marker = if (`$marker -and (Test-Path -LiteralPath `$marker)) { "`$(Get-Content -LiteralPath `$marker -Raw)".Trim() } else { '' }
 }

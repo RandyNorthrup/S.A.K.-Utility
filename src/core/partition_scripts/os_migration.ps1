@@ -58,6 +58,8 @@ function Open-SakSnapshots {
   try {
     $set = New-Object SakMigration.SnapshotSet
     $script:sakSnapshotSet = $set
+    # From here Windows may drop the snapshot (shadow storage full), before the capture starts too.
+    $script:sakSnapshotTaken = (Get-Date).AddSeconds(-5)
     $devices = $set.Create([string[]]@($wanted | ForEach-Object { [string]$_.VolumePath }))
     for ($i = 0; $i -lt $wanted.Count; ++$i) {
       $wanted[$i].Device = $devices[$i]
@@ -329,7 +331,10 @@ function Invoke-SakImageRoute {
   try {
     Invoke-SakDism (@('/Capture-Image', "/ImageFile:$image", "/CaptureDir:${snapshotLetter}:\", '/Name:SAK Migrate OS', '/Compress:fast', '/EA', "/ConfigFile:$config") + $verifyArgs)
   } catch {
-    $explained = Get-SakCaptureFailureMessage -Code $script:sakDismExit -Since $captureStart -SourceLetter "$($windows.Letter)" -SnapshotLetter $snapshotLetter -DismLog (Join-Path $env:SystemRoot 'Logs\DISM\dism.log') -VolsnapEvents (Get-SakVolsnapLimitEvents $captureStart)
+    # Windows can drop the snapshot between taking it and the capture: its events, and dism.log's
+    # lines, count from when the snapshot was taken.
+    $snapshotSince = if ($script:sakSnapshotTaken) { $script:sakSnapshotTaken } else { $captureStart }
+    $explained = Get-SakCaptureFailureMessage -Code $script:sakDismExit -Since $snapshotSince -SourceLetter "$($windows.Letter)" -SnapshotLetter $snapshotLetter -DismLog (Join-Path $env:SystemRoot 'Logs\DISM\dism.log') -VolsnapEvents (Get-SakVolsnapLimitEvents $snapshotSince)
     if ($explained) { throw ('{0} (DISM exit code {1})' -f $explained, $script:sakDismExit) }
     throw
   }

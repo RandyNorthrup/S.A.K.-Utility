@@ -232,10 +232,14 @@ the file system Windows had mounted on it. So:
 - A mutation catalog's find-string goes stale when its code moves: re-point the mutant at the
   code that now does that job and run it, never delete it (`run_all_mutation_catalogs.py
   --validate` is the nightly's check).
-- Every online scan a script runs (Repair-Volume -Scan, chkdsk without /f) is followed at once
-  by `volumeScanSettleStatement()` (`windows_continued_work.h`): a disk removed within seconds
-  of one can crash Windows (volsnap, 2026-11-12). In generated scripts write it through
-  `volumeScanLine`; `generatedScripts_everyOnlineScanSettles` reads every corpus script for it.
+- Every online scan a script runs (Repair-Volume -Scan, chkdsk) is wrapped in a try whose
+  finally waits 15 s, passed or failed: a disk removed within seconds of one can crash Windows
+  (volsnap, 2026-11-12). In generated scripts write it through `volumeScanLine` or
+  `volumeScanSettledStatement()` (`windows_continued_work.h`);
+  `generatedScripts_everyOnlineScanSettles` reads every corpus script for it. In scripts/ the
+  finally calls the readback's `Wait-RbVolumeScanSettle` (a job run elsewhere copies it with
+  `Get-RigReadbackFunctionText`); `test_partition_manager_scan_settle` reads every script for it
+  and fails on a take-down between a scan and its wait.
 - A stand-in for a Windows cmdlet proves only what it models. A step that changes a partition's
   type or attributes, or hands a partition to a bundled tool, also gets a case in
   `test_raw_partition_write` against Windows itself on a VHDX (elevated, must-run in CI): the

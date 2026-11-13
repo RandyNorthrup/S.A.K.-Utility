@@ -6448,8 +6448,10 @@ void PartitionManagerCoreTests::generatedScripts_volumeScanStopsOnWhatItFinds() 
 // A drive removed within seconds of an online scan can crash Windows: volsnap leaves a timer queued
 // in the volume's device object, and the disk's removal frees it (operation proof's crash
 // investigation, 2026-11-12). So Check File System waits after the scan, saying why, before it
-// reports done. Windows PowerShell 5.1 runs the whole generated script, on both of its routes:
-// Repair-Volume for NTFS and chkdsk for FAT32.
+// reports the result, passed or failed: a person who reads "failed" is as likely to pull the drive
+// at once. Windows PowerShell 5.1 runs the whole generated script on both of its routes,
+// Repair-Volume for NTFS and chkdsk for FAT32 and exFAT, with scans that pass and scans that throw;
+// a throw still stops the script, with its own words, after the wait.
 void PartitionManagerCoreTests::generatedScripts_volumeScanSettlesBeforeDone() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Partition;
@@ -6463,23 +6465,45 @@ void PartitionManagerCoreTests::generatedScripts_volumeScanSettlesBeforeDone() {
     QVERIFY2(check.valid(), qPrintable(check.blockers.join(' ')));
 
     const QString settle = QStringLiteral(
-        "Letting Windows finish with the volume before reporting done (a drive removed right after "
-        "a scan can crash Windows).");
+        "Letting Windows finish with the volume before reporting the result (a drive removed right "
+        "after a scan can crash Windows).");
     struct Route {
         const char* file_system;
+        const char* repair_error;
+        int chkdsk_exit;
         const char* scanned;
+        const char* reported;
     };
-    for (const Route& route : {Route{"NTFS", "CALL Repair E"},
-                               Route{"FAT32", "The type of the file system is FAT32."}}) {
-        const QString out =
-            runVolumeScanScript(check.script, QString::fromLatin1(route.file_system), QString(), 0);
+    for (const Route& route :
+         {Route{"NTFS", "", 0, "CALL Repair E", "DONE"},
+          Route{"FAT32", "", 0, "The type of the file system is FAT32.", "DONE"},
+          Route{"NTFS",
+                "The volume has corruption",
+                0,
+                "CALL Repair E",
+                "THREW The volume has corruption"},
+          Route{"exFAT",
+                "",
+                3,
+                "The type of the file system is exFAT.",
+                "THREW chkdsk found a problem on E: (exit 3)"}}) {
+        const QString out = runVolumeScanScript(check.script,
+                                                QString::fromLatin1(route.file_system),
+                                                QString::fromLatin1(route.repair_error),
+                                                route.chkdsk_exit);
         const qsizetype scanned = out.indexOf(QString::fromLatin1(route.scanned));
         const qsizetype ended =
             out.indexOf(QStringLiteral("SAK-WINDOWS-CONTINUES|END|volume-scan"));
         const qsizetype said = out.indexOf(settle);
         const qsizetype slept = out.indexOf(QStringLiteral("SLEPT 15"));
-        const qsizetype done = out.indexOf(QStringLiteral("DONE"));
-        QVERIFY2(scanned >= 0 && scanned < ended && ended < said && said < slept && slept < done,
+        const qsizetype reported = out.indexOf(QString::fromLatin1(route.reported));
+        QVERIFY2(scanned >= 0 && scanned < ended && ended < said && said < slept &&
+                     slept < reported,
+                 qPrintable(out));
+        // A scan that threw is reported as it threw, after the wait, and the script went no
+        // further.
+        QVERIFY2(QString::fromLatin1(route.reported) == QStringLiteral("DONE") ||
+                     !out.contains(QStringLiteral("DONE")),
                  qPrintable(out));
     }
 }
@@ -6495,7 +6519,8 @@ QString scriptLineAt(const QString& script, qsizetype at) {
 
 /// What is wrong with the online scans in @p script, one entry per problem, and adds the scans it
 /// saw to @p scans. Every Repair-Volume -Scan and chkdsk call sits between volume-scan markers,
-/// and the settle (volumeScanSettleStatement) follows each End marker at once.
+/// inside a try that the Begin marker opens and whose finally is the settle
+/// (volumeScanSettleStatement), right after the End marker: the wait runs, passed or failed.
 QStringList volumeScanSettleProblems(const QString& script, int* scans) {
     static const QRegularExpression scan_call(
         QStringLiteral(R"(Repair-Volume\b[^\n;]*?\s-Scan\b|chkdsk\.exe\b|chkdsk\b[^\n;]*/scan\b)"),
@@ -6504,9 +6529,18 @@ QStringList volumeScanSettleProblems(const QString& script, int* scans) {
     const QString end_marker = QStringLiteral("SAK-WINDOWS-CONTINUES|END|volume-scan");
     const QString end_statement =
         QStringLiteral("[Console]::Out.WriteLine('%1'); [Console]::Out.Flush() }").arg(end_marker);
+    const QString opened_try = QStringLiteral("try { [Console]::Out.WriteLine(('");
     const QRegularExpression settle_next(
-        QStringLiteral("[;\\s]*") + QRegularExpression::escape(sak::volumeScanSettleStatement()));
+        QStringLiteral("\\s*\\}\\s*finally\\s*\\{\\s*") +
+        QRegularExpression::escape(sak::volumeScanSettleStatement()) + QStringLiteral("\\s*\\}"));
     QStringList problems;
+    for (qsizetype at = script.indexOf(begin); at >= 0; at = script.indexOf(begin, at + 1)) {
+        const qsizetype try_at = at - opened_try.size();
+        if (try_at < 0 || script.mid(try_at, opened_try.size()) != opened_try) {
+            problems.append(QStringLiteral("a scan not inside the settle's try: ") +
+                            scriptLineAt(script, at));
+        }
+    }
     auto calls = scan_call.globalMatch(script);
     while (calls.hasNext()) {
         const qsizetype at = calls.next().capturedStart();
@@ -6529,7 +6563,7 @@ QStringList volumeScanSettleProblems(const QString& script, int* scans) {
                         QRegularExpression::NormalMatch,
                         QRegularExpression::AnchorAtOffsetMatchOption)
                  .hasMatch()) {
-            problems.append(QStringLiteral("no settle right after the scan: ") +
+            problems.append(QStringLiteral("no settle in a finally right after the scan: ") +
                             scriptLineAt(script, at));
         }
     }

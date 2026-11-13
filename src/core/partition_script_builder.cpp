@@ -141,11 +141,10 @@ QString windowsContinuedLine(WindowsContinuedWork work,
 
 // Repair-Volume -Scan starts the storage job "Repair Volume", which finishes on its own; its
 // markers carry @p size_expression ("0" where the volume's size is not known). The settle after
-// every online scan follows at once (see kVolumeScanSettleSeconds).
+// every online scan runs in a finally around it, passed or failed (volumeScanSettledStatement).
 QString volumeScanLine(const QString& statement,
                        const QString& size_expression = QStringLiteral("0")) {
-    return windowsContinuedLine(WindowsContinuedWork::VolumeScan, size_expression, statement) +
-           volumeScanSettleStatement() + QLatin1Char('\n');
+    return volumeScanSettledStatement(size_expression, statement) + QLatin1Char('\n');
 }
 
 // The scan of the volume at drive letter @p drive (a PowerShell expression). Repair-Volume -Scan
@@ -4228,11 +4227,10 @@ static QString allocateExecutionScript(const PartitionOperation& operation,
                 "if ($diff.Count -gt 0) { $diff | Format-Table | Out-String | Write-Output; throw "
                 "'Restored donor manifest differs from backup' }\n"
                 "if ($targetVolume -and $targetVolume.DriveLetter) { ") +
-            windowsContinuedStatement(WindowsContinuedWork::VolumeScan,
-                                      QStringLiteral("0"),
-                                      volumeScanStatement(
-                                          QStringLiteral("$targetVolume.DriveLetter"))) +
-            QStringLiteral("; ") + volumeScanSettleStatement() + QStringLiteral(" }\n") +
+            volumeScanSettledStatement(QStringLiteral("0"),
+                                       volumeScanStatement(
+                                           QStringLiteral("$targetVolume.DriveLetter"))) +
+            QStringLiteral(" }\n") +
             volumeScanLine(volumeScanStatement(QStringLiteral("$sourceDrive"))) +
             QStringLiteral("Get-Partition -DiskNumber %1 | Sort-Object Offset | Format-Table "
                            "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))

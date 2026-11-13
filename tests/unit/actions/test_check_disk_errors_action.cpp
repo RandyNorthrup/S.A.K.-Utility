@@ -385,14 +385,17 @@ void CheckDiskErrorsActionTests::buildScanVolumeScript_isReadOnly() {
     QVERIFY(script.contains(QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|volume-scan|")));
     QVERIFY(script.contains(QStringLiteral("SAK-WINDOWS-CONTINUES|END|volume-scan")));
     // A drive removed right after an online scan can crash Windows (volsnap, 2026-11-12), so the
-    // settle follows the scan's End marker at once, before the result is reported.
+    // settle runs in a finally around the scan, passed or failed, before the result is reported.
     const QString scan_end = QStringLiteral(
         "[Console]::Out.WriteLine('SAK-WINDOWS-CONTINUES|END|volume-scan'); [Console]::Out.Flush() "
-        "}\n    ");
+        "} } finally { ");
     const QString settle = QStringLiteral(
-        "Write-Output 'Letting Windows finish with the volume before reporting done (a drive "
-        "removed right after a scan can crash Windows).'; Start-Sleep -Seconds 15\n");
+        "Write-Output 'Letting Windows finish with the volume before reporting the result (a "
+        "drive removed right after a scan can crash Windows).'; Start-Sleep -Seconds 15 }\n");
     QVERIFY2(script.contains(scan_end + settle), qPrintable(script));
+    QVERIFY2(script.contains(QStringLiteral("    try { [Console]::Out.WriteLine(('SAK-WINDOWS-"
+                                            "CONTINUES|BEGIN|volume-scan|")),
+             qPrintable(script));
     QVERIFY(script.indexOf(settle) < script.indexOf(QStringLiteral("ScanResult: $scanResult")));
 
     // The tokens parseDriveScanResult and processScanKeyValue match on by exact equality; rename

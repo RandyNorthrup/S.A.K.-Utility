@@ -84,9 +84,17 @@ QString windowsContinuedStatement(WindowsContinuedWork work,
 
 QString volumeScanSettleStatement() {
     return QStringLiteral(
-               "Write-Output 'Letting Windows finish with the volume before reporting done (a "
-               "drive removed right after a scan can crash Windows).'; Start-Sleep -Seconds %1")
+               "Write-Output 'Letting Windows finish with the volume before reporting the result "
+               "(a drive removed right after a scan can crash Windows).'; Start-Sleep -Seconds %1")
         .arg(kVolumeScanSettleSeconds);
+}
+
+QString volumeScanSettledStatement(const QString& size_expression, const QString& statement) {
+    // One pass over both arguments: the scan's text is never read for placeholders.
+    return QStringLiteral("try { %1 } finally { %2 }")
+        .arg(
+            windowsContinuedStatement(WindowsContinuedWork::VolumeScan, size_expression, statement),
+            volumeScanSettleStatement());
 }
 
 bool isWindowsContinuedMarkerLine(const QString& line) {

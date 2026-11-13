@@ -66,6 +66,13 @@ inline constexpr int kVolumeScanSettleSeconds = 15;
 /// what follows every online scan (Repair-Volume -Scan, and chkdsk without /f).
 [[nodiscard]] QString volumeScanSettleStatement();
 
+/// PowerShell, one line: the online scan @p statement between the volume-scan markers
+/// (windowsContinuedStatement), inside a try whose finally is volumeScanSettleStatement. The wait
+/// runs whether the scan passed or threw, since a person who reads "failed" is as likely to pull
+/// the drive at once, and an error the scan threw still stops the script, unchanged, after it.
+[[nodiscard]] QString volumeScanSettledStatement(const QString& size_expression,
+                                                 const QString& statement);
+
 /// Whether @p line is a Windows-continued marker line, well formed or not: never text for a person.
 [[nodiscard]] bool isWindowsContinuedMarkerLine(const QString& line);
 

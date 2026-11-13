@@ -201,6 +201,7 @@ private Q_SLOTS:
     void aRefusalReachesThePersonInItsOwnWords();
     void imageReviewSaysHowMuchShadowStorageThereIs();
     void imageCaptureFailureSaysWhatStoppedIt();
+    void imageCaptureFailureReadsFromTheSnapshot();
 };
 
 void PartitionOsMigrationTests::largerTargetGrowsWindowsAndKeepsRecoveryLast() {
@@ -864,6 +865,18 @@ void PartitionOsMigrationTests::imageReviewSaysHowMuchShadowStorageThereIs() {
     // route's.
     QVERIFY(
         osMigrationShadowStorageText(planOsMigration(gptWindowsDisk(), 512ULL * kGiB)).isEmpty());
+}
+
+// F29b (VM, settle build 26e12127): Windows dropped the snapshot 10 s before DISM failed and before
+// the capture began, so the capture's catch reads volsnap's events and dism.log from when the
+// snapshot was taken, not from the capture's start.
+void PartitionOsMigrationTests::imageCaptureFailureReadsFromTheSnapshot() {
+    const auto script = migrationScript(gptWindowsDisk(), 80ULL * kGiB);
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(u';')));
+    QVERIFY2(script.script.contains(QStringLiteral("$script:sakSnapshotTaken = (Get-Date)")) &&
+                 script.script.contains(
+                     QStringLiteral("-VolsnapEvents (Get-SakVolsnapLimitEvents $snapshotSince)")),
+             "the volsnap events count from the snapshot, not from the capture");
 }
 
 // F23 (operation proof, 2026-11-12): two captures on the VM failed with DISM's code only: 433, "A

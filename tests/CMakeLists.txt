@@ -7321,6 +7321,20 @@ add_test(NAME test_new_partition_manager_automation_vm_security_windows_powershe
 set_tests_properties(
     test_new_partition_manager_automation_vm_security_windows_powershell PROPERTIES TIMEOUT 120)
 
+# No script in scripts/ takes a disk down within 15 s of an online scan (volsnap, 2026-11-12):
+# every scan sits in a try whose finally is the readback's Wait-RbVolumeScanSettle. Script text and
+# stand-ins only; nothing touches a disk.
+add_test(NAME test_partition_manager_scan_settle
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_scan_settle.ps1")
+set_tests_properties(test_partition_manager_scan_settle PROPERTIES TIMEOUT 120)
+
+add_test(NAME test_partition_manager_scan_settle_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_scan_settle.ps1")
+set_tests_properties(test_partition_manager_scan_settle_windows_powershell PROPERTIES TIMEOUT 120)
+
 add_test(NAME test_false_green_command_propagation
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
@@ -7632,7 +7646,8 @@ set(_sak_labels_cert_tooling
     test_partition_manager_live_certifier test_partition_filesystem_probe_certifier
     test_file_management_live_certifier_gate
     test_new_partition_manager_automation_vm_security
-    test_new_partition_manager_automation_vm_security_windows_powershell)
+    test_new_partition_manager_automation_vm_security_windows_powershell
+    test_partition_manager_scan_settle test_partition_manager_scan_settle_windows_powershell)
 # Fuzz suites are product tests that also carry `fuzz`. One measured over the 60-second T2 fuzz
 # budget (about 127 s serially), so it runs in T4 under fuzz-extended instead of product.
 set(_sak_labels_fuzz_extended test_fuzz_backup_codec)
