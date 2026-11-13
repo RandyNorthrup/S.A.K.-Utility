@@ -2135,7 +2135,11 @@ while (-not (Test-Path -LiteralPath $StopFile)) {
     $checks += New-OpsCheck -Name "C:'s disk table is as it was" -Passed ((ConvertTo-Json -InputObject $sourceBefore.table -Depth 6 -Compress) -eq (ConvertTo-Json -InputObject $sourceAfter.table -Depth 6 -Compress)) -Detail "$(@($sourceAfter.table.partitions).Count) partitions"
     $shadowsAfter = @(Get-CimInstance -ClassName Win32_ShadowCopy -ErrorAction SilentlyContinue).Count
     $checks += New-OpsCheck -Name 'no shadow copy of the attempt was left' -Passed ($shadowsAfter -le $shadowsBefore) -Detail "$shadowsBefore before, $shadowsAfter after"
-    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ storage_before = $storageBefore; resize = $resized; storage_small = $storageSmall; storage_restored = $restored; volsnap_events = $volsnap; preflight = $preflight })
+    # When the account did not come: whether DISM had failed before Windows logged the snapshot's
+    # end, to the millisecond, from the event log and dism.log.
+    $eventTimes = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'volsnap'; StartTime = $started } -ErrorAction SilentlyContinue | Sort-Object TimeCreated | ForEach-Object { "$($_.TimeCreated.ToString('HH:mm:ss.fff')) volsnap $($_.Id) record $($_.RecordId)" })
+    $dismErrors = @(Get-Content -LiteralPath "$env:SystemRoot\Logs\DISM\dism.log" -Tail 400 -ErrorAction SilentlyContinue | Where-Object { $_ -match ', Error ' } | Select-Object -Last 12 | ForEach-Object { "$_" })
+    return Complete-OpsRow -Media $media -Checks $checks -Extra ([ordered]@{ storage_before = $storageBefore; resize = $resized; storage_small = $storageSmall; storage_restored = $restored; volsnap_events = $volsnap; volsnap_event_times = $eventTimes; dism_errors = $dismErrors; preflight = $preflight })
 }
 
 function Get-OpsBiosSystemPartition {
