@@ -742,17 +742,9 @@ QString dismLogFixture() {
         "CWimManager::WimProviderMsgLogCallback\r\n");
 }
 
-/// Windows PowerShell 5.1: the migration script's own capture-failure and shadow-storage
-/// functions, defined from its text, run on @p log and on volsnap events built as Get-WinEvent
-/// returns them. One "<CASE> <answer>" line per case.
-QString captureFailureRunner(const QString& script_path, const QString& log_path) {
-    QString cases;
-    for (const auto& entry : kShadowStorageCases) {
-        cases += QStringLiteral("'SMALL %1 %2 %3 ' + (Test-SakShadowStorageSmall %1 %2 %3)\n")
-                     .arg(entry.max_bytes)
-                     .arg(entry.used_bytes)
-                     .arg(entry.windows_used_bytes);
-    }
+/// The migration script's own capture-failure and shadow-storage functions, defined from the text
+/// at @p script_path, with @p log_path as $log and the two helpers the cases below use.
+QString captureFailureFunctionsPrelude(const QString& script_path, const QString& log_path) {
     return QStringLiteral(
                "$ErrorActionPreference = 'Stop'\n"
                "$tokens = $null; $errors = $null\n"
@@ -774,7 +766,24 @@ QString captureFailureRunner(const QString& script_path, const QString& log_path
                "${Letter}: below the user defined limit.\" } }\n"
                "function Write-SakCase([string]$case, [string]$text) { if ($text) { \"$case "
                "$text\" } else { "
-               "\"$case NONE\" } }\n"
+               "\"$case NONE\" } }\n")
+        .arg(PartitionScriptBuilder::quotePowerShell(script_path),
+             PartitionScriptBuilder::quotePowerShell(log_path));
+}
+
+/// Windows PowerShell 5.1: the migration script's own capture-failure and shadow-storage
+/// functions, defined from its text, run on @p log and on volsnap events built as Get-WinEvent
+/// returns them. One "<CASE> <answer>" line per case.
+QString captureFailureRunner(const QString& script_path, const QString& log_path) {
+    QString cases;
+    for (const auto& entry : kShadowStorageCases) {
+        cases += QStringLiteral("'SMALL %1 %2 %3 ' + (Test-SakShadowStorageSmall %1 %2 %3)\n")
+                     .arg(entry.max_bytes)
+                     .arg(entry.used_bytes)
+                     .arg(entry.windows_used_bytes);
+    }
+    return captureFailureFunctionsPrelude(script_path, log_path) +
+           QStringLiteral(
                "Write-SakCase 'DELETED' (Get-SakCaptureFailureMessage -Code 433 -Since '2026-11-12 "
                "02:40:00' "
                "-SourceLetter C -SnapshotLetter R -DismLog $log -VolsnapEvents "
@@ -799,15 +808,18 @@ QString captureFailureRunner(const QString& script_path, const QString& log_path
                "Write-SakCase 'UNNAMED' (Get-SakCaptureFailureMessage -Code 225 -Since '2026-11-12 "
                "04:00:00' "
                "-SourceLetter C -SnapshotLetter R -DismLog $log -VolsnapEvents @())\n"
+               "Write-SakCase 'ABORTED' (Get-SakCaptureFailureMessage -Code 3 -Since '2026-11-12 "
+               "02:40:00' "
+               "-SourceLetter C -SnapshotLetter R -DismLog $log -VolsnapEvents "
+               "@(New-SakVolsnapEvent 36 "
+               "'2026-11-12 02:45:10' C))\n"
                "Write-SakCase 'OTHERCODE' (Get-SakCaptureFailureMessage -Code 2 -Since '2026-11-12 "
                "02:40:00' "
                "-SourceLetter C -SnapshotLetter R -DismLog $log -VolsnapEvents "
                "@(New-SakVolsnapEvent 33 "
                "'2026-11-12 02:45:10' C))\n"
-               "(Write-SakShadowStorageReport ([pscustomobject]@{ MaxSpace = [uint64]%3; UsedSpace "
-               "= [uint64]%4 }) 'C' ([uint64]24641175552)) | ForEach-Object { 'REPORT ' + $_ }\n")
-               .arg(PartitionScriptBuilder::quotePowerShell(script_path),
-                    PartitionScriptBuilder::quotePowerShell(log_path))
+               "(Write-SakShadowStorageReport ([pscustomobject]@{ MaxSpace = [uint64]%1; UsedSpace "
+               "= [uint64]%2 }) 'C' ([uint64]24641175552)) | ForEach-Object { 'REPORT ' + $_ }\n")
                .arg(kVmShadowMaxBytes)
                .arg(kVmShadowUsedBytes) +
            cases;
@@ -892,6 +904,13 @@ void PartitionOsMigrationTests::imageCaptureFailureSaysWhatStoppedIt() {
                  "DELETED Windows deleted the snapshot S.A.K. was copying from because "
                  "shadow-copy storage on C: was full (Windows Update or restore points can use "
                  "it). Nothing on C: changed.")),
+             qPrintable(out));
+    // F29 (operation proof, merged build 9170b149): with the storage at its 320 MB minimum on the
+    // VM, volsnap aborted the snapshot (event 36) and DISM stopped with exit code 3, "The system
+    // cannot find the path specified", not 433: the same account applies.
+    QVERIFY2(out.contains(QStringLiteral(
+                 "ABORTED Windows deleted the snapshot S.A.K. was copying from because "
+                 "shadow-copy storage on C: was full")),
              qPrintable(out));
     for (const char* none :
          {"OTHERVOLUME NONE", "BEFORE NONE", "NOEVENTS NONE", "OTHERCODE NONE"}) {

@@ -118,7 +118,8 @@ function Write-SakShadowStorageReport($storage, [string]$letter, [uint64]$window
 }
 
 # Why a capture stopped, when Windows says: DISM reports only its own code. 433 (ERROR_NO_SUCH_DEVICE)
-# with a volsnap 33 or 36 for the volume is the snapshot Windows deleted; 225 (ERROR_VIRUS_INFECTED)
+# or 3 (ERROR_PATH_NOT_FOUND, seen on the VM when volsnap aborted the snapshot with event 36) with a
+# volsnap 33 or 36 for the volume is the snapshot Windows deleted; 225 (ERROR_VIRUS_INFECTED)
 # is an antivirus blocking a file, which dism.log names. Empty when neither says more.
 function Get-SakVolsnapLimitEvents([datetime]$since) {
   @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'volsnap'; Id = 33, 36; StartTime = $since } -ErrorAction SilentlyContinue)
@@ -137,7 +138,7 @@ function Get-SakDismFileErrors([string]$logPath, [datetime]$since) {
 }
 function Get-SakCaptureFailureMessage([int]$Code, [datetime]$Since, [string]$SourceLetter, [string]$SnapshotLetter, [string]$DismLog, [object[]]$VolsnapEvents) {
   $volume = if ($SourceLetter) { "${SourceLetter}:" } else { 'the Windows volume' }
-  if ($Code -eq 433) {
+  if (@(433, 3) -contains $Code) {
     $deleted = @($VolsnapEvents | Where-Object { $_ -and @(33, 36) -contains [int]$_.Id -and $_.TimeCreated -ge $Since -and "$($_.Message)" -match ('volume ' + [regex]::Escape($volume)) })
     if ($deleted.Count -eq 0) { return '' }
     return ('Windows deleted the snapshot S.A.K. was copying from because shadow-copy storage on {0} was full (Windows Update or restore points can use it). Nothing on {0} changed. Try again after Windows Update finishes, enlarge shadow storage (vssadmin resize shadowstorage /for={0} /on={0} /maxsize=10%), or migrate to a target at least as large as the Windows partition, which is copied block by block instead of through an image.' -f $volume)
