@@ -3682,6 +3682,33 @@ operation-proof guard included; the T2 labels, 333 of 333; `-PlanOnly`; every ci
 hooks on the merge commit. Drills for the two T2 fixes, red then green: `ops-driver-silentlycontinue`,
 `runner-stops-proof-rows-too`.
 
+### Fix batch 3: what the screenshot retakes and the 1db87df4 recertification found (2026-11-13)
+
+On the `fix3` branch from 1db87df4, one commit per item, each test drilled red with the fix broken and green
+with every byte restored.
+
+**iPerf3 server refusal.** Unelevated, a server on an address other PCs can reach said "iPerf3 server not
+started: Windows Firewall did not add its inbound rule (The requested operation requires elevation (Run as
+administrator).). Adding it needs S.A.K. running as administrator." Three faults: the status bar's permanent
+widgets (the Standard label and Run as Admin) cut it off at "S.A", so the instruction was lost; netsh's own
+sentence gave nested brackets and ".)."; and it named administrator rights as the cause even when S.A.K. was
+elevated and the rule failed for another reason. Now (`bandwidth_tester.cpp`): unelevated, such a start is
+refused before anything runs (no stale-rule sweep, no server process, no netsh) with "Run as Admin to start the
+iPerf3 server: adding its firewall rule needs administrator rights.", leading with the action and naming the
+status bar's button by its own text. Elevated, a rule Windows still does not add says "iPerf3 server not
+started: Windows Firewall did not add its inbound rule: <netsh's words>." with netsh's trailing punctuation
+dropped, so it ends with one full stop, and no claim of a cause. Loopback is unchanged: no rule, so no
+administrator. The Bandwidth tab says it before Start Server is pressed: Start Server's tooltip ends "(requires
+admin on this address, for its firewall rule: Run as Admin)", as Reset Network's says "(requires admin)", and the
+stopped server reads "Server: Stopped (needs Run as Admin)", for a non-loopback Listen on address only.
+Tests: `test_bandwidth_tester` (unelevated, refused at once with no process started and nothing late; elevated,
+injected with `setElevatedForTesting`, the rule attempted and refused by the test hardware guard, netsh's reason
+and no administrator claim; loopback unelevated starts; `serverNeedsElevation` for IPv4, IPv6 and loopback; the
+message's punctuation for a reason ending in ".", ")", "!", ";", "...", spaces or nothing),
+`test_network_diagnostic_panel` (the note on a LAN address and not on 127.0.0.1, and Start Server's refusal).
+Drills: `iperf-no-up-front-refusal`, `iperf-sweep-before-refusal`, `iperf-loopback-needs-admin`,
+`iperf-old-admin-claim`, `iperf-punctuation-kept`, `panel-no-admin-note`, `panel-note-ignores-loopback`.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

@@ -6,6 +6,7 @@
 
 #include "sak/bandwidth_tester.h"
 
+#include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_transfer_runner.h"
@@ -374,8 +375,40 @@ QProcess* BandwidthTester::containedServerProcess(uint16_t port,
     return server;
 }
 
+bool BandwidthTester::serverNeedsElevation(const QHostAddress& bind_address, bool elevated) {
+    return !elevated && !bind_address.isLoopback();
+}
+
+QString BandwidthTester::needsElevationMessage() {
+    return QStringLiteral(
+        "Run as Admin to start the iPerf3 server: adding its firewall rule needs administrator "
+        "rights.");
+}
+
+QString BandwidthTester::firewallRuleRefusalMessage(const QString& why) {
+    // netsh ends its own sentence, sometimes after a bracket ("... (Run as administrator)."):
+    // its last full stop goes, and this message adds the one it ends with.
+    QString reason = why.simplified();
+    while (!reason.isEmpty() && QStringLiteral(".!?;:,").contains(reason.back())) {
+        reason.chop(1);
+        reason = reason.trimmed();
+    }
+    const QString lead =
+        QStringLiteral("iPerf3 server not started: Windows Firewall did not add its inbound rule");
+    return reason.isEmpty() ? lead + QLatin1Char('.') : QStringLiteral("%1: %2.").arg(lead, reason);
+}
+
 void BandwidthTester::startIperfServer(uint16_t port, const QHostAddress& bind_address) {
     if (serverStartRefused(bind_address)) {
+        return;
+    }
+    // A server other PCs can reach needs its inbound rule, and adding one needs administrator
+    // rights: without them nothing runs at all (no rule sweep, no server process, no netsh).
+    const bool elevated = m_elevatedForTesting.value_or(ElevationManager::isElevated());
+    if (serverNeedsElevation(bind_address, elevated)) {
+        sak::logWarning("iPerf3 server not started on {}: S.A.K. is not running as administrator",
+                        bind_address.toString().toStdString());
+        Q_EMIT errorOccurred(needsElevationMessage());
         return;
     }
     // A crash before this change (or of an older build) left its rule behind; sweep those first.
@@ -418,10 +451,8 @@ void BandwidthTester::onServerFirewallRule(QProcess* server, bool added, const Q
     }
     sak::logWarning("iPerf3 server not started: inbound firewall rule not added: {}",
                     why.toStdString());
-    Q_EMIT errorOccurred(QStringLiteral("iPerf3 server not started: Windows Firewall did not add "
-                                        "its inbound rule (%1). Adding it needs S.A.K. running "
-                                        "as administrator.")
-                             .arg(why));
+    // Elevated here (startIperfServer refuses earlier without it), so the cause is netsh's own.
+    Q_EMIT errorOccurred(firewallRuleRefusalMessage(why));
     m_serverProcess = nullptr;
     m_firewallRuleName.clear();
     server->deleteLater();

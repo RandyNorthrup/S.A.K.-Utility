@@ -256,6 +256,9 @@ private:
     /// Refill both servers' "Listen on" lists from m_adapters. Each starts on the address that
     /// server last used when it is still offered, else on the adapter holding the default route.
     void refreshListenAddressChoices();
+    /// Start Server's tooltip and the stopped server's status say when the chosen listen address
+    /// needs Run as Admin (BandwidthTester::serverNeedsElevation).
+    void updateIperfServerAdminNote();
     /// The address chosen in @p combo, remembered under @p settings_key for the next run. Null
     /// when nothing is chosen, which the controller refuses with a message.
     [[nodiscard]] QString takeListenAddress(QComboBox* combo, QAnyStringView settings_key);

@@ -5,6 +5,8 @@
 /// @brief The Network panel's start-up adapter scan runs, off-thread, in every run mode.
 
 #include "sak/accessible_name_rule.h"
+#include "sak/bandwidth_tester.h"
+#include "sak/elevation_manager.h"
 #include "sak/network_diagnostic_controller.h"
 #include "sak/network_diagnostic_panel.h"
 #include "sak/portable_settings.h"
@@ -405,6 +407,7 @@ class NetworkDiagnosticPanelTests : public QObject {
 private Q_SLOTS:
     void cleanup();
     void listenOnStartsOnTheDefaultRouteAndRemembersEachServer();
+    void iperfServerSaysBeforeStartWhenItNeedsRunAsAdmin();
     // Review 5 (Z6): Reset Network, which resets the PC's whole network stack, was drawn as
     // neutral as Copy Config, beside three filled buttons. It takes the danger tone, and Backup
     // and Restore Settings are not filled.
@@ -1349,6 +1352,65 @@ void NetworkDiagnosticPanelTests::listenOnStartsOnTheDefaultRouteAndRemembersEac
     Q_EMIT controller->adaptersScanComplete(listenTestAdapters());
     QCOMPARE(comboNamed(panel, iperf_name)->currentData().toString(), QStringLiteral("10.8.0.2"));
     QCOMPARE(comboNamed(panel, lan_name)->currentData().toString(), QStringLiteral("192.168.1.20"));
+}
+
+// Before Start Server is pressed, the Bandwidth tab says when the chosen address needs Run as
+// Admin (a server other PCs can reach needs its firewall rule), on Start Server's tooltip as the
+// app's other administrator-only controls do, and on the stopped server's status. This PC only
+// (loopback) needs neither. Starting from such an address is refused at once with what to do.
+void NetworkDiagnosticPanelTests::iperfServerSaysBeforeStartWhenItNeedsRunAsAdmin() {
+    sak::PortableSettings().remove(kListenAddressKeys.first());
+    const auto forget =
+        qScopeGuard([]() { sak::PortableSettings().remove(kListenAddressKeys.first()); });
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    auto adapters = listenTestAdapters();
+    sak::NetworkAdapterInfo loopback;
+    loopback.name = QStringLiteral("Loopback");
+    loopback.isConnected = true;
+    loopback.ipv4Addresses = {QStringLiteral("127.0.0.1")};
+    adapters.append(loopback);
+    Q_EMIT controller->adaptersScanComplete(adapters);
+    QComboBox* listen = comboNamed(panel, QStringLiteral("iPerf3 server listen address"));
+    QVERIFY(listen != nullptr);
+    QPushButton* start = nullptr;
+    for (auto* button : panel.findChildren<QPushButton*>()) {
+        if (button->accessibleDescription() == QStringLiteral("Start iPerf3 server")) {
+            start = button;
+        }
+    }
+    QVERIFY(start != nullptr);
+    const auto status_text = [&panel]() {
+        QStringList texts;
+        for (const auto* label : panel.findChildren<QLabel*>()) {
+            texts.append(label->text());
+        }
+        return texts;
+    };
+    const bool elevated = sak::ElevationManager::isElevated();
+
+    listen->setCurrentIndex(listen->findData(QStringLiteral("192.168.1.20")));
+    QCOMPARE(start->toolTip().contains(QStringLiteral("requires admin")), !elevated);
+    QCOMPARE(status_text().contains(QStringLiteral("Server: Stopped (needs Run as Admin)")),
+             !elevated);
+
+    listen->setCurrentIndex(listen->findData(QStringLiteral("127.0.0.1")));
+    QVERIFY2(!start->toolTip().contains(QStringLiteral("requires admin")),
+             qPrintable(start->toolTip()));
+    QVERIFY(!status_text().contains(QStringLiteral("Server: Stopped (needs Run as Admin)")));
+
+    if (elevated) {
+        return;
+    }
+    listen->setCurrentIndex(listen->findData(QStringLiteral("192.168.1.20")));
+    QSignalSpy errors(controller, &sak::NetworkDiagnosticController::errorOccurred);
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onStartIperfServer", Qt::DirectConnection));
+    QTRY_VERIFY_WITH_TIMEOUT(!errors.isEmpty(), 5000);
+    QVERIFY2(errors.first().at(0).toString().contains(
+                 sak::BandwidthTester::needsElevationMessage()),
+             qPrintable(errors.first().at(0).toString()));
 }
 
 QTEST_MAIN(NetworkDiagnosticPanelTests)

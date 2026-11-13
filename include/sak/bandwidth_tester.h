@@ -59,10 +59,31 @@ public:
     ///
     /// A server other PCs can reach starts only once its inbound Windows Firewall rule (private
     /// profile, local subnet, this iperf3.exe, this address and port) is in place. Adding the
-    /// rule needs administrator rights; without the rule the server is not started and
-    /// errorOccurred says why. A loopback server needs no rule: Windows Firewall does not filter
-    /// loopback. A peer that goes quiet is dropped after kIperfServerIdleTimeoutSec.
+    /// rule needs administrator rights: without them the start is refused before anything runs
+    /// (needsElevationMessage), and a rule Windows still does not add stops the server too
+    /// (firewallRuleRefusalMessage). A loopback server needs no rule, so no administrator:
+    /// Windows Firewall does not filter loopback. A peer that goes quiet is dropped after
+    /// kIperfServerIdleTimeoutSec.
     void startIperfServer(uint16_t port, const QHostAddress& bind_address);
+
+    /// @brief True when a server on @p bind_address needs S.A.K. running as administrator: any
+    ///        address but loopback needs an inbound firewall rule, and @p elevated is false.
+    ///        Pure; the Bandwidth panel asks it before Start Server is pressed.
+    [[nodiscard]] static bool serverNeedsElevation(const QHostAddress& bind_address, bool elevated);
+
+    /// @brief What a start refused for want of administrator rights says. It leads with what to
+    ///        do, naming the status bar's Run as Admin button: the status bar it is shown in
+    ///        leaves it little room beside that button.
+    [[nodiscard]] static QString needsElevationMessage();
+
+    /// @brief What a start says when Windows Firewall did not add the server's inbound rule, with
+    ///        @p why (netsh's own words) as its last clause. Its trailing punctuation goes, so
+    ///        the message ends with one full stop whatever @p why ends with. Pure; testable.
+    [[nodiscard]] static QString firewallRuleRefusalMessage(const QString& why);
+
+    /// @brief Tests: answer "is S.A.K. running as administrator?" with @p elevated instead of
+    ///        asking Windows, so both routes run without real elevation.
+    void setElevatedForTesting(bool elevated) { m_elevatedForTesting = elevated; }
 
     /// @brief The iperf3 arguments for a server on @p port that listens only on
     ///        @p bind_address and drops an idle peer. Pure; testable.
@@ -141,7 +162,9 @@ Q_SIGNALS:
 
 private:
     QString m_iperf3Path;
-    QProcess* m_serverProcess = nullptr;       ///< Owned; destroyed in destructor
+    QProcess* m_serverProcess = nullptr;  ///< Owned; destroyed in destructor
+    /// setElevatedForTesting's answer; empty asks ElevationManager.
+    std::optional<bool> m_elevatedForTesting;
     QProcess* m_firewallAddProcess = nullptr;  ///< In-flight add; removes serialize behind it
     QString m_firewallRuleName;                ///< Unique inbound rule for the running server
     std::atomic<bool> m_cancelled{false};

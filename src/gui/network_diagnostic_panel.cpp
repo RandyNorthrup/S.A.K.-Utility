@@ -7,9 +7,11 @@
 #include "sak/network_diagnostic_panel.h"
 // sak::csvEscape -- the one CSV cell writer, with the CWE-1236 formula guard.
 #include "sak/action_constants.h"
+#include "sak/bandwidth_tester.h"
 #include "sak/csv_escape.h"
 #include "sak/detachable_log_window.h"
 #include "sak/dns_diagnostic_tool.h"
+#include "sak/elevation_manager.h"
 #include "sak/ethernet_config_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -1220,9 +1222,6 @@ void NetworkDiagnosticPanel::setupBandwidthIperfControls(QWidget* widget,
 
     m_bwServerStartBtn = new QPushButton(tr("Start Server"), widget);
     m_bwServerStartBtn->setStyleSheet(ui::kSecondaryButtonStyle);
-    m_bwServerStartBtn->setToolTip(
-        tr("Start local iPerf3 server for other devices to test "
-           "against"));
     setAccessible(m_bwServerStartBtn, tr("Start Server"), tr("Start iPerf3 server"));
     iperf_btn_row->addWidget(m_bwServerStartBtn);
 
@@ -1238,6 +1237,30 @@ void NetworkDiagnosticPanel::setupBandwidthIperfControls(QWidget* widget,
     m_bwServerStatus->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextMuted));
     iperf_btn_row->addWidget(m_bwServerStatus);
     iperf_layout->addLayout(iperf_btn_row);
+    connect(m_bwListenAddress,
+            &QComboBox::currentIndexChanged,
+            this,
+            &NetworkDiagnosticPanel::updateIperfServerAdminNote);
+    updateIperfServerAdminNote();
+}
+
+// A server other PCs can reach needs its firewall rule, and the rule needs S.A.K. running as
+// administrator; one this PC alone can reach needs neither. Said before Start Server is pressed,
+// as the app's other administrator-only controls say it ("(requires admin)" on Reset Network),
+// and on the server's status while it is stopped.
+void NetworkDiagnosticPanel::updateIperfServerAdminNote() {
+    const QString address = m_bwListenAddress->currentData().toString();
+    const bool needs_admin = !address.isEmpty() &&
+                             BandwidthTester::serverNeedsElevation(QHostAddress(address),
+                                                                   ElevationManager::isElevated());
+    m_bwServerStartBtn->setToolTip(
+        needs_admin ? tr("Start local iPerf3 server for other devices to test against (requires "
+                         "admin on this address, for its firewall rule: Run as Admin)")
+                    : tr("Start local iPerf3 server for other devices to test against"));
+    if (m_bwServerStartBtn->isEnabled()) {
+        m_bwServerStatus->setText(needs_admin ? tr("Server: Stopped (needs Run as Admin)")
+                                              : tr("Server: Stopped"));
+    }
 }
 
 void NetworkDiagnosticPanel::setupBandwidthIperfResults(QWidget* widget,
@@ -2084,9 +2107,9 @@ void NetworkDiagnosticPanel::connectControllerBandwidthSignals() {
     connect(m_controller.get(), &NetworkDiagnosticController::iperfServerStopped, this, [this]() {
         Q_ASSERT(m_bwServerStatus);
         Q_ASSERT(m_bwServerStartBtn);
-        m_bwServerStatus->setText(tr("Server: Stopped"));
         m_bwServerStartBtn->setEnabled(true);
         m_bwServerStopBtn->setEnabled(false);
+        updateIperfServerAdminNote();
     });
 }
 

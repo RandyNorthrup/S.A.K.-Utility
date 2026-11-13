@@ -120,6 +120,13 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **The iPerf3 server says what to do when it needs administrator rights** - Started without administrator rights
+  on an address other PCs can reach, it said "iPerf3 server not started: Windows Firewall did not add its inbound
+  rule (... (Run as administrator).). Adding it needs S.A.K. running as administrator.", which the status bar cut
+  off at "S.A". It now refuses at once, before it runs anything, with "Run as Admin to start the iPerf3 server:
+  adding its firewall rule needs administrator rights.", and the Bandwidth tab says so beside Start Server before
+  it is pressed. Running as administrator, a rule Windows still does not add gives Windows Firewall's own reason
+  and no guess. A server for this PC only (127.0.0.1) needs no administrator rights, as before.
 - **Format to APFS asks for a volume name before it starts** - A partition with no label (a RAW or unlabelled
   volume) went to Apply and failed with only "APFS writer helper failed with exit code 1"; Add to Queue now says
   "An APFS volume needs a name: type one in Volume label".
