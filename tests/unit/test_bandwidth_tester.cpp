@@ -43,6 +43,7 @@ private Q_SLOTS:
     void iperfServer_withoutAdministratorRefusesBeforeAnythingRuns();
     void iperfServer_needsAdministratorOnlyForARule();
     void firewallRuleRefusal_endsWithOneFullStopAndNamesNoCause();
+    void netshFailureReason_neverEmpty();
 
     // -- composeFirewallRuleName (per-instance uniqueness, B9-16) --
     void firewallRuleName_containsPortAndToken();
@@ -559,6 +560,18 @@ void TestBandwidthTester::firewallRuleRefusal_endsWithOneFullStopAndNamesNoCause
                  qPrintable(message));
         QVERIFY2(!message.contains(QStringLiteral("needs S.A.K.")), qPrintable(message));
     }
+}
+
+// netsh stopped mid-run (its QProcess destroyed with the panel) said nothing, and the log read
+// "Failed to add firewall rule for port 5201: ". A failure always says why.
+void TestBandwidthTester::netshFailureReason_neverEmpty() {
+    QCOMPARE(BandwidthTester::netshFailureReason(
+                 1, QProcess::NormalExit, QStringLiteral(" Ok,\r\n no. ")),
+             QStringLiteral("Ok, no."));
+    QCOMPARE(BandwidthTester::netshFailureReason(62'097, QProcess::CrashExit, QString()),
+             QStringLiteral("netsh was stopped before it finished"));
+    QCOMPARE(BandwidthTester::netshFailureReason(1, QProcess::NormalExit, QStringLiteral("  ")),
+             QStringLiteral("netsh exited with code 1 and said nothing"));
 }
 
 // The server used to be a plain QProcess outside any Job, so a crash of this app left iperf3

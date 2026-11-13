@@ -81,6 +81,14 @@ public:
     ///        the message ends with one full stop whatever @p why ends with. Pure; testable.
     [[nodiscard]] static QString firewallRuleRefusalMessage(const QString& why);
 
+    /// @brief Why a netsh call that did not succeed failed, never empty: what netsh said, or that
+    ///        it was stopped before it finished, or its exit code when it said nothing. The log
+    ///        used to read "Failed to add firewall rule for port 5201: " when netsh was stopped
+    ///        mid-run.
+    [[nodiscard]] static QString netshFailureReason(int exit_code,
+                                                    QProcess::ExitStatus status,
+                                                    const QString& output);
+
     /// @brief Tests: answer "is S.A.K. running as administrator?" with @p elevated instead of
     ///        asking Windows, so both routes run without real elevation.
     void setElevatedForTesting(bool elevated) { m_elevatedForTesting = elevated; }

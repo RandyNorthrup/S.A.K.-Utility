@@ -3742,6 +3742,22 @@ read go before the click turns it red (drill `report-test-releases-before-the-cl
 byte restored). Fifty runs of the whole suite under load (18 CPU burners on a 20-thread PC, 36 minutes): 50
 passed.
 
+**The same suite started real servers.** `listenOnStartsOnTheDefaultRouteAndRemembersEachServer` pressed Start
+Server for both servers for real: the nightly's log shows netsh.exe and powershell.exe ("QProcess: Destroyed while
+process ... is still running") and "Failed to add firewall rule for port 5201: " with nothing after the colon, and
+an elevated run would have added a real inbound firewall rule to the PC. Start Server now reaches the
+controller's `setServerStartRecorderForTesting` seam in that test, which records which server, port and address
+it was asked for and starts nothing; the test checks the iPerf3 server was asked for 10.8.0.2 and the LAN server
+for 192.168.1.20, that no QProcess exists under the panel, and, as before, that each address is remembered for
+its own server. The empty reason was netsh stopped mid-run (its QProcess destroyed with the panel), which exits
+with no output: `BandwidthTester::netshFailureReason` always says why (netsh's words, or "netsh was stopped before
+it finished", or "netsh exited with code N and said nothing"), for the add and the delete. Sweep: the guard was
+built, for one run and never committed, to print every process the suite starts; after this change
+`test_network_diagnostic_panel` starts three, all `iperf3.exe -c 127.0.0.1 -p 5201` clients from the three
+bandwidth-button tests, which point at loopback where nothing listens on purpose (refused at once, no traffic off
+the PC); no netsh, no PowerShell, no server; `test_network_diagnostic_controller` starts none. Drills:
+`controller-starts-the-iperf3-server-anyway`, `netsh-stopped-says-nothing`.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

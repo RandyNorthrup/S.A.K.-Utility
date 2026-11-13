@@ -31,6 +31,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QProcess>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSemaphore>
@@ -1363,7 +1364,9 @@ const QStringList kListenAddressKeys{QStringLiteral("NetworkDiagnostics/iperfSer
 
 // The iPerf3 and LAN transfer servers each listen on one chosen adapter address. A server's list
 // starts on the adapter holding the default route; the address a server was started on is
-// remembered for that server alone and chosen again the next time the list is filled.
+// remembered for that server alone and chosen again the next time the list is filled. Start
+// Server reaches the controller's recorder, not a server: it used to start netsh (and, elevated,
+// add a real inbound firewall rule) and a LAN server's PowerShell, on this PC, for real.
 void NetworkDiagnosticPanelTests::listenOnStartsOnTheDefaultRouteAndRemembersEachServer() {
     for (const QString& key : kListenAddressKeys) {
         sak::PortableSettings().remove(key);
@@ -1388,10 +1391,19 @@ void NetworkDiagnosticPanelTests::listenOnStartsOnTheDefaultRouteAndRemembersEac
         QCOMPARE(iperf->currentData().toString(), QStringLiteral("192.168.1.20"));
         QCOMPARE(lan->currentData().toString(), QStringLiteral("192.168.1.20"));
 
+        QStringList starts;
+        controller->setServerStartRecorderForTesting(
+            [&starts](const QString& server, uint16_t, const QHostAddress& address) {
+                starts.append(server + QLatin1Char('@') + address.toString());
+            });
         iperf->setCurrentIndex(iperf->findData(QStringLiteral("10.8.0.2")));
         QVERIFY(QMetaObject::invokeMethod(&panel, "onStartIperfServer", Qt::DirectConnection));
         QVERIFY(
             QMetaObject::invokeMethod(&panel, "onStartLanTransferServer", Qt::DirectConnection));
+        QCOMPARE(starts,
+                 QStringList({QStringLiteral("iPerf3@10.8.0.2"),
+                              QStringLiteral("LAN transfer@192.168.1.20")}));
+        QVERIFY2(panel.findChildren<QProcess*>().isEmpty(), "Start Server started a process");
     }
     sak::QuickActionController quick_actions;
     sak::NetworkDiagnosticPanel panel(quick_actions);

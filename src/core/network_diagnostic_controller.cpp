@@ -834,6 +834,10 @@ void NetworkDiagnosticController::scanPorts(const PortScanParams& params) {
 
 void NetworkDiagnosticController::startIperfServer(uint16_t port,
                                                    const QHostAddress& bind_address) {
+    if (m_serverStartRecorder) {
+        m_serverStartRecorder(QStringLiteral("iPerf3"), port, bind_address);
+        return;
+    }
     m_bandwidthTester->startIperfServer(port, bind_address);
 }
 
@@ -1018,6 +1022,10 @@ void NetworkDiagnosticController::discoverShares(const QString& hostname) {
 
 void NetworkDiagnosticController::startLanTransferServer(uint16_t port,
                                                          const QHostAddress& bind_address) {
+    if (m_serverStartRecorder) {
+        m_serverStartRecorder(QStringLiteral("LAN transfer"), port, bind_address);
+        return;
+    }
     if (m_lanTransferServerRunning.load(std::memory_order_acquire)) {
         Q_EMIT errorOccurred(QStringLiteral("LAN transfer server is already running"));
         return;

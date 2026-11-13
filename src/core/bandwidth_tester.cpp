@@ -398,6 +398,19 @@ QString BandwidthTester::firewallRuleRefusalMessage(const QString& why) {
     return reason.isEmpty() ? lead + QLatin1Char('.') : QStringLiteral("%1: %2.").arg(lead, reason);
 }
 
+QString BandwidthTester::netshFailureReason(int exit_code,
+                                            QProcess::ExitStatus status,
+                                            const QString& output) {
+    const QString said = output.simplified();
+    if (!said.isEmpty()) {
+        return said;
+    }
+    if (status == QProcess::CrashExit) {
+        return QStringLiteral("netsh was stopped before it finished");
+    }
+    return QStringLiteral("netsh exited with code %1 and said nothing").arg(exit_code);
+}
+
 void BandwidthTester::startIperfServer(uint16_t port, const QHostAddress& bind_address) {
     if (serverStartRefused(bind_address)) {
         return;
@@ -900,6 +913,19 @@ QString BandwidthTester::resolveNetshPath() {
     return system32Path(QStringLiteral("netsh.exe"));
 }
 
+namespace {
+
+/// Why the netsh call @p proc made did not succeed, from all it wrote (BandwidthTester::
+/// netshFailureReason): netsh reports a refusal (elevation, policy) on standard output.
+QString netshProcessFailure(QProcess* proc, int exit_code, QProcess::ExitStatus status) {
+    return BandwidthTester::netshFailureReason(
+        exit_code,
+        status,
+        QString::fromLocal8Bit(proc->readAllStandardOutput() + proc->readAllStandardError()));
+}
+
+}  // namespace
+
 void BandwidthTester::createFirewallRule(const QString& ruleName,
                                          uint16_t port,
                                          const QHostAddress& bind_address,
@@ -933,21 +959,19 @@ void BandwidthTester::createFirewallRule(const QString& ruleName,
     connect(proc,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             proc,
-            [this, port, proc, done](int exitCode, QProcess::ExitStatus) {
-                // netsh reports a refusal (elevation, policy) on standard output.
-                const QString said = QString::fromLocal8Bit(proc->readAllStandardOutput() +
-                                                            proc->readAllStandardError())
-                                         .simplified();
-                if (exitCode != 0) {
+            [this, port, proc, done](int exitCode, QProcess::ExitStatus status) {
+                const bool added = exitCode == 0 && status == QProcess::NormalExit;
+                const QString why = added ? QString() : netshProcessFailure(proc, exitCode, status);
+                if (!added) {
                     sak::logWarning("Failed to add firewall rule for port {}: {}",
                                     port,
-                                    said.toStdString());
+                                    why.toStdString());
                 }
                 if (m_firewallAddProcess == proc) {
                     m_firewallAddProcess = nullptr;
                 }
                 proc->deleteLater();
-                done(exitCode == 0, exitCode == 0 ? QString() : said);
+                done(added, why);
             });
     // Scope the inbound allow tightly: private profile only (never public networks),
     // remote peers on the local subnet only, the address the server is bound to, and only
@@ -1005,10 +1029,15 @@ void BandwidthTester::executeFirewallDelete(const QString& ruleName) {
     connect(proc,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             proc,
-            [proc](int exitCode, QProcess::ExitStatus) {
-                if (exitCode != 0) {
-                    sak::logWarning("Failed to remove firewall rule: {}",
-                                    QString::fromUtf8(proc->readAllStandardError()).toStdString());
+            [proc](int exitCode, QProcess::ExitStatus status) {
+                if (exitCode != 0 || status != QProcess::NormalExit) {
+                    sak::logWarning(
+                        "Failed to remove firewall rule: {}",
+                        netshFailureReason(exitCode,
+                                           status,
+                                           QString::fromLocal8Bit(proc->readAllStandardOutput() +
+                                                                  proc->readAllStandardError()))
+                            .toStdString());
                 }
                 proc->deleteLater();
             });

@@ -136,6 +136,17 @@ public:
     /// @brief Start the iPerf3 server listening only on @p bind_address (see
     ///        BandwidthTester::startIperfServer).
     void startIperfServer(uint16_t port, const QHostAddress& bind_address);
+
+    /// @brief What Start Server asked for: which server ("iPerf3" or "LAN transfer"), its port
+    ///        and the address it would listen on.
+    using ServerStartRecorder =
+        std::function<void(const QString& server, uint16_t port, const QHostAddress& address)>;
+    /// @brief Tests: record each server start in @p recorder instead of starting it, so a test can
+    ///        check the address a server would use with no server process, socket, netsh or
+    ///        firewall rule (an elevated test run would otherwise add a real inbound rule).
+    void setServerStartRecorderForTesting(ServerStartRecorder recorder) {
+        m_serverStartRecorder = std::move(recorder);
+    }
     void stopIperfServer();
     [[nodiscard]] bool isIperfServerRunning() const;
     void runBandwidthTest(const BandwidthTestParams& params);
@@ -315,6 +326,7 @@ private:
     // LAN transfer server state
     QTcpServer* m_lanTransferServer = nullptr;
     std::atomic<bool> m_lanTransferServerRunning{false};
+    ServerStartRecorder m_serverStartRecorder;  ///< setServerStartRecorderForTesting
 
     // Cached results for report generation
     QVector<NetworkAdapterInfo> m_cachedAdapters;
