@@ -1715,6 +1715,7 @@ private Q_SLOTS:
     void partitionExecutor_stopDuringWindowsPhaseIsNotCalledCancelled();
     void partitionExecutor_windowsPhaseReachesAnotherThread();
     void stopCleanup_scriptsMarkWhatTheyMakeAndUnmake();
+    void generatedScripts_wipeFreeSpaceRemovesCipherFolderWithoutFollowingLinks();
     void stopCleanup_trackerFollowsOnlyWhatTheAppMade();
     void stopCleanup_scriptRemovesExactlyWhatItIsGiven();
     void stopCleanup_reportNamesRemovedAndKept();
@@ -29554,16 +29555,65 @@ void PartitionManagerCoreTests::stopCleanup_scriptsMarkWhatTheyMakeAndUnmake() {
                                                         volume);
     QVERIFY2(wipe.valid(), qPrintable(wipe.blockers.join(QStringLiteral("; "))));
     QVERIFY2(wipe.script.contains(
-                 QStringLiteral("if (-not (Test-Path -LiteralPath ('{0}:\\EFSTMPWP' -f 'T'))) { "
+                 QStringLiteral("$sakCipherFolder = ('{0}:\\EFSTMPWP' -f 'T')\n"
+                                "$sakCipherFolderWasThere = Test-Path -LiteralPath "
+                                "$sakCipherFolder\n"
+                                "if (-not $sakCipherFolderWasThere) { "
                                 "[Console]::Out.WriteLine('SAK-CLEANUP|CREATED|CIPHER|' + ('T')); "
                                 "[Console]::Out.Flush() }\n")),
              "cipher's folder is claimed only when it was not there before cipher started");
+    // F32: a folder this run made goes once cipher has finished; one that was there stays.
+    QVERIFY2(wipe.script.indexOf(QStringLiteral("if ($sakCipherExit -eq 0 -and -not "
+                                                "$sakCipherFolderWasThere")) >
+                 wipe.script.indexOf(QStringLiteral("$sakCipherExit = $LASTEXITCODE")),
+             qPrintable(wipe.script));
     QVERIFY(wipe.script.indexOf(QStringLiteral("SAK-CLEANUP|CREATED|CIPHER|")) <
             wipe.script.indexOf(QStringLiteral("cipher.exe /w:T:\\")));
     QVERIFY(wipe.script.indexOf(QStringLiteral("SAK-CLEANUP|RELEASED|CIPHER|")) >
             wipe.script.indexOf(QStringLiteral("$sakCipherExit = $LASTEXITCODE")));
     QVERIFY2(wipe.script.endsWith(QStringLiteral("exit $sakCipherExit\n")),
              "cipher's own exit code is still the step's");
+}
+
+// F32 (testpc2, merged build 9170b149): cipher's EFSTMPWP folder, left at the volume root, goes
+// once cipher has exited 0, and only when this run made it. It goes without following a link:
+// Windows PowerShell 5.1's Remove-Item -Recurse goes through a junction and deletes what is behind
+// it. A failure to remove it is a warning: the free space was wiped.
+void PartitionManagerCoreTests::
+    generatedScripts_wipeFreeSpaceRemovesCipherFolderWithoutFollowingLinks() {
+    const PartitionScript wipe = windowsContinuedScript(PartitionOperationType::WipeFreeSpace,
+                                                        windowsContinuedPartitionTarget());
+    QVERIFY2(wipe.valid(), qPrintable(wipe.blockers.join(QStringLiteral("; "))));
+    QVERIFY2(wipe.script.contains(
+                 QStringLiteral("try { Remove-SakTreeNoFollow $sakCipherFolder }")) &&
+                 !wipe.script.contains(QStringLiteral("-Recurse")),
+             qPrintable(wipe.script));
+    const QString removed = runWithScriptFunctions(
+        wipe.script,
+        QStringLiteral(
+            "$root = Join-Path ([IO.Path]::GetTempPath()) ('sak-nofollow-' + "
+            "[guid]::NewGuid().ToString('N'))\n"
+            "$outside = Join-Path $root 'outside'\n"
+            "$cipher = Join-Path $root 'EFSTMPWP'\n"
+            "New-Item -ItemType Directory -Path $outside, (Join-Path $cipher 'sub') | Out-Null\n"
+            "Set-Content -LiteralPath (Join-Path $outside 'canary.txt') -Value 'keep'\n"
+            "Set-Content -LiteralPath (Join-Path $cipher 'sub\\fil1.tmp') -Value 'x'\n"
+            "(Get-Item -LiteralPath (Join-Path $cipher 'sub\\fil1.tmp')).Attributes = 'ReadOnly'\n"
+            "New-Item -ItemType Junction -Path (Join-Path $cipher 'link') -Target $outside | "
+            "Out-Null\n"
+            "try {\n"
+            "  Remove-SakTreeNoFollow $cipher\n"
+            "  'TREE GONE ' + (-not (Test-Path -LiteralPath $cipher)) + ' CANARY ' + (Test-Path "
+            "-LiteralPath (Join-Path $outside 'canary.txt'))\n"
+            "  New-Item -ItemType Junction -Path $cipher -Target $outside | Out-Null\n"
+            "  Remove-SakTreeNoFollow $cipher\n"
+            "  'LINK GONE ' + (-not (Test-Path -LiteralPath $cipher)) + ' CANARY ' + (Test-Path "
+            "-LiteralPath (Join-Path $outside 'canary.txt'))\n"
+            "} finally { cmd /c rmdir /s /q $root }\n"),
+        nullptr);
+    QVERIFY2(removed.contains(QStringLiteral("TREE GONE True CANARY True")) &&
+                 removed.contains(QStringLiteral("LINK GONE True CANARY True")),
+             qPrintable(removed));
 }
 
 void PartitionManagerCoreTests::stopCleanup_trackerFollowsOnlyWhatTheAppMade() {

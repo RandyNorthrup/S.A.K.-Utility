@@ -6881,15 +6881,53 @@ PartitionScript PartitionScriptBuilder::buildBitLockerScript(
     return out;
 }
 
+// Removes a folder tree without following a link: a junction or symbolic link inside it, or the
+// folder itself being one, is removed as the link, never what it points to. Windows PowerShell
+// 5.1's Remove-Item -Recurse goes through a junction and deletes what is behind it.
+static QString noFollowTreeRemovalFunctionScript() {
+    return QStringLiteral(
+        "function Remove-SakTreeNoFollow([string]$Path) {\n"
+        "  $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop\n"
+        "  if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {\n"
+        "    if ($item.PSIsContainer) { [IO.Directory]::Delete($item.FullName, $false) } else { "
+        "[IO.File]::Delete($item.FullName) }\n"
+        "    return\n"
+        "  }\n"
+        "  if ($item.PSIsContainer) {\n"
+        "    foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction "
+        "Stop)) { Remove-SakTreeNoFollow $child.FullName }\n"
+        "    $item.Attributes = [IO.FileAttributes]::Normal\n"
+        "    [IO.Directory]::Delete($item.FullName, $false)\n"
+        "  } else {\n"
+        "    $item.Attributes = [IO.FileAttributes]::Normal\n"
+        "    [IO.File]::Delete($item.FullName)\n"
+        "  }\n"
+        "}\n");
+}
+
 // cipher /w fills the free space through files in an EFSTMPWP folder at the volume's root and
 // removes them as it finishes; a killed cipher leaves them. The marker claims the folder for the
 // application's cleanup only when it was not there before cipher started.
 static QString wipeFreeSpaceCommandScript(const QString& letter) {
     const QString drive = PartitionScriptBuilder::quotePowerShell(letter);
-    return QStringLiteral("if (-not (Test-Path -LiteralPath ('{0}:\\EFSTMPWP' -f %1))) { ")
+    // cipher finished and the free space was wiped, yet its EFSTMPWP folder stayed at the root
+    // (testpc2, merged build 9170b149, F32): one this run made goes once cipher has exited 0,
+    // without following a link (Remove-SakTreeNoFollow); one that was there before stays.
+    return noFollowTreeRemovalFunctionScript() +
+           QStringLiteral(
+               "$sakCipherFolder = ('{0}:\\EFSTMPWP' -f %1)\n"
+               "$sakCipherFolderWasThere = Test-Path -LiteralPath $sakCipherFolder\n"
+               "if (-not $sakCipherFolderWasThere) { ")
                .arg(drive) +
            stopLeftoverCreatedStatement(StopLeftoverKind::CipherFolder, drive) +
            QStringLiteral(" }\ncipher.exe /w:%1:\\\n$sakCipherExit = $LASTEXITCODE\n").arg(letter) +
+           QStringLiteral(
+               "if ($sakCipherExit -eq 0 -and -not $sakCipherFolderWasThere -and "
+               "(Test-Path -LiteralPath $sakCipherFolder)) { try { "
+               "Remove-SakTreeNoFollow $sakCipherFolder } catch { Write-Output "
+               "('WARNING: the free space was wiped, but cipher''s work folder {0} "
+               "could not be removed: {1}' -f $sakCipherFolder, "
+               "$_.Exception.Message) } }\n") +
            stopLeftoverReleasedStatement(StopLeftoverKind::CipherFolder, drive) +
            QStringLiteral("\nexit $sakCipherExit\n");
 }
