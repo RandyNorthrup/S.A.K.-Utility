@@ -52,6 +52,7 @@ function Get-SakWindowsOwnLetter([string]$windowsRoot) {
   } finally { $ErrorActionPreference = $previous }
 }
 
+if ($sakRepairMode -eq 'BIOS') { Assert-SakBootsectPresent }
 $disk = Get-Disk -Number $sakRepairDisk -ErrorAction Stop
 if ($disk.IsBoot -or $disk.IsSystem) {
   throw "Disk $sakRepairDisk is the disk Windows is running from, so this repair does not run on it. Repair of the running Windows is a separate choice."

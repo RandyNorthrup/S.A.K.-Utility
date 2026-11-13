@@ -6517,8 +6517,15 @@ namespace {
 
 QString biosBootRepairBody(const QString& windows_path, const QString& preferred_letter) {
     // bcdboot writes to the partition the firmware starts from, which seldom has a letter, so
-    // this gives it one for the repair and takes it away again.
+    // this gives it one for the repair and takes it away again. bootsect writes the BIOS boot
+    // code; Windows 10 and 11 have it, a Windows Server need not (GitHub's runner has none), so
+    // its absence is a plain refusal before anything changes, never a failure halfway through.
     return QStringLiteral(
+               "$sakBootsect = Join-Path ([Environment]::SystemDirectory) 'bootsect.exe'\n"
+               "if (-not (Test-Path -LiteralPath $sakBootsect -PathType Leaf)) {\n"
+               "  throw ('This Windows has no bootsect.exe ({0}), which BIOS boot repair needs to "
+               "write the boot code, so nothing was changed.' -f $sakBootsect)\n"
+               "}\n"
                "$sakBootDisk = @(Get-Disk | Where-Object { $_.IsBoot }) | Select-Object -First 1\n"
                "if (-not $sakBootDisk) { throw 'Boot repair could not find the disk this Windows "
                "started from' }\n"
@@ -6538,7 +6545,7 @@ QString biosBootRepairBody(const QString& windows_path, const QString& preferred
                "try {\n"
                "  bcdboot.exe %1 /s \"${sakBootLetter}:\" /f BIOS\n"
                "  $code = $LASTEXITCODE\n"
-               "  bootsect.exe /nt60 \"${sakBootLetter}:\" /mbr\n"
+               "  & $sakBootsect /nt60 \"${sakBootLetter}:\" /mbr\n"
                "  if ($LASTEXITCODE -ne 0 -and $code -eq 0) { $code = $LASTEXITCODE }\n"
                "} finally {\n"
                "  if ($sakLettered) { Remove-PartitionAccessPath -DiskNumber "

@@ -1622,6 +1622,8 @@ private Q_SLOTS:
     void generatedScripts_windowsDataTypeStepRunsAgainstStandIns();
     void generatedScripts_volumeCopyLeavesOutOnlyTheRootVolumeFolders();
     void generatedScripts_corpusBuildsEveryOperationAndBranch();
+    void generatedScripts_commandGuardAsksTheListNotTheHost();
+    void generatedScripts_biosRoutesRefuseWithoutBootsect();
     void generatedScripts_resizeChecksTheFileSystemFirst();
     void generatedScripts_resizeGivesANonDataPartitionItsTypeBack();
     void resize_growsAnApfsPartitionInPlaceOnly();
@@ -4169,54 +4171,109 @@ QString callProblemsScript() {
 /// -Verbose passes -ErrorAction Stop too: given -Verbose, those cmdlets no longer stop on
 /// $ErrorActionPreference, and Check File System on FAT32 and exFAT reported success having
 /// checked nothing (operation proof, 2026-11-12, F15).
-QString commandProblemsScript() {
+/// The System32 tools a generated script may call by name: inbox tools of the Windows client
+/// editions S.A.K. supports, each found in C:\Windows\System32 on this project's Windows 11 Pro PCs
+/// (2026-11-12). The guard never asks the host for a native tool: the GitHub runner is a Windows
+/// Server, which has no bootsect.exe (T2 on 9170b149), and a host that has a tool a customer's
+/// Windows lacks would pass a script that fails there. A tool not listed is a finding.
+constexpr std::array kClientSystem32Tools = {"bcdboot.exe",
+                                             "bcdedit.exe",
+                                             "bootsect.exe",
+                                             "chkdsk.exe",
+                                             "cipher.exe",
+                                             "cmd.exe",
+                                             "convert.exe",
+                                             "diskpart.exe",
+                                             "dism.exe",
+                                             "fsutil.exe",
+                                             "manage-bde.exe",
+                                             "mbr2gpt.exe",
+                                             "mountvol.exe",
+                                             "reagentc.exe",
+                                             "reg.exe",
+                                             "robocopy.exe"};
+
+/// The list as a PowerShell expression. Base64, because the test hardware guard refuses to start a
+/// PowerShell whose command names a disk tool (diskpart, chkdsk, ...): the checker only parses
+/// scripts and runs none of them.
+QString clientSystem32ToolsArray() {
+    QStringList tools;
+    for (const char* tool : kClientSystem32Tools) {
+        tools.append(QString::fromLatin1(tool));
+    }
     return QStringLiteral(
-        "$script:knownCommands = @{}\n"
-        "$script:storageCommands = @{}\n"
-        "function Test-SakStopsOnError($c) {\n"
-        "  $elements = @($c.CommandElements)\n"
-        "  for ($i = 1; $i -lt $elements.Count; $i++) {\n"
-        "    $e = $elements[$i]\n"
-        "    if ($e -isnot [System.Management.Automation.Language.CommandParameterAst] -or "
-        "@('ErrorAction', 'EA') -notcontains $e.ParameterName) { continue }\n"
-        "    $value = $(if ($e.Argument) { $e.Argument } elseif ($i + 1 -lt $elements.Count) { "
-        "$elements[$i + 1] })\n"
-        "    return ($value -and ($value.Extent.Text -replace \"['\"\"]\", '') -eq 'Stop')\n"
-        "  }\n"
-        "  return $false\n"
-        "}\n"
-        "function Get-SakCommandProblems($name, $ast, $functions) {\n"
-        "  foreach ($c in $ast.FindAll({ param($n) $n -is "
-        "[System.Management.Automation.Language.CommandAst] }, $true)) {\n"
-        "    $called = $c.GetCommandName()\n"
-        "    if (-not $called -or $functions.ContainsKey($called)) { continue }\n"
-        "    if (-not $script:knownCommands.ContainsKey($called)) {\n"
-        "      $command = Get-Command -Name $called -ErrorAction SilentlyContinue | Select-Object "
-        "-First 1\n"
-        "      $script:knownCommands[$called] = [bool]$command\n"
-        "      $script:storageCommands[$called] = [bool]$command -and \"$($command.ModuleName)\" "
-        "-eq 'Storage' }\n"
-        "    if (-not $script:knownCommands[$called]) {\n"
-        "      $name + ': calls ' + $called + ', which Windows PowerShell 5.1 does not have' }\n"
-        "    $verbose = @($c.CommandElements | Where-Object { $_ -is "
-        "[System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq "
-        "'Verbose' }).Count -gt 0\n"
-        "    if (-not ($script:storageCommands[$called] -and $verbose)) { continue }\n"
-        "    $script:storageVerboseCalls++\n"
-        "    if (-not (Test-SakStopsOnError $c)) {\n"
-        "      $name + ': ' + $c.Extent.Text + ': a Storage cmdlet given -Verbose stops only on "
-        "-ErrorAction Stop' }\n"
-        "  }\n"
-        "  foreach ($a in $ast.FindAll({ param($n) $n -is "
-        "[System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {\n"
-        "    $left = $a.Left\n"
-        "    if ($left -is [System.Management.Automation.Language.ConvertExpressionAst]) { $left = "
-        "$left.Child }\n"
-        "    if ($left -is [System.Management.Automation.Language.VariableExpressionAst] -and "
-        "@('args', 'input', '_', 'PSItem', 'this') -contains $left.VariablePath.UserPath) {\n"
-        "      $name + ': assigns the automatic $' + $left.VariablePath.UserPath }\n"
-        "  }\n"
-        "}\n");
+               "@([Text.Encoding]::ASCII.GetString([Convert]::FromBase64String('%1')) "
+               "-split ',')")
+        .arg(QString::fromLatin1(tools.join(QLatin1Char(',')).toLatin1().toBase64()));
+}
+
+QString commandProblemsScript() {
+    return QStringLiteral("$script:clientSystem32Tools = %1\n").arg(clientSystem32ToolsArray()) +
+           QStringLiteral(
+               "$script:knownCommands = @{}\n"
+               "$script:storageCommands = @{}\n"
+               "function Test-SakStopsOnError($c) {\n"
+               "  $elements = @($c.CommandElements)\n"
+               "  for ($i = 1; $i -lt $elements.Count; $i++) {\n"
+               "    $e = $elements[$i]\n"
+               "    if ($e -isnot [System.Management.Automation.Language.CommandParameterAst] -or "
+               "@('ErrorAction', 'EA') -notcontains $e.ParameterName) { continue }\n"
+               "    $value = $(if ($e.Argument) { $e.Argument } elseif ($i + 1 -lt "
+               "$elements.Count) { "
+               "$elements[$i + 1] })\n"
+               "    return ($value -and ($value.Extent.Text -replace \"['\"\"]\", '') -eq 'Stop')\n"
+               "  }\n"
+               "  return $false\n"
+               "}\n"
+               "function Get-SakCommandProblems($name, $ast, $functions) {\n"
+               "  foreach ($c in $ast.FindAll({ param($n) $n -is "
+               "[System.Management.Automation.Language.CommandAst] }, $true)) {\n"
+               "    $called = $c.GetCommandName()\n"
+               "    if (-not $called -or $functions.ContainsKey($called)) { continue }\n"
+               // A cmdlet, function or alias is asked of Windows PowerShell 5.1's own modules; a
+               // native tool (a name with an extension, or none PowerShell knows) only of the
+               // committed list.
+               "    if (-not $script:knownCommands.ContainsKey($called)) {\n"
+               "      $leaf = [IO.Path]::GetFileName($called).ToLowerInvariant()\n"
+               "      $command = $null\n"
+               "      if (-not [IO.Path]::HasExtension($leaf)) {\n"
+               "        $command = Get-Command -Name $called -CommandType Cmdlet, Function, Alias "
+               "-ErrorAction SilentlyContinue | Select-Object -First 1\n"
+               "        $leaf += '.exe'\n"
+               "      }\n"
+               "      $script:knownCommands[$called] = [bool]$command -or "
+               "($script:clientSystem32Tools -contains $leaf)\n"
+               "      $script:storageCommands[$called] = [bool]$command -and "
+               "\"$($command.ModuleName)\" "
+               "-eq 'Storage' }\n"
+               "    if (-not $script:knownCommands[$called]) {\n"
+               "      $name + ': calls ' + $called + ', which is neither a Windows PowerShell 5.1 "
+               "command "
+               "nor a System32 tool every supported Windows client has' }\n"
+               "    $verbose = @($c.CommandElements | Where-Object { $_ -is "
+               "[System.Management.Automation.Language.CommandParameterAst] -and $_.ParameterName "
+               "-eq "
+               "'Verbose' }).Count -gt 0\n"
+               "    if (-not ($script:storageCommands[$called] -and $verbose)) { continue }\n"
+               "    $script:storageVerboseCalls++\n"
+               "    if (-not (Test-SakStopsOnError $c)) {\n"
+               "      $name + ': ' + $c.Extent.Text + ': a Storage cmdlet given -Verbose stops "
+               "only on "
+               "-ErrorAction Stop' }\n"
+               "  }\n"
+               "  foreach ($a in $ast.FindAll({ param($n) $n -is "
+               "[System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {\n"
+               "    $left = $a.Left\n"
+               "    if ($left -is [System.Management.Automation.Language.ConvertExpressionAst]) { "
+               "$left = "
+               "$left.Child }\n"
+               "    if ($left -is [System.Management.Automation.Language.VariableExpressionAst] "
+               "-and "
+               "@('args', 'input', '_', 'PSItem', 'this') -contains $left.VariablePath.UserPath) "
+               "{\n"
+               "      $name + ': assigns the automatic $' + $left.VariablePath.UserPath }\n"
+               "  }\n"
+               "}\n");
 }
 
 /// The PowerShell that checks every .ps1 in @p folder: each call to a function the script itself
@@ -5023,6 +5080,94 @@ void PartitionManagerCoreTests::generatedScripts_volumeCopyLeavesOutOnlyTheRootV
                  !copied.contains(QStringLiteral("gone.txt")),
              qPrintable(out));
     QVERIFY2(out.contains(QStringLiteral("MANIFESTS AGREE True 3")), qPrintable(out));
+}
+
+// The command guard asks Windows PowerShell 5.1 about cmdlets, and only the committed list
+// (kClientSystem32Tools) about native tools: GitHub's Windows Server runner has no bootsect.exe, so
+// asking the host failed T2 there (9170b149), and a host that has a tool a customer's Windows lacks
+// would pass a script that fails there. A tool this PC has but the list does not is a finding; a
+// listed one is not, whatever the host has.
+void PartitionManagerCoreTests::generatedScripts_commandGuardAsksTheListNotTheHost() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QFile probe(dir.filePath(QStringLiteral("probe.ps1")));
+    QVERIFY(probe.open(QIODevice::WriteOnly));
+    probe.write(
+        "$ErrorActionPreference = 'Stop'\n"
+        "Get-Partition -DiskNumber 0 -ErrorAction Stop | Out-Null\n"
+        "bootsect.exe /nt60 C: /mbr\n"
+        "mountvol C: /S\n"
+        "systeminfo.exe\n"
+        "whoami\n");
+    probe.close();
+    const ProcessResult proc = sak::runPowerShell(ownFunctionCallChecker(dir.path()), 120'000);
+    const QString out = (proc.std_out + proc.std_err).trimmed();
+    QVERIFY2(out.contains(QStringLiteral("CHECKED 1 ")), qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("PROBLEM probe.ps1: calls systeminfo.exe, which is "
+                                         "neither")),
+             qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("PROBLEM probe.ps1: calls whoami, which is neither")),
+             qPrintable(out));
+    QVERIFY2(!out.contains(QStringLiteral("calls bootsect.exe")), qPrintable(out));
+    QVERIFY2(!out.contains(QStringLiteral("calls mountvol")), qPrintable(out));
+    QVERIFY2(!out.contains(QStringLiteral("calls Get-Partition")), qPrintable(out));
+}
+
+// Writing BIOS boot code needs bootsect.exe, which a Windows Server need not have. Every BIOS route
+// checks for it before it changes anything and refuses plainly: the running Windows' BIOS boot
+// repair, an attached disk's, and Migrate OS to an MBR disk. Each runs in Windows PowerShell 5.1
+// with Test-Path answering that bootsect.exe is not there and stand-ins that say when a disk would
+// have been touched.
+void PartitionManagerCoreTests::generatedScripts_biosRoutesRefuseWithoutBootsect() {
+    const QString stand_ins = QStringLiteral(
+        "function global:Test-Path { param([string]$LiteralPath, [string]$PathType) "
+        "return -not ($LiteralPath -like '*bootsect.exe') }\n"
+        "function global:Get-Disk { 'TOUCHED Get-Disk' }\n"
+        "function global:Get-Partition { 'TOUCHED Get-Partition' }\n"
+        "function global:Add-PartitionAccessPath { 'TOUCHED Add-PartitionAccessPath' }\n"
+        "function global:Set-Disk { 'TOUCHED Set-Disk' }\n"
+        "function global:bcdboot.exe { 'TOUCHED bcdboot' }\n");
+    const auto run = [&stand_ins](const QString& functions, const QString& body) {
+        int exit_code = -1;
+        return runWithScriptFunctions(functions,
+                                      stand_ins + QStringLiteral("try {\n") + body +
+                                          QStringLiteral("\n'DONE'\n} catch { 'THREW ' + "
+                                                         "$_.Exception.Message }\n"),
+                                      &exit_code);
+    };
+    const auto refusedPlainly = [](const QString& out) {
+        return out.contains(QStringLiteral("THREW This Windows has no bootsect.exe")) &&
+               out.contains(QStringLiteral("so nothing was changed")) &&
+               !out.contains(QStringLiteral("TOUCHED")) && !out.contains(QStringLiteral("DONE"));
+    };
+
+    PartitionTarget disk;
+    disk.kind = PartitionTargetKind::Disk;
+    disk.disk_number = DiskNumber{0};
+    const QJsonObject bios{{QStringLiteral("windows_path"), QStringLiteral("D:\\Windows")},
+                           {QStringLiteral("esp_letter"), QStringLiteral("S")},
+                           {QStringLiteral("boot_mode"), QStringLiteral("BIOS")}};
+    PartitionScriptBuilder builder;
+    const auto running = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::RepairBoot, disk, bios));
+    QVERIFY(running.valid());
+    const QString running_out = run(QString(), running.script);
+    QVERIFY2(refusedPlainly(running_out), qPrintable(running_out));
+
+    const QString attached_out =
+        run(QString(), sak::buildAttachedBootRepairScriptText(7, QStringLiteral("BIOS")));
+    QVERIFY2(refusedPlainly(attached_out), qPrintable(attached_out));
+
+    const auto [migration_target,
+                migration_payload] = corpusMigrationInput(512ULL * 1024ULL * 1024ULL * 1024ULL);
+    const auto migration = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::MigrateOs, migration_target, migration_payload));
+    QVERIFY2(migration.valid(), qPrintable(migration.blockers.join(QStringLiteral("; "))));
+    const QString migration_out =
+        run(migration.script,
+            QStringLiteral("$script:sakSystem32 = [Environment]::SystemDirectory\n"
+                           "$sakScheme = 'MBR'\nAssert-SakMigrationStart"));
+    QVERIFY2(refusedPlainly(migration_out), qPrintable(migration_out));
 }
 
 // The static checks see only what the corpus builds: Restore Image named [SakLockedFilePath]
@@ -27218,8 +27363,10 @@ void PartitionManagerCoreTests::scriptBuilder_buildsBiosBootRepairScript() {
     QVERIFY(script.valid());
     QVERIFY(script.script.contains(
         QStringLiteral("bcdboot.exe 'D:\\Windows' /s \"${sakBootLetter}:\" /f BIOS")));
+    // bootsect by the path checked first (its absence is a plain refusal, see
+    // generatedScripts_biosRoutesRefuseWithoutBootsect).
     QVERIFY(
-        script.script.contains(QStringLiteral("bootsect.exe /nt60 \"${sakBootLetter}:\" /mbr")));
+        script.script.contains(QStringLiteral("& $sakBootsect /nt60 \"${sakBootLetter}:\" /mbr")));
     // bcdboot and bootsect need a letter on the partition the firmware starts from, which seldom
     // has one. The script gives it one, and takes it away again however the repair ends.
     QVERIFY(script.script.contains(QStringLiteral("$_.IsBoot")));

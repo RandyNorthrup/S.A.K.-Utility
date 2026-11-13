@@ -28,6 +28,8 @@ function Assert-SakNoBitLocker {
   }
 }
 function Assert-SakMigrationStart {
+  # An MBR target gets BIOS boot code at the end: checked before anything is written.
+  if ($sakScheme -eq 'MBR') { Assert-SakBootsectPresent }
   $source = Assert-SakPinnedDisk $sakSourceDisk $sakSourcePin 'source'
   $target = Assert-SakPinnedDisk $sakTargetDisk $sakTargetPin 'target'
   if (-not ($source.IsBoot -or $source.IsSystem)) { throw 'The source disk is not the disk Windows is running from' }
