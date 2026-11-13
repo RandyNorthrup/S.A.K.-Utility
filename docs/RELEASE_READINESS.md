@@ -3312,6 +3312,186 @@ The first attempt stopped at clang-tidy's core pass: "missing field 'helper_oper
 designated initializer opsfix's read-only check route builds in partition_manager_controller.cpp (a compile
 diagnostic MSVC does not give); the fields are named (1af44e9c) and the whole gate ran again.
 
+### After the merge round: T2's bootsect.exe, the nightly's stale mutants, the volsnap settle, and opsproof's final run (2026-11-12)
+
+On lane2 after 9170b149 (the merge round above), from GitHub's first runs of the merged tree, the operation proof's
+crash investigation, and opsproof's final run on 9170b149 (F18's script half, F27 to F32). Each fix has a test that
+fails without it, drilled red with the fix broken in the source and green with every byte restored. After the
+drills, lizard's length and complexity limits moved six tests' new parts into tests of their own
+(`fileSystemTools_hfsReadOnlyCheckIsStaged`, `scriptBuilder_hideOnMbrUsesTheTypeByte`,
+`generatedScripts_mbrHideAndUnhideUseTheTypeByte`, `generatedScripts_logicalToPrimaryCountsDataPartitionsOnly`,
+`generatedScripts_wipeFreeSpaceRemovesCipherFolderWithoutFollowingLinks`, and helpers for the resize cases, the
+capture-failure runner and the HFS+ raw test) and split the resize-as-data functions in two; the assertions are the
+ones drilled.
+
+**T2: "calls bootsect.exe, which Windows PowerShell 5.1 does not have".** The generated-script guard
+(`generatedScripts_callTheirOwnFunctionsWithDeclaredParameters`) asked the machine it ran on whether a native tool
+exists, and GitHub's Windows Server runner has no `bootsect.exe`. It now asks Windows PowerShell 5.1 about cmdlets,
+functions and aliases only, and `kClientSystem32Tools`, a committed list of 16 inbox System32 tools found on this
+project's Windows 11 Pro PCs, about native tools; a tool not on the list is a finding wherever the guard runs (test:
+`generatedScripts_commandGuardAsksTheListNotTheHost`; drill `gh-guard-host-independent`). The product: every route
+that runs `bootsect.exe` checks it exists first and refuses plainly, "This Windows has no bootsect.exe (...), which
+... needs, so nothing was changed": the running Windows' BIOS boot repair (which now runs the checked path), an
+attached disk's BIOS repair, and Migrate OS to an MBR disk (`Assert-SakBootsectPresent`). Test:
+`generatedScripts_biosRoutesRefuseWithoutBootsect`, all three in Windows PowerShell 5.1 with `bootsect.exe` absent
+and stand-ins that would show a disk touched. Drills: `gh-bios-repair-checks-bootsect`, `gh-target-boot-assert`,
+`gh-migrate-checks-bootsect`, `gh-attached-checks-bootsect`.
+
+**Nightly T4: four mutation-catalog find-strings matched nothing.** Each is re-pointed at the code that now does
+its job, and each was run as its catalog states it:
+
+| Mutant | Re-pointed at | Killed by |
+| --- | --- | --- |
+| `partition_manager_controller.json` batch-preview-ignores-projected-inventory | the queue's preview line, now followed by `appendQueuedBackupBlocker` (opsfix) | `queueChecksEachOperationAgainstTheLayoutBeforeIt` (new): Delete All Partitions then Initialize Disk, which only the projected layout allows. Re-pointed alone it survived: opsfix's batch test now creates NTFS, which the scan's layout allows too. |
+| `pst_block_decoder.json` 4k-exact-size-check-inverted | `inflateZlibExactly`'s size comparison (`bounded_inflate.cpp`, since sec2) | `unicode4kCompressedBlockInflates`, `unicode4kDecompressSizeMismatchFailsClosed` |
+| `pst_block_decoder.json` 4k-exact-size-check-disabled | the same comparison | `unicode4kDecompressSizeMismatchFailsClosed` |
+| `pst_block_decoder.json` 4k-decompress-failure-isEmpty-masked | inflate's own result (`(result < 0 && result > 0) || ...`, so the variable stays used and the mutant compiles; the first version, the condition deleted, did not compile). Equivalent under qUncompress, not now: a stream that inflates to exactly the declared length with a broken adler32 would be accepted. | `unicode4kCorruptChecksumFailsClosed` (new) |
+
+Each was run as its catalog states it (built, its suite through `run_ctest_no_dialogs.ps1`): all four killed.
+`run_all_mutation_catalogs.py --validate`: PASS, 61 catalogs. AGENTS.md: re-point a stale mutant, never delete it.
+
+**The volsnap settle.** The operation proof's crash investigation (2026-11-12; its report is outside the repository)
+found that on Windows 11 26100 removing a whole disk within seconds of an online scan (`chkdsk /scan`,
+`Repair-Volume -Scan`) can leave a volsnap timer queued in a freed volume device object: five bugchecks across
+testpc1, testpc2 and the VM. A scan-then-detach loop crashed testpc2 in its second round; with 10 s between the scan
+and the detach, 24 rounds under the same load did not. After every online scan S.A.K. runs, the script now says
+"Letting Windows finish with the volume before reporting done (a drive removed right after a scan can crash
+Windows)." and waits `kVolumeScanSettleSeconds` (15) before it goes on or reports done: Check File System
+(Repair-Volume for NTFS and ReFS, chkdsk without /f for FAT32 and exFAT), Scan File Systems (after each volume), the
+closing scans of Defragment and of Allocate Free Space, Change Cluster Size, Move, Primary/Logical, Serial and
+Dynamic to Basic, and Check Disk Errors. Check File System's result on a drive that can be unplugged (Windows calls
+it removable, or it is on USB, SD, MMC or 1394) ends with "Wait a few seconds after this finishes before unplugging
+the drive."; a drive inside the PC gets no such line. The settle runs on the success path: a scan that fails stops
+its script at once, as before.
+
+| Test | What it proves |
+| --- | --- |
+| `generatedScripts_volumeScanSettlesBeforeDone` | The whole Check File System script in Windows PowerShell 5.1, NTFS and FAT32: the scan, its End marker, the message, `Start-Sleep -Seconds 15`, then the end, in that order. |
+| `generatedScripts_everyOnlineScanSettles` | Every script the corpus builds: each Repair-Volume -Scan or chkdsk call sits between volume-scan markers, Begin and End pair up, and the settle follows each End marker at once. Check File System and Allocate Free Space must be among the scripts with scans. |
+| `buildScanVolumeScript_isReadOnly` | Check Disk Errors: the settle right after the End marker, before the result line. |
+| `checkFileSystemSaysToWaitBeforeUnplugging` | The result's line for USB and for a removable SATA drive, none for NVMe. |
+
+Drills, each red then green with every byte restored: `vs-settle-removed-from-scan-line` (both new core tests),
+`vs-settle-removed-at-allocate-site` (the corpus guard alone names Allocate Free Space), `vs-settle-before-the-scan`
+(both), `vs-settle-one-second` (the runtime test and Check Disk Errors' test),
+`vs-settle-removed-from-check-disk-errors`, `vs-panel-note-never-added`, `vs-panel-note-for-every-drive` (NVMe got
+the line), `vs-panel-usb-not-unpluggable`.
+
+**F27: every ext Resize on GPT failed, with a false message.** Opsproof's final run on 9170b149: "Windows did
+not give the partition its type back ... This operation is only supported on data partitions", the partition
+still Linux-typed and its old size. `Invoke-SakResizeAsDataPartition` (opsfix 39759560) set GPT's
+no-default-letter attribute before the basic-data type, and Windows sets that attribute on a data partition only
+(StorageWMI 42011); its finally repeated the error and called it a type that did not come back. Now (opsproof's
+patch, taken as written): the data type first, then the attribute; on the way back the attribute while the
+partition still has the data type, then its own type; and "did not give the partition its type back" only when
+the type read back really differs (otherwise the resize's own failure, or that the attributes could not be set
+back). The unit test's stand-in had taken the attribute on any type, so it proved nothing about this: a stand-in
+proves only what it models. It now refuses the attribute on a GPT partition that is not basic data, and a new
+case (an access path Windows will not remove, on MBR) shows the message is not claimed when the type is back.
+`PartitionScriptBuilder::resizeAsDataPartitionFunctionScript` is public so that Windows itself can be asked:
+`test_raw_partition_write::resizeAsDataGivesAnExtPartitionItsTypeBack` (elevated, must-run in CI) makes a
+Linux-typed GPT partition on a VHDX as S.A.K.'s ext Format leaves one (no letter, the attribute set), grows it
+through the app's own function and reads back its type, attributes, letters and size, then asks for more than the
+disk holds and reads back the same, with Windows' own reason and not the false message.
+On testpc1 (elevated, the test program beside the merged package): red with the function as it was on
+9170b149, with opsproof's own words ("RESULT THREW Windows did not give the partition its type back
+({0fc63daf-8483-4772-8e79-3d69d8477de4}): This operation is only supported on data partitions."), green after.
+Windows reads a Linux-typed partition's attributes its own way (the no-default-letter attribute set before the
+type change reads False, and the partition reads hidden), so the test compares the partition with what Windows
+read before the resize, not with a fixed line; the first green run on testpc1 showed that. Core drills:
+`f27-attribute-before-type`, `f27-restore-type-before-attribute` (red recorded; the round was stopped during its
+green build to take F29-F32, with the file restored byte for byte and rebuilt green before every later run),
+`f27-type-back-message`.
+
+**F28: Check Non-Windows File System failed on every healthy HFS+ volume.** Opsproof's final run on 9170b149:
+"fsck_hfs -n -f //?/GLOBALROOT/Device/Harddisk4/Partition2 ... Device is not a block device ... exit code 8".
+Since F25 the read-only check runs in the helper through the generated script, and the staging that repair and
+format use was not applied to it; fsck_hfs opens a block device or a file only. Now (opsproof's patch, with the
+long-task timeout added): the check reads the partition into a sparse image in the run folder (TEMP, which S.A.K.
+sets to it), runs `fsck_hfs -n -f` on the image through `Invoke-SakCheckedHfsTool` (only exit 0 passes), removes
+the image, and writes nothing back. A run folder on a FAT32 or exFAT drive is refused before anything is read,
+in the same words as repair and format, which now name the check too ("S.A.K. stages HFS+ format, check, repair
+and file changes as an image of the partition in its own data folder ... Run S.A.K. from an NTFS-formatted
+drive"). `runReadOnlyCheckThroughHelper` hands the helper the operation, and that operation builds the staged
+check; the run's output and failure reach the result in their own words
+(`test_partition_manager_controller::hfsReadOnlyCheckRunsTheStagedScript`). The script: the F28 assertions in
+`fileSystemTools_sayWhenTheyCouldNotOpenThePartition` (staged, `-n -f` on the image, no write-back, the image in
+the run folder and removed, the drive checked first) and `hfsStaging_everyCallerRunsTheStagingFunction` (the check
+among the callers). Windows itself: `test_raw_partition_write::hfsReadOnlyCheckStagesAndWritesNothing`
+(elevated, must-run in CI): an HFS+ partition the app's own Format made on a GPT VHDX, checked through the app's
+own script; healthy passes, a damaged volume header (file count and free-block count) fails, the partition's
+SHA-256 is the same after each check, no image is left, and with the run folder on a FAT32 volume the check
+refuses in those words and makes no image.
+On testpc1: red with the check unstaged, as on 9170b149 ("Device is not a block device", "Filesystem tool exit
+code: 8" on the healthy volume), green after. Core drills: `f28-check-not-staged` (core and controller tests),
+`f28-check-writes-back`.
+
+**F18's script half: Convert logical to primary always stopped at Apply.** Opsproof's final run on 9170b149:
+"Primary/logical conversion requires a single data partition on the disk", before any change. fix9 taught the safety
+validator that the extended container Windows lists beside a logical partition is not a data partition; the script's
+own count, `@(Get-Partition -DiskNumber N)`, still included it (since 4500612f8). The two now share one rule in
+`partition_manager_types`: `isExtendedPartitionContainer` (the validator, on the scan's Type) and
+`dataPartitionsOnlyPowerShell` (the script, on the disk's Type at Apply), from one constant and the same test. Test:
+`scriptBuilder_buildsOfflineMoveAndMetadataScripts` runs the generated script's own two counting lines in Windows
+PowerShell 5.1 against a stand-in Get-Partition (a logical partition with its extended container passes, one primary
+passes, two logical partitions in one container are refused); the validator's logical-with-container case already
+ran. Drills: `f18-script-counts-extended`, `f18-shared-rule` (the shared constant broken: the validator's test and
+the script's both failed).
+
+**F29: a capture whose snapshot Windows aborted got only DISM's words.** Opsproof's VM final run: with the shadow
+storage at its minimum, volsnap aborted the Image-route capture snapshot (event 36, "shadow copy storage could
+not grow due to a user imposed limit") and DISM exited 3 ("The system cannot find the path specified"), not 433,
+so `Get-SakCaptureFailureMessage` (opsfix e142bd5b) said nothing of the snapshot. Opsproof's patch, as written:
+433 or 3, still only with a volsnap 33 or 36 for that volume since the capture began; exit 2 still gets nothing.
+Test: `test_partition_os_migration::imageCaptureFailureSaysWhatStoppedIt` gains the ABORTED case (exit 3 with a
+volsnap 36). Drill: `f29-exit-3`.
+
+**F30 (serious): Hide on an MBR disk hid every partition on it.** Opsproof on testpc2 with a two-partition MBR VHDX:
+Set-Partition -IsHidden and -NoDefaultDriveLetter are the whole disk's attributes on MBR, so Hide of one partition
+hid all of them and took all their letters. Now (opsproof's patch, with the refusal moved before anything changes):
+on MBR one partition is hidden by its type's hidden form (01, 04, 06, 07, 0B, 0C, 0E become 11, 14, 16, 17, 1B, 1C,
+1E) and shown by its own; a type with no hidden form is refused before its paths are touched, "S.A.K. hides an MBR
+partition by its type, and type 83 has no hidden form, so nothing was changed"; GPT is unchanged. Tests:
+`generatedScripts_hideRemovesThePathsFirstAndUnhideGivesALetter` (the stand-ins now have a disk style and an MBR
+type: MBR Hide sets 17 after the paths go and never -IsHidden, MBR Unhide sets 07 and gives a letter, an 83
+partition is refused with nothing removed) and, against Windows itself,
+`test_raw_partition_write::hideOnMbrHidesOnlyThatPartition` (the app's own Hide and Unhide of partition 1 of a
+two-partition MBR VHDX: partition 1 hidden with no letter and type 17 while partition 2 keeps its letter and stays
+visible; Unhide gives partition 1 type 07 and a letter back). On testpc1: red with Hide by the attribute, as on
+9170b149 (after Hide of partition 1: "P1 True - 07" and "P2 True - 07", partition 2 hidden and its letter gone, as
+on testpc2), green after. The whole elevated suite on testpc1 with the final program: 19 of 19. Core drills:
+`f30-hide-by-attribute-on-mbr`, `f30-unhide-by-attribute-on-mbr`, `f30-unsupported-type-not-refused`.
+
+**F31: Merge took the free space after the source too.** Owner's decision through the coordinator: fix it. Merge
+grew the target to its supported maximum, so two 256 MiB partitions on a 1 GB disk became 1008 MiB. It now ends
+where the source ended: `$mergedSize = source offset + source size - target offset`, read before the source is
+removed (opsproof's patch). Test: `scriptBuilder_buildsMergeScript` (the resize to $mergedSize, never SizeMax, the
+size taken before the removal). Drill: `f31-merge-grows-to-max`.
+
+**F32: Wipe Free Space left cipher's EFSTMPWP folder at the volume root.** Opsproof's patch removed it with
+`Remove-Item -Recurse -Force`, which in Windows PowerShell 5.1 goes through a junction and deletes what is behind
+it; that was not taken. The folder goes only when this run made it and cipher exited 0, through the script's own
+no-follow removal (`Remove-SakTreeNoFollow`: a junction or link, or the folder itself being one, is removed as the
+link), and a failure to remove it is a warning, since the free space was wiped. Tests:
+`stopCleanup_scriptsMarkWhatTheyMakeAndUnmake` (the removal after cipher, only for a folder this run made, through
+the no-follow function, no -Recurse anywhere) and the function itself in Windows PowerShell 5.1 on a folder holding
+a read-only file and a junction to a folder with a canary, then on a folder that is itself a junction: the tree
+goes, the canary stays. Drills: `f32-removal-follows-links` (the canary behind the junction was deleted),
+`f32-remove-item-recurse`.
+
+Not changed: the certification readback harness (`Test-RbVolumeHealth` in `scripts/partition_manager_readback.ps1`)
+runs Repair-Volume -Scan and `chkdsk /scan` itself, and the app certification detaches its VHDX files afterwards,
+the pattern of crashes 3 and 4. It is test tooling, not a script S.A.K. runs, and is left for the owner's call.
+
+**Gate.** One run, alone on the PC, on 2cc767d5 (the code; the naming commit and this section came after):
+configure; full build, 0 errors and 0 compiler warnings; T2 labels at -j 6, 331 of 331; cert-tooling 6 of 6;
+tooling-extended 17 of 17; the mutation label 1 of 1 and `run_all_mutation_catalogs.py --validate` PASS (61
+catalogs); both clang-tidy passes, non-core 155 of 155 TUs clean, core 174 of 174 healthy; every ci.yml static
+gate, 18 of 18; the hooks on every commit. Core's measured naming findings rose from 5,291 to 5,295 there: the
+four camelCase names opsproof's F28 function brought. f6b5d1ba renames them; the naming gate then measured 5,291
+again, and `test_partition_manager_core` passed 449 of 449. The elevated cases ran on testpc1 (above): the whole
+`test_raw_partition_write` suite, 19 of 19.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

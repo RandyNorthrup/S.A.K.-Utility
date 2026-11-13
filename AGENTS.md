@@ -224,6 +224,28 @@ the file system Windows had mounted on it. So:
   `generatedScripts_corpusBuildsEveryOperationAndBranch`: Restore Image named a type before
   loading its DLL, and the guard that checks exactly that never saw a Restore Image script
   (2026-11-12).
+- A generated script calls a native tool by name only if `kClientSystem32Tools`
+  (`test_partition_manager_core.cpp`) lists it: the guard never asks the machine it runs on,
+  because GitHub's Windows Server runner lacks tools a Windows client has (bootsect.exe, T2 on
+  9170b149). A tool a Windows Server or a trimmed Windows may lack is checked for by the script
+  before it changes anything, and refused plainly ("This Windows has no bootsect.exe ...").
+- A mutation catalog's find-string goes stale when its code moves: re-point the mutant at the
+  code that now does that job and run it, never delete it (`run_all_mutation_catalogs.py
+  --validate` is the nightly's check).
+- Every online scan a script runs (Repair-Volume -Scan, chkdsk without /f) is followed at once
+  by `volumeScanSettleStatement()` (`windows_continued_work.h`): a disk removed within seconds
+  of one can crash Windows (volsnap, 2026-11-12). In generated scripts write it through
+  `volumeScanLine`; `generatedScripts_everyOnlineScanSettles` reads every corpus script for it.
+- A stand-in for a Windows cmdlet proves only what it models. A step that changes a partition's
+  type or attributes, or hands a partition to a bundled tool, also gets a case in
+  `test_raw_partition_write` against Windows itself on a VHDX (elevated, must-run in CI): the
+  Resize stand-in took the no-default-letter attribute on any type, and Windows refuses it on a
+  non-data GPT partition, so every GPT ext Resize failed (F27); fsck_hfs opens no partition path
+  (F28).
+- A rule the safety validator applies to the scan and a script applies to the disk at Apply is
+  one function used by both (`isExtendedPartitionContainer` / `dataPartitionsOnlyPowerShell`):
+  the validator learned the extended container is not a data partition and the script did not
+  (F18).
 - Nothing in `tests/`, `scripts/` or a package may be something Defender flags:
   `test_defender_clean` scans them. A test that checks a script loads its DLL names the DLL; it
   does not spell out the reflective load beside C# it compiles (Defender quarantined such a fixture

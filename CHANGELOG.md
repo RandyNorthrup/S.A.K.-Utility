@@ -86,6 +86,41 @@ of its own put on the PC.
   'New-SakBackupFolder' is not recognized": their script called the new backup-folder function before defining
   it. Nothing was changed on the disk. The scripts now define it first, and a check over every generated script
   refuses a call that comes before its function's definition.
+- **A drive checked for errors is given time before it is unplugged** - On Windows 11 a disk removed within seconds
+  of an online file system scan can crash Windows (a timer the volume snapshot driver leaves behind). After every
+  such scan S.A.K. Utility runs (Check File System, Scan File Systems, Check Disk Errors, and the scan that ends a
+  defragmentation or a rebuild) it says "Letting Windows finish with the volume before reporting done" and waits 15
+  seconds. Check File
+  System on a USB or removable drive also ends with "Wait a few seconds after this finishes before unplugging the
+  drive."
+- **Resize of a Linux partition works on a GPT disk** - Every ext Resize on a GPT disk failed with "Windows did not
+  give the partition its type back ... This operation is only supported on data partitions", nothing changed:
+  the partition's no-letter attribute was set before it had the data type Windows resizes, and Windows takes that
+  attribute on a data partition only. The attribute now follows the type there and goes back before it, and that
+  message appears only when the type really did not come back.
+- **Check Non-Windows File System works on HFS+** - The read-only check failed on every healthy HFS+ volume with
+  "Device is not a block device". It now reads the partition into an image in S.A.K. Utility's own folder, checks
+  the image, removes it and writes nothing to the partition; like HFS+ repair, it needs S.A.K. Utility on an NTFS
+  drive and says so.
+- **Convert logical to primary gets past Apply** - It stopped every time with "Primary/logical conversion
+  requires a single data partition on the disk", counting the extended container Windows lists beside a logical
+  partition. The check before the run and the one in the run now share one rule.
+- **Hide on an MBR disk hides only that partition** - Hiding one partition of an MBR disk hid every partition on
+  it and took all their drive letters, because Windows keeps the hidden and no-letter flags for the whole disk
+  there. One MBR partition is now hidden by its type's hidden form (NTFS 07 becomes 17) and shown by its own; a type
+  with no hidden form is refused before anything changes.
+- **Merge ends where the second partition ended** - Merging two partitions also took any free space after the
+  second one (two 256 MB partitions on a 1 GB disk became 1008 MB). The merged partition now ends where the second
+  partition ended.
+- **Wipe Free Space tidies up after cipher** - It left cipher's EFSTMPWP folder at the root of the drive. A folder
+  this run made is removed once cipher has finished, without following any link inside it.
+- **A Migrate OS capture says when Windows dropped its snapshot** - When Windows aborted the snapshot the image is
+  captured from (its shadow-copy storage full), DISM sometimes stops with "The system cannot find the path
+  specified"; S.A.K. Utility now says the snapshot was deleted and what to do, as it already did for DISM's other
+  code.
+- **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
+  or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
+  refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
 - **Format to APFS asks for a volume name before it starts** - A partition with no label (a RAW or unlabelled
   volume) went to Apply and failed with only "APFS writer helper failed with exit code 1"; Add to Queue now says
   "An APFS volume needs a name: type one in Volume label".
