@@ -94,8 +94,10 @@ function Get-ScanSettleProblems {
 
 function Assert-EveryScanSettles {
     $self = [IO.Path]::GetFileName($PSCommandPath)
-    $files = @(Get-ChildItem -LiteralPath $ScriptsRoot -Recurse -File -Include '*.ps1', '*.psm1' |
-        Where-Object { $_.Name -ne $self })
+    # By extension, not -Include: Windows PowerShell 5.1 ignores -Include beside -LiteralPath and
+    # listed every file under scripts/ (the operation proof's plan data among them).
+    $files = @(Get-ChildItem -LiteralPath $ScriptsRoot -Recurse -File |
+        Where-Object { $_.Extension -in '.ps1', '.psm1' -and $_.Name -ne $self })
     $problems = New-Object System.Collections.Generic.List[string]
     $scanned = New-Object System.Collections.Generic.List[string]
     foreach ($file in $files) {
@@ -108,12 +110,17 @@ function Assert-EveryScanSettles {
     foreach ($expected in 'partition_manager_readback.ps1', 'run_partition_manager_certification_rig.ps1') {
         Assert-Condition -Condition ($scanned -contains $expected) -Message "no online scan found in $expected; scanned: $($scanned -join ', ')"
     }
-    # A file that waits has the wait: it loads the readback, or copies the function from it.
+    # A file that waits has the wait: it loads the readback, or copies the function from it, or (a
+    # file another loads after the readback) refuses to run without it. Code says so, not a comment.
     foreach ($file in $files) {
         $text = [IO.File]::ReadAllText($file.FullName)
         if ($file.Name -eq 'partition_manager_readback.ps1' -or $text -notmatch '\bWait-RbVolumeScanSettle\b') { continue }
+        $code = $text
+        foreach ($range in @(Get-CommentRanges -Path $file.FullName | Sort-Object { $_[0] } -Descending)) {
+            $code = $code.Remove($range[0], $range[1] - $range[0])
+        }
         Assert-Condition `
-            -Condition ($text -match 'partition_manager_readback\.ps1' -or $text -match "Get-RigReadbackFunctionText\s+-Name\s+'Wait-RbVolumeScanSettle'") `
+            -Condition ($code -match 'partition_manager_readback\.ps1' -or $code -match "Get-RigReadbackFunctionText\s+-Name\s+'Wait-RbVolumeScanSettle'") `
             -Message "$($file.Name) calls Wait-RbVolumeScanSettle but neither loads the readback nor copies the function from it"
     }
     "OK every online scan in scripts/ settles before a disk can go ($($scanned -join ', '))"

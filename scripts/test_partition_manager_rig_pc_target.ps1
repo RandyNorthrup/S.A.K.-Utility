@@ -223,7 +223,8 @@ try {
     $unsized = Invoke-Script -Path $Script:Groups -Arguments @('-Group', 'ssd-device', '-Rows', 'external.ssd-retrim', '-EvidenceDir', (Join-Path $Script:Root 'group-unsized'), '-PcFile', $pc, '-PinFile', $pinStub)
     Assert-That ($unsized.code -ne 0 -and $unsized.text -match 'sized from its pinned drive' -and $unsized.calls -ceq '') 'ssd-device refuses a pin file with no drive size, before it reaches the PC' $unsized.text
     $rowsScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'run_partition_manager_app_certification.ps1') -Raw
-    Assert-That ($rowsScript -match "if \(\`$report\.status -ne 'Passed'\) \{ break \}") 'The rows in the guest stop at the first that fails' ''
+    # Certification rows stop at the first that fails; only the operation proof runs them all.
+    Assert-That ($rowsScript -match "if \(\`$report\.status -ne 'Passed' -and -not \`$OperationProof\) \{ break \}") 'The rows in the guest stop at the first that fails' ''
 
     # Pins come from what the PC reports.
     $disks = @(

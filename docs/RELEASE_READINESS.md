@@ -3636,6 +3636,52 @@ test changes): 331 of 331. The coverage job has no import step: it builds RelWit
 `build/tests/RelWithDebInfo` with Qt on PATH, and its sixteen core suites start none of the four programs. release.yml
 runs no ctest.
 
+### Merge of ops: the Partition Manager operation proof onto lane2 (2026-11-13)
+
+The `ops` branch (89139e37, 73 commits since 5585dca5) merged into lane2 after the ASan fix: the
+operation-proof driver (`scripts/run_partition_manager_operation_proof.ps1`), its plan, rows,
+checks, VM hygiene and Defender records, and the `-OperationProof` paths of the certification
+runner and the rig. Where both sides changed a file, lane2's version is kept. The step client
+(`partition_manager_scenario_step.cpp`) had reached lane2 already (3259cccc, the opsfix commits,
+the fix1 patch), so the merged file is lane2's; its one conflict, the assistant route, keeps
+`sak::assistantPartitionOperation` (e3c021ed) over the `makeOperation` call that commit replaced.
+`tests/CMakeLists.txt` and `test_partition_manager_live_certifier.ps1` carried the same change on
+both sides. The certification runner's one conflict, its param block, keeps both lane2's
+`-ApprovalPath` and ops's `-OperationProof`.
+
+Made to hold lane2's rules, which ops's scripts predate, each a T2 or cert-tooling test that
+failed on the merge as it came:
+
+- **The settle** (`test_partition_manager_scan_settle`, cert-tooling). The operation proof's own
+  readers ran chkdsk's and Repair-Volume's online scans with no settle after them, and rows then
+  take their virtual disks down. Each scan now settles in a finally through
+  `Wait-RbVolumeScanSettle`; `-NoSettle` keeps the volsnap drills' own timing (Drill D none,
+  Drill E its `-SettleSeconds`), as `Close-OpsRowVolumes -NoSettle` already did, and
+  `Close-OpsRowVolumes` waits through the shared helper instead of its own 15 s sleep. The rows
+  and the checks refuse to load without the readback, which the runner loads first. The guard
+  itself: it now lists scripts by extension (Windows PowerShell 5.1 ignores `-Include` beside
+  `-LiteralPath`, so its 5.1 run had been reading every file under scripts/, the plan's data
+  among them), and a comment naming the readback no longer counts as loading it. Drills, each
+  red then green: `ops-chkdsk-without-settle`, `ops-refs-scan-without-settle`,
+  `ops-checks-without-readback` (red only once comments stopped counting), `guard-include-listing`.
+- **No `-ErrorAction SilentlyContinue` in a `run_partition_manager_*.ps1`**
+  (`test_partition_manager_storage_helpers`, cert). The driver had eight. Listings of a folder
+  that may not exist yet (the PC's claims, the run's output, the runs folder) test for it first
+  and stop on any other error; a stale virtual disk is dismounted only when Windows has it
+  attached; the run's own temporary files (a job script removing itself, the unpacked package,
+  the scratch folder) use `-ErrorAction Ignore`, as the group runner removes its job file.
+- **Certification rows stop at the first that fails** (`test_partition_manager_rig_pc_target`,
+  cert): the runner now runs every row only under `-OperationProof`; the test reads that form.
+
+Not run here: the operation proof itself (testpc2 and the VM). Its `-PlanOnly` lists 116 rows
+(device 3, none 2, testpc2 102, vm 9) and the plan agrees with the row bodies.
+
+**Checks**, on the merge staged, alone on the PC: configure and the Release build, 0 errors and 0 compiler
+warnings (the code digest changes, as expected); cert-tooling 8 of 8; `test_partition_manager_row_evidence`, its
+operation-proof guard included; the T2 labels, 333 of 333; `-PlanOnly`; every ci.yml static gate, 19 of 19; the
+hooks on the merge commit. Drills for the two T2 fixes, red then green: `ops-driver-silentlycontinue`,
+`runner-stops-proof-rows-too`.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and
