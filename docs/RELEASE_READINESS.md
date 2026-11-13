@@ -3709,6 +3709,25 @@ message's punctuation for a reason ending in ".", ")", "!", ";", "...", spaces o
 Drills: `iperf-no-up-front-refusal`, `iperf-sweep-before-refusal`, `iperf-loopback-needs-admin`,
 `iperf-old-admin-claim`, `iperf-punctuation-kept`, `panel-no-admin-note`, `panel-note-ignores-loopback`.
 
+**vhd.clear-disk-wipe on the 1db87df4 recertification.** Its step `refused_on_thin` failed: 9623ad18 moved Wipe
+Disk's thin-provisioned refusal from Apply to the queue, so the step client reported "Not added to the queue: Wipe
+Disk needs a full format, and Windows does not allow one on a thin-provisioned disk, such as a virtual disk file.
+Nothing was changed." as Failed, while the row still asked for `failed` (an Apply that failed). The cert agent's
+static check of every step against the queue refusals that 9623ad18, 66ecdd53, f5e55dfd, 51b318da and opsfix
+moved found this one alone. The row body and the matrix generator now both say `refused` (the matrix regenerated,
+never edited), and no matrix step expects `failed` any more; `expectedFailure` stays. The row's readback still
+proves the thin disk unchanged: its raw table and its file manifest before and after. A refused step needs no
+helper connection (`Test-PmStep`), which a queue refusal never makes. And so the class cannot recur silently: a
+step that expected Apply to fail and was refused before Apply now reports "expected Apply to fail; it was refused
+at queue: <text>" (or "at apply"), self-test `step-a-failure-refused-at-queue-says-so`. Tests:
+`test_partition_manager_row_evidence` reads every row body's `Invoke-CertStep -Step ... -Expect` (to the end of
+the call, past a multi-line `-Choices` table) and the matrix, and requires them to agree, this row a refusal in
+both; it accepts a queue-time refusal for a `refused` step (no execution, no helper), names a matrix that still
+asks for `failed`, and refuses a refused step whose client failed. Drills: `thin-row-body-expects-failed`,
+`thin-matrix-expects-failed`, `evidence-wants-a-helper-for-refusals`, `body-reader-first-line-only`,
+`step-client-plain-queue-wording`. Not drilled: the two call sites of the new wording (no local test reaches a
+real queue refusal), only the function both call.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

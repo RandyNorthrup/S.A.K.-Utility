@@ -228,7 +228,8 @@ VHD_ROWS = [
         "vhd.clear-disk-wipe",
         "Clear-level non-system disk wipe",
         [VIRTUAL_MACHINE],
-        [step("refused_on_thin", "WipeDisk", expect="failed"), step("wipe", "WipeDisk")],
+        # The thin-disk refusal is the queue's since 9623ad18 (it was an Apply that failed).
+        [step("refused_on_thin", "WipeDisk", expect="refused"), step("wipe", "WipeDisk")],
         [
             check("a_thin_disk_keeps_its_table", "thin_table_after", equals_path="thin_table_before"),
             *files_unchanged("a_thin_disk_keeps_its_files", "thin_files_before", "thin_files_after"),

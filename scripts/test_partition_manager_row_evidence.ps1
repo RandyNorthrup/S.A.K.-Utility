@@ -388,6 +388,87 @@ try {
     Assert-IndexRefused 'a report changed after it was selected' 'changed after this run was selected' { param($i) $i.rows[0].report_sha256 = 'f' * 64 }
     Remove-Item -LiteralPath (Join-Path $evidenceRoot 'vhd.fixture\report.json')
     Assert-IndexRefused 'an index naming a report that is gone' 'report is missing' { param($i) }
+    # A step refused at the queue, before any Apply (vhd.clear-disk-wipe's refused_on_thin since
+    # 9623ad18 moved Wipe Disk's thin-disk refusal there): no execution, and the helper never
+    # connected. The evidence check accepts it for a 'refused' step, and a matrix that still asks for
+    # 'failed' (an Apply that failed) names the mismatch, as on the 1db87df4 recertification.
+    function New-QueueRefusalEvidence {
+        param([string]$Dir)
+        New-Evidence -Dir $Dir
+        Set-Client $Dir {
+            param($c)
+            $c.expect = 'refused'
+            $c.PSObject.Properties.Remove('execution')
+            $c.PSObject.Properties.Remove('helper_connected')
+            $c | Add-Member -NotePropertyName 'helper_connected_after_scan' -NotePropertyValue $false
+            $c | Add-Member -NotePropertyName 'refused_at' -NotePropertyValue 'queue'
+            $c | Add-Member -NotePropertyName 'queue_refusal_reasons' -NotePropertyValue @('Wipe Disk needs a full format, and Windows does not allow one on a thin-provisioned disk, such as a virtual disk file. Nothing was changed.')
+        }
+        Set-Report $Dir {
+            param($r)
+            $r.steps[0].expect = 'refused'
+            $r.steps[0].observed.helper_token_elevated = $false
+            $r.steps[0].observed.helper_sha256 = ''
+        }
+        Update-Hashes -Dir $Dir
+    }
+    $refusedSpec = Get-Spec
+    $refusedSpec.steps[0].expect = 'refused'
+    $queueRefusal = Join-Path $Script:Root 'queue-refusal'
+    New-QueueRefusalEvidence -Dir $queueRefusal
+    $queueReasons = @(Test-PmRowEvidence -Spec $refusedSpec -RowDir $queueRefusal -CurrentCodeDigest $Script:Digest)
+    if ($queueReasons.Count -ne 0) { $Script:Failures.Add("A queue-time refusal for a 'refused' step was refused: $($queueReasons -join ' / ')") } else { $Script:Passes++ }
+    $failedSpec = Get-Spec
+    $failedSpec.steps[0].expect = 'failed'
+    $stale = @(Test-PmRowEvidence -Spec $failedSpec -RowDir $queueRefusal -CurrentCodeDigest $Script:Digest)
+    if (@($stale | Where-Object { $_ -match "expecting refused, and the matrix asks for Create expecting failed" }).Count -ne 1) { $Script:Failures.Add("A row that refused where the matrix asks for a failure was not named: $($stale -join ' / ')") } else { $Script:Passes++ }
+    Assert-Refused 'a refused step whose client failed' 'did not do what it expected' {
+        param($d)
+        New-QueueRefusalEvidence -Dir $d
+        Set-Client $d { param($c) $c.status = 'Failed'; $c.expectation_met = $false }
+    } -Spec $refusedSpec
+
+    # Every step a row body names, with its -Expect (Invoke-CertStep's default is 'success'), expects
+    # what the matrix says: Test-PmStep compares the two at every run, so a row whose body and matrix
+    # disagree can only fail. Read from the files themselves, so a change to either is seen here.
+    $pmMatrixPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json'
+    $pmMatrix = Get-Content -LiteralPath $pmMatrixPath -Raw | ConvertFrom-Json
+    $matrixExpect = @{}
+    foreach ($row in @($pmMatrix.vhd_scenarios) + @($pmMatrix.external_gates)) {
+        foreach ($step in @($row.steps)) { $matrixExpect["$($row.id)/$($step.id)"] = "$($step.expect)" }
+    }
+    $bodiesText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'partition_manager_certification_row_bodies.ps1') -Raw
+    $bodyStarts = @([regex]::Matches($bodiesText, "\`$Script:CertRowBodies\['(?<id>[^']+)'\]\s*=\s*\{"))
+    $compared = @{}
+    for ($index = 0; $index -lt $bodyStarts.Count; $index++) {
+        $start = $bodyStarts[$index].Index
+        $end = if ($index + 1 -lt $bodyStarts.Count) { $bodyStarts[$index + 1].Index } else { $bodiesText.Length }
+        $rowId = $bodyStarts[$index].Groups['id'].Value
+        $body = $bodiesText.Substring($start, $end - $start)
+        foreach ($call in [regex]::Matches($body, "Invoke-CertStep\s+-Step\s+'(?<step>[^']+)'")) {
+            $key = "$rowId/$($call.Groups['step'].Value)"
+            if (-not $matrixExpect.ContainsKey($key)) { continue }
+            # The call's own text: to the end of its line, and on past lines its brackets leave open
+            # (external.bitlocker's -Expect follows a -Choices table several lines long).
+            $depth = 0
+            $stop = $body.Length
+            for ($at = $call.Index; $at -lt $body.Length; $at++) {
+                $char = $body[$at]
+                if ($char -eq '{' -or $char -eq '(') { $depth++ }
+                elseif ($char -eq '}' -or $char -eq ')') { $depth--; if ($depth -lt 0) { $stop = $at; break } }
+                elseif ($char -eq "`n" -and $depth -eq 0) { $stop = $at; break }
+            }
+            $said = [regex]::Match($body.Substring($call.Index, $stop - $call.Index), "-Expect\s+'(?<expect>[a-z]+)'")
+            $bodyExpect = if ($said.Success) { $said.Groups['expect'].Value } else { 'success' }
+            $compared[$key] = $bodyExpect
+            if ($bodyExpect -cne $matrixExpect[$key]) { $Script:Failures.Add("$key expects $bodyExpect in its row body, and the matrix asks for $($matrixExpect[$key])") } else { $Script:Passes++ }
+        }
+    }
+    if ($compared.Count -lt 20) { $Script:Failures.Add("Only $($compared.Count) row-body steps were compared with the matrix") } else { $Script:Passes++ }
+    if ($compared['vhd.clear-disk-wipe/refused_on_thin'] -cne 'refused' -or $matrixExpect['vhd.clear-disk-wipe/refused_on_thin'] -cne 'refused') {
+        $Script:Failures.Add("vhd.clear-disk-wipe/refused_on_thin is not a refusal in both its row body ($($compared['vhd.clear-disk-wipe/refused_on_thin'])) and the matrix ($($matrixExpect['vhd.clear-disk-wipe/refused_on_thin']))")
+    } else { $Script:Passes++ }
+
 } finally {
     Remove-Item -LiteralPath $Script:Root -Recurse -Force -ErrorAction SilentlyContinue
 }

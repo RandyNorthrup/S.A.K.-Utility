@@ -438,7 +438,8 @@ $Script:CertRowBodies['vhd.clear-disk-wipe'] = {
     $thinFiles = Write-RbFixtureTree -Root "$($thinVolume.letter):\fixture"
     Write-VolumeCache -DriveLetter $thinVolume.letter
     $thinTableBefore = (Read-RbRawTable -DiskNumber $thin | ConvertTo-Json -Depth 4 -Compress)
-    Invoke-CertStep -Step 'refused_on_thin' -Operation 'WipeDisk' -Pin (Get-CertPin -DiskNumber $thin) -Expect 'failed' -RefusalContains 'thin-provisioned' | Out-Null
+    # Refused at the queue, before Apply, since 9623ad18 (it was an Apply that failed).
+    Invoke-CertStep -Step 'refused_on_thin' -Operation 'WipeDisk' -Pin (Get-CertPin -DiskNumber $thin) -Expect 'refused' -RefusalContains 'thin-provisioned' | Out-Null
     $thinTableAfter = (Read-RbRawTable -DiskNumber $thin | ConvertTo-Json -Depth 4 -Compress)
     $thinFilesAfter = Get-RbFileManifest -Root "$($thinVolume.letter):\fixture"
 

@@ -135,7 +135,7 @@ function Test-PureAdmissionContract {
         "step-proof-writes-through-the-panel-raw-path",
         "step-proof-format-adds-tool-fields-only-for-non-windows", "step-client-vouches-for-itself",
         "step-proof-assistant-route-takes-only-core-payloads", "step-administrator-scan-only-for-proof-jobs",
-        "step-an-apply-that-ran-is-no-refusal"
+        "step-an-apply-that-ran-is-no-refusal", "step-a-failure-refused-at-queue-says-so"
     )
     $checks = @($report.checks)
     Assert-Contract ($checks.Count -eq $expected.Count) "Pure guard check count changed"

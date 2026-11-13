@@ -951,6 +951,23 @@ bool expectedRefusal(const StepJob& job, const QStringList& reasons) {
            reasons.join(QLatin1Char(' ')).contains(job.refusal_contains, Qt::CaseInsensitive);
 }
 
+/// What a step reports when the operation was refused before Apply ran, at @p where ("queue" or
+/// "apply"), and the step did not expect that refusal. A step that expected Apply itself to fail
+/// says so in those words: the refusal moved earlier (9623ad18 moved Wipe Disk's thin-disk
+/// refusal from Apply to the queue), so the row's expectation is out of date, and "Not added to
+/// the queue" alone read as the operation's own failure (vhd.clear-disk-wipe, 1db87df4).
+QString refusedBeforeApplyMessage(const StepJob& job,
+                                  const QString& where,
+                                  const QString& reasons) {
+    if (job.expect == QStringLiteral("failed")) {
+        return QStringLiteral("expected Apply to fail; it was refused at %1: %2")
+            .arg(where, reasons);
+    }
+    return where == QStringLiteral("queue")
+               ? QStringLiteral("Not added to the queue: %1").arg(reasons)
+               : QStringLiteral("Apply refused: %1").arg(reasons);
+}
+
 bool executionPassed(const sak::PartitionExecutionResult& result, qsizetype queued) {
     return result.success && !result.dry_run && !result.cancelled && !result.timed_out &&
            result.steps.size() == queued && std::ranges::all_of(result.steps, [](const auto& step) {
@@ -1029,8 +1046,10 @@ Result<void> applyQueued(sak::PartitionManagerController& controller,
             report->insert("expectation_met", true);
             return {};
         }
-        return refused(QStringLiteral("Apply refused: %1")
-                           .arg(refusal.isEmpty() ? status : refusal.join(QStringLiteral("; "))));
+        return refused(refusedBeforeApplyMessage(
+            job,
+            QStringLiteral("apply"),
+            refusal.isEmpty() ? status : refusal.join(QStringLiteral("; "))));
     }
     const auto& result = **execution;
     report->insert("execution", executionJson(result));
@@ -1091,8 +1110,8 @@ Result<void> queueAndApply(sak::PartitionManagerController& controller,
             report->insert("expectation_met", true);
             return {};
         }
-        return refused(QStringLiteral("Not added to the queue: %1")
-                           .arg(queued.reasons.join(QStringLiteral("; "))));
+        return refused(refusedBeforeApplyMessage(
+            job, QStringLiteral("queue"), queued.reasons.join(QStringLiteral("; "))));
     }
     recordQueued(controller, report);
     return applyQueued(controller, job, report);
@@ -1787,6 +1806,25 @@ void selfTestJobs(const AddCheck& add) {
     add(QStringLiteral("step-proof-job-may-stop"), parseJob(stopped).has_value());
 }
 
+// A step that expected Apply to fail and was refused at the queue says that, not "Not added to
+// the queue" alone; a step that expected success keeps the plain wording.
+void selfTestRefusedBeforeApply(const AddCheck& add) {
+    const StepJob failure_job{.expect = QStringLiteral("failed"),
+                              .refusal_contains = QStringLiteral("thin-provisioned")};
+    const StepJob success_job{.expect = QStringLiteral("success")};
+    const QString thin = QStringLiteral(
+        "Wipe Disk needs a full format, and Windows does not allow one on a thin-provisioned disk");
+    add(QStringLiteral("step-a-failure-refused-at-queue-says-so"),
+        refusedBeforeApplyMessage(failure_job, QStringLiteral("queue"), thin) ==
+                QStringLiteral("expected Apply to fail; it was refused at queue: ") + thin &&
+            refusedBeforeApplyMessage(failure_job, QStringLiteral("apply"), thin) ==
+                QStringLiteral("expected Apply to fail; it was refused at apply: ") + thin &&
+            refusedBeforeApplyMessage(success_job, QStringLiteral("queue"), thin) ==
+                QStringLiteral("Not added to the queue: ") + thin &&
+            refusedBeforeApplyMessage(success_job, QStringLiteral("apply"), thin) ==
+                QStringLiteral("Apply refused: ") + thin);
+}
+
 void selfTestOutcomes(const AddCheck& add) {
     const QJsonObject redacted = withoutSecrets({{"recovery_password", "123"}, {"a", "b"}});
     add(QStringLiteral("step-report-withholds-a-password"),
@@ -1827,6 +1865,7 @@ void selfTestOutcomes(const AddCheck& add) {
     result.steps.first().skipped = true;
     add(QStringLiteral("step-execution-refuses-a-skipped-step"), !executionPassed(result, 1));
     add(QStringLiteral("step-has-a-builder-for-each-operation"), requestBuilders().size() == 27);
+    selfTestRefusedBeforeApply(add);
 }
 
 void selfTestOperationProof(const AddCheck& add) {
