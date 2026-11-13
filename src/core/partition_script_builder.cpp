@@ -4895,21 +4895,21 @@ static bool isHfsReadOnlyCheckRequest(const ExternalFileSystemToolScriptRequest&
 static PartitionScript buildStagedHfsReadOnlyCheckScript(
     const PartitionOperation& operation,
     const ExternalFileSystemToolScriptRequest& request,
-    const PartitionFileSystemToolResolution& fsckResolution,
-    const QString& rawTargetPath) {
+    const PartitionFileSystemToolResolution& fsck_resolution,
+    const QString& raw_target_path) {
     PartitionScript out;
     out.preview = request.preview + QStringLiteral(" using sparse staging");
-    const QString fsckPath =
-        PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(fsckResolution.tool_path));
-    const QString fsckHash =
-        PartitionScriptBuilder::quotePowerShell(fsckResolution.tool.binary_sha256.toLower());
+    const QString fsck_path = PartitionScriptBuilder::quotePowerShell(
+        QDir::toNativeSeparators(fsck_resolution.tool_path));
+    const QString fsck_hash =
+        PartitionScriptBuilder::quotePowerShell(fsck_resolution.tool.binary_sha256.toLower());
     out.script =
         commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
         hfsStagedFunctionsScript() +
         QStringLiteral(
             "$targetPath = %1\n"
             "$targetSizeBytes = [uint64]$p.Size\n")
-            .arg(PartitionScriptBuilder::quotePowerShell(rawTargetPath)) +
+            .arg(PartitionScriptBuilder::quotePowerShell(raw_target_path)) +
         hfsStagedImagePathScript(QStringLiteral("sak-hfs-check")) +
         QStringLiteral(
             "$stagingRequiredBytes = Get-SakHfsAllocatedBytes -RawTarget $targetPath "
@@ -4925,11 +4925,11 @@ static PartitionScript buildStagedHfsReadOnlyCheckScript(
             "} finally {\n"
             "  Remove-SakTemporaryPath $stagedImagePath\n"
             "}\n")
-            .arg(fsckPath, fsckHash);
+            .arg(fsck_path, fsck_hash);
     out.dry_run_script = out.preview + QStringLiteral("\nStage raw HFS target, check with ") +
-                         PartitionScriptBuilder::quotePowerShell(fsckResolution.tool_path) +
+                         PartitionScriptBuilder::quotePowerShell(fsck_resolution.tool_path) +
                          QStringLiteral(" -n -f on the staged image; nothing is written to ") +
-                         PartitionScriptBuilder::quotePowerShell(rawTargetPath);
+                         PartitionScriptBuilder::quotePowerShell(raw_target_path);
     // Staging reads the partition's whole data, as the repair's does.
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
