@@ -6453,10 +6453,13 @@ PartitionScript PartitionScriptBuilder::buildMergeScript(
                      // before the source is deleted.
                      "New-SakBackupFolder $destination\n"
                      "Invoke-SakRobocopy ('{0}:\\' -f $sourceVolume.DriveLetter) $destination\n"
+                     // The merged partition ends where the source ended: growing it to its
+                     // supported maximum also took the free space after the source (testpc2,
+                     // merged build 9170b149, F31: 1008 MiB from two of 256 MiB).
+                     "$mergedSize = [uint64]$source.Offset + [uint64]$source.Size - "
+                     "[uint64]$target.Offset\n"
                      "Remove-Partition -DiskNumber %1 -PartitionNumber %2 -Confirm:$false\n"
-                     "$supported = Get-PartitionSupportedSize -DiskNumber %1 -PartitionNumber %4\n"
-                     "Resize-Partition -DiskNumber %1 -PartitionNumber %4 -Size "
-                     "$supported.SizeMax\n")
+                     "Resize-Partition -DiskNumber %1 -PartitionNumber %4 -Size $mergedSize\n")
                      .arg(operation.target.disk_number.value())
                      .arg(source_partition)
                      .arg(quotePowerShell(folder))

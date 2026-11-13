@@ -22113,6 +22113,29 @@ void PartitionManagerCoreTests::scriptBuilder_buildsMergeScript() {
                  QStringLiteral("/XD (Join-Path $from 'System Volume Information') "
                                 "(Join-Path $from '$RECYCLE.BIN')")),
              qPrintable(script.script));
+    // F31: the merged partition ends where the source ended, not at its supported maximum.
+    {
+        PartitionTarget merge_target;
+        merge_target.kind = PartitionTargetKind::Partition;
+        merge_target.disk_number = DiskNumber{2};
+        merge_target.partition_number = PartitionNumber{1};
+        const auto merge =
+            PartitionScriptBuilder().buildScript(PartitionOperationPlanner::makeOperation(
+                PartitionOperationType::Merge,
+                merge_target,
+                QJsonObject{{QStringLiteral("source_partition_number"), QStringLiteral("2")},
+                            {QStringLiteral("target_folder"), QStringLiteral("Merged")}}));
+        QVERIFY2(merge.valid(), qPrintable(merge.blockers.join(' ')));
+        QVERIFY2(merge.script.contains(QStringLiteral("-Size $mergedSize")) &&
+                     !merge.script.contains(QStringLiteral("$supported.SizeMax")),
+                 qPrintable(merge.script));
+        // From the target's start to the source's end, read before the source is removed.
+        const qsizetype sized = merge.script.indexOf(
+            QStringLiteral("$mergedSize = [uint64]$source.Offset + [uint64]$source.Size - "
+                           "[uint64]$target.Offset\n"));
+        QVERIFY2(sized > 0 && sized < merge.script.indexOf(QStringLiteral("Remove-Partition")),
+                 qPrintable(merge.script));
+    }
 }
 
 void PartitionManagerCoreTests::scriptBuilder_formatsByPartitionIdentity() {
