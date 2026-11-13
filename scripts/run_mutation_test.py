@@ -861,7 +861,8 @@ def _scoped_properties(records) -> dict:
 
 def _ctest_registration(build_dir: str, config: str, regex: str) -> dict:
     log_path = _next_log_path("ctest-registration")
-    result = _run(["ctest", "--test-dir", build_dir, "-C", config, "-R", regex,
+    result = _run(["ctest", "--interactive-debug-mode", "0", "--test-dir", build_dir, "-C", config,
+                   "-R", regex,
                    "--show-only=json-v1"], TEST_DISCOVERY_TIMEOUT_SECONDS, log_path)
     if result != 0:
         raise HarnessError(f"CTest registration discovery failed; see {log_path}")
@@ -995,7 +996,8 @@ def _test_passes(build_dir: str, config: str, regex: str,
         execution_dir, execution_regex, qt_report, expected_name = _prepare_qt_selection(
             build_dir, config, regex, target, functions, log_path)
     result = _run(
-        ["ctest", "--test-dir", execution_dir, "-C", config, "-R", execution_regex,
+        ["ctest", "--interactive-debug-mode", "0", "--test-dir", execution_dir, "-C", config,
+         "-R", execution_regex,
          "--no-tests=error", "--timeout", str(TEST_CASE_TIMEOUT_SECONDS),
          "--output-on-failure", "--output-junit", str(report_path)],
         TEST_COMMAND_TIMEOUT_SECONDS, log_path,

@@ -56,6 +56,27 @@ QString appFile(const QString& name) {
     return QDir(QCoreApplication::applicationDirPath()).filePath(name);
 }
 
+// The files beside a test program by the names this build gives them: a Debug build loads Qt's and
+// vcpkg's Debug DLLs (Qt6Cored.dll, platforms\qwindowsd.dll, zd.dll), and those are what it has
+// beside it (the Debug+ASan nightly on 9170b149 found no Qt6Core.dll there).
+#ifdef _DEBUG
+constexpr bool kDebugBuild = true;
+#else
+constexpr bool kDebugBuild = false;
+#endif
+QString builtName(const char* release, const char* debug) {
+    return QString::fromLatin1(kDebugBuild ? debug : release);
+}
+QString qtCoreName() {
+    return builtName("Qt6Core.dll", "Qt6Cored.dll");
+}
+QString qwindowsName() {
+    return builtName("qwindows.dll", "qwindowsd.dll");
+}
+QString zlibName() {
+    return builtName("z.dll", "zd.dll");
+}
+
 bool copyInto(const QString& source, const QString& folder, const QString& name) {
     return QDir().mkpath(folder) && QFile::copy(source, QDir(folder).filePath(name));
 }
@@ -321,7 +342,7 @@ void ProgramIntegrityTests::signaturesOfRealFiles() {
         return signature;
     };
     QCOMPARE(read(QCoreApplication::applicationFilePath()).state, pi::SignatureState::Unsigned);
-    const pi::Signature qt = read(appFile(QStringLiteral("Qt6Core.dll")));
+    const pi::Signature qt = read(appFile(qtCoreName()));
     QVERIFY2(qt.state == pi::SignatureState::Trusted ||
                  qt.state == pi::SignatureState::UntrustedChain,
              qPrintable(qt.detail));
@@ -329,8 +350,8 @@ void ProgramIntegrityTests::signaturesOfRealFiles() {
              qPrintable(qt.subject));
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QString tampered = dir.filePath(QStringLiteral("Qt6Core.dll"));
-    QVERIFY(QFile::copy(appFile(QStringLiteral("Qt6Core.dll")), tampered));
+    const QString tampered = dir.filePath(qtCoreName());
+    QVERIFY(QFile::copy(appFile(qtCoreName()), tampered));
     QVERIFY(flipByteNearMiddle(tampered));
     QCOMPARE(read(tampered).state, pi::SignatureState::Invalid);
 }
@@ -341,12 +362,12 @@ void ProgramIntegrityTests::cleanFolderIsHeldAndAPlantedDllRefused() {
     const QString root = program.path();
     QVERIFY(copyInto(
         QCoreApplication::applicationFilePath(), root, QStringLiteral("sak_elevated_helper.exe")));
-    QVERIFY(copyInto(appFile(QStringLiteral("Qt6Core.dll")), root, QStringLiteral("Qt6Core.dll")));
-    QVERIFY(copyInto(appFile(QStringLiteral("platforms/qwindows.dll")),
+    QVERIFY(copyInto(appFile(qtCoreName()), root, qtCoreName()));
+    QVERIFY(copyInto(appFile(QStringLiteral("platforms/") + qwindowsName()),
                      root + "/platforms",
-                     QStringLiteral("qwindows.dll")));
+                     qwindowsName()));
     // data\ is the person's, never loaded: not checked.
-    QVERIFY(copyInto(appFile(QStringLiteral("z.dll")), root + "/data", QStringLiteral("x.dll")));
+    QVERIFY(copyInto(appFile(zlibName()), root + "/data", QStringLiteral("x.dll")));
     {
         const auto hold = pi::ProgramHold::verify(root);
         QVERIFY2(hold,
@@ -354,7 +375,7 @@ void ProgramIntegrityTests::cleanFolderIsHeldAndAPlantedDllRefused() {
         QCOMPARE(hold->heldFiles().size(), 3);
     }
     // A planted DLL with a name the loader looks for refuses the elevation and is named.
-    QVERIFY(copyInto(appFile(QStringLiteral("z.dll")), root, QStringLiteral("version.dll")));
+    QVERIFY(copyInto(appFile(zlibName()), root, QStringLiteral("version.dll")));
     const auto refused = pi::ProgramHold::verify(root);
     QVERIFY(!refused);
     QVERIFY2(refused.error().file.endsWith(QStringLiteral("version.dll"), Qt::CaseInsensitive),
@@ -365,21 +386,19 @@ void ProgramIntegrityTests::cleanFolderIsHeldAndAPlantedDllRefused() {
 void ProgramIntegrityTests::tamperedPinnedFileIsRefused() {
     QTemporaryDir program;
     QVERIFY(program.isValid());
-    QVERIFY(copyInto(
-        appFile(QStringLiteral("Qt6Core.dll")), program.path(), QStringLiteral("Qt6Core.dll")));
-    QVERIFY(flipByteNearMiddle(QDir(program.path()).filePath(QStringLiteral("Qt6Core.dll"))));
+    QVERIFY(copyInto(appFile(qtCoreName()), program.path(), qtCoreName()));
+    QVERIFY(flipByteNearMiddle(QDir(program.path()).filePath(qtCoreName())));
     const auto refused = pi::ProgramHold::verify(program.path());
     QVERIFY(!refused);
-    QVERIFY(refused.error().file.endsWith(QStringLiteral("Qt6Core.dll"), Qt::CaseInsensitive));
+    QVERIFY(refused.error().file.endsWith(qtCoreName(), Qt::CaseInsensitive));
 }
 
 void ProgramIntegrityTests::junctionInsideTheProgramFolderIsRefused() {
     QTemporaryDir program;
     QTemporaryDir elsewhere;
     QVERIFY(program.isValid() && elsewhere.isValid());
-    QVERIFY(copyInto(appFile(QStringLiteral("platforms/qwindows.dll")),
-                     elsewhere.path(),
-                     QStringLiteral("qwindows.dll")));
+    QVERIFY(copyInto(
+        appFile(QStringLiteral("platforms/") + qwindowsName()), elsewhere.path(), qwindowsName()));
     QVERIFY(sak::test::createJunction(QDir(program.path()).filePath(QStringLiteral("platforms")),
                                       elsewhere.path()));
     QVERIFY(!pi::ProgramHold::verify(program.path()));
@@ -429,7 +448,7 @@ void ProgramIntegrityTests::moduleLoadedFromElsewhereFailsTheAudit() {
     QTemporaryDir elsewhere;
     QVERIFY(elsewhere.isValid());
     const QString stray = QDir(elsewhere.path()).filePath(QStringLiteral("stray.dll"));
-    QVERIFY(QFile::copy(appFile(QStringLiteral("z.dll")), stray));
+    QVERIFY(QFile::copy(appFile(zlibName()), stray));
     HMODULE module =
         LoadLibraryExW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(stray).utf16()),
                        nullptr,
@@ -445,7 +464,9 @@ void ProgramIntegrityTests::moduleLoadedFromElsewhereFailsTheAudit() {
 // The manifest must cover every DLL the build puts beside the program that is not first-party:
 // each DLL in the build output folder (Qt, MSVC runtime, vcpkg) and every Qt plugin. The build
 // folder's windeployqt run also copies the Windows SDK's shader compilers, which the package leaves
-// out (scripts/deploy_qt_runtime.ps1: --no-system-d3d-compiler, --no-system-dxc-compiler).
+// out (scripts/deploy_qt_runtime.ps1: --no-system-d3d-compiler, --no-system-dxc-compiler). A Debug
+// build's own list covers what it alone puts there: vcpkg's Debug DLLs and, with ENABLE_ASAN, the
+// AddressSanitizer runtime (the Debug+ASan nightly on 9170b149 found that one unpinned).
 void ProgramIntegrityTests::everyShippedFileTheBuildCopiesIsPinned() {
     const QDir output(QCoreApplication::applicationDirPath());
     const QStringList not_shipped = {QStringLiteral("dxcompiler.dll"), QStringLiteral("dxil.dll")};

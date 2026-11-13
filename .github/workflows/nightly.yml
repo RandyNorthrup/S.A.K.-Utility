@@ -87,11 +87,20 @@ jobs:
         $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         icacls $env:GITHUB_WORKSPACE /grant "*${sid}:(OI)(CI)F" /T /C /Q
         exit $LASTEXITCODE
+    # Every import of every program and test executable built here resolves beside it or in
+    # System32, before any test runs: the four programs linked with /DEPENDENTLOADFLAG:0x1000 never
+    # search PATH, and a missing DLL is named here instead of failing a test, or hanging one on a
+    # Windows error box (the 9170b149 nightly). scripts/check_program_imports.ps1.
+    - name: Imports resolve beside each executable
+      shell: pwsh
+      run: '& scripts/check_program_imports.ps1 -Directory build/Release'
+
     - name: Test (T4 labels)
       shell: pwsh
       run: |
-        & scripts/invoke_unelevated.ps1 -FilePath ctest -- --test-dir build -C Release `
-          -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error -L $env:T4_LABELS `
+        & scripts/invoke_unelevated.ps1 -FilePath ctest -- --interactive-debug-mode 0 `
+          --test-dir build -C Release -j $env:NUMBER_OF_PROCESSORS --output-on-failure `
+          --no-tests=error -L $env:T4_LABELS `
           -E '^test_defender_clean$'
         $ctestExit = $LASTEXITCODE
         "CTEST EXIT: $ctestExit"
@@ -293,9 +302,23 @@ jobs:
         New-ItemProperty -Path $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
         New-ItemProperty -Path $key -Name DumpCount -Value 30 -PropertyType DWord -Force | Out-Null
 
+    # Every import of every program and test executable built here resolves beside it or in
+    # System32, before any test runs: the four programs linked with /DEPENDENTLOADFLAG:0x1000 never
+    # search PATH, and a missing DLL is named here instead of failing a test, or hanging one on a
+    # Windows error box (the 9170b149 nightly). scripts/check_program_imports.ps1.
+    - name: Imports resolve beside each executable
+      shell: pwsh
+      run: '& scripts/check_program_imports.ps1 -Directory build-debug/Debug'
+
     - name: Test (Debug, ASan, native suites)
       shell: pwsh
       run: |
+        # ctest-error-mode-exempt: the one ctest call without --interactive-debug-mode 0. Its
+        # error mode 0x0003 stops Windows Error Reporting writing a crash dump for an access
+        # violation or a fail-fast (measured on testpc1, 2026-11-13), and the steps below collect
+        # this job's dumps. What a missing DLL would do here is caught before it: the
+        # check_program_imports step above; and a test that waits anyway ends at its TIMEOUT
+        # (every test has one, scaled 5 times here). scripts/check_ctest_error_mode.ps1.
         & scripts/invoke_unelevated.ps1 -FilePath ctest -- --test-dir build-debug -C Debug `
           -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error -L '^(product|fuzz-extended)$'
         $ctestExit = $LASTEXITCODE
@@ -312,7 +335,7 @@ jobs:
         $cdb = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
         if ($files.Count -gt 0 -and -not (Test-Path -LiteralPath $cdb)) { 'cdb is not on this runner; the dumps are in the artifact' }
         $symbols = "srv*$env:RUNNER_TEMP\symbols*https://msdl.microsoft.com/download/symbols;" +
-          "$env:GITHUB_WORKSPACE\build-debug\tests\Debug;$env:GITHUB_WORKSPACE\build-debug\Debug"
+          "$env:GITHUB_WORKSPACE\build-debug\Debug"
         foreach ($file in $files) {
           "===== $($file.Name)"
           if (Test-Path -LiteralPath $cdb) {

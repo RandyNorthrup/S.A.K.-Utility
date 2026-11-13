@@ -273,6 +273,25 @@ tier as proof of a wider one.
 CTest labels are set in one block at the end of `tests/CMakeLists.txt`; `tests/README.md` lists
 what each holds. Configure fails for a script test with no label.
 
+Every CTest test has a time limit. A test that sets no `TIMEOUT` gets `SAK_TEST_DEFAULT_TIMEOUT`
+(300 s, scaled 5 times in the ASan job), and configure fails for a test registered without one:
+with none, two writer-CLI tests that could not start waited out the nightly's 330-minute job
+(2026-11-12). A test that needs longer sets its own `TIMEOUT` where it is added.
+
+A missing DLL must fail at once, never wait on a Windows error box. Every ctest call in a workflow
+or under `scripts/` passes `--interactive-debug-mode 0` (`scripts/check_ctest_error_mode.ps1`, a
+T2 static gate). The one exemption is the nightly's Debug + ASan test step: that error mode
+(0x0003) also stops Windows Error Reporting writing the crash dumps the job collects (measured on
+testpc1, 2026-11-13), so the step carries `ctest-error-mode-exempt:` with its reasons. Every job
+that runs tests first runs `scripts/check_program_imports.ps1` on its output folder, which names
+each executable whose imports do not resolve beside it or in System32.
+
+A Debug build's tests sit in `build/Debug` beside its programs, as Release's sit in
+`build/Release`: the product looks for the helper and `sak_script_types.dll` beside the running
+program. The four programs linked with `/DEPENDENTLOADFLAG:0x1000` resolve imports only from their
+folder and System32, never PATH, so each configuration stages its own DLLs beside them (Debug:
+vcpkg's `zd.dll` and `bz2d.dll`), and the program manifest pins what each configuration puts there.
+
 Before a local commit that touches code: T1 hooks, a build, and the tests your change can reach
 (`ctest -L <label>` or `-R`). A fix that changes a message another subsystem asserts on is not
 proved by its own file's tests -- search for the message and run those too. The full suite runs

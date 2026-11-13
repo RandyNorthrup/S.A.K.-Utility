@@ -3517,6 +3517,125 @@ four camelCase names opsproof's F28 function brought. f6b5d1ba renames them; the
 again, and `test_partition_manager_core` passed 449 of 449. The elevated cases ran on testpc1 (above): the whole
 `test_raw_partition_write` suite, 19 of 19.
 
+### The Debug + ASan nightly on 9170b149: two tests that never ended, tests with no time limit, and the Debug layout (2026-11-12)
+
+Nightly 43277300774 on 9170b149 (the one on 9aa97f95 was 297 of 297): the Debug + ASan job ran into
+its 330-minute limit, and six suites failed. Reproduced in a local Debug + ASan build configured as
+the nightly's is (`-DENABLE_ASAN=ON -DSAK_TEST_TIMEOUT_SCALE=5`), run through
+`scripts/run_ctest_no_dialogs.ps1`. None of it is a product hang. Each failure is the Debug build's
+layout, which the security round (19b982d1) made matter; a Release package already has every file
+beside its programs and was not affected.
+
+**The writer CLI tests never ended, and test_single_instance_app's first instance did not start.**
+The security round linked sak_utility, the helper and both writer CLIs with
+`/DEPENDENTLOADFLAG:0x1000`: they resolve their imports only from their own folder and System32,
+never PATH. A Debug build imports vcpkg's Debug DLLs (`zd.dll`, and for sak_utility also
+`bz2d.dll`), which only PATH held: the build staged the Release names (`z.dll`, `bz2.dll`) beside
+the programs. `dumpbin /dependents` of the nightly's programs as built locally: each CLI's one
+import not beside it was `zd.dll`. Under ctest without `--interactive-debug-mode 0` a missing
+import is a Windows error box that waits for an answer, so the CLIs never ended and sak_utility
+never started ("The first instance did not start within 90 s"). Each configuration now stages its
+own vcpkg DLLs beside sak_utility and both writer CLIs (`SAK_VCPKG_DEBUG_RUNTIME_DLL_GROUPS` in
+CMakeLists.txt, staged for each of the three, so a build of one CLI alone has them too); every
+import of the four programs resolves beside them or in System32 (dumpbin, checked locally). A
+Release build stages what it did.
+
+**Neither test had a time limit.** 283 of 361 tests set no TIMEOUT, ctest has none of its own
+here (no `include(CTest)`), and `SAK_TEST_TIMEOUT_SCALE` multiplies only limits that exist. Every
+test now has one: a test that sets none gets `SAK_TEST_DEFAULT_TIMEOUT`, 300 s, and configure fails
+for a test registered without one (the check runs after the last `add_test`). 300 s is 4.7 times
+the slowest such test in Release (`test_file_explorer_archive_service`, 64 s on the workstation)
+and, scaled to 1500 s under ASan, 7 times the slowest such test there
+(`test_file_management_explorer_panel`, 204 s on that nightly). `test_app_theme`, 21 s in Release
+but 1182 s and 1760 s on the last two ASan nightlies, sets its own 600 s (3000 s scaled). ctest
+4.4.5 ends a test's whole process tree at its limit: a test whose child slept 90 s holding its
+output ended at its 8 s limit, with no process left. The writer CLI tests would now have failed
+after 25 minutes, not 330.
+
+**test_elevation_hardening ("helper is missing"), test_script_types, and all 22 of
+test_partition_manager_core's failures.** Debug test programs ran from `build/tests/Debug`, while
+the product looks for the helper and `sak_script_types.dll` beside the running program (security
+round). Release's tests sit beside the app in `build/Release`; Debug's now sit beside it in
+`build/Debug` (`CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG`), with `Qt6Testd.dll` and `qoffscreend.dll`
+staged there as Release stages `Qt6Test.dll` and `qoffscreen.dll`, and the step that copied the
+tools and sak_utility.exe into `tests/Debug` is gone. Core's
+`inventoryScan_aCallPastItsOwnLimitSaysWhichStep` ("no progress for 6 s") was the same cause: the
+scan ends itself through `Sak.ScanProcess` from that DLL, and without it the quiet limit ended it
+instead. The bootsect.exe PROBLEM in that run was fixed in 2b392fed (above).
+
+**test_program_integrity (7 failures).** It named Release's files (`Qt6Core.dll`,
+`platforms\qwindows.dll`, `z.dll`); it now names the build's own (`Qt6Cored.dll`, `qwindowsd.dll`,
+`zd.dll` in Debug). The program manifest pinned only Release's vcpkg DLLs, so a Debug build's
+`zd.dll`, `bz2d.dll`, its own `liblzma.dll` and the ASan runtime failed the shipped-file check and
+the module audit. A Debug build now compiles a list of its own (`cmake/program_manifest.cmake`,
+under `_DEBUG`: vcpkg's `debug/bin` in place of `bin` and, with ENABLE_ASAN, the ASan runtime); the
+Release list is line for line what it was. The helper-missing case was the layout above.
+
+**Tests and drills.** Locally, Debug + ASan as the nightly configures it, through the no-dialogs
+wrapper at -j 6: the `product` and `fuzz-extended` labels, 304 of 304 (303 passed; the
+skipped one is test_single_instance_app, which starts the application and so runs only where
+`SAK_TEST_ALLOW_REAL_HARDWARE` is set: its cause is read from sak_utility's imports above).
+test_partition_manager_core 528 s, test_app_theme 1188 s. Drills, each red with the fix broken and
+green with every byte restored: `asan-debug-dlls-release-names` (Debug staged the Release names:
+both CLI tests red, the CLI exiting -1073741515, STATUS_DLL_NOT_FOUND, at once under the wrapper),
+`asan-dlls-staged-for-the-app-only` (the CLIs built alone, as before: the same), `asan-tests-in-tests-debug`
+("helper is missing", test_script_types red), `asan-integrity-release-names` (5 cases red: "open
+failed" and the copies), `asan-debug-manifest-is-release` (the audit names the ASan runtime; the
+shipped-file check names bz2d.dll, the ASan runtime and zd.dll), `asan-no-debug-offscreen`
+(test_elevation_hardening 0xc0000409, "no Qt platform plugin could be initialized"),
+`asan-no-debug-qttest` (the audit names Qt6Testd.dll from Qt's own folder) and
+`no-default-timeout` (configure: "These tests have no TIMEOUT, so a hang would wait out the whole CI
+job"). The first round's greens of the three test_program_integrity drills failed on `z.dll` and
+`bz2.dll` that the first drill's red half had staged in `build\Debug`; with those removed all three
+ran again, red then green. A fresh Debug build never has them, and a Debug tree from before this
+change needs them deleted once: the shipped-file check names them.
+
+**A missing DLL fails at once, and is found before the tests.** The coordinator's addition, in the
+same change. Every ctest call in the workflows and under `scripts/` now passes
+`--interactive-debug-mode 0` (ci.yml's T2 shards and registration query, nightly.yml's T4 job,
+the coverage, branch-coverage, mutation, shard-planning, skip-audit and AI smoke runners), so a
+test program that cannot load a DLL exits with 0xC0000135 instead of waiting on a box. One call
+keeps the default: the nightly's Debug + ASan test step. Measured on testpc1 (2026-11-13, a
+throwaway crash probe, LocalDumps set as that job sets it, then removed): at error mode 0 Windows
+Error Reporting wrote a dump for an access violation and for a fail-fast; at 0x0003, what the
+flag gives, it wrote neither; at 0x0001 it wrote one. ctest can give only 0x0003, so the flag
+there would have left that job's dump and stack steps nothing to read. That step says so in a
+`ctest-error-mode-exempt:` comment, and what guards it instead: every test's TIMEOUT, and a new
+step before it. `scripts/check_ctest_error_mode.ps1` (a T2 static gate, `test_check_ctest_error_mode`)
+fails on a ctest call without the flag (15 calls found: each form the tree uses, its flag on a
+continued line included), allows the exemption only in nightly.yml, only with the words dump,
+TIMEOUT and check_program_imports in it, and only once, and fails when it finds no workflow call
+at all. `scripts/check_program_imports.ps1` reads each executable's import and delay-import tables
+from the file (no dumpbin), follows the DLLs beside it transitively, and fails naming each
+executable and each DLL that is neither beside it nor in System32 (API sets aside). ci.yml's
+shards, nightly's T4 job and the ASan job run it on their output folder before their tests:
+locally 305 executables in Release and 299 in Debug pass, in about 15 s. Drilled by moving
+`zd.dll` out of the Debug folder: it named sak_apfs_writer_cli, sak_hfs_writer_cli and
+sak_utility (60 missing imports in all), and passed with the DLL back. `test_check_program_imports`
+runs it on a real writer CLI alone (red, naming its zlib and Qt DLLs), with the DLLs it names
+copied in (green), with its zlib DLL removed again (red, naming z.dll, and zd.dll against the Debug
+build), on a stand-in import table (a DLL beside the program is followed and its own missing import
+named with it), and on a folder with no executables (red). Drills, each red then green with every
+byte restored: `imports-not-transitive`, `imports-anything-resolves`, `imports-empty-folder-passes`,
+`ctest-flag-any-value`, `ctest-exemption-anywhere`, `ctest-exemption-no-reasons`,
+`ctest-no-continuation`, `ctest-strings-read-as-calls`, `ctest-two-exemptions-allowed`,
+`ctest-vacuous-passes`, `ci-t2-without-flag`, `mutation-runner-without-flag`,
+`nightly-exemption-without-timeout`. Not drilled: the delay-import table, since no executable here
+has one to remove.
+
+**Gate.** Alone on the PC, on 99f69abc with this change uncommitted: configure; full Release build, 0 errors
+and 0 compiler warnings; T2 labels at -j 6, 333 of 333; cert-tooling 8 of 8; tooling-extended 17 of 17; the
+mutation label 1 of 1 and `run_all_mutation_catalogs.py --validate` PASS (61 catalogs); the clang-tidy naming gate,
+non-core 155 of 155 TUs clean and core 174 of 174 healthy (5,291 measured, unchanged); every ci.yml static gate,
+19 of 19, the new one included; the hooks on the commit. The first T2 run took 9 minutes, against 5 for the same
+suites minutes before and after, with every long suite 2 to 4 times slower than it runs: something else loaded the
+PC, and it lost `test_partition_manager_release_claims` to process capture's cleanup budget and
+`test_partition_image_volume_lock_selected_mbr_unpinned_guid` to its 210 s limit; run again, all 333 passed, those
+two in 36 s and 16 s. The Release T2 run before the ctest flag and the import check were added (the same CMake and
+test changes): 331 of 331. The coverage job has no import step: it builds RelWithDebInfo, whose tests run from
+`build/tests/RelWithDebInfo` with Qt on PATH, and its sixteen core suites start none of the four programs. release.yml
+runs no ctest.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

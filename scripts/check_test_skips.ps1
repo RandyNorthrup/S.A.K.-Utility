@@ -249,7 +249,7 @@ function Read-RegisteredQtLogNames {
     } else {
         $ctest = Get-Command ctest -ErrorAction Stop
         $buildDir = Split-Path -Parent $ResultsDir
-        $registrationText = (& $ctest.Source --test-dir $buildDir -C Release `
+        $registrationText = (& $ctest.Source --interactive-debug-mode 0 --test-dir $buildDir -C Release `
             --show-only=json-v1) -join "`n"
         if ($LASTEXITCODE -ne 0) {
             throw "ctest registration query failed with exit code $LASTEXITCODE"

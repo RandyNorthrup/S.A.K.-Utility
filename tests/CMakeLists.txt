@@ -20,6 +20,13 @@ file(MAKE_DIRECTORY "${TEST_OUTPUT_DIR}")
 # windeployqt placed in build/Release/.  Using the config-specific property
 # (RUNTIME_OUTPUT_DIRECTORY_RELEASE) avoids the extra subdirectory.
 set(SAK_MAIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/Release")
+# A Debug build's tests sit beside its sak_utility.exe too (build/Debug), as the Release tests do:
+# tests that start the elevated helper or load sak_script_types.dll find them beside themselves.
+# In build/tests/Debug they did not, and the Debug+ASan nightly on 9170b149 failed
+# test_elevation_hardening ("helper is missing") and test_script_types for it. Every test target
+# here takes this unless it names its own Debug folder.
+set(SAK_DEBUG_OUTPUT_DIR "${CMAKE_BINARY_DIR}/Debug")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG "${SAK_DEBUG_OUTPUT_DIR}")
 
 # Product code a test exercises comes from the static product libraries declared in the root
 # CMakeLists.txt (sak_foundation and the layers above it): a test target lists its own test
@@ -136,6 +143,21 @@ else()
     message(FATAL_ERROR
         "qoffscreen.dll not found next to Qt6::Core - the GUI test suites "
         "force QT_QPA_PLATFORM=offscreen and would abort at startup")
+endif()
+# The same two for a Debug build, whose tests sit in build/Debug beside its program (see
+# CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG above) and load Qt's Debug DLLs: Qt6Testd.dll, and
+# qoffscreend.dll, since windeployqt deploys only qwindowsd.dll there and Qt looks for the platform
+# plugin beside the program. A Qt without Debug DLLs cannot build Debug at all, so their absence
+# is not an error here.
+get_target_property(_qt_test_dll_debug Qt6::Test IMPORTED_LOCATION_DEBUG)
+if(_qt_test_dll_debug AND EXISTS "${_qt_test_dll_debug}")
+    file(COPY "${_qt_test_dll_debug}" DESTINATION "${SAK_DEBUG_OUTPUT_DIR}")
+    message(STATUS "Deployed ${_qt_test_dll_debug} -> ${SAK_DEBUG_OUTPUT_DIR}")
+endif()
+if(_qt_bin_dir AND EXISTS "${_qt_bin_dir}/../plugins/platforms/qoffscreend.dll")
+    file(COPY "${_qt_bin_dir}/../plugins/platforms/qoffscreend.dll"
+         DESTINATION "${SAK_DEBUG_OUTPUT_DIR}/platforms")
+    message(STATUS "Deployed qoffscreend.dll for headless Debug GUI tests")
 endif()
 
 # ============================================================================
@@ -1740,8 +1762,11 @@ target_include_directories(test_app_theme PRIVATE
 add_test(NAME test_app_theme COMMAND test_app_theme
          -o "${TEST_OUTPUT_DIR}/test_app_theme.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# 21 s in Release, but 1182 s and 1760 s under Debug + ASan on the last two nightlies (9aa97f95,
+# 9170b149), the slowest suite there by far: the default limit, scaled, would be 1500 s. 600 s
+# scaled is 3000 s, 1.7 times the slower of the two.
 set_tests_properties(test_app_theme PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 600)
 message(STATUS "Added unit test: test_app_theme")
 
 # test_theme_widget_states - what the theme draws for checked, selected, disabled, focused and
@@ -7157,6 +7182,22 @@ add_test(NAME test_run_ctest_no_dialogs
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_ctest_no_dialogs.ps1")
 set_tests_properties(test_run_ctest_no_dialogs PROPERTIES TIMEOUT 120)
 
+# Every ctest call in the workflows and scripts/ passes --interactive-debug-mode 0, so a test that
+# cannot load a DLL exits at once instead of waiting on a Windows error box; the one exemption is
+# the nightly's Debug + ASan step, which keeps its crash dumps.
+add_test(NAME test_check_ctest_error_mode
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_check_ctest_error_mode.ps1")
+set_tests_properties(test_check_ctest_error_mode PROPERTIES TIMEOUT 120)
+
+# The import check the CI jobs run before their tests: a real writer CLI without its DLLs is named
+# with each, with them it passes, and with its zlib DLL removed again that DLL is named.
+add_test(NAME test_check_program_imports
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_check_program_imports.ps1"
+                 -CliPath "$<TARGET_FILE:sak_apfs_writer_cli>")
+set_tests_properties(test_check_program_imports PROPERTIES TIMEOUT 120)
+
 # The CI toolchain's pinned downloads: an outage is retried, a 4xx or a wrong file is refused, and a
 # cached copy is used only when it is the pinned file.
 add_test(NAME test_pinned_download
@@ -7617,7 +7658,8 @@ set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_depende
     test_verify_authenticode_signatures test_sign_exe_signers)
 set(_sak_labels_tooling
     test_process_capture test_process_capture_windows_powershell test_assert_built_target
-    test_run_ctest_no_dialogs test_pinned_download test_run_lizard_js_baseline
+    test_run_ctest_no_dialogs test_check_ctest_error_mode test_check_program_imports
+    test_pinned_download test_run_lizard_js_baseline
     test_cppcheck_qt_slot_classifier
     test_dialog_buttons_deferred
     test_run_folder_retention test_run_folder_retention_windows_powershell
@@ -7709,6 +7751,25 @@ foreach(_sak_guard_target IN LISTS _sak_guard_targets)
 endforeach()
 
 get_property(_sak_label_tests DIRECTORY PROPERTY TESTS)
+
+# Every test has a time limit. ctest has none of its own here (no include(CTest), so no
+# DART_TESTING_TIMEOUT), and a test that sets none waits as long as whatever it waits on: on the
+# 9170b149 nightly (43277300774) test_sak_apfs_writer_cli and test_sak_hfs_writer_cli waited on a
+# writer CLI that could not load zd.dll until the job's 330-minute limit ended the whole job; they
+# were two of 283 tests with none. A test that sets none above gets this one: 300 s is 4.7 times
+# the slowest of them in Release (test_file_explorer_archive_service, 64 s on a workstation) and,
+# scaled below, 7 times the slowest under Debug + ASan (test_file_management_explorer_panel, 204 s on
+# that nightly). A test that needs longer sets its own where it is added, as test_app_theme does.
+# ctest 4.4.5 ends the test's whole process tree at its limit, a program the test started included
+# (measured 2026-11-12 with a test whose child slept 90 s holding its output: ended at 8 s, its
+# limit, and no process left).
+set(SAK_TEST_DEFAULT_TIMEOUT 300)
+foreach(_sak_test IN LISTS _sak_label_tests)
+    get_test_property(${_sak_test} TIMEOUT _sak_timeout)
+    if(NOT _sak_timeout)
+        set_tests_properties(${_sak_test} PROPERTIES TIMEOUT ${SAK_TEST_DEFAULT_TIMEOUT})
+    endif()
+endforeach()
 
 # Every TIMEOUT above was set against the Release build. Debug + AddressSanitizer runs the same
 # suites several times slower: the first nightly (42913851120, 2026-11-10), set against T2 on the
@@ -7819,24 +7880,12 @@ message(STATUS "Test labels: ${_sak_label_test_count} tests labelled; "
 # Debug / sanitizer run environment
 # ============================================================================
 #
-# Debug test binaries run from tests/Debug, not beside sak_utility as Release's do, and the suites
-# that use a bundled tool look beside the executable. So do the suites that start the application
-# itself (the built-in MCP cases look for sak_utility.exe beside them): without it the first
-# Debug + ASan nightly failed them with "Built-in MCP app is missing" (2026-11-10).
-set(_sak_stage_tools_for_debug_tests
-    "${CMAKE_COMMAND}"
-    "-DSAK_TOOLS_SOURCE=${CMAKE_SOURCE_DIR}/tools"
-    "-DSAK_TOOLS_DESTINATION=${CMAKE_CURRENT_BINARY_DIR}/Debug/tools"
-    -P "${CMAKE_SOURCE_DIR}/cmake/copy_tools_bundle.cmake")
-set(_sak_stage_app_for_debug_tests
-    "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:sak_utility>"
-    "${CMAKE_CURRENT_BINARY_DIR}/Debug/")
-add_custom_target(sak_stage_tools_for_debug_tests ALL
-    COMMAND "$<$<CONFIG:Debug>:${_sak_stage_tools_for_debug_tests}>"
-    COMMAND "$<$<CONFIG:Debug>:${_sak_stage_app_for_debug_tests}>"
-    COMMAND_EXPAND_LISTS
-    VERBATIM)
-add_dependencies(sak_stage_tools_for_debug_tests sak_utility)
+# Debug test binaries sit beside sak_utility in build/Debug (CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG at
+# the top of this file), where its build already puts the bundled tools and the application the
+# suites look for beside themselves. Until 2026-11-12 they ran from tests/Debug, and a step copied
+# the tools and sak_utility.exe there (without it the first Debug + ASan nightly failed the
+# built-in MCP cases with "Built-in MCP app is missing", 2026-11-10); the helper and
+# sak_script_types.dll it did not copy.
 
 # Release test binaries find their Qt DLLs because the packaging step stages
 # them next to the executables. The Debug configuration has no such step, so a
@@ -7885,4 +7934,21 @@ else()
             "Could not resolve the Qt6::Core location, so test binaries would "
             "not find their Qt DLLs. Refusing to configure a test suite that "
             "cannot run.")
+endif()
+
+# Last, after every add_test: a test registered without a time limit is refused, whichever line of
+# this file adds it (the default above reaches only the tests added before it). See
+# SAK_TEST_DEFAULT_TIMEOUT for why.
+get_property(_sak_timed_tests DIRECTORY PROPERTY TESTS)
+set(_sak_untimed_tests "")
+foreach(_sak_test IN LISTS _sak_timed_tests)
+    get_test_property(${_sak_test} TIMEOUT _sak_timeout)
+    if(NOT _sak_timeout OR _sak_timeout LESS_EQUAL 0)
+        list(APPEND _sak_untimed_tests ${_sak_test})
+    endif()
+endforeach()
+if(_sak_untimed_tests)
+    list(JOIN _sak_untimed_tests ", " _sak_untimed_text)
+    message(FATAL_ERROR "These tests have no TIMEOUT, so a hang would wait out the whole CI job: "
+                        "${_sak_untimed_text}")
 endif()

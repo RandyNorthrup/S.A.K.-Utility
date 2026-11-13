@@ -189,7 +189,7 @@ try {
 
     Write-Host "Running instrumented tests (regex: $TestRegex) ..."
     $ctestResult = Invoke-CapturedProcess -FilePath $ctest -WorkingDirectory $buildPath `
-        -Arguments @('-R', $TestRegex, '--output-on-failure')
+        -Arguments @('--interactive-debug-mode', '0', '-R', $TestRegex, '--output-on-failure')
     @($ctestResult.stdout, $ctestResult.stderr) | Where-Object {
         -not [string]::IsNullOrWhiteSpace($_)
     } | ForEach-Object { $_ -split "`r?`n" } | Select-Object -Last 12 | Write-Host

@@ -161,6 +161,11 @@ jobs:
       shell: pwsh
       run: '& scripts/check_build_system_lint.ps1'
 
+    - name: Every ctest call fails fast on a missing DLL
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_ctest_error_mode.ps1'
+
   # ==========================================================================================
   # Build every target and run the T2 labels, spread over several runners.
   #
@@ -270,14 +275,23 @@ jobs:
       shell: pwsh
       run: '& scripts/invoke_unelevated.ps1 -FilePath pwsh -- -NoProfile -NonInteractive -File scripts/check_accessibility_patterns.ps1'
 
+    # Every import of every program and test executable built here resolves beside it or in
+    # System32, before any test runs: the four programs linked with /DEPENDENTLOADFLAG:0x1000 never
+    # search PATH, and a missing DLL is named here instead of failing a test, or hanging one on a
+    # Windows error box (the 9170b149 nightly). scripts/check_program_imports.ps1.
+    - name: Imports resolve beside each executable
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_program_imports.ps1 -Directory build/Release'
+
     - name: Test (T2 labels, this shard)
       if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
       shell: pwsh
       run: |
         $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
-        & scripts/invoke_unelevated.ps1 -FilePath ctest -- --test-dir build -C Release `
-          -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error `
-          -L $env:T2_LABELS -R $plan.tests_regex
+        & scripts/invoke_unelevated.ps1 -FilePath ctest -- --interactive-debug-mode 0 `
+          --test-dir build -C Release -j $env:NUMBER_OF_PROCESSORS --output-on-failure `
+          --no-tests=error -L $env:T2_LABELS -R $plan.tests_regex
         $ctestExit = $LASTEXITCODE
         "CTEST EXIT: $ctestExit"
         exit $ctestExit
@@ -404,7 +418,8 @@ jobs:
       shell: pwsh
       run: |
         $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
-        $json = ctest --test-dir build -C Release --show-only=json-v1 -L $env:T2_LABELS -R $plan.tests_regex
+        $json = ctest --interactive-debug-mode 0 --test-dir build -C Release --show-only=json-v1 `
+          -L $env:T2_LABELS -R $plan.tests_regex
         if ($LASTEXITCODE -ne 0) { throw "ctest --show-only exited $LASTEXITCODE" }
         [IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE 'build/ci-registration.json'), ($json -join "`n"))
 

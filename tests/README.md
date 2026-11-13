@@ -63,7 +63,7 @@ Every registered test carries exactly one tier label (set in the label block at 
 |---|---|---|
 | `product` | T2 | Native QtTest suites (the default) and the product scripts: browser extension, pack/register, the Create Image lock rows, the APFS/HFS writer CLIs, the release-binary scan for partition/filesystem test hooks and the retired SAK_DEV_SOURCE_TREE override |
 | `release-tooling` | T2 | Startup budget, runtime-DLL audit and signature publisher regressions |
-| `tooling` | T2 | Core process-capture contract, lizard JS baseline, cppcheck Qt-slot classifier, run-folder retention fences |
+| `tooling` | T2 | Core process-capture contract, lizard JS baseline, cppcheck Qt-slot classifier, run-folder retention fences, the ctest error-mode and program-import checks |
 | `cert` | T2 | Apple filesystem capability matrix gate (JSON only); Partition Manager row evidence guards, claim level and site wording, code digest, and whether the matrix is what its generator writes |
 | `tooling-extended` | T4 | Process-capture ownership/deadline/output/stdin/environment scopes, false-green harness, portable staging and archive recovery |
 | `mutation` | T4 | Mutation runner regressions |

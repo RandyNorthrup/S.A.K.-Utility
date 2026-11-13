@@ -149,7 +149,8 @@ try {
         '--export_type', "html:$htmlDir",
         '--cover_children',
         '--quiet',
-        '--', 'ctest', '--test-dir', $buildPath, '-C', $Config, '-R', $TestRegex,
+        '--', 'ctest', '--interactive-debug-mode', '0', '--test-dir', $buildPath, '-C', $Config,
+        '-R', $TestRegex,
         '--output-on-failure'
     )
     $captured = Invoke-CapturedProcess -FilePath $occ -Arguments $coverageArgs

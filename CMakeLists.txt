@@ -208,13 +208,13 @@ if(MSVC)
         set(SAK_ASAN_STATE "ENABLED for the Debug configuration")
         message(STATUS "Address Sanitizer:  ${SAK_ASAN_STATE}")
         message(STATUS "ASan runtime:       ${SAK_ASAN_RUNTIME}")
-        # Stage it beside both Debug output roots at configure time, so every
-        # Debug executable finds it without depending on the developer's PATH.
-        # An instrumented binary that cannot load this DLL dies with
-        # STATUS_DLL_NOT_FOUND before main, which reads as a broken test
-        # rather than a missing runtime -- measured, not assumed.
+        # Stage it beside the Debug output root at configure time (the tests sit
+        # there too), so every Debug executable finds it without depending on
+        # the developer's PATH. An instrumented binary that cannot load this DLL
+        # dies with STATUS_DLL_NOT_FOUND before main, which reads as a broken
+        # test rather than a missing runtime -- measured, not assumed. The Debug
+        # program manifest pins it (sak_write_program_manifest's DEBUG_FILES).
         file(COPY "${SAK_ASAN_RUNTIME}" DESTINATION "${CMAKE_BINARY_DIR}/Debug")
-        file(COPY "${SAK_ASAN_RUNTIME}" DESTINATION "${CMAKE_BINARY_DIR}/tests/Debug")
     endif()
 endif()
 
@@ -1733,20 +1733,53 @@ if(_sak_vcpkg_dlls_required AND NOT DEFINED VCPKG_INSTALLED_DIR)
         "or bundled. Configure with the vcpkg toolchain file so VCPKG_INSTALLED_DIR is "
         "defined, or use a -static triplet.")
 endif()
+# The same libraries as a Debug build imports them: vcpkg keeps Debug's own DLLs under debug/bin,
+# some under other names (zd.dll, bz2d.dll). The programs linked with /DEPENDENTLOADFLAG:0x1000
+# below resolve their imports only from their folder and System32, never PATH, so a Debug build
+# that staged only the Release names could not start them. On the 9170b149 nightly the Debug+ASan
+# writer CLIs (whose one import not beside them was zd.dll) never ended, their tests running until
+# the job's limit, and sak_utility (zd.dll and bz2d.dll) never started: under ctest without
+# --interactive-debug-mode 0 a missing import is a Windows error box that waits for an answer.
+# Each configuration stages its own; a Release package is unchanged.
+set(SAK_VCPKG_DEBUG_RUNTIME_DLL_GROUPS
+    "zd.dll|zlibd1.dll|zlibd.dll"
+    "bz2d.dll|libbz2d.dll"
+    "liblzma.dll|lzmad.dll|lzma.dll"
+)
+# The programs that resolve their imports only from their own folder, and so need the DLLs staged
+# beside them whichever of them is built first.
+set(SAK_VCPKG_DLL_STAGED_FOR sak_utility sak_apfs_writer_cli sak_hfs_writer_cli)
 if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
     set(SAK_VCPKG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+    set(SAK_VCPKG_DEBUG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
+    set(_sak_group_index 0)
     foreach(group ${SAK_VCPKG_RUNTIME_DLL_GROUPS})
         string(REPLACE "|" ";" group_dlls "${group}")
+        list(GET SAK_VCPKG_DEBUG_RUNTIME_DLL_GROUPS ${_sak_group_index} _sak_debug_group)
+        math(EXPR _sak_group_index "${_sak_group_index} + 1")
+        string(REPLACE "|" ";" _sak_debug_dlls "${_sak_debug_group}")
+        set(_sak_debug_dll "")
+        foreach(_sak_debug_name ${_sak_debug_dlls})
+            if(NOT _sak_debug_dll AND EXISTS "${SAK_VCPKG_DEBUG_BIN}/${_sak_debug_name}")
+                set(_sak_debug_dll "${SAK_VCPKG_DEBUG_BIN}/${_sak_debug_name}")
+            endif()
+        endforeach()
         set(group_found FALSE)
         foreach(dll ${group_dlls})
             set(runtime_dll "${SAK_VCPKG_BIN}/${dll}")
             if(EXISTS "${runtime_dll}")
-                add_custom_command(TARGET sak_utility POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${runtime_dll}"
-                        "$<TARGET_FILE_DIR:sak_utility>"
-                    COMMENT "Bundling ${dll} from vcpkg..."
-                )
+                set(_sak_staged_dll "${runtime_dll}")
+                if(_sak_debug_dll)
+                    set(_sak_staged_dll "$<IF:$<CONFIG:Debug>,${_sak_debug_dll},${runtime_dll}>")
+                endif()
+                foreach(_sak_staging_target ${SAK_VCPKG_DLL_STAGED_FOR})
+                    add_custom_command(TARGET ${_sak_staging_target} POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${_sak_staged_dll}"
+                            "$<TARGET_FILE_DIR:${_sak_staging_target}>"
+                        COMMENT "Bundling ${dll} (Debug: its debug build) from vcpkg..."
+                    )
+                endforeach()
                 set(group_found TRUE)
             endif()
         endforeach()
@@ -1882,12 +1915,21 @@ else()
 endif()
 get_target_property(_sak_qt_core_dll Qt6::Core IMPORTED_LOCATION_RELEASE)
 get_filename_component(_sak_qt_bin_dir "${_sak_qt_core_dll}" DIRECTORY)
+# A Debug build pins what it puts beside its programs instead: vcpkg's Debug DLLs (staged above)
+# and, with ENABLE_ASAN, the AddressSanitizer runtime. The Debug+ASan nightly on 9170b149 found
+# test_program_integrity's audit and shipped-file checks refusing those.
+set(_sak_manifest_debug_files "")
+if(MSVC AND ENABLE_ASAN)
+    list(APPEND _sak_manifest_debug_files "${SAK_ASAN_RUNTIME}")
+endif()
 include(cmake/program_manifest.cmake)
 sak_write_program_manifest("${CMAKE_CURRENT_BINARY_DIR}/include/sak/program_manifest.inc"
     QT_BIN "${_sak_qt_bin_dir}"
     QT_PLUGINS "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}"
     VC_RUNTIME "${_sak_vc_runtime_dir}"
     VCPKG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    DEBUG_VCPKG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+    DEBUG_FILES ${_sak_manifest_debug_files}
     TOOLS "${CMAKE_CURRENT_SOURCE_DIR}/tools")
 
 # ============================================================================
