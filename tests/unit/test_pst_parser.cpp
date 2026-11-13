@@ -236,6 +236,7 @@ private Q_SLOTS:
     void unicode4kZeroDeclaredSizeStoresUncompressed();
     void unicode4kBadZlibFailsClosed();
     void unicode4kDecompressSizeMismatchFailsClosed();
+    void unicode4kCorruptChecksumFailsClosed();
     void unicode4kZlibBombStopsAtTheDeclaredSize();
     void compressibleEncryptedPstDecodesRootPropertyContext();
     void reusableOpenableFixtureReachesRootFolder();
@@ -781,6 +782,29 @@ void TestPstParser::unicode4kDecompressSizeMismatchFailsClosed() {
     QVERIFY(!parser.isOpen());  // inflated size != declared -> fail closed
     // The exact-size invariant, named. A regressed page/trailer size or footer read would
     // refuse the store as an integrity or read failure and leave this invariant untested.
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(error_spy.takeFirst().at(0).toString(),
+             QStringLiteral("Failed to build folder hierarchy: Block decompression failed"));
+}
+
+// decompressBlockIf4k, the inflate result itself: a real zlib stream with the true inflated length
+// declared, but its adler32 checksum (the stream's last four bytes) broken. Every byte inflates
+// before zlib finds the checksum wrong, so only inflate's own result tells: the block must fail
+// closed, not hand the unverified bytes downstream.
+void TestPstParser::unicode4kCorruptChecksumFailsClosed() {
+    const int inflated = static_cast<int>(buildRootPcHeapForTest().size());
+    QByteArray stream = rootHeapZlibStream();
+    constexpr char kChecksumFlip = 0x5A;  // any change to the last checksum byte
+    stream[stream.size() - 1] = static_cast<char>(stream.at(stream.size() - 1) ^ kChecksumFlip);
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    temp_file.write(buildUnicode4kBlockStore(stream, static_cast<uint16_t>(inflated)));
+    temp_file.close();
+
+    PstParser parser;
+    QSignalSpy error_spy(&parser, &PstParser::errorOccurred);
+    parser.open(temp_file.fileName());
+    QVERIFY(!parser.isOpen());
     QCOMPARE(error_spy.count(), 1);
     QCOMPARE(error_spy.takeFirst().at(0).toString(),
              QStringLiteral("Failed to build folder hierarchy: Block decompression failed"));

@@ -167,6 +167,7 @@ private Q_SLOTS:
     void queueRefusalGivesItsReasons();
     void logTextIsPlainAndWhole();
     void quickPartitionBatchUsesSequentialProjectedInventory();
+    void queueChecksEachOperationAgainstTheLayoutBeforeIt();
     void changedQueueReviewTokenRefusesApply();
     void undoLastOperationRestoresReadyState();
     void freshSameHashMetadataBlocksApply();
@@ -495,6 +496,29 @@ void PartitionManagerControllerTests::logTextIsPlainAndWhole() {
     QVERIFY(text.contains(QStringLiteral("Failed: Second step\nit broke\nstderr here")));
     QVERIFY(!text.contains(QStringLiteral("<table")));
     QVERIFY(!text.contains(QStringLiteral("&lt;")));
+}
+
+// Each queued operation is checked against the disk as the ones queued before it leave it (the
+// projected inventory), not as the scan found it: after Delete All Partitions, the disk is empty,
+// so Initialize Disk may follow. Checked against the scan, which still shows the partition, it was
+// refused ("Initialize Disk requires an empty/raw disk").
+void PartitionManagerControllerTests::queueChecksEachOperationAgainstTheLayoutBeforeIt() {
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(volumeInventory());
+    QSignalSpy status(&controller, &sak::PartitionManagerController::statusMessage);
+    const bool queued = controller.queueOperations(
+        {{.type = sak::PartitionOperationType::DeleteAllPartitions,
+          .target = testDiskTarget(),
+          .payload = QJsonObject{}},
+         {.type = sak::PartitionOperationType::InitializeDisk,
+          .target = testDiskTarget(),
+          .payload = QJsonObject{{QStringLiteral("target_style"), QStringLiteral("GPT")}}}});
+    QStringList said;
+    for (const auto& message : status) {
+        said.append(message.at(0).toString());
+    }
+    QVERIFY2(queued, qPrintable(said.join(QStringLiteral(" | "))));
+    QCOMPARE(controller.queue().operations().size(), kTwoQueuedOperations);
 }
 
 void PartitionManagerControllerTests::quickPartitionBatchUsesSequentialProjectedInventory() {

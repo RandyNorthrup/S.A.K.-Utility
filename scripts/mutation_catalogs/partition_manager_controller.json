@@ -143,8 +143,8 @@
     {
       "id": "batch-preview-ignores-projected-inventory",
       "file": "src/core/partition_manager_controller.cpp",
-      "find": "const auto preview = m_planner.previewOperation(projected_inventory, operation);\n        batch.operations.append(preview.operations);",
-      "replace": "const auto preview = m_planner.previewOperation(m_inventory, operation);\n        batch.operations.append(preview.operations);",
+      "find": "auto preview = m_planner.previewOperation(projected_inventory, operation);\n        appendQueuedBackupBlocker(m_inventory, operation, &preview);",
+      "replace": "auto preview = m_planner.previewOperation(m_inventory, operation);\n        appendQueuedBackupBlocker(m_inventory, operation, &preview);",
       "expect": "killed",
       "why": "quickPartitionBatchUsesSequentialProjectedInventory requires Create APFS to validate against the Initialize GPT result, not the original RAW disk."
     },
