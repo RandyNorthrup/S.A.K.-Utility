@@ -33,6 +33,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScopeGuard>
+#include <QSemaphore>
 #include <QStandardPaths>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -165,6 +166,46 @@ private:
     }
 
     QList<QStringList> m_netsh_calls;
+    sak::ScopedProcessFaultInjector m_injector;
+};
+
+/// A diagnostic the test holds running: the DNS cache read (its one PowerShell call) waits in its
+/// worker until release(), then answers an empty cache. Only that call is held; every other launch
+/// takes its usual path.
+class HeldDnsCacheRead {
+public:
+    HeldDnsCacheRead()
+        : m_injector(
+              [this](const QString&, const QStringList& args) -> std::optional<sak::ProcessResult> {
+                  if (!args.join(QLatin1Char(' ')).contains(QStringLiteral("Get-DnsClientCache"))) {
+                      return std::nullopt;
+                  }
+                  m_entered.release();
+                  m_released.acquire();
+                  sak::ProcessResult result;
+                  result.exit_code = 0;
+                  result.std_out = QStringLiteral("[]");
+                  return result;
+              }) {}
+    ~HeldDnsCacheRead() { release(); }
+    HeldDnsCacheRead(const HeldDnsCacheRead&) = delete;
+    HeldDnsCacheRead& operator=(const HeldDnsCacheRead&) = delete;
+    HeldDnsCacheRead(HeldDnsCacheRead&&) = delete;
+    HeldDnsCacheRead& operator=(HeldDnsCacheRead&&) = delete;
+
+    /// True once the read has reached its worker and is waiting there.
+    [[nodiscard]] bool waitUntilHeld(int timeout_ms) { return m_entered.tryAcquire(1, timeout_ms); }
+    void release() {
+        if (!m_let_go) {
+            m_let_go = true;
+            m_released.release();
+        }
+    }
+
+private:
+    QSemaphore m_entered;
+    QSemaphore m_released;
+    bool m_let_go{false};
     sak::ScopedProcessFaultInjector m_injector;
 };
 
@@ -712,15 +753,20 @@ void NetworkDiagnosticPanelTests::generateReportAddsTheExtensionItWasNotGiven() 
     QVERIFY(QFile::exists(dir.filePath(QStringLiteral("net.html"))));
 }
 
-// The first thing the panel does is scan adapters. A click during that says so, and does not ask
-// for details the controller would then refuse.
+// A click on Generate Report while a diagnostic runs says so, and does not ask for details the
+// controller would then refuse. The click reaches the panel queued, so a real adapter scan that
+// ended first (its end is queued too, and ahead) let the report through: the Debug+ASan nightly on
+// 1db87df4 saw no box. The diagnostic here is one the test holds running until the click has been
+// answered, however fast or slow this PC is.
 void NetworkDiagnosticPanelTests::generateReportWaitsForARunningDiagnostic() {
     sak::QuickActionController quick_actions;
     sak::NetworkDiagnosticPanel panel(quick_actions);
     auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
     QVERIFY(controller != nullptr);
     QVERIFY(waitForStartupScan(panel));
-    controller->scanAdapters();  // marks the operation active before it returns
+    HeldDnsCacheRead held;
+    controller->dnsInspectCache();
+    QVERIFY(held.waitUntilHeld(kAdapterScanTimeoutMs));
     QVERIFY(!controller->canGenerateReport());
     QPushButton* button = reportButton(panel);
     QVERIFY(button != nullptr);
@@ -729,6 +775,8 @@ void NetworkDiagnosticPanelTests::generateReportWaitsForARunningDiagnostic() {
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(driver.saw_message_box);
     QVERIFY(!driver.details_answered);
+    held.release();
+    QTRY_VERIFY_WITH_TIMEOUT(controller->canGenerateReport(), kAdapterScanTimeoutMs);
 }
 
 // Seen on a VM: the log held DL 171.31 Mbps, UL 26.98 Mbps, latency 227.0 ms and the screen was

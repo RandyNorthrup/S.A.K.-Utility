@@ -3728,6 +3728,20 @@ asks for `failed`, and refuses a refused step whose client failed. Drills: `thin
 `step-client-plain-queue-wording`. Not drilled: the two call sites of the new wording (no local test reaches a
 real queue refusal), only the function both call.
 
+**Network Diagnostics' report test, a flake on the Debug+ASan nightly (43501912348, 1db87df4).**
+`generateReportWaitsForARunningDiagnostic` failed "'driver.saw_message_box' returned FALSE". The test started a
+real adapter scan (`scanAdapters`, off the GUI thread) and clicked Generate Report, counting on the scan to be
+still running. Generate Report's click is connected `Qt::QueuedConnection`, and the scan's end reaches the
+controller queued too (`QThread::finished`, then `removeOperation`): a scan that ended before the click put its
+end ahead of the click in the queue, `sendPostedEvents` delivered it first, the report saw nothing running and
+asked for details instead of saying a diagnostic runs. Forced: `QTest::qSleep(3000)` after the scan started
+turned the old test red with exactly the nightly's failure. Now the diagnostic is one the test holds running: the
+DNS cache read, whose one PowerShell call a `ScopedProcessFaultInjector` holds in its worker until the test lets
+it go, after the click has been answered. The same forced 3 s sleep leaves the new test green, and letting the
+read go before the click turns it red (drill `report-test-releases-before-the-click`, red then green with every
+byte restored). Fifty runs of the whole suite under load (18 CPU burners on a 20-thread PC, 36 minutes): 50
+passed.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and
