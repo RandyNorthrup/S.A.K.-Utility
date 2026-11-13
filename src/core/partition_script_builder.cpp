@@ -139,10 +139,13 @@ QString windowsContinuedLine(WindowsContinuedWork work,
     return windowsContinuedStatement(work, size_expression, statement) + QLatin1Char('\n');
 }
 
-// Repair-Volume -Scan starts the storage job "Repair Volume", which finishes on its own. The size
-// of the volume is not known where these scans run, so the marker carries none.
-QString volumeScanLine(const QString& statement) {
-    return windowsContinuedLine(WindowsContinuedWork::VolumeScan, QStringLiteral("0"), statement);
+// Repair-Volume -Scan starts the storage job "Repair Volume", which finishes on its own; its
+// markers carry @p size_expression ("0" where the volume's size is not known). The settle after
+// every online scan follows at once (see kVolumeScanSettleSeconds).
+QString volumeScanLine(const QString& statement,
+                       const QString& size_expression = QStringLiteral("0")) {
+    return windowsContinuedLine(WindowsContinuedWork::VolumeScan, size_expression, statement) +
+           volumeScanSettleStatement() + QLatin1Char('\n');
 }
 
 // The scan of the volume at drive letter @p drive (a PowerShell expression). Repair-Volume -Scan
@@ -4166,7 +4169,7 @@ static QString allocateExecutionScript(const PartitionOperation& operation,
                                       QStringLiteral("0"),
                                       volumeScanStatement(
                                           QStringLiteral("$targetVolume.DriveLetter"))) +
-            QStringLiteral(" }\n") +
+            QStringLiteral("; ") + volumeScanSettleStatement() + QStringLiteral(" }\n") +
             volumeScanLine(volumeScanStatement(QStringLiteral("$sourceDrive"))) +
             QStringLiteral("Get-Partition -DiskNumber %1 | Sort-Object Offset | Format-Table "
                            "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))
@@ -5483,9 +5486,8 @@ PartitionScript PartitionScriptBuilder::buildCheckFileSystemScript(
     PartitionScript out;
     out.preview = QStringLiteral("Check file system on %1:").arg(letter.toUpper());
     out.script = commonHeader(out.preview) +
-                 windowsContinuedLine(WindowsContinuedWork::VolumeScan,
-                                      uintArg(operation.target.size_bytes),
-                                      volumeScanStatement(quotePowerShell(letter.toUpper()), true));
+                 volumeScanLine(volumeScanStatement(quotePowerShell(letter.toUpper()), true),
+                                uintArg(operation.target.size_bytes));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -5759,9 +5761,8 @@ PartitionScript PartitionScriptBuilder::buildSurfaceTestScript(
             "  Write-Output \"Scanning volume $($_.DriveLetter):\"\n"
             "  ")
             .arg(operation.target.disk_number.value()) +
-        windowsContinuedLine(WindowsContinuedWork::VolumeScan,
-                             QStringLiteral("$_.Size"),
-                             volumeScanStatement(QStringLiteral("$_.DriveLetter"), true)) +
+        volumeScanLine(volumeScanStatement(QStringLiteral("$_.DriveLetter"), true),
+                       QStringLiteral("$_.Size")) +
         QStringLiteral("}\n");
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
@@ -6697,9 +6698,8 @@ PartitionScript PartitionScriptBuilder::buildDefragVolumeScript(
                              QStringLiteral(
                                  "Optimize-Volume -DriveLetter $driveLetter -Defrag -Verbose "
                                  "-ErrorAction Stop")) +
-        windowsContinuedLine(WindowsContinuedWork::VolumeScan,
-                             uintArg(operation.target.size_bytes),
-                             volumeScanStatement(QStringLiteral("$driveLetter")));
+        volumeScanLine(volumeScanStatement(QStringLiteral("$driveLetter")),
+                       uintArg(operation.target.size_bytes));
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }
@@ -6888,9 +6888,8 @@ PartitionScript PartitionScriptBuilder::buildMovePartitionScript(
                         "Invoke-SakRobocopy $backupPath $sourceRoot\n"
                         "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"
                         "Assert-SakManifestMatch $backupManifest $restoredManifest\n") +
-         windowsContinuedLine(WindowsContinuedWork::VolumeScan,
-                              QStringLiteral("$targetSize"),
-                              volumeScanStatement(QStringLiteral("$drive"))) +
+         volumeScanLine(volumeScanStatement(QStringLiteral("$drive")),
+                        QStringLiteral("$targetSize")) +
          QStringLiteral("Get-Partition -DiskNumber %7 | Sort-Object Offset | Format-Table "
                         "DiskNumber,PartitionNumber,DriveLetter,Offset,Size,Type -AutoSize\n"))
             .arg(quotePowerShell(payload.drive),

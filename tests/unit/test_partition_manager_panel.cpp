@@ -200,6 +200,7 @@ private Q_SLOTS:
     void ssdSecureEraseShowsQueueDialog();
     void ssdSecureEraseNamesTheBusItSees();
     void readOnlyScansRunNowWithoutQueueing();
+    void checkFileSystemSaysToWaitBeforeUnplugging();
     void windowsPhaseDisablesCancelAndSaysSo();
     void openClosePromptFollowsTheRun();
     void scanFileSystemsIsDiskLevelOnly();
@@ -6271,6 +6272,64 @@ void PartitionManagerPanelTests::readOnlyScansRunNowWithoutQueueing() {
     QCOMPARE(executed->types,
              QVector<sak::PartitionOperationType>({sak::PartitionOperationType::CheckFileSystem,
                                                    sak::PartitionOperationType::SurfaceTest}));
+}
+
+// A drive removed right after an online scan can crash Windows (volsnap, 2026-11-12). The script
+// waits after the scan; Check File System's result also says to wait, but only for a drive that
+// can be pulled out: one on USB, or one Windows calls removable. An NVMe drive inside the PC gets
+// no such line.
+void PartitionManagerPanelTests::checkFileSystemSaysToWaitBeforeUnplugging() {
+    const QString note =
+        QStringLiteral("Wait a few seconds after this finishes before unplugging the drive.");
+    struct Drive {
+        const char* bus;
+        bool removable;
+        bool noted;
+    };
+    for (const Drive& drive :
+         {Drive{"USB", false, true}, Drive{"SATA", true, true}, Drive{"NVMe", false, false}}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = applyReviewInventoryFixture();
+        inventory.disks[0].unique_id = QStringLiteral("panel-unplug-disk");
+        inventory.disks[0].bus_type = QString::fromLatin1(drive.bus);
+        inventory.disks[0].is_removable = drive.removable;
+        panel.setTestInventoryForReview(inventory);
+        panel.setTestApplyExecutorForReview([](const QVector<sak::PartitionOperation>&,
+                                               bool dry_run,
+                                               bool,
+                                               const sak::CancelCheck&) {
+            sak::PartitionExecutionResult result;
+            result.success = true;
+            result.dry_run = dry_run;
+            result.message = QStringLiteral("scan complete");
+            return result;
+        });
+        QStringList shown;
+        QTimer closer;
+        closer.setInterval(1);
+        QObject::connect(&closer, &QTimer::timeout, [&shown]() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                shown.append(box->text());
+                box->accept();
+            }
+        });
+        closer.start();
+
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        auto* button = findToolButtonByName(&panel, QStringLiteral("Check File System"));
+        QVERIFY2(button != nullptr, drive.bus);
+        QTRY_VERIFY2(button->isEnabled(), drive.bus);
+        pressAction(button);
+        QTRY_COMPARE(shown.size(), 1);
+        QVERIFY2(shown.constFirst().startsWith(QStringLiteral("scan complete")),
+                 qPrintable(shown.constFirst()));
+        QVERIFY2(shown.constFirst().contains(note) == drive.noted,
+                 qPrintable(QString::fromLatin1(drive.bus) + QStringLiteral(": ") +
+                            shown.constFirst()));
+        QCoreApplication::processEvents();
+    }
 }
 
 namespace {

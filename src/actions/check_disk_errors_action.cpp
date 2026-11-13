@@ -272,7 +272,8 @@ QString CheckDiskErrorsAction::buildScanVolumeScript(QChar drive) {
     // it never calls -OfflineScanAndFix (which schedules a boot-time repair). The verdict is the
     // result the scan itself returns; a repair is only ever recommended, never run.
     // The scan is a Windows storage job ("Repair Volume") that finishes even when this script is
-    // killed, so it runs between the markers that say so.
+    // killed, so it runs between the markers that say so. The settle follows it at once: a drive
+    // removed right after an online scan can crash Windows (see kVolumeScanSettleSeconds).
     return (QStringLiteral("$drive = \"%1:\"\n"
                            "Write-Output '===SCAN_START==='\n"
                            "Write-Output \"Drive: $drive\"\n"
@@ -284,6 +285,7 @@ QString CheckDiskErrorsAction::buildScanVolumeScript(QChar drive) {
                                       QStringLiteral("0"),
                                       QStringLiteral("$scanResult = Repair-Volume -DriveLetter %1 "
                                                      "-Scan -ErrorAction Stop")) +
+            QStringLiteral("\n    ") + volumeScanSettleStatement() +
             QStringLiteral("\n"
                            "    Write-Output \"ScanResult: $scanResult\"\n"
                            "} catch {\n"

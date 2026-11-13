@@ -11496,6 +11496,21 @@ void PartitionManagerPanel::onExploreSelected() {
     }
 }
 
+namespace {
+
+// A drive a technician can pull out: one Windows calls removable, or one on a bus whose drives are
+// unplugged (a USB hard drive calls itself fixed).
+bool diskCanBeUnplugged(const PartitionDiskInfo* disk) {
+    if (disk == nullptr) {
+        return false;
+    }
+    const QString bus = disk->bus_type.trimmed().toUpper();
+    return disk->is_removable || bus == QStringLiteral("USB") || bus == QStringLiteral("SD") ||
+           bus == QStringLiteral("MMC") || bus == QStringLiteral("1394");
+}
+
+}  // namespace
+
 void PartitionManagerPanel::onCheckFileSystem() {
     const auto availability = partitionActionAvailability(selectedPartition(),
                                                           windowsNativePolicy());
@@ -11503,7 +11518,11 @@ void PartitionManagerPanel::onCheckFileSystem() {
         showWarningLogged(this, tr("Check File System"), availability.reason);
         return;
     }
-    runReadOnlyOperation(PartitionOperationType::CheckFileSystem);
+    // A drive removed right after an online scan can crash Windows (volsnap, 2026-11-12). The
+    // script waits after the scan; the result also says to wait, for a drive that can be pulled.
+    const bool unpluggable = diskCanBeUnplugged(selectedDisk());
+    m_unplug_note_pending = runReadOnlyOperation(PartitionOperationType::CheckFileSystem) &&
+                            unpluggable;
 }
 
 void PartitionManagerPanel::onInspectNonNativeFileSystem() {
@@ -11866,18 +11885,18 @@ void PartitionManagerPanel::onSurfaceTest() {
     runReadOnlyOperation(PartitionOperationType::SurfaceTest);
 }
 
-void PartitionManagerPanel::runReadOnlyOperation(PartitionOperationType type) {
+bool PartitionManagerPanel::runReadOnlyOperation(PartitionOperationType type) {
     // A scan changes nothing, so it runs now rather than waiting in the Apply queue behind a
     // review dialog. The controller re-checks that the type is read-only and refuses otherwise.
     if (queueMutationBlockedByRunningOperation()) {
-        return;
+        return false;
     }
     const auto target = selectedTarget();
     if (!target) {
         Q_EMIT statusMessage(tr("Select a target first"), sak::kTimerStatusDefaultMs);
-        return;
+        return false;
     }
-    m_controller->runReadOnlyOperation(type, *target);
+    return m_controller->runReadOnlyOperation(type, *target);
 }
 
 void PartitionManagerPanel::onSpaceAnalyzer() {
@@ -13681,11 +13700,17 @@ void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& 
         std::ranges::any_of(result.steps, [](const PartitionExecutionStep& step) {
             return step.may_still_run_in_windows || !step.stop_cleanup_not_removed.isEmpty();
         });
+    QString message = result.message;
+    if (m_unplug_note_pending) {
+        m_unplug_note_pending = false;
+        message += QStringLiteral("\n\n") +
+                   tr("Wait a few seconds after this finishes before unplugging the drive.");
+    }
     if (result.success || (result.cancelled && !needs_attention)) {
-        showInformationLogged(this, tr("Partition Manager"), result.message);
+        showInformationLogged(this, tr("Partition Manager"), message);
         return;
     }
-    showWarningLogged(this, tr("Partition Manager"), result.message);
+    showWarningLogged(this, tr("Partition Manager"), message);
 }
 
 std::optional<PartitionTarget> PartitionManagerPanel::selectedTarget() const {

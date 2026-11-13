@@ -1612,6 +1612,8 @@ private Q_SLOTS:
     void generatedScripts_checkerNamesAStorageCmdletThatWouldNotStop();
     void generatedScripts_writerCallsPassEveryArgumentOn();
     void generatedScripts_volumeScanStopsOnWhatItFinds();
+    void generatedScripts_volumeScanSettlesBeforeDone();
+    void generatedScripts_everyOnlineScanSettles();
     void generatedScripts_toolRunnerSurvivesStderrAndKeepsTheExitCode();
     void generatedScripts_toolRunnerReadsWhatE2fsckSays();
     void fileSystemTools_sayWhenTheyCouldNotOpenThePartition();
@@ -6290,7 +6292,8 @@ namespace {
 /// volume holds @p file_system. Repair-Volume finds @p repair_error (empty: nothing), and reports
 /// it as Windows' does when it is given -Verbose: it stops the script only when -ErrorAction Stop
 /// is passed as well. chkdsk is a stand-in .cmd that prints a line to stdout and one to stderr and
-/// exits with @p chkdsk_exit. "DONE" when the script ran to its end, "THREW <message>" when not.
+/// exits with @p chkdsk_exit. Start-Sleep says "SLEPT <seconds>" and returns at once. "DONE" when
+/// the script ran to its end, "THREW <message>" when not.
 QString runVolumeScanScript(QString script,
                             const QString& file_system,
                             const QString& repair_error,
@@ -6325,6 +6328,7 @@ QString runVolumeScanScript(QString script,
             "}; if ([string]$PSBoundParameters['ErrorAction'] -eq 'Stop' -or -not "
             "$PSBoundParameters.ContainsKey('Verbose')) { throw %2 }; Write-Host ('NOT STOPPED "
             "BY ' + %2) }\n"
+            "function Start-Sleep { param($Seconds) Write-Output ('SLEPT ' + $Seconds) }\n"
             "try {\n")
                 .arg(PartitionScriptBuilder::quotePowerShell(file_system),
                      PartitionScriptBuilder::quotePowerShell(repair_error)) +
@@ -6377,6 +6381,140 @@ void PartitionManagerCoreTests::generatedScripts_volumeScanStopsOnWhatItFinds() 
     QVERIFY2(exfat.contains(QStringLiteral("THREW chkdsk found a problem on E: (exit 3)")) &&
                  !exfat.contains(QStringLiteral("DONE")),
              qPrintable(exfat));
+}
+
+// A drive removed within seconds of an online scan can crash Windows: volsnap leaves a timer queued
+// in the volume's device object, and the disk's removal frees it (operation proof's crash
+// investigation, 2026-11-12). So Check File System waits after the scan, saying why, before it
+// reports done. Windows PowerShell 5.1 runs the whole generated script, on both of its routes:
+// Repair-Volume for NTFS and chkdsk for FAT32.
+void PartitionManagerCoreTests::generatedScripts_volumeScanSettlesBeforeDone() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{2};
+    target.drive_letter = QStringLiteral("E");
+    target.size_bytes = 256 * kMiBytes;
+    const PartitionScriptBuilder builder;
+    const auto check = builder.buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::CheckFileSystem, target));
+    QVERIFY2(check.valid(), qPrintable(check.blockers.join(' ')));
+
+    const QString settle = QStringLiteral(
+        "Letting Windows finish with the volume before reporting done (a drive removed right after "
+        "a scan can crash Windows).");
+    struct Route {
+        const char* file_system;
+        const char* scanned;
+    };
+    for (const Route& route : {Route{"NTFS", "CALL Repair E"},
+                               Route{"FAT32", "The type of the file system is FAT32."}}) {
+        const QString out =
+            runVolumeScanScript(check.script, QString::fromLatin1(route.file_system), QString(), 0);
+        const qsizetype scanned = out.indexOf(QString::fromLatin1(route.scanned));
+        const qsizetype ended =
+            out.indexOf(QStringLiteral("SAK-WINDOWS-CONTINUES|END|volume-scan"));
+        const qsizetype said = out.indexOf(settle);
+        const qsizetype slept = out.indexOf(QStringLiteral("SLEPT 15"));
+        const qsizetype done = out.indexOf(QStringLiteral("DONE"));
+        QVERIFY2(scanned >= 0 && scanned < ended && ended < said && said < slept && slept < done,
+                 qPrintable(out));
+    }
+}
+
+namespace {
+
+/// The line of @p script that holds @p at, cut short for a failure message.
+QString scriptLineAt(const QString& script, qsizetype at) {
+    constexpr qsizetype kShownCharacters = 160;
+    const qsizetype start = script.lastIndexOf(QLatin1Char('\n'), at) + 1;
+    return script.mid(start, kShownCharacters).section(QLatin1Char('\n'), 0, 0);
+}
+
+/// What is wrong with the online scans in @p script, one entry per problem, and adds the scans it
+/// saw to @p scans. Every Repair-Volume -Scan and chkdsk call sits between volume-scan markers,
+/// and the settle (volumeScanSettleStatement) follows each End marker at once.
+QStringList volumeScanSettleProblems(const QString& script, int* scans) {
+    static const QRegularExpression scan_call(
+        QStringLiteral(R"(Repair-Volume\b[^\n;]*?\s-Scan\b|chkdsk\.exe\b|chkdsk\b[^\n;]*/scan\b)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QString begin = QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|volume-scan|");
+    const QString end_marker = QStringLiteral("SAK-WINDOWS-CONTINUES|END|volume-scan");
+    const QString end_statement =
+        QStringLiteral("[Console]::Out.WriteLine('%1'); [Console]::Out.Flush() }").arg(end_marker);
+    const QRegularExpression settle_next(
+        QStringLiteral("[;\\s]*") + QRegularExpression::escape(sak::volumeScanSettleStatement()));
+    QStringList problems;
+    auto calls = scan_call.globalMatch(script);
+    while (calls.hasNext()) {
+        const qsizetype at = calls.next().capturedStart();
+        if (script.lastIndexOf(begin, at) <= script.lastIndexOf(end_marker, at)) {
+            problems.append(QStringLiteral("a scan outside the volume-scan markers: ") +
+                            scriptLineAt(script, at));
+        }
+    }
+    if (script.count(begin) != script.count(end_statement)) {
+        problems.append(QStringLiteral("%1 volume-scan Begin markers, %2 End markers")
+                            .arg(script.count(begin))
+                            .arg(script.count(end_statement)));
+    }
+    for (qsizetype at = script.indexOf(end_statement); at >= 0;
+         at = script.indexOf(end_statement, at + end_statement.size())) {
+        ++*scans;
+        if (!settle_next
+                 .match(script,
+                        at + end_statement.size(),
+                        QRegularExpression::NormalMatch,
+                        QRegularExpression::AnchorAtOffsetMatchOption)
+                 .hasMatch()) {
+            problems.append(QStringLiteral("no settle right after the scan: ") +
+                            scriptLineAt(script, at));
+        }
+    }
+    return problems;
+}
+
+}  // namespace
+
+// The settle after every online scan S.A.K. runs (see
+// generatedScripts_volumeScanSettlesBeforeDone): Check File System's, the closing scans of the
+// rebuilds, the FAT read-only chkdsk. Every script the corpus builds is read, and a scan with no
+// settle right after it names its operation.
+void PartitionManagerCoreTests::generatedScripts_everyOnlineScanSettles() {
+    const PartitionScriptBuilder builder;
+    const auto inputs = scriptCorpusInputs();
+    const int type_count = static_cast<int>(PartitionOperationType::HfsDeleteHardlink) + 1;
+    int scans = 0;
+    QStringList scanning;
+    QStringList problems;
+    for (int type = 0; type < type_count; ++type) {
+        const QString name = toDisplayString(static_cast<PartitionOperationType>(type));
+        for (const auto& [target, payload] : inputs) {
+            const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+                static_cast<PartitionOperationType>(type), target, payload));
+            if (!script.valid()) {
+                continue;
+            }
+            const int before = scans;
+            for (const QString& problem : volumeScanSettleProblems(script.script, &scans)) {
+                const QString line = name + QStringLiteral(": ") + problem;
+                if (!problems.contains(line)) {
+                    problems.append(line);
+                }
+            }
+            if (scans > before && !scanning.contains(name)) {
+                scanning.append(name);
+            }
+        }
+    }
+    constexpr qsizetype kProblemsShown = 10;
+    QVERIFY2(problems.isEmpty(), qPrintable(problems.mid(0, kProblemsShown).join('\n')));
+    // The guard has scans to read: an empty corpus or a renamed marker would pass it unseen.
+    for (const auto type :
+         {PartitionOperationType::CheckFileSystem, PartitionOperationType::AllocateFreeSpace}) {
+        QVERIFY2(scanning.contains(toDisplayString(type)),
+                 qPrintable(QStringLiteral("%1 scans in: ").arg(scans) + scanning.join(", ")));
+    }
 }
 
 // The staged HFS+ format and repair run fsck_hfs through Invoke-SakCheckedHfsTool and read its exit
