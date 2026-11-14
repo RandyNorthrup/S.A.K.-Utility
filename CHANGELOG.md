@@ -120,6 +120,11 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **Check Disk Errors checks an NTFS USB stick too** - Quick Actions' Check Disk Errors had Check File System's
+  failure on a removable NTFS drive ("A snapshot error occurred ... Run an offline scan and fix."). It now runs the
+  same read-only check Check File System does, from the same code: no errors found (read-only chkdsk), errors found
+  (none fixed), or not checked with the reason, "in use" among them. A fixed drive whose snapshot fails says so in
+  the same plain words.
 - **Partition Manager's disk table is the keyboard route** - After a click on the disk map the keyboard focus
   stayed on the map, and Tab went to the map's tiles and never to the disk table. A click on the map now gives the
   table the keyboard, at the row it selected; Tab moves on from the table instead of along a row's cells; and

@@ -65,6 +65,23 @@ public:
     /// sak_script_types.dll beside the program, verified and held with every program file before
     /// the helper started, loaded from its bytes. Nothing is compiled into the temporary folder.
     [[nodiscard]] static QString scriptTypesLoaderScript();
+
+    /// The read-only volume check Check File System and Check Disk Errors share, in three parts
+    /// that run in order. The target: $sakScanDrive is @p drive (a PowerShell expression),
+    /// $sakScanVolume its Get-Volume, and $sakScanRemovableNtfs whether it is NTFS on a drive
+    /// Windows calls removable, which Windows does not snapshot for the online scan.
+    [[nodiscard]] static QString volumeScanTargetStatement(const QString& drive);
+    /// The online scan of $sakScanDrive (Repair-Volume -Scan), its result put in
+    /// @p result_variable when one is named. A snapshot Windows could not take is said in S.A.K.'s
+    /// words: a read-only check does not pass on Windows' advice to run a scan that fixes.
+    [[nodiscard]] static QString onlineVolumeScanStatement(const QString& result_variable,
+                                                           bool verbose);
+    /// chkdsk of $sakScanDrive without /f, /r, /x or /scan, which only reads. A removable NTFS
+    /// drive is locked first, so one in use is said to be and not checked, and dismounted, so
+    /// chkdsk reads what is on it (Sak.ScanVolumeLock). $sakScanVerdict says which it was:
+    /// 'None' (no problems found), 'Problems' (found, and, reading only, none fixed) or
+    /// 'NotChecked'; the last two also stop the script in S.A.K.'s words.
+    [[nodiscard]] static QString readOnlyVolumeCheckStatement();
     [[nodiscard]] static bool isValidDriveLetter(const QString& value);
     [[nodiscard]] static bool isSupportedFileSystem(const QString& value);
     /// PowerShell function: which file system a 512-byte sector is the boot sector of, or $null.

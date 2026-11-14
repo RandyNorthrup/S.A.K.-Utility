@@ -4352,6 +4352,10 @@ target_include_directories(test_check_disk_errors_action PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 
+# It runs the removable drive's read-only check, which loads sak_script_types.dll, against
+# stand-ins; sak_utility's post-build step puts the DLL beside the program.
+add_dependencies(test_check_disk_errors_action sak_utility)
+
 add_test(NAME test_check_disk_errors_action
          COMMAND test_check_disk_errors_action
          -o "${TEST_OUTPUT_DIR}/test_check_disk_errors_action.txt,txt" -o -,txt

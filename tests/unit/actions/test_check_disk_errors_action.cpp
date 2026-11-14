@@ -7,6 +7,8 @@
 ///        overall outcome must reflect every drive, not just one that succeeded.
 
 #include "sak/actions/check_disk_errors_action.h"
+#include "sak/partition_operation_planner.h"
+#include "sak/partition_script_builder.h"
 #include "sak/process_runner.h"
 
 #include <QtTest/QtTest>
@@ -38,6 +40,26 @@ private Q_SLOTS:
     void aStopDuringTheScanSaysWindowsMayFinishIt();
     void aScanProcessThatWasCancelledEndsTheRun();
     void reportSaysNetworkDrivesAreNotChecked();
+    void aRemovableNtfsDriveGetsCheckFileSystemsReadOnlyCheck();
+    void aRemovableNtfsDriveNotCheckedSaysWhy();
+    void aFixedDriveKeepsTheOnlineScan();
+    void bothChecksAreBuiltFromTheSameStatements();
+
+private:
+    /// What parseDriveScanResult counted for one drive.
+    struct ScanTotals {
+        int scanned = 0;
+        int errors = 0;
+        int repairs = 0;
+    };
+    /// The report one drive's scan @p output makes, and what it counted.
+    static QString reportOf(const QString& output, ScanTotals* totals) {
+        Action action;
+        QString report;
+        action.parseDriveScanResult(
+            output, report, totals->scanned, totals->errors, totals->repairs);
+        return report;
+    }
 };
 
 namespace {
@@ -377,9 +399,17 @@ void CheckDiskErrorsActionTests::buildScanVolumeScript_isReadOnly() {
     // cannot stand alone, and nothing else bounded how many Repair-Volume calls are emitted.
     QCOMPARE(script.count(QStringLiteral("Repair-Volume")), 1);
     QVERIFY2(script.contains(QStringLiteral(
-                 "try { $scanResult = Repair-Volume -DriveLetter C -Scan -ErrorAction Stop } "
-                 "finally {")),
+                 "try { try { $scanResult = Repair-Volume -DriveLetter $sakScanDrive -Scan "
+                 "-ErrorAction Stop } catch {")),
              "the one Repair-Volume call must be exactly the read-only -Scan form");
+    QVERIFY(script.contains(QStringLiteral("$sakScanDrive = 'C';")));
+    // The removable drive's check is chkdsk without /f, /r, /x or /scan: it only reads.
+    for (const QString& flag : {QStringLiteral(" /f"),
+                                QStringLiteral(" /r"),
+                                QStringLiteral(" /x"),
+                                QStringLiteral("/scan")}) {
+        QVERIFY2(!script.contains(flag, Qt::CaseInsensitive), qPrintable(flag));
+    }
     // Windows finishes a scan it has started even when this script is killed, so the scan runs
     // between the markers that say so.
     QVERIFY(script.contains(QStringLiteral("SAK-WINDOWS-CONTINUES|BEGIN|volume-scan|")));
@@ -417,11 +447,221 @@ void CheckDiskErrorsActionTests::buildScanVolumeScript_isReadOnly() {
     const QString script_d = Action::buildScanVolumeScript(QChar('D'));
     QVERIFY(script_d.contains(QStringLiteral("$drive = \"D:\"")));
     QVERIFY(script_d.contains(QStringLiteral("Write-Output \"Drive: $drive\"")));
-    QVERIFY(script_d.contains(QStringLiteral("Repair-Volume -DriveLetter D -Scan")));
+    QVERIFY(script_d.contains(QStringLiteral("$sakScanDrive = 'D';")));
     QVERIFY2(!script_d.contains(QStringLiteral("-DriveLetter C")),
              "scan must target the requested volume, not a hardcoded C");
     QVERIFY2(!script_d.contains(QStringLiteral("$drive = \"C:\"")),
              "the reported drive must be the requested volume, not a hardcoded C");
+}
+
+namespace {
+
+/// What one drive's scan finds, in the stand-ins its script runs against: the volume's file
+/// system and drive type, the lock (empty: it locks; otherwise what it throws), chkdsk's exit
+/// code and verdict line, and Repair-Volume's error (with its FullyQualifiedErrorId) or nothing.
+struct StandIn {
+    QString drive_type;
+    QString lock_error;
+    int chkdsk_exit{0};
+    QString chkdsk_says;
+    QString repair_error;
+    QString repair_error_id;
+};
+
+/// Runs Check Disk Errors' script for D: in Windows PowerShell 5.1 against stand-ins for
+/// Get-Volume, the lock, chkdsk, Repair-Volume and Start-Sleep: nothing reaches a real drive.
+QString runAgainstStandIns(const StandIn& in) {
+    QString script = CheckDiskErrorsAction::buildScanVolumeScript(QLatin1Char('D'));
+    const QString chkdsk = QStringLiteral("([Environment]::SystemDirectory + '\\chkdsk.exe')");
+    const QString lock = QStringLiteral("[Sak.ScanVolumeLock]::LockAndDismount($sakScanDrive)");
+    QTemporaryDir dir;
+    if (!dir.isValid() || !script.contains(chkdsk) || !script.contains(lock)) {
+        return QStringLiteral("NO STAND-IN FOR CHKDSK");
+    }
+    script.replace(lock, QStringLiteral("(Invoke-StandInLock $sakScanDrive)"));
+    const QString tool = QDir::toNativeSeparators(dir.filePath(QStringLiteral("chkdsk.cmd")));
+    QFile file(tool);
+    const QByteArray bytes =
+        QStringLiteral(
+            "@echo off\r\necho CHKDSK RAN\r\n%1echo stand-in chkdsk stderr line 1>&2\r\n"
+            "exit /b %2\r\n")
+            .arg(in.chkdsk_says.isEmpty() ? QString()
+                                          : QStringLiteral("echo %1\r\n").arg(in.chkdsk_says))
+            .arg(in.chkdsk_exit)
+            .toLatin1();
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+        return QStringLiteral("NO STAND-IN FOR CHKDSK");
+    }
+    file.close();
+    using sak::PartitionScriptBuilder;
+    script.replace(chkdsk, PartitionScriptBuilder::quotePowerShell(tool));
+    const QString prelude =
+        QStringLiteral(
+            "function Get-Volume { param($DriveLetter, $ErrorAction) [pscustomobject]@{ "
+            "FileSystem = 'NTFS'; DriveType = %1 } }\n"
+            "function Invoke-StandInLock { param($Letter) Write-Host ('LOCKED ' + $Letter); "
+            "if (%2) { throw %2 } }\n"
+            "function Repair-Volume { [CmdletBinding()] param($DriveLetter, [switch]$Scan) "
+            "Write-Host ('CALL Repair ' + $DriveLetter); if (%3) { "
+            "$PSCmdlet.ThrowTerminatingError((New-Object "
+            "System.Management.Automation.ErrorRecord ([Exception]%3), %4, 'NotSpecified', "
+            "$null)) }; 'NoErrorsFound' }\n"
+            "function Start-Sleep { param($Seconds) Write-Output ('SLEPT ' + $Seconds) }\n")
+            .arg(PartitionScriptBuilder::quotePowerShell(in.drive_type),
+                 PartitionScriptBuilder::quotePowerShell(in.lock_error),
+                 PartitionScriptBuilder::quotePowerShell(in.repair_error),
+                 PartitionScriptBuilder::quotePowerShell(in.repair_error_id));
+    // Run from a file, so the command line names no real tool: the test hardware guard refuses a
+    // PowerShell whose command line does.
+    const QString runner = QDir::toNativeSeparators(dir.filePath(QStringLiteral("scan.ps1")));
+    QFile runner_file(runner);
+    const QByteArray runner_bytes = (prelude + script).toUtf8();
+    if (!runner_file.open(QIODevice::WriteOnly) ||
+        runner_file.write(runner_bytes) != runner_bytes.size()) {
+        return QStringLiteral("NO STAND-IN RUNNER");
+    }
+    runner_file.close();
+    constexpr int kStandInTimeoutMs = 60'000;
+    const sak::ProcessResult proc =
+        sak::runPowerShell(QStringLiteral("& %1; exit $LASTEXITCODE")
+                               .arg(PartitionScriptBuilder::quotePowerShell(runner)),
+                           kStandInTimeoutMs);
+    return proc.std_out + proc.std_err;
+}
+
+}  // namespace
+
+// Windows does not snapshot a removable drive, so the online scan of an NTFS USB stick failed "A
+// snapshot error occurred while scanning this drive. Run an offline scan and fix.", here as in
+// Check File System (the coordinator, 2026-11-13). Such a drive now gets Check File System's own
+// read-only check: locked (one in use is said to be, and not checked), dismounted, and read by
+// chkdsk without /f, and its result is one of three: no errors found, errors found (none fixed),
+// or not checked. A fixed drive whose snapshot fails is said in the same words as there, not as
+// Windows' advice to run a scan that fixes. Windows PowerShell 5.1 runs the whole script.
+void CheckDiskErrorsActionTests::aRemovableNtfsDriveGetsCheckFileSystemsReadOnlyCheck() {
+    const QString settle = QStringLiteral("Letting Windows finish with the volume");
+    const QString clean = runAgainstStandIns({.drive_type = QStringLiteral("Removable")});
+    QVERIFY2(clean.indexOf(QStringLiteral("LOCKED D")) >= 0, qPrintable(clean));
+    QVERIFY2(clean.indexOf(QStringLiteral("LOCKED D")) <
+                 clean.indexOf(QStringLiteral("CHKDSK RAN")),
+             qPrintable(clean));
+    QVERIFY2(clean.contains(settle) && clean.contains(QStringLiteral("SLEPT 15")),
+             qPrintable(clean));
+    QVERIFY2(!clean.contains(QStringLiteral("CALL Repair")), qPrintable(clean));
+    ScanTotals totals;
+    QString report = reportOf(clean, &totals);
+    QCOMPARE(totals.scanned, 1);
+    QCOMPARE(totals.errors, 0);
+    QVERIFY2(report.contains(QStringLiteral("Drive D: ") + QChar(0x2713) +
+                             QStringLiteral(" No errors found (read-only chkdsk)")),
+             qPrintable(report + clean));
+
+    // What chkdsk said, reading only, on testpc1's stick with one file record damaged.
+    const QString damaged =
+        runAgainstStandIns({.drive_type = QStringLiteral("Removable"),
+                            .chkdsk_exit = 3,
+                            .chkdsk_says = QStringLiteral(
+                                "Errors found.  CHKDSK cannot continue in read-only mode.")});
+    totals = {};
+    report = reportOf(damaged, &totals);
+    QCOMPARE(totals.scanned, 1);
+    QCOMPARE(totals.errors, 1);
+    QCOMPARE(totals.repairs, 1);
+    QVERIFY2(report.contains(QStringLiteral(
+                 "Drive D: \u26a0 Errors found by a read-only chkdsk, which fixed none of them")),
+             qPrintable(report + damaged));
+    QVERIFY2(report.contains(QStringLiteral("Repair recommended")), qPrintable(report));
+}
+
+// A removable drive the read-only check could not read is named as not checked, with why: in use
+// (and chkdsk never run), or chkdsk's own last line.
+void CheckDiskErrorsActionTests::aRemovableNtfsDriveNotCheckedSaysWhy() {
+    const QString in_use = QStringLiteral(
+        "D: is in use, so it was not checked. Close the files and programs using it, then check "
+        "it again. Nothing was changed.");
+    const QString held =
+        runAgainstStandIns({.drive_type = QStringLiteral("Removable"), .lock_error = in_use});
+    ScanTotals totals;
+    QString report = reportOf(held, &totals);
+    QCOMPARE(totals.scanned, 0);
+    QVERIFY2(report.contains(QStringLiteral("Drive D: - Not checked (") + in_use +
+                             QLatin1Char(')')),
+             qPrintable(report + held));
+    QVERIFY2(!held.contains(QStringLiteral("CHKDSK RAN")), qPrintable(held));
+    QVERIFY2(held.contains(QStringLiteral("Letting Windows finish with the volume")),
+             qPrintable(held));
+
+    const QString unread =
+        runAgainstStandIns({.drive_type = QStringLiteral("Removable"), .chkdsk_exit = 3});
+    totals = {};
+    report = reportOf(unread, &totals);
+    QCOMPARE(totals.scanned, 0);
+    QVERIFY2(report.contains(QStringLiteral(
+                 "Drive D: - Not checked (chkdsk could not check D: (exit 3): stand-in chkdsk "
+                 "stderr line)")),
+             qPrintable(report + unread));
+}
+
+// A fixed drive keeps the online scan, and a snapshot it cannot take is said in Check File System's
+// words, without Windows' advice to run a scan that fixes; both settle after the scan.
+void CheckDiskErrorsActionTests::aFixedDriveKeepsTheOnlineScan() {
+    const QString settle = QStringLiteral("Letting Windows finish with the volume");
+    const QString fixed = runAgainstStandIns({.drive_type = QStringLiteral("Fixed")});
+    ScanTotals totals;
+    QString report = reportOf(fixed, &totals);
+    QCOMPARE(totals.scanned, 1);
+    QVERIFY2(fixed.contains(QStringLiteral("CALL Repair D")), qPrintable(fixed));
+    QVERIFY2(!fixed.contains(QStringLiteral("LOCKED")), qPrintable(fixed));
+    QVERIFY2(!fixed.contains(QStringLiteral("CHKDSK RAN")), qPrintable(fixed));
+    QVERIFY2(fixed.contains(settle), qPrintable(fixed));
+    QVERIFY2(report.contains(QStringLiteral("Drive D: ") + QChar(0x2713) +
+                             QStringLiteral(" No errors found\n")),
+             qPrintable(report + fixed));
+
+    const QString snapshot = runAgainstStandIns(
+        {.drive_type = QStringLiteral("Fixed"),
+         .repair_error = QStringLiteral(
+             "A snapshot error occurred while scanning this drive. Run an offline scan and fix."),
+         .repair_error_id = QStringLiteral("StorageWMI 43012,Repair-Volume")});
+    totals = {};
+    report = reportOf(snapshot, &totals);
+    QCOMPARE(totals.scanned, 0);
+    QVERIFY2(report.contains(QStringLiteral(
+                 "Drive D: - Scan failed (Windows could not take the snapshot it reads D: through, "
+                 "so D: was not checked. Nothing was changed.)")),
+             qPrintable(report + snapshot));
+    QVERIFY2(!report.contains(QStringLiteral("offline scan")), qPrintable(report));
+    QVERIFY2(snapshot.contains(settle), qPrintable(snapshot));
+}
+
+// One check, two callers: Check Disk Errors' script is built from the statements Check File
+// System's is, the target, the online scan and the read-only chkdsk, not a copy of them.
+void CheckDiskErrorsActionTests::bothChecksAreBuiltFromTheSameStatements() {
+    using sak::PartitionScriptBuilder;
+    sak::PartitionTarget target;
+    target.kind = sak::PartitionTargetKind::Partition;
+    target.disk_number = sak::DiskNumber{1};
+    target.partition_number = sak::PartitionNumber{2};
+    target.drive_letter = QStringLiteral("D");
+    target.size_bytes = 256ULL * 1024ULL * 1024ULL;
+    const auto check_file_system = PartitionScriptBuilder().buildScript(
+        sak::PartitionOperationPlanner::makeOperation(sak::PartitionOperationType::CheckFileSystem,
+                                                      target));
+    QVERIFY2(check_file_system.valid(), qPrintable(check_file_system.blockers.join(' ')));
+    const QString check_disk = Action::buildScanVolumeScript(QLatin1Char('D'));
+    const QString read_only = PartitionScriptBuilder::readOnlyVolumeCheckStatement();
+    const QString target_statement =
+        PartitionScriptBuilder::volumeScanTargetStatement(QStringLiteral("'D'"));
+    QVERIFY(read_only.contains(QStringLiteral("LockAndDismount")));
+    QVERIFY2(check_disk.contains(read_only) && check_file_system.script.contains(read_only),
+             qPrintable(check_disk));
+    QVERIFY2(check_disk.contains(target_statement) &&
+                 check_file_system.script.contains(target_statement),
+             qPrintable(check_file_system.script));
+    QVERIFY(check_disk.contains(
+        PartitionScriptBuilder::onlineVolumeScanStatement(QStringLiteral("$scanResult"), false)));
+    QVERIFY(check_file_system.script.contains(
+        PartitionScriptBuilder::onlineVolumeScanStatement(QString(), true)));
 }
 
 void CheckDiskErrorsActionTests::evaluateDiskCheckOutcome_aggregatesAllDrives() {

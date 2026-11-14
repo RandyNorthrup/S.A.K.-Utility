@@ -3888,6 +3888,35 @@ Management (Ping results); Backup and Restore, Image Flasher, Help and Support a
 cause, so not changed here: on the AI Assistant tab Tab stops in the message box, which takes Tab as text (Ctrl+Tab
 leaves it); and from the tab bar Tab first visits its scroll arrows and the status bar's Theme button.
 
+**Check Disk Errors on an NTFS USB stick, from the same code as Check File System.** Found in item 5's sweep:
+Quick Actions' Check Disk Errors counts a removable drive as scannable and ran only `Repair-Volume -Scan`, so on a
+stick it reported "Scan failed (A snapshot error occurred while scanning this drive. Run an offline scan and
+fix.)", passing on Windows' advice and checking nothing. One implementation now, three statements in
+`PartitionScriptBuilder` that both build from: `volumeScanTargetStatement` (the drive, its Get-Volume, and whether
+it is NTFS on a drive Windows calls removable), `onlineVolumeScanStatement` (Repair-Volume -Scan, a StorageWMI 43012
+in S.A.K.'s words), and `readOnlyVolumeCheckStatement` (lock, dismount, chkdsk without /f, its verdict in
+`$sakScanVerdict`: None, Problems or NotChecked, the lock's refusal unwrapped from "Exception calling ..."). Check
+File System's `volumeScanStatement` is now those three; Check Disk Errors' `buildScanVolumeScript` runs the target,
+then the read-only check for a removable NTFS drive or the online scan otherwise, each inside the 15 s settle, and
+reports the read-only verdict as "ReadOnlyCheck": "Drive D: (check) No errors found (read-only chkdsk)", "Drive D:
+(warning) Errors found by a read-only chkdsk, which fixed none of them" with "Repair recommended", or "Drive D: - Not
+checked (D: is in use, so it was not checked. ...)". Tests: `test_check_disk_errors_action`
+`aRemovableNtfsDriveGetsCheckFileSystemsReadOnlyCheck`, `aRemovableNtfsDriveNotCheckedSaysWhy` and
+`aFixedDriveKeepsTheOnlineScan` (Windows PowerShell 5.1 runs Check Disk Errors' script against stand-ins for
+Get-Volume, the lock, chkdsk and Repair-Volume, and the action's own parser makes the report), and
+`bothChecksAreBuiltFromTheSameStatements` (each script contains the shared statements verbatim); the elevated
+`readOnlyCheckWithoutASnapshotLocksAndWritesNothing` runs the real action (`OneVolumeCheckDisk`, its volume list
+narrowed to one) over the VHDX, online, forced removable and in use, and over the stick by
+SAK_TEST_REMOVABLE_NTFS_EXPECT. testpc1, its stick, elevated, Check File System and Check Disk Errors each: none
+("Drive D: (check) No errors found (read-only chkdsk)"), in use ("Drive D: - Not checked (D: is in use, so it was not
+checked. ...)", the plain sentence), the whole suite (20 passed), problems after one MFT record was damaged again
+("Drive D: (warning) Errors found by a read-only chkdsk, which fixed none of them"), and none again after the stick
+was reformatted to an empty NTFS USBSTICK; the VHDX's online route and every route settled. Drills, each turning both
+callers' tests red where the part is shared: `shared-removable-test-broken`, `shared-problems-not-recognized`,
+`shared-snapshot-words-dropped`, and Check Disk Errors' own `check-disk-read-only-verdict-unreported`. Not drilled
+locally: the lock's refusal unwrapped, since a stand-in throws plain text; testpc1's in-use run shows the plain
+sentence in both reports.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file check_disk_errors_action.cpp
-/// @brief Implements read-only online disk error checks using Repair-Volume -Scan
+/// @brief Implements read-only disk error checks: Repair-Volume -Scan, and a read-only chkdsk of
+///        an NTFS volume on a removable drive
 
 #include "sak/actions/check_disk_errors_action.h"
 
 #include "sak/action_constants.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
+#include "sak/partition_script_builder.h"
 #include "sak/process_runner.h"
 #include "sak/windows_continued_work.h"
 
@@ -275,25 +277,52 @@ QString CheckDiskErrorsAction::buildScanVolumeScript(QChar drive) {
     // killed, so it runs between the markers that say so. The settle runs in a finally around it,
     // whether the scan passed or failed: a drive removed right after an online scan can crash
     // Windows (see kVolumeScanSettleSeconds).
-    return (QStringLiteral("$drive = \"%1:\"\n"
-                           "Write-Output '===SCAN_START==='\n"
-                           "Write-Output \"Drive: $drive\"\n"
-                           "\n"
-                           "try {\n"
-                           "    Write-Output 'Running online scan...'\n"
-                           "    ") +
-            volumeScanSettledStatement(QStringLiteral("0"),
-                                       QStringLiteral("$scanResult = Repair-Volume -DriveLetter %1 "
-                                                      "-Scan -ErrorAction Stop")) +
-            QStringLiteral("\n"
-                           "    Write-Output \"ScanResult: $scanResult\"\n"
-                           "} catch {\n"
-                           "    Write-Output \"Error: $($_.Exception.Message)\"\n"
-                           "    Write-Output 'Status: Scan failed'\n"
-                           "}\n"
-                           "\n"
-                           "Write-Output '===SCAN_END==='\n"))
-        .arg(drive);
+    // Windows does not snapshot a removable drive, and the online scan of an NTFS USB stick failed
+    // "A snapshot error occurred ... Run an offline scan and fix." (the coordinator, 2026-11-13):
+    // such a drive gets Check File System's read-only chkdsk, the same statement, and its verdict
+    // ($sakScanVerdict) is reported as "ReadOnlyCheck". A snapshot that fails on another drive is
+    // said in the same words as there.
+    return QStringLiteral(
+               "$drive = \"%1:\"\n"
+               "Write-Output '===SCAN_START==='\n"
+               "Write-Output \"Drive: $drive\"\n"
+               "\n"
+               "$sakScanVerdict = $null\n"
+               "try {\n"
+               "    ")
+               .arg(drive) +
+           PartitionScriptBuilder::volumeScanTargetStatement(
+               PartitionScriptBuilder::quotePowerShell(QString(drive))) +
+           QStringLiteral(
+               "\n"
+               "    if ($sakScanRemovableNtfs) {\n"
+               "        Write-Output 'Running read-only check...'\n"
+               "        ") +
+           volumeScanSettledStatement(QStringLiteral("0"),
+                                      PartitionScriptBuilder::readOnlyVolumeCheckStatement()) +
+           QStringLiteral(
+               "\n"
+               "    } else {\n"
+               "        Write-Output 'Running online scan...'\n"
+               "        ") +
+           volumeScanSettledStatement(QStringLiteral("0"),
+                                      PartitionScriptBuilder::onlineVolumeScanStatement(
+                                          QStringLiteral("$scanResult"), false)) +
+           QStringLiteral(
+               "\n"
+               "        Write-Output \"ScanResult: $scanResult\"\n"
+               "    }\n"
+               "} catch {\n"
+               "    if ($sakScanVerdict -ne 'Problems') {\n"
+               "        Write-Output \"Error: $($_.Exception.Message)\"\n"
+               "        Write-Output $(if ($sakScanVerdict -eq 'NotChecked') { "
+               "'Status: Not checked' } else { 'Status: Scan failed' })\n"
+               "    }\n"
+               "}\n"
+               "if (@('None', 'Problems') -contains $sakScanVerdict) { Write-Output "
+               "\"ReadOnlyCheck: $sakScanVerdict\" }\n"
+               "\n"
+               "Write-Output '===SCAN_END==='\n");
 }
 
 bool CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
@@ -354,6 +383,8 @@ void CheckDiskErrorsAction::processScanKeyValue(const QString& key,
         state.result = value;
     } else if (key == "Status") {
         state.status = value;
+    } else if (key == "ReadOnlyCheck") {
+        state.read_only_check = value;
     }
 }
 
@@ -362,6 +393,10 @@ void CheckDiskErrorsAction::appendDriveScanEntry(const ParsedDriveState& state,
                                                  int& drives_scanned,
                                                  int& errors_found,
                                                  int& repairs_recommended) {
+    if (appendReadOnlyCheckEntry(
+            state, report, drives_scanned, errors_found, repairs_recommended)) {
+        return;
+    }
     // Only an answer about the volume counts as scanned. A scan that errored, whose output was cut
     // short, or that returned a result this check cannot read is never reported clean.
     const ScanVerdict verdict = classifyScanResult(state.result);
@@ -402,6 +437,33 @@ void CheckDiskErrorsAction::appendDriveScanEntry(const ParsedDriveState& state,
         break;
     }
     report += "\n";
+}
+
+bool CheckDiskErrorsAction::appendReadOnlyCheckEntry(const ParsedDriveState& state,
+                                                     QString& report,
+                                                     int& drives_scanned,
+                                                     int& errors_found,
+                                                     int& repairs_recommended) {
+    // A removable drive's read-only chkdsk (buildScanVolumeScript): its own verdict, not one of
+    // Repair-Volume's.
+    if (state.read_only_check == QStringLiteral("None")) {
+        drives_scanned++;
+        report += QString("Drive %1: \u2713 No errors found (read-only chkdsk)\n\n")
+                      .arg(state.drive_letter);
+        return true;
+    }
+    if (state.read_only_check == QStringLiteral("Problems")) {
+        drives_scanned++;
+        errors_found++;
+        repairs_recommended++;
+        report += QString(
+                      "Drive %1: \u26a0 Errors found by a read-only chkdsk, which fixed none "
+                      "of them\n")
+                      .arg(state.drive_letter);
+        report += "  \u2139 Repair recommended (this check does not modify the disk)\n\n";
+        return true;
+    }
+    return false;
 }
 
 void CheckDiskErrorsAction::executeRunVolumeScan(const QVector<QChar>& drives,
