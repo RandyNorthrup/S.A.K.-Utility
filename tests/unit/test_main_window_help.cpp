@@ -4,7 +4,9 @@
 /// @file test_main_window_help.cpp
 /// @brief What the Help and About tabs send people to and tell them.
 
+#include "sak/bandwidth_tester.h"
 #include "sak/main_window.h"
+#include "sak/windows11_theme.h"
 
 #include <QApplication>
 #include <QDesktopServices>
@@ -12,12 +14,17 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QSizeGrip>
+#include <QStatusBar>
 #include <QTabWidget>
 #include <QTextBrowser>
 #include <QtTest/QtTest>
 #include <QUrl>
 
 #include <algorithm>
+#include <string>
+
+#include <windows.h>
 
 /// Catches the URL a click would have opened in the browser.
 class UrlCatcher : public QObject {
@@ -40,7 +47,157 @@ private Q_SLOTS:
     void ostConverterHeaderNamesItsOneFormat();
     void aboutVersionLineReadsAsADate();
     void aboutTestingTextQuotesTheCertification();
+    void iperfAdministratorMessageFitsTheStatusBar();
+    void aiStatusLabelStandsAsideOnlyWhileAMessageShows();
 };
+
+namespace {
+
+/// The width @p text takes in Segoe UI at @p pixel_size, as Windows itself draws it at 96 DPI. The
+/// offscreen test platform draws every glyph as a box as wide as the font is tall, so its own
+/// measure of a sentence is about twice a real font's.
+int segoeUiTextWidth(const QString& text, int pixel_size) {
+    HDC dc = CreateCompatibleDC(nullptr);
+    HFONT font = CreateFontW(-pixel_size,
+                             0,
+                             0,
+                             0,
+                             FW_NORMAL,
+                             FALSE,
+                             FALSE,
+                             FALSE,
+                             DEFAULT_CHARSET,
+                             OUT_DEFAULT_PRECIS,
+                             CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY,
+                             DEFAULT_PITCH,
+                             L"Segoe UI");
+    HGDIOBJ previous = SelectObject(dc, font);
+    const std::wstring wide = text.toStdWString();
+    SIZE size{};
+    const bool measured =
+        GetTextExtentPoint32W(dc, wide.c_str(), static_cast<int>(wide.size()), &size) != FALSE;
+    SelectObject(dc, previous);
+    DeleteObject(font);
+    DeleteDC(dc);
+    return measured ? static_cast<int>(size.cx) : -1;
+}
+
+/// The width QStatusBar gives a timed message: from 6 px in to 2 px short of the first permanent
+/// widget it shows (QStatusBarPrivate::messageRect). Its other widgets are hidden meanwhile.
+int timedMessageRoom(const QStatusBar* bar) {
+    int right = bar->width() - 12;
+    for (const auto* child : bar->findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+        if (child->isVisible() && qobject_cast<const QSizeGrip*>(child) == nullptr) {
+            right = (std::min)(right, child->x() - 2);
+        }
+    }
+    return right - 6;
+}
+
+/// The AI status label in @p bar: the permanent label the AI Assistant tab fills.
+QLabel* aiStatusLabel(const QStatusBar* bar) {
+    for (auto* label : bar->findChildren<QLabel*>(Qt::FindDirectChildrenOnly)) {
+        if (label->text().startsWith(QStringLiteral("AI:"))) {
+            return label;
+        }
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+// A timed status message is drawn only up to the status bar's first permanent widget. On the AI
+// Assistant tab the AI status label, which takes all the free space, left it about 77 px at 1280
+// px: every timed message there was cut after a dozen letters. The label now stands aside while a
+// timed message shows. Measured with Segoe UI as Windows draws it at the theme's size, against
+// the room the bar gives the message with the AI label present before it: the iPerf3 server's
+// refusal (cut off at "S.A" in the capture of 1db87df4) and the longest other timed message fit
+// whole at 1280 px, and at 1024 px their leading clause does. The room is measured with the
+// offscreen platform's box glyphs, which make the permanent widgets wider than they are, so the
+// real room is larger still.
+void MainWindowHelpTests::iperfAdministratorMessageFitsTheStatusBar() {
+    struct Message {
+        QString text;
+        QString leading;  ///< What must not be cut at 1024 px.
+    };
+    const QList<Message> messages{
+        {sak::BandwidthTester::needsElevationMessage(),
+         QStringLiteral("Run as Admin to start the iPerf3 server")},
+        {QStringLiteral("Disk inventory changed while the operation was being reviewed. Refresh "
+                        "and confirm it again."),
+         QStringLiteral("Disk inventory changed while the operation was being reviewed.")}};
+    sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
+    for (const int width : {1280, 1024}) {
+        sak::MainWindow window;
+        window.resize(width, 800);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QApplication::processEvents();
+        QStatusBar* bar = window.statusBar();
+        QLabel* ai = aiStatusLabel(bar);
+        QVERIFY2(ai != nullptr && ai->isVisible(), "the AI Assistant tab opens with its label");
+        const QFont font = bar->font();
+        const int pixels = font.pixelSize() > 0 ? font.pixelSize()
+                                                : qRound(font.pointSizeF() * 96.0 / 72.0);
+        for (const Message& message : messages) {
+            QVERIFY(message.text.startsWith(message.leading));
+            QVERIFY(QMetaObject::invokeMethod(
+                &window, "updateStatus", Q_ARG(QString, message.text), Q_ARG(int, 5000)));
+            const int room = timedMessageRoom(bar);
+            const int whole = segoeUiTextWidth(message.text, pixels);
+            const int leading = segoeUiTextWidth(message.leading, pixels);
+            qInfo().noquote() << width << "px window:" << room << "px of room;" << whole << "px for"
+                              << message.text << ";" << leading << "px for its lead";
+            QVERIFY2(leading > 0 && (width == 1280 ? whole : leading) <= room,
+                     qPrintable(QStringLiteral("%1 px: %2 px (lead %3 px) in %4 px: %5")
+                                    .arg(width)
+                                    .arg(whole)
+                                    .arg(leading)
+                                    .arg(room)
+                                    .arg(message.text)));
+        }
+        bar->clearMessage();
+    }
+}
+
+// The AI status label's place is worked out afresh, never toggled: a message replacing a message
+// keeps it aside, the bar clearing brings it back, and on another tab, where it is not shown, a
+// message clearing does not show it.
+void MainWindowHelpTests::aiStatusLabelStandsAsideOnlyWhileAMessageShows() {
+    sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
+    sak::MainWindow window;
+    window.resize(1280, 800);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QApplication::processEvents();
+    QStatusBar* bar = window.statusBar();
+    QLabel* ai = aiStatusLabel(bar);
+    QVERIFY2(ai != nullptr && ai->isVisible(), "the AI Assistant tab opens with its label");
+    bar->showMessage(QStringLiteral("first"), 5000);
+    bar->showMessage(QStringLiteral("second"), 5000);
+    QVERIFY(!ai->isVisible());
+    bar->clearMessage();
+    QVERIFY(ai->isVisible());
+    QTabWidget* tabs = nullptr;
+    for (auto* candidate : window.findChildren<QTabWidget*>()) {
+        if (candidate->count() > 1 &&
+            candidate->tabText(candidate->currentIndex()) == QStringLiteral("AI Assistant")) {
+            tabs = candidate;
+        }
+    }
+    QVERIFY2(tabs != nullptr, "the main tabs, on the AI Assistant tab");
+    const int ai_tab = tabs->currentIndex();
+    tabs->setCurrentIndex(ai_tab == 0 ? 1 : 0);
+    QApplication::processEvents();
+    QVERIFY(!ai->isVisible());
+    bar->showMessage(QStringLiteral("elsewhere"), 5000);
+    bar->clearMessage();
+    QVERIFY(!ai->isVisible());
+    tabs->setCurrentIndex(ai_tab);
+    QApplication::processEvents();
+    QVERIFY(ai->isVisible());
+}
 
 // The button opened a GitHub wiki that does not exist, and its name and tooltip said GitHub.
 void MainWindowHelpTests::wikiButtonOpensTheSiteWiki() {

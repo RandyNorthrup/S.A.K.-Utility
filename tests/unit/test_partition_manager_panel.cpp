@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/color_constants.h"
+#include "sak/layout_constants.h"
 #include "sak/partition_apfs_writer.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_registry.h"
@@ -58,6 +59,7 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTemporaryDir>
+#include <QTextDocument>
 #include <QTextEdit>
 #include <QThread>
 #include <QTimer>
@@ -204,6 +206,9 @@ private Q_SLOTS:
     void ssdSecureEraseNamesTheBusItSees();
     void readOnlyScansRunNowWithoutQueueing();
     void checkFileSystemSaysToWaitBeforeUnplugging();
+    void newCheckTextsFitTheResultBox();
+    void newResizeTextsFitTheResizeDialog();
+    void newTypeIdPromptFitsItsDialog();
     void windowsPhaseDisablesCancelAndSaysSo();
     void openClosePromptFollowsTheRun();
     void scanFileSystemsIsDiskLevelOnly();
@@ -6415,6 +6420,157 @@ void PartitionManagerPanelTests::readOnlyScansRunNowWithoutQueueing() {
 // it, but only for a drive that can be pulled out: one on USB, or one Windows calls removable. An
 // NVMe drive inside the PC gets no such line. The result is shown once the check has finished, so
 // it no longer says "after this finishes" (the capture of 1db87df4).
+namespace {
+
+/// The plain-text labels of @p dialog whose text needs more room than they have.
+QStringList cutOffLabels(const QWidget* dialog) {
+    QStringList cut;
+    for (const QLabel* label : dialog->findChildren<QLabel*>()) {
+        if (!label->isVisibleTo(dialog) || label->text().isEmpty() ||
+            Qt::mightBeRichText(label->text())) {
+            continue;
+        }
+        const QRect room = label->contentsRect();
+        const QSize needed = label->wordWrap()
+                                 ? QSize(room.width(), label->heightForWidth(label->width()))
+                                 : label->fontMetrics()
+                                       .boundingRect(QRect(0, 0, QWIDGETSIZE_MAX, QWIDGETSIZE_MAX),
+                                                     static_cast<int>(label->alignment()),
+                                                     label->text())
+                                       .size();
+        if (needed.width() > room.width() ||
+            needed.height() > (label->wordWrap() ? label->height() : room.height())) {
+            cut.append(QStringLiteral("%1 (%2x%3 needed, %4x%5 given)")
+                           .arg(label->text())
+                           .arg(needed.width())
+                           .arg(needed.height())
+                           .arg(room.width())
+                           .arg(room.height()));
+        }
+    }
+    return cut;
+}
+
+/// Why @p dialog does not fit a 1024 px screen (and so a 1280 px one), or nothing.
+QString dialogDoesNotFit(const QWidget* dialog) {
+    constexpr int kNarrowScreenWidth = 1024;
+    QStringList problems = cutOffLabels(dialog);
+    if (dialog->width() + sak::kDialogWindowFrameAllowance > kNarrowScreenWidth) {
+        problems.append(QStringLiteral("%1 px wide").arg(dialog->width()));
+    }
+    return problems.join(QStringLiteral("; "));
+}
+
+}  // namespace
+
+// The texts this fix batch added fit where they are shown, at 1024 and 1280 px screens. Each
+// dialog is narrower than a 1024 px screen, and no label is cut off: a wrapped one has the height
+// its text needs at its width, and one that does not wrap has the width of its longest line. The
+// offscreen test platform draws every glyph as a box as wide as the font is tall, wider than any
+// real font's, so a text that fits here fits on screen. First Check File System's results on a USB
+// drive: "in use", the snapshot one and problems found, each with the note to eject the drive.
+void PartitionManagerPanelTests::newCheckTextsFitTheResultBox() {
+    for (const QString& said :
+         {QStringLiteral("D: is in use, so it was not checked. Close the files and programs using "
+                         "it, then check it again. Nothing was changed."),
+          QStringLiteral("Windows could not take the snapshot it reads D: through, so D: was not "
+                         "checked. Nothing was changed."),
+          QStringLiteral("chkdsk found problems on D: Reading only, it fixed none of them (exit "
+                         "3).")}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = applyReviewInventoryFixture();
+        inventory.disks[0].bus_type = QStringLiteral("USB");
+        panel.setTestInventoryForReview(inventory);
+        panel.setTestApplyExecutorForReview(
+            [said](const QVector<sak::PartitionOperation>&, bool, bool, const sak::CancelCheck&) {
+                sak::PartitionExecutionResult result;
+                result.success = false;
+                result.message = said;
+                return result;
+            });
+        QString problems = QStringLiteral("no result shown");
+        QTimer closer;
+        closer.setInterval(1);
+        QObject::connect(&closer, &QTimer::timeout, [&problems]() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                QApplication::processEvents();
+                problems = box->text().contains(QStringLiteral("Eject the drive"))
+                               ? dialogDoesNotFit(box)
+                               : QStringLiteral("no unplug note: ") + box->text();
+                box->accept();
+            }
+        });
+        closer.start();
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        auto* button = findToolButtonByName(&panel, QStringLiteral("Check File System"));
+        QVERIFY(button != nullptr);
+        QTRY_VERIFY(button->isEnabled());
+        pressAction(button);
+        QTRY_VERIFY2(problems != QStringLiteral("no result shown"), qPrintable(said));
+        QVERIFY2(problems.isEmpty(), qPrintable(said + QStringLiteral(": ") + problems));
+    }
+}
+
+// The Resize dialog's reasons for a FAT32 partition and an APFS one with nothing after it fit it.
+void PartitionManagerPanelTests::newResizeTextsFitTheResizeDialog() {
+    for (const QString& file_system : {QStringLiteral("FAT32"), QStringLiteral("APFS")}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = unallocatedAllocateInventoryFixture();
+        inventory.disks[0].partitions[0].volume->file_system = file_system;
+        inventory.disks[0].unallocated_regions.clear();
+        panel.setTestInventoryForReview(inventory);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        QString status;
+        QString problems = QStringLiteral("no dialog");
+        const ScopedModalInspection inspection([&]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(dialog);
+            QVERIFY(dialog != nullptr);
+            QApplication::processEvents();
+            auto* label =
+                findAccessibleWidget<QLabel>(dialog, QStringLiteral("Move resize support status"));
+            QVERIFY(label != nullptr);
+            status = label->text();
+            problems = dialogDoesNotFit(dialog);
+            dialog->reject();
+        });
+        auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+        QVERIFY(resize != nullptr);
+        pressAction(resize);
+        QVERIFY2(status.startsWith(file_system == QStringLiteral("APFS")
+                                       ? QStringLiteral("S.A.K. grows an APFS partition only")
+                                       : QStringLiteral("Windows cannot shrink or grow")),
+                 qPrintable(file_system + QStringLiteral(": ") + status));
+        QVERIFY2(problems.isEmpty(), qPrintable(file_system + QStringLiteral(": ") + problems));
+    }
+}
+
+// The type ID prompt, its example GUID unwrapped, fits a 1024 px screen.
+void PartitionManagerPanelTests::newTypeIdPromptFitsItsDialog() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = modalTargetBindingInventoryFixture();
+    inventory.disks[0].partition_style = QStringLiteral("GPT");
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    QString problems = QStringLiteral("no prompt");
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY(dialog != nullptr);
+        QApplication::processEvents();
+        problems = dialogDoesNotFit(dialog);
+        dialog->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onSetPartitionTypeId", Qt::DirectConnection));
+    QVERIFY2(problems.isEmpty(), qPrintable(problems));
+}
+
 void PartitionManagerPanelTests::checkFileSystemSaysToWaitBeforeUnplugging() {
     const QString note = QStringLiteral("Eject the drive in Windows before you unplug it.");
     struct Drive {

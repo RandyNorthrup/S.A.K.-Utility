@@ -3832,6 +3832,36 @@ line with plain hyphens, the label selectable and unwrapped, and the dialog made
 wide as the GUID at its own font. Drills: `type-id-prompt-wraps`, `type-id-guid-in-the-sentence`,
 `type-id-label-not-selectable`.
 
+**Fit checks for this batch's texts, and the status bar.** The texts items 5 to 7 added fit where they are shown
+at 1024 and 1280 px: `newCheckTextsFitTheResultBox` (Check File System's results on a USB drive: in use, the
+snapshot one and problems found, each with the eject note), `newResizeTextsFitTheResizeDialog` (the FAT32 and APFS
+reasons) and `newTypeIdPromptFitsItsDialog`. Each dialog is narrower than a 1024 px screen less the frame
+allowance, and no label is cut off (a wrapped one has the height its text needs at its width; an unwrapped one the
+width of its longest line). The offscreen test platform draws every glyph as a box as wide as the font is tall,
+about twice a real font's width, so these are conservative. The status bar: a timed message
+(`QStatusBar::showMessage`, which every panel's status message with a timeout uses) is drawn only up to the bar's
+first visible permanent widget (`QStatusBarPrivate::messageRect`). On the AI Assistant tab that is the AI status
+label, an expanding `ElidingLabel` that took the free space: at 1280 px the message had about 77 px, so every timed
+message there was cut after a dozen letters, in every build with the AI Assistant. The label is shown only on that
+tab, so the iPerf3 refusal on the Network tab was limited by the Theme, Standard and Run as Admin widgets instead.
+Now `MainWindow::updateAiStatusBarVisibility` also requires the bar to have no timed message, and runs again on
+`QStatusBar::messageChanged`: worked out afresh each time, never toggled, so a message replacing a message keeps it
+aside, a message clearing brings it back, and a message on another tab, where the label is not shown, does not show
+it. Its neighbours are right-aligned, so nothing moves but the label. The capture's pictures were taken with the
+label hidden and are not affected. Measured, `iperfAdministratorMessageFitsTheStatusBar`, with the AI label present
+before the message: the text's width in Segoe UI at the theme's size as Windows itself draws it (GDI,
+`GetTextExtentPoint32W`), against the message's room in the laid-out bar. At 1280 px the room is 739 px: the iPerf3
+refusal needs 522 px and the longest other timed message ("Disk inventory changed while the operation was being
+reviewed. Refresh and confirm it again.") 545 px, both whole. At 1024 px the room is 483 px: their leading clauses
+fit ("Run as Admin to start the iPerf3 server", 225 px; "Disk inventory changed while the operation was being
+reviewed.", 373 px), and by this measure the last 39 and 62 px are cut. The room is measured with the box glyphs,
+which make the Theme, Standard and Run as Admin widgets wider than they are on screen, so the real room is larger
+and the cut smaller or none. `aiStatusLabelStandsAsideOnlyWhileAMessageShows` covers the label's state. Drills:
+`ai-label-stays-beside-a-message` (the measure fails at 77 px), `ai-label-not-told-of-messages`,
+`resize-reason-not-wrapped`. Not drilled: the result box is Qt's own QMessageBox, which wraps any text, a long
+unbroken word included (a drill that made the eject note one 85-character word left it fitting), so nothing in
+S.A.K. can cut it; that test stands as the measurement.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

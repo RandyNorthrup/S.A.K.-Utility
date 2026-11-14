@@ -120,6 +120,10 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **Status messages on the AI Assistant tab are no longer cut short** - A status message that clears itself is
+  drawn only up to the status bar's first permanent widget, and on the AI Assistant tab the AI status line took all
+  the free space, leaving the message about 77 px at 1280 px. The AI status line now stands aside while such a
+  message shows and comes back when it clears.
 - **The partition type ID prompt keeps its example GUID whole** - On a GPT disk, Change Partition Type ID broke
   the example GUID across two lines at a hyphen. The example is now on a line of its own that never wraps, and it
   can be selected and copied into the field.

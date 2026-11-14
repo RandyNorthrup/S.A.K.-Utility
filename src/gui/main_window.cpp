@@ -1675,6 +1675,11 @@ void MainWindow::wireAiPanel() {
                 updateAiStatusBarVisibility();
             });
     connectPanelLog(m_ai_assistant_panel.get());
+    // A timed message has the bar only up to its first permanent widget, and this label, which
+    // takes the free space, left it about 77 px at 1280 px: it stands aside while one shows.
+    connect(statusBar(), &QStatusBar::messageChanged, this, [this]() {
+        updateAiStatusBarVisibility();
+    });
     updateAiStatusBarVisibility();
 }
 #endif
@@ -1716,7 +1721,10 @@ void MainWindow::updateAiStatusBarVisibility() {
         const QString details = m_ai_assistant_panel->statusDetails();
         m_ai_status_label->setFullText(details);
     }
-    m_ai_status_label->setVisible(active && !m_ai_status_label->fullText().isEmpty());
+    // Worked out afresh each time, never toggled, so a message replacing a message, a message
+    // clearing, or a message shown on another tab leaves it as the tab and its text say.
+    m_ai_status_label->setVisible(active && !m_ai_status_label->fullText().isEmpty() &&
+                                  statusBar()->currentMessage().isEmpty());
 }
 #endif
 
