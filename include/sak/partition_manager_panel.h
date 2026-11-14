@@ -75,6 +75,12 @@ public:
         PartitionManagerController::InventoryScannerWithProgress scanner);
     // Reports a Windows-continued phase for the running apply, as its executor would.
     void reportTestWindowsPhaseForReview(const std::optional<WindowsContinuedPhase>& phase);
+    // Runs Check Non-Windows File System's read-only tool check through @p runner instead of the
+    // bundled tools, as the panel starts it once the check is chosen.
+    void runTestReadOnlyFileSystemCheckForReview(
+        PartitionManagerController::FileSystemCheckRunner runner,
+        const QString& file_system,
+        const QString& target_path);
 #endif
 
 protected:
@@ -144,6 +150,7 @@ private Q_SLOTS:
     void onWipeSelected();
     void showPartitionContextMenu(const QPoint& position);
     void onExecutionFinished(const sak::PartitionExecutionResult& result);
+    void onFileSystemCheckFinished(const sak::PartitionFileSystemToolRunResult& result);
 
 private:
     void onChangeApfsVolumeLabel();

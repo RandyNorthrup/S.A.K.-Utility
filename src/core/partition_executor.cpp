@@ -11,6 +11,7 @@
 #include "sak/layout_constants.h"
 #include "sak/no_follow_fs.h"
 #include "sak/process_runner.h"
+#include "sak/volume_check_outcome.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -290,11 +291,63 @@ PartitionExecutionResult PartitionExecutor::execute(const QVector<PartitionOpera
         return step.success;
     });
     if (result.success) {
-        result.message = dry_run ? QStringLiteral("Dry run complete")
-                                 : QStringLiteral("Partition operation batch complete");
+        const SuccessSummary summary =
+            dry_run ? SuccessSummary{.message = QStringLiteral("Dry run complete"),
+                                     .needs_attention = false}
+                    : successSummary(operations, result.steps);
+        result.message = summary.message;
+        result.findings_need_attention = summary.needs_attention;
     }
     Q_EMIT progressUpdated(kPercentMax, result.message);
     return result;
+}
+
+namespace {
+
+/// What one passed step of a read-only check found, one outcome a volume; none for any other step.
+QVector<volume_check::Outcome> stepOutcomes(const PartitionOperation& operation,
+                                            const PartitionExecutionStep& step) {
+    switch (operation.type) {
+    case PartitionOperationType::CheckFileSystem:
+        return volume_check::volumeOutcomes(step.stdout_text);
+    case PartitionOperationType::SurfaceTest: {
+        auto outcomes = volume_check::volumeOutcomes(step.stdout_text);
+        if (outcomes.isEmpty()) {
+            outcomes.append({.text = QStringLiteral("Disk %1's reliability counters were read; it "
+                                                    "has no volume with a drive letter to scan.")
+                                         .arg(operation.target.disk_number.value()),
+                             .needs_attention = false});
+        }
+        return outcomes;
+    }
+    case PartitionOperationType::PartitionRecoveryScan:
+        return {volume_check::recoveryScanOutcome(operation.target.disk_number.value(),
+                                                  step.stdout_text)};
+    default:
+        return {};
+    }
+}
+
+}  // namespace
+
+// Fix batch 4 (C): a Check File System that found nothing ended on "Partition operation batch
+// complete" and the note to eject the drive, which said nothing of what the check found.
+PartitionExecutor::SuccessSummary PartitionExecutor::successSummary(
+    const QVector<PartitionOperation>& operations, const QVector<PartitionExecutionStep>& steps) {
+    QStringList said;
+    bool needs_attention = false;
+    const qsizetype ran = std::min(operations.size(), steps.size());
+    for (qsizetype index = 0; index < ran; ++index) {
+        for (const auto& outcome : stepOutcomes(operations.at(index), steps.at(index))) {
+            said.append(outcome.text);
+            needs_attention = needs_attention || outcome.needs_attention;
+        }
+    }
+    if (said.isEmpty()) {
+        return {.message = QStringLiteral("Partition operation batch complete"),
+                .needs_attention = false};
+    }
+    return {.message = said.join(QLatin1Char('\n')), .needs_attention = needs_attention};
 }
 
 void PartitionExecutor::cancel() {

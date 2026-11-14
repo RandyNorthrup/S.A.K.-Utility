@@ -4,6 +4,7 @@
 #include "sak/color_constants.h"
 #include "sak/layout_constants.h"
 #include "sak/partition_apfs_writer.h"
+#include "sak/partition_executor.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_registry.h"
 #include "sak/partition_file_system_tool_runner.h"
@@ -216,6 +217,8 @@ private Q_SLOTS:
     void newCheckTextsFitTheResultBox();
     void newResizeTextsFitTheResizeDialog();
     void newResizeFreeSpaceTextsFitTheResizeDialog();
+    void checkFileSystemSaysWhatTheCheckFound();
+    void nonWindowsCheckSaysWhatItFound();
     void newTypeIdPromptFitsItsDialog();
     void windowsPhaseDisablesCancelAndSaysSo();
     void openClosePromptFollowsTheRun();
@@ -1223,11 +1226,13 @@ void verifyMetadataCheckDialog(QToolButton* button, const QString& expectedFindi
                      "Refresh Disks re-reads the metadata and recomputes these results"));
         QVERIFY2(dialog->windowTitle().endsWith(QStringLiteral("Metadata (Last Disk Scan)")),
                  qPrintable(dialog->windowTitle()));
+        // Fix batch 4 (C): in the words every read-only check uses.
         QCOMPARE(propertyTableValue(properties, QStringLiteral("Result")),
-                 QStringLiteral("No sanity warnings"));
+                 QStringLiteral(
+                     "No errors found (read-only, in the metadata the last disk scan read)"));
         // The findings cell is the check's ENTIRE verdict list. A contains() on the
         // "Metadata sanity: <FS>" prefix passed regardless of what the sentence went on to
-        // say -- including a warning line the "No sanity warnings" result contradicts.
+        // say -- including a warning line the "No errors found" result contradicts.
         QCOMPARE(propertyTableValue(properties, QStringLiteral("Findings")), expectedFinding);
         inspected = true;
         dialog->reject();
@@ -6946,6 +6951,133 @@ void PartitionManagerPanelTests::newCheckTextsFitTheResultBox() {
         pressAction(button);
         QTRY_VERIFY2(problems != QStringLiteral("no result shown"), qPrintable(said));
         QVERIFY2(problems.isEmpty(), qPrintable(said + QStringLiteral(": ") + problems));
+    }
+}
+
+namespace {
+
+/// The next message box: its text and icon, once it has opened and been closed.
+struct ResultBox {
+    QString text;
+    QMessageBox::Icon icon{QMessageBox::NoIcon};
+    bool seen{false};
+};
+
+/// Closes the next message box that opens, keeping what it said in @p box.
+void closeNextResultBox(QTimer* closer, ResultBox* box) {
+    closer->setInterval(1);
+    QObject::connect(closer, &QTimer::timeout, [box]() {
+        if (auto* shown = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            box->text = shown->text();
+            box->icon = shown->icon();
+            box->seen = true;
+            shown->accept();
+        }
+    });
+    closer->start();
+}
+
+}  // namespace
+
+// Fix batch 4 (C): Check File System's result on a USB stick said "Partition operation batch
+// complete" and the note to eject the drive, and not what the check found. It now says it, as
+// PartitionExecutor ends a run whose steps passed, with the eject note kept; errors found are a
+// warning though the run passed.
+void PartitionManagerPanelTests::checkFileSystemSaysWhatTheCheckFound() {
+    struct Case {
+        const char* output{nullptr};
+        const char* said{nullptr};
+        QMessageBox::Icon icon{QMessageBox::NoIcon};
+    };
+    for (const Case& test :
+         {Case{"Volume check D: read-only chkdsk: None",
+               "Drive D: No errors found (read-only chkdsk).",
+               QMessageBox::Information},
+          Case{"Volume check D: online scan: ScanErrorsFoundNeedSpotFix",
+               "Drive D: Errors found (Windows reports ScanErrorsFoundNeedSpotFix). Repair "
+               "recommended (this check does not modify the disk).",
+               QMessageBox::Warning}}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = applyReviewInventoryFixture();
+        inventory.disks[0].bus_type = QStringLiteral("USB");
+        panel.setTestInventoryForReview(inventory);
+        const QString output = QString::fromLatin1(test.output);
+        panel.setTestApplyExecutorForReview([output](
+                                                const QVector<sak::PartitionOperation>& operations,
+                                                bool,
+                                                bool,
+                                                const sak::CancelCheck&) {
+            sak::PartitionExecutionResult result;
+            sak::PartitionExecutionStep step;
+            step.success = true;
+            step.stdout_text = output;
+            result.steps = {step};
+            result.success = true;
+            const auto summary = sak::PartitionExecutor::successSummary(operations, result.steps);
+            result.message = summary.message;
+            result.findings_need_attention = summary.needs_attention;
+            return result;
+        });
+        ResultBox box;
+        QTimer closer;
+        closeNextResultBox(&closer, &box);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        auto* button = findToolButtonByName(&panel, QStringLiteral("Check File System"));
+        QVERIFY(button != nullptr);
+        QTRY_VERIFY(button->isEnabled());
+        pressAction(button);
+        QTRY_VERIFY2(box.seen, test.said);
+        QCOMPARE(box.text,
+                 QString::fromLatin1(test.said) +
+                     QStringLiteral("\n\nEject the drive in Windows before you unplug it."));
+        QCOMPARE(box.icon, test.icon);
+    }
+}
+
+// Check Non-Windows File System's read-only tool check ended in the status bar alone. Its end now
+// opens a result that says what it found: no errors, or errors the check left, as a warning.
+void PartitionManagerPanelTests::nonWindowsCheckSaysWhatItFound() {
+    struct Case {
+        bool success{false};
+        const char* problem{nullptr};
+        const char* said{nullptr};
+        QMessageBox::Icon icon{QMessageBox::NoIcon};
+    };
+    for (const Case& test :
+         {Case{true,
+               "",
+               "The ext4 file system: No errors found (read-only e2fsck).",
+               QMessageBox::Information},
+          Case{
+              false,
+              "e2fsck: e2fsck found errors in the file system and left them uncorrected (exit "
+              "code 4).",
+              "The ext4 file system: Errors found by a read-only e2fsck, which fixed none of them. "
+              "e2fsck found errors in the file system and left them uncorrected (exit code 4).",
+              QMessageBox::Warning}}) {
+        sak::PartitionManagerPanel panel;
+        panel.setTestInventoryForReview(applyReviewInventoryFixture());
+        ResultBox box;
+        QTimer closer;
+        closeNextResultBox(&closer, &box);
+        const bool success = test.success;
+        const QString problem = QString::fromLatin1(test.problem);
+        panel.runTestReadOnlyFileSystemCheckForReview(
+            [success, problem](const sak::PartitionFileSystemReadOnlyCheckRequest&,
+                               const sak::CancelCheck&) {
+                sak::PartitionFileSystemToolRunResult result;
+                result.tool_id = QStringLiteral("e2fsck");
+                result.success = success;
+                result.problem = problem;
+                return result;
+            },
+            QStringLiteral("ext4"),
+            QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk0\\Partition1"));
+        QTRY_VERIFY2(box.seen, test.said);
+        QCOMPARE(box.text, QString::fromLatin1(test.said));
+        QCOMPARE(box.icon, test.icon);
     }
 }
 

@@ -61,6 +61,8 @@ struct PartitionFileSystemToolRunResult {
     /// Why the run did not pass, in plain words, when the tool's own answer says more than its
     /// exit code (e2fsck: PartitionFileSystemToolRunner::e2fsckProblem).
     QString problem;
+    /// The file system the check was asked about ("ext4", "HFS+"), for what its end says.
+    QString file_system;
 };
 
 class PartitionFileSystemToolRunner {
@@ -113,6 +115,11 @@ public:
     [[nodiscard]] static QString openFailureProblem(const QString& output);
     /// Get-SakToolOpenFailure: the same reading, in Windows PowerShell.
     [[nodiscard]] static QString openFailureFunctionScript();
+    /// Whether @p problem (e2fsckProblem's words, as a run reported them) is an answer about the
+    /// file system: errors e2fsck left, a superblock or table it called corrupt, or an "Abort?" it
+    /// was asked. Otherwise the check gave no answer: it could not open the partition, failed to
+    /// run, or was stopped.
+    [[nodiscard]] static bool problemIsAFinding(const QString& problem);
 };
 
 }  // namespace sak

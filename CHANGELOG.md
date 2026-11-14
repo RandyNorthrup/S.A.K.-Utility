@@ -120,6 +120,13 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **Check File System says what the check found** - Its result said "Partition operation batch complete", with
+  the note to eject a USB drive, whatever the check had found. It now says, for each drive, "No errors found",
+  "Errors found (Windows reports ...)" with a repair recommended, or "Not checked" and why, in the words Quick
+  Actions' Check Disk Errors uses; errors found are a warning. Scan File Systems says the same for each volume, and
+  Partition Recovery Scan says how many possible lost partitions it found, or none. Check Non-Windows File System's
+  read-only check of an ext or HFS+ partition, which ended in the status bar alone, now opens a result that says
+  what e2fsck or fsck_hfs found.
 - **Resize no longer offers free space a partition cannot use** - For a FAT32 or exFAT partition, which Windows
   neither shrinks nor grows, an APFS partition with nothing after it, or a file system S.A.K. could not identify,
   the Resize dialog showed the free space after the partition as the size it could reach, with a size handle that

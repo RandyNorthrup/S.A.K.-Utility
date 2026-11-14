@@ -12,6 +12,7 @@
 #include "sak/partition_raw_device_io.h"
 #include "sak/partition_safety_validator.h"
 #include "sak/partition_stop_cleanup.h"
+#include "sak/volume_check_outcome.h"
 #include "sak/windows_continued_work.h"
 
 #include <QByteArray>
@@ -156,13 +157,23 @@ QString volumeScanLine(const QString& statement,
 // Volume -Scan reads a snapshot, and Windows does not snapshot a removable drive: on an NTFS USB
 // stick it stopped with "A snapshot error occurred while scanning this drive. Run an offline scan
 // and fix." (the capture of 1db87df4; testpc1's stick). Such a volume gets the read-only chkdsk.
+// Each route ends with a verdict line ("Volume check E: online scan: NoErrorsFound"), which the
+// run's result reads back as a sentence (volume_check::volumeOutcomes): the finished dialog said
+// only "Partition operation batch complete" (fix batch 4, C).
 QString volumeScanStatement(const QString& drive, bool verbose = false) {
     return PartitionScriptBuilder::volumeScanTargetStatement(drive) +
            QStringLiteral(
                "; if (@('NTFS', 'ReFS') -contains $sakScanVolume.FileSystem -and -not "
-               "$sakScanRemovableNtfs) { ") +
-           PartitionScriptBuilder::onlineVolumeScanStatement(QString(), verbose) +
+               "$sakScanRemovableNtfs) { $sakScanResult = $null; ") +
+           PartitionScriptBuilder::onlineVolumeScanStatement(QStringLiteral("$sakScanResult"),
+                                                             verbose) +
+           QStringLiteral("; ") +
+           volume_check::verdictLineStatement(volume_check::kOnlineScanRoute,
+                                              QStringLiteral("$sakScanResult")) +
            QStringLiteral(" } else { ") + PartitionScriptBuilder::readOnlyVolumeCheckStatement() +
+           QStringLiteral("; ") +
+           volume_check::verdictLineStatement(volume_check::kReadOnlyChkdskRoute,
+                                              QStringLiteral("$sakScanVerdict")) +
            QStringLiteral(" }");
 }
 

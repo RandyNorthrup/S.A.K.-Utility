@@ -37,6 +37,7 @@
 #include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
+#include "sak/volume_check_outcome.h"
 #include "sak/widget_helpers.h"
 
 #include <QAbstractButton>
@@ -6720,9 +6721,13 @@ void showMetadataConsistencyDialog(QWidget* parent, const NonNativeFilesystemChe
     addProperty(&rows,
                 QObject::tr("Re-run"),
                 QObject::tr("Refresh Disks re-reads the metadata and recomputes these results"));
+    // Said in the words every read-only check uses (volume_check, fix batch 4, C).
     addProperty(&rows,
                 QObject::tr("Result"),
-                warning ? QObject::tr("Warnings found") : QObject::tr("No sanity warnings"));
+                warning ? volume_check::readOnlyErrorsText(QObject::tr("metadata check")) +
+                              QObject::tr(" (see Findings)")
+                        : volume_check::noErrorsText() +
+                              QObject::tr(" (read-only, in the metadata the last disk scan read)"));
     addProperty(&rows, QObject::tr("Findings"), findings.join('\n'));
     // Why no repair is offered here, so a technician is not left guessing.
     if (!state.repair_available && !state.repair_reason.isEmpty()) {
@@ -6735,11 +6740,14 @@ void showMetadataConsistencyDialog(QWidget* parent, const NonNativeFilesystemChe
 }
 
 QString hfsConsistencyResultText(const PartitionHfsConsistencyCheckResult& result) {
+    // Said in the words every read-only check uses (volume_check, fix batch 4, C).
     if (!result.blockers.isEmpty()) {
-        return QObject::tr("Blocked");
+        return QObject::tr("Not checked (see Blockers)");
     }
-    return result.warnings.isEmpty() ? QObject::tr("No consistency blockers")
-                                     : QObject::tr("Warnings found");
+    return result.warnings.isEmpty()
+               ? volume_check::noErrorsText() + QObject::tr(" (read-only catalog check)")
+               : volume_check::readOnlyErrorsText(QObject::tr("catalog check")) +
+                     QObject::tr(" (see Warnings)");
 }
 
 PartitionHfsConsistencyCheckResult showHfsConsistencyDialog(
@@ -9653,6 +9661,14 @@ void PartitionManagerPanel::reportTestWindowsPhaseForReview(
     m_controller->reportWindowsPhaseForTesting(phase);
 }
 
+void PartitionManagerPanel::runTestReadOnlyFileSystemCheckForReview(
+    PartitionManagerController::FileSystemCheckRunner runner,
+    const QString& file_system,
+    const QString& target_path) {
+    m_controller->setFileSystemCheckRunnerForTesting(std::move(runner));
+    m_controller->runReadOnlyFileSystemCheck(file_system, target_path);
+}
+
 void PartitionManagerPanel::setTestInventoryScannerWithProgressForReview(
     PartitionManagerController::InventoryScannerWithProgress scanner) {
     m_controller->setInventoryScannerWithProgressForTesting(std::move(scanner));
@@ -10395,6 +10411,10 @@ void PartitionManagerPanel::connectControllerSignals() {
             &PartitionManagerController::executionFinished,
             this,
             &PartitionManagerPanel::onExecutionFinished);
+    connect(m_controller.get(),
+            &PartitionManagerController::fileSystemCheckFinished,
+            this,
+            &PartitionManagerPanel::onFileSystemCheckFinished);
     connect(m_controller.get(), &PartitionManagerController::windowsPhaseChanged, this, [this]() {
         updateWindowsPhaseNotice();
         updateActionState();
@@ -13926,11 +13946,27 @@ void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& 
         // Shown once the check has finished, so it does not say "after this finishes".
         message += QStringLiteral("\n\n") + tr("Eject the drive in Windows before you unplug it.");
     }
-    if (result.success || (result.cancelled && !needs_attention)) {
+    // A check that ran to its end and found errors, or gave no answer about a volume, passed as a
+    // run and is still a warning (fix batch 4, C).
+    if ((result.success && !result.findings_need_attention) ||
+        (result.cancelled && !needs_attention)) {
         showInformationLogged(this, tr("Partition Manager"), message);
         return;
     }
     showWarningLogged(this, tr("Partition Manager"), message);
+}
+
+// Fix batch 4 (C): Check Non-Windows File System's read-only tool check (e2fsck -n, fsck_hfs -n)
+// ended in the status bar alone ("Filesystem check complete"). Its end now says what it found, as
+// Check File System's does, in the same words.
+void PartitionManagerPanel::onFileSystemCheckFinished(
+    const PartitionFileSystemToolRunResult& result) {
+    const auto outcome = volume_check::toolCheckOutcome(result, result.file_system);
+    if (outcome.needs_attention) {
+        showWarningLogged(this, tr("Check Non-Windows File System"), outcome.text);
+        return;
+    }
+    showInformationLogged(this, tr("Check Non-Windows File System"), outcome.text);
 }
 
 std::optional<PartitionTarget> PartitionManagerPanel::selectedTarget() const {

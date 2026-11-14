@@ -91,6 +91,18 @@ public:
                                                           QString* pending,
                                                           bool* is_output);
 
+    /// What a run whose steps all passed says, and whether that still needs a closer look.
+    struct SuccessSummary {
+        QString message;
+        bool needs_attention{false};
+    };
+    /// What the steps of a run that passed found, as its result's message: each read-only check's
+    /// outcome (Check File System and Scan File Systems one sentence a volume, a recovery scan
+    /// what it found), or "Partition operation batch complete" when no step is such a check.
+    [[nodiscard]] static SuccessSummary successSummary(
+        const QVector<PartitionOperation>& operations,
+        const QVector<PartitionExecutionStep>& steps);
+
 #ifdef SAK_PARTITION_FS_TEST_HOOKS
     /// @brief Test-only: called with each broker right after an elevated operation registers
     ///        it, before anything is sent. Static so the class layout is the same in test and

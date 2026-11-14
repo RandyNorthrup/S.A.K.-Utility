@@ -481,6 +481,21 @@ QString PartitionFileSystemToolRunner::e2fsckProblem(int exit_code,
     return e2fsckExitMessage(kE2fsckOtherMessage, exit_code);
 }
 
+bool PartitionFileSystemToolRunner::problemIsAFinding(const QString& problem) {
+    // Compared without line breaks or doubled spaces, since a run's error text can be wrapped;
+    // each message up to its exit code.
+    const QString said = problem.simplified();
+    for (const char* message :
+         {kE2fsckErrorsLeftMessage, kE2fsckCorruptMessage, kE2fsckAbortMessage}) {
+        const QString stem =
+            QString::fromLatin1(message).section(QStringLiteral("{0}"), 0, 0).simplified();
+        if (said.contains(stem)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QString PartitionFileSystemToolRunner::openFailureProblem(const QString& output) {
     // e2fsprogs: "e2fsck: <reason> while trying to open <device>". Other tools: "<tool>: can't
     // open <device>: <reason>".

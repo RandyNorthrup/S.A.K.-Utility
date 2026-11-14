@@ -34,6 +34,7 @@
 #include "sak/process_runner.h"
 #include "sak/program_integrity.h"
 #include "sak/storage_inventory_worker.h"
+#include "sak/volume_check_outcome.h"
 #include "sak/windows_continued_work.h"
 
 #include "../support/byte_writer.h"
@@ -1614,6 +1615,9 @@ private Q_SLOTS:
     void generatedScripts_volumeScanStopsOnWhatItFinds();
     void generatedScripts_volumeScanOnARemovableDriveNeedsNoSnapshot();
     void generatedScripts_volumeScanSaysWhatChkdskFound();
+    void generatedScripts_volumeScanSaysWhatEachRouteFound();
+    void executorSaysWhatAReadOnlyRunFound();
+    void readOnlyToolCheckSaysWhatItFound();
     void inventoryScanFailureSaysWhyInReadableWords();
     void generatedScripts_volumeScanSettlesBeforeDone();
     void generatedScripts_everyOnlineScanSettles();
@@ -6367,6 +6371,7 @@ struct VolumeScanStandIn {
     QString lock_error;
     QString chkdsk_says;
     QString repair_error_id;
+    QString repair_status;  ///< what Repair-Volume answers when it finds nothing to throw for
 };
 
 QString runVolumeScanScript(QString script,
@@ -6411,7 +6416,7 @@ QString runVolumeScanScript(QString script,
             "Write-Host ('CALL Repair ' + $DriveLetter); if (%5) { "
             "$PSCmdlet.ThrowTerminatingError((New-Object "
             "System.Management.Automation.ErrorRecord ([Exception]%2), %5, 'NotSpecified', "
-            "$null)) }; if (-not %2) { 'NoErrorsFound'; return "
+            "$null)) }; if (-not %2) { %6; return "
             "}; if ([string]$PSBoundParameters['ErrorAction'] -eq 'Stop' -or -not "
             "$PSBoundParameters.ContainsKey('Verbose')) { throw %2 }; Write-Host ('NOT STOPPED "
             "BY ' + %2) }\n"
@@ -6421,7 +6426,10 @@ QString runVolumeScanScript(QString script,
                      PartitionScriptBuilder::quotePowerShell(repair_error),
                      PartitionScriptBuilder::quotePowerShell(more.drive_type),
                      PartitionScriptBuilder::quotePowerShell(more.lock_error),
-                     PartitionScriptBuilder::quotePowerShell(more.repair_error_id)) +
+                     PartitionScriptBuilder::quotePowerShell(more.repair_error_id),
+                     PartitionScriptBuilder::quotePowerShell(more.repair_status.isEmpty()
+                                                                 ? QStringLiteral("NoErrorsFound")
+                                                                 : more.repair_status)) +
             script + QStringLiteral("\n'DONE'\n} catch { 'THREW ' + $_.Exception.Message }\n"),
         &exit_code);
 }
@@ -6611,6 +6619,173 @@ void PartitionManagerCoreTests::generatedScripts_volumeScanSaysWhatChkdskFound()
     QVERIFY2(unchecked.contains(QStringLiteral(
                  "THREW chkdsk could not check E: (exit 3): stand-in chkdsk stderr line")),
              qPrintable(unchecked));
+}
+
+// Fix batch 4 (C): a Check File System that found nothing ended on "Partition operation batch
+// complete" and the note to eject the drive. Each route of the generated script, run by Windows
+// PowerShell 5.1 against stand-ins, ends with a verdict line that the run's result reads back as
+// one sentence, in the words Check Disk Errors uses: the online scan of a fixed NTFS or ReFS drive,
+// what Windows reports when it finds errors or gives no answer, and the read-only chkdsk of FAT32,
+// exFAT and a removable NTFS drive. (Problems a chkdsk finds, and a drive it could not check, stop
+// the script with their own words: generatedScripts_volumeScanSaysWhatChkdskFound.)
+void PartitionManagerCoreTests::generatedScripts_volumeScanSaysWhatEachRouteFound() {
+    const PartitionScript check = checkFileSystemScriptOnE();
+    QVERIFY2(check.valid(), qPrintable(check.blockers.join(' ')));
+    struct Route {
+        const char* file_system;
+        const char* drive_type;
+        const char* repair_status;
+        const char* said;
+        bool needs_attention;
+    };
+    for (const Route& route :
+         {Route{"NTFS", "Fixed", "", "Drive E: No errors found.", false},
+          Route{"ReFS",
+                "Fixed",
+                "ScanErrorsFoundNeedSpotFix",
+                "Drive E: Errors found (Windows reports ScanErrorsFoundNeedSpotFix). Repair "
+                "recommended (this check does not modify the disk).",
+                true},
+          Route{"NTFS",
+                "Fixed",
+                "ScanNeedsRetry",
+                "Drive E: Not checked (Windows answered \"ScanNeedsRetry\", which is not an "
+                "answer about the drive).",
+                true},
+          Route{"FAT32", "Fixed", "", "Drive E: No errors found (read-only chkdsk).", false},
+          Route{"exFAT", "Removable", "", "Drive E: No errors found (read-only chkdsk).", false},
+          Route{"NTFS", "Removable", "", "Drive E: No errors found (read-only chkdsk).", false}}) {
+        const QString out =
+            runVolumeScanScript(check.script,
+                                QString::fromLatin1(route.file_system),
+                                QString(),
+                                0,
+                                {.drive_type = QString::fromLatin1(route.drive_type),
+                                 .repair_status = QString::fromLatin1(route.repair_status)});
+        const auto outcomes = volume_check::volumeOutcomes(out);
+        QVERIFY2(outcomes.size() == 1 && outcomes.first().text == QString::fromLatin1(route.said) &&
+                     outcomes.first().needs_attention == route.needs_attention,
+                 qPrintable(out));
+    }
+}
+
+// What a run of read-only checks that passed says, read from its steps' output: one sentence a
+// volume for Check File System and Scan File Systems, what a recovery scan found, and the old
+// words only for a run with no such check.
+void PartitionManagerCoreTests::executorSaysWhatAReadOnlyRunFound() {
+    PartitionTarget disk;
+    disk.kind = PartitionTargetKind::Disk;
+    disk.disk_number = DiskNumber{3};
+    PartitionTarget partition = disk;
+    partition.kind = PartitionTargetKind::Partition;
+    partition.partition_number = PartitionNumber{1};
+    partition.drive_letter = QStringLiteral("D");
+    const auto summaryOf =
+        [](PartitionOperationType type, const PartitionTarget& target, const QString& output) {
+            PartitionExecutionStep step;
+            step.success = true;
+            step.stdout_text = output;
+            return PartitionExecutor::successSummary(
+                {PartitionOperationPlanner::makeOperation(type, target)}, {step});
+        };
+    auto summary =
+        summaryOf(PartitionOperationType::CheckFileSystem,
+                  partition,
+                  QStringLiteral("Running\r\nVolume check D: read-only chkdsk: None\r\n"));
+    QCOMPARE(summary.message, QStringLiteral("Drive D: No errors found (read-only chkdsk)."));
+    QVERIFY(!summary.needs_attention);
+
+    summary = summaryOf(PartitionOperationType::SurfaceTest,
+                        disk,
+                        QStringLiteral("Scanning volume E:\nVolume check E: online scan: "
+                                       "NoErrorsFound\nScanning volume F:\nVolume check F: online "
+                                       "scan: ScanErrorsFoundNeedSpotFix\n"));
+    QCOMPARE(summary.message,
+             QStringLiteral("Drive E: No errors found.\nDrive F: Errors found (Windows reports "
+                            "ScanErrorsFoundNeedSpotFix). Repair recommended (this check does not "
+                            "modify the disk)."));
+    QVERIFY(summary.needs_attention);
+    summary =
+        summaryOf(PartitionOperationType::SurfaceTest, disk, QStringLiteral("MediaType: SSD"));
+    QCOMPARE(summary.message,
+             QStringLiteral("Disk 3's reliability counters were read; it has no volume with a "
+                            "drive letter to scan."));
+
+    const QString candidate = QStringLiteral(
+        "Candidate partition boot sector at byte offset 5368709120 (NTFS, size 1073741824 bytes)");
+    summary = summaryOf(PartitionOperationType::PartitionRecoveryScan,
+                        disk,
+                        QStringLiteral("Partition 1 is at byte offset 1048576 (NTFS) and is not "
+                                       "lost\r\n") +
+                            candidate + QStringLiteral("\r\n"));
+    QCOMPARE(summary.message,
+             QStringLiteral("The recovery scan of Disk 3 found 1 possible lost partition:\n") +
+                 candidate);
+    summary = summaryOf(PartitionOperationType::PartitionRecoveryScan, disk, QString());
+    QCOMPARE(summary.message,
+             QStringLiteral("The recovery scan of Disk 3 found no lost partition."));
+
+    summary = summaryOf(PartitionOperationType::SetPartitionLabel,
+                        partition,
+                        QStringLiteral("Volume check D: online scan: NoErrorsFound"));
+    QCOMPARE(summary.message, QStringLiteral("Partition operation batch complete"));
+    QVERIFY(!summary.needs_attention);
+}
+
+// Check Non-Windows File System's read-only check (e2fsck -n, fsck_hfs -n) said only "Filesystem
+// check complete" in the status bar. What it found, from what the run reported: no errors; errors
+// the check left (e2fsck's own words, or fsck_hfs's "found corrupt"); or not checked, and why.
+void PartitionManagerCoreTests::readOnlyToolCheckSaysWhatItFound() {
+    const auto outcomeOf =
+        [](const QString& tool, bool success, const QString& problem, const QString& output) {
+            PartitionFileSystemToolRunResult result;
+            result.tool_id = tool;
+            result.success = success;
+            result.problem = problem;
+            result.std_out = output;
+            return volume_check::toolCheckOutcome(result,
+                                                  tool == QStringLiteral("e2fsck")
+                                                      ? QStringLiteral("ext4")
+                                                      : QStringLiteral("HFS+"));
+        };
+    const QString e2fsck = QStringLiteral("e2fsck");
+    auto outcome = outcomeOf(e2fsck, true, QString(), QString());
+    QCOMPARE(outcome.text,
+             QStringLiteral("The ext4 file system: No errors found (read-only e2fsck)."));
+    QVERIFY(!outcome.needs_attention);
+
+    // As the elevated run reports it: the script's "<tool>: <problem>".
+    const QString left = PartitionFileSystemToolRunner::e2fsckProblem(4, QString(), {0});
+    outcome = outcomeOf(e2fsck, false, e2fsck + QStringLiteral(": ") + left, QString());
+    QCOMPARE(outcome.text,
+             QStringLiteral("The ext4 file system: Errors found by a read-only e2fsck, which fixed "
+                            "none of them. ") +
+                 left);
+    QVERIFY(outcome.needs_attention);
+
+    const QString unopened = PartitionFileSystemToolRunner::openFailureProblem(
+        QStringLiteral("e2fsck: Permission denied while trying to open \\\\?\\GLOBALROOT\\Device\\"
+                       "Harddisk1\\Partition2"));
+    outcome = outcomeOf(e2fsck, false, unopened, QString());
+    QCOMPARE(outcome.text, QStringLiteral("The ext4 file system: Not checked. ") + unopened);
+    QVERIFY(outcome.needs_attention);
+
+    const QString fsck_hfs = QStringLiteral("fsck_hfs");
+    outcome = outcomeOf(fsck_hfs,
+                        false,
+                        QStringLiteral("Command exited with code 8"),
+                        QStringLiteral("** The volume Untitled was found corrupt and needs to be "
+                                       "repaired.\nFilesystem tool exit code: 8\n"));
+    QVERIFY2(outcome.text.startsWith(QStringLiteral(
+                 "The HFS+ file system: Errors found by a read-only fsck_hfs, which fixed none "
+                 "of them.")),
+             qPrintable(outcome.text));
+    outcome =
+        outcomeOf(fsck_hfs, false, QString(), QStringLiteral("Filesystem tool exit code: 16"));
+    QCOMPARE(outcome.text,
+             QStringLiteral(
+                 "The HFS+ file system: Not checked. fsck_hfs ended with exit code 16."));
+    QVERIFY(outcome.needs_attention);
 }
 
 // A drive removed within seconds of an online scan can crash Windows: volsnap leaves a timer queued

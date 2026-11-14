@@ -1079,10 +1079,11 @@ PartitionManagerState PartitionManagerController::publishExecutionResult(
     Q_EMIT inventoryChanged(m_inventory);
     emitQueueChanged();
     Q_EMIT progressUpdate(kPercentMax, kPercentMax);
+    // A check of several volumes says one sentence a line; the status bar shows one line.
     Q_EMIT statusMessage(result.message.isEmpty()
                              ? (result.success ? QStringLiteral("Partition operation complete")
                                                : QStringLiteral("Partition operation failed"))
-                             : result.message,
+                             : QString(result.message).replace(QLatin1Char('\n'), QLatin1Char(' ')),
                          sak::kTimerStatusDefaultMs);
     Q_EMIT executionFinished(result);
     return result.cancelled ? PartitionManagerState::Cancelled
@@ -1173,16 +1174,16 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
     connect(watcher,
             &QFutureWatcher<PartitionFileSystemToolRunResult>::finished,
             this,
-            [this, watcher]() {
+            [this, watcher, file_system]() {
                 auto result = watcher->result();
                 if (m_file_system_check_watcher != watcher) {
                     return;
                 }
-                if (!result.std_out.trimmed().isEmpty()) {
-                    Q_EMIT logOutput(result.std_out.trimmed());
-                }
-                if (!result.std_err.trimmed().isEmpty()) {
-                    Q_EMIT logOutput(result.std_err.trimmed());
+                result.file_system = file_system;
+                for (const QString& said : {result.std_out.trimmed(), result.std_err.trimmed()}) {
+                    if (!said.isEmpty()) {
+                        Q_EMIT logOutput(said);
+                    }
                 }
                 Q_EMIT statusMessage(readOnlyCheckStatus(result),
                                      result.problem.isEmpty() ? sak::kTimerStatusDefaultMs

@@ -3733,6 +3733,58 @@ fixed size, some otherwise); `newResizeFreeSpaceTextsFitTheResizeDialog` fits th
 each red then green with the bytes restored: never fixed; Max online left at current plus free; the size controls
 left live; the usable colour; the free space not said to be not usable; ext treated as fixed; the label unwrapped.
 
+**C. Check File System's result did not say what the check found.** The capture
+`partition_manager_check_fs_unplug_note.png` showed a clean check of an NTFS USB stick as "Partition operation batch
+complete" and "Eject the drive in Windows before you unplug it.", nothing more. Every route of the volume scan now
+ends with a verdict line ("Volume check E: online scan: NoErrorsFound", "Volume check E: read-only chkdsk: None";
+`volumeScanStatement`, `partition_script_builder.cpp`), and `PartitionExecutor::successSummary` reads a passed run's
+steps back as one sentence a volume (`volume_check_outcome.cpp`, new): "Drive D: No errors found (read-only
+chkdsk).", "Drive E: No errors found.", "Drive E: Errors found (Windows reports ScanErrorsFoundNeedSpotFix). Repair
+recommended (this check does not modify the disk).", or "Drive E: Not checked (Windows answered "ScanNeedsRetry",
+which is not an answer about the drive)." Errors found, or no answer, are a warning box though the run passed
+(`PartitionExecutionResult::findings_need_attention`). Problems a read-only chkdsk finds, and a drive it could not
+check, already stopped the script with their own words ("chkdsk found problems on D: Reading only, it fixed none of
+them (exit 3).", "D: is in use, so it was not checked. ...", the snapshot sentence), shown as a warning; they are
+unchanged. The eject line stays for a drive that can be unplugged. The words are Quick Actions' Check Disk Errors'
+own: "No errors found", "Errors found and fixed by Windows while the drive stayed online", "Errors found (Windows
+reports ...)", "Errors found by a read-only chkdsk, which fixed none of them" and "Repair recommended (this check does
+not modify the disk)" now come from `volume_check` in both, with the RepairStatus reading Check Disk Errors had
+(`repairStatusFinding`); its report reads exactly as before. Routes: NTFS and ReFS on a fixed drive (the online
+scan), FAT32 and exFAT (chkdsk), NTFS on a removable drive (chkdsk), each through the generated script and stand-ins.
+ext (e2fsck -n) and HFS+ (fsck_hfs -n) run through Check Non-Windows File System's read-only check, which ended in the
+status bar alone ("Filesystem check complete"): its end now opens a result, "The ext4 file system: No errors found
+(read-only e2fsck).", "The ext4 file system: Errors found by a read-only e2fsck, which fixed none of them. e2fsck
+found errors in the file system and left them uncorrected (exit code 4).", fsck_hfs's "found corrupt and needs to be
+repaired" read the same way, and "Not checked." with the reason for a check that could not open the partition, did
+not run, or was stopped (`toolCheckOutcome`; `PartitionFileSystemToolRunner::problemIsAFinding` tells e2fsck's answers
+about the file system from its failures to give one). The APFS metadata check (and XFS and Btrfs, which share it)
+said "Result: No sanity warnings" or "Warnings found": now "No errors found (read-only, in the metadata the last disk
+scan read)" or "Errors found by a read-only metadata check, which fixed none of them (see Findings)"; the HFS+ catalog
+check likewise ("Not checked (see Blockers)" when it could not read the catalog).
+Survey of the other Partition Manager operations whose result is the thing asked for. Ended on a bare "Partition
+operation batch complete", now fixed: Scan File Systems (one sentence a volume, or "Disk 3's reliability counters were
+read; it has no volume with a drive letter to scan."), and Partition Recovery Scan ("The recovery scan of Disk 3
+found no lost partition.", or how many possible lost partitions and each candidate's line, up to ten, the rest in
+the log). Said nothing at all, now a result: Check Non-Windows File System's read-only tool check. Had a result row in
+other words, now in the shared ones: the metadata and HFS+ catalog checks. Not of this kind, left: Disk Benchmark,
+Space Analyzer, Properties and Inspect show their own dialogs with what they read; Create Image, like every queued
+operation, ends on "batch complete" after Apply, its result being the image file it wrote; Optimize SSD and Defrag
+are actions, not checks. The status bar shows a result of several sentences on one line.
+Tests: `test_partition_manager_core` (`generatedScripts_volumeScanSaysWhatEachRouteFound`, the generated script run
+by Windows PowerShell 5.1 against stand-ins on each route, the verdict read back as its sentence;
+`executorSaysWhatAReadOnlyRunFound`, Check File System, Scan File Systems with and without volumes, a recovery scan
+with and without candidates, and a run with no check; `readOnlyToolCheckSaysWhatItFound`, e2fsck clean, errors left
+as the elevated run reports them, a partition it could not open, fsck_hfs's corrupt volume and an exit code alone);
+`test_partition_manager_panel` (`checkFileSystemSaysWhatTheCheckFound`: the result box on a USB stick says the
+sentence and the eject note, information for no errors, a warning for errors found; `nonWindowsCheckSaysWhatItFound`:
+the read-only tool check's end opens a result, information or warning; the metadata check's Result row);
+`test_check_disk_errors_action` unchanged in what it expects, and its shared-statement test now names the variable
+Check File System keeps the scan's answer in. Drills, each red then green with the bytes restored: the executor's
+summary skipping Check File System; findings shown as information; the tool check's end not connected; e2fsck's
+errors read as "not checked"; the metadata Result in the old words; the shared "No errors found" changed (Check Disk
+Errors and Partition Manager both red); the chkdsk route's verdict line naming an empty variable; the recovery scan's
+candidates unread.
+
 **D. The v0.9.3-rc.1 release dry run stopped at its readiness gate.** Run 43600917371 (the tag on main 9277c08b)
 failed in the build job at step 20, "Release readiness gate from clean extracted package", with "Accessibility
 runtime audit failed with exit code 1: No audit output written. STDOUT: System.Object[] STDERR: System.Object[]";
