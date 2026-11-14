@@ -19,6 +19,11 @@ namespace {
 /// How many candidate boot sectors a recovery scan's result names; the log has every one.
 constexpr qsizetype kRecoveryCandidatesShown = 10;
 
+/// The verdict line's groups: "Volume check <drive>: <route>: <answer>".
+constexpr int kVerdictDriveGroup = 1;
+constexpr int kVerdictRouteGroup = 2;
+constexpr int kVerdictAnswerGroup = 3;
+
 /// "Drive E: <said>."
 QString driveSentence(const QString& letter, const QString& said) {
     return QStringLiteral("Drive %1: %2.").arg(letter, said);
@@ -143,10 +148,11 @@ QVector<Outcome> volumeOutcomes(const QString& script_output) {
     auto lines = kVerdictLine.globalMatch(script_output);
     while (lines.hasNext()) {
         const auto line = lines.next();
-        const QString letter = line.captured(1).toUpper();
-        outcomes.append(line.captured(2) == kOnlineScanRoute
-                            ? onlineScanOutcome(letter, line.captured(3))
-                            : readOnlyChkdskOutcome(letter, line.captured(3)));
+        const QString letter = line.captured(kVerdictDriveGroup).toUpper();
+        const QString answer = line.captured(kVerdictAnswerGroup);
+        outcomes.append(line.captured(kVerdictRouteGroup) == kOnlineScanRoute
+                            ? onlineScanOutcome(letter, answer)
+                            : readOnlyChkdskOutcome(letter, answer));
     }
     return outcomes;
 }
