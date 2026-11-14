@@ -293,7 +293,7 @@ PartitionExecutionResult PartitionExecutor::execute(const QVector<PartitionOpera
     if (result.success) {
         const SuccessSummary summary =
             dry_run ? SuccessSummary{.message = QStringLiteral("Dry run complete"),
-                                     .needs_attention = false}
+                                     .needs_attention = false,}
                     : successSummary(operations, result.steps);
         result.message = summary.message;
         result.findings_need_attention = summary.needs_attention;
@@ -313,16 +313,20 @@ QVector<volume_check::Outcome> stepOutcomes(const PartitionOperation& operation,
     case PartitionOperationType::SurfaceTest: {
         auto outcomes = volume_check::volumeOutcomes(step.stdout_text);
         if (outcomes.isEmpty()) {
-            outcomes.append({.text = QStringLiteral("Disk %1's reliability counters were read; it "
-                                                    "has no volume with a drive letter to scan.")
-                                         .arg(operation.target.disk_number.value()),
-                             .needs_attention = false});
+            outcomes.append({
+                .text = QStringLiteral("Disk %1's reliability counters were read; it "
+                                       "has no volume with a drive letter to scan.")
+                            .arg(operation.target.disk_number.value()),
+                .needs_attention = false,
+            });
         }
         return outcomes;
     }
     case PartitionOperationType::PartitionRecoveryScan:
-        return {volume_check::recoveryScanOutcome(operation.target.disk_number.value(),
-                                                  step.stdout_text)};
+        return {
+            volume_check::recoveryScanOutcome(operation.target.disk_number.value(),
+                                              step.stdout_text),
+        };
     default:
         return {};
     }
@@ -344,8 +348,10 @@ PartitionExecutor::SuccessSummary PartitionExecutor::successSummary(
         }
     }
     if (said.isEmpty()) {
-        return {.message = QStringLiteral("Partition operation batch complete"),
-                .needs_attention = false};
+        return {
+            .message = QStringLiteral("Partition operation batch complete"),
+            .needs_attention = false,
+        };
     }
     return {.message = said.join(QLatin1Char('\n')), .needs_attention = needs_attention};
 }

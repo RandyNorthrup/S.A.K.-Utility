@@ -366,9 +366,9 @@ PackageInternalizationEngine::setFreeSpaceProbeForTesting(FreeSpaceProbe probe) 
 }
 
 QString PackageInternalizationEngine::workDriveName(const QString& work_root) {
-    static const QRegularExpression drive_letter(QStringLiteral("^([A-Za-z]:)"));
+    static const QRegularExpression kDriveLetter(QStringLiteral("^([A-Za-z]:)"));
     const QString native = QDir::toNativeSeparators(QDir(work_root).absolutePath());
-    if (const auto match = drive_letter.match(native); match.hasMatch()) {
+    if (const auto match = kDriveLetter.match(native); match.hasMatch()) {
         return match.captured(1).toUpper();
     }
     const QStorageInfo volume(work_root);

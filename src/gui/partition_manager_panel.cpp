@@ -5968,7 +5968,7 @@ bool resizeSizeFixed(const ResizePartitionWidgets& widgets) {
 // The file system as the Resize dialog names it when the free space after it is not usable: its
 // own name, or that the scan could not identify it.
 QString resizeFileSystemName(const QString& file_system) {
-    const QString fs = file_system.trimmed();
+    QString fs = file_system.trimmed();
     if (fs.isEmpty() || fs.compare(QStringLiteral("RAW"), Qt::CaseInsensitive) == 0 ||
         fs.compare(QStringLiteral("Unknown"), Qt::CaseInsensitive) == 0) {
         return QObject::tr("a file system S.A.K. could not identify");
@@ -6200,40 +6200,50 @@ QString resizeActionText(uint64_t target_bytes, uint64_t current_bytes) {
 // free" across the whole bar for a FAT32 partition).
 SizePreviewRow resizeMaxOnlineRow(const ResizePartitionWidgets& widgets, uint64_t scale_bytes) {
     if (!widgets.size_fixed) {
-        return {.label = QObject::tr("Max online"),
-                .total_bytes = scale_bytes,
-                .filled_bytes = widgets.max_online_bytes,
-                .fill_color = QColor(QString::fromLatin1(ui::kColorWarning)),
-                .text = QObject::tr("%1 current + %2 free")
-                            .arg(formatPartitionBytes(widgets.current_bytes),
-                                 formatPartitionBytes(widgets.adjacent_free_bytes))};
-    }
-    return {.label = QObject::tr("Max online"),
+        return {
+            .label = QObject::tr("Max online"),
             .total_bytes = scale_bytes,
             .filled_bytes = widgets.max_online_bytes,
-            .fill_color = QColor(QString::fromLatin1(ui::kColorTextMuted)),
-            .text = resizeFreeSpaceUnusable(widgets)
-                        ? QObject::tr("%1, the current size: free space not usable for %2")
-                              .arg(formatPartitionBytes(widgets.max_online_bytes),
-                                   resizeFileSystemName(widgets.file_system))
-                        : QObject::tr("%1, the current size")
-                              .arg(formatPartitionBytes(widgets.max_online_bytes))};
+            .fill_color = QColor(QString::fromLatin1(ui::kColorWarning)),
+            .text = QObject::tr("%1 current + %2 free")
+                        .arg(formatPartitionBytes(widgets.current_bytes),
+                             formatPartitionBytes(widgets.adjacent_free_bytes)),
+        };
+    }
+    return {
+        .label = QObject::tr("Max online"),
+        .total_bytes = scale_bytes,
+        .filled_bytes = widgets.max_online_bytes,
+        .fill_color = QColor(QString::fromLatin1(ui::kColorTextMuted)),
+        .text = resizeFreeSpaceUnusable(widgets)
+                    ? QObject::tr("%1, the current size: free space not usable for %2")
+                          .arg(formatPartitionBytes(widgets.max_online_bytes),
+                               resizeFileSystemName(widgets.file_system))
+                    : QObject::tr("%1, the current size")
+                          .arg(formatPartitionBytes(widgets.max_online_bytes)),
+    };
 }
 
 void updateResizePreviewRows(const ResizePartitionWidgets& widgets,
                              uint64_t target_bytes,
                              uint64_t scale_bytes) {
-    widgets.size_preview->setRows({{.label = QObject::tr("Current"),
-                                    .total_bytes = scale_bytes,
-                                    .filled_bytes = widgets.current_bytes,
-                                    .fill_color = QColor(QString::fromLatin1(ui::kColorPrimary)),
-                                    .text = formatPartitionBytes(widgets.current_bytes)},
-                                   {.label = QObject::tr("Target"),
-                                    .total_bytes = scale_bytes,
-                                    .filled_bytes = target_bytes,
-                                    .fill_color = QColor(QString::fromLatin1(ui::kColorSuccess)),
-                                    .text = formatPartitionBytes(target_bytes)},
-                                   resizeMaxOnlineRow(widgets, scale_bytes)});
+    widgets.size_preview->setRows({
+        {
+            .label = QObject::tr("Current"),
+            .total_bytes = scale_bytes,
+            .filled_bytes = widgets.current_bytes,
+            .fill_color = QColor(QString::fromLatin1(ui::kColorPrimary)),
+            .text = formatPartitionBytes(widgets.current_bytes),
+        },
+        {
+            .label = QObject::tr("Target"),
+            .total_bytes = scale_bytes,
+            .filled_bytes = target_bytes,
+            .fill_color = QColor(QString::fromLatin1(ui::kColorSuccess)),
+            .text = formatPartitionBytes(target_bytes),
+        },
+        resizeMaxOnlineRow(widgets, scale_bytes),
+    });
 }
 
 bool resizeMoveReady(const ResizePartitionWidgets& widgets,

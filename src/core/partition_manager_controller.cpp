@@ -1174,7 +1174,7 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
     connect(watcher,
             &QFutureWatcher<PartitionFileSystemToolRunResult>::finished,
             this,
-            [this, watcher, file_system]() {
+            [this, watcher, file_system] {
                 auto result = watcher->result();
                 if (m_file_system_check_watcher != watcher) {
                     return;

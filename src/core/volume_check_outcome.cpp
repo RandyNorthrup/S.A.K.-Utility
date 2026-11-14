@@ -36,31 +36,37 @@ Outcome onlineScanOutcome(const QString& letter, const QString& status) {
     case Finding::FixedOnline:
         return {.text = driveSentence(letter, fixedOnlineText()), .needs_attention = false};
     case Finding::ErrorsFound:
-        return {.text = driveSentence(letter, windowsReportsErrorsText(status)) + QLatin1Char(' ') +
-                        repairRecommendedText() + QLatin1Char('.'),
-                .needs_attention = true};
+        return {
+            .text = driveSentence(letter, windowsReportsErrorsText(status)) + QLatin1Char(' ') +
+                    repairRecommendedText() + QLatin1Char('.'),
+            .needs_attention = true,
+        };
     case Finding::NotChecked:
         break;
     }
-    return {.text =
-                driveSentence(letter,
+    return {
+        .text = driveSentence(letter,
                               QStringLiteral("Not checked (Windows answered \"%1\", which is not "
                                              "an answer about the drive)")
                                   .arg(status)),
-            .needs_attention = true};
+        .needs_attention = true,
+    };
 }
 
 Outcome readOnlyChkdskOutcome(const QString& letter, const QString& verdict) {
     if (verdict == QStringLiteral("None")) {
-        return {.text = driveSentence(letter,
-                                      noErrorsText() + QStringLiteral(" (read-only chkdsk)")),
-                .needs_attention = false};
+        return {
+            .text = driveSentence(letter, noErrorsText() + QStringLiteral(" (read-only chkdsk)")),
+            .needs_attention = false,
+        };
     }
     // Problems found, or no check at all, stop the script with their own words before this line.
-    return {.text = driveSentence(
-                letter,
-                QStringLiteral("Not checked (the read-only chkdsk answered \"%1\")").arg(verdict)),
-            .needs_attention = true};
+    return {
+        .text = driveSentence(
+            letter,
+            QStringLiteral("Not checked (the read-only chkdsk answered \"%1\")").arg(verdict)),
+        .needs_attention = true,
+    };
 }
 
 /// Why a read-only tool check did not pass, without the tool's name the script puts first
@@ -93,16 +99,22 @@ bool fsckHfsFoundErrors(const QString& output) {
 }  // namespace
 
 Finding repairStatusFinding(const QString& repair_status) {
-    static const QStringList kClean = {QStringLiteral("NoErrorsFound"),
-                                       QStringLiteral("ScanNoErrorsFound")};
-    static const QStringList kFixed = {QStringLiteral("ErrorsFixed"),
-                                       QStringLiteral("MinorErrorsFixedOrCleanup"),
-                                       QStringLiteral("ScanErrorsFoundAndFixedOnline"),
-                                       QStringLiteral("ScanFoundAndFixedLeaks")};
-    static const QStringList kNeedsRepair = {QStringLiteral("ScanErrorsFixedOnlineAlsoNeedSpotFix"),
-                                             QStringLiteral("ScanErrorsFoundNeedSpotFix"),
-                                             QStringLiteral("NeedOfflineScanAndFix"),
-                                             QStringLiteral("ScanFoundLeaks")};
+    static const QStringList kClean = {
+        QStringLiteral("NoErrorsFound"),
+        QStringLiteral("ScanNoErrorsFound"),
+    };
+    static const QStringList kFixed = {
+        QStringLiteral("ErrorsFixed"),
+        QStringLiteral("MinorErrorsFixedOrCleanup"),
+        QStringLiteral("ScanErrorsFoundAndFixedOnline"),
+        QStringLiteral("ScanFoundAndFixedLeaks"),
+    };
+    static const QStringList kNeedsRepair = {
+        QStringLiteral("ScanErrorsFixedOnlineAlsoNeedSpotFix"),
+        QStringLiteral("ScanErrorsFoundNeedSpotFix"),
+        QStringLiteral("NeedOfflineScanAndFix"),
+        QStringLiteral("ScanFoundLeaks"),
+    };
     if (kClean.contains(repair_status)) {
         return Finding::NoErrors;
     }
@@ -166,9 +178,11 @@ Outcome recoveryScanOutcome(uint32_t disk_number, const QString& script_output) 
         candidates.append(found.next().captured(0).trimmed());
     }
     if (candidates.isEmpty()) {
-        return {.text = QStringLiteral("The recovery scan of Disk %1 found no lost partition.")
-                            .arg(disk_number),
-                .needs_attention = false};
+        return {
+            .text = QStringLiteral("The recovery scan of Disk %1 found no lost partition.")
+                        .arg(disk_number),
+            .needs_attention = false,
+        };
     }
     QString text = QStringLiteral("The recovery scan of Disk %1 found %2:\n%3")
                        .arg(QString::number(disk_number),
@@ -189,27 +203,37 @@ Outcome toolCheckOutcome(const PartitionFileSystemToolRunResult& result,
                                                             : result.tool_id.trimmed();
     const QString subject = QStringLiteral("The %1 file system").arg(file_system.trimmed());
     if (result.cancelled) {
-        return {.text = subject + QStringLiteral(": Not checked; the check was cancelled, and "
-                                                 "nothing was changed."),
-                .needs_attention = false};
+        return {
+            .text = subject + QStringLiteral(": Not checked; the check was cancelled, and "
+                                             "nothing was changed."),
+            .needs_attention = false,
+        };
     }
     if (result.blocked) {
-        return {.text = subject + QStringLiteral(": Not checked. ") +
-                        result.blockers.join(QLatin1Char(' ')),
-                .needs_attention = true};
+        return {
+            .text = subject + QStringLiteral(": Not checked. ") +
+                    result.blockers.join(QLatin1Char(' ')),
+            .needs_attention = true,
+        };
     }
     if (result.success) {
-        return {.text = QStringLiteral("%1: %2 (read-only %3).").arg(subject, noErrorsText(), tool),
-                .needs_attention = false};
+        return {
+            .text = QStringLiteral("%1: %2 (read-only %3).").arg(subject, noErrorsText(), tool),
+            .needs_attention = false,
+        };
     }
     const QString detail = toolFailureDetail(result, tool);
     if (PartitionFileSystemToolRunner::problemIsAFinding(detail) ||
         fsckHfsFoundErrors(result.std_out)) {
-        return {.text = QStringLiteral("%1: %2. %3").arg(subject, readOnlyErrorsText(tool), detail),
-                .needs_attention = true};
+        return {
+            .text = QStringLiteral("%1: %2. %3").arg(subject, readOnlyErrorsText(tool), detail),
+            .needs_attention = true,
+        };
     }
-    return {.text = QStringLiteral("%1: Not checked. %2").arg(subject, detail),
-            .needs_attention = true};
+    return {
+        .text = QStringLiteral("%1: Not checked. %2").arg(subject, detail),
+        .needs_attention = true,
+    };
 }
 
 }  // namespace sak::volume_check
