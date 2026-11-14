@@ -2038,8 +2038,9 @@ public:
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         m_on_activated = std::move(spec.on_activated);
         if (m_on_activated) {
+            // Clicked, not tabbed to: the disk table is the keyboard route to the same targets,
+            // and a click moves the keyboard focus there (selectTargetFromMap).
             setCursor(Qt::PointingHandCursor);
-            setFocusPolicy(Qt::StrongFocus);
         }
     }
 
@@ -2111,16 +2112,6 @@ protected:
         QWidget::mouseReleaseEvent(event);
     }
 
-    void keyPressEvent(QKeyEvent* event) override {
-        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
-            event->key() == Qt::Key_Space) {
-            activate();
-            event->accept();
-            return;
-        }
-        QWidget::keyPressEvent(event);
-    }
-
 private:
     void activate() {
         if (m_on_activated) {
@@ -2165,8 +2156,8 @@ public:
         setMinimumHeight(kDiskTileMinHeight);
         setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
         if (m_on_activated) {
+            // Clicked, not tabbed to, as a partition segment is.
             setCursor(Qt::PointingHandCursor);
-            setFocusPolicy(Qt::StrongFocus);
         }
     }
 
@@ -2223,16 +2214,6 @@ protected:
             return;
         }
         QWidget::mouseReleaseEvent(event);
-    }
-
-    void keyPressEvent(QKeyEvent* event) override {
-        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
-            event->key() == Qt::Key_Space) {
-            activate();
-            event->accept();
-            return;
-        }
-        QWidget::keyPressEvent(event);
     }
 
 private:
@@ -10092,6 +10073,11 @@ QWidget* PartitionManagerPanel::createWorkspace(QWidget* parent) {
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    // The table is the keyboard route through the disks and partitions the map draws: the arrow
+    // keys move between its rows, Tab moves on from it (not along a row's seven cells), and
+    // Shift+F10 or the Menu key opens a row's menu, as a right-click does (eventFilter).
+    m_table->setTabKeyNavigation(false);
+    m_table->installEventFilter(this);
     setAccessible(m_table, tr("Disk and partition table"), tr("Select a disk or partition"));
     // QTableWidget owns its model as soon as it is constructed, so the overlay binds to a
     // live model here. Parented to m_table, it self-manages its lifetime.
@@ -10134,6 +10120,10 @@ QWidget* PartitionManagerPanel::createDiskMapPane(QWidget* parent) {
     setAccessible(scroll,
                   tr("Partition disk map"),
                   tr("Visual proportional map of disks, partitions, and free space"));
+    // The map is drawn again on every selection, so a focused tile was deleted under the keyboard
+    // focus, which fell to this scroll area and then to tiles appended to the end of the tab
+    // order (testpc1). Nothing in the map takes the keyboard focus: the table does.
+    scroll->setFocusPolicy(Qt::NoFocus);
     frame_layout->addWidget(scroll);
     return frame;
 }
@@ -10558,7 +10548,7 @@ QWidget* PartitionManagerPanel::createPartitionSegment(
          .color = partitionColor(disk, partition),
          .used_percent = usedPercent(partition),
          .selected = targetMatchesPartition(selected, disk, partition),
-         .on_activated = [this, segment_target]() { selectTargetInTable(segment_target); }},
+         .on_activated = [this, segment_target]() { selectTargetFromMap(segment_target); }},
         m_disk_map_container);
     attachDiskMapContextMenu(segment, segment_target);
     return segment;
@@ -10578,7 +10568,7 @@ QWidget* PartitionManagerPanel::createUnallocatedSegment(
          .color = unallocatedColor(),
          .used_percent = 0,
          .selected = targetMatchesRegion(selected, region),
-         .on_activated = [this, segment_target]() { selectTargetInTable(segment_target); }},
+         .on_activated = [this, segment_target]() { selectTargetFromMap(segment_target); }},
         m_disk_map_container);
     attachDiskMapContextMenu(segment, segment_target);
     return segment;
@@ -10601,7 +10591,7 @@ QWidget* PartitionManagerPanel::createDiskTile(const PartitionDiskInfo& disk) {
     spec.color = partitionColorForRole(color_role);
     spec.selected = targetMatchesDisk(selected, disk);
     spec.on_activated = [this, target]() {
-        selectTargetInTable(target);
+        selectTargetFromMap(target);
     };
     auto* tile = new DiskTileWidget(std::move(spec), m_disk_map_container);
     attachDiskMapContextMenu(tile, target);
@@ -10629,6 +10619,14 @@ void PartitionManagerPanel::selectTargetInTable(const PartitionTarget& target) {
     }
 }
 
+void PartitionManagerPanel::selectTargetFromMap(const PartitionTarget& target) {
+    selectTargetInTable(target);
+    // The keyboard follows the click to the table, at the row it selected, and stays in the panel.
+    if (m_table != nullptr) {
+        m_table->setFocus(Qt::OtherFocusReason);
+    }
+}
+
 void PartitionManagerPanel::attachDiskMapContextMenu(QWidget* widget,
                                                      const PartitionTarget& target) {
     if (widget == nullptr) {
@@ -10640,7 +10638,8 @@ void PartitionManagerPanel::attachDiskMapContextMenu(QWidget* widget,
             this,
             [this, widget, target](const QPoint& position) {
                 const QPoint global_position = widget->mapToGlobal(position);
-                selectTargetInTable(target);
+                // The table has the keyboard before the menu opens, so the menu gives it back.
+                selectTargetFromMap(target);
                 showSelectedTargetContextMenuAt(global_position);
             });
 }
@@ -11037,6 +11036,38 @@ void PartitionManagerPanel::showPartitionContextMenu(const QPoint& position) {
         m_table->selectRow(item->row());
     }
     showSelectedTargetContextMenuAt(m_table->viewport()->mapToGlobal(position));
+}
+
+bool PartitionManagerPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_table && m_table != nullptr) {
+        bool from_keyboard = false;
+        if (event->type() == QEvent::KeyPress) {
+            const auto* key = static_cast<QKeyEvent*>(event);
+            from_keyboard = (key->key() == Qt::Key_Menu && key->modifiers() == Qt::NoModifier) ||
+                            (key->key() == Qt::Key_F10 && key->modifiers() == Qt::ShiftModifier);
+        } else if (event->type() == QEvent::ContextMenu) {
+            // Windows' own keyboard menu request: its position is not the current row's.
+            from_keyboard = static_cast<QContextMenuEvent*>(event)->reason() ==
+                            QContextMenuEvent::Keyboard;
+        }
+        if (from_keyboard) {
+            showCurrentRowContextMenu();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void PartitionManagerPanel::showCurrentRowContextMenu() {
+    // The menu a right-click on the current row opens, at that row.
+    const int row = m_table->currentRow();
+    QPoint anchor = m_table->viewport()->rect().topLeft();
+    if (row >= 0) {
+        m_table->selectRow(row);
+        const QRect cell = m_table->visualRect(m_table->model()->index(row, ColPartition));
+        anchor = QPoint(cell.left() + cell.height() / 2, cell.center().y());
+    }
+    showSelectedTargetContextMenuAt(m_table->viewport()->mapToGlobal(anchor));
 }
 
 void PartitionManagerPanel::showSelectedTargetContextMenuAt(const QPoint& global_position) {

@@ -56,8 +56,10 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStyleOptionViewItem>
+#include <QTabBar>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTextDocument>
 #include <QTextEdit>
@@ -124,6 +126,10 @@ private Q_SLOTS:
     void diskMapHighlightsOnlySelectedPartition();
     void diskMapHighlightsSelectedDiskRow();
     void diskMapContextMenuSelectsMatchingTargets();
+    void keyboardReachesTheDiskTableFromEveryControl();
+    void tabMovesOnFromTheDiskTableAndBack();
+    void mapClickGivesTheDiskTableTheKeyboard();
+    void keyboardOpensTheRowMenuARightClickOpens();
     void actionsReturnBeforeTheirDialogsOpen();
     void contextMenuOmitsRibbonAndQueueControls();
     void convertDynamicToBasicRefusesABasicDisk();
@@ -3011,6 +3017,263 @@ void PartitionManagerPanelTests::diskMapContextMenuSelectsMatchingTargets() {
     QVERIFY2(segment != nullptr, "Disk-map partition segment should exist");
     sendContextMenu(segment);
     QCOMPARE(table->currentRow(), 1);
+}
+
+namespace {
+
+/// The panel's disk and partition table, by the name a screen reader gives it.
+QTableWidget* diskTable(const QWidget& panel) {
+    for (auto* table : panel.findChildren<QTableWidget*>()) {
+        if (table->accessibleName() == QStringLiteral("Disk and partition table")) {
+            return table;
+        }
+    }
+    return nullptr;
+}
+
+QString focusName(const QWidget* widget) {
+    if (widget == nullptr) {
+        return QStringLiteral("(nothing)");
+    }
+    return QStringLiteral("%1 \"%2\"")
+        .arg(QString::fromLatin1(widget->metaObject()->className()),
+             widget->accessibleName().isEmpty() ? widget->objectName() : widget->accessibleName());
+}
+
+/// Where Tab (Shift+Tab when @p backwards) took the keyboard focus, press by press, until it
+/// reached @p target or @p presses ran out; and whether each stop was @p bar or inside @p panel.
+struct TabWalk {
+    bool reached{false};
+    bool stayed{true};
+    QStringList path;
+};
+
+TabWalk tabUntil(
+    const QWidget* target, const QWidget* panel, const QWidget* bar, bool backwards, int presses) {
+    TabWalk walk;
+    for (int press = 0; press < presses; ++press) {
+        QWidget* from = QApplication::focusWidget();
+        if (from == nullptr) {
+            walk.path.append(focusName(nullptr));
+            return walk;
+        }
+        QTest::keyClick(from, Qt::Key_Tab, backwards ? Qt::ShiftModifier : Qt::NoModifier);
+        const QWidget* now = QApplication::focusWidget();
+        walk.path.append(focusName(now));
+        if (now != bar && (now == nullptr || !panel->isAncestorOf(now))) {
+            walk.stayed = false;
+        }
+        if (now == target) {
+            walk.reached = true;
+            return walk;
+        }
+    }
+    return walk;
+}
+
+/// The panel as the main window holds it: a page of a tab widget, shown and active.
+struct HostedPanel {
+    QTabWidget tabs;
+    sak::PartitionManagerPanel* panel{nullptr};
+    QTableWidget* table{nullptr};
+
+    HostedPanel() {
+        panel = new sak::PartitionManagerPanel;
+        panel->setTestInventoryForReview(applyReviewInventoryFixture());
+        tabs.addTab(panel, QStringLiteral("Partition Manager"));
+        tabs.resize(1280, 800);
+        tabs.show();
+        table = diskTable(*panel);
+    }
+    ~HostedPanel() = default;
+    HostedPanel(const HostedPanel&) = delete;
+    HostedPanel& operator=(const HostedPanel&) = delete;
+    HostedPanel(HostedPanel&&) = delete;
+    HostedPanel& operator=(HostedPanel&&) = delete;
+};
+
+constexpr int kTabStopBound = 200;
+
+/// The texts of the menu that opens while @p open runs, which is then closed.
+template <typename Open>
+QStringList menuOpenedBy(Open open) {
+    QStringList texts;
+    QTimer::singleShot(0, [&texts]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (menu == nullptr) {
+            return;
+        }
+        for (const auto* action : menu->actions()) {
+            if (!action->isSeparator()) {
+                texts.append(action->text());
+            }
+        }
+        menu->close();
+    });
+    open();
+    QApplication::processEvents();
+    flushDeferredDeletes();
+    return texts;
+}
+
+}  // namespace
+
+// The disk table is the keyboard route through the disks and partitions the map draws (the
+// coordinator, after testpc1 and testpc2, 2026-11-13). Tab and Shift+Tab reach it from the main
+// tab bar and from every control in the panel, and never leave the panel on the way.
+void PartitionManagerPanelTests::keyboardReachesTheDiskTableFromEveryControl() {
+    HostedPanel host;
+    QVERIFY(QTest::qWaitForWindowActive(&host.tabs));
+    QVERIFY(host.table != nullptr);
+    QWidget* bar = host.tabs.tabBar();
+    QList<QWidget*> starts{bar};
+    for (auto* widget : host.panel->findChildren<QWidget*>()) {
+        if (widget->isVisibleTo(&host.tabs) && widget->isEnabled() &&
+            (widget->focusPolicy() & Qt::TabFocus) == Qt::TabFocus && widget != host.table) {
+            starts.append(widget);
+        }
+    }
+    QVERIFY(starts.size() > 1);
+    for (QWidget* start : starts) {
+        for (const bool backwards : {false, true}) {
+            start->setFocus(Qt::TabFocusReason);
+            QTRY_VERIFY(start->hasFocus());
+            const TabWalk walk = tabUntil(host.table, host.panel, bar, backwards, kTabStopBound);
+            QVERIFY2(walk.reached && walk.stayed,
+                     qPrintable(
+                         QStringLiteral("%1 from %2: %3")
+                             .arg(backwards ? QStringLiteral("Shift+Tab") : QStringLiteral("Tab"),
+                                  focusName(start),
+                                  walk.path.join(QStringLiteral(" > ")))));
+        }
+    }
+}
+
+// Tab moves on from the table, not along a row's seven cells, and Shift+Tab comes back to it at
+// the same row; the arrow keys move between rows.
+void PartitionManagerPanelTests::tabMovesOnFromTheDiskTableAndBack() {
+    HostedPanel host;
+    QVERIFY(QTest::qWaitForWindowActive(&host.tabs));
+    QVERIFY(host.table != nullptr);
+    host.table->setFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(host.table->hasFocus());
+    host.table->setCurrentCell(0, 0);
+    QTest::keyClick(host.table, Qt::Key_Down);
+    QCOMPARE(host.table->currentRow(), 1);
+    QTest::keyClick(host.table, Qt::Key_Tab);
+    QWidget* next = QApplication::focusWidget();
+    QVERIFY2(next != host.table && next != nullptr && host.panel->isAncestorOf(next),
+             qPrintable(focusName(next)));
+    QTest::keyClick(next, Qt::Key_Tab, Qt::ShiftModifier);
+    QCOMPARE(QApplication::focusWidget(), host.table);
+    QCOMPARE(host.table->currentRow(), 1);
+}
+
+// testpc1: after a click on a disk map tile the focus stayed on "Partition disk map", and Tab went
+// Log > Disk 0 tile > Disk 0 partition 1, never to the table: the map is drawn again for every
+// selection, so the clicked tile was deleted with the focus on it, and the new tiles came at the
+// end of the tab order. Nothing in the map takes the focus now; a click on a tile or a segment,
+// wherever the focus was (the tab bar, testpc2; a control in the panel), and a tile's menu
+// closing, give it to the table at the row selected, and Tab goes on from there in the panel.
+void PartitionManagerPanelTests::mapClickGivesTheDiskTableTheKeyboard() {
+    HostedPanel host;
+    QVERIFY(QTest::qWaitForWindowActive(&host.tabs));
+    QVERIFY(host.table != nullptr);
+    auto* map = host.panel->findChild<QScrollArea*>();
+    for (auto* scroll : host.panel->findChildren<QScrollArea*>()) {
+        if (scroll->accessibleName() == QStringLiteral("Partition disk map")) {
+            map = scroll;
+        }
+    }
+    QVERIFY(map != nullptr && map->accessibleName() == QStringLiteral("Partition disk map"));
+    QCOMPARE(map->focusPolicy(), Qt::NoFocus);
+    for (const auto* name : {"partitionDiskMapDiskTile", "partitionDiskMapSegment"}) {
+        for (const auto* piece : host.panel->findChildren<QWidget*>(QString::fromLatin1(name))) {
+            QCOMPARE(piece->focusPolicy(), Qt::NoFocus);
+        }
+    }
+
+    QWidget* bar = host.tabs.tabBar();
+    auto* ribbon_button = findToolButtonByName(host.panel, QStringLiteral("Resize/Move Partition"));
+    QVERIFY(ribbon_button != nullptr);
+    struct Click {
+        QWidget* focus_before;
+        const char* piece;
+        int row;
+    };
+    for (const Click& click : {Click{bar, "partitionDiskMapSegment", 1},
+                               Click{ribbon_button, "partitionDiskMapDiskTile", 0},
+                               Click{bar, "partitionDiskMapDiskTile", 0}}) {
+        click.focus_before->setFocus(Qt::TabFocusReason);
+        QTRY_VERIFY(click.focus_before->hasFocus());
+        auto* piece = host.panel->findChild<QWidget*>(QString::fromLatin1(click.piece));
+        QVERIFY(piece != nullptr);
+        QTest::mouseClick(piece, Qt::LeftButton, Qt::NoModifier, piece->rect().center());
+        flushDeferredDeletes();
+        QCOMPARE(QApplication::focusWidget(), host.table);
+        QCOMPARE(host.table->currentRow(), click.row);
+        QTest::keyClick(host.table, Qt::Key_Tab);
+        QWidget* next = QApplication::focusWidget();
+        QVERIFY2(next != nullptr && host.panel->isAncestorOf(next), qPrintable(focusName(next)));
+        QTest::keyClick(next, Qt::Key_Tab, Qt::ShiftModifier);
+        QCOMPARE(QApplication::focusWidget(), host.table);
+    }
+
+    // A tile's menu, opened and closed without a choice, leaves the keyboard at the table too.
+    bar->setFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(bar->hasFocus());
+    auto* segment = host.panel->findChild<QWidget*>(QStringLiteral("partitionDiskMapSegment"));
+    QVERIFY(segment != nullptr);
+    const QStringList actions = menuOpenedBy([segment]() {
+        const QPoint point = segment->rect().center();
+        QContextMenuEvent event(QContextMenuEvent::Mouse, point, segment->mapToGlobal(point));
+        QApplication::sendEvent(segment, &event);
+    });
+    QVERIFY(!actions.isEmpty());
+    // The window's own keyboard focus: a closed menu can leave no window active offscreen.
+    QCOMPARE(host.tabs.focusWidget(), host.table);
+    QCOMPARE(host.table->currentRow(), 1);
+}
+
+// Shift+F10 and the Menu key on a row of the table open the menu a right-click on that row opens,
+// for the current row; so does Windows' own keyboard menu request, whatever position it names.
+void PartitionManagerPanelTests::keyboardOpensTheRowMenuARightClickOpens() {
+    HostedPanel host;
+    QVERIFY(QTest::qWaitForWindowActive(&host.tabs));
+    QVERIFY(host.table != nullptr);
+    for (const int row : {0, 1}) {
+        const QRect cell = host.table->visualItemRect(host.table->item(row, 0));
+        const QStringList right_click = menuOpenedBy([&host, cell]() {
+            QContextMenuEvent event(QContextMenuEvent::Mouse,
+                                    cell.center(),
+                                    host.table->viewport()->mapToGlobal(cell.center()));
+            QApplication::sendEvent(host.table->viewport(), &event);
+        });
+        QVERIFY2(right_click.contains(QStringLiteral("Properties")),
+                 qPrintable(right_click.join(QStringLiteral(", "))));
+        QCOMPARE(host.table->currentRow(), row);
+
+        // A closed menu can leave no window active on the offscreen platform.
+        host.tabs.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&host.tabs));
+        host.table->setFocus(Qt::TabFocusReason);
+        QTRY_VERIFY(host.table->hasFocus());
+        QCOMPARE(menuOpenedBy(
+                     [&host]() { QTest::keyClick(host.table, Qt::Key_F10, Qt::ShiftModifier); }),
+                 right_click);
+        QCOMPARE(menuOpenedBy([&host]() { QTest::keyClick(host.table, Qt::Key_Menu); }),
+                 right_click);
+        const QRect other = host.table->visualItemRect(host.table->item(1 - row, 0));
+        QCOMPARE(menuOpenedBy([&host, other]() {
+                     QContextMenuEvent event(QContextMenuEvent::Keyboard,
+                                             other.center(),
+                                             host.table->mapToGlobal(other.center()));
+                     QApplication::sendEvent(host.table, &event);
+                 }),
+                 right_click);
+        QCOMPARE(host.table->currentRow(), row);
+        QCOMPARE(host.tabs.focusWidget(), host.table);
+    }
 }
 
 void PartitionManagerPanelTests::contextMenuOmitsRibbonAndQueueControls() {

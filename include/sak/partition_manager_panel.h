@@ -77,6 +77,9 @@ public:
     void reportTestWindowsPhaseForReview(const std::optional<WindowsContinuedPhase>& phase);
 #endif
 
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
@@ -251,6 +254,10 @@ private:
                                       const std::optional<PartitionTarget>& selected);
     QWidget* createDiskTile(const PartitionDiskInfo& disk);
     void selectTargetInTable(const PartitionTarget& target);
+    /// A click on the disk map: selects @p target in the table and gives the table the keyboard.
+    void selectTargetFromMap(const PartitionTarget& target);
+    /// Shift+F10 or the Menu key on the table: the current row's menu, at that row.
+    void showCurrentRowContextMenu();
     /// @brief Health/operational/temperature/wear/error fragments shown in a disk row tooltip
     static QStringList diskStatusParts(const PartitionDiskInfo& disk);
     void addDiskRow(const PartitionDiskInfo& disk);

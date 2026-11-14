@@ -3862,6 +3862,32 @@ and the cut smaller or none. `aiStatusLabelStandsAsideOnlyWhileAMessageShows` co
 unbroken word included (a drill that made the eject note one 85-character word left it fitting), so nothing in
 S.A.K. can cut it; that test stands as the measurement.
 
+**Keyboard route in Partition Manager (testpc1 and testpc2).** After a click on a disk map tile the focus stayed
+on "Partition disk map", Tab went Log > Disk 0 tile > Disk 0 partition 1 and never to the disk table, and Up and
+Down did nothing among the tiles. Cause: the map is drawn again on every selection (`rebuildDiskMap`, hide and
+`deleteLater`), so a clicked tile, which took the focus (`Qt::StrongFocus`), was deleted under it; the focus fell to
+the map's scroll area, and the new tiles came at the end of the window's tab order. Now nothing in the map takes the
+focus (tiles and segments have no focus policy, the scroll area `Qt::NoFocus`), so it looks the same and has no
+focus ring; a click on a tile or segment, and its menu, give the table the focus at the row selected
+(`selectTargetFromMap`), wherever the focus was (the tab bar, testpc2; a control in the panel; the map, testpc1).
+The table is the keyboard route: Tab moves on from it (`setTabKeyNavigation(false)`, so not along a row's seven
+cells), the arrow keys move between rows, and Shift+F10, the Menu key and Windows' own keyboard menu request open
+the current row's menu, the one a right-click on it opens (`eventFilter`, `showCurrentRowContextMenu`; for
+Windows' own request, whatever position it names). Checked: no `setTabOrder` and no `setFocusProxy` in the panel;
+the map's row frames and bars take no focus. Tests: `keyboardReachesTheDiskTableFromEveryControl` (the panel as a
+page of a tab widget: Tab and Shift+Tab from the tab bar and from every focusable control reach the table, every
+stop inside the panel), `tabMovesOnFromTheDiskTableAndBack`, `mapClickGivesTheDiskTableTheKeyboard` (tile and segment clicks with the focus first on the tab bar or a ribbon
+button, then Tab and Shift+Tab, and a tile's menu closing), `keyboardOpensTheRowMenuARightClickOpens`. Drills:
+`map-tile-takes-the-focus`, `map-click-leaves-the-keyboard-behind`, `table-tab-walks-the-cells`,
+`table-menu-key-not-handled`, `map-scroll-area-is-a-tab-stop`, `table-out-of-the-tab-order`. Sweep of every main
+tab on testpc1 (offscreen, the main window built there, since it builds every panel, disk inventory included; a
+diagnostic never committed): Tab from the tab bar reaches the page's main list or table on File Management
+(Category Mappings Table), Partition Manager (Pending operations, then the disk table), Benchmark and Diagnostics
+(SMART Health Table), Email Tools (Email Folder Tree), Application Management (Package Search Results) and Network
+Management (Ping results); Backup and Restore, Image Flasher, Help and Support and About have none. Not the same
+cause, so not changed here: on the AI Assistant tab Tab stops in the message box, which takes Tab as text (Ctrl+Tab
+leaves it); and from the tab bar Tab first visits its scroll arrows and the status bar's Theme button.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

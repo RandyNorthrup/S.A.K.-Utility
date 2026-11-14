@@ -120,6 +120,10 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **Partition Manager's disk table is the keyboard route** - After a click on the disk map the keyboard focus
+  stayed on the map, and Tab went to the map's tiles and never to the disk table. A click on the map now gives the
+  table the keyboard, at the row it selected; Tab moves on from the table instead of along a row's cells; and
+  Shift+F10 or the Menu key opens a row's menu, as a right-click does. The map looks the same.
 - **Status messages on the AI Assistant tab are no longer cut short** - A status message that clears itself is
   drawn only up to the status bar's first permanent widget, and on the AI Assistant tab the AI status line took all
   the free space, leaving the message about 77 px at 1280 px. The AI status line now stands aside while such a
