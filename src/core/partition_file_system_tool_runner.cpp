@@ -11,6 +11,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QRegularExpression>
 
 #include <optional>
 
@@ -39,6 +40,43 @@ constexpr auto kXfsFileSystem = "xfs";
 constexpr auto kBtrfsFileSystem = "btrfs";
 constexpr qsizetype kExtVolumeLabelMaxChars = 16;
 constexpr qsizetype kHfsVolumeLabelMaxChars = 255;
+
+// e2fsck's exit code is a bit mask (e2fsck(8)): 4 errors left uncorrected, 8 operational error,
+// 32 cancelled by the user. 1 and 2 (corrected) are an accepted code only for a repair.
+constexpr int kE2fsckErrorsLeft = 4;
+constexpr int kE2fsckOperationalError = 8;
+constexpr int kE2fsckCancelled = 32;
+// What e2fsck prints when the superblock says the file system is larger than its device, before it
+// asks "Abort?". A check answers no and goes on, and exits 0 (operation proof, 2026-11-11).
+constexpr auto kE2fsckCorruptLine = "the partition table is likely to be corrupt";
+constexpr auto kE2fsckCorruptMessage =
+    "e2fsck says the superblock or the partition table is likely corrupt: the file system is "
+    "larger than its partition. It went on only because a check answers no to every question, so "
+    "the file system did not pass. Put the partition back to the file system's size, or restore "
+    "the file system from a backup.";
+constexpr auto kE2fsckAbortMessage =
+    "e2fsck asked to stop because of a serious problem (\"Abort?\"). It went on only because a "
+    "check answers no to every question, so the file system did not pass.";
+constexpr auto kE2fsckOperationalMessage =
+    "e2fsck could not check the file system (an operational error, exit code {0}).";
+constexpr auto kE2fsckErrorsLeftMessage =
+    "e2fsck found errors in the file system and left them uncorrected (exit code {0}).";
+constexpr auto kE2fsckCancelledMessage = "e2fsck was stopped before it finished (exit code {0}).";
+constexpr auto kE2fsckOtherMessage =
+    "e2fsck ended with exit code {0}, which this run does not accept.";
+constexpr auto kOpenFailureMessage =
+    "S.A.K. could not open the partition: {0}. The check read nothing, so this says nothing about "
+    "the file system.";
+
+QString e2fsckExitMessage(const char* message, int exit_code) {
+    return QString::fromLatin1(message).replace(QStringLiteral("{0}"), QString::number(exit_code));
+}
+
+QString quotedPowerShell(const char* text) {
+    return QStringLiteral("'") +
+           QString::fromLatin1(text).replace(QStringLiteral("'"), QStringLiteral("''")) +
+           QStringLiteral("'");
+}
 
 QString normalizedToken(const QString& value) {
     return value.trimmed().toLower();
@@ -397,7 +435,118 @@ PartitionFileSystemToolRunResult PartitionFileSystemToolRunner::runReadOnlyCheck
     result.cancelled = process.cancelled;
     result.std_out = process.std_out;
     result.std_err = process.std_err;
+    if (command.tool_id == QString::fromLatin1(kE2fsckToolId) && !process.timed_out &&
+        !process.cancelled) {
+        // A read-only check accepts 0 only: it corrects nothing.
+        result.problem = e2fsckProblem(process.exit_code,
+                                       process.std_out + QLatin1Char('\n') + process.std_err,
+                                       {0});
+    } else if (!process.timed_out && !process.cancelled) {
+        result.problem = openFailureProblem(process.std_out + QLatin1Char('\n') + process.std_err);
+    }
+    result.success = result.success && result.problem.isEmpty();
     return result;
+}
+
+QString PartitionFileSystemToolRunner::e2fsckProblem(int exit_code,
+                                                     const QString& output,
+                                                     const QList<int>& accepted_exit_codes) {
+    if (const QString open_failure = openFailureProblem(output); !open_failure.isEmpty()) {
+        return open_failure;
+    }
+    if (output.contains(QLatin1String(kE2fsckCorruptLine), Qt::CaseInsensitive)) {
+        return QString::fromLatin1(kE2fsckCorruptMessage);
+    }
+    static const QRegularExpression kAbortAnsweredNo(QStringLiteral("^\\s*Abort\\? no\\b"),
+                                                     QRegularExpression::MultilineOption |
+                                                         QRegularExpression::CaseInsensitiveOption);
+    if (kAbortAnsweredNo.match(output).hasMatch()) {
+        return QString::fromLatin1(kE2fsckAbortMessage);
+    }
+    if (accepted_exit_codes.contains(exit_code)) {
+        return {};
+    }
+    if (exit_code < 0) {
+        return e2fsckExitMessage(kE2fsckOtherMessage, exit_code);
+    }
+    if ((exit_code & kE2fsckOperationalError) != 0) {
+        return e2fsckExitMessage(kE2fsckOperationalMessage, exit_code);
+    }
+    if ((exit_code & kE2fsckErrorsLeft) != 0) {
+        return e2fsckExitMessage(kE2fsckErrorsLeftMessage, exit_code);
+    }
+    if ((exit_code & kE2fsckCancelled) != 0) {
+        return e2fsckExitMessage(kE2fsckCancelledMessage, exit_code);
+    }
+    return e2fsckExitMessage(kE2fsckOtherMessage, exit_code);
+}
+
+QString PartitionFileSystemToolRunner::openFailureProblem(const QString& output) {
+    // e2fsprogs: "e2fsck: <reason> while trying to open <device>". Other tools: "<tool>: can't
+    // open <device>: <reason>".
+    static const QRegularExpression kWhileTryingToOpen(
+        QStringLiteral(R"(^\s*[\w.+-]+: (.+?) while trying to open\b)"),
+        QRegularExpression::MultilineOption | QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression kCannotOpen(
+        QStringLiteral(
+            R"(^\s*[\w.+-]+: (?:can\x27?t|cannot|could not|unable to) open [^:\r\n]+: (.+)$)"),
+        QRegularExpression::MultilineOption | QRegularExpression::CaseInsensitiveOption);
+    QString reason;
+    if (const auto found = kWhileTryingToOpen.match(output); found.hasMatch()) {
+        reason = found.captured(1);
+    } else if (const auto other = kCannotOpen.match(output); other.hasMatch()) {
+        reason = other.captured(1);
+    }
+    reason = reason.trimmed();
+    while (reason.endsWith(QLatin1Char('.'))) {
+        reason.chop(1);
+    }
+    return reason.isEmpty()
+               ? QString()
+               : QString::fromLatin1(kOpenFailureMessage).replace(QStringLiteral("{0}"), reason);
+}
+
+QString PartitionFileSystemToolRunner::openFailureFunctionScript() {
+    return QStringLiteral(R"PS(
+function Get-SakToolOpenFailure([string]$Output) {
+  $reason = ''
+  if ($Output -match '(?im)^\s*[\w.+-]+: (.+?) while trying to open\b') { $reason = $Matches[1] }
+  elseif ($Output -match '(?im)^\s*[\w.+-]+: (?:can\x27?t|cannot|could not|unable to) open [^:\r\n]+: (.+)$') { $reason = $Matches[1] }
+  $reason = $reason.Trim().TrimEnd('.')
+  if (-not $reason) { return '' }
+  return (%1 -f $reason)
+}
+)PS")
+        .arg(quotedPowerShell(kOpenFailureMessage));
+}
+
+QString PartitionFileSystemToolRunner::e2fsckProblemFunctionScript() {
+    // The same order as e2fsckProblem: an open failure, the output, then the exit code.
+    return openFailureFunctionScript() +
+           QStringLiteral(
+               "function Get-SakE2fsckProblem([int]$ExitCode, [string]$Output, [int[]]$Accepted) "
+               "{\n"
+               "  $openFailure = Get-SakToolOpenFailure $Output\n"
+               "  if ($openFailure) { return $openFailure }\n"
+               "  if ($Output -match %1) { return %2 }\n"
+               "  if ($Output -match '(?im)^\\s*Abort\\? no\\b') { return %3 }\n"
+               "  if ($Accepted -contains $ExitCode) { return '' }\n"
+               "  if ($ExitCode -lt 0) { return (%4 -f $ExitCode) }\n"
+               "  if ($ExitCode -band %5) { return (%6 -f $ExitCode) }\n"
+               "  if ($ExitCode -band %7) { return (%8 -f $ExitCode) }\n"
+               "  if ($ExitCode -band %9) { return (%10 -f $ExitCode) }\n"
+               "  return (%4 -f $ExitCode)\n"
+               "}\n")
+               .arg(quotedPowerShell(kE2fsckCorruptLine),
+                    quotedPowerShell(kE2fsckCorruptMessage),
+                    quotedPowerShell(kE2fsckAbortMessage),
+                    quotedPowerShell(kE2fsckOtherMessage),
+                    QString::number(kE2fsckOperationalError),
+                    quotedPowerShell(kE2fsckOperationalMessage),
+                    QString::number(kE2fsckErrorsLeft),
+                    quotedPowerShell(kE2fsckErrorsLeftMessage),
+                    QString::number(kE2fsckCancelled))
+               .arg(quotedPowerShell(kE2fsckCancelledMessage));
 }
 
 }  // namespace sak

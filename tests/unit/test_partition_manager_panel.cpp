@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/color_constants.h"
+#include "sak/layout_constants.h"
+#include "sak/partition_apfs_writer.h"
 #include "sak/partition_file_system_detector.h"
+#include "sak/partition_file_system_registry.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_manager_panel.h"
 #include "sak/partition_operation_requests.h"
@@ -53,9 +56,12 @@
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStyleOptionViewItem>
+#include <QTabBar>
 #include <QTableWidget>
 #include <QTableWidgetItem>
+#include <QTabWidget>
 #include <QTemporaryDir>
+#include <QTextDocument>
 #include <QTextEdit>
 #include <QThread>
 #include <QTimer>
@@ -120,6 +126,10 @@ private Q_SLOTS:
     void diskMapHighlightsOnlySelectedPartition();
     void diskMapHighlightsSelectedDiskRow();
     void diskMapContextMenuSelectsMatchingTargets();
+    void keyboardReachesTheDiskTableFromEveryControl();
+    void tabMovesOnFromTheDiskTableAndBack();
+    void mapClickGivesTheDiskTableTheKeyboard();
+    void keyboardOpensTheRowMenuARightClickOpens();
     void actionsReturnBeforeTheirDialogsOpen();
     void contextMenuOmitsRibbonAndQueueControls();
     void convertDynamicToBasicRefusesABasicDisk();
@@ -151,6 +161,7 @@ private Q_SLOTS:
     void restoreImageSourceRefusesUnmappedIdentity();
     void restoreImageSourceRefusesUncAliases();
     void restoreImageQueuesConfirmedTarget();
+    void typeIdPromptKeepsTheExampleGuidWhole();
     void modalQueueBindsReviewedTarget();
     void modalQueueRefusesChangedLayout();
     void cloneAndUsedScalingDoNotOverflow() const;
@@ -188,6 +199,9 @@ private Q_SLOTS:
     void propertiesDialogShowsRawFilesystemMetadata();
     void propertiesAndInspectShowRawFilesystemSanityNotes();
     void extFilesystemWriteActionsQueueWithConfirmation() const;
+    void resizeSaysWindowsCannotResizeFat32() const;
+    void resizeGrowsAnApfsPartitionOnly() const;
+    void resizeOffersOnlySizesTheQueueTakes() const;
     void apfsContainerActionAllowsWritableApfsVolumes();
     void manageBitLockerShowsStatusDialog();
     void theTableHeaderReachesTheRightEdge();
@@ -197,6 +211,10 @@ private Q_SLOTS:
     void ssdSecureEraseShowsQueueDialog();
     void ssdSecureEraseNamesTheBusItSees();
     void readOnlyScansRunNowWithoutQueueing();
+    void checkFileSystemSaysToWaitBeforeUnplugging();
+    void newCheckTextsFitTheResultBox();
+    void newResizeTextsFitTheResizeDialog();
+    void newTypeIdPromptFitsItsDialog();
     void windowsPhaseDisablesCancelAndSaysSo();
     void openClosePromptFollowsTheRun();
     void scanFileSystemsIsDiskLevelOnly();
@@ -1115,8 +1133,9 @@ void verifyRawHfsSidebarControls(sak::PartitionManagerPanel* panel) {
     QVERIFY(check->toolTip().contains(QStringLiteral("fsck_hfs")));
     QVERIFY(!resize->isEnabled());
     QCOMPARE(resize->toolTip(),
-             QStringLiteral("HFS+ resize is not supported yet. Non-Windows resize currently "
-                            "supports ext2/ext3/ext4 only."));
+             QStringLiteral("S.A.K. cannot resize HFS+ partitions. Windows resizes NTFS and ReFS "
+                            "partitions, S.A.K. resizes ext2, ext3 and ext4 with its bundled "
+                            "tools, and grows APFS partitions in place."));
     QVERIFY(!nativeCheck->isEnabled());
     QCOMPARE(nativeCheck->toolTip(), nativeDisabledReason);
     QVERIFY(!changeCluster->isEnabled());
@@ -1231,6 +1250,13 @@ void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
         QCOMPARE(metadata,
                  QStringLiteral("Block size: 4096\nData blocks: 32768\nMetadata sanity: XFS "
                                 "superblock geometry is internally consistent"));
+        // No XFS tool ships, and the dialog says so plainly, with no "Required bundled tools"
+        // row (it read "Format and repair remain blocked until the bundled tools have been
+        // tested" beside "Required bundled tools: xfs_repair").
+        QCOMPARE(propertyTableValue(properties, QStringLiteral("Blocked filesystem actions")),
+                 QStringLiteral("XFS format, repair and the deep check (xfs_repair) are not "
+                                "available because S.A.K. Utility includes no XFS tools"));
+        QVERIFY(propertyTableValue(properties, QStringLiteral("Required bundled tools")).isEmpty());
         propertiesInspected = true;
         dialog->reject();
     });
@@ -1253,6 +1279,13 @@ void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
         QCOMPARE(metadata,
                  QStringLiteral("Block size: 4096\nData blocks: 32768\nMetadata sanity: XFS "
                                 "superblock geometry is internally consistent"));
+        // No XFS tool ships, and the dialog says so plainly, with no "Required bundled tools"
+        // row (it read "Format and repair remain blocked until the bundled tools have been
+        // tested" beside "Required bundled tools: xfs_repair").
+        QCOMPARE(propertyTableValue(properties, QStringLiteral("Blocked filesystem actions")),
+                 QStringLiteral("XFS format, repair and the deep check (xfs_repair) are not "
+                                "available because S.A.K. Utility includes no XFS tools"));
+        QVERIFY(propertyTableValue(properties, QStringLiteral("Required bundled tools")).isEmpty());
         inspectInspected = true;
         dialog->reject();
     });
@@ -1348,6 +1381,11 @@ void queueApfsFormatAndVerify() {
         auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
         QVERIFY(fileSystem != nullptr);
         QCOMPARE(fileSystem->currentText(), QStringLiteral("APFS"));
+        // The fixture's volume has no label, and an APFS volume needs a name (Add to Queue
+        // refuses one without: the writer would at Apply).
+        auto* label = findAccessibleWidget<QLineEdit>(dialog, QStringLiteral("Volume label"));
+        QVERIFY(label != nullptr);
+        label->setText(QStringLiteral("SAKAPFS"));
         auto* confirm = findAccessibleWidget<QCheckBox>(dialog,
                                                         QStringLiteral("Confirm APFS format"));
         QVERIFY(confirm != nullptr);
@@ -1445,17 +1483,56 @@ void queueHfsRepairAndVerify() {
     verifySingleQueuedOperation(&panel, QStringLiteral("Check File System - Disk 0 Partition 1"));
 }
 
+/// What the disk scan reads from a container S.A.K.'s writer really formatted (256 MiB, the size
+/// the VM proof used), so the APFS repair gate is tested against the writer's own output, not a
+/// fixed text: the fixed layout it used to look for was one the writer no longer produced.
+/// The scan details of a container the app's writer formatted, @p container_bytes long, read by
+/// the production detector. The generated repair handles up to 128 MiB (one space-manager chunk);
+/// 64 MiB is inside that, 256 MiB (the VM's partition) is not.
+constexpr uint64_t kRepairableApfsBytes = 64ULL * 1024ULL * 1024ULL;
+constexpr uint64_t kLargeApfsBytes = 256ULL * 1024ULL * 1024ULL;
+
+QStringList formattedApfsScanDetails(uint64_t container_bytes = kLargeApfsBytes) {
+    QTemporaryDir dir;
+    if (!dir.isValid()) {
+        return {};
+    }
+    const uint64_t kContainerBytes = container_bytes;
+    const QString image = QDir(dir.path()).filePath(QStringLiteral("generated-apfs.img"));
+    // What the app's Format to APFS asks of the writer (its evidence ID), on an image file.
+    sak::PartitionApfsWriteOptions options;
+    options.writable = true;
+    options.evidence_id = QStringLiteral("ui.apfs-generated-raw-format");
+    const auto build = sak::PartitionApfsWriter::buildImageOnlyFormatImage(
+        {.image_path = image,
+         .target_container_bytes = kContainerBytes,
+         .block_size_bytes = 4096,
+         .volume_name = QStringLiteral("APFSPROOF"),
+         .options = options});
+    if (!build.ok) {
+        return {QStringLiteral("format failed: ") + build.blockers.join(QStringLiteral("; "))};
+    }
+    QFile file(image);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {QStringLiteral("cannot open the image")};
+    }
+    const auto detection =
+        sak::PartitionFileSystemDetector::detectFromDevice(&file, 0, kContainerBytes);
+    if (!detection) {
+        return {QStringLiteral("no file system detected")};
+    }
+    QStringList details = detection->details;
+    details.prepend(
+        QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"));
+    return details;
+}
+
 void queueGeneratedApfsRepairAndVerify() {
     sak::PartitionManagerPanel panel;
     auto inventory = applyReviewInventoryFixture();
-    setRawFileSystem(
-        &inventory.disks[0].partitions[0].volume.value(),
-        QStringLiteral("APFS"),
-        {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"),
-         QStringLiteral("APFS space manager block: 10"),
-         QStringLiteral("APFS volume candidate block 6 index 0 name SAK APFS volume object map OID "
-                        "103 root tree OID 104"),
-         QStringLiteral("Volume OIDs: 102")});
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
+                     QStringLiteral("APFS"),
+                     formattedApfsScanDetails(kRepairableApfsBytes));
     panel.setTestInventoryForReview(inventory);
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");
@@ -1496,16 +1573,90 @@ void queueGeneratedApfsRepairAndVerify() {
     verifySingleQueuedOperation(&panel, QStringLiteral("Check File System - Disk 0 Partition 1"));
 }
 
+/// Opens Check Non-Windows File System on Disk 0 partition 1 scanned as APFS with @p details,
+/// and returns the title of the dialog that opened and its "Repair" row (empty when it has none).
+/// Fails the test if the repair-mode dialog opened instead.
+QPair<QString, QString> apfsCheckDialogTitleAndRepairRow(const QStringList& details) {
+    sak::PartitionManagerPanel panel;
+    auto inventory = applyReviewInventoryFixture();
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
+                     QStringLiteral("APFS"),
+                     details);
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    if (table == nullptr) {
+        return {};
+    }
+    table->selectRow(1);
+    QString title;
+    QString repair_row;
+    bool repair_mode_offered = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        if (dialog == nullptr) {
+            return;
+        }
+        title = dialog->windowTitle();
+        repair_mode_offered = findAccessibleWidget<QComboBox>(
+                                  dialog, QStringLiteral("Non-Windows filesystem check mode")) !=
+                              nullptr;
+        if (auto* properties =
+                dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"))) {
+            repair_row = propertyTableValue(properties, QStringLiteral("Repair"));
+        }
+        dialog->reject();
+    });
+    auto* check = findToolButtonByName(&panel, QStringLiteral("Check Non-Windows File System"));
+    if (check == nullptr) {
+        return {};
+    }
+    pressAction(check);
+    return {repair_mode_offered ? QStringLiteral("(repair mode offered)") : title, repair_row};
+}
+
+// A container another program formatted gets no repair: the Check opens the read-only metadata
+// dialog, as it did for every container before 2026-11-11, and says why in plain words.
+void foreignApfsOffersOnlyTheMetadataCheck() {
+    QStringList details = formattedApfsScanDetails(kRepairableApfsBytes);
+    const QString sak_line = QStringLiteral("APFS volume formatted by: %1")
+                                 .arg(sak::PartitionApfsWriter::sakFormatterName());
+    QVERIFY2(details.contains(sak_line), qPrintable(details.join(QStringLiteral(" | "))));
+    details.replaceInStrings(sak_line,
+                             QStringLiteral("APFS volume formatted by: newfs_apfs (2142.1.1)"));
+    const auto [title, repair_row] = apfsCheckDialogTitleAndRepairRow(details);
+    QCOMPARE(title, QStringLiteral("APFS Metadata (Last Disk Scan)"));
+    QCOMPARE(repair_row,
+             QStringLiteral("S.A.K. can repair only APFS containers it formatted itself, up to "
+                            "128.0 MB. This container was formatted by something else (a Mac, "
+                            "for example), so only the read-only metadata check is offered."));
+}
+
+// A container the app formatted but larger than the writer's repair handles (one space-manager
+// chunk, 128 MiB) gets no repair either: offering it made Apply fail with "APFS writer helper
+// failed with exit code 1" on the VM (2026-11-11, a 256 MiB container). The window says why.
+void largeGeneratedApfsSaysWhyNoRepair() {
+    const QStringList details = formattedApfsScanDetails(kLargeApfsBytes);
+    QVERIFY2(details.contains(QStringLiteral("APFS volume formatted by: %1")
+                                  .arg(sak::PartitionApfsWriter::sakFormatterName())),
+             qPrintable(details.join(QStringLiteral(" | "))));
+    QVERIFY(
+        !sak::PartitionApfsWriter::repairGeometryBlocker(4096, kLargeApfsBytes / 4096).isEmpty());
+    QVERIFY(sak::PartitionApfsWriter::repairGeometryBlocker(4096, kRepairableApfsBytes / 4096)
+                .isEmpty());
+    const auto [title, repair_row] = apfsCheckDialogTitleAndRepairRow(details);
+    QCOMPARE(title, QStringLiteral("APFS Metadata (Last Disk Scan)"));
+    QCOMPARE(repair_row,
+             QStringLiteral("S.A.K. can repair only APFS containers it formatted itself, up to "
+                            "128.0 MB. This container is 256.0 MB, so only the read-only metadata "
+                            "check is offered."));
+}
+
 sak::PartitionInventory generatedApfsInventoryFixture() {
     auto inventory = applyReviewInventoryFixture();
-    setRawFileSystem(
-        &inventory.disks[0].partitions[0].volume.value(),
-        QStringLiteral("APFS"),
-        {QStringLiteral("Metadata sanity: APFS container block geometry is internally consistent"),
-         QStringLiteral("APFS space manager block: 10"),
-         QStringLiteral("APFS volume candidate block 6 index 0 name SAK APFS volume object map OID "
-                        "103 root tree OID 104"),
-         QStringLiteral("Volume OIDs: 102")});
+    setRawFileSystem(&inventory.disks[0].partitions[0].volume.value(),
+                     QStringLiteral("APFS"),
+                     formattedApfsScanDetails());
     return inventory;
 }
 
@@ -2868,6 +3019,263 @@ void PartitionManagerPanelTests::diskMapContextMenuSelectsMatchingTargets() {
     QCOMPARE(table->currentRow(), 1);
 }
 
+namespace {
+
+/// The panel's disk and partition table, by the name a screen reader gives it.
+QTableWidget* diskTable(const QWidget& panel) {
+    for (auto* table : panel.findChildren<QTableWidget*>()) {
+        if (table->accessibleName() == QStringLiteral("Disk and partition table")) {
+            return table;
+        }
+    }
+    return nullptr;
+}
+
+QString focusName(const QWidget* widget) {
+    if (widget == nullptr) {
+        return QStringLiteral("(nothing)");
+    }
+    return QStringLiteral("%1 \"%2\"")
+        .arg(QString::fromLatin1(widget->metaObject()->className()),
+             widget->accessibleName().isEmpty() ? widget->objectName() : widget->accessibleName());
+}
+
+/// Where Tab (Shift+Tab when @p backwards) took the keyboard focus, press by press, until it
+/// reached @p target or @p presses ran out; and whether each stop was @p bar or inside @p panel.
+struct TabWalk {
+    bool reached{false};
+    bool stayed{true};
+    QStringList path;
+};
+
+TabWalk tabUntil(
+    const QWidget* target, const QWidget* panel, const QWidget* bar, bool backwards, int presses) {
+    TabWalk walk;
+    for (int press = 0; press < presses; ++press) {
+        QWidget* from = QApplication::focusWidget();
+        if (from == nullptr) {
+            walk.path.append(focusName(nullptr));
+            return walk;
+        }
+        QTest::keyClick(from, Qt::Key_Tab, backwards ? Qt::ShiftModifier : Qt::NoModifier);
+        const QWidget* now = QApplication::focusWidget();
+        walk.path.append(focusName(now));
+        if (now != bar && (now == nullptr || !panel->isAncestorOf(now))) {
+            walk.stayed = false;
+        }
+        if (now == target) {
+            walk.reached = true;
+            return walk;
+        }
+    }
+    return walk;
+}
+
+/// The panel as the main window holds it: a page of a tab widget, shown and active.
+struct HostedPanel {
+    QTabWidget tabs;
+    sak::PartitionManagerPanel* panel{nullptr};
+    QTableWidget* table{nullptr};
+
+    HostedPanel() {
+        panel = new sak::PartitionManagerPanel;
+        panel->setTestInventoryForReview(applyReviewInventoryFixture());
+        tabs.addTab(panel, QStringLiteral("Partition Manager"));
+        tabs.resize(1280, 800);
+        tabs.show();
+        table = diskTable(*panel);
+    }
+    ~HostedPanel() = default;
+    HostedPanel(const HostedPanel&) = delete;
+    HostedPanel& operator=(const HostedPanel&) = delete;
+    HostedPanel(HostedPanel&&) = delete;
+    HostedPanel& operator=(HostedPanel&&) = delete;
+};
+
+constexpr int kTabStopBound = 200;
+
+/// The texts of the menu that opens while @p open runs, which is then closed.
+template <typename Open>
+QStringList menuOpenedBy(Open open) {
+    QStringList texts;
+    QTimer::singleShot(0, [&texts]() {
+        auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+        if (menu == nullptr) {
+            return;
+        }
+        for (const auto* action : menu->actions()) {
+            if (!action->isSeparator()) {
+                texts.append(action->text());
+            }
+        }
+        menu->close();
+    });
+    open();
+    QApplication::processEvents();
+    flushDeferredDeletes();
+    return texts;
+}
+
+}  // namespace
+
+// The disk table is the keyboard route through the disks and partitions the map draws (the
+// coordinator, after testpc1 and testpc2, 2026-11-13). Tab and Shift+Tab reach it from the main
+// tab bar and from every control in the panel, and never leave the panel on the way.
+void PartitionManagerPanelTests::keyboardReachesTheDiskTableFromEveryControl() {
+    HostedPanel host;
+    QVERIFY(QTest::qWaitForWindowActive(&host.tabs));
+    QVERIFY(host.table != nullptr);
+    QWidget* bar = host.tabs.tabBar();
+    QList<QWidget*> starts{bar};
+    for (auto* widget : host.panel->findChildren<QWidget*>()) {
+        if (widget->isVisibleTo(&host.tabs) && widget->isEnabled() &&
+            (widget->focusPolicy() & Qt::TabFocus) == Qt::TabFocus && widget != host.table) {
+            starts.append(widget);
+        }
+    }
+    QVERIFY(starts.size() > 1);
+    for (QWidget* start : starts) {
+        for (const bool backwards : {false, true}) {
+            start->setFocus(Qt::TabFocusReason);
+            QTRY_VERIFY(start->hasFocus());
+            const TabWalk walk = tabUntil(host.table, host.panel, bar, backwards, kTabStopBound);
+            QVERIFY2(walk.reached && walk.stayed,
+                     qPrintable(
+                         QStringLiteral("%1 from %2: %3")
+                             .arg(backwards ? QStringLiteral("Shift+Tab") : QStringLiteral("Tab"),
+                                  focusName(start),
+                                  walk.path.join(QStringLiteral(" > ")))));
+        }
+    }
+}
+
+// Tab moves on from the table, not along a row's seven cells, and Shift+Tab comes back to it at
+// the same row; the arrow keys move between rows.
+void PartitionManagerPanelTests::tabMovesOnFromTheDiskTableAndBack() {
+    HostedPanel host;
+    QVERIFY(QTest::qWaitForWindowActive(&host.tabs));
+    QVERIFY(host.table != nullptr);
+    host.table->setFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(host.table->hasFocus());
+    host.table->setCurrentCell(0, 0);
+    QTest::keyClick(host.table, Qt::Key_Down);
+    QCOMPARE(host.table->currentRow(), 1);
+    QTest::keyClick(host.table, Qt::Key_Tab);
+    QWidget* next = QApplication::focusWidget();
+    QVERIFY2(next != host.table && next != nullptr && host.panel->isAncestorOf(next),
+             qPrintable(focusName(next)));
+    QTest::keyClick(next, Qt::Key_Tab, Qt::ShiftModifier);
+    QCOMPARE(QApplication::focusWidget(), host.table);
+    QCOMPARE(host.table->currentRow(), 1);
+}
+
+// testpc1: after a click on a disk map tile the focus stayed on "Partition disk map", and Tab went
+// Log > Disk 0 tile > Disk 0 partition 1, never to the table: the map is drawn again for every
+// selection, so the clicked tile was deleted with the focus on it, and the new tiles came at the
+// end of the tab order. Nothing in the map takes the focus now; a click on a tile or a segment,
+// wherever the focus was (the tab bar, testpc2; a control in the panel), and a tile's menu
+// closing, give it to the table at the row selected, and Tab goes on from there in the panel.
+void PartitionManagerPanelTests::mapClickGivesTheDiskTableTheKeyboard() {
+    HostedPanel host;
+    QVERIFY(QTest::qWaitForWindowActive(&host.tabs));
+    QVERIFY(host.table != nullptr);
+    auto* map = host.panel->findChild<QScrollArea*>();
+    for (auto* scroll : host.panel->findChildren<QScrollArea*>()) {
+        if (scroll->accessibleName() == QStringLiteral("Partition disk map")) {
+            map = scroll;
+        }
+    }
+    QVERIFY(map != nullptr && map->accessibleName() == QStringLiteral("Partition disk map"));
+    QCOMPARE(map->focusPolicy(), Qt::NoFocus);
+    for (const auto* name : {"partitionDiskMapDiskTile", "partitionDiskMapSegment"}) {
+        for (const auto* piece : host.panel->findChildren<QWidget*>(QString::fromLatin1(name))) {
+            QCOMPARE(piece->focusPolicy(), Qt::NoFocus);
+        }
+    }
+
+    QWidget* bar = host.tabs.tabBar();
+    auto* ribbon_button = findToolButtonByName(host.panel, QStringLiteral("Resize/Move Partition"));
+    QVERIFY(ribbon_button != nullptr);
+    struct Click {
+        QWidget* focus_before;
+        const char* piece;
+        int row;
+    };
+    for (const Click& click : {Click{bar, "partitionDiskMapSegment", 1},
+                               Click{ribbon_button, "partitionDiskMapDiskTile", 0},
+                               Click{bar, "partitionDiskMapDiskTile", 0}}) {
+        click.focus_before->setFocus(Qt::TabFocusReason);
+        QTRY_VERIFY(click.focus_before->hasFocus());
+        auto* piece = host.panel->findChild<QWidget*>(QString::fromLatin1(click.piece));
+        QVERIFY(piece != nullptr);
+        QTest::mouseClick(piece, Qt::LeftButton, Qt::NoModifier, piece->rect().center());
+        flushDeferredDeletes();
+        QCOMPARE(QApplication::focusWidget(), host.table);
+        QCOMPARE(host.table->currentRow(), click.row);
+        QTest::keyClick(host.table, Qt::Key_Tab);
+        QWidget* next = QApplication::focusWidget();
+        QVERIFY2(next != nullptr && host.panel->isAncestorOf(next), qPrintable(focusName(next)));
+        QTest::keyClick(next, Qt::Key_Tab, Qt::ShiftModifier);
+        QCOMPARE(QApplication::focusWidget(), host.table);
+    }
+
+    // A tile's menu, opened and closed without a choice, leaves the keyboard at the table too.
+    bar->setFocus(Qt::TabFocusReason);
+    QTRY_VERIFY(bar->hasFocus());
+    auto* segment = host.panel->findChild<QWidget*>(QStringLiteral("partitionDiskMapSegment"));
+    QVERIFY(segment != nullptr);
+    const QStringList actions = menuOpenedBy([segment]() {
+        const QPoint point = segment->rect().center();
+        QContextMenuEvent event(QContextMenuEvent::Mouse, point, segment->mapToGlobal(point));
+        QApplication::sendEvent(segment, &event);
+    });
+    QVERIFY(!actions.isEmpty());
+    // The window's own keyboard focus: a closed menu can leave no window active offscreen.
+    QCOMPARE(host.tabs.focusWidget(), host.table);
+    QCOMPARE(host.table->currentRow(), 1);
+}
+
+// Shift+F10 and the Menu key on a row of the table open the menu a right-click on that row opens,
+// for the current row; so does Windows' own keyboard menu request, whatever position it names.
+void PartitionManagerPanelTests::keyboardOpensTheRowMenuARightClickOpens() {
+    HostedPanel host;
+    QVERIFY(QTest::qWaitForWindowActive(&host.tabs));
+    QVERIFY(host.table != nullptr);
+    for (const int row : {0, 1}) {
+        const QRect cell = host.table->visualItemRect(host.table->item(row, 0));
+        const QStringList right_click = menuOpenedBy([&host, cell]() {
+            QContextMenuEvent event(QContextMenuEvent::Mouse,
+                                    cell.center(),
+                                    host.table->viewport()->mapToGlobal(cell.center()));
+            QApplication::sendEvent(host.table->viewport(), &event);
+        });
+        QVERIFY2(right_click.contains(QStringLiteral("Properties")),
+                 qPrintable(right_click.join(QStringLiteral(", "))));
+        QCOMPARE(host.table->currentRow(), row);
+
+        // A closed menu can leave no window active on the offscreen platform.
+        host.tabs.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&host.tabs));
+        host.table->setFocus(Qt::TabFocusReason);
+        QTRY_VERIFY(host.table->hasFocus());
+        QCOMPARE(menuOpenedBy(
+                     [&host]() { QTest::keyClick(host.table, Qt::Key_F10, Qt::ShiftModifier); }),
+                 right_click);
+        QCOMPARE(menuOpenedBy([&host]() { QTest::keyClick(host.table, Qt::Key_Menu); }),
+                 right_click);
+        const QRect other = host.table->visualItemRect(host.table->item(1 - row, 0));
+        QCOMPARE(menuOpenedBy([&host, other]() {
+                     QContextMenuEvent event(QContextMenuEvent::Keyboard,
+                                             other.center(),
+                                             host.table->mapToGlobal(other.center()));
+                     QApplication::sendEvent(host.table, &event);
+                 }),
+                 right_click);
+        QCOMPARE(host.table->currentRow(), row);
+        QCOMPARE(host.tabs.focusWidget(), host.table);
+    }
+}
+
 void PartitionManagerPanelTests::contextMenuOmitsRibbonAndQueueControls() {
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(applyReviewInventoryFixture());
@@ -3606,6 +4014,57 @@ void PartitionManagerPanelTests::restoreImageQueuesConfirmedTarget() {
     QVERIFY(body.contains(QStringLiteral("expected_layout_hash,")));
     QVERIFY(!body.contains(
         QStringLiteral("queueOperation(PartitionOperationType::RestoreImage, payload)")));
+}
+
+// The GPT prompt's example GUID broke at a hyphen at the prompt's own width (446 px, the capture of
+// 1db87df4). It is on a line of its own now, in a label that never wraps, so the dialog is never
+// narrower than the GUID; its hyphens are plain (no U+2011 to go along with a copy), and the label
+// can be selected to copy it.
+void PartitionManagerPanelTests::typeIdPromptKeepsTheExampleGuidWhole() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = modalTargetBindingInventoryFixture();
+    inventory.disks[0].partition_style = QStringLiteral("GPT");
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    QApplication::processEvents();
+    const QString guid = QStringLiteral("{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}");
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Type ID prompt should open");
+        QVERIFY2(dialog->labelText().endsWith(QStringLiteral("\n") + guid),
+                 qPrintable(dialog->labelText()));
+        QVERIFY(!dialog->labelText().contains(QChar(0x2011)));
+        QVERIFY(!dialog->labelText().contains(QChar(0x2060)));
+        QLabel* label = nullptr;
+        for (auto* candidate : dialog->findChildren<QLabel*>()) {
+            if (candidate->text() == dialog->labelText()) {
+                label = candidate;
+            }
+        }
+        QVERIFY(label != nullptr);
+        QVERIFY(label->textInteractionFlags().testFlag(Qt::TextSelectableByMouse));
+        // Never wrapped, so never broken at a hyphen: made as narrow as the capture (446 px), or
+        // narrower, the dialog stays as wide as the GUID, whatever the font.
+        QVERIFY(!label->wordWrap());
+        const int guid_width = label->fontMetrics().horizontalAdvance(guid);
+        for (const int width : {446, 200}) {
+            dialog->resize(width, dialog->height());
+            QApplication::processEvents();
+            QVERIFY2(guid_width <= label->contentsRect().width(),
+                     qPrintable(QStringLiteral("%1 px: %2 > %3")
+                                    .arg(width)
+                                    .arg(guid_width)
+                                    .arg(label->contentsRect().width())));
+        }
+        inspected = true;
+        dialog->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onSetPartitionTypeId", Qt::DirectConnection));
+    QVERIFY(inspected);
 }
 
 void PartitionManagerPanelTests::modalQueueBindsReviewedTarget() {
@@ -5479,6 +5938,183 @@ void PartitionManagerPanelTests::propertiesAndInspectShowRawFilesystemSanityNote
                                              "internally consistent"));
 }
 
+// F4 (operation proof, 2026-11-11): Resize offered shrinking a FAT32 or exFAT partition, and Apply
+// refused it ("Target size outside supported range"). Windows neither shrinks nor grows them
+// (testpc1, 2026-11-12), so the dialog offers no other size, says why, and does not offer Add to
+// Queue; nor does it speak of Windows online resize.
+void PartitionManagerPanelTests::resizeSaysWindowsCannotResizeFat32() const {
+    for (const QString& file_system : {QStringLiteral("FAT32"), QStringLiteral("exFAT")}) {
+        for (const bool grow : {false, true}) {
+            sak::PartitionManagerPanel panel;
+            auto inventory = unallocatedAllocateInventoryFixture();
+            inventory.disks[0].partitions[0].volume->file_system = file_system;
+            panel.setTestInventoryForReview(inventory);
+            auto* table = panel.findChild<QTableWidget*>();
+            QVERIFY2(table != nullptr, "Partition table should exist");
+            table->selectRow(1);
+            bool inspected = false;
+            QString status;
+            bool accept_enabled = true;
+            const ScopedModalInspection inspection([&]() {
+                auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                const auto reject_on_return = rejectDialogOnReturn(dialog);
+                QVERIFY2(dialog != nullptr, "Resize dialog should open");
+                auto* size =
+                    findAccessibleWidget<QSpinBox>(dialog, QStringLiteral("Target partition size"));
+                QVERIFY(size != nullptr);
+                const int current = size->value();
+                QCOMPARE(size->minimum(), current);
+                QCOMPARE(size->maximum(), current);
+                size->setValue(current + (grow ? 64 : -64));
+                QCOMPARE(size->value(), current);
+                auto* label = findAccessibleWidget<QLabel>(
+                    dialog, QStringLiteral("Move resize support status"));
+                QVERIFY(label != nullptr);
+                status = label->text();
+                for (const auto* text : dialog->findChildren<QLabel*>()) {
+                    QVERIFY2(!text->text().contains(QStringLiteral("Windows online resize")),
+                             qPrintable(text->text()));
+                }
+                auto* buttons = dialog->findChild<QDialogButtonBox*>();
+                QVERIFY(buttons != nullptr && buttons->button(QDialogButtonBox::Ok) != nullptr);
+                accept_enabled = buttons->button(QDialogButtonBox::Ok)->isEnabled();
+                inspected = true;
+                dialog->reject();
+            });
+            auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+            QVERIFY2(resize != nullptr, "Resize action should exist");
+            pressAction(resize);
+            QVERIFY(inspected);
+            QVERIFY2(status == QStringLiteral("Windows cannot shrink or grow FAT32 or exFAT "
+                                              "partitions. Back up the files, then delete and "
+                                              "recreate the partition at the size you want."),
+                     qPrintable(file_system + QStringLiteral(": ") + status));
+            QVERIFY2(!accept_enabled, qPrintable(file_system));
+        }
+    }
+}
+
+// No file system's Resize dialog offers a size its queue then refuses (the capture of 1db87df4
+// offered an APFS partition 1 MB): the smallest and the largest size each dialog offers are
+// sizes the queue's rule takes (PartitionFileSystemRegistry::windowsResizeBlocker, which the
+// safety validator applies; ext is resized by S.A.K.'s own tools, both ways). A file system the
+// queue resizes neither way, or whose Resize is not offered at all, offers only its own size.
+void PartitionManagerPanelTests::resizeOffersOnlySizesTheQueueTakes() const {
+    for (const QString& file_system : {QStringLiteral("NTFS"),
+                                       QStringLiteral("ReFS"),
+                                       QStringLiteral("FAT32"),
+                                       QStringLiteral("exFAT"),
+                                       QStringLiteral("APFS"),
+                                       QStringLiteral("ext4"),
+                                       QStringLiteral("HFS+")}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = unallocatedAllocateInventoryFixture();
+        inventory.disks[0].partitions[0].volume->file_system = file_system;
+        const uint64_t current_bytes = inventory.disks[0].partitions[0].size_bytes;
+        panel.setTestInventoryForReview(inventory);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+        QVERIFY2(resize != nullptr, "Resize action should exist");
+        if (!resize->isEnabled()) {
+            continue;  // Not offered at all, so nothing is offered that the queue refuses.
+        }
+        int minimum = 0;
+        int maximum = 0;
+        int current = 0;
+        bool inspected = false;
+        const ScopedModalInspection inspection([&]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(dialog);
+            QVERIFY2(dialog != nullptr, "Resize dialog should open");
+            auto* size = findAccessibleWidget<QSpinBox>(dialog,
+                                                        QStringLiteral("Target partition size"));
+            QVERIFY(size != nullptr);
+            current = size->value();
+            minimum = size->minimum();
+            maximum = size->maximum();
+            inspected = true;
+            dialog->reject();
+        });
+        pressAction(resize);
+        QVERIFY2(inspected, qPrintable(file_system));
+        constexpr uint64_t kMiB = 1024ULL * 1024ULL;
+        for (const int offered : {minimum, maximum}) {
+            if (offered == current) {
+                continue;
+            }
+            const QString refusal =
+                file_system == QStringLiteral("ext4")
+                    ? QString()
+                    : sak::PartitionFileSystemRegistry::windowsResizeBlocker(
+                          file_system, current_bytes, static_cast<uint64_t>(offered) * kMiB);
+            QVERIFY2(refusal.isEmpty(),
+                     qPrintable(QStringLiteral("%1 offers %2 MB (current %3 MB): %4")
+                                    .arg(file_system)
+                                    .arg(offered)
+                                    .arg(current)
+                                    .arg(refusal)));
+        }
+        if (file_system == QStringLiteral("NTFS") || file_system == QStringLiteral("ext4")) {
+            QVERIFY2(minimum < current && current < maximum, qPrintable(file_system));
+        }
+    }
+}
+
+// An APFS partition grows in place only (coordinator, 2026-11-12): the dialog accepts a grow and
+// says the container is grown afterwards, and offers no size below the current one (the capture
+// of 1db87df4 offered 1 MB, then refused it), nor speaks of Windows online resize.
+void PartitionManagerPanelTests::resizeGrowsAnApfsPartitionOnly() const {
+    for (const bool grow : {true, false}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = unallocatedAllocateInventoryFixture();
+        inventory.disks[0].partitions[0].volume->file_system = QStringLiteral("APFS");
+        panel.setTestInventoryForReview(inventory);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        bool inspected = false;
+        QString status;
+        bool accept_enabled = !grow;
+        const ScopedModalInspection inspection([&]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(dialog);
+            QVERIFY2(dialog != nullptr, "Resize dialog should open");
+            auto* size = findAccessibleWidget<QSpinBox>(dialog,
+                                                        QStringLiteral("Target partition size"));
+            QVERIFY(size != nullptr);
+            const int current = size->value();
+            QCOMPARE(size->minimum(), current);
+            QVERIFY(size->maximum() > current);
+            size->setValue(current + (grow ? 64 : -64));
+            QCOMPARE(size->value(), grow ? current + 64 : current);
+            auto* label =
+                findAccessibleWidget<QLabel>(dialog, QStringLiteral("Move resize support status"));
+            QVERIFY(label != nullptr);
+            status = label->text();
+            for (const auto* text : dialog->findChildren<QLabel*>()) {
+                QVERIFY2(!text->text().contains(QStringLiteral("Windows online resize")),
+                         qPrintable(text->text()));
+            }
+            auto* buttons = dialog->findChild<QDialogButtonBox*>();
+            QVERIFY(buttons != nullptr && buttons->button(QDialogButtonBox::Ok) != nullptr);
+            accept_enabled = buttons->button(QDialogButtonBox::Ok)->isEnabled();
+            inspected = true;
+            dialog->reject();
+        });
+        auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+        QVERIFY2(resize != nullptr && resize->isEnabled(), "Resize is offered for APFS");
+        pressAction(resize);
+        QVERIFY(inspected);
+        QCOMPARE(status,
+                 grow ? QStringLiteral("This grows the partition only. Then use APFS container "
+                                       "actions > Resize container to fill partition.")
+                      : QStringLiteral("Choose a target size different from the current size."));
+        QCOMPARE(accept_enabled, grow);
+    }
+}
+
 void PartitionManagerPanelTests::extFilesystemWriteActionsQueueWithConfirmation() const {
     queueExtFormatAndVerify();
     queueLinuxSwapFormatAndVerify();
@@ -5486,6 +6122,8 @@ void PartitionManagerPanelTests::extFilesystemWriteActionsQueueWithConfirmation(
     queueExtRepairAndVerify();
     queueHfsRepairAndVerify();
     queueGeneratedApfsRepairAndVerify();
+    foreignApfsOffersOnlyTheMetadataCheck();
+    largeGeneratedApfsSaysWhyNoRepair();
     queueExtResizeAndVerify(true);
     queueExtResizeAndVerify(false);
 }
@@ -6038,6 +6676,215 @@ void PartitionManagerPanelTests::readOnlyScansRunNowWithoutQueueing() {
     QCOMPARE(executed->types,
              QVector<sak::PartitionOperationType>({sak::PartitionOperationType::CheckFileSystem,
                                                    sak::PartitionOperationType::SurfaceTest}));
+}
+
+// A drive removed right after an online scan can crash Windows (volsnap, 2026-11-12). The script
+// waits after the scan; Check File System's result also says to eject the drive before unplugging
+// it, but only for a drive that can be pulled out: one on USB, or one Windows calls removable. An
+// NVMe drive inside the PC gets no such line. The result is shown once the check has finished, so
+// it no longer says "after this finishes" (the capture of 1db87df4).
+namespace {
+
+/// The plain-text labels of @p dialog whose text needs more room than they have.
+QStringList cutOffLabels(const QWidget* dialog) {
+    QStringList cut;
+    for (const QLabel* label : dialog->findChildren<QLabel*>()) {
+        if (!label->isVisibleTo(dialog) || label->text().isEmpty() ||
+            Qt::mightBeRichText(label->text())) {
+            continue;
+        }
+        const QRect room = label->contentsRect();
+        const QSize needed = label->wordWrap()
+                                 ? QSize(room.width(), label->heightForWidth(label->width()))
+                                 : label->fontMetrics()
+                                       .boundingRect(QRect(0, 0, QWIDGETSIZE_MAX, QWIDGETSIZE_MAX),
+                                                     static_cast<int>(label->alignment()),
+                                                     label->text())
+                                       .size();
+        if (needed.width() > room.width() ||
+            needed.height() > (label->wordWrap() ? label->height() : room.height())) {
+            cut.append(QStringLiteral("%1 (%2x%3 needed, %4x%5 given)")
+                           .arg(label->text())
+                           .arg(needed.width())
+                           .arg(needed.height())
+                           .arg(room.width())
+                           .arg(room.height()));
+        }
+    }
+    return cut;
+}
+
+/// Why @p dialog does not fit a 1024 px screen (and so a 1280 px one), or nothing.
+QString dialogDoesNotFit(const QWidget* dialog) {
+    constexpr int kNarrowScreenWidth = 1024;
+    QStringList problems = cutOffLabels(dialog);
+    if (dialog->width() + sak::kDialogWindowFrameAllowance > kNarrowScreenWidth) {
+        problems.append(QStringLiteral("%1 px wide").arg(dialog->width()));
+    }
+    return problems.join(QStringLiteral("; "));
+}
+
+}  // namespace
+
+// The texts this fix batch added fit where they are shown, at 1024 and 1280 px screens. Each
+// dialog is narrower than a 1024 px screen, and no label is cut off: a wrapped one has the height
+// its text needs at its width, and one that does not wrap has the width of its longest line. The
+// offscreen test platform draws every glyph as a box as wide as the font is tall, wider than any
+// real font's, so a text that fits here fits on screen. First Check File System's results on a USB
+// drive: "in use", the snapshot one and problems found, each with the note to eject the drive.
+void PartitionManagerPanelTests::newCheckTextsFitTheResultBox() {
+    for (const QString& said :
+         {QStringLiteral("D: is in use, so it was not checked. Close the files and programs using "
+                         "it, then check it again. Nothing was changed."),
+          QStringLiteral("Windows could not take the snapshot it reads D: through, so D: was not "
+                         "checked. Nothing was changed."),
+          QStringLiteral("chkdsk found problems on D: Reading only, it fixed none of them (exit "
+                         "3).")}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = applyReviewInventoryFixture();
+        inventory.disks[0].bus_type = QStringLiteral("USB");
+        panel.setTestInventoryForReview(inventory);
+        panel.setTestApplyExecutorForReview(
+            [said](const QVector<sak::PartitionOperation>&, bool, bool, const sak::CancelCheck&) {
+                sak::PartitionExecutionResult result;
+                result.success = false;
+                result.message = said;
+                return result;
+            });
+        QString problems = QStringLiteral("no result shown");
+        QTimer closer;
+        closer.setInterval(1);
+        QObject::connect(&closer, &QTimer::timeout, [&problems]() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                QApplication::processEvents();
+                problems = box->text().contains(QStringLiteral("Eject the drive"))
+                               ? dialogDoesNotFit(box)
+                               : QStringLiteral("no unplug note: ") + box->text();
+                box->accept();
+            }
+        });
+        closer.start();
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        auto* button = findToolButtonByName(&panel, QStringLiteral("Check File System"));
+        QVERIFY(button != nullptr);
+        QTRY_VERIFY(button->isEnabled());
+        pressAction(button);
+        QTRY_VERIFY2(problems != QStringLiteral("no result shown"), qPrintable(said));
+        QVERIFY2(problems.isEmpty(), qPrintable(said + QStringLiteral(": ") + problems));
+    }
+}
+
+// The Resize dialog's reasons for a FAT32 partition and an APFS one with nothing after it fit it.
+void PartitionManagerPanelTests::newResizeTextsFitTheResizeDialog() {
+    for (const QString& file_system : {QStringLiteral("FAT32"), QStringLiteral("APFS")}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = unallocatedAllocateInventoryFixture();
+        inventory.disks[0].partitions[0].volume->file_system = file_system;
+        inventory.disks[0].unallocated_regions.clear();
+        panel.setTestInventoryForReview(inventory);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        QString status;
+        QString problems = QStringLiteral("no dialog");
+        const ScopedModalInspection inspection([&]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(dialog);
+            QVERIFY(dialog != nullptr);
+            QApplication::processEvents();
+            auto* label =
+                findAccessibleWidget<QLabel>(dialog, QStringLiteral("Move resize support status"));
+            QVERIFY(label != nullptr);
+            status = label->text();
+            problems = dialogDoesNotFit(dialog);
+            dialog->reject();
+        });
+        auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+        QVERIFY(resize != nullptr);
+        pressAction(resize);
+        QVERIFY2(status.startsWith(file_system == QStringLiteral("APFS")
+                                       ? QStringLiteral("S.A.K. grows an APFS partition only")
+                                       : QStringLiteral("Windows cannot shrink or grow")),
+                 qPrintable(file_system + QStringLiteral(": ") + status));
+        QVERIFY2(problems.isEmpty(), qPrintable(file_system + QStringLiteral(": ") + problems));
+    }
+}
+
+// The type ID prompt, its example GUID unwrapped, fits a 1024 px screen.
+void PartitionManagerPanelTests::newTypeIdPromptFitsItsDialog() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = modalTargetBindingInventoryFixture();
+    inventory.disks[0].partition_style = QStringLiteral("GPT");
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    QString problems = QStringLiteral("no prompt");
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY(dialog != nullptr);
+        QApplication::processEvents();
+        problems = dialogDoesNotFit(dialog);
+        dialog->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onSetPartitionTypeId", Qt::DirectConnection));
+    QVERIFY2(problems.isEmpty(), qPrintable(problems));
+}
+
+void PartitionManagerPanelTests::checkFileSystemSaysToWaitBeforeUnplugging() {
+    const QString note = QStringLiteral("Eject the drive in Windows before you unplug it.");
+    struct Drive {
+        const char* bus;
+        bool removable;
+        bool noted;
+    };
+    for (const Drive& drive :
+         {Drive{"USB", false, true}, Drive{"SATA", true, true}, Drive{"NVMe", false, false}}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = applyReviewInventoryFixture();
+        inventory.disks[0].unique_id = QStringLiteral("panel-unplug-disk");
+        inventory.disks[0].bus_type = QString::fromLatin1(drive.bus);
+        inventory.disks[0].is_removable = drive.removable;
+        panel.setTestInventoryForReview(inventory);
+        panel.setTestApplyExecutorForReview([](const QVector<sak::PartitionOperation>&,
+                                               bool dry_run,
+                                               bool,
+                                               const sak::CancelCheck&) {
+            sak::PartitionExecutionResult result;
+            result.success = true;
+            result.dry_run = dry_run;
+            result.message = QStringLiteral("scan complete");
+            return result;
+        });
+        QStringList shown;
+        QTimer closer;
+        closer.setInterval(1);
+        QObject::connect(&closer, &QTimer::timeout, [&shown]() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                shown.append(box->text());
+                box->accept();
+            }
+        });
+        closer.start();
+
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        auto* button = findToolButtonByName(&panel, QStringLiteral("Check File System"));
+        QVERIFY2(button != nullptr, drive.bus);
+        QTRY_VERIFY2(button->isEnabled(), drive.bus);
+        pressAction(button);
+        QTRY_COMPARE(shown.size(), 1);
+        QVERIFY2(shown.constFirst().startsWith(QStringLiteral("scan complete")),
+                 qPrintable(shown.constFirst()));
+        QVERIFY2(shown.constFirst().contains(note) == drive.noted,
+                 qPrintable(QString::fromLatin1(drive.bus) + QStringLiteral(": ") +
+                            shown.constFirst()));
+        QCoreApplication::processEvents();
+    }
 }
 
 namespace {

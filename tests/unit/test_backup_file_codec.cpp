@@ -7,11 +7,14 @@
 #include "sak/backup_file_codec.h"
 #include "sak/error_codes.h"
 
+#include "../support/junction_fixture.h"
+
 #include <QByteArray>
 #include <QCryptographicHash>
 #include <QDataStream>
 #include <QDir>
 #include <QFile>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -49,6 +52,9 @@ private Q_SLOTS:
     void originalSizeIsReadWithoutDecoding_data();
     void originalSizeIsReadWithoutDecoding();
     void passwordCheckFindsTheFirstEncryptedFile();
+    void restoreNeverWritesThroughAPlantedStagingName();
+    void backupNeverWritesThroughAPlantedDestination();
+    void junctionDestinationFolderIsRefused();
 
 private:
     QString sourcePath() const;
@@ -580,6 +586,85 @@ void BackupFileCodecTests::passwordCheckFindsTheFirstEncryptedFile() {
     QVERIFY(sak::backupPasswordOpens(tree, options.password));
     QVERIFY(!sak::backupPasswordOpens(tree, QStringLiteral("not the password")));
     QVERIFY(QDir(tree).removeRecursively());
+}
+
+// ============================================================================
+// Links at or above the destination (security brief 4b B2, B3)
+// ============================================================================
+
+namespace {
+
+const QByteArray kVictimBytes = QByteArrayLiteral("a file another account wants overwritten");
+
+bool hardLink(const QString& link, const QString& existing) {
+    return CreateHardLinkW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(link).utf16()),
+                           reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(existing).utf16()),
+                           nullptr) != 0;
+}
+
+}  // namespace
+
+// The restore used to stage into the predictable <dest>.sakpart, opened with Truncate: a hard link
+// (or, with the privilege, a symbolic link) planted under that name had the decoded file written
+// into whatever it named. The staging name is random now and is never a name already there.
+void BackupFileCodecTests::restoreNeverWritesThroughAPlantedStagingName() {
+    writeSource(QByteArray(4096, 'r'));
+    sak::BackupCodecOptions options;
+    options.compress = true;
+    QVERIFY(sak::writeBackupFile(sourcePath(), storedPath(), options).has_value());
+
+    QTemporaryDir outside;
+    QVERIFY(outside.isValid());
+    QVERIFY(sak::test::createCanary(outside.path(), QStringLiteral("victim.txt"), kVictimBytes));
+    QVERIFY(hardLink(restoredPath() + QStringLiteral(".sakpart"),
+                     QDir(outside.path()).filePath(QStringLiteral("victim.txt"))));
+
+    const auto restored = sak::readBackupFile(storedPath(), restoredPath(), QString());
+    QVERIFY(restored.has_value());
+    QCOMPARE(fileBytes(restoredPath()), QByteArray(4096, 'r'));
+    QVERIFY(sak::test::canaryIntact(outside.path(), QStringLiteral("victim.txt"), kVictimBytes));
+}
+
+// The backup used to open its destination with Truncate: a hard link planted at the destination
+// name had the container written into the file it named. Publishing now replaces the NAME.
+void BackupFileCodecTests::backupNeverWritesThroughAPlantedDestination() {
+    writeSource(QByteArray(4096, 'w'));
+    QTemporaryDir outside;
+    QVERIFY(outside.isValid());
+    QVERIFY(sak::test::createCanary(outside.path(), QStringLiteral("victim.txt"), kVictimBytes));
+    QVERIFY(hardLink(storedPath(), QDir(outside.path()).filePath(QStringLiteral("victim.txt"))));
+
+    sak::BackupCodecOptions options;
+    options.compress = true;
+    QVERIFY(sak::writeBackupFile(sourcePath(), storedPath(), options).has_value());
+    QVERIFY(sak::test::canaryIntact(outside.path(), QStringLiteral("victim.txt"), kVictimBytes));
+    QVERIFY(sak::readBackupFile(storedPath(), restoredPath(), QString()).has_value());
+    QCOMPARE(fileBytes(restoredPath()), QByteArray(4096, 'w'));
+}
+
+// A junction as (or above) the destination folder is refused, for a backup and for a restore,
+// and nothing lands in the folder it points at.
+void BackupFileCodecTests::junctionDestinationFolderIsRefused() {
+    writeSource(QByteArray(512, 'j'));
+    QTemporaryDir outside;
+    QVERIFY(outside.isValid());
+    const QString link = QDir(m_dir.path()).filePath(QStringLiteral("link"));
+    QVERIFY(sak::test::createJunction(link, outside.path()));
+    const auto cleanup = qScopeGuard([&link] {
+        RemoveDirectoryW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(link).utf16()));
+    });
+
+    sak::BackupCodecOptions options;
+    options.compress = true;
+    QVERIFY(
+        !sak::writeBackupFile(sourcePath(), QDir(link).filePath(QStringLiteral("x.sak")), options)
+             .has_value());
+    QVERIFY(sak::writeBackupFile(sourcePath(), storedPath(), options).has_value());
+    QVERIFY(
+        !sak::readBackupFile(storedPath(), QDir(link).filePath(QStringLiteral("x.bin")), QString())
+             .has_value());
+    QVERIFY2(QDir(outside.path()).entryList(QDir::Files | QDir::Hidden | QDir::System).isEmpty(),
+             "something was written through the junction");
 }
 
 QTEST_GUILESS_MAIN(BackupFileCodecTests)

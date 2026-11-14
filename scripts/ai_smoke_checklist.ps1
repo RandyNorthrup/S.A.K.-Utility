@@ -52,9 +52,10 @@ if ($RunAutomated) {
     cmake --build build --config Release
     if ($LASTEXITCODE -ne 0) { throw "CMake build failed (exit $LASTEXITCODE)" }
     # --no-tests=error so a filter that matches nothing fails instead of passing vacuously.
-    ctest --test-dir build -C Release -R "test_ai_|test_openai_responses_client" --no-tests=error --output-on-failure
+    ctest --interactive-debug-mode 0 --test-dir build -C Release -R "test_ai_|test_openai_responses_client" `
+        --no-tests=error --output-on-failure
     if ($LASTEXITCODE -ne 0) { throw "AI test subset failed (exit $LASTEXITCODE)" }
-    ctest --test-dir build -C Release --output-on-failure
+    ctest --interactive-debug-mode 0 --test-dir build -C Release --output-on-failure
     if ($LASTEXITCODE -ne 0) { throw "Full CTest suite failed (exit $LASTEXITCODE)" }
 }
 
@@ -76,7 +77,8 @@ if ($RunLiveOpenAI) {
             }
             [Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $candidate, "Process")
         }
-        ctest --test-dir build -C Release -R "^test_openai_responses_client$" --no-tests=error --output-on-failure
+        ctest --interactive-debug-mode 0 --test-dir build -C Release -R "^test_openai_responses_client$" `
+            --no-tests=error --output-on-failure
         if ($LASTEXITCODE -ne 0) { throw "Live OpenAI smoke test failed (exit $LASTEXITCODE)" }
     } finally {
         [Environment]::SetEnvironmentVariable("OPENAI_API_KEY", $previousOpenAIKey, "Process")

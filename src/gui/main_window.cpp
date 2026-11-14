@@ -144,7 +144,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
         <li><b>Queued Operations</b> - Create, delete, format, resize, move start, merge, split, clone, image, restore, label, drive-letter, type ID, active flag, hide/unhide, wipe, initialize, delete-all, and boot repair flows</li>
         <li><b>Commercial-Parity Utilities</b> - Quick Partition, Extend Partition, Allocate Free Space, Allocate Free Space To, Space Analyzer, Disk Benchmark, BitLocker status, Disk Defrag, SSD erase (TRIM + overwrite), Data Recovery, OS migration, and Make Bootable Media</li>
         <li><b>Destructive Safety</b> - Off-volume backup, typed confirmations, system/boot/removable/media guards, script preview, elevated execution, restore verification, SHA-256 manifest comparison, and repair scans where mutation requires rebuild</li>
-        <li><b>Testing</b> - Partition Manager has not yet been tested through the app on real hardware. Back up first.</li>
+        <li><b>Testing</b> - On the v0.9.3 code, Partition Manager operations, including boot repair, MBR-to-GPT conversion and OS migration, ran through the app on disposable virtual machines and virtual disks. Some operations were also tested on one SAMSUNG MZVL2512HCJQ-00BH1 512 GB NVMe SSD and one Seagate Expansion Desk 8 TB USB disk. Internal SATA drives were not tested, and results on other devices may differ. SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize. Separately, on earlier code (June to August 2026), S.A.K.'s HFS+ and APFS write engine was validated with Apple's own tools. Back up before changing a disk.</li>
     </ul>
 </div>
 
@@ -1675,6 +1675,11 @@ void MainWindow::wireAiPanel() {
                 updateAiStatusBarVisibility();
             });
     connectPanelLog(m_ai_assistant_panel.get());
+    // A timed message has the bar only up to its first permanent widget, and this label, which
+    // takes the free space, left it about 77 px at 1280 px: it stands aside while one shows.
+    connect(statusBar(), &QStatusBar::messageChanged, this, [this] {
+        updateAiStatusBarVisibility();
+    });
     updateAiStatusBarVisibility();
 }
 #endif
@@ -1716,7 +1721,10 @@ void MainWindow::updateAiStatusBarVisibility() {
         const QString details = m_ai_assistant_panel->statusDetails();
         m_ai_status_label->setFullText(details);
     }
-    m_ai_status_label->setVisible(active && !m_ai_status_label->fullText().isEmpty());
+    // Worked out afresh each time, never toggled, so a message replacing a message, a message
+    // clearing, or a message shown on another tab leaves it as the tab and its text say.
+    m_ai_status_label->setVisible(active && !m_ai_status_label->fullText().isEmpty() &&
+                                  statusBar()->currentMessage().isEmpty());
 }
 #endif
 
@@ -1782,11 +1790,11 @@ void MainWindow::createThemeSelector() {
     m_theme_button->setToolTip(tr("Light, Dark, or System to follow the Windows app theme"));
     auto* menu = new QMenu(m_theme_button);
     auto* choices = new QActionGroup(menu);
-    const std::array<std::pair<ui::ThemePreference, QString>, 3> kChoices{
-        {{ui::ThemePreference::System, tr("System")},
-         {ui::ThemePreference::Light, tr("Light")},
-         {ui::ThemePreference::Dark, tr("Dark")}}};
-    for (const auto& [preference, label] : kChoices) {
+    using ThemeOption = std::pair<ui::ThemePreference, QString>;
+    const std::array theme_options{ThemeOption{ui::ThemePreference::System, tr("System")},
+                                   ThemeOption{ui::ThemePreference::Light, tr("Light")},
+                                   ThemeOption{ui::ThemePreference::Dark, tr("Dark")}};
+    for (const auto& [preference, label] : theme_options) {
         QAction* action = menu->addAction(label);
         action->setCheckable(true);
         action->setData(static_cast<int>(preference));

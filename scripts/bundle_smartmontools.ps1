@@ -59,6 +59,56 @@ function Assert-PinnedSmartctl {
     }
 }
 
+function Get-SmartctlVersion {
+    # The whole output first, then the exit code. Under PowerShell 7 a native command whose pipeline
+    # Select-Object -First stops never sets $LASTEXITCODE, which then holds whatever an earlier
+    # command left: $null in a new session. Read that way, this check failed for a correctly pinned
+    # smartctl.exe on every fresh CI session (2026-11-10; scripts/check_powershell_syntax.ps1 now
+    # refuses the pattern).
+    param([Parameter(Mandatory = $true)] [string]$Path)
+    $output = @(& $Path --version 2>&1)
+    $exitCode = $LASTEXITCODE
+    $line = $output | ForEach-Object { "$_" } | Where-Object { $_ -match 'smartctl' } | Select-Object -First 1
+    return [pscustomobject]@{ ExitCode = $exitCode; Line = "$line" }
+}
+
+function Assert-SmartctlVersion {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+    $reported = Get-SmartctlVersion -Path $Path
+    if ($reported.ExitCode -ne 0 -or -not $reported.Line -or $reported.Line -notmatch [regex]::Escape($Version)) {
+        throw "smartctl.exe did not report version ${Version}: exit $($reported.ExitCode), first line '$($reported.Line)'."
+    }
+    return $reported.Line
+}
+
+function Copy-BundleFile {
+    # A re-bundle leaves a file alone when it already has the right bytes: tools/smartmontools is
+    # tracked, and an unneeded rewrite is a change to the tree the certification digest covers.
+    param([Parameter(Mandatory = $true)] [string]$Source, [Parameter(Mandatory = $true)] [string]$Destination)
+    if ((Test-Path -LiteralPath $Destination -PathType Leaf) -and
+        (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash) {
+        Write-Host "Unchanged: $Destination" -ForegroundColor Gray
+        return
+    }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force
+}
+
+function Write-BundleText {
+    # Writes text as the tracked files carry it (UTF-8 with a byte-order mark, CRLF), and not at all
+    # when the file already says the same: Set-Content -Encoding UTF8 writes a byte-order mark
+    # under Windows PowerShell and none under PowerShell 7, so a re-bundle used to rewrite README.txt.
+    param([Parameter(Mandatory = $true)] [string]$Path, [Parameter(Mandatory = $true)] [string]$Text)
+    $wanted = ($Text -replace "`r`n", "`n").TrimEnd("`n")
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        $current = ([IO.File]::ReadAllText($Path) -replace "`r`n", "`n").TrimEnd("`n")
+        if ($current -ceq $wanted) {
+            Write-Host "Unchanged: $Path" -ForegroundColor Gray
+            return
+        }
+    }
+    [IO.File]::WriteAllText($Path, ($wanted -replace "`n", "`r`n") + "`r`n", [Text.UTF8Encoding]::new($true))
+}
+
 if ([string]::IsNullOrEmpty($DestinationPath)) {
     $DestinationPath = Join-Path $PSScriptRoot "..\tools\smartmontools"
 }
@@ -86,15 +136,13 @@ if ((Test-Path -LiteralPath $SmartctlExe) -and (-not $Force)) {
         # and that it reports the expected version before short-circuiting. On any
         # failure fall through to a fresh, re-verified download rather than accepting it.
         Assert-PinnedSmartctl -Path $SmartctlExe
-        $existingVersion = & $SmartctlExe --version 2>&1 | Select-String "smartctl" | Select-Object -First 1
-        if ($LASTEXITCODE -ne 0 -or -not $existingVersion -or "$existingVersion" -notmatch [regex]::Escape($Version)) {
-            throw "Existing smartctl.exe did not report version $Version (exit $LASTEXITCODE)."
-        }
+        $existingVersion = Assert-SmartctlVersion -Path $SmartctlExe
         Write-Host "smartctl already bundled: $existingVersion" -ForegroundColor Green
         Write-Host "Use -Force to re-download." -ForegroundColor Gray
         exit 0
     } catch {
-        Write-Host "Existing smartctl.exe failed trust/version check, re-downloading..." -ForegroundColor Yellow
+        # Say which check failed: a silent re-download hid the cause once already.
+        Write-Host "Existing smartctl.exe failed trust/version check, re-downloading: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
@@ -206,7 +254,7 @@ try {
     # The extracted path can come from a recursive search, so bind trust to the binary
     # itself: fail closed unless the selected smartctl.exe has the pinned hash.
     Assert-PinnedSmartctl -Path $SmartctlSrc
-    Copy-Item -LiteralPath $SmartctlSrc -Destination $SmartctlExe -Force
+    Copy-BundleFile -Source $SmartctlSrc -Destination $SmartctlExe
     Write-Host "Copied smartctl.exe to $DestinationPath" -ForegroundColor Green
 
     # -- Copy license file ------------------------------------------------------
@@ -217,7 +265,7 @@ try {
             Select-Object -First 1 -ExpandProperty FullName
     }
     if ($LicenseSrc -and (Test-Path -LiteralPath $LicenseSrc)) {
-        Copy-Item -LiteralPath $LicenseSrc -Destination (Join-Path $DestinationPath "COPYING") -Force
+        Copy-BundleFile -Source $LicenseSrc -Destination (Join-Path $DestinationPath "COPYING")
         Write-Host "Copied license file (GPLv2)" -ForegroundColor Green
     } else {
         Write-Host "WARNING: License file (COPYING) not found in extracted files" -ForegroundColor DarkYellow
@@ -225,7 +273,7 @@ try {
 
     # -- Create README ----------------------------------------------------------
 
-    @"
+    $readme = @"
 smartmontools v$Version
 =======================
 Bundled for S.A.K. Utility diagnostic panel.
@@ -236,7 +284,8 @@ GitHub:  https://github.com/smartmontools/smartmontools
 
 smartctl is used by the Diagnostic & Benchmarking panel to query
 S.M.A.R.T. health data from storage devices (SATA, NVMe, USB).
-"@ | Set-Content (Join-Path $DestinationPath "README.txt") -Encoding UTF8
+"@
+    Write-BundleText -Path (Join-Path $DestinationPath "README.txt") -Text $readme
 
     # -- Verify -----------------------------------------------------------------
 
@@ -244,10 +293,7 @@ S.M.A.R.T. health data from storage devices (SATA, NVMe, USB).
     # Fail closed: the bundle is only complete if the copied binary runs, exits 0, and
     # reports the expected version. A swallowed warning here would let an unusable or
     # wrong binary be declared "bundled".
-    $VersionOutput = & $SmartctlExe --version 2>&1 | Select-String "smartctl" | Select-Object -First 1
-    if ($LASTEXITCODE -ne 0 -or -not $VersionOutput -or "$VersionOutput" -notmatch [regex]::Escape($Version)) {
-        throw "Bundled smartctl.exe failed verification: exit=$LASTEXITCODE version='$VersionOutput' (expected $Version)."
-    }
+    $VersionOutput = Assert-SmartctlVersion -Path $SmartctlExe
     Write-Host "Successfully bundled: $VersionOutput" -ForegroundColor Green
 
     Write-Host ""

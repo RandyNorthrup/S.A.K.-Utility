@@ -48,6 +48,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
@@ -159,6 +161,11 @@ jobs:
       shell: pwsh
       run: '& scripts/check_build_system_lint.ps1'
 
+    - name: Every ctest call fails fast on a missing DLL
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_ctest_error_mode.ps1'
+
   # ==========================================================================================
   # Build every target and run the T2 labels, spread over several runners.
   #
@@ -182,6 +189,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
@@ -204,9 +213,12 @@ jobs:
     - name: Plan this shard
       id: plan
       shell: pwsh
+      env:
+        SHARD_COUNT: ${{ strategy.job-total }}
+        SHARD_INDEX: ${{ strategy.job-index }}
       run: |
         & scripts/plan_ci_build_shards.ps1 -BuildDir build `
-          -ShardCount ${{ strategy.job-total }} -ShardIndex ${{ strategy.job-index }} `
+          -ShardCount $env:SHARD_COUNT -ShardIndex $env:SHARD_INDEX `
           -LabelRegex $env:T2_LABELS -OutFile build/ci-plan.json
         $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
         Write-Host "Targets: $($plan.build_targets -join ' ')"
@@ -263,14 +275,23 @@ jobs:
       shell: pwsh
       run: '& scripts/invoke_unelevated.ps1 -FilePath pwsh -- -NoProfile -NonInteractive -File scripts/check_accessibility_patterns.ps1'
 
+    # Every import of every program and test executable built here resolves beside it or in
+    # System32, before any test runs: the four programs linked with /DEPENDENTLOADFLAG:0x1000 never
+    # search PATH, and a missing DLL is named here instead of failing a test, or hanging one on a
+    # Windows error box (the 9170b149 nightly). scripts/check_program_imports.ps1.
+    - name: Imports resolve beside each executable
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_program_imports.ps1 -Directory build/Release'
+
     - name: Test (T2 labels, this shard)
       if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
       shell: pwsh
       run: |
         $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
-        & scripts/invoke_unelevated.ps1 -FilePath ctest -- --test-dir build -C Release `
-          -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error `
-          -L $env:T2_LABELS -R $plan.tests_regex
+        & scripts/invoke_unelevated.ps1 -FilePath ctest -- --interactive-debug-mode 0 `
+          --test-dir build -C Release -j $env:NUMBER_OF_PROCESSORS --output-on-failure `
+          --no-tests=error -L $env:T2_LABELS -R $plan.tests_regex
         $ctestExit = $LASTEXITCODE
         "CTEST EXIT: $ctestExit"
         exit $ctestExit
@@ -295,6 +316,100 @@ jobs:
         if (-not (Select-String -LiteralPath $log -Quiet -Pattern '^PASS\s+: ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe\(\)')) {
           throw 'test_elevated_helper_connection did not run: a skip exits 0 too'
         }
+        # Proof for the T2 result job, which requires it from the one shard whose plan holds the test.
+        New-Item -ItemType Directory -Force -Path build/elevated-proof | Out-Null
+        Select-String -LiteralPath $log -Pattern '^PASS\s+:' | ForEach-Object { $_.Line } |
+          Set-Content -LiteralPath build/elevated-proof/test_elevated_helper_connection.txt -Encoding ascii
+
+    # test_fat_volumes makes and mounts small FAT32 and exFAT VHDX volumes, which needs
+    # administrator: under the standard-user token above ctest skips it (tests/skip_baseline.txt),
+    # and this step, which keeps the runner's elevated token, runs it. A skip exits 0 too, so the
+    # step reads every case's PASS line on both volumes. The test carries the product label, so the
+    # shard plan places it in exactly one shard; in every other shard this step has nothing to run.
+    - name: FAT32 and exFAT volumes (elevated)
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        if (@($plan.tests) -notcontains 'test_fat_volumes') {
+          'test_fat_volumes is not in this shard'
+          exit 0
+        }
+        $log = Join-Path $env:RUNNER_TEMP 'test_fat_volumes.txt'
+        $test = Start-Process -FilePath build/Release/test_fat_volumes.exe -ArgumentList '-o', "$log,txt" -NoNewWindow -Wait -PassThru
+        Get-Content -LiteralPath $log
+        if ($test.ExitCode -ne 0) { exit $test.ExitCode }
+        foreach ($case in 'heldFoldersAndStagedFiles', 'heldReadOnlyFileRefusesWriters', 'programFolderOnTheVolume', 'scriptSafeFilesWithTempOnTheVolume') {
+          foreach ($row in 'FAT32', 'exFAT') {
+            if (-not (Select-String -LiteralPath $log -Quiet -Pattern "^PASS\s+: FatVolumeTests::$case\($row\)")) {
+              throw "test_fat_volumes did not pass $case($row): a skip exits 0 too"
+            }
+          }
+        }
+        # Proof for the T2 result job, which requires it from the one shard whose plan holds the test.
+        New-Item -ItemType Directory -Force -Path build/elevated-proof | Out-Null
+        Select-String -LiteralPath $log -Pattern '^PASS\s+:' | ForEach-Object { $_.Line } |
+          Set-Content -LiteralPath build/elevated-proof/test_fat_volumes.txt -Encoding ascii
+
+    # test_raw_partition_write makes NTFS, FAT32 and exFAT VHDX volumes and writes them raw, as the
+    # partition writers do (the take, the flush read-back, the app's own Format and Restore Image
+    # scripts): administrator only, so ctest skips it under the standard-user token
+    # (tests/skip_baseline.txt) and this step runs the whole suite elevated. A skip exits 0 too, so
+    # the step needs a PASS line for every case and the totals to show nothing failed or skipped.
+    - name: Raw partition writes (elevated)
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        if (@($plan.tests) -notcontains 'test_raw_partition_write') {
+          'test_raw_partition_write is not in this shard'
+          exit 0
+        }
+        $log = Join-Path $env:RUNNER_TEMP 'test_raw_partition_write.txt'
+        $test = Start-Process -FilePath build/Release/test_raw_partition_write.exe -ArgumentList '-o', "$log,txt" -NoNewWindow -Wait -PassThru
+        Get-Content -LiteralPath $log
+        if ($test.ExitCode -ne 0) { exit $test.ExitCode }
+        $cases = @(foreach ($case in 'refusedWhileSomethingHasItOpen', 'nativeWriterReachesTheWholePartition',
+                                     'scriptWriterReachesTheWholePartition', 'scriptReleaseAndClearTakeThePartition') {
+                     foreach ($row in 'NTFS', 'FAT32', 'exFAT') { "$case($row)" }
+                   }) + 'formatRoundTripSetsAndRestoresThePartitionType()' + 'restoreImageThroughTheGeneratedScript()' +
+                   'resizeAsDataGivesAnExtPartitionItsTypeBack()' + 'hfsReadOnlyCheckStagesAndWritesNothing()' +
+                   'hideOnMbrHidesOnlyThatPartition()' + 'readOnlyCheckWithoutASnapshotLocksAndWritesNothing()'
+        foreach ($case in $cases) {
+          if (-not (Select-String -LiteralPath $log -Quiet -Pattern "^PASS\s+: RawPartitionWriteTests::$([regex]::Escape($case))\s*$")) {
+            throw "test_raw_partition_write did not pass ${case}: a skip exits 0 too"
+          }
+        }
+        if (-not (Select-String -LiteralPath $log -Quiet -Pattern '^Totals: \d+ passed, 0 failed, 0 skipped')) {
+          throw 'test_raw_partition_write failed or skipped a case'
+        }
+        New-Item -ItemType Directory -Force -Path build/elevated-proof | Out-Null
+        Select-String -LiteralPath $log -Pattern '^PASS\s+:' | ForEach-Object { $_.Line } |
+          Set-Content -LiteralPath build/elevated-proof/test_raw_partition_write.txt -Encoding ascii
+
+    # A script too long for a command line runs from standard input (sak::powerShellInvocation, the
+    # same path the helper's RunPowerShell task takes); this case starts one for real and checks its
+    # exit code and its Stop reach the Storage cmdlets. ctest runs it unelevated too; this step runs
+    # it with the runner's elevated token, as the helper would, and needs its PASS line.
+    - name: Long scripts from standard input (elevated)
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        if (@($plan.tests) -notcontains 'test_process_runner') {
+          'test_process_runner is not in this shard'
+          exit 0
+        }
+        $log = Join-Path $env:RUNNER_TEMP 'test_process_runner_elevated.txt'
+        $test = Start-Process -FilePath build/Release/test_process_runner.exe -ArgumentList 'runPowerShell_longScriptRunsAndKeepsItsExitCode', '-o', "$log,txt" -NoNewWindow -Wait -PassThru
+        Get-Content -LiteralPath $log
+        if ($test.ExitCode -ne 0) { exit $test.ExitCode }
+        if (-not (Select-String -LiteralPath $log -Quiet -Pattern '^PASS\s+: ProcessRunnerTests::runPowerShell_longScriptRunsAndKeepsItsExitCode\(\)')) {
+          throw 'runPowerShell_longScriptRunsAndKeepsItsExitCode did not run: a skip exits 0 too'
+        }
+        New-Item -ItemType Directory -Force -Path build/elevated-proof | Out-Null
+        Select-String -LiteralPath $log -Pattern '^PASS\s+:' | ForEach-Object { $_.Line } |
+          Set-Content -LiteralPath build/elevated-proof/test_process_runner.txt -Encoding ascii
 
     # The skip audit runs once over every shard's logs in the T2 result job. It needs each
     # shard's registration: a test's command resolves only where its executable was built.
@@ -303,7 +418,8 @@ jobs:
       shell: pwsh
       run: |
         $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
-        $json = ctest --test-dir build -C Release --show-only=json-v1 -L $env:T2_LABELS -R $plan.tests_regex
+        $json = ctest --interactive-debug-mode 0 --test-dir build -C Release --show-only=json-v1 `
+          -L $env:T2_LABELS -R $plan.tests_regex
         if ($LASTEXITCODE -ne 0) { throw "ctest --show-only exited $LASTEXITCODE" }
         [IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE 'build/ci-registration.json'), ($json -join "`n"))
 
@@ -317,6 +433,7 @@ jobs:
           build/ci-registration.json
           build/test_results/*.txt
           build/Testing/Temporary/LastTest.log
+          build/elevated-proof/*.txt
         retention-days: 14
         if-no-files-found: warn
 
@@ -336,6 +453,8 @@ jobs:
     - name: Checkout code
       if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Download shard logs
       if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
@@ -372,6 +491,67 @@ jobs:
         [IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE 'build/t2-registration.json'), ($merged | ConvertTo-Json -Depth 6))
         Write-Host "Plan $($digests[0]): $count shards, $($registered.Count) T2 tests"
 
+    # A test that can only run elevated is skipped by ctest under the standard-user token and run by
+    # an elevated step in its shard, and that step passes with nothing to do in every shard whose plan
+    # lacks the test. So a test moved off the T2 labels, or never planned, would pass every shard
+    # unrun. Each test listed here must be in exactly one shard's plan, and that shard must have
+    # uploaded its elevated step's proof: a PASS line for every case required here.
+    - name: Every must-run-elevated test ran elevated
+      if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
+      shell: pwsh
+      run: |
+        $fatCases = foreach ($case in 'heldFoldersAndStagedFiles', 'heldReadOnlyFileRefusesWriters',
+                                      'programFolderOnTheVolume', 'scriptSafeFilesWithTempOnTheVolume') {
+          foreach ($row in 'FAT32', 'exFAT') { "FatVolumeTests::$case($row)" }
+        }
+        $rawCases = @(foreach ($case in 'refusedWhileSomethingHasItOpen', 'nativeWriterReachesTheWholePartition',
+                                        'scriptWriterReachesTheWholePartition', 'scriptReleaseAndClearTakeThePartition') {
+                        foreach ($row in 'NTFS', 'FAT32', 'exFAT') { "RawPartitionWriteTests::$case($row)" }
+                      }) + 'RawPartitionWriteTests::formatRoundTripSetsAndRestoresThePartitionType()' +
+                      'RawPartitionWriteTests::restoreImageThroughTheGeneratedScript()' +
+                      'RawPartitionWriteTests::resizeAsDataGivesAnExtPartitionItsTypeBack()' +
+                      'RawPartitionWriteTests::hfsReadOnlyCheckStagesAndWritesNothing()' +
+                      'RawPartitionWriteTests::hideOnMbrHidesOnlyThatPartition()' +
+                      'RawPartitionWriteTests::readOnlyCheckWithoutASnapshotLocksAndWritesNothing()'
+        $required = [ordered]@{
+          test_elevated_helper_connection = @('ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe()')
+          test_fat_volumes = @($fatCases)
+          test_raw_partition_write = @($rawCases)
+          test_process_runner = @('ProcessRunnerTests::runPowerShell_longScriptRunsAndKeepsItsExitCode()')
+        }
+        $shards = @(Get-ChildItem -LiteralPath shards -Directory)
+        $problems = [System.Collections.Generic.List[string]]::new()
+        foreach ($test in $required.Keys) {
+          $holders = @($shards | Where-Object {
+            $planPath = Join-Path $_.FullName 'ci-plan.json'
+            (Test-Path -LiteralPath $planPath -PathType Leaf) -and
+              (@((Get-Content -Raw -LiteralPath $planPath | ConvertFrom-Json).tests) -contains $test)
+          })
+          if ($holders.Count -ne 1) {
+            $problems.Add("$test is in $($holders.Count) shard plans; it must be in exactly one")
+            continue
+          }
+          $shard = $holders[0].Name
+          $proof = Join-Path $holders[0].FullName "elevated-proof/$test.txt"
+          if (-not (Test-Path -LiteralPath $proof -PathType Leaf)) {
+            $problems.Add("${test}: $shard uploaded no proof that its elevated step passed")
+            continue
+          }
+          $lines = @(Get-Content -LiteralPath $proof)
+          $missing = @($required[$test] | Where-Object {
+            $pattern = '^PASS\s+: ' + [regex]::Escape($_) + '\s*$'
+            -not ($lines | Where-Object { $_ -match $pattern })
+          })
+          foreach ($case in $missing) { $problems.Add("${test}: no PASS for $case in $shard") }
+          if ($missing.Count -eq 0) {
+            Write-Host "OK  $test ran elevated in $shard; $($required[$test].Count) case(s) passed"
+          }
+        }
+        if ($problems.Count -gt 0) {
+          $problems | ForEach-Object { Write-Host "::error::$_" }
+          throw "$($problems.Count) must-run-elevated problem(s)"
+        }
+
     # ctest scores a binary Passed even when every function called QSKIP. This holds every skip
     # in the whole T2 run to tests/skip_baseline.txt and fails on an unreviewed skip, a stale
     # baseline entry, or a registered QtTest with no log.
@@ -383,9 +563,12 @@ jobs:
     - name: Every T2 job passed
       if: ${{ always() }}
       shell: pwsh
+      env:
+        STATIC_GATES_RESULT: ${{ needs.static-gates.result }}
+        BUILD_TEST_RESULT: ${{ needs.build-test.result }}
       run: |
-        Write-Host "static-gates: ${{ needs.static-gates.result }}"
-        Write-Host "build-test:   ${{ needs.build-test.result }}"
-        if ('${{ needs.static-gates.result }}' -ne 'success' -or '${{ needs.build-test.result }}' -ne 'success') {
+        Write-Host "static-gates: $env:STATIC_GATES_RESULT"
+        Write-Host "build-test:   $env:BUILD_TEST_RESULT"
+        if ($env:STATIC_GATES_RESULT -ne 'success' -or $env:BUILD_TEST_RESULT -ne 'success') {
           exit 1
         }

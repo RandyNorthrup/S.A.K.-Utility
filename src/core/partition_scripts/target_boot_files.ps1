@@ -16,6 +16,15 @@ function Invoke-SakTool([string]$name, [string[]]$toolArgs) {
     throw ('{0} failed with exit code {1}: {2}' -f $name, $code, (($lines | Select-Object -Last 3) -join ' '))
   }
 }
+# Writing BIOS boot code needs bootsect.exe. Windows 10 and 11 have it; a Windows Server need not
+# (GitHub's runner has none). Each BIOS route checks this before it changes anything, so its absence
+# is a plain refusal, never a failure halfway through.
+function Assert-SakBootsectPresent {
+  $tool = Join-Path $script:sakSystem32 'bootsect.exe'
+  if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+    throw "This Windows has no bootsect.exe ($tool), which writing BIOS boot code needs, so nothing was changed."
+  }
+}
 function Add-SakTargetLetter($partition) {
   $partition = Get-Partition -DiskNumber $partition.DiskNumber -PartitionNumber $partition.PartitionNumber -ErrorAction Stop
   if ([char]::IsLetter($partition.DriveLetter)) { return [string]$partition.DriveLetter }

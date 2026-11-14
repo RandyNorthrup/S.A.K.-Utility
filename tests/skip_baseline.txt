@@ -44,6 +44,8 @@ test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::li
 # ---------------------------------------------------------------------------
 test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::symlinkFileEntriesSkippedAcrossWalkOps = Creating an NTFS file symlink needs SeCreateSymbolicLinkPrivilege or Developer Mode; neither is guaranteed on a build agent.
 test_elevated_helper_connection::ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe = Starting the helper from a standard-user token needs a consent prompt, and a runner has nobody to answer it. An elevated CI step runs this test and fails if it skipped.
+test_fat_volumes::FatVolumeTests::initTestCase = Making and mounting FAT32 and exFAT virtual disks needs administrator rights, and the T2 run uses a standard-user token. An elevated CI step runs this test and fails if it skipped.
+test_raw_partition_write::RawPartitionWriteTests::initTestCase = Making, mounting and writing NTFS, FAT32 and exFAT virtual disks needs administrator rights, and the T2 run uses a standard-user token. An elevated CI step runs this test and fails if it skipped.
 
 # ---------------------------------------------------------------------------
 # C. LIVE THIRD-PARTY NETWORK - costs money or depends on someone else's uptime.

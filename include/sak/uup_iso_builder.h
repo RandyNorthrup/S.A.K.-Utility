@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/no_follow_fs.h"
 #include "sak/uup_dump_api.h"
 
 #include <QDir>
@@ -15,6 +16,7 @@
 #include <QTimer>
 
 #include <atomic>
+#include <expected>
 #include <memory>
 #include <optional>
 
@@ -150,6 +152,13 @@ public:
      */
     [[nodiscard]] static bool hasIso9660Signature(const QString& isoPath);
 
+    /// The workspace @p name in @p temp_root: reused (to resume a download) only when it is ours:
+    /// on NTFS, owned by Administrators or SYSTEM with a protected DACL granting only those; on
+    /// FAT or exFAT, which keep no ACLs and hold no links, always, since every downloaded file is
+    /// hashed again before it counts. Anything else (a link included) is removed and made new.
+    [[nodiscard]] static std::expected<sak::no_follow::HeldDirectory, QString> openUupWorkspace(
+        const sak::no_follow::HeldDirectory& temp_root, const QString& name);
+
     /**
      * @brief Check if a build is currently in progress
      */
@@ -272,6 +281,9 @@ private:
     QString m_lang;
     QString m_updateId;
     QString m_workDir;
+    /// The workspace, held without following a link for the whole build (security brief 4a).
+    std::unique_ptr<sak::no_follow::HeldDirectory> m_workspace;
+
     qint64 m_totalDownloadBytes = 0;
     bool m_allFilesAlreadyDownloaded = false;
 

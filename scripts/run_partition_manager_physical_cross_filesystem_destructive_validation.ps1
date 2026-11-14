@@ -305,8 +305,8 @@ function Invoke-ExtScenario {
     $label = ("SAK{0}PHY" -f $FileSystem.ToUpperInvariant())
 
     Invoke-NativeCommand -Name "mke2fs-format-$FileSystem" -FilePath $Tools.mke2fs.path -Arguments @("-q", "-t", $FileSystem, "-F", "-L", $label, $rawTarget) | Out-Null
-    Invoke-NativeCommand -Name "e2fsck-repair-clean-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Out-Null
-    Invoke-NativeCommand -Name "e2fsck-readonly-after-format-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
+    Invoke-NativeCommand -Name "e2fsck-repair-clean-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Assert-SakE2fsckPassed | Out-Null
+    Invoke-NativeCommand -Name "e2fsck-readonly-after-format-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Assert-SakE2fsckPassed | Out-Null
     $formatProbePath = Join-Path $RunRoot "$FileSystem-after-format-probe.json"
     $formatProbe = Invoke-CertifierProbe -Certifier $Certifier -TargetPath $rawTarget -ExpectedFileSystem $FileSystem -ReportPath $formatProbePath -InputSizeBytes ([uint64]$partition.Size)
 
@@ -314,7 +314,7 @@ function Invoke-ExtScenario {
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $grownSize -ErrorAction Stop
     Update-HostStorageCache -ErrorAction Stop
     Invoke-NativeCommand -Name "resize2fs-grow-$FileSystem" -FilePath $Tools.resize2fs.path -Arguments @($rawTarget) | Out-Null
-    Invoke-NativeCommand -Name "e2fsck-readonly-after-grow-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
+    Invoke-NativeCommand -Name "e2fsck-readonly-after-grow-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Assert-SakE2fsckPassed | Out-Null
     $growProbePath = Join-Path $RunRoot "$FileSystem-after-grow-probe.json"
     $growProbe = Invoke-CertifierProbe -Certifier $Certifier -TargetPath $rawTarget -ExpectedFileSystem $FileSystem -ReportPath $growProbePath -InputSizeBytes $grownSize
 
@@ -326,11 +326,11 @@ function Invoke-ExtScenario {
         throw "ShrinkByBytes must leave shrunk size larger than initial size."
     }
     $shrunkKilobytes = [uint64][Math]::Floor([double]$shrunkSize / 1KB)
-    Invoke-NativeCommand -Name "e2fsck-repair-before-shrink-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Out-Null
+    Invoke-NativeCommand -Name "e2fsck-repair-before-shrink-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Assert-SakE2fsckPassed | Out-Null
     Invoke-NativeCommand -Name "resize2fs-shrink-$FileSystem" -FilePath $Tools.resize2fs.path -Arguments @("-p", $rawTarget, "$($shrunkKilobytes)K") | Out-Null
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $shrunkSize -ErrorAction Stop
     Update-HostStorageCache -ErrorAction Stop
-    Invoke-NativeCommand -Name "e2fsck-readonly-after-shrink-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
+    Invoke-NativeCommand -Name "e2fsck-readonly-after-shrink-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Assert-SakE2fsckPassed | Out-Null
     $shrinkProbePath = Join-Path $RunRoot "$FileSystem-after-shrink-probe.json"
     $shrinkProbe = Invoke-CertifierProbe -Certifier $Certifier -TargetPath $rawTarget -ExpectedFileSystem $FileSystem -ReportPath $shrinkProbePath -InputSizeBytes $shrunkSize
 

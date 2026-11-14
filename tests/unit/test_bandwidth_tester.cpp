@@ -8,6 +8,10 @@
 #include "sak/network_diagnostic_types.h"
 #include "sak/network_transfer_runner.h"
 
+#include "../support/tcp_listeners.h"
+#include "../support/test_hardware_guard.h"
+
+#include <QNetworkInterface>
 #include <QProcess>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
@@ -33,6 +37,13 @@ private Q_SLOTS:
     void bandwidthTestResult_defaults();
     void staleFirewallRules_onlyThoseNoLiveSakOwns();
     void iperfServer_runsInsideAKillOnCloseJob();
+    void iperfServerArguments_bindOneAddressAndDropIdlePeers();
+    void iperfServer_listensOnlyOnTheChosenAddress();
+    void iperfServer_startsOnlyWithItsFirewallRule();
+    void iperfServer_withoutAdministratorRefusesBeforeAnythingRuns();
+    void iperfServer_needsAdministratorOnlyForARule();
+    void firewallRuleRefusal_endsWithOneFullStopAndNamesNoCause();
+    void netshFailureReason_neverEmpty();
 
     // -- composeFirewallRuleName (per-instance uniqueness, B9-16) --
     void firewallRuleName_containsPortAndToken();
@@ -52,6 +63,7 @@ private Q_SLOTS:
     // -- runNetworkTransfer (R5-P9-34: a non-positive timeout is refused) --
     void networkTransfer_rejectsZeroTimeoutBeforeAnyRequest();
     void networkTransfer_rejectsNegativeTimeout();
+    void networkTransfer_refusesToHoldAnInstallerSizedBodyInMemory();
 };
 
 void TestBandwidthTester::construction_default() {
@@ -316,6 +328,30 @@ void TestBandwidthTester::networkTransfer_rejectsNegativeTimeout() {
     QCOMPARE(result.elapsed_ms, 0LL);
 }
 
+// An installer of up to 4 GiB was once read whole into memory to be hashed. A transfer that may be
+// larger than the in-memory ceiling must now stream to a sink: without one it is refused before
+// any request is sent.
+void TestBandwidthTester::networkTransfer_refusesToHoldAnInstallerSizedBodyInMemory() {
+    NetworkTransferRequest request;
+    request.url = QUrl(QStringLiteral("http://127.0.0.1:9/never-contacted"));
+    request.timeout_ms = 1000;
+    request.max_response_bytes = sak::kMaxInMemoryResponseBytes + 1;
+    const NetworkTransferResult held = runNetworkTransfer(request);
+    QVERIFY(!held.success);
+    QVERIFY2(held.error_message.contains(QStringLiteral("must be streamed")),
+             qPrintable(held.error_message));
+    QCOMPARE(held.elapsed_ms, 0LL);
+
+    // The same cap with a sink is allowed to try; it fails only on the closed port.
+    request.body_sink = [](const char*, qint64) {
+        return true;
+    };
+    const NetworkTransferResult streamed = runNetworkTransfer(request);
+    QVERIFY(!streamed.success);
+    QVERIFY2(!streamed.error_message.contains(QStringLiteral("must be streamed")),
+             qPrintable(streamed.error_message));
+}
+
 // A crash left the iPerf3 server's inbound allow rule behind for good. Rule names now carry the
 // owner's process ID, and a server start sweeps rules whose owner is gone -- never its own, never
 // a live SAK's, never a rule that is not ours.
@@ -334,6 +370,210 @@ void TestBandwidthTester::staleFirewallRules_onlyThoseNoLiveSakOwns() {
              QStringList({names.at(2), names.at(3)}));
 }
 
+namespace {
+
+QProcess* iperfServerProcessOf(const BandwidthTester& tester) {
+    for (auto* child : tester.findChildren<QProcess*>()) {
+        if (child->program().endsWith(QStringLiteral("iperf3.exe"), Qt::CaseInsensitive)) {
+            return child;
+        }
+    }
+    return nullptr;
+}
+
+// A non-loopback IPv4 address of this PC, so a server there would need an inbound rule; when the
+// PC has none, a documentation address (TEST-NET-1) stands in: the rule is decided first.
+QHostAddress nonLoopbackAddress() {
+    for (const QHostAddress& address : QNetworkInterface::allAddresses()) {
+        if (address.protocol() == QAbstractSocket::IPv4Protocol && !address.isLoopback() &&
+            !address.isLinkLocal()) {
+            return address;
+        }
+    }
+    return QHostAddress(QStringLiteral("192.0.2.1"));
+}
+
+constexpr quint16 kBoundServerPort = 52'918;
+constexpr quint16 kRuleServerPort = 52'919;
+constexpr int kServerWaitMs = 10'000;
+
+}  // namespace
+
+// The server's command line names the one address it listens on and an idle limit, and nothing
+// it is given can widen that: a wildcard or empty address is not a listen address at all.
+void TestBandwidthTester::iperfServerArguments_bindOneAddressAndDropIdlePeers() {
+    const QStringList args =
+        BandwidthTester::iperfServerArguments(5201, QHostAddress(QStringLiteral("10.1.2.3")));
+    const auto bind = args.indexOf(QStringLiteral("-B"));
+    QVERIFY(bind >= 0 && bind + 1 < args.size());
+    QCOMPARE(args.at(bind + 1), QStringLiteral("10.1.2.3"));
+    const auto idle = args.indexOf(QStringLiteral("--idle-timeout"));
+    QVERIFY(idle >= 0 && idle + 1 < args.size());
+    QCOMPARE(args.at(idle + 1), QString::number(kIperfServerIdleTimeoutSec));
+    QVERIFY(args.contains(QStringLiteral("-s")));
+
+    QVERIFY(BandwidthTester::isSpecificListenAddress(QHostAddress(QStringLiteral("10.1.2.3"))));
+    QVERIFY(BandwidthTester::isSpecificListenAddress(QHostAddress(QHostAddress::LocalHost)));
+    QVERIFY(!BandwidthTester::isSpecificListenAddress(QHostAddress()));
+    QVERIFY(!BandwidthTester::isSpecificListenAddress(QHostAddress(QHostAddress::Any)));
+    QVERIFY(!BandwidthTester::isSpecificListenAddress(QHostAddress(QHostAddress::AnyIPv4)));
+    QVERIFY(!BandwidthTester::isSpecificListenAddress(QHostAddress(QHostAddress::AnyIPv6)));
+    QVERIFY(!BandwidthTester::isSpecificListenAddress(QHostAddress(QHostAddress::Broadcast)));
+
+    BandwidthTester tester;
+    QSignalSpy errors(&tester, &BandwidthTester::errorOccurred);
+    tester.startIperfServer(kBoundServerPort, QHostAddress(QHostAddress::Any));
+    QCOMPARE(errors.count(), 1);
+    QVERIFY(iperfServerProcessOf(tester) == nullptr);
+}
+
+// iperf3 listened on every address the PC has. Bound to loopback here (no inbound rule needed,
+// so the test hardware guard's refusal of firewall changes does not stop it), Windows must show
+// the server listening on 127.0.0.1 alone.
+void TestBandwidthTester::iperfServer_listensOnlyOnTheChosenAddress() {
+    BandwidthTester tester;
+    // A server only this PC can reach needs no rule, so no administrator either.
+    tester.setElevatedForTesting(false);
+    QVERIFY(tester.isIperf3Available());
+    QSignalSpy started(&tester, &BandwidthTester::serverStarted);
+    tester.startIperfServer(kBoundServerPort, QHostAddress(QHostAddress::LocalHost));
+    QTRY_COMPARE_WITH_TIMEOUT(started.count(), 1, kServerWaitMs);
+    QProcess* server = iperfServerProcessOf(tester);
+    QVERIFY(server != nullptr);
+    const auto pid = static_cast<DWORD>(server->processId());
+    QTRY_VERIFY_WITH_TIMEOUT(!sak::test::tcpListenersOf(pid, kBoundServerPort).isEmpty(),
+                             kServerWaitMs);
+    const QStringList listeners = sak::test::tcpListenersOf(pid);
+    tester.stopIperfServer();
+    QTRY_VERIFY_WITH_TIMEOUT(!tester.isServerRunning(), kServerWaitMs);
+    QCOMPARE(listeners, QStringList{QStringLiteral("127.0.0.1:%1").arg(kBoundServerPort)});
+}
+
+// A server other PCs can reach starts only once its inbound firewall rule is in place. Without
+// the rule it used to start anyway, so Windows asked the user whether to let iperf3.exe through
+// (on public networks too). This runs as an elevated S.A.K. would (no real elevation): the rule is
+// attempted, and here the test hardware guard refuses it, as Windows refuses a standard user's
+// netsh in CI. The server must not start, and the error must give netsh's reason and no cause of
+// its own: S.A.K. was elevated, so "needs administrator" would be a guess. Where a test may
+// change the firewall and the rule is added, the server starts bound to that address alone.
+void TestBandwidthTester::iperfServer_startsOnlyWithItsFirewallRule() {
+    BandwidthTester tester;
+    tester.setElevatedForTesting(true);
+    QVERIFY(tester.isIperf3Available());
+    QSignalSpy started(&tester, &BandwidthTester::serverStarted);
+    QSignalSpy errors(&tester, &BandwidthTester::errorOccurred);
+    const QHostAddress address = nonLoopbackAddress();
+    tester.startIperfServer(kRuleServerPort, address);
+    QTRY_VERIFY_WITH_TIMEOUT(started.count() > 0 || errors.count() > 0, kServerWaitMs);
+    const QString said = errors.isEmpty() ? QString() : errors.first().at(0).toString();
+    const QString lead = QStringLiteral(
+        "iPerf3 server not started: Windows Firewall did not add its inbound rule: ");
+    const bool refused = said.startsWith(lead);
+    if (!sak::test::realHardwareAllowed()) {
+        QVERIFY2(refused, said.isEmpty() ? "no error" : qPrintable(said));
+    }
+    if (refused) {
+        QVERIFY2(said.size() > lead.size() + 1, qPrintable(said));
+        QVERIFY2(!said.contains(QStringLiteral("Run as Admin to")) &&
+                     !said.contains(QStringLiteral("needs S.A.K.")) &&
+                     !said.contains(QStringLiteral("Adding it needs")),
+                 qPrintable(said));
+        QTest::qWait(500);  // nothing may start late either
+        QCOMPARE(started.count(), 0);
+        QVERIFY(iperfServerProcessOf(tester) == nullptr);
+        QVERIFY(!tester.isServerRunning());
+        return;
+    }
+    QProcess* server = iperfServerProcessOf(tester);
+    QVERIFY(server != nullptr);
+    const auto pid = static_cast<DWORD>(server->processId());
+    QTRY_VERIFY_WITH_TIMEOUT(!sak::test::tcpListenersOf(pid, kRuleServerPort).isEmpty(),
+                             kServerWaitMs);
+    const QStringList listeners = sak::test::tcpListenersOf(pid);
+    tester.stopIperfServer();
+    QTRY_VERIFY_WITH_TIMEOUT(!tester.isServerRunning(), kServerWaitMs);
+    QCOMPARE(listeners,
+             QStringList{QStringLiteral("%1:%2").arg(address.toString()).arg(kRuleServerPort)});
+}
+
+// Not elevated, a server other PCs can reach is refused before anything runs: no stale-rule
+// sweep, no server process, no netsh. The message leads with what to do, because the status bar
+// shows it beside its own Run as Admin button and cut the old one off at "S.A".
+void TestBandwidthTester::iperfServer_withoutAdministratorRefusesBeforeAnythingRuns() {
+    BandwidthTester tester;
+    tester.setElevatedForTesting(false);
+    QVERIFY(tester.isIperf3Available());
+    QSignalSpy started(&tester, &BandwidthTester::serverStarted);
+    QSignalSpy errors(&tester, &BandwidthTester::errorOccurred);
+    tester.startIperfServer(kRuleServerPort, nonLoopbackAddress());
+    QCOMPARE(errors.count(), 1);  // at once, not after a netsh run
+    const QString said = errors.first().at(0).toString();
+    QCOMPARE(said, BandwidthTester::needsElevationMessage());
+    QVERIFY2(said.startsWith(QStringLiteral("Run as Admin to start the iPerf3 server")),
+             qPrintable(said));
+    QVERIFY2(tester.findChildren<QProcess*>().isEmpty(), "a process was started before refusing");
+    QTest::qWait(500);  // nothing may start late either
+    QCOMPARE(started.count(), 0);
+    QCOMPARE(errors.count(), 1);
+    QVERIFY(!tester.isServerRunning());
+}
+
+// Only a server other PCs can reach needs administrator rights: loopback needs no rule, IPv4 or
+// IPv6, elevated or not.
+void TestBandwidthTester::iperfServer_needsAdministratorOnlyForARule() {
+    const QHostAddress lan(QStringLiteral("192.168.1.20"));
+    QVERIFY(BandwidthTester::serverNeedsElevation(lan, false));
+    QVERIFY(!BandwidthTester::serverNeedsElevation(lan, true));
+    for (const auto& loopback :
+         {QHostAddress(QHostAddress::LocalHost), QHostAddress(QHostAddress::LocalHostIPv6)}) {
+        QVERIFY(!BandwidthTester::serverNeedsElevation(loopback, false));
+        QVERIFY(!BandwidthTester::serverNeedsElevation(loopback, true));
+    }
+}
+
+// netsh ends its own sentence, and its elevation refusal ends in a bracket: the old message gave
+// "(... (Run as administrator).). Adding it needs S.A.K. running as administrator." Now netsh's
+// words are the last clause and the message ends with one full stop whatever they end with.
+void TestBandwidthTester::firewallRuleRefusal_endsWithOneFullStopAndNamesNoCause() {
+    const QString lead =
+        QStringLiteral("iPerf3 server not started: Windows Firewall did not add its inbound rule");
+    QCOMPARE(BandwidthTester::firewallRuleRefusalMessage(QStringLiteral(
+                 "The requested operation requires elevation (Run as administrator).")),
+             lead + QStringLiteral(": The requested operation requires elevation (Run as "
+                                   "administrator)."));
+    QCOMPARE(BandwidthTester::firewallRuleRefusalMessage(QStringLiteral("Access is denied")),
+             lead + QStringLiteral(": Access is denied."));
+    QCOMPARE(BandwidthTester::firewallRuleRefusalMessage(
+                 QStringLiteral("  Group policy\r\n  blocks it... ")),
+             lead + QStringLiteral(": Group policy blocks it."));
+    QCOMPARE(BandwidthTester::firewallRuleRefusalMessage(QStringLiteral("Failed!")),
+             lead + QStringLiteral(": Failed."));
+    QCOMPARE(BandwidthTester::firewallRuleRefusalMessage(QString()), lead + QLatin1Char('.'));
+    QCOMPARE(BandwidthTester::firewallRuleRefusalMessage(QStringLiteral(" . ")),
+             lead + QLatin1Char('.'));
+    for (const QString& why :
+         {QStringLiteral("x."), QStringLiteral("(y)."), QStringLiteral("z;")}) {
+        const QString message = BandwidthTester::firewallRuleRefusalMessage(why);
+        QVERIFY2(!message.contains(QStringLiteral("..")) &&
+                     !message.contains(QStringLiteral(".).")) &&
+                     !message.contains(QStringLiteral(";.")),
+                 qPrintable(message));
+        QVERIFY2(!message.contains(QStringLiteral("needs S.A.K.")), qPrintable(message));
+    }
+}
+
+// netsh stopped mid-run (its QProcess destroyed with the panel) said nothing, and the log read
+// "Failed to add firewall rule for port 5201: ". A failure always says why.
+void TestBandwidthTester::netshFailureReason_neverEmpty() {
+    QCOMPARE(BandwidthTester::netshFailureReason(
+                 1, QProcess::NormalExit, QStringLiteral(" Ok,\r\n no. ")),
+             QStringLiteral("Ok, no."));
+    QCOMPARE(BandwidthTester::netshFailureReason(62'097, QProcess::CrashExit, QString()),
+             QStringLiteral("netsh was stopped before it finished"));
+    QCOMPARE(BandwidthTester::netshFailureReason(1, QProcess::NormalExit, QStringLiteral("  ")),
+             QStringLiteral("netsh exited with code 1 and said nothing"));
+}
+
 // The server used to be a plain QProcess outside any Job, so a crash of this app left iperf3
 // listening. It now starts inside a kill-on-close Job.
 void TestBandwidthTester::iperfServer_runsInsideAKillOnCloseJob() {
@@ -341,13 +581,13 @@ void TestBandwidthTester::iperfServer_runsInsideAKillOnCloseJob() {
     if (!tester.isIperf3Available()) {
         // No bundled tool, no server to contain: starting must refuse out loud instead.
         QSignalSpy errors(&tester, &BandwidthTester::errorOccurred);
-        tester.startIperfServer(52'917);
+        tester.startIperfServer(52'917, QHostAddress(QHostAddress::LocalHost));
         QCOMPARE(errors.count(), 1);
         QVERIFY(!tester.isServerRunning());
         return;
     }
     QSignalSpy started(&tester, &BandwidthTester::serverStarted);
-    tester.startIperfServer(52'917);
+    tester.startIperfServer(52'917, QHostAddress(QHostAddress::LocalHost));
     QTRY_COMPARE_WITH_TIMEOUT(started.count(), 1, 10'000);
     QProcess* server = nullptr;  // netsh and the rule sweep are QProcess children too
     for (auto* child : tester.findChildren<QProcess*>()) {

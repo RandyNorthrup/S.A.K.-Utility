@@ -22,6 +22,17 @@
 
 namespace sak {
 
+/// The scan that verifies an Apply is tried this many times more when it does not finish, waiting
+/// kPartitionVerificationBackoffMs times the attempt before each (operation proof, 2026-11-12,
+/// F26).
+inline constexpr int kPartitionVerificationRetries = 2;
+inline constexpr int kPartitionVerificationBackoffMs = 5000;
+/// What an Apply that ran says when no scan afterwards could finish: it is not a failure, and
+/// nothing can be queued until a scan does finish.
+inline constexpr auto kPartitionUnverifiedMessage =
+    "The operation finished, but S.A.K. could not re-read the disks to verify it: Windows' "
+    "storage service did not answer in time. Rescan before trusting the layout.";
+
 class PartitionManagerController : public QObject {
     Q_OBJECT
 
@@ -47,6 +58,12 @@ public:
         const PartitionInventory& inventory);
     /// @brief Status line for a completed scan, including empty and partial scan reasons.
     [[nodiscard]] static QString inventoryStatusMessage(const PartitionInventory& inventory);
+
+    /// What the helper route makes of @p request: its operation run by @p execute (the elevated
+    /// executor), or the reason it is not run. A failed run's problem is the script's own words.
+    [[nodiscard]] static PartitionFileSystemToolRunResult runReadOnlyCheckThroughHelper(
+        const PartitionFileSystemReadOnlyCheckRequest& request,
+        const std::function<PartitionExecutionResult(const PartitionOperation&)>& execute);
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
     using InventoryScanner = std::function<StorageInventoryScanResult(const CancelCheck&)>;
@@ -81,6 +98,11 @@ public Q_SLOTS:
     /// step's script and everything after it. A phase Windows finishes on its own goes on, and the
     /// batch's result names that step as possibly still running in Windows.
     void cancelForExit();
+    /// The read-only check of a non-Windows file system (e2fsck -n, fsck_hfs -n, ...). It runs in
+    /// the elevated helper, as a repair does: only an administrator can open the raw partition,
+    /// and e2fsck run in this standard-user process reported the refusal as an unreadable
+    /// superblock (operation proof, 2026-11-12, F25). The result arrives through
+    /// fileSystemCheckFinished.
     void runReadOnlyFileSystemCheck(const QString& file_system, const QString& target_path);
     /// @brief Run one read-only operation now instead of queueing it for Apply.
     /// A scan changes nothing on the disk, so making the user queue it and then press Apply is
@@ -102,6 +124,7 @@ public Q_SLOTS:
     void setInventoryScannerWithProgressForTesting(InventoryScannerWithProgress scanner);
     void setApplyInventoryScannerForTesting(InventoryScanner scanner);
     void setApplyExecutorForTesting(ApplyExecutor executor);
+    void setVerificationBackoffForTesting(int backoff_ms);
     void setFileSystemCheckRunnerForTesting(FileSystemCheckRunner runner);
     /// Reports a Windows-continued phase as the executor's signals do, for an apply run by a
     /// test executor; nothing means the phase ended.
@@ -159,6 +182,11 @@ private:
     std::optional<PendingApplyRequest> m_pending_apply_request;
     std::optional<PendingApplyRequest> m_active_apply_request;
     std::optional<PartitionExecutionResult> m_pending_execution_result;
+    /// The verification scan after an Apply: which retry this is, with what rights it runs, and
+    /// how long the first retry waits.
+    int m_verification_attempt{0};
+    bool m_verification_elevated{false};
+    int m_verification_backoff_ms{kPartitionVerificationBackoffMs};
     std::optional<WindowsContinuedPhase> m_windows_phase;
     std::function<StorageInventoryScanResult(const CancelCheck&,
                                              const InventoryScanProgressCallback&)>
@@ -184,6 +212,7 @@ private:
     [[nodiscard]] bool revalidateQueuedOperations(const PartitionInventory& inventory,
                                                   QVector<PartitionOperation>* operations);
     [[nodiscard]] bool reviewTokenMatches(const PartitionQueueReviewToken& reviewed) const;
+    [[nodiscard]] bool retryVerificationScan(const StorageInventoryScanResult& scan);
     static void bindDiskIdentity(const PartitionInventory& inventory,
                                  PartitionOperation* operation);
     static void bindRawPayloadTargetIdentity(const PartitionInventory& inventory,

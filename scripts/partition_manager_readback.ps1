@@ -388,15 +388,40 @@ function Get-RbFileManifest {
     return [pscustomobject]@{ root = $rootPath; file_count = $sorted.Count; digest = $digest }
 }
 
+function Wait-RbVolumeScanSettle {
+    <#
+    .SYNOPSIS
+        The wait after every online scan these scripts run, before anything takes a disk down.
+
+    .DESCRIPTION
+        volsnap.sys (Windows 11 26100) can leave a timer queued in a volume's device object after
+        an online scan (Repair-Volume -Scan, chkdsk /scan), and removing the whole disk within
+        seconds (Dismount-DiskImage, Set-Disk -IsOffline, mountvol /P, a VirtualBox detach) frees
+        the object under it: Windows bugchecks (operation proof's crash investigation, 2026-11-12;
+        very likely the VM's 0x139s during earlier certification runs). Every online scan in
+        scripts/ runs in a try whose finally calls this, so no path takes a disk down within 15 s
+        of one, whether the scan passed or threw. test_partition_manager_scan_settle checks it.
+        The product's own scripts wait the same (kVolumeScanSettleSeconds). The certification rig
+        copies this function's text into the job it runs inside a VM, so it stands alone.
+    #>
+    param([int]$Seconds = 15)
+    Write-Host ('Letting Windows finish with the volume before going on ({0} s; a disk removed right after a scan can crash Windows)' -f $Seconds)
+    Start-Sleep -Seconds $Seconds
+}
+
 function Test-RbVolumeHealth {
     <#
     .SYNOPSIS
         Windows' own check of a volume: the repair scan, chkdsk's read-only scan, and the dirty bit.
     #>
     param([Parameter(Mandatory = $true)] [string]$Letter)
-    $scan = "$(Repair-Volume -DriveLetter $Letter -Scan -ErrorAction Stop)"
-    $check = & chkdsk.exe "${Letter}:" /scan 2>&1 | Out-String
-    $checkExit = $LASTEXITCODE
+    try {
+        $scan = "$(Repair-Volume -DriveLetter $Letter -Scan -ErrorAction Stop)"
+        $check = & chkdsk.exe "${Letter}:" /scan 2>&1 | Out-String
+        $checkExit = $LASTEXITCODE
+    } finally {
+        Wait-RbVolumeScanSettle
+    }
     $dirty = & fsutil.exe dirty query "${Letter}:" 2>&1 | Out-String
     return [pscustomobject]@{
         repair_scan = $scan

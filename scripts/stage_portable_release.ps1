@@ -159,6 +159,8 @@ Copy-RequiredFile (Join-Path $buildRoot "sak_utility.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_elevated_helper.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_apfs_writer_cli.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_hfs_writer_cli.exe") $packageRoot
+# The elevated scripts' native types (security brief 4a), loaded from this verified file.
+Copy-RequiredFile (Join-Path $buildRoot "sak_script_types.dll") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_browser_control.crx") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_splash.png") $packageRoot
 Copy-OptionalFile (Join-Path $buildRoot "icon.ico") $packageRoot
@@ -257,6 +259,7 @@ foreach ($relativePath in @("data/ai_sessions", "data/temp", "data/logs", "_logs
 $critical = @(
     "sak_utility.exe",
     "sak_elevated_helper.exe",
+    "sak_script_types.dll",
     "sak_browser_control.crx",
     "sak_splash.png",
     "Qt6Core.dll",

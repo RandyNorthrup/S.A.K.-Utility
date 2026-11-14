@@ -167,6 +167,94 @@ enforces it.
 **Never `--no-verify`.** If a hook fails, fix the cause. A hook bypassed once becomes a hook
 nobody trusts.
 
+**Elevated code never follows a link, and nothing of S.A.K.'s lives outside its folder** (owner,
+2026-11-11). S.A.K. runs as administrator from a folder, often a flash drive, that other accounts
+may be able to write to, and nothing is copied to the PC, not even temporarily.
+
+- Every open, write, move or delete in a folder someone else could write to (a folder the user
+  picked, the program's data folder, a backup root) goes through `sak::no_follow`
+  (`include/sak/no_follow_fs.h`) in C++ and `[Sak.SafeFiles]` in PowerShell: hold the folder,
+  create with CREATE_NEW under a random name, publish by a rename relative to the held folder,
+  delete with `removeTree`. Never `QDir::removeRecursively`, `QFile::copy`/`rename` onto a chosen
+  path, `New-Item -Force`, `robocopy /MIR` into a chosen root, or `mklink`.
+- Temporary files go only in this run's folder under `data\temp`
+  (`app_paths::sessionTempDirectory()`; TEMP and TMP point there for the whole process, elevated
+  or not). A file another program reads by name (a diskpart `/s` script, a netsh profile, a
+  credential, a payload) is written with `app_paths::writeHeldSessionTempFile` or
+  `[Sak.SafeFiles]::WriteHeldReadOnly` and held read-only until that program is done. Scripts stay
+  in memory: never a `.ps1` on disk.
+- Work files (downloads, unpacked packages, staging) go in a new folder in the run folder
+  (`QDir::tempPath()`; `OfflineDeploymentWorker::newWorkDirPath`), never beside the user's chosen
+  output (`<output>\_work` was one, 2026-11-12). Check the free space there first and refuse
+  plainly; the output may be on another drive, so a finished file is placed by a copy that is
+  read back (`OfflineDeploymentWorker::placeVerifiedCopy`), never a rename.
+- No `Add-Type` in a script. C# a script needs goes into
+  `src/core/partition_scripts/sak_script_types.cs` (C# 5, built into `sak_script_types.dll`) and is
+  loaded with `PartitionScriptBuilder::scriptTypesLoaderScript()`.
+- Every `.exe` and `.dll` the build ships is in the program manifest
+  (`cmake/program_manifest.cmake`), or an elevation refuses the folder;
+  `test_program_integrity` fails on a shipped file the manifest misses.
+- The test for any of this plants a junction to a canary (`tests/support/junction_fixture.h`) and
+  checks the canary afterwards.
+
+**A generated script's operation is not tested until the script itself has run it** (2026-11-11).
+The app's HFS+ Format and Repair and its Format to APFS of a Windows partition never worked, and
+every assertion on their script text passed: a function's call named a parameter it did not have,
+a function that returned a value also wrote to the pipeline, and a partition was written through
+the file system Windows had mounted on it. So:
+
+- A test of a generated PowerShell function runs the script's own function (against a stand-in
+  file or tool), not a copy and not a string match.
+  `generatedScripts_callTheirOwnFunctionsWithDeclaredParameters` checks every own-function call and
+  every `Sak.*` type statically.
+- A PowerShell function whose value a caller uses writes its progress with
+  `[Console]::Out.WriteLine`, never to the pipeline.
+- A partition is written only through a handle that took it first: extended DASD access, lock,
+  dismount (`openFileOrRawDeviceReadWrite` in C++, `[Sak.RawPartitionWrite]::Open` in a script).
+  Tests that write image files say nothing about this; `test_raw_partition_write` writes real
+  partitions.
+- A script calls its own function only after that function's definition (the guard's
+  `Get-SakOrderProblems`): Change Cluster Size and Allocate Free Space called one before it, and
+  failed on every run (2026-11-11).
+- A script runs in the scope a short script runs in, whatever its length: one read from standard
+  input and run as a child scriptblock kept its Stop from the Storage cmdlets, and a failed disk
+  command was passed over (2026-11-12).
+- The generated-script guards see only what the corpus builds. A new operation or builder branch
+  gets a corpus input that builds a real script and a row in
+  `generatedScripts_corpusBuildsEveryOperationAndBranch`: Restore Image named a type before
+  loading its DLL, and the guard that checks exactly that never saw a Restore Image script
+  (2026-11-12).
+- A generated script calls a native tool by name only if `kClientSystem32Tools`
+  (`test_partition_manager_core.cpp`) lists it: the guard never asks the machine it runs on,
+  because GitHub's Windows Server runner lacks tools a Windows client has (bootsect.exe, T2 on
+  9170b149). A tool a Windows Server or a trimmed Windows may lack is checked for by the script
+  before it changes anything, and refused plainly ("This Windows has no bootsect.exe ...").
+- A mutation catalog's find-string goes stale when its code moves: re-point the mutant at the
+  code that now does that job and run it, never delete it (`run_all_mutation_catalogs.py
+  --validate` is the nightly's check).
+- Every online scan a script runs (Repair-Volume -Scan, chkdsk) is wrapped in a try whose
+  finally waits 15 s, passed or failed: a disk removed within seconds of one can crash Windows
+  (volsnap, 2026-11-12). In generated scripts write it through `volumeScanLine` or
+  `volumeScanSettledStatement()` (`windows_continued_work.h`);
+  `generatedScripts_everyOnlineScanSettles` reads every corpus script for it. In scripts/ the
+  finally calls the readback's `Wait-RbVolumeScanSettle` (a job run elsewhere copies it with
+  `Get-RigReadbackFunctionText`); `test_partition_manager_scan_settle` reads every script for it
+  and fails on a take-down between a scan and its wait.
+- A stand-in for a Windows cmdlet proves only what it models. A step that changes a partition's
+  type or attributes, or hands a partition to a bundled tool, also gets a case in
+  `test_raw_partition_write` against Windows itself on a VHDX (elevated, must-run in CI): the
+  Resize stand-in took the no-default-letter attribute on any type, and Windows refuses it on a
+  non-data GPT partition, so every GPT ext Resize failed (F27); fsck_hfs opens no partition path
+  (F28).
+- A rule the safety validator applies to the scan and a script applies to the disk at Apply is
+  one function used by both (`isExtendedPartitionContainer` / `dataPartitionsOnlyPowerShell`):
+  the validator learned the extended container is not a data partition and the script did not
+  (F18).
+- Nothing in `tests/`, `scripts/` or a package may be something Defender flags:
+  `test_defender_clean` scans them. A test that checks a script loads its DLL names the DLL; it
+  does not spell out the reflective load beside C# it compiles (Defender quarantined such a fixture
+  as Trojan:PowerShell/Fleisnam.E, 2026-11-11).
+
 ---
 
 ## The gate
@@ -184,6 +272,25 @@ tier as proof of a wider one.
 
 CTest labels are set in one block at the end of `tests/CMakeLists.txt`; `tests/README.md` lists
 what each holds. Configure fails for a script test with no label.
+
+Every CTest test has a time limit. A test that sets no `TIMEOUT` gets `SAK_TEST_DEFAULT_TIMEOUT`
+(300 s, scaled 5 times in the ASan job), and configure fails for a test registered without one:
+with none, two writer-CLI tests that could not start waited out the nightly's 330-minute job
+(2026-11-12). A test that needs longer sets its own `TIMEOUT` where it is added.
+
+A missing DLL must fail at once, never wait on a Windows error box. Every ctest call in a workflow
+or under `scripts/` passes `--interactive-debug-mode 0` (`scripts/check_ctest_error_mode.ps1`, a
+T2 static gate). The one exemption is the nightly's Debug + ASan test step: that error mode
+(0x0003) also stops Windows Error Reporting writing the crash dumps the job collects (measured on
+testpc1, 2026-11-13), so the step carries `ctest-error-mode-exempt:` with its reasons. Every job
+that runs tests first runs `scripts/check_program_imports.ps1` on its output folder, which names
+each executable whose imports do not resolve beside it or in System32.
+
+A Debug build's tests sit in `build/Debug` beside its programs, as Release's sit in
+`build/Release`: the product looks for the helper and `sak_script_types.dll` beside the running
+program. The four programs linked with `/DEPENDENTLOADFLAG:0x1000` resolve imports only from their
+folder and System32, never PATH, so each configuration stages its own DLLs beside them (Debug:
+vcpkg's `zd.dll` and `bz2d.dll`), and the program manifest pins what each configuration puts there.
 
 Before a local commit that touches code: T1 hooks, a build, and the tests your change can reach
 (`ctest -L <label>` or `-R`). A fix that changes a message another subsystem asserts on is not
@@ -209,6 +316,13 @@ the real thing proves it. A PowerShell test that runs the application exits 77, 
 as skipped, and one that aims a writer or certifier at a real drive, to prove it refuses, leaves that
 check out. The guard is not in those programs, so a script test that names a real drive needs the
 same test of the variable. Do not set that variable on a person's PC.
+
+A test that only an elevated run proves (test_fat_volumes, test_raw_partition_write, the real
+helper, test_process_runner's long-script case) is skipped by ctest under CI's standard-user token
+and run by an elevated step in ci.yml, and the T2 result job's "must-run-elevated" list requires
+its PASS lines: a new one goes on both. Run such a suite against a package only with that same
+build's test programs: `sak_script_types.dll` is not byte-for-byte repeatable and each build pins
+its own, so newer test programs refuse an older package's DLL ("it isn't part of S.A.K.").
 
 On a PC someone is working at, run suites through `scripts/run_ctest_no_dialogs.ps1`, which takes
 ctest's own arguments. A plain `ctest` resets the error mode its children inherit, whatever its parent

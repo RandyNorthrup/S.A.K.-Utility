@@ -6,6 +6,7 @@
 
 #include "sak/bandwidth_tester.h"
 
+#include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_transfer_runner.h"
@@ -18,6 +19,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTimer>
@@ -51,6 +53,8 @@ public:
         : QObject(parent), m_job(std::move(job)) {
         setObjectName(QStringLiteral("iperf3ServerJob"));
     }
+
+    [[nodiscard]] WindowsProcessJob& job() const { return *m_job; }
 
 private:
     std::unique_ptr<WindowsProcessJob> m_job;
@@ -296,74 +300,191 @@ QString BandwidthTester::findIperf3Path() const {
     return {};
 }
 
-void BandwidthTester::startIperfServer(uint16_t port) {
+QStringList BandwidthTester::iperfServerArguments(uint16_t port, const QHostAddress& bind_address) {
+    return {
+        QStringLiteral("-s"),
+        QStringLiteral("-p"),
+        QString::number(port),
+        // Only the chosen interface: iperf3 otherwise listens on every address this PC has.
+        QStringLiteral("-B"),
+        bind_address.toString(),
+        // A peer that connects and goes quiet is dropped instead of holding the server.
+        QStringLiteral("--idle-timeout"),
+        QString::number(kIperfServerIdleTimeoutSec),
+        QStringLiteral("--one-off"),
+        QStringLiteral("-J"),
+    };
+}
+
+bool BandwidthTester::isSpecificListenAddress(const QHostAddress& address) {
+    return !address.isNull() && address != QHostAddress(QHostAddress::Any) &&
+           address != QHostAddress(QHostAddress::AnyIPv4) &&
+           address != QHostAddress(QHostAddress::AnyIPv6) && !address.isBroadcast() &&
+           !address.isMulticast();
+}
+
+bool BandwidthTester::serverStartRefused(const QHostAddress& bind_address) {
+    if (!isSpecificListenAddress(bind_address)) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Choose the network adapter address the iPerf3 server listens on"));
+        return true;
+    }
     if (!isIperf3Available()) {
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 not found. Place iperf3.exe in tools/iperf3/"));
-        return;
+        return true;
     }
-
     if (m_serverProcess != nullptr) {
-        // Reject re-entry while a server object exists in ANY state -- Running OR the brief
-        // Starting window before started() fires. Guarding on the pointer (not just the
-        // Running state) means a second start during Starting cannot overwrite
-        // m_serverProcess and m_firewallRuleName, orphaning the first server and leaking its
-        // inbound rule. Both teardown handlers null m_serverProcess, so a genuine restart
-        // still proceeds.
+        // Reject re-entry while a server object exists in ANY state -- waiting for its firewall
+        // rule, Starting before started() fires, or Running. Guarding on the pointer (not the
+        // process state) means a second start cannot overwrite m_serverProcess and
+        // m_firewallRuleName, orphaning the first server and leaking its inbound rule. Both
+        // teardown handlers null m_serverProcess, so a genuine restart still proceeds.
         Q_EMIT errorOccurred(QStringLiteral("iPerf3 server is already running"));
-        return;
+        return true;
     }
+    return false;
+}
 
+QProcess* BandwidthTester::containedServerProcess(uint16_t port,
+                                                  const QHostAddress& bind_address,
+                                                  const QString& ruleName) {
     // The server runs inside a kill-on-close Job: if this app crashes, closing the Job ends the
     // server too, instead of leaving it listening (and its inbound rule allowing) for good.
     auto created_job = WindowsProcessJob::create();
     if (!created_job) {
         Q_EMIT errorOccurred(
             QStringLiteral("Cannot contain the iPerf3 server: %1").arg(created_job.error()));
-        return;
+        return nullptr;
     }
     std::unique_ptr<WindowsProcessJob> job = std::move(*created_job);
-
-    // A crash before this change (or of an older build) left its rule behind; sweep those first.
-    removeStaleFirewallRules();
-
-    // Unique per-instance rule name: two concurrent servers must not share one, or one stopping
-    // would tear down the other's still-needed inbound rule. The token leads with this process's
-    // ID so a later start can tell a crashed owner's rule from a live one's.
-    m_firewallRuleName = ownedFirewallRuleName(port);
-    createFirewallRule(m_firewallRuleName, port);
-    const QString ruleName = m_firewallRuleName;
-
     m_serverProcess = new QProcess(this);
     QProcess* const server = m_serverProcess;  // a FailedToStart handler nulls the member
     server->setProgram(m_iperf3Path);
-    server->setArguments({
-        QStringLiteral("-s"),
-        QStringLiteral("-p"),
-        QString::number(port),
-        QStringLiteral("--one-off"),
-        QStringLiteral("-J"),
-    });
-
+    server->setArguments(iperfServerArguments(port, bind_address));
     connectServerProcessSignals(ruleName, port);
     if (const auto installed = job->installOn(*server); !installed) {
         Q_EMIT errorOccurred(
             QStringLiteral("Cannot contain the iPerf3 server: %1").arg(installed.error()));
         m_serverProcess = nullptr;
         server->deleteLater();
-        removeFirewallRule(ruleName);
+        return nullptr;
+    }
+    // The Job lives exactly as long as the server's QProcess: ~QProcess stops and reaps the
+    // server first, then this child closes the emptied Job.
+    new ServerJobHolder(std::move(job), server);
+    return server;
+}
+
+bool BandwidthTester::serverNeedsElevation(const QHostAddress& bind_address, bool elevated) {
+    return !elevated && !bind_address.isLoopback();
+}
+
+QString BandwidthTester::needsElevationMessage() {
+    return QStringLiteral(
+        "Run as Admin to start the iPerf3 server: adding its firewall rule needs administrator "
+        "rights.");
+}
+
+QString BandwidthTester::firewallRuleRefusalMessage(const QString& why) {
+    // netsh ends its own sentence, sometimes after a bracket ("... (Run as administrator)."):
+    // its last full stop goes, and this message adds the one it ends with.
+    QString reason = why.simplified();
+    while (!reason.isEmpty() && QStringLiteral(".!?;:,").contains(reason.back())) {
+        reason.chop(1);
+        reason = reason.trimmed();
+    }
+    const QString lead =
+        QStringLiteral("iPerf3 server not started: Windows Firewall did not add its inbound rule");
+    return reason.isEmpty() ? lead + QLatin1Char('.') : QStringLiteral("%1: %2.").arg(lead, reason);
+}
+
+QString BandwidthTester::netshFailureReason(int exit_code,
+                                            QProcess::ExitStatus status,
+                                            const QString& output) {
+    QString said = output.simplified();
+    if (!said.isEmpty()) {
+        return said;
+    }
+    if (status == QProcess::CrashExit) {
+        return QStringLiteral("netsh was stopped before it finished");
+    }
+    return QStringLiteral("netsh exited with code %1 and said nothing").arg(exit_code);
+}
+
+void BandwidthTester::startIperfServer(uint16_t port, const QHostAddress& bind_address) {
+    if (serverStartRefused(bind_address)) {
         return;
     }
+    // A server other PCs can reach needs its inbound rule, and adding one needs administrator
+    // rights: without them nothing runs at all (no rule sweep, no server process, no netsh).
+    const bool elevated = m_elevatedForTesting.value_or(ElevationManager::isElevated());
+    if (serverNeedsElevation(bind_address, elevated)) {
+        sak::logWarning("iPerf3 server not started on {}: S.A.K. is not running as administrator",
+                        bind_address.toString().toStdString());
+        Q_EMIT errorOccurred(needsElevationMessage());
+        return;
+    }
+    // A crash before this change (or of an older build) left its rule behind; sweep those first.
+    removeStaleFirewallRules();
+
+    // Unique per-instance rule name: two concurrent servers must not share one, or one stopping
+    // would tear down the other's still-needed inbound rule. The token leads with this process's
+    // ID so a later start can tell a crashed owner's rule from a live one's. Windows Firewall does
+    // not filter loopback, so a server only this PC can reach has no rule to add.
+    const bool needs_rule = !bind_address.isLoopback();
+    m_firewallRuleName = needs_rule ? ownedFirewallRuleName(port) : QString();
+    const QString ruleName = m_firewallRuleName;
+    QProcess* const server = containedServerProcess(port, bind_address, ruleName);
+    if (server == nullptr) {
+        m_firewallRuleName.clear();
+        return;
+    }
+    if (!needs_rule) {
+        launchServer(server);
+        return;
+    }
+    // Not started until its rule is in place. Without the rule other PCs cannot reach the server
+    // anyway, and Windows would ask the user whether to let iperf3.exe through -- on public
+    // networks as well -- instead of the narrow rule this adds.
+    createFirewallRule(ruleName,
+                       port,
+                       bind_address,
+                       [this, pending = QPointer<QProcess>(server)](bool added,
+                                                                    const QString& why) {
+                           if (pending != nullptr && m_serverProcess == pending) {
+                               onServerFirewallRule(pending, added, why);
+                           }
+                       });
+}
+
+void BandwidthTester::onServerFirewallRule(QProcess* server, bool added, const QString& why) {
+    if (added) {
+        launchServer(server);
+        return;
+    }
+    sak::logWarning("iPerf3 server not started: inbound firewall rule not added: {}",
+                    why.toStdString());
+    // Elevated here (startIperfServer refuses earlier without it), so the cause is netsh's own.
+    Q_EMIT errorOccurred(firewallRuleRefusalMessage(why));
+    m_serverProcess = nullptr;
+    m_firewallRuleName.clear();
+    server->deleteLater();
+}
+
+void BandwidthTester::launchServer(QProcess* server) {
+    // The one child by that name is the ServerJobHolder containedServerProcess attached (no
+    // Q_OBJECT, so it is found by name rather than by type).
+    const auto* holder = static_cast<const ServerJobHolder*>(
+        server->findChild<QObject*>(QStringLiteral("iperf3ServerJob"), Qt::FindDirectChildrenOnly));
+    Q_ASSERT(holder != nullptr);
     server->start();
     const bool started = server->waitForStarted(sak::kTimeoutProcessStartMs);
-    if (const auto completed = job->completeLaunch(*server, started); !completed) {
+    if (const auto completed = holder->job().completeLaunch(*server, started); !completed) {
         // Fail closed: a server the Job did not capture must not keep running.
         Q_EMIT errorOccurred(
             QStringLiteral("iPerf3 server was not contained: %1").arg(completed.error()));
         server->kill();
     }
-    // The Job lives exactly as long as the server's QProcess: ~QProcess stops and reaps the
-    // server first, then this child closes the emptied Job.
-    new ServerJobHolder(std::move(job), server);
 }
 
 void BandwidthTester::connectServerProcessSignals(const QString& ruleName, uint16_t port) {
@@ -792,43 +913,69 @@ QString BandwidthTester::resolveNetshPath() {
     return system32Path(QStringLiteral("netsh.exe"));
 }
 
-void BandwidthTester::createFirewallRule(const QString& ruleName, uint16_t port) {
+namespace {
+
+/// Why the netsh call @p proc made did not succeed, from all it wrote (BandwidthTester::
+/// netshFailureReason): netsh reports a refusal (elevation, policy) on standard output.
+QString netshProcessFailure(QProcess* proc, int exit_code, QProcess::ExitStatus status) {
+    return BandwidthTester::netshFailureReason(
+        exit_code,
+        status,
+        QString::fromLocal8Bit(proc->readAllStandardOutput() + proc->readAllStandardError()));
+}
+
+}  // namespace
+
+void BandwidthTester::createFirewallRule(const QString& ruleName,
+                                         uint16_t port,
+                                         const QHostAddress& bind_address,
+                                         FirewallRuleDone done) {
     const QString netsh = resolveNetshPath();
     if (netsh.isEmpty()) {
-        sak::logWarning("Cannot resolve netsh.exe path; skipping inbound rule for port {}", port);
+        sak::logWarning("Cannot resolve netsh.exe path; no inbound rule for port {}", port);
+        done(false, QStringLiteral("netsh.exe was not found in the Windows system folder"));
         return;
     }
     auto* proc = new QProcess(this);
     // Track the in-flight add so a remove requested before it finishes serializes
     // behind it (see removeFirewallRule) instead of racing and leaking a rule.
     m_firewallAddProcess = proc;
-    connect(proc, &QProcess::errorOccurred, proc, [this, port, proc](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart) {
-            sak::logWarning("Failed to start netsh for firewall rule on port {}: {}",
-                            port,
-                            proc->errorString().toStdString());
-            if (m_firewallAddProcess == proc) {
-                m_firewallAddProcess = nullptr;
-            }
-            proc->deleteLater();
-        }
-    });
+    connect(proc,
+            &QProcess::errorOccurred,
+            proc,
+            [this, port, proc, done](QProcess::ProcessError error) {
+                if (error != QProcess::FailedToStart) {
+                    return;
+                }
+                sak::logWarning("Failed to start netsh for firewall rule on port {}: {}",
+                                port,
+                                proc->errorString().toStdString());
+                if (m_firewallAddProcess == proc) {
+                    m_firewallAddProcess = nullptr;
+                }
+                proc->deleteLater();
+                done(false, proc->errorString());
+            });
     connect(proc,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             proc,
-            [this, port, proc](int exitCode, QProcess::ExitStatus) {
-                if (exitCode != 0) {
+            [this, port, proc, done](int exitCode, QProcess::ExitStatus status) {
+                const bool added = exitCode == 0 && status == QProcess::NormalExit;
+                const QString why = added ? QString() : netshProcessFailure(proc, exitCode, status);
+                if (!added) {
                     sak::logWarning("Failed to add firewall rule for port {}: {}",
                                     port,
-                                    QString::fromUtf8(proc->readAllStandardError()).toStdString());
+                                    why.toStdString());
                 }
                 if (m_firewallAddProcess == proc) {
                     m_firewallAddProcess = nullptr;
                 }
                 proc->deleteLater();
+                done(added, why);
             });
     // Scope the inbound allow tightly: private profile only (never public networks),
-    // remote peers on the local subnet only, and only the bundled iperf3 binary.
+    // remote peers on the local subnet only, the address the server is bound to, and only
+    // the bundled iperf3 binary.
     proc->start(netsh,
                 {QStringLiteral("advfirewall"),
                  QStringLiteral("firewall"),
@@ -838,6 +985,7 @@ void BandwidthTester::createFirewallRule(const QString& ruleName, uint16_t port)
                  QStringLiteral("dir=in"),
                  QStringLiteral("action=allow"),
                  QStringLiteral("protocol=tcp"),
+                 QStringLiteral("localip=%1").arg(bind_address.toString()),
                  QStringLiteral("localport=%1").arg(port),
                  QStringLiteral("profile=private"),
                  QStringLiteral("remoteip=LocalSubnet"),
@@ -881,10 +1029,15 @@ void BandwidthTester::executeFirewallDelete(const QString& ruleName) {
     connect(proc,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             proc,
-            [proc](int exitCode, QProcess::ExitStatus) {
-                if (exitCode != 0) {
-                    sak::logWarning("Failed to remove firewall rule: {}",
-                                    QString::fromUtf8(proc->readAllStandardError()).toStdString());
+            [proc](int exitCode, QProcess::ExitStatus status) {
+                if (exitCode != 0 || status != QProcess::NormalExit) {
+                    sak::logWarning(
+                        "Failed to remove firewall rule: {}",
+                        netshFailureReason(exitCode,
+                                           status,
+                                           QString::fromLocal8Bit(proc->readAllStandardOutput() +
+                                                                  proc->readAllStandardError()))
+                            .toStdString());
                 }
                 proc->deleteLater();
             });

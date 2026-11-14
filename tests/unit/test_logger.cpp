@@ -12,6 +12,8 @@
 #include "sak/error_codes.h"
 #include "sak/logger.h"
 
+#include "../support/junction_fixture.h"
+
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
@@ -55,7 +57,6 @@ private Q_SLOTS:
     void getLogFile_afterInit();
 
     // Thread safety
-    void concurrentWrites_noCorruption();
 
     // to_string for log_level
     void logLevel_toString();
@@ -68,6 +69,10 @@ private Q_SLOTS:
 
     void sessionLogsToPrune_keepsTheNewestWithinCountAndSize();
     void initializePrunesOldSessionLogs();
+
+    // Security brief 4a.3
+    void logFolderThatIsAJunctionIsRefused();
+    void openLogDeniesOtherWritersButNotReaders();
 
 private:
     /// @brief Reads all content from the singleton log file
@@ -441,60 +446,8 @@ void LoggerTests::getLogFile_afterInit() {
              "only a fractional-second field may follow the timestamp");
 }
 
-// ============================================================================
-// Thread Safety
-// ============================================================================
-
-void LoggerTests::concurrentWrites_noCorruption() {
-    auto& log = sak::logger::instance();
-
-    constexpr int THREADS = 4;
-    constexpr int MSGS_PER_THREAD = 25;
-
-    std::vector<std::thread> threads;
-    for (int t = 0; t < THREADS; ++t) {
-        threads.emplace_back([&log]() {
-            for (int m = 0; m < MSGS_PER_THREAD; ++m) {
-                log.log(sak::log_level::info, "CONCURRENT_WRITE_MARKER");
-            }
-        });
-    }
-
-    for (auto& t : threads) {
-        t.join();
-    }
-
-    std::string content = readLogContent();
-
-    int count = 0;
-    std::string::size_type pos = 0;
-    while ((pos = content.find("CONCURRENT_WRITE_MARKER", pos)) != std::string::npos) {
-        ++count;
-        pos += 23;
-    }
-    QCOMPARE(count, THREADS * MSGS_PER_THREAD);
-
-    // Class (B): "no corruption" is never actually checked -- counting markers
-    // cannot see records SPLICED into one another, which is exactly what losing
-    // the write lock produces. Production writes the message last, immediately
-    // before the single '\n', and starts every record with '[', so each marker
-    // must sit at end-of-record inside a record carrying exactly one header.
-    constexpr std::string::size_type MARKER_LEN = 23;
-    for (std::string::size_type p = content.find("CONCURRENT_WRITE_MARKER"); p != std::string::npos;
-         p = content.find("CONCURRENT_WRITE_MARKER", p + MARKER_LEN)) {
-        const auto recordEnd = p + MARKER_LEN;
-        QVERIFY2(recordEnd < content.size() &&
-                     (content[recordEnd] == '\n' || content[recordEnd] == '\r'),
-                 "a concurrent record must terminate right after its message");
-        const auto nl = content.rfind('\n', p);
-        const std::string::size_type begin = (nl == std::string::npos) ? std::string::size_type{0}
-                                                                       : nl + 1;
-        const std::string record = content.substr(begin, recordEnd - begin);
-        QVERIFY2(record.starts_with("["), "a concurrent record must begin its own line");
-        QCOMPARE(countOccurrences(record, "] [INFO] [test_logger.cpp:"), 1);
-        QCOMPARE(countOccurrences(record, "CONCURRENT_WRITE_MARKER"), 1);
-    }
-}
+// Concurrent writes: test_logger_concurrency.cpp (an in-memory sink, so the WSL
+// ThreadSanitizer row can build it).
 
 // ============================================================================
 // to_string
@@ -617,6 +570,46 @@ void LoggerTests::initializePrunesOldSessionLogs() {
     }
     QVERIFY2(remaining <= 30, qPrintable(QString::number(remaining)));
     QVERIFY(newest_old_kept);
+}
+
+// Security brief 4a.3: the elevated helper writes its log into the program's data folder, which can
+// be on a drive other accounts write to. A junction there used to send an administrator's log
+// file (and the pruning of old logs) wherever it pointed. The folder is opened without following
+// a link: a junction is refused, the logger keeps the file it had, and the target is untouched.
+void LoggerTests::logFolderThatIsAJunctionIsRefused() {
+    auto& log = sak::logger::instance();
+    const auto before = log.getLogFile();
+    QTemporaryDir outside;
+    QVERIFY(outside.isValid());
+    const QByteArray canary_bytes = QByteArrayLiteral("not a log");
+    QVERIFY(sak::test::createCanary(
+        outside.path(), QStringLiteral("test_logger_old.log"), canary_bytes));
+    const QString link = m_logDir.filePath(QStringLiteral("junction_logs"));
+    QVERIFY(sak::test::createJunction(link, outside.path()));
+
+    const auto result = log.initialize(std::filesystem::path(link.toStdWString()), "test_logger");
+    QVERIFY2(!result.has_value(), "a junction log folder was used");
+    QVERIFY(log.getLogFile() == before);
+    QCOMPARE(QDir(outside.path()).entryList(QDir::Files | QDir::Hidden | QDir::System),
+             QStringList{QStringLiteral("test_logger_old.log")});
+    QVERIFY(sak::test::canaryIntact(
+        outside.path(), QStringLiteral("test_logger_old.log"), canary_bytes));
+}
+
+// The log is created new (never through a name that already existed) and kept open shared for
+// reading only: nobody else can write into an administrator's log while it is ours, and the log
+// window can still read it.
+void LoggerTests::openLogDeniesOtherWritersButNotReaders() {
+    auto& log = sak::logger::instance();
+    QVERIFY(log.initialize(m_logSubDir, "test_logger").has_value());
+    sak::logInfo("a line the reader must see");
+    const QString file = QString::fromStdWString(log.getLogFile().wstring());
+    QFile writer(file);
+    QVERIFY2(!writer.open(QIODevice::WriteOnly | QIODevice::Append),
+             "another writer opened the live log");
+    QFile reader(file);
+    QVERIFY(reader.open(QIODevice::ReadOnly));
+    QVERIFY(reader.readAll().contains("a line the reader must see"));
 }
 
 QTEST_GUILESS_MAIN(LoggerTests)

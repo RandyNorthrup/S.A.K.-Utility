@@ -207,6 +207,7 @@ private Q_SLOTS:
     void textTokensReachAaOnTheLightPage();
     void darkStatusTextReachesAaOnDarkSurfaces();
     void buttonLabelsReachAaOnTheirGradients();
+    void selectedTabLabelReachesAa_data();
     void selectedTabLabelReachesAa();
     void tableHeadersKeepOneWeightWhileARowIsSelected();
     void pageTitlesAreSectionSized();
@@ -785,26 +786,38 @@ void ThemeWidgetStatesTests::buttonLabelsReachAaOnTheirGradients() {
     }
 }
 
-// The selected tab's white label on the middle of its diagonal gradient, read from the sheet.
+void ThemeWidgetStatesTests::selectedTabLabelReachesAa_data() {
+    checkedCheckBoxDrawsATick_data();
+}
+
+// The selected tab is filled like the page under it and outlined in the accent (the owner,
+// 2026-11-10: its icon is drawn whole, which the blue gradient it had could not carry). Read from
+// the rule in force, in each theme (the dark sheet's comes after the light one's): its label
+// reaches AA on its fill, and its outline 3:1, the bar for what shows a control's state.
 void ThemeWidgetStatesTests::selectedTabLabelReachesAa() {
-    const QString block = sheetBlock(QStringLiteral("QTabBar::tab:selected"));
-    QVERIFY(!block.isEmpty());
-    static const QRegularExpression kStops(QStringLiteral(
-        R"(stop:0\s+(rgba\([^)]*\)|#[0-9a-fA-F]{6}),\s*stop:1\s+(rgba\([^)]*\)|#[0-9a-fA-F]{6}))"));
-    const auto match = kStops.match(block);
-    QVERIFY2(match.hasMatch(), qPrintable(block));
-    const QColor backdrop = token(sak::ui::kColorBgWhite);
-    const QColor top = over(match.captured(1), backdrop);
-    const QColor bottom = over(match.captured(2), backdrop);
-    const QColor middle((top.red() + bottom.red()) / 2,
-                        (top.green() + bottom.green()) / 2,
-                        (top.blue() + bottom.blue()) / 2);
-    const QColor text(propertyIn(block, QStringLiteral("color")));
-    const double ratio = contrast(text, middle);
-    QVERIFY2(ratio >= kWcagAaNormalText,
-             qPrintable(QStringLiteral("selected tab label on %1 is %2:1")
-                            .arg(middle.name())
-                            .arg(ratio, 0, 'f', 2)));
+    QFETCH(AppThemeMode, mode);
+    sak::ui::applyWindows11Theme(*qApp, mode);
+    const QString sheet = qApp->styleSheet();
+    const qsizetype start = sheet.lastIndexOf(QStringLiteral("QTabBar::tab:selected"));
+    QVERIFY(start >= 0);
+    const QString block = sheet.mid(start, sheet.indexOf(QLatin1Char('}'), start) - start);
+    const QColor page = mode == AppThemeMode::Dark ? token(sak::ui::kColorDarkBgPanel)
+                                                   : token(sak::ui::kColorBgWhite);
+    const QColor fill = over(propertyIn(block, QStringLiteral("background")), page);
+    const QColor text = over(propertyIn(block, QStringLiteral("color")), fill);
+    const QColor outline = over(propertyIn(block, QStringLiteral("border-color")), fill);
+    QVERIFY2(fill.isValid() && text.isValid() && outline.isValid(), qPrintable(block));
+    const double label = contrast(text, fill);
+    QVERIFY2(label >= kWcagAaNormalText,
+             qPrintable(QStringLiteral("selected tab label %1 on %2 is %3:1")
+                            .arg(text.name(), fill.name())
+                            .arg(label, 0, 'f', 2)));
+    constexpr double kNonTextContrast = 3.0;
+    const double edge = contrast(outline, fill);
+    QVERIFY2(edge >= kNonTextContrast,
+             qPrintable(QStringLiteral("selected tab outline %1 on %2 is %3:1")
+                            .arg(outline.name(), fill.name())
+                            .arg(edge, 0, 'f', 2)));
 }
 
 // S20: a table bolded every header section while a row was selected; trees and lists did not.

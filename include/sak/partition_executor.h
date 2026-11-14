@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "sak/no_follow_fs.h"
 #include "sak/partition_manager_types.h"
 #include "sak/partition_script_builder.h"
 #include "sak/partition_stop_cleanup.h"
@@ -20,12 +21,42 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <vector>
 
 class PartitionManagerCoreTests;
 
 namespace sak {
 
 class ElevationBroker;
+
+/// A script's PartitionScriptCredential secrets, each written to a new file in this run's
+/// temporary folder and held read-only for this object's life; the script with each placeholder
+/// replaced by its file's path. Destruction overwrites each file with zeros and removes it.
+class StagedScriptCredentials {
+public:
+    explicit StagedScriptCredentials(const PartitionScript& script);
+    ~StagedScriptCredentials();
+    StagedScriptCredentials(const StagedScriptCredentials&) = delete;
+    StagedScriptCredentials& operator=(const StagedScriptCredentials&) = delete;
+    StagedScriptCredentials(StagedScriptCredentials&&) = delete;
+    StagedScriptCredentials& operator=(StagedScriptCredentials&&) = delete;
+
+    [[nodiscard]] bool ok() const noexcept { return m_ok; }
+    [[nodiscard]] const QString& error() const noexcept { return m_error; }
+    [[nodiscard]] const QString& script() const noexcept { return m_script; }
+    [[nodiscard]] std::vector<QString> stagedPaths() const;
+
+private:
+    struct StagedFile {
+        no_follow::UniqueHandle hold;
+        QString path;
+        int size{0};
+    };
+    QString m_script;
+    std::vector<StagedFile> m_files;
+    bool m_ok{true};
+    QString m_error;
+};
 
 class PartitionExecutor : public QObject {
     Q_OBJECT
@@ -46,6 +77,12 @@ public:
                                                         const QString& structured_error,
                                                         const QString& std_err,
                                                         int exit_code);
+    /// What a failed operation run in this process says, as elevatedFailureMessage says it for
+    /// the helper: cancelled, timed out, or the script's own words (scriptFailureReason), and the
+    /// whole of @p std_err only when it gave none.
+    [[nodiscard]] static QString localFailureMessage(const QString& std_err,
+                                                     bool cancelled,
+                                                     bool timed_out);
     /// The helper streams a script's output as progress frames "STDOUT|<chunk>" and
     /// "STDERR|<chunk>". Appends @p chunk's text to @p pending and returns the lines it
     /// completed, leaving a partial last line in @p pending. Empty for any other frame, and

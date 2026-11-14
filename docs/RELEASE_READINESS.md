@@ -2643,13 +2643,1345 @@ operation stays in the queue as pending, to be applied again or removed, and doe
   skips manifest-pinned files and `verify_authenticode_signatures.ps1` accepts an unsigned file whose hash matches
   its pin, so the shipped manifest stays the repository's. That is a `scripts/` change, which the certification
   digest covers.
-- `scripts/bundle_smartmontools.ps1`: on the release runner its check of an existing, correctly pinned smartctl.exe
-  failed while the same check passes on a workstation, and its catch prints no reason (`release.yml`'s diagnostic
-  step now prints what each part of the check sees). Its re-download path then rewrites the tracked README.txt
-  with `Set-Content -Encoding UTF8`, which under PowerShell 7 drops the byte-order mark the tracked file has. The
-  release workflow no longer bundles into the checkout. The script should name the check that failed, and a
-  re-bundle should leave a tracked file unchanged when its content is the same. A `scripts/` change, which the
-  certification digest covers.
+
+### Fix round N: the first nightly and the first release dry run (2026-11-10)
+
+The release workflow and the nightly had never run (they can be dispatched only from `main`). Their first runs on
+`main` 4f7daa47 found what follows; the owner ruled to fix all of it before release and certify the result again.
+Each fix that changes behaviour has a test that went red with the fix taken out, each drilled on its own and restored
+byte for byte; a deletion is proved by the build and both clang-tidy passes.
+
+**Release dry run 42913905285.** The readiness gate refused the certification evidence ("the evidence is for other
+code"): on the runner, `bundle_smartmontools.ps1` judged the tracked, correctly pinned smartctl.exe untrusted,
+downloaded smartmontools again and rewrote the tracked `tools/smartmontools/README.txt` without its byte-order mark,
+which moved the certification digest. The cause: it read `$LASTEXITCODE` after `& smartctl --version | ... |
+Select-Object -First 1`, and PowerShell 7 does not record the exit code of a native command whose pipeline
+Select-Object -First stops, so in a new session it is `$null` and `$null -ne 0` is true (measured: 40 of 40 fresh
+pwsh 7.6.9 sessions; Windows PowerShell 5.1 sets 0). The application runs smartctl through QProcess and its own
+scripts read `Process.ExitCode` under Windows PowerShell 5.1, so no customer path has it.
+- `bundle_smartmontools.ps1` captures the output first and then the exit code, says which check failed, and leaves a
+  file alone when its bytes or its text are already right (README in the tracked encoding). Test
+  `test_bundle_smartmontools` (T2, offline: a pinned bundle in a new pwsh 7 session is accepted, nothing downloaded,
+  no file rewritten) and `test_bundle_smartmontools_rebundle` (T4, downloads: `-Force` rewrites no file). Three
+  drills red: the old check, the old README write, a plain copy over an identical smartctl.exe.
+- `check_powershell_syntax.ps1` (T1 on changed scripts, T2 on the whole tree) now refuses `$LASTEXITCODE` read after
+  a native command's pipeline is cut short by Select-Object -First or -Index, with no other native command between.
+  Its only hits in the tree were the two in `bundle_smartmontools.ps1`. `test_powershell_syntax_gate` (pwsh and
+  Windows PowerShell) covers five refused shapes, five passed ones and the two-casings rule, which had no test; five
+  drills red.
+- `release.yml` bundles smartmontools and iPerf3 into the runner's temp folder and compares them with the tracked
+  binaries, and checks after bundling and before readiness that no step changed a tracked file (#3).
+
+**Nightly 42913851120.**
+- clang-tidy naming gate: clang's own diagnostics stopped it, and a local run of both passes the way the nightly runs
+  them found more than CI had reached (the gate stops at its first failing pass). Missing designated fields
+  (verify_system_files_action.cpp, process_runner.cpp, diagnostic_benchmark_panel.cpp, network_diagnostic_panel.cpp,
+  user_migration_panel.cpp) are named; unused constants (organizer_panel.cpp, windows11_theme.cpp,
+  network_reset_safeguard.cpp, pst_named_properties.cpp, uup_dump_api.cpp, uup_iso_builder.cpp,
+  windows_iso_downloader.cpp) are deleted; an unneeded lambda capture (partition_operation_requests.cpp) is gone;
+  `clonePreviewScaledBytes` and the one-floor `segmentSpans`, called only by the panel's test hooks, are deleted and
+  the hooks call what production calls; three names follow the naming rules (`kDefenderTasks`, `theme_options`,
+  `kInstance`; `theme_options` now takes its length from its entries, as the magic-number gate wants of a constant
+  without the k prefix), and so do two static regexes in `thermal_monitor.cpp` (`kSafeIdentity`, `kDiskStatus`), a file on
+  the core pass's must-stay-clean list that CI had never reached.
+- Mutation catalogs: five mutants whose text had moved are retargeted (restore-image payload target, the APFS resize
+  wording, SMART's warning boundary and NVMe media errors) or removed (`critical-threshold-boundary-ge-to-gt`: SMART no
+  longer has a critical raw threshold), and `clone-preview-scale-wraps-product` moved into `saturatingMultiplyDivide`
+  with the wrapper it named.
+- `test_false_green_command_propagation`: `(Get-Command git.exe).Source` is an array where PATH holds two git.exe, as
+  on the runner; reproduced locally with two on PATH and fixed with `-TotalCount 1`. The same lookup is hardened in
+  `generate_compile_commands.ps1`, `test_startup_budget.ps1` and the toolchain action.
+- `test_source_fingerprint`: the runner's TEMP is under an 8.3 short name (RUNNER~1), so the root arrived short while
+  CMake named each input long, and every input read as outside its root. `verify_source_fingerprint.py` expands short
+  names with GetLongPathNameW (names only; reparse points are still refused) before comparing. A new case checks both
+  spellings each way; drill red.
+- Debug + AddressSanitizer: no AddressSanitizer report. `test_network_reset_safeguard` called `error()` on a
+  `std::expected` holding a value, because Qt 6.12's QVERIFY2 evaluates its message even when the check passes; it now
+  uses the guard the other nine such calls use. The two MCP session suites each failed their built-in case with
+  "Built-in MCP app is missing": it starts sak_utility.exe from the test's own folder, and in Debug the tests and the
+  application build to different folders; `sak_stage_tools_for_debug_tests` now stages it (in Release they share
+  one, and on a workstation the hardware guard skips the case, which is why only CI saw it). Three suites crossed
+  limits set against Release: `SAK_TEST_TIMEOUT_SCALE` multiplies every TIMEOUT by 5 in the ASan job only (refused
+  at configure without ENABLE_ASAN), measured in `tests/CMakeLists.txt`. The job now keeps a crash dump of any test
+  that ends abnormally, prints a debugger stack for it, and uploads the QTest result files, none of which it kept
+  before; the first run's three failures carried no detail.
+- The explorer suite's Debug assert (in `openFolderInSecondPaneListsThatFolderInPaneB`, CI only, three runs of three)
+  was `QList::takeFirst` on an empty list in Qt's `QHeaderViewPrivate::resizeSections`. The header's layout pass
+  queues one width per column shown when it starts, then emits `sectionResized` as it goes, also for a column hidden
+  since the last pass, which still holds its width. `FileExplorerDetailsView` refitted from that signal and showed
+  columns it had dropped for room, so the pass met a shown column it had queued no width for: an assert in Debug,
+  undefined behaviour in Release. The refit now runs once, queued, after the pass has returned. Two Release tests
+  force the pass with the view's own calls (the splitter's narrow-then-wide resizes, and the header menu hiding a
+  column in a narrow pane) and check that no emission changes which columns show: both red on the old code, green
+  three runs of three on the fix. On CI, the nightly's ASan build of the explorer suite with the fix (temporary branch
+  probe-asan-explorer, run 42948322870) passed fifteen runs of fifteen, 124 cases each with no crash dump, where it
+  had asserted on every run before; the branch and its runs' artifacts are deleted. A sweep of the GUI found no
+  other slot on a header signal or on a view's resize that shows or hides a section or changes a resize mode.
+- `test_dedicated_threads` failed once on unchanged code under a -j 4 T2 shard: it times the shared thread pool while
+  its own spinners hold two cores. It now runs alone (RUN_SERIAL) and prints the latency it measured. With the jobs
+  put back on the shared pool the probe never started within its 3000 ms (three of three); on threads of their own
+  it started in 0-100 ms, so its bound is 2000 ms, not 1000: a busy machine gets twenty times that, still short of
+  "never". Thirty runs beside the full T2 label set at -j 6: 30 passed, 0-237 ms; again on the round's final tree,
+  30 passed, 0-989 ms.
+- Added by the owner: the selected main tab drew its icon as a flat white silhouette (`tabIcon`'s QIcon::On
+  pixmap, UI review S25), which lost every line inside the drawing. It now shows the icon's own drawing. Those colours
+  fail on the old blue fill (in the light theme 0-15% of an icon's pixels at 3:1), so the selected tab is filled like
+  the page under it (light #ffffff, dark #172033) with a 2 px accent outline; every tab has the 2 px border,
+  transparent until selected, so no tab moves. `selectedTabIconsKeepTheirDrawing` selects each tab in both themes and
+  fails on an icon reshaped or in fewer colours than its own drawing, and on the 3:1 rule read on the real fill: red on
+  all 22 before, green after (weakest: light Application Management 0.59 of its pixels, light Partition Manager's
+  weakest quarter 0.46).
+
+### The About tab's testing line (2026-11-11)
+
+The screenshot recapture after 18614fca found the About tab still saying "Partition Manager has not yet been tested
+through the app on real hardware. Back up first." (`src/gui/main_window.cpp`), false since the certification tested
+it on two real disks. On the owner's ruling its Testing line now quotes the generated "What the site may say" block of
+`docs/PARTITION_MANAGER_CERTIFICATION.md`: all six sentences, so the limits (internal SATA drives were not tested;
+SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize) and "Back up before changing a disk." are in it.
+`aboutTestingTextQuotesTheCertification` (test_main_window_help) reads that block from the document at test time
+(`SAK_CERTIFICATION_DOC`) and fails when an About sentence is not one of the block's in its order, when a limit (a
+sentence with "not") or the "Back up" sentence is left out, or when "Apple-certified" appears. Red on the old line,
+red with the sanitize limit dropped and with "Back up" reworded, green on the new line. When new evidence changes
+the block, the test fails until the About line follows it.
+
+A sweep of every user-visible string in `src`, `include` and `resources` (the About, Help, licence and credits
+HTML, tooltips and status text, the wiki link, the AI assistant's instructions, skills, workflows and tool
+descriptions) for "not yet tested", "real hardware", "certif", "uncertified", "HardwareCertified", "VM-only",
+"tested", "experimental" and the like found no other stale certification claim. "certification" is left only as an
+internal sidebar key (shown as "Writable Mac Disks") and in code and comments, and the APFS safety note's "validated
+with Apple's own tools" says what the block says.
+
+Partition Manager's file-system registry (`src/core/partition_file_system_registry.cpp`), shown in Properties and
+Inspect as "Blocked filesystem actions" and "Required bundled tools", was checked entry by entry against what ships
+(`tools/filesystem/manifest.json`: e2fsck, mke2fs and resize2fs for ext2/3/4, newfs_hfs and fsck_hfs for HFS+/HFSX;
+`scripts/stage_portable_release.ps1`: sak_apfs_writer_cli and sak_hfs_writer_cli). On the owner's ruling:
+- XFS read "Format and repair remain blocked until the bundled tools have been tested" and listed xfs_repair as a
+  required bundled tool; Btrfs read "Deep btrfs check requires manifest-approved btrfs" and "Repair remains disabled
+  until destructive VM and lab testing proves safe scenarios" and listed btrfs. Neither tool ships. Each now reads
+  "<XFS|Btrfs> format, repair and the deep check (<tool>) are not available because S.A.K. Utility includes no
+  <XFS|Btrfs> tools", with no required tool.
+- HFS+/HFSX: "... remain blocked pending testing of each operation" and "... remain blocked in this milestone" now
+  say the same operations "are not available".
+- Linux swap: "resize remains partition-only until operation-specific proof exists" now reads "resize changes only
+  the partition, not the swap area inside it".
+- ext2/3/4 named other file systems' writes ("XFS/Btrfs/APFS write workflows and HFS+ file writes are not enabled by
+  ext tool approval", two of which exist now); it now says what is blocked for ext: "Writing files inside an ext
+  volume is not available: S.A.K. Utility reads and copies out ext files only".
+- Unchanged, as true and promising nothing: NTFS, FAT12/16/32, exFAT (none blocked, no tools), ReFS (no entry: the
+  generic "no registered filesystem workflow"), APFS (its size, Fusion, sealed, case-sensitive and locked-volume
+  limits; sak_apfs_writer_cli ships) and the unidentified entry.
+`fileSystemRegistry_requiresOnlyToolsThatShip` (test_partition_manager_core) reads the manifest and the staging
+script at test time and fails when an entry names a tool that does not ship for it, when a manifest tool is missing
+from an entry it serves, or when a blocked action promises a future ("until ... tested", "pending testing",
+"milestone", "yet") or an approval. The registry pins and the XFS Properties/Inspect rows in test_partition_manager_panel
+are updated. Drills: the whole old registry, xfs_repair alone put back, and the swap promise alone put back each
+turned the tests red.
+
+The 317211fc dev nightly (43047447744) failed its T4 CTest labels job on two tests:
+- `test_linux_iso_catalog_live`: "HTTP 0" from releases.ubuntu.com for the Ubuntu 26.04 desktop and server ISOs.
+  That was Canonical's outage, not ours: from the workstation the same hour, two of the host's three addresses
+  (185.125.190.37 and .40) did not answer on 443, while 91.189.91.108 answered 200 for both ISOs. Left as it is.
+- `test_process_capture_output_windows_powershell`, case stdout-exact: "Exact-boundary output child failed (expected
+  '0', got '1')". The Python fixture (`tests/support/process_capture_deadline_fixture.py`) waited 2 s for the outer
+  test's acknowledgement, while the outer side (`scripts/test_process_capture.ps1`) gives itself 10 s to produce it,
+  so a slow Windows PowerShell 5.1 outer side under T4's load lost the race and the fixture exited 1. Each fixture
+  wait now outlasts its outer window by 5 s: 15 s for the output acknowledgements (outer 10 s), 35 s for the
+  deadline cases' bound.ack (outer 30 s watchdog), and the self-expiry watchdog 45 s (the largest receipt delay, two
+  output acknowledgements and a margin), reasoned at the constants. Drill: with the old 2 s wait and the outer side
+  held 3 s before output-ready.ack, stdout-exact failed with the nightly's exact message (and minimum-exact on the
+  fixture's traceback); with the fix, both passed, as they do without the delay. All twelve process-capture tests
+  pass in both shells, and the Windows PowerShell output test passed 20 runs of 20 (17-27 s each) beside two
+  back-to-back runs of the full T2 label set at -j 6 (322 of 322 both times). The 317211fc nightly's ASan job
+  passed, 297 of 297 with no crash dump.
+
+The 77a92478 dev nightly (43065407990) failed its T4 CTest labels job on
+`test_source_fingerprint::test_header_change_reconfigures_on_build` (the stamp did not change after a header edit and
+`cmake --build`), passed by the two nightlies before it. Measured with the same fixture: MSBuild's ZERO_CHECK runs
+CMake again only when an input is at least a millisecond newer than `CMakeFiles/generate.stamp`; an input dated 1 ms
+before it, equal to it or 100 ns after it went unnoticed (3 of 3 each), 1 ms to 2 s after it was noticed (3 of 3
+each). Windows dates a write by its clock tick, so the test's edit, written the instant configure returned, could
+tie the stamp. The test now dates the edit one second past the newest configure output (no sleep); drilled red 3 of
+3 with the edit dated to tie the stamp, green 3 of 3 with the fix.
+
+To stop finding one intermittent failure per nightly, a flush on a temporary branch (probe-flush, run 43072540193,
+77a92478 plus one workflow file, since deleted) ran the nightly's T4 CTest labels job as six parallel copies with
+each test repeated up to three times until it failed, the T4 static job once, and the eight T2 build + test shards
+with each test repeated up to twice. T4 static and all eight T2 shards passed. Two tests failed, nothing else:
+- the fingerprint case above, in four of the six copies (fixed above);
+- `test_linux_iso_catalog_live`, once in copy 6: Fedora's redirector gave no answer in 30 s; it passed in every
+  other copy. The second upstream outage in a day after Canonical's, so on the coordinator's ruling the live check
+  now asks a URL a second time, after 5 s, only when the first try got no HTTP answer at all (a timeout or status
+  0), and logs each retry in the test output ("upstream retry: ...") so a flaky upstream stays visible. Any HTTP
+  status is final on the first answer, so a dead address (404) or a refusal (403) still fails at once.
+  `catalogDownloadCheckRetriesOnlyTransportFailures` (T2, offline) scripts the answers: no answer then 200, and
+  HTTP 0 then 206, pass with one logged retry; 200 passes at once; 404 and 403 fail on the first answer; no answer
+  twice, HTTP 0 twice, and no answer then 404 fail. Drills: one try only, retrying every status, and a third try
+  each turned it red.
+
+### Security round: an administrator's S.A.K. on a drive other accounts can write to (2026-11-11)
+
+Owner rulings this round answers (2026-11-11): fix every app-side item of the security brief before 0.9.3; S.A.K.
+runs as administrator straight from its folder, often a flash drive ("it needs to run securely from the flashdrive
+with nothing copied to the user's machine"), and "the temp files cannot live on a user's pc not even temporarily
+unless it's in the app directory". Items 5 (iPerf3, LAN Transfer, the browser bridge's hello frame) and 6 (treating
+the remote side as hostile), `scripts/sign-exe.ps1` and `requirements-gates.txt` were done in a parallel round; their
+entries are theirs. The one item of 5 done here is the elevated pipe's per-frame deadline.
+
+One shared primitive carries the C++ half: `sak::no_follow` (`include/sak/no_follow_fs.h`). A `HeldDirectory` is
+opened without following a link, checked to be exactly the folder named (no link anywhere from the drive or share
+root down), and held without FILE_SHARE_DELETE, which pins it and every folder above it (measured: renaming an
+ancestor of a held folder is refused). A `StagedFile` is created CREATE_NEW under a random name in a held folder and
+published by a rename relative to the held folder's handle (NtSetInformationFile; kernel32 refuses a FILE_RENAME_INFO
+with a RootDirectory, error 87, measured). `removeTree` removes a link as itself and never descends into it.
+`writeHeldReadOnlyFile` writes a new file, then holds it open for reading, sharing reading only, and reads it back.
+The PowerShell half is `sak_script_types.dll` (`Sak.SafeFiles`, `Sak.ShadowMapping` and the types the scripts used
+to compile with Add-Type), built from `src/core/partition_scripts/sak_script_types.cs` and loaded from its bytes. The
+durable rule is in AGENTS.md ("Elevated code never follows a link, and nothing of S.A.K.'s lives outside its
+folder").
+
+| Item | What was wrong | Fix | Test | Drill (red, restored byte for byte, green) |
+|---|---|---|---|---|
+| 4a.1 | The run-temp cleanup (at exit and of earlier runs' folders) used `QDir::removeRecursively`, which in Qt 6 follows a junction: a junction left in `data\temp` turned an elevated cleanup into a recursive delete of whatever it named (drilled: the canary was deleted). | `no_follow::removeTree` removes a link as itself and never descends into it; earlier runs' folders are removed through the held `data\temp`. | `test_no_follow_fs` removeTree cases; `test_config_manager::staleRunFoldersNeverFollowAJunction`; VM `ntfs-stale-junction` | primitive drills; `4a-run-dacl`, `4a-temp-processwide` |
+| 4a.2 | The elevated helper and its scripts worked in `<program>\data\temp` with fixed or guessable names any account that can write the drive could pre-empt. | Every run (the app, unelevated too, and the helper) makes its own `data\temp\run-<pid>-<128-bit random>`: CREATE_NEW, held, never a link, protected DACL on NTFS (SYSTEM and Administrators, plus the person when not elevated); TEMP and TMP point there for the whole process and what it starts; removed at exit and at the next start if a run was killed. Nothing goes to %TEMP% or C:\Windows\Temp (owner ruling). | `test_config_manager::runTempIsProcessWideAndProtected`; VM: owner Administrators, protected, SYSTEM and Administrators only; a limited token's junction, file and rename in it refused | `4a-run-dacl`, `4a-temp-processwide` |
+| 4a scripts | diskpart scripts, APFS/HFS+ payloads, the FileVault password, Wi-Fi profiles: files another program reads by name, written in place where they could be swapped before the reader opened them; Add-Type compiled C# into the temp folder and loaded it; the shadow-copy link was an `mklink /D` in the temp folder. | Each such file is written CREATE_NEW and held read-only (no writer, no delete) until its reader is done (`writeHeldReadOnlyFile`, `writeHeldSessionTempFile`, `[Sak.SafeFiles]::WriteHeldReadOnly`); measured that diskpart (`_wfopen`) and netsh read through the hold. The scripts' C# (including the storage scan's dynamic-disk probe, which the scan compiled even unelevated) ships as `sak_script_types.dll`, pinned by hash, loaded from its bytes. The shadow copy is reached through a drive letter `DefineDosDevice` maps in the helper's logon session, removed in the same `finally` and at the helper's next start if a run was killed. | `test_no_follow_fs::heldReadOnlyFileOpensForReadersAndRefusesWriters`, `test_script_types` (6), `test_partition_manager_core` (diskpart, payload, credential, shadow, `stopCleanup_onlyShadowCopyDevicesAreStaleMappings`), testpc1 netsh measurement | `4a-diskpart-hold`, `4a-held-reopen-share`, `cs-holdreadonly-share`, `cred-hold`, `cred-removed`, `4a-shadow-device` |
+| 4a UUP | The Windows-via-UUP workspace had a deterministic name in `data\temp` and was reused as found. | Reused (so a download resumes) only when it is one S.A.K. made: on NTFS owned by Administrators or SYSTEM with a protected DACL; on FAT, where nothing can be told apart, every file is hashed again before it counts. Otherwise removed (a link as itself) and made new. | `test_uup_iso_builder::workspaceThatIsAJunctionIsRemovedNotFollowed`, `foreignWorkspaceIsNotReused` | `4a-uup-foreign` |
+| 4a.3 | The helper's logs in `data\logs` had predictable names opened for append, so a planted link redirected an elevated write. | The log folder is held without following a link; each log is created CREATE_NEW and held deny-write for the session (`FileLogSink`). | `test_logger::logFolderThatIsAJunctionIsRefused`, `openLogDeniesOtherWritersButNotReaders`; the TSan row uses an in-memory sink (`test_logger_concurrency`) | `4a3-logger-folder`, `4a3-logger-share` |
+| 4b B1 | File Organizer created category folders and renamed files into them with no link check. | Category folders are opened strictly below the held target folder; each move is a rename relative to the held folder, replacing only on "overwrite". | `test_organizer_worker::junctionCategoryFolderIsRefusedAndItsTargetUntouched`, `junctionCategoryFolderReceivesNoNewFile` | `B1-organizer` |
+| 4b B2/B3 | Backup files staged at the predictable `<dest>.sakpart` opened with Truncate; the destination opened with Truncate; the profile backup's pass-through copy and the restore's copies and renames used `QFile::copy`/`rename`, which follow a link (even a dangling one). | `StagedFile` under a fresh random name in the held folder, published by rename; `copyFileTo`/`moveTo` everywhere in profile backup and restore. | `test_backup_file_codec` (3); `test_user_profile_backup_worker::backupNeverWritesThroughAJunction`; `test_user_profile_restore_worker::restoreNeverWritesThroughAJunction`. The drills found that both junction tests pass with `QFile::copy` put back: each worker refuses a link in the destination's folders before any copy, so what the no-follow copy closes is a link planted at the file's own name after that check, which no test can time. `backupCopiesWithNoLinkFollowingCall` and `restoreCopiesWithNoLinkFollowingCall` (`tests/support/link_following_calls.h`) now fail on any Qt copy or rename in either worker's source. | `B2B3-codec-revert`, `B3-backup-copy`, `B2-restore-copy` (red only after those two tests) |
+| 4b B4 | Partition move/backup ran `New-Item -Force` then `robocopy /MIR` into the chosen root. | `New-SakBackupFolder` (no `-Force`, then held); robocopy `/E /XJ`, never `/MIR` into a chosen root. | `test_partition_manager_core` (backup script assertions); one copy of these functions now (the move/backup and the manifest scripts had two) | `B4-mir`, `B4-new-folder` |
+| 4b B6 | Create Image opened the destination file with `FileMode::Create`. | The folder is held and the file made with `[Sak.SafeFiles]::CreateReplacing`: an ordinary file is replaced by name, a link refuses. | `test_partition_manager_core::scriptBuilder_buildsCloneVerificationScript`; `test_script_types::createReplacingRefusesALinkAndReplacesAFile` | `B6-createreplacing`, `cs-holddirectory` |
+| 4b B7 | Email export wrote attachments with `QFile::open(WriteOnly)`. | The output folder is held; each file is a new file in it. | `test_email_export_worker::sidecarAttachmentsNeverFollowAJunction`, `junctionOutputFolderIsRefused` | `B7-email-revert` |
+| 4c | An elevated S.A.K. ran whatever program files sat in its folder, often a flash drive other accounts can write to; elevated children searched the current folder and PATH. | Before anything runs as administrator (Run as Administrator, the helper, and an elevated start itself), every .exe and .dll in the folder (not `data\`) is opened, held deny-write/deny-delete for the elevated side's life, and accepted only by (i) its pinned path and SHA-256 (the build's manifest; a shipped file missing from it fails `everyShippedFileTheBuildCopiesIsPinned`), (ii) the running program's own signature, or (iii) on an unsigned build, the three first-party programs by name; anything else refuses, naming the file. Elevated processes: `SetDefaultDllDirectories`, `SetDllDirectory("")`, Qt plugins only from the program folder, a module audit after start, current directory System32, `NoDefaultCurrentDirectoryInExePath`, and `/DEPENDENTLOADFLAG:0x1000` on all four programs. | `test_program_integrity` (13), `test_elevation_hardening` (2), `test_process_runner::elevatedChildStartsInSystem32WithoutCurrentDirectorySearch`; VM: planted DLL refused on NTFS, FAT32 and exFAT | `4c-rule-iii`, `4c-pin-hash`, `4c-broken-signature`, `4c-tree-junction`, `4c-hold-share`, `4c-audit-program`, `4c-audit-roots`, `4c-broker-verify`, `4c-restart-verify`, `4c-child-env`, `4c-child-cwd`, `4c-dependentloadflag` |
+| 4d | No check of who signed the helper before launching it. | Same signer as the running program: a trusted chain needs the same subject and EKUs; an untrusted one the identical leaf certificate. | `test_program_integrity::sameSignerNeedsTheSameIdentityOrTheSameCertificate`; VM on a test-signed package: clean elevates, an unsigned helper and one signed by another publisher refuse | `4d-ekus`, `4d-leaf` |
+| 5 (pipe) | The elevated pipe read each chunk with its own timeout, so a sender trickling bytes held it indefinitely. | One absolute deadline per frame (`readPipeBytesBefore`). | `test_elevated_pipe_protocol::dribbledFrameStopsAtItsOneDeadline`, `wholeFrameInTimeIsRead` | `5-frame-deadline` |
+| FAT | Found by the VM proof: FAT32 and exFAT refuse `FileAttributeTagInfo`, which every no-follow check read, so a clean package on such a drive would not run as administrator at all. | Refused tag info falls back to `FileBasicInfo` with tag 0 (C++ `attributesFromAnswers`, C# `RequireOrdinary`); a reparse attribute with no readable tag still refuses. | `test_no_follow_fs::attributesAreReadOnEveryFileSystem`; `test_fat_volumes` (CI elevated step: real FAT32 and exFAT VHDX; its set-up has not passed yet, see the VM table); VM | `fat-attributes` |
+| HFS+ | Since 2026-08-31 every raw-device HFS+ staging script failed at `New-SakSparseImageFile` (`[ref]$Owned` no caller passed); and on a FAT program drive staging cannot work. | The unused `[ref]$Owned` removed (a first fix made it optional with a `$null` default, which does not bind either: the new caller test caught that, and the VM showed the original failure through the app, `shots\hfs-format-live-failure-before-fix.png`); `Assert-SakStagingVolume` refuses a non-NTFS/ReFS drive and a short one before the target is read. | `hfsStaging_everyCallerRunsTheStagingFunction`, `verifyHfsStagingVolumeCheck`, `generatedScripts_callTheirOwnFunctionsWithDeclaredParameters` (every generated script's own-function calls: declared parameters, every [ref] passed) | `hfs-staging-volume`, `hfs-staging-owned`, `guard-undeclared-param`, `guard-unpassed-ref` |
+| HFS+ tool runner | Found by the VM proof once staging worked: HFS+ Format through the app failed with "Cannot convert the "System.Object[]" value of type "System.Object[]" to type "System.Int32"". `Invoke-SakCheckedHfsTool` passed the tool's output down the pipeline and then returned its exit code, so every caller got an array. Present since the 2026-06-13 base (`c4cdefc6`): together with the rows above and below, the app's HFS+ Format and Repair have never worked. | The tool's output goes to the console (`[Console]::Out.WriteLine`); the function returns only the exit code. | `hfsStaging_repairReadsTheToolsExitCode` (runs the script's own function against a stand-in tool) | `hfs-tool-runner-output` |
+| Raw partition writes | Found by the VM proof: Format to APFS of an NTFS partition failed through the app ("Unable to zero APFS format target: Unknown error"), and HFS+ Format of one with "Access to the path is denied." (`shots\hfs-format-live-failure-access-denied-b21.png`). Windows mounts the file system it knows (NTFS, FAT32, exFAT) when a partition is opened, drive letter or not, and the scripts dismounted only a lettered volume. Through that file system a write into its own sectors is refused, and one over the partition's last sectors comes back short with no error (measured: 1,044,480 of 1,048,576 bytes, also after a lock and dismount without extended DASD access). Present since the 2026-06-13 base (`c4cdefc6`): every test and certifier wrote image files or partitions Windows had no file system on. | A writable partition handle takes the volume first: extended DASD access, `FSCTL_LOCK_VOLUME` (refused while anything else has the partition open: "The partition is in use, so Windows will not hand it over: close File Explorer windows and programs using it, then try again"), then `FSCTL_DISMOUNT_VOLUME`. The C++ writer (`WindowsRawDevice`: the APFS writer and the HFS+ file writer) and the scripts' `Sak.RawPartitionWrite` (the HFS+ staged copy) both do it; a short raw write now says so instead of "Unknown error". | `test_raw_partition_write` (CI elevated step; NTFS, FAT32 and exFAT VHDX: first and last MiB through both writers, read back; both refuse a partition in use; its set-up has not passed yet, see the VM table); the same checks as guest scripts on the VM; `rawDeviceClassifier_canonicalizesExtendedDeviceSpellings`; `test_script_types::rawPartitionWriteTakesOnlyPartitions`; HFS+ script assertions | `raw-partition-classify`, `hfs-copy-takes-partition`, `cs-rawpartition-ispartition`; on the VM `raw-partition-take`, `cs-rawpartition-take` |
+| Script loader | Found by the VM proof: with the partition lock in, HFS+ Format stopped at "Unable to find type [Sak.RawPartitionWrite]." (`shots\hfs-format-live-failure-unloaded-type-b22.png`). The HFS+ staging scripts never loaded `sak_script_types.dll`; the guard checked only that each type a script names is in the DLL. Extended, the guard also caught this round's own payload holds (the APFS root-file and HFS+ payload scripts named `Sak.SafeFiles` without loading it) before any build left the tree. | The HFS+ staging functions and both payload scripts load the DLL first; the guard now refuses a script that names a type without loading the DLL before it (outside a function body, in text order). | `generatedScripts_callTheirOwnFunctionsWithDeclaredParameters` (load before use) | `guard-unloaded-type` |
+| PowerShell module path | Found when the tool-runner test ran under the T2 runner: Windows PowerShell 5.1 started with PowerShell 7's `PSModulePath` finds 7's `Microsoft.PowerShell.Utility` first and has no `Get-FileHash` (measured), which the HFS+ tool check and other partition scripts call. S.A.K. started from a PowerShell 7 window, and CI's runner, passed that path to every script. | A Windows PowerShell child gets no `PSModulePath` and builds its own (`process_runner`, every launch through it); other children keep it. | `test_process_runner::runPowerShell_childBuildsItsOwnModulePath`; `hfsStaging_repairReadsTheToolsExitCode` under the T2 runner | `ps-modulepath` |
+| APFS repair offer | Found by the VM proof: for a container the app had just formatted, Check Non-Windows File System showed only the read-only metadata. The panel offered "Queue generated APFS repair" only for one fixed layout (space manager block 10, volume block 6, OIDs 102-104) that the writer no longer produces at 256 MiB. From the 2026-06-13 base (`c4cdefc6`); the tests fed that text, never a container the writer made. A first fix offered it for any container the writer formatted; the b28 VM rerun then showed the option and failed at Apply ("APFS writer helper failed with exit code 1"), because `repair-raw` handles only one space-manager chunk (`appendGeneratedGeometryBlocker`: 4096-byte blocks, at most 32,768 blocks, 128 MiB). | The scan reports who formatted each APFS volume ("APFS volume formatted by: S.A.K. Utility APFS writer", from `apfs_formatted_by`); the panel offers the repair only when that is the writer and the scanned block size and count pass `PartitionApfsWriter::repairGeometryBlocker`, the same function the writer's guard now calls, so the two cannot drift. Otherwise the metadata dialog's "Repair" row says why: "S.A.K. can repair only APFS containers it formatted itself, up to 128.0 MB. This container was formatted by something else (a Mac, for example), so only the read-only metadata check is offered." or "... This container is 256.0 MB, so ...". | `test_partition_manager_panel` (containers the writer really formats, read by the production detector: 64 MiB offered; 256 MiB and a foreign formatter get the metadata dialog with those exact words) | `apfs-repair-gate`, `apfs-formatter-detail`, `apfs-repair-geometry`, `apfs-repair-reason-row` |
+| Running image | Found by the operation-proof agent on testpc2: the certification step client (`partition_manager_live_certifier`) never recorded its own program file at start, so the 4c check had nothing to compare with and refused every elevation it asked for, saying a file in the folder was not part of S.A.K. | The step client records itself first thing in `main()` (the opsproof patch, with a self-test check); a program that never recorded itself is refused as what it is, "S.A.K. did not record its own program file when it started; an internal error" (`program_check_failed`), never as a file in the folder; every program and test that can reach an elevation records itself, and a guard fails on one that does not. | `partition_manager_live_certifier --self-test` (`step-client-vouches-for-itself`); `test_program_integrity::uncapturedProgramRefusesAsItsOwnFault`, `everyProgramThatCanElevateRecordsItself` | `step-client-capture`, `uncaptured-refusal-truthful`, `capture-guard` |
+| Audit e1 | The read-only generated-script audit (2026-11-11): `Invoke-SakFilesystemTool` ran the bundled tool with `2>&1` under Stop, and e2fsprogs print their version banner to stderr (resize2fs always, e2fsck and mke2fs mostly), so the first line threw NativeCommandError: ext Format, Grow, Shrink and Repair stopped there. | Stop is relaxed for the native call only; the lines go to the log and `$LASTEXITCODE` decides, as in the diskpart and HFS+ runners. The post-format fsck call too. | `generatedScripts_toolRunnerSurvivesStderrAndKeepsTheExitCode` (the script's own function, a stand-in tool that writes a banner to stderr and exits 0, then 3) | `e1-tool-runner-stderr` |
+| Audit e2 | `Dismount-Volume`, which Windows PowerShell 5.1 does not have, ran before every lettered target of swap Format, ext Format/Repair/Grow/Shrink, ext Create and every APFS script; an unlettered target went on with its file system mounted. | The script takes the partition (`[Sak.RawPartitionWrite]::Release`: write-through handle, lock, dismount; refused with a plain message while anything has it open); a format by a bundled tool first clears the old file system's first and last MiB (`ClearFileSystem`), so Windows does not mount it again under the tool; swap writes its header through the taken partition. The static guard now checks that every command a script calls exists in Windows PowerShell 5.1. | the guard; script assertions (ext format, shrink, create, APFS, swap); `test_raw_partition_write::scriptReleaseAndClearTakeThePartition` | `e2-take-not-dismount` |
+| Audit e3 | HFS+ staged format and the raw-device writer wrote with no lock or dismount. | The "Raw partition writes" row. | as there | as there |
+| Audit e4 | `Get-SakAttachedSystemPartition` returned its "is now active" notice along with the partition. | The notice goes to the log (`[Console]::Out`). | `generatedScripts_valueFunctionsReturnOnlyTheirValue` (stand-in Storage cmdlets) | `e4-boot-pick-leak` |
+| Audit e5 | The writer-helper wrappers ran the helper with `2>&1` under Stop: its output and exit code never reached the log. | As e1. | `generatedScripts_writerWrapperReportsTheHelpersExitCode` (the wrapper's own text pointed at a stand-in) | `e5-writer-wrapper-stderr` |
+| Audit e6 | `Get-SakHfsAllocatedBytes` returned 0 on any error, which turned the staging free-space check off. | An unreadable header (a damaged volume is what repair is for) asks for room for the whole partition. | `generatedScripts_valueFunctionsReturnOnlyTheirValue` | `e6-hfs-allocated-fail-closed` |
+| Audit e7 | The staged image's written ranges were parsed from fsutil's translated output, so HFS+ staging could not work on a non-English Windows. | `Sak.SparseFiles` (`FSCTL_SET_SPARSE`, `FSCTL_QUERY_ALLOCATED_RANGES`); no fsutil. | `generatedScripts_sparseRangesComeFromTheFileSystem`; `test_script_types::sparseRangesAreReadFromTheFileSystem` | `e7-sparse-ranges-dll`, `e7-cs-setsparse` |
+| Audit e8 | The writer wrappers built their argument list in the automatic `$args`. | `$cliArgs`; the guard refuses an assignment to `$args`, `$input`, `$_`, `$PSItem`, `$this`. | the guard | `e8-args-assign` |
+| Audit e9 | Merge made its destination with `New-Item -Force` and checked for a link around it. | Made new and held (`New-SakBackupFolder`), copied with `Invoke-SakRobocopy`, which stops on a code of 4 or more before the source is removed. | `scriptBuilder_buildsMergeScript` assertions | `e9-merge-hold` |
+| Script types | Found by the same guard in this round, before any build left the tree: moving the Add-Type blocks into the DLL left Copy Partition naming `Sak.CopyVolumeLock`, a type the script used to compile as a renamed copy of `ImageVolumeLock` and the DLL did not have. | `Sak.CopyVolumeLock` in the DLL wraps `ImageVolumeLock` and words its refusals for Copy Partition; the guard now also checks that every type a generated script names is one the DLL defines. | `generatedScripts_callTheirOwnFunctionsWithDeclaredParameters` (types), `test_script_types::typesLoadWithoutAddType`, `copyVolumeLockSpeaksForCopyPartition` | `guard-missing-type` |
+| Lettered non-Windows volume (opsproof fix2) | Found by the operation proof on testpc2 (b28, ops.format-ext4): after a good Format to ext4 of a lettered partition, the scan's dirty-bit (fsutil, error 87) and BitLocker ("Element not found") reads failed on the RAW volume; their warnings came before the raw probe identified ext4, made the post-apply scan non-authoritative ("Post-apply verification failed") and refused every later Apply. The same for any lettered ext, HFS+, APFS or swap volume (a customer's ext4 stick). | The coordinator's patch: the volume-state warnings are added after the raw probe and skipped for a volume it identified as a file system Windows does not mount; a RAW volume nothing identified still warns. The b30 VM proof then found the same at Add to Queue: ext repair on a lettered customer ext4 volume (basic-data type, so Windows letters a RAW volume) stopped with "Not Added to the Queue: BitLocker protection and lock state could not be determined". The safety validator's BitLocker blocker and unknown-dirty-bit warning now skip such a volume too, through one shared test (`PartitionFileSystemRegistry::identifiedNonWindowsVolume`). | `inventoryWarnings_skipVolumesWindowsCannotProbe` (ext4 by raw signature: no warning; unidentified RAW: both); `safetyValidator_identifiedNonWindowsVolumeIsNotUnknownState` (the same two volumes at queue time) | `fix2-skip-dirty-bit`, `fix2-skip-bitlocker`, `fix2-validator-bitlocker`, `fix2-validator-dirty` |
+| Partition type after a non-Windows Format (owner ruling through the coordinator) | Format to ext2/3/4, Linux swap, HFS+ or APFS left the partition a Windows data partition with its letter, so Windows mounted a RAW volume over it and offered "You need to format the disk in drive T:". | Every drive letter and folder path removed before the partition is taken (the b32 VM proof: APFS Format of a lettered RAW or freshly formatted NTFS partition failed at Apply, "APFS writer helper failed with exit code 1", because File Explorer held the lettered volume and the writer's lock was refused for its 10 s), and again after the tool or writer, then the file system's own type (GPT Linux file system 0FC63DAF, Linux swap 0657FD6D, Apple HFS+ 48465300, APFS 7C3457EF; MBR 0x83, 0x82, 0xAF); a disk with no partition table is refused. Measured on testpc1 for all seven: the type change alone also drops the volume and letter, the raw partition path still opens, RawPartitionWrite takes it and the write reads back, and Format-Volume then fails ("No matching MSFT_Volume objects found"). So Windows Format first sets a Linux or Apple type back to a Windows data partition (GPT basic data; MBR 0x07, or 0x0C for FAT32), waits for the volume and fails plainly if none comes; any other type is left alone. Create of a non-Windows file system is not a window path (F2, the second fixer). | `generatedScripts_partitionTypeStepsRunAgainstStandIns` (both steps in Windows PowerShell 5.1 against stand-in Storage cmdlets), `scriptBuilder_nonWindowsFormatTakesItsPartitionType`, `scriptBuilder_windowsFormatRestoresAWindowsDataType`; elevated `test_raw_partition_write::formatRoundTripSetsAndRestoresThePartitionType` (the app's own ext4 then NTFS Format scripts on a lettered MBR partition) | `type-step-format`, `type-step-access-paths`, `type-step-letters-first`, `type-restore-windows-format`, `type-restore-volume-wait` |
+| Merge and the volume copies (opsproof F10, fix5) | Found by the operation proof on testpc2 (b28, ops.merge): Merge stopped with robocopy exit 9, "ERROR 5 ... Copying File U:\System Volume Information\WPSettings.dat Access is denied", on an ordinary NTFS volume; it failed closed (no Remove-Partition). Not a regression of this round: at the base the certified copies ran `robocopy /MIR` and Merge `robocopy /E`, neither with an exclusion. | The coordinator's patch: `Invoke-SakRobocopy` leaves out `(Join-Path $from 'System Volume Information')` and `(Join-Path $from '$RECYCLE.BIN')`, the root only, as `Get-SakFileManifest` already did; the same names deeper down are copied. The same helper serves the cluster-size, volume-serial and allocate copies. | `generatedScripts_volumeCopyLeavesOutOnlyTheRootVolumeFolders` (the scripts' own Invoke-SakRobocopy and Get-SakFileManifest in Windows PowerShell 5.1 over a stand-in root holding both folders at the root and deeper down; the real robocopy, with /COPYALL given as /COPY:DAT because copying auditing information needs a right an unelevated test lacks); the text check in `scriptBuilder_buildsMergeScript` | `fix5-root-volume-folders` |
+| APFS Format without a volume name | Found by the b34 VM proof: Format to APFS of a RAW or unlabelled partition failed at Apply with only "APFS writer helper failed with exit code 1". The Format dialog starts from the partition's current label, and the writer refuses an empty name ("APFS format requires a non-empty volume name"; reproduced by hand on the VM and on an image locally). | Refused at Add to Queue: "An APFS volume needs a name: type one in Volume label". | `safetyValidator_apfsFormatNeedsAVolumeName` | `apfs-format-needs-name` |
+| Helper start timeout (opsproof F13) | On testpc2 with Driver Verifier on, a Type ID change was refused with "Elevated helper did not respond in time": the client gave the helper 10 s to open its pipe, and the helper checks every program file first. On the VM, the first start after a fresh unpack with Defender on took about 1.4 s (0.3 s of it the helper's own start); a slow USB drive, Defender's first scan of the helper or a busy PC can take far longer. | `kPipeConnectTimeoutMs` 30 s (the client's wait for the pipe and the helper's wait for the client), and the broker logs "still waiting for the administrator helper to start (N s of 30 s)" every 5 s. The per-frame deadlines are unchanged. | `test_elevated_pipe_protocol::testProtocolConstants` | `f13-connect-timeout` |
+| Defender (opsproof, testpc2) | Defender on testpc2 quarantined `tests/support/partition_image_volume_lock_fixture.ps1` (this round's version) as Trojan:PowerShell/Fleisnam.E, which broke the build's code-digest step there: the file carried the literal `[System.Reflection.Assembly]::Load(` next to the Add-Type C# its drills compile. `partition_os_migration_fixture.ps1` had the same pair. | Both fixtures check the scripts' loader by the DLL's name instead, so neither carries the reflective-load text. `test_defender_clean` (tooling-extended) scans the tests and scripts trees and the program folder with Defender (`-DisableRemediation`) and fails on a detection or a scan that could not run. On the VM, with real-time protection on and signatures updated to 1.463.261.0: the b34 package (C:\SAK) and both trees clean; a generated-style loader through AMSI loads the types with no detection; the control, the quarantined blob written as a .ps1, is detected as Trojan:PowerShell/Fleisnam.E. | `test_defender_clean` | the control |
+| Function defined before use (opsproof F14, fix6) | A regression of this round, found by the operation proof on testpc2 (b28, ops.cluster-ntfs): Change Cluster Size and Allocate Free Space, both certified, failed on every run with "New-SakBackupFolder : The term 'New-SakBackupFolder' is not recognized". Their setup called the function the round introduced before `robocopyManifestFunctionsScript()`, which defines it, came in the script; nothing was destroyed (it stops before Format-Volume). The static guard checked that own-function calls name declared parameters, not that the definition comes first. | The coordinator's patch puts the functions first in both builders. The class is closed in the guard: every call a generated script makes outside its functions to one of its own functions must come after that function's definition, and after the definitions of every own function it calls in turn, across the whole corpus. | `generatedScripts_callTheirOwnFunctionsWithDeclaredParameters` (`Get-SakOrderProblems`; it also requires the corpus to hold such calls), and the patch's order assertions in the allocate and cluster script tests | `f15-define-before-use` (this exact break; named before the finding was renumbered F14) |
+| Long scripts and the Storage cmdlets (opsproof F17, fix8) | Since ae87377b (2026-11-03): a script over 30,000 characters runs from standard input, and the reader ran it as `& ([scriptblock]::Create($sakScript))`. Its `$ErrorActionPreference = 'Stop'` then stayed in a child scope the Storage module's CDXML cmdlets do not see, so a failed Remove-Partition, New-Partition, Format-Volume or Resize-Partition without its own `-ErrorAction` went on and the script exited 0: Apply reported success (proved on testpc2 by the operation proof). The helper's RunPowerShell task builds its command with the same `sak::powerShellInvocation`. No script in the generated-script corpus is that long (the guard now names any that is); Migrate OS and the HFS+/APFS file writes with a large payload are. | The coordinator's patch dot-sources the script, so it runs in the scope a short script runs in; the reader's own variables (`$sakReader`, `$sakScript`) are removed first, so the script finds only `$sakStdinScriptBlock`. The exit code comes through. | `test_process_runner::powerShellInvocation_longScriptReadsItselfFromStandardInput`; `runPowerShell_longScriptRunsAndKeepsItsExitCode` (real hardware only: exit 7 kept, a throw stops, `Get-Partition -DiskNumber 99999` under the script's Stop stops it, the reader's variables are gone), passed elevated on testpc1 through the same code path the helper uses | `f17-dot-source` |
+| Restore Image and the corpus (opsproof F20, fix10) | A regression of this round in a certified operation, found by the operation proof on testpc2 (b28, vhd.image-restore): every Restore Image stopped at once with "Unable to find type [SakLockedFilePath]"; nothing was written. The branch never loaded `sak_script_types.dll` before the content pin named the type. The static guard that checks exactly that ("uses a type before loading the DLL") missed it: no corpus input built a valid Restore Image script, so the guard never saw one. | The coordinator's patch loads the DLL first in that branch. The class is closed with a coverage guard: every operation type builds at least one real script from the corpus, and each named branch appears in one (Format Windows, ext, HFS+, APFS, swap; Check ext, HFS+, APFS repair; Resize Windows and ext; Create Image in both capture modes; Restore Image; Copy Disk to a disk; Copy Partition from a volume; Migrate OS block by block and through an image; the backup of Change Cluster Size, Allocate, Move, Primary/Logical, Serial and Dynamic to Basic; the Merge copy). The corpus gained the inputs for those, so the static checks (own-function calls and parameters, define before use, types loaded before use, commands that exist in Windows PowerShell 5.1) now see each one. | `generatedScripts_corpusBuildsEveryOperationAndBranch`; the patch's order assertion in the pinned Restore Image test; elevated `test_raw_partition_write::restoreImageThroughTheGeneratedScript` (the app's own Restore Image script, a 2 MiB image file onto a whole 64 MiB virtual disk with its identity pinned as the panel pins it, then the disk read back as the image): passed on testpc1 with the b36 package's DLL, and with the loader line left out it failed there with "Unable to find type [SakLockedFilePath]" | `f20-restore-loads-types` (red: the guard, "uses SakLockedFilePath without loading sak_script_types.dll before it" for three corpus scripts, and the assertion); `f20-corpus-coverage-image` (without the image inputs: "no corpus input builds: Create Image; Restore Image; Migrate OS; Create Image, locked volumes; Create Image, offline disk; Restore Image; Migrate OS, block by block; Migrate OS, through an image"; a first drill that dropped only the Restore Image input stayed green, because the raw-disk copy inputs build a Restore Image script too). The guard also fails if an operation type is added after the last one it counts; the testpc1 run above, red then green |
+| Flush after the dismount (coordinator ruling) | FAT32 and exFAT answer FlushFileBuffers with ERROR_NOT_READY (21) once their file system is dismounted, and both writers took that as success. | Only that code, only on a partition the writer itself took and dismounted, and only when every block written since the last flush reads back as written (SHA-256 per 4 KiB block, recorded as each write is made; a partial block is recorded as it will read after the write): otherwise the flush fails, "The partition did not flush, and the block at offset N does not read back as written". C++ (`WindowsRawDevice::syncToDevice`) and C# (`TakenPartitionStream.Flush`). | `test_raw_partition_write` FAT32 and exFAT rows of both writers (the comment says which rows pass through the check) | `flush-readback-cpp`, `flush-readback-cs`, both on testpc1 (elevated): with a recorded hash that cannot match, the FAT32 and exFAT rows fail with "The partition did not flush, and the block at offset 0 does not read back as written" and NTFS (whose flush succeeds) passes; with the real code all three pass |
+
+Measured along the way:
+- FAT32 and exFAT refuse `GetFileInformationByHandleEx(FileAttributeTagInfo)`; NTFS answers it (VM, 2026-11-11:
+  `[Sak.SafeFiles]::HoldReadOnly` and `HoldDirectory` failed on X: and Y: and held on C:). `FileBasicInfo` answers
+  on all four.
+- In Windows PowerShell 5.1 a `[ref]` parameter that is not passed is `$null`, and assigning through it throws under
+  `$ErrorActionPreference = 'Stop'`; giving it a `$null` default instead fails to bind ("Reference type is expected
+  in argument").
+- diskpart reads its `/s` script with the C runtime's `_wfopen` (its import table), which shares reading and
+  writing, so it opens through S.A.K.'s read-only hold; a writer and a delete are refused
+  (`heldReadOnlyFileOpensForReadersAndRefusesWriters`, `heldScriptRefusesWritersAndAllowsReaders`; FAT on the VM).
+- `netsh wlan add profile filename=` reads through the hold too: testpc1, 2026-11-11, a throwaway user=current
+  profile added (exit 0) and deleted with the file held; a writer refused meanwhile; the control (the file opened
+  with no sharing) made netsh fail, so the test tells; the profile list identical before and after.
+- `/DEPENDENTLOADFLAG:0x1000` on an exe: a DLL only on PATH or in the current folder no longer loads
+  (STATUS_DLL_NOT_FOUND), one beside the program still does (two-file stand-in, link.exe and lld-link).
+- HFS+ format, repair and file changes have stopped at their first step since 2026-08-31 (R5 IDX33):
+  `New-SakSparseImageFile` set `$Owned.Value` with no caller passing `-Owned`, which throws under
+  `$ErrorActionPreference = 'Stop'` (measured in Windows PowerShell 5.1) before the target is read. Fixed with the
+  staging check by removing the unused parameter; the new test runs every caller's call and would have caught it.
+  Before that they failed later, at the tool runner and at the partition write (rows above): the app's HFS+ Format
+  and Repair never worked, and Format to APFS worked only on a partition Windows had no file system on.
+- A partition opened for writing (`\\?\GLOBALROOT\Device\HarddiskN\PartitionM`, NTFS, no drive letter; VM,
+  2026-11-11): a 1 MiB write at the start succeeded; one over the last MiB wrote 1,044,480 bytes and reported
+  success, with and without `FSCTL_LOCK_VOLUME` plus `FSCTL_DISMOUNT_VOLUME`; on the same partition with no file
+  system Windows knows (RAW) the same APFS format succeeded. With `FSCTL_ALLOW_EXTENDED_DASD_IO` added, before the
+  lock or after the dismount, both MiB were written whole; on RAW that control is refused (error 87) and is not
+  needed. After the handle closed Windows found no file system it knew there (`logs\raw-lock.log`,
+  `logs\raw-lock2.log`).
+
+The Apple sentence (owner ruling through the coordinator, 2026-11-11). "Writes to Apple file systems were
+validated with Apple's own tools." came from `Get-PmAppleSentence`, emitted whenever
+`certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json` had a certified capability. That evidence is the HFS+ and
+APFS write engine on earlier code (H-a..H-h 2026-06-14 to 06-28, A-a..A-h 2026-06-26 to 08-31, the H8/A8 physical
+gates 2026-06-28), run by certifiers and the writer tools on images and a USB disk; even
+`external.hfs-file-apply-physical` (2026-06-10) staged with its own FileStream steps, not the app's script. No
+evidence ran the app's raw-device HFS+ format, repair or file change, and the final v0.9.3 run had no Apple row, so
+next to "On the v0.9.3 code ... ran through the app" the sentence overstated the current code. It now reads
+"Separately, on earlier code (June to August 2026), S.A.K.'s HFS+ and APFS write engine was validated with Apple's
+own tools.", with the months and the file systems taken from the matrix and a certified capability with no date
+stopping the wording (`test_partition_manager_certification_status`). The About tab, README and the certification
+document quote it; the recertification regenerates the block.
+
+The raw-device HFS+ file-change operations (`PartitionOperationType::HfsReplaceFile`, `HfsGrowFile` and the rest of
+the HfsXxx family) are built only by tests and certifiers: nothing in the app creates them, so their staged scripts
+are not a user path. A person changes files on an HFS+ partition through File Management, which uses the in-process
+`PartitionHfsFileSystemWriter` and no staging script. The family stays, covered by the new caller test and the static
+guard; keep or remove is the owner's call after the release.
+
+INCOMPLETE, after 0.9.3 on the owner's ruling: certification rows that run the app's own HFS+ and APFS format, repair and
+file-change paths through the step client, so the Apple sentence can one day be about current code.
+
+VM proof (2026-11-11, VirtualBox "Windows 11" on the Mac, restored to `pre-round8`, guest hygiene applied, restored
+and powered off afterwards; no snapshot taken or deleted). Package `SAK-Utility-v0.9.3-secfix-5585dca5-wt` staged by
+the release workflow's two scripts from lane2's build (zip SHA-256 `2A74926E48F976E901B2B0CC9F4A4C06DDB16DC0E3418E45B0805CB4700F5485`),
+unpacked to C:\SAK (NTFS), X:\SAK (FAT32 VHD) and Y:\SAK (exFAT VHD), plus C:\SAKSigned, a copy whose 23 unsigned
+program files were signed with a test certificate trusted on that VM only. Each start below is the app started with
+Technician's elevated token (the guest's SAKCaptureElevated task); the attack is from its limited token. Evidence:
+`E:\SAK-Utility-Test-Scratch\secfix-vm\` (`logs\<proof>-<step>.log`, `shots\<proof>-launch.png`, `logs\timeline.log`).
+
+| Proof | What was planted | Result |
+|---|---|---|
+| `ntfs-stale-junction` (4a.1, 4a.2) | `data\temp\run-999996-...\link`, a junction to `C:\SecCanary` | at the elevated start the stale run folder was removed and the canary stayed (1 entry, same bytes); the run's own folder: owner Administrators, protected DACL, SYSTEM and Administrators only; from the limited token a junction, a file and a rename in it were each refused (access denied); removed at exit |
+| `ntfs-temp-junction` (4a) | `data\temp` itself a junction to the canary | "S.A.K. Utility could not create its temporary folder in its data folder: C:\SAK\data\temp is a link (a junction or symbolic link), so it was not used"; nothing created through it, canary intact |
+| `ntfs-planted-dll` (4c) | `sak_extra.dll`, an unsigned DLL that is not S.A.K.'s | elevated start refused: "S.A.K. won't run as administrator while C:\SAK\sak_extra.dll is in its folder; it isn't part of S.A.K." |
+| `signed-clean` (4d) | nothing (test-signed package) | elevated start, main window, run folder protected as above |
+| `signed-helper-unsigned` (4d) | the helper swapped for the unsigned build's | refused, naming `C:\SAKSigned\sak_elevated_helper.exe` |
+| `signed-helper-other-signer` (4d) | the helper re-signed by a second trusted test publisher | refused, naming the helper |
+| `unsigned-helper-swapped` | on the unsigned package, the helper signed by another publisher | refused (rule iii accepts only an unsigned first-party program) |
+| `fat32-clean`, `exfat-clean` on the first package | nothing | refused: "S.A.K. won't run as administrator while X:\SAK\bz2.dll is in its folder" (and Y:): FAT32 and exFAT refuse `FileAttributeTagInfo` (`before-fat-fix\`). Fixed (FAT row above); package `...-wt` rebuilt (zip SHA-256 `BDDA5D4957E53FCD4189B760FE831AF765EACA5B1B335541CD8909DEE1147F69`) |
+| `fat32-clean`, `exfat-clean` after the fix | nothing | elevated start, main window; the run's folder made on the volume (no ACLs there, as expected) |
+| `vm-drill-partition-lock` (raw partition writes) | the APFS writer CLI built with the volume lock switched off, then the package's own; the scripts' DLL compiled with a plain FileStream, then the package's own; each against Disk 4's NTFS partition, formatted NTFS again before each | drilled CLI: "Unable to zero APFS format target: Windows wrote only 1044480 of 1048576 bytes at offset 267386880: the rest is past the end of the partition as this handle sees it"; package CLI: ok. Drilled DLL: "Access to the path is denied." and the last MiB on disk unchanged; package DLL: written, and the last MiB read back through the disk equal (`logs\vm-drill-partition-lock.log`) |
+| elevated suites on the package | `test_no_follow_fs`, `test_script_types`, `test_fat_volumes`, `test_raw_partition_write` with SAK_TEST_ALLOW_REAL_HARDWARE=1 | On this VM `test_no_follow_fs` 25/25 and `test_script_types` pass; the two virtual-disk suites could not set up here or on testpc1 at first. The cause was the tests' own set-up, not the machines: `diskpart(create) + makeVolume(...)` as one sum, whose operands C++ may evaluate in either order, and MSVC ran `makeVolume` first, before the disk existed ("The system cannot find the file specified"). Two statements now, with a comment. On testpc1 (a real PC; 64 MiB virtual disks in TEMP only, removed after): `test_fat_volumes` 10/10, `test_no_follow_fs` 25/25, `test_script_types` 11/11, and `test_raw_partition_write` 14 of 15, its FAT32 row of `scriptReleaseAndClearTakeThePartition` refused: "The partition is in use". The check had read as passing in two earlier runs, because under the default Continue a refused `ClearFileSystem` failed only its statement and `'CLEARED'` still printed; it now runs under Stop, matches whole lines, and says how long the hold lasted: taken on the first retry after the 2 s refusal, about 3 s after the file on the volume was closed. The take now tries for 10 s (50 x 200 ms, C++ and C#). The final package of this round (b38, `SAK-Utility-v0.9.3-secfix-63c0f806-wt`, zip SHA-256 `7E7F75A238A43C88C945695D4CA37EBF2BA8A9DB27407999DE709FEC558BC04E`) with that build's test programs, on testpc1, 2026-11-12: `test_raw_partition_write` 16/16 (with the partition-type round trip and Restore Image), `test_fat_volumes` 10/10, `test_no_follow_fs` 25/25, `test_script_types` 11/11, and `test_process_runner`'s two long-script cases. Test programs and package must come from one build: with newer test programs on an older package, `programFolderOnTheVolume` refuses the package's `sak_script_types.dll` ("it isn't part of S.A.K."), since the C# build is not byte-for-byte repeatable. |
+
+Live proof through the app's own window (owner ruling through the coordinator, "Option A", 2026-11-11). Same VM;
+package `SAK-Utility-v0.9.3-secfix-5585dca5-wt` rebuilt from this tree (zip SHA-256
+`9065BF0299C0DEB4EF7DD250F694A71989356E637E785775F663BC270D3223BA`), unpacked to C:\SAK (NTFS) and started with the
+elevated token; the site repo's capture harness clicked through Partition Manager and File Explorer as a person
+would. Targets: two throwaway 512 MiB virtual disks, Disk 3 (HFSPROOF) and Disk 4 (APFSPROOF), each with a 256 MiB
+NTFS data partition and no drive letter. Each result was read back by tools that are not the operation: the bundled
+`fsck_hfs -n -f` on a read-only copy of the partition, and `partition_filesystem_probe_certifier --expect` (the
+production reader) on the partition itself. No Apple tool runs on Windows, so the APFS read-back is the production
+reader only. Evidence: `capture\<tag>\` (pictures and the window's accessibility tree) and `logs\verify-<tag>.log`.
+
+| Operation (window) | On the way (each fixed above, picture kept) | Result | Read back |
+|---|---|---|---|
+| Partition Manager > Format Partition > HFS+, Disk 3 partition 2 (NTFS) | "The property 'Value' cannot be found" (`hfs-format-live-failure-before-fix.png`); "Cannot convert ... System.Object[] ... to System.Int32" (`hfs-format-live-failure-tool-runner.png`); "Access to the path is denied." (`...-access-denied-b21.png`); "Unable to find type [Sak.RawPartitionWrite]." (`...-unloaded-type-b22.png`) | batch complete; helper task success (`capture\hfs-format-b24`) | fsck_hfs exit 0, "The volume HFSPROOF appears to be OK."; probe: HFS+, valid volume header (`verify-hfs-format-b24b.log`) |
+| Check Non-Windows File System > Queue HFS+ repair, Disk 3 partition 2 | (as above: never ran) | batch complete; success (`capture\hfs-repair-b24`) | fsck_hfs exit 0, OK; probe HFS+, no blockers (`verify-hfs-repair-b24.log`) |
+| File Management > File Explorer > Add Raw/Image (the HFS+ partition) > New > New Folder "SECFIX-PROOF" | | the folder listed (`capture\fm-change-b24`) | fsck_hfs exit 0, OK; probe lists `/SECFIX-PROOF` (`verify-fm-change-b24.log`) |
+| Format Partition > NTFS, Disk 4 partition 2 (control: diskpart through the helper) | | success | the APFS format below found NTFS there |
+| Format Partition > APFS, Disk 4 partition 2 (NTFS) | "APFS writer helper failed with exit code 1" ("Unable to zero APFS format target: Unknown error") | batch complete; success (`capture\apfs-format-b24`) | probe: APFS, 65,536 blocks of 4 KiB, one volume "APFSPROOF", no blockers (`verify-apfs-format-b24.log`) |
+| Check Non-Windows File System on that APFS container | | NOT OFFERED: only the read-only "APFS Metadata (Last Disk Scan)" dialog (`capture\apfs-repair-b24\diagnostics`) | see below |
+| (b28) Format Partition > APFS, Disk 4 partition 2 (NTFS, 256 MiB) | | success (`capture\apfs-format-b28`) | probe: APFS, passed (`verify-apfs-format-b28.log`) |
+| (b28) Check Non-Windows File System > Queue generated APFS repair, that 256 MiB container | | offered (the gate fix), then Apply failed: "APFS writer helper failed with exit code 1" (the writer's repair handles one space-manager chunk, 128 MiB) | the gate now also asks the writer's geometry (the "APFS repair offer" row) |
+| (b28) Format > ext4; Check > Queue ext repair; Format > Linux swap (Disk 3) | | success each (`capture\ext-format-b28`, `ext-repair-b28`, `swap-format-b28`) | bundled `e2fsck -fn` exit 0; swap signature SWAPSPACE2, version 1, probe passed |
+| (b30) Resize/Move ext4 256 to 400 MB, then 400 to 200 MB | the size box reads "400 MB" (flow fixed) | success each (`capture\ext-grow-b30`, `ext-shrink-b30`) | `e2fsck -fn` exit 0 after each |
+| (b30) Format > ext4 over ext4 | | success (`capture\ext-format-b30`) | partition type Linux file system (0FC63DAF), no volume, no letter; `e2fsck -fn` 0 |
+| (b30) Format > NTFS of that Linux-typed partition | | success (`capture\ntfs-from-ext-b30`) | type back to basic data; probe NTFS |
+| (b30) Format > ext4 of a lettered NTFS partition (E:) | | success (`capture\ext-format-lettered-b30`) | letter gone, Linux type, `e2fsck -fn` 0 |
+| (b30) Format > Linux swap over swap | | success (`capture\swap-format-b30`) | type Linux swap (0657FD6D), no volume, SWAPSPACE2 |
+| (b30, b32) Check > Queue ext repair on a lettered customer ext4 volume (basic-data type, E:, made outside S.A.K.) | b30: "Not Added to the Queue: BitLocker protection and lock state could not be determined" | b32: queued, applied, verified (`capture\ext-repair-lettered-b32`) | `e2fsck -fn` 0 |
+| (b32) Format > NTFS of a customer Linux-typed partition (made outside S.A.K.) | | success (`capture\ntfs-customer-linux-b32`) | basic data, NTFS, probe passed |
+| (b32, b34) Format > APFS of a lettered RAW and a lettered NTFS partition | b32: failed after 10 s (Explorer held the lettered volume); b34: the letters now go first, and it failed in 3 s: the volume had no label, and the writer refuses an empty name | b35: refused at Add to Queue without a name ("An APFS volume needs a name: type one in Volume label", `capture\apfs-format-unnamed-b35`); with a name, success on a 100 MB container (`apfs-format-named-b35`) and on a lettered 150 MB NTFS partition (`apfs-format-lettered-b35`) | probe APFS, type APFS (7C3457EF), no letter (`verify-apfs-format-named-b35.log`, `verify-apfs-format-lettered-b35.log`) |
+| (b35) Check > Queue generated APFS repair, the 100 MB container the app formatted | | success (`capture\apfs-repair-small-b35`) | probe APFS, passed (`verify-apfs-repair-small-b35.log`) |
+| (b35) Check Non-Windows File System on a container over 128 MiB | | the read-only metadata dialog, no repair (`capture\apfs-check-large-b35`, `apfs-check-150-b35`) | the panel tests pin its "Repair" row words |
+| (b34) Merge Partitions, Disk 3 partition 3 (F:, files including nested `System Volume Information` and `$RECYCLE.BIN`) into partition 2 (E:) | (the F10 exit 9 was found by the operation proof) | success (`capture\merge-b34`) | partition 2 256 to 496 MB; every file under E:\Merged-Partition-3 with the same SHA-256, nested folders included (`logs\prep-b34-after-merge.log`) |
+| (b34) Reformat for New Serial Number, E: | first try: "Backup directory does not exist" (a folder that did not exist; the queue-time check is F14, the second fixer's) | success (`capture\volume-serial-b34b`) | serial 0xe4de9be3 to 0x18edf146, every file identical (`logs\prep-b34-after-serial2.log`) |
+| (b35) Change Cluster Size, E: to 8 KB | (F14 was found by the operation proof) | success (`capture\cluster-b35`) | 4096 to 8192 bytes per cluster, every file identical (`logs\prep-b35-after-cluster.log`) |
+| (b35) Allocate Free Space, 50 MB from Disk 4 partition 3 (G:) to partition 2 (F:) | | success (`capture\allocate-b35`) | F: 150 to 200 MB, G: recreated 200 to 150 MB, every file on both identical (`logs\prep-b35-after-allocate.log`) |
+
+APFS repair through the window (found by this proof, fixed; see the "APFS repair offer" row). The panel offered "Queue generated APFS repair" only for one fixed layout the writer no longer produces, so the option never appeared (from the 2026-06-13 base, `c4cdefc6`). It is now offered for a container S.A.K.'s writer formatted whose geometry the writer's own repair accepts: one space-manager chunk, 128 MiB. The b28 rerun showed the option for a 256 MiB container and the Apply then failed ("APFS writer helper failed with exit code 1"), which is why the geometry is part of the gate now; for any other container the metadata dialog says why there is no repair.
+
+Tool-only defect (no app path reaches it): `sak_apfs_writer_cli repair-image`, the image-only repair, reports a healthy container as a failure ("APFS repair did not find any incorrect supported object checksums", exit 1; measured on a 64 MiB container the writer had just formatted). No generated script calls it: the app's repair runs `repair-raw`, which does not have that blocker; only `scripts/test_sak_apfs_writer_cli.ps1` and the probe certifier call the image path. Left for after the release.
+
+Known limitations (documented, not open defects):
+- HFS+ format, repair and file changes need S.A.K. on an NTFS drive: they stage an image of the partition in the
+  data folder, and only NTFS and ReFS hold a sparse file (FAT32 also caps a file at 4 GiB). They refuse before the
+  target is read, naming the drive and its file system, and ask for room for the volume's allocated blocks first.
+  For the wiki notes list.
+- The Windows USB creator's WIM split now needs room on the drive S.A.K. runs from; its existing free-space check
+  names the folder. The same holds for what programs S.A.K. starts put in TEMP (an installer unpacking itself,
+  Chocolatey's downloads): it lands in the run's folder on that drive and goes when the run ends.
+- Before each elevation the check reads every program file (about 150 MB): on the VM's FAT32 virtual disk an
+  elevated start took about 6 s to its main window; on a slow USB 2 stick the first read takes longer, and Windows
+  caches it after.
+- While S.A.K. runs as administrator, its program files are locked: they cannot be changed, replaced or deleted
+  until it exits (the same for the helper's life). Deliberate: that hold is what makes the check mean anything.
+- A program file is accepted by its pinned path and SHA-256 (what a release does not change: the Qt runtime and
+  plugins, the VC runtime, vcpkg's DLLs, the bundled tools), or by carrying the running program's own signature.
+  An unsigned (developer) build, having no signature to compare, also accepts its own three other programs unsigned,
+  by name only: `sak_elevated_helper.exe`, `sak_apfs_writer_cli.exe` and `sak_hfs_writer_cli.exe`. So on an
+  unsigned build a swapped helper is not caught; the 4d check is a signed release's.
+
+Residual risks (stated):
+- Same account: another process of the same user, unelevated, can still do what that user can do to the program's
+  folder before S.A.K. starts; the check then refuses an elevation, but an unelevated run trusts its own folder as
+  any portable program does.
+- Started as administrator from Explorer (right-click, Run as administrator) rather than through S.A.K.'s own Run as
+  Administrator or helper: Windows resolves the program's imports before any S.A.K. code runs, and for a DLL that
+  is not one of Windows' KnownDLLs (version.dll, dwmapi.dll, uxtheme.dll and the like) it looks in the program's
+  folder first. A DLL planted there under such a name runs its DllMain as administrator before S.A.K.'s start-up
+  check, which then refuses the run, naming it. No program can close this from inside itself; S.A.K.'s own
+  elevation paths check the folder before they elevate, and the module audit ends a run in which anything outside
+  the rules was loaded. `/DEPENDENTLOADFLAG` keeps PATH and the current folder out of that search.
+- FAT32 and exFAT keep no ACLs and hold no links: on such a drive any local account can read or change a temporary
+  file in `data\temp` while it exists. A file another program reads by name is held read-only from creation until
+  that program is done, so it cannot be changed in that time; the HFS+ staging image (not on FAT, see above) and
+  the USB creator's split WIM are written by the tools themselves. The FileVault password file exists for the
+  operation's length, readable by local accounts on FAT; it is overwritten with zeros and removed afterwards, which
+  flash wear levelling may not erase physically.
+- Programs S.A.K. starts inherit TEMP and TMP pointing into `data\temp`, so their own temporary files land there
+  too; what they write elsewhere is theirs (below).
+- What Windows itself records outside the program's folder when any program runs, S.A.K. included (Windows'
+  records, not S.A.K.'s files, and not something a portable program can prevent): the Prefetch file, the
+  Background Activity Moderator and Application Compatibility entries, the UserAssist and MUICache entries Explorer
+  keeps for a program it launched, the Windows Error Reporting record if it crashes (S.A.K.'s own crash dumps go to
+  `data\crashes`), and event-log records such as a UAC elevation; plus whatever a feature exists to change on the
+  PC (a restored profile, a Wi-Fi profile added, a package installed).
+- The TSan row now runs the logger through an in-memory sink (`test_logger_concurrency`); the Windows file sink
+  itself is covered by `test_logger` under the normal suite.
+
+### Security round sec2: listeners, hostile remote data, signing and gate pins (2026-11-11)
+
+A parallel round to the one above, on the same owner rulings: items 5 and 6 of the security brief (the network
+and IPC listeners; treating the remote side as hostile) and the two items "also inside the digest" (`sign-exe.ps1`,
+`requirements-gates.txt`). It was built on its own branch from 5585dca5 and cherry-picked onto this round's tree in
+the merge round below. Every finding was re-read in the code at 77a92478 before it was fixed; all were real. Each
+fix has a test that went red with the fix taken out and green with it restored.
+
+#### 5. Network and IPC listeners
+
+**iPerf3 server.** It listened on every address the PC had, kept a peer that connected and went
+quiet for as long as it liked, and started whether or not its inbound firewall rule was added
+(unelevated, `netsh` refuses, and Windows then asked the user whether to let `iperf3.exe` through,
+public networks included). Now (`bandwidth_tester.cpp`): `-B <address>` binds it to the one
+adapter address chosen in the panel, `--idle-timeout 30` drops a silent peer and goes back to
+listening, and a server other PCs can reach starts only after its rule is in place. The rule also
+names the bound address (`localip=`). Without the rule the server is not started and the panel
+says why: "iPerf3 server not started: Windows Firewall did not add its inbound rule (...). Adding
+it needs S.A.K. running as administrator." A loopback server needs no rule (Windows Firewall does
+not filter loopback). Tests: `test_bandwidth_tester` (the argv; Windows' own listener table shows
+127.0.0.1 alone; with the rule refused, no server and the message).
+
+**LAN Transfer server.** It listened on `QHostAddress::Any`. It now listens on the chosen adapter
+address and refuses a wildcard. Test: `test_network_diagnostic_controller` (the listener table
+shows 127.0.0.1 alone; Any refused).
+
+**"Listen on" (new UI, small).** Neither server had any choice of interface, so each server row in
+the Network Diagnostics panel gains a "Listen on:" list of the connected adapters' IPv4 addresses
+(Bandwidth tab, iPerf3 group, before Start Server; LAN Transfer tab, server group, before Listen
+Port). Each list starts on the adapter holding the default route and remembers the address that
+server was last started on (`data/config/ui_state.ini`, `NetworkDiagnostics/*ServerListenAddress`).
+Tests: `test_network_diagnostic_controller` (choices, preference), `test_network_diagnostic_panel`
+(default, per-server memory). Screens to retake: Network Diagnostics > Bandwidth, and Network
+Diagnostics > LAN Transfer.
+
+**Browser bridge pipe.** The handshake read the first frame against the 64 MiB native-messaging
+limit and checked the token, and only then the peer: any same-user process that opened the pipe
+held its single instance for the 30 s deadline and could make the server allocate up to 64 MiB.
+Now the peer (our own binary, launched by Chrome) is checked the moment it connects, before a byte
+is read, and the hello's length prefix is refused above 4 KiB before anything is allocated.
+Replies keep the full limit (they may carry screenshots). Tests: `test_browser_bridge_pipe` (a
+60 MiB prefix is dropped at once with no allocation of 1 MiB or more; Windows PowerShell as a
+foreign peer is dropped at once and the real relay is admitted right after).
+
+#### 6. Treating the remote side as hostile
+
+**Installer downloads.** The internalization engine (installers and `.nupkg`s) and the direct
+downloader held each download whole in RAM, up to 4 GiB, to hash it before writing. They now share
+`PackageInternalizationEngine::downloadVerifiedFile`: the body streams to a file in the process's
+temp folder (`QDir::tempPath()`, the per-run folder the app points TEMP at), then is copied into
+place through a `QSaveFile` while it is hashed, so the bytes that land are the bytes that were
+checked, and nothing is committed on a mismatch. An installer with no usable checksum is now
+refused before it is downloaded rather than after. `runNetworkTransfer` gained a body sink, and
+refuses to hold any response that may exceed 512 MiB in memory: a caller that could get one must
+stream it. Tests: `test_package_internalization_engine` (64 MiB over loopback with no Qt allocation
+of 1 MiB or more, staged in the temp folder and never beside the target; a mismatch leaves
+nothing; the cap stops a streamed body), `test_bandwidth_tester` (the in-memory ceiling).
+
+**HFS+ leaf chains.** None of the four leaf walks (extents overflow, catalog listing, catalog
+consistency scan, attributes scan) remembered the nodes it had visited, so a leaf linking back
+into the chain re-read the same records up to the 200,000-node cap: a listing repeated entries, a
+scan counted them again, and the extents load appended them to every fork's extent list. Each walk
+now stops at a node reached twice: "HFS+ <tree> leaf chain loops back to node N". Test:
+`test_partition_manager_core` (`hfsFileSystemReader_refusesLeafChainLoops`, all four walks).
+
+**zlib.** The APFS decmpfs decoder (inline and ZLIB_RSRC chunks) used `qUncompress`, which grows
+its buffer to whatever the stream holds, and compared the size afterwards. The same shape was in
+the HFS+ decmpfs chunk decoder and the PST 4K block reader. All three now use one
+`inflateZlibExactly` that inflates into the declared size plus one byte and stops there. Tests:
+`test_bounded_inflate`, `test_partition_manager_core` (APFS and HFS+ bombs), `test_pst_parser`
+(a 32 MiB bomb declaring 4 KiB: no allocation of 1 MiB or more).
+
+**APFS extended attributes.** A B-tree node's table entries were bounds-checked one by one but
+never against each other, so many entries could point at one record: a 1 MiB leaf of 100,000
+entries naming one 64 KiB attribute value had the scan hold 100,000 copies (gigabytes). And two
+records for one attribute both survived, with the decmpfs one (the file's content) decided by scan
+order. Now a node whose entries overlap is structurally invalid, and a second record for one
+(object, name) is refused. Test: `test_partition_manager_core`
+(`apfsFileSystemReader_refusesAliasedOrRepeatedXattrs`, both on writer-made images patched and
+re-checksummed).
+
+#### Also inside the digest
+
+**sign-exe.ps1.** It accepted any valid signature on the Artifact Signing dlib, which signtool runs
+with signing rights, and any valid signature on the exe it had just signed. Now every DLL in the
+dlib's folder must be signed by Microsoft (the client's own DLLs are "Microsoft Corporation", the
+VC runtime it carries "Microsoft Windows"), and the signed exe must be signed by
+`CN=Randy Northrup, O=Randy Northrup` (the publisher `verify_authenticode_signatures.ps1` requires
+of every packaged binary) and timestamped. Test: `test_sign_exe_signers` (release-tooling): the
+checks on real signed files, and `sign-exe.ps1` itself run in a sandbox with a stand-in `az`,
+stopping at a Chocolatey-signed dlib.
+
+**requirements-gates.txt.** Every package pip installs from it, the three tools and the twelve they
+pull in, is pinned to one version and to the SHA-256 of every file PyPI publishes for it, so pip
+runs in hash-checking mode. Proved on testpc2 in a fresh venv: installs and runs clang-format
+23.1.3, lizard 1.24.3 and pre-commit 4.7.0; a wrong hash and an unlisted dependency are both
+refused. The CI action that reads the clang-format pin parsed `clang-format==(.+)$`, which the new
+line continuation would have broken (" \" captured with the version); it now reads the version
+only.
+
+#### Proof (testpc2, W:\sak at the sec2 tree)
+
+- Build: Visual Studio 2022 / Qt 6.12.0, Release, BUILD EXIT 0, 293 executables.
+- Targeted tests (console session, standard-user token): 15/15 green.
+- Drills: 26 guards, each broken alone, red, restored byte for byte, rebuilt, green: 23 C++
+  (zlib x4, HFS+ walks x4, APFS x2, downloads x4, pipe x2, servers and panel x7) and 3 PowerShell
+  (sign-exe). One first attempt (iPerf3 `-B` removed) did not compile, so its green proved
+  nothing; it was rewritten to compile and went red.
+- T2 labels (product, release-tooling, tooling, cert), `-j 6`: 323 of 324 passed;
+  `test_partition_manager_rig_pc_target` failed for testpc2's own state, not this change: the
+  final certification left `C:\SAKCert\disposable-machine.json` there, so the rig script passes
+  its disposable-machine check and stops at its administrator check, where the test expects the
+  "runs only in a VirtualBox" refusal. sec2 changes none of the scripts involved.
+- clang-tidy naming gate, both passes (LLVM 23.1.3): non-core 155/155 TUs clean; core 171/171
+  healthy, 15 ratcheted TUs clean.
+- ci.yml static gates, whole tree: all pass (hygiene, registration, qrc, PowerShell syntax,
+  clang-format, lizard, ASCII, secret regex, licenses, blocking, GUI tokens / magic numbers /
+  stylesheet literals, magic numbers, dialog buttons, logged message boxes, error-message
+  uniqueness, build-system lint).
+
+#### Residual risks
+
+- Before the merge, `QDir::tempPath()` was the user's %TEMP%, so a partial download was staged
+  there. Resolved in the merge round (follow-up c): it is the app's per-run folder.
+- The offline deployment build kept its work folders in the chosen output folder
+  (`<output>\_work`, `<output>\_sak_temp_XXXXXX`). Resolved in the merge round (follow-up b).
+- iPerf3 and the LAN server bind IPv4 adapter addresses only (the list offers no IPv6).
+- The LAN transfer server still adds no firewall rule of its own; bound to one address, Windows
+  asks about it as before.
+- An oversized embedded APFS extended attribute is not refused; the memory it takes is now linear
+  in its size (no aliasing).
+- https download callers are proven at the shared helper (`downloadVerifiedFile`), not each caller:
+  the tests have no TLS loopback server.
+- iperf3's own handling of a hostile client is upstream's; the idle limit and the bind narrow who
+  can reach it and for how long.
+- The exe timestamp check moved into `authenticode_signer.ps1` unchanged; no validly signed file
+  without a timestamp was at hand to drill it.
+
+### Release signing isolation and workflow pinning (2026-11-11)
+
+From the security audit of a brief forwarded by the owner, who ruled that signing moves to OIDC.
+
+- `release.yml` is four jobs. **build** (read-only token, no secrets, no environment, `persist-credentials: false`)
+  does everything up to the signing catalog, including the filesystem tool check before signing, with no GitHub
+  Actions cache: the toolchain action's new `cache: 'false'` turns off the pip, Qt, vcpkg and pinned-download caches,
+  so nothing another workflow wrote reaches what ships. It hands on the unsigned package (one zip, which keeps its
+  empty and dot-named folders, such as `tools/chocolatey/.chocolatey`, that a folder artifact drops) and the release
+  check tools, for one day. **sign** runs in the `release` environment with `id-token: write` only and no checkout:
+  download-artifact, an unpack with .NET's own ZipFile, azure/login (OIDC, `allow-no-subscriptions`), the signing
+  action with `cache-dependencies: false` and `exclude-environment-credential: true`, an inline check that every
+  catalog file is Valid, signed by CN=Randy Northrup and timestamped, and the signed zip handed on for one day. The
+  pins of azure/login and the signing action are win-app-migrator's. **verify** (read-only, no environment) re-pins
+  the packaged filesystem tools between the application's own check before and after, verifies Authenticode, runs
+  the signed readiness gate from a build/Release laid out from the signed package, and builds the archive and
+  SHA256SUMS. **publish** (tags only, `contents: write`, not in the environment) re-checks the uploaded zips, the
+  binaries' signatures and every SHA256SUMS line, then creates the release. The repository does not attest, so
+  neither does this. A tag that disagrees with VERSION is refused before anything is built.
+- The `release` environment exists and admits `v*` tags only. AZURE_CLIENT_ID and AZURE_TENANT_ID stay repository
+  secrets (they are IDs, and secrets cannot be read to copy them). AZURE_CLIENT_SECRET is no longer referenced and
+  stays until OIDC has signed once. Azure must hold a federated credential for
+  `repo:RandyNorthrup/S.A.K.-Utility:environment:release` on the signing app registration; nothing here can see it.
+- A pre-release tag (one with a hyphen, such as `v0.9.3-rc.1`) runs build, sign and verify and stops before
+  publish: that is the dry run of signing now that the environment refuses a manual run from a branch. A manual
+  run from a branch builds and checks the unsigned package and skips the signing job.
+- Elsewhere: `persist-credentials: false` on every checkout in ci, nightly and secret-scan; the TruffleHog action
+  pinned to the 3.99.7 image by tag and digest (it ran `latest`); gitleaks in secret-scan checked against a pinned
+  SHA-256 rather than the same release's checksums file; OpenCppCoverage installed as 0.9.9; Python as 3.14.10
+  rather than "3.14"; and expressions moved out of `run:` blocks into `env:` (the version in release, the shard
+  numbers and job results in ci). The old single job's unused `id-token: write` is gone with it.
+
+### Merge round: the security rounds, the workflow hardening and the operation fixes on one tree (2026-11-12)
+
+On lane2 at 8e33392b (the security round above, gate green), in this order: sec2's seven commits and the workflow
+hardening's five, cherry-picked; the follow-ups below, each with a test that fails without it, drilled red with the
+fix broken in the source and green with every byte restored; then opsfix's branch, merged; then one gate.
+
+**Cherry-picks.** sec2 (a991c37e, 7d43b936, 3eb68a6d, 8bdfea89, 6fa760d2, 567354ed, 5c85add1) and gh-hardening
+(5f776451, a2fc5a43, 0adf96cc, 10040c24, acff82a8). Git merged every file the brief expected to conflict
+(`CMakeLists.txt`, `tests/CMakeLists.txt`, `tests/README.md`, `test_partition_manager_core.cpp`, and
+`.github/actions/windows-build-env/action.yml`, where sec2's clang-format pin regex for the hashed requirements file
+and the hardening's tool pins both stand) without a conflict; the one conflict was this file, where both rounds
+added a section at the same place: both are kept, the security round first. sec2's notes are folded into the sec2
+section above and the CHANGELOG, and `docs/security-sec2-notes.md` is gone (it said nothing they do not). The merged
+tree built (0 errors, 0 warnings) and passed T2, 330 of 330, before any follow-up.
+
+| Follow-up | Fix | Test | Drill (red, then green) |
+| --- | --- | --- | --- |
+| a. sec2's four `removeRecursively` tree deletes | `sak::no_follow::removeTree` in `OfflineDeploymentWorker::removeOwnedWorkDir` and in the internalization engine's work-folder reset and its `_rels` and `package` cleanup. | `removeOwnedWorkDir_neverFollowsAJunctionInside`, `cleanNugetArtifacts_neverFollowsAJunction` (`_rels` itself a junction, and one inside `package`), `resetWorkFolder_neverFollowsAJunction`: a canary behind each junction survives. | `a-offline-work-removetree`, `a-engine-reset-removetree`, `a-engine-rels-removetree`, `a-engine-package-removetree` |
+| b. Offline Deployment's work folders (owner: no work file outside the app's folder) | A bundle's and a direct download's work folders are new ones in the run folder (`newWorkDirPath`, under `QDir::tempPath()`), not `<output>\_work` or `<output>\_sak_temp_*`. Before either starts, when no installer's size is known yet, the drive holding the run folder needs 1 GiB free; then each download whose server declares its size (Content-Length) is checked before its body is taken, for that size, twice when its copy into place lands on the same drive, plus 64 MiB (`downloadWorkBytes`, asked through the transfer's new `on_size_declared`). Either refusal reads: "Not enough free space for the work files: S.A.K. keeps them in its own folder (...), and that drive has ... free; at least 1.00 GB is needed. Free some space on the drive S.A.K. runs from, or run it from a larger one." An installer taken from inside a package is placed by a no-follow copy that is read back (`placeVerifiedCopy`); a downloaded one was already hashed as it was copied into place. | `newWorkDirPath_isANewFolderInTheRunFolder`; `bundle_refusesWhenTheRunFolderIsShortOfSpace` and `directDownload_refusesWhenTheRunFolderIsShortOfSpace` (the refusal names the run folder, not the output, and nothing is made in either); `placeVerifiedCopy_keepsOnlyACopyThatReadsBack`; `downloadVerifiedFile_needsRoomForItsDeclaredSize` (a stand-in for the free space: one byte short of the need is refused before the body is taken, nothing left at the target or staged; exactly the need downloads) | `b-bundle-work-in-run-folder(-2)`, `b-space-check-shared`, `b-bundle-runs-the-check`, `b-direct-runs-the-check`, `b-work-dir-root`, `b-placed-copy-verified-2` (the first version of that drill did not compile, so it proved nothing and was rewritten), `b-size-declared-hookup`, `b-download-checks-declared-size`, `b-download-second-copy`, `b-download-margin` |
+| c. Downloads stage in `data\temp\run-*` | Nothing new to fix: the test runs the app's own startup step (`app_paths::establishSessionTempDirectory`), so it proves Qt reads the TEMP the app set and the partial file is in the run folder while the download runs. | `downloadVerifiedFile_stagesInTheRunFolderTheAppSetsAtStartup` | `c-run-folder-temp` (TEMP and TMP not set), `c-download-staging-dir` (staged beside the target) |
+| d. `test_partition_manager_rig_pc_target` on an approved PC | The rows script takes `-ApprovalPath` (same default); the test names a missing file of its own (the refusal on any machine) and one naming another machine (refused for that, so the file named is the one read). The approval on testpc2 is left alone. | the test itself | `d-rig-approval-path` |
+| f. The Defender guard in CI | The nightly T4 job builds the program too and runs `test_defender_clean` over `tests`, `scripts` and `build\Release` in its own step, excluded from its ctest step. Where Defender is not running the step writes a warning into the job summary and passes with `-AllowMissingDefender`; `test_defender_clean.ps1` now also fails where Defender's service or antivirus is off, not only where its scanner is missing. Whether a hosted runner has Defender running is not known yet: it shows on the first nightly. | `test_defender_clean_status` (tooling, T2): with `Get-MpComputerStatus` answering "off", the scan fails, or passes saying NOTHING WAS SCANNED only when allowed | `f-defender-not-running` |
+| i. Must-run-elevated | `ci.yml` runs `test_raw_partition_write` whole and `test_process_runner::runPowerShell_longScriptRunsAndKeepsItsExitCode` elevated in their shard, reads every case's PASS line, and uploads the proof; the T2 result job requires it, as for `test_fat_volumes` and the real-helper test. | On testpc1 with the b38 package and its test programs, the workflow's own step bodies (taken from `ci.yml` unchanged, run in Windows PowerShell 5.1 there): FAT 10/10, raw writes 16/16, the long-script case 3/3; the result job's check then printed OK for the three, and a problem only for the real-helper test, which that run did not plan. | The same check with the Restore Image PASS line deleted from the proof: "test_raw_partition_write: no PASS for RawPartitionWriteTests::restoreImageThroughTheGeneratedScript()" |
+
+**Sweep for work files beside a chosen destination.** Fixed: Offline Deployment (above). Found and left, being the
+output itself under construction rather than work files, each published only when complete: `QSaveFile`'s
+temporary sibling (the verified download, the manifest, the AI store's atomic writes), `no_follow::StagedFile`'s
+`.sakpart` (backups and restores), and the Windows-via-UUP converter's `<iso>.partial` beside the chosen ISO (its
+workspace is already in the app's data folder). The disk benchmark and stress test write their test files to the
+drive under test by design. Everything else temporary uses `QDir::tempPath()` or `QDir::temp()`, the run folder.
+
+**Residual 5 (the C# DLL is not byte-for-byte repeatable).** The release workflow is consistent: its build job
+builds `sak_utility` (with the helper and `sak_script_types.dll`, whose pin `cmake/script_types_pin.cmake` writes
+from the DLL that build made) and the probe certifier the signed readiness gate drives in one `cmake --build`, stages
+the package from that same `build\Release`, and builds `sak_filesystem_manifest_check` on its own, which compiles
+only the filesystem tool manifest code (no program integrity, no DLL pin) and checks the repository's own manifest.
+After signing, the DLL's bytes change and the same-signer rule accepts it. Only a person mixing builds (newer test
+programs on an older package) hits the mismatch; AGENTS.md now says so.
+
+**opsfix (h).** Merged at e5664dc2, its 20 commits since f39224a7, as 34ab4a62. One file conflicted,
+`test_partition_manager_core.cpp`, six hunks, each kept both sides: the slot list (this round's corpus tests and
+opsfix's Resize tests), the corpus (this round's coverage inputs and opsfix's writer-names payloads, both appended),
+the generated-script checker (both counters, a summary line printing " ORDERED n STORAGE-VERBOSE n", and opsfix's
+writer stand-in checker after it), and the guard's assertions (neither count may be 0). Everything else merged
+without a conflict; opsfix's Windows Format already set this round's Windows data type back before its take. The
+merged tree built clean and passed T2, 331 of 331.
+
+**Hide on the shared removal (g).** Hide's own loop over the access paths is gone: it runs
+`PartitionScriptBuilder::removePartitionAccessPathsScript`, the function a non-Windows Format runs before it takes
+the partition, then hides and reads the result back as opsfix wrote it. Tests: opsfix's
+`generatedScripts_hideRemovesThePathsFirstAndUnhideGivesALetter` (the whole Hide and Unhide scripts in Windows
+PowerShell 5.1 against stand-ins) and the Hide text check, which now requires the shared function's text before
+`-IsHidden $true`. Drill: `g-hide-uses-shared-removal`.
+
+**opsfix's open items (j, k, l).**
+- j. clang-tidy's naming check found 24 camelCase parameters and local constants on lines opsfix wrote in
+  `partition_script_builder.cpp` and `partition_safety_validator.cpp` (opsfix counted 25). Each is renamed with its
+  uses, by the check's own fixes for those declarations only: the two files go from 216 findings after the merge to
+  192, below the 208 before it. `filesystemToolCallScriptWithArgsExpression`, left without a caller when opsfix
+  removed the non-Windows Create builders and reported unused by clang (which fails the tidy gate), is removed.
+- k. The ext VM gate and the physical cross-file-system validation read only `e2fsck`'s exit code. The shared
+  storage helper gains `Get-SakE2fsckOutputProblem` ("likely to be corrupt", "physical size of the device", or
+  "Abort? no" is a failure, opsfix's F11 rule) and `Assert-SakE2fsckPassed`, and all ten `e2fsck` runs in the two
+  scripts go through it. Test: `test_partition_manager_storage_helpers` (the operation proof's output, each line
+  alone, a clean run, and every call in both scripts). Drills: `k-e2fsck-corrupt-line`, `k-e2fsck-physical-size`,
+  `k-e2fsck-abort-no`, `k-ext-gate-reads-output`, `k-physical-reads-output`.
+- l. In practice the assistant could not run any backup-first operation: Move and Allocate Free Space (the only two
+  in its list; Change Cluster Size, Serial, Primary/Logical and Dynamic to Basic are not) were refused by the safety
+  validator with "requires an off-volume backup directory" even when the model named one, because only Partition
+  Manager's queue binds the backup folder's volume (`backup_volume_guid`, an app-owned field the model may not send)
+  and checks it again before Apply. Not a weaker run, a refusal with a misleading reason. `assistantPartitionOperation`
+  now refuses all six first: "Move Partition copies the volume's files to a backup folder first, and S.A.K. checks
+  that folder's drive only when the person queues the operation in Partition Manager, so the assistant does not run
+  it. Ask the person to queue it in Partition Manager.", and the tool's payload description says so.
+  `overwrite_confirmed` matters only to Create Image's existing-file check, not an assistant operation. Test:
+  `assistantRefusesTheBackupOperationsPlainly`. Drills: `l-assistant-backup-refusal`, `l-assistant-description`.
+
+**Screens to retake.** Network Diagnostics > Bandwidth (iPerf3's "Listen on" list, the refusal when Windows
+Firewall did not add the rule: "iPerf3 server not started: Windows Firewall did not add its inbound rule (...).
+Adding it needs S.A.K. running as administrator.", and a silent peer dropped after 30 s); Network Diagnostics >
+LAN Transfer ("Listen on"); the About tab (its Testing item's sentence on Apple's own tools); Offline Deployment's
+two new refusals ("Not enough free space for the work files: ...", and "Nothing was started: S.A.K. keeps the work
+files in its own folder (...), and could not tell how much free space that drive has."); and the
+assistant's new refusal of the backup-first operations (j, k, l above), which shows in its chat.
+
+**Residuals recorded, not fixed.** "Listen on" lists IPv4 addresses only; the LAN server adds no firewall rule of
+its own; an oversized embedded APFS extended attribute is not refused (its memory is now linear in its size); https
+download callers are proven at the shared helper, not each caller (no TLS loopback in the tests); whether a hosted
+runner has Defender running shows on the first nightly.
+
+**Gate.** One run, alone on the PC, on 1af44e9c: full build, 0 errors and 0 compiler warnings; T2 labels at -j 6, 331 of
+331; cert-tooling 6 of 6; tooling-extended 17 of 17 (test_defender_clean among them); both clang-tidy passes,
+non-core 155 of 155 TUs clean, core 174 of 174 healthy with 5,291 measured findings (5,304 before the merge round)
+and 21 ratcheted clean; every ci.yml static gate, 18 of 18; the hooks on every commit; the pre-push secret scan.
+The first attempt stopped at clang-tidy's core pass: "missing field 'helper_operation' initializer" in the
+designated initializer opsfix's read-only check route builds in partition_manager_controller.cpp (a compile
+diagnostic MSVC does not give); the fields are named (1af44e9c) and the whole gate ran again.
+
+### After the merge round: T2's bootsect.exe, the nightly's stale mutants, the volsnap settle, and opsproof's final run (2026-11-12)
+
+On lane2 after 9170b149 (the merge round above), from GitHub's first runs of the merged tree, the operation proof's
+crash investigation, and opsproof's final run on 9170b149 (F18's script half, F27 to F32). Each fix has a test that
+fails without it, drilled red with the fix broken in the source and green with every byte restored. After the
+drills, lizard's length and complexity limits moved six tests' new parts into tests of their own
+(`fileSystemTools_hfsReadOnlyCheckIsStaged`, `scriptBuilder_hideOnMbrUsesTheTypeByte`,
+`generatedScripts_mbrHideAndUnhideUseTheTypeByte`, `generatedScripts_logicalToPrimaryCountsDataPartitionsOnly`,
+`generatedScripts_wipeFreeSpaceRemovesCipherFolderWithoutFollowingLinks`, and helpers for the resize cases, the
+capture-failure runner and the HFS+ raw test) and split the resize-as-data functions in two; the assertions are the
+ones drilled.
+
+**T2: "calls bootsect.exe, which Windows PowerShell 5.1 does not have".** The generated-script guard
+(`generatedScripts_callTheirOwnFunctionsWithDeclaredParameters`) asked the machine it ran on whether a native tool
+exists, and GitHub's Windows Server runner has no `bootsect.exe`. It now asks Windows PowerShell 5.1 about cmdlets,
+functions and aliases only, and `kClientSystem32Tools`, a committed list of 16 inbox System32 tools found on this
+project's Windows 11 Pro PCs, about native tools; a tool not on the list is a finding wherever the guard runs (test:
+`generatedScripts_commandGuardAsksTheListNotTheHost`; drill `gh-guard-host-independent`). The product: every route
+that runs `bootsect.exe` checks it exists first and refuses plainly, "This Windows has no bootsect.exe (...), which
+... needs, so nothing was changed": the running Windows' BIOS boot repair (which now runs the checked path), an
+attached disk's BIOS repair, and Migrate OS to an MBR disk (`Assert-SakBootsectPresent`). Test:
+`generatedScripts_biosRoutesRefuseWithoutBootsect`, all three in Windows PowerShell 5.1 with `bootsect.exe` absent
+and stand-ins that would show a disk touched. Drills: `gh-bios-repair-checks-bootsect`, `gh-target-boot-assert`,
+`gh-migrate-checks-bootsect`, `gh-attached-checks-bootsect`.
+
+**Nightly T4: four mutation-catalog find-strings matched nothing.** Each is re-pointed at the code that now does
+its job, and each was run as its catalog states it:
+
+| Mutant | Re-pointed at | Killed by |
+| --- | --- | --- |
+| `partition_manager_controller.json` batch-preview-ignores-projected-inventory | the queue's preview line, now followed by `appendQueuedBackupBlocker` (opsfix) | `queueChecksEachOperationAgainstTheLayoutBeforeIt` (new): Delete All Partitions then Initialize Disk, which only the projected layout allows. Re-pointed alone it survived: opsfix's batch test now creates NTFS, which the scan's layout allows too. |
+| `pst_block_decoder.json` 4k-exact-size-check-inverted | `inflateZlibExactly`'s size comparison (`bounded_inflate.cpp`, since sec2) | `unicode4kCompressedBlockInflates`, `unicode4kDecompressSizeMismatchFailsClosed` |
+| `pst_block_decoder.json` 4k-exact-size-check-disabled | the same comparison | `unicode4kDecompressSizeMismatchFailsClosed` |
+| `pst_block_decoder.json` 4k-decompress-failure-isEmpty-masked | inflate's own result (`(result < 0 && result > 0) || ...`, so the variable stays used and the mutant compiles; the first version, the condition deleted, did not compile). Equivalent under qUncompress, not now: a stream that inflates to exactly the declared length with a broken adler32 would be accepted. | `unicode4kCorruptChecksumFailsClosed` (new) |
+
+Each was run as its catalog states it (built, its suite through `run_ctest_no_dialogs.ps1`): all four killed.
+`run_all_mutation_catalogs.py --validate`: PASS, 61 catalogs. AGENTS.md: re-point a stale mutant, never delete it.
+
+**The volsnap settle.** The operation proof's crash investigation (2026-11-12; its report is outside the repository)
+found that on Windows 11 26100 removing a whole disk within seconds of an online scan (`chkdsk /scan`,
+`Repair-Volume -Scan`) can leave a volsnap timer queued in a freed volume device object: five bugchecks across
+testpc1, testpc2 and the VM. A scan-then-detach loop crashed testpc2 in its second round; with 10 s between the scan
+and the detach, 24 rounds under the same load did not. After every online scan S.A.K. runs, the script now says
+"Letting Windows finish with the volume before reporting the result (a drive removed right after a scan can crash
+Windows)." and waits `kVolumeScanSettleSeconds` (15) before it goes on or reports the result: Check File System
+(Repair-Volume for NTFS and ReFS, chkdsk without /f for FAT32 and exFAT), Scan File Systems (after each volume), the
+closing scans of Defragment and of Allocate Free Space, Change Cluster Size, Move, Primary/Logical, Serial and
+Dynamic to Basic, and Check Disk Errors. Check File System's result on a drive that can be unplugged (Windows calls
+it removable, or it is on USB, SD, MMC or 1394) ends with "Wait a few seconds after this finishes before unplugging
+the drive."; a drive inside the PC gets no such line. The settle runs in a finally around the scan
+(`volumeScanSettledStatement`), passed or thrown, and a scan that threw then stops its script with its own words
+(the coordinator's call the same day: a person who reads "failed" is as likely to pull the drive at once; the first
+commit, 70b478cf, waited on the success path only).
+
+| Test | What it proves |
+| --- | --- |
+| `generatedScripts_volumeScanSettlesBeforeDone` | The whole Check File System script in Windows PowerShell 5.1, NTFS and FAT32 passing, NTFS and exFAT throwing: the scan, its End marker, the message, `Start-Sleep -Seconds 15`, then the result in that order; a throw surfaces with its own words after the wait, and the script goes no further. |
+| `generatedScripts_everyOnlineScanSettles` | Every script the corpus builds: each Repair-Volume -Scan or chkdsk call sits between volume-scan markers, Begin and End pair up, the Begin marker opens the settle's try, and its finally, right after the End marker, is the settle. Check File System and Allocate Free Space must be among the scripts with scans. |
+| `buildScanVolumeScript_isReadOnly` | Check Disk Errors: the scan in the settle's try, the settle in its finally, before the result line. |
+| `checkFileSystemSaysToWaitBeforeUnplugging` | The result's line for USB and for a removable SATA drive, none for NVMe. |
+
+Drills, each red then green with every byte restored: `vs-settle-removed-from-scan-line` (both new core tests),
+`vs-settle-removed-at-allocate-site` (the corpus guard alone names Allocate Free Space), `vs-settle-before-the-scan`
+(both), `vs-settle-one-second` (the runtime test and Check Disk Errors' test),
+`vs-settle-removed-from-check-disk-errors`, `vs-panel-note-never-added`, `vs-panel-note-for-every-drive` (NVMe got
+the line), `vs-panel-usb-not-unpluggable`.
+
+**F27: every ext Resize on GPT failed, with a false message.** Opsproof's final run on 9170b149: "Windows did
+not give the partition its type back ... This operation is only supported on data partitions", the partition
+still Linux-typed and its old size. `Invoke-SakResizeAsDataPartition` (opsfix 39759560) set GPT's
+no-default-letter attribute before the basic-data type, and Windows sets that attribute on a data partition only
+(StorageWMI 42011); its finally repeated the error and called it a type that did not come back. Now (opsproof's
+patch, taken as written): the data type first, then the attribute; on the way back the attribute while the
+partition still has the data type, then its own type; and "did not give the partition its type back" only when
+the type read back really differs (otherwise the resize's own failure, or that the attributes could not be set
+back). The unit test's stand-in had taken the attribute on any type, so it proved nothing about this: a stand-in
+proves only what it models. It now refuses the attribute on a GPT partition that is not basic data, and a new
+case (an access path Windows will not remove, on MBR) shows the message is not claimed when the type is back.
+`PartitionScriptBuilder::resizeAsDataPartitionFunctionScript` is public so that Windows itself can be asked:
+`test_raw_partition_write::resizeAsDataGivesAnExtPartitionItsTypeBack` (elevated, must-run in CI) makes a
+Linux-typed GPT partition on a VHDX as S.A.K.'s ext Format leaves one (no letter, the attribute set), grows it
+through the app's own function and reads back its type, attributes, letters and size, then asks for more than the
+disk holds and reads back the same, with Windows' own reason and not the false message.
+On testpc1 (elevated, the test program beside the merged package): red with the function as it was on
+9170b149, with opsproof's own words ("RESULT THREW Windows did not give the partition its type back
+({0fc63daf-8483-4772-8e79-3d69d8477de4}): This operation is only supported on data partitions."), green after.
+Windows reads a Linux-typed partition's attributes its own way (the no-default-letter attribute set before the
+type change reads False, and the partition reads hidden), so the test compares the partition with what Windows
+read before the resize, not with a fixed line; the first green run on testpc1 showed that. Core drills:
+`f27-attribute-before-type`, `f27-restore-type-before-attribute` (red recorded; the round was stopped during its
+green build to take F29-F32, with the file restored byte for byte and rebuilt green before every later run),
+`f27-type-back-message`.
+
+**F28: Check Non-Windows File System failed on every healthy HFS+ volume.** Opsproof's final run on 9170b149:
+"fsck_hfs -n -f //?/GLOBALROOT/Device/Harddisk4/Partition2 ... Device is not a block device ... exit code 8".
+Since F25 the read-only check runs in the helper through the generated script, and the staging that repair and
+format use was not applied to it; fsck_hfs opens a block device or a file only. Now (opsproof's patch, with the
+long-task timeout added): the check reads the partition into a sparse image in the run folder (TEMP, which S.A.K.
+sets to it), runs `fsck_hfs -n -f` on the image through `Invoke-SakCheckedHfsTool` (only exit 0 passes), removes
+the image, and writes nothing back. A run folder on a FAT32 or exFAT drive is refused before anything is read,
+in the same words as repair and format, which now name the check too ("S.A.K. stages HFS+ format, check, repair
+and file changes as an image of the partition in its own data folder ... Run S.A.K. from an NTFS-formatted
+drive"). `runReadOnlyCheckThroughHelper` hands the helper the operation, and that operation builds the staged
+check; the run's output and failure reach the result in their own words
+(`test_partition_manager_controller::hfsReadOnlyCheckRunsTheStagedScript`). The script: the F28 assertions in
+`fileSystemTools_sayWhenTheyCouldNotOpenThePartition` (staged, `-n -f` on the image, no write-back, the image in
+the run folder and removed, the drive checked first) and `hfsStaging_everyCallerRunsTheStagingFunction` (the check
+among the callers). Windows itself: `test_raw_partition_write::hfsReadOnlyCheckStagesAndWritesNothing`
+(elevated, must-run in CI): an HFS+ partition the app's own Format made on a GPT VHDX, checked through the app's
+own script; healthy passes, a damaged volume header (file count and free-block count) fails, the partition's
+SHA-256 is the same after each check, no image is left, and with the run folder on a FAT32 volume the check
+refuses in those words and makes no image.
+On testpc1: red with the check unstaged, as on 9170b149 ("Device is not a block device", "Filesystem tool exit
+code: 8" on the healthy volume), green after. Core drills: `f28-check-not-staged` (core and controller tests),
+`f28-check-writes-back`.
+
+**F18's script half: Convert logical to primary always stopped at Apply.** Opsproof's final run on 9170b149:
+"Primary/logical conversion requires a single data partition on the disk", before any change. fix9 taught the safety
+validator that the extended container Windows lists beside a logical partition is not a data partition; the script's
+own count, `@(Get-Partition -DiskNumber N)`, still included it (since 4500612f8). The two now share one rule in
+`partition_manager_types`: `isExtendedPartitionContainer` (the validator, on the scan's Type) and
+`dataPartitionsOnlyPowerShell` (the script, on the disk's Type at Apply), from one constant and the same test. Test:
+`scriptBuilder_buildsOfflineMoveAndMetadataScripts` runs the generated script's own two counting lines in Windows
+PowerShell 5.1 against a stand-in Get-Partition (a logical partition with its extended container passes, one primary
+passes, two logical partitions in one container are refused); the validator's logical-with-container case already
+ran. Drills: `f18-script-counts-extended`, `f18-shared-rule` (the shared constant broken: the validator's test and
+the script's both failed).
+
+**F29: a capture whose snapshot Windows aborted got only DISM's words.** Opsproof's VM final run: with the shadow
+storage at its minimum, volsnap aborted the Image-route capture snapshot (event 36, "shadow copy storage could
+not grow due to a user imposed limit") and DISM exited 3 ("The system cannot find the path specified"), not 433,
+so `Get-SakCaptureFailureMessage` (opsfix e142bd5b) said nothing of the snapshot. Opsproof's patch, as written:
+433 or 3, still only with a volsnap 33 or 36 for that volume since the capture began; exit 2 still gets nothing.
+Test: `test_partition_os_migration::imageCaptureFailureSaysWhatStoppedIt` gains the ABORTED case (exit 3 with a
+volsnap 36). Drill: `f29-exit-3`. The VM's rerun on the settle build (26e12127) still failed F29: Windows
+aborted the snapshot (volsnap 36 at 18:34:58) before the capture began (DISM's error at 18:35:08; the shadow
+storage filled while the target was being formatted), and the catch read volsnap's events and dism.log from the
+capture's start, so the only event was dropped. Opsproof's fix19, as written: `Open-SakSnapshots` records
+`$script:sakSnapshotTaken` just before the snapshot is created, and the catch reads from then, falling back to the
+capture's start. Test: `imageCaptureFailureReadsFromTheSnapshot` checks the script reads from the snapshot's time.
+Drills: `f29b-events-from-capture-start`, `f29b-snapshot-time-not-recorded`.
+
+**F30 (serious): Hide on an MBR disk hid every partition on it.** Opsproof on testpc2 with a two-partition MBR VHDX:
+Set-Partition -IsHidden and -NoDefaultDriveLetter are the whole disk's attributes on MBR, so Hide of one partition
+hid all of them and took all their letters. Now (opsproof's patch, with the refusal moved before anything changes):
+on MBR one partition is hidden by its type's hidden form (01, 04, 06, 07, 0B, 0C, 0E become 11, 14, 16, 17, 1B, 1C,
+1E) and shown by its own; a type with no hidden form is refused before its paths are touched, "S.A.K. hides an MBR
+partition by its type, and type 83 has no hidden form, so nothing was changed"; GPT is unchanged. Tests:
+`generatedScripts_hideRemovesThePathsFirstAndUnhideGivesALetter` (the stand-ins now have a disk style and an MBR
+type: MBR Hide sets 17 after the paths go and never -IsHidden, MBR Unhide sets 07 and gives a letter, an 83
+partition is refused with nothing removed) and, against Windows itself,
+`test_raw_partition_write::hideOnMbrHidesOnlyThatPartition` (the app's own Hide and Unhide of partition 1 of a
+two-partition MBR VHDX: partition 1 hidden with no letter and type 17 while partition 2 keeps its letter and stays
+visible; Unhide gives partition 1 type 07 and a letter back). On testpc1: red with Hide by the attribute, as on
+9170b149 (after Hide of partition 1: "P1 True - 07" and "P2 True - 07", partition 2 hidden and its letter gone, as
+on testpc2), green after. The whole elevated suite on testpc1 with the final program: 19 of 19. Core drills:
+`f30-hide-by-attribute-on-mbr`, `f30-unhide-by-attribute-on-mbr`, `f30-unsupported-type-not-refused`.
+
+**F31: Merge took the free space after the source too.** Owner's decision through the coordinator: fix it. Merge
+grew the target to its supported maximum, so two 256 MiB partitions on a 1 GB disk became 1008 MiB. It now ends
+where the source ended: `$mergedSize = source offset + source size - target offset`, read before the source is
+removed (opsproof's patch). Test: `scriptBuilder_buildsMergeScript` (the resize to $mergedSize, never SizeMax, the
+size taken before the removal). Drill: `f31-merge-grows-to-max`.
+
+**F32: Wipe Free Space left cipher's EFSTMPWP folder at the volume root.** Opsproof's patch removed it with
+`Remove-Item -Recurse -Force`, which in Windows PowerShell 5.1 goes through a junction and deletes what is behind
+it; that was not taken. The folder goes only when this run made it and cipher exited 0, through the script's own
+no-follow removal (`Remove-SakTreeNoFollow`: a junction or link, or the folder itself being one, is removed as the
+link), and a failure to remove it is a warning, since the free space was wiped. Tests:
+`stopCleanup_scriptsMarkWhatTheyMakeAndUnmake` (the removal after cipher, only for a folder this run made, through
+the no-follow function, no -Recurse anywhere) and the function itself in Windows PowerShell 5.1 on a folder holding
+a read-only file and a junction to a folder with a canary, then on a folder that is itself a junction: the tree
+goes, the canary stays. Drills: `f32-removal-follows-links` (the canary behind the junction was deleted),
+`f32-remove-item-recurse`.
+
+**The settle in the certification tooling, and on the failure path.** The readback harness (`Test-RbVolumeHealth`
+in `scripts/partition_manager_readback.ps1`) runs Repair-Volume -Scan and `chkdsk /scan`, and the rows then detach
+their VHDX: the pattern of crashes 3 and 4, and very likely the VM's 0x139s during earlier certification runs. The
+coordinator's call: wherever scripts/ runs an online scan and then takes a volume or disk down, wait 15 s first,
+through one shared helper. `Wait-RbVolumeScanSettle` (the readback) logs "Letting Windows finish with the volume
+before going on (15 s; a disk removed right after a scan can crash Windows)" and waits; `Test-RbVolumeHealth`'s two
+scans run in a try whose finally calls it, and the certification rig's boot-facts job, which runs Repair-Volume -Scan
+inside a throwaway VM that is then powered off and its disk detached, does the same with the function's text copied
+from the readback (`Get-RigReadbackFunctionText`), not a second definition. Those are the only online scans in
+scripts/. `test_partition_manager_scan_settle` (cert-tooling, pwsh and Windows PowerShell 5.1) reads every script in
+scripts/: each online scan, as code or as a job's text, sits in a try whose finally calls `Wait-RbVolumeScanSettle`,
+with no take-down (Dismount-DiskImage, -IsOffline $true, mountvol, a VirtualBox detach or controlvm, Remove-
+PartitionAccessPath) between the scan and that finally; then it runs the readback's scan against stand-ins, passing
+(scan, chkdsk, the wait, then the dirty bit) and throwing (the wait, then the same error), and runs the rig's copy of
+the wait on its own. In the product, the same call put the settle in a finally around every online scan (above).
+Drills, each red then green with every byte restored: `pf-settle-success-only` (the product's
+wait after the scan, not in a finally: the runtime test's throwing routes, the corpus guard and Check Disk Errors'
+test), `pf-settle-swallows-the-error` (a catch in the settle's try: the scan's error no longer stopped the script),
+`h-readback-no-settle`, `h-readback-settle-success-only`, `h-takedown-before-settle` (a mountvol line between the scan
+and its wait), `h-rig-no-settle`.
+
+**Gate.** One run, alone on the PC, on 2cc767d5 (the code; the naming commit and this section came after):
+configure; full build, 0 errors and 0 compiler warnings; T2 labels at -j 6, 331 of 331; cert-tooling 6 of 6;
+tooling-extended 17 of 17; the mutation label 1 of 1 and `run_all_mutation_catalogs.py --validate` PASS (61
+catalogs); both clang-tidy passes, non-core 155 of 155 TUs clean, core 174 of 174 healthy; every ci.yml static
+gate, 18 of 18; the hooks on every commit. Core's measured naming findings rose from 5,291 to 5,295 there: the
+four camelCase names opsproof's F28 function brought. f6b5d1ba renames them; the naming gate then measured 5,291
+again, and `test_partition_manager_core` passed 449 of 449. The elevated cases ran on testpc1 (above): the whole
+`test_raw_partition_write` suite, 19 of 19.
+
+### The Debug + ASan nightly on 9170b149: two tests that never ended, tests with no time limit, and the Debug layout (2026-11-12)
+
+Nightly 43277300774 on 9170b149 (the one on 9aa97f95 was 297 of 297): the Debug + ASan job ran into
+its 330-minute limit, and six suites failed. Reproduced in a local Debug + ASan build configured as
+the nightly's is (`-DENABLE_ASAN=ON -DSAK_TEST_TIMEOUT_SCALE=5`), run through
+`scripts/run_ctest_no_dialogs.ps1`. None of it is a product hang. Each failure is the Debug build's
+layout, which the security round (19b982d1) made matter; a Release package already has every file
+beside its programs and was not affected.
+
+**The writer CLI tests never ended, and test_single_instance_app's first instance did not start.**
+The security round linked sak_utility, the helper and both writer CLIs with
+`/DEPENDENTLOADFLAG:0x1000`: they resolve their imports only from their own folder and System32,
+never PATH. A Debug build imports vcpkg's Debug DLLs (`zd.dll`, and for sak_utility also
+`bz2d.dll`), which only PATH held: the build staged the Release names (`z.dll`, `bz2.dll`) beside
+the programs. `dumpbin /dependents` of the nightly's programs as built locally: each CLI's one
+import not beside it was `zd.dll`. Under ctest without `--interactive-debug-mode 0` a missing
+import is a Windows error box that waits for an answer, so the CLIs never ended and sak_utility
+never started ("The first instance did not start within 90 s"). Each configuration now stages its
+own vcpkg DLLs beside sak_utility and both writer CLIs (`SAK_VCPKG_DEBUG_RUNTIME_DLL_GROUPS` in
+CMakeLists.txt, staged for each of the three, so a build of one CLI alone has them too); every
+import of the four programs resolves beside them or in System32 (dumpbin, checked locally). A
+Release build stages what it did.
+
+**Neither test had a time limit.** 283 of 361 tests set no TIMEOUT, ctest has none of its own
+here (no `include(CTest)`), and `SAK_TEST_TIMEOUT_SCALE` multiplies only limits that exist. Every
+test now has one: a test that sets none gets `SAK_TEST_DEFAULT_TIMEOUT`, 300 s, and configure fails
+for a test registered without one (the check runs after the last `add_test`). 300 s is 4.7 times
+the slowest such test in Release (`test_file_explorer_archive_service`, 64 s on the workstation)
+and, scaled to 1500 s under ASan, 7 times the slowest such test there
+(`test_file_management_explorer_panel`, 204 s on that nightly). `test_app_theme`, 21 s in Release
+but 1182 s and 1760 s on the last two ASan nightlies, sets its own 600 s (3000 s scaled). ctest
+4.4.5 ends a test's whole process tree at its limit: a test whose child slept 90 s holding its
+output ended at its 8 s limit, with no process left. The writer CLI tests would now have failed
+after 25 minutes, not 330.
+
+**test_elevation_hardening ("helper is missing"), test_script_types, and all 22 of
+test_partition_manager_core's failures.** Debug test programs ran from `build/tests/Debug`, while
+the product looks for the helper and `sak_script_types.dll` beside the running program (security
+round). Release's tests sit beside the app in `build/Release`; Debug's now sit beside it in
+`build/Debug` (`CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG`), with `Qt6Testd.dll` and `qoffscreend.dll`
+staged there as Release stages `Qt6Test.dll` and `qoffscreen.dll`, and the step that copied the
+tools and sak_utility.exe into `tests/Debug` is gone. Core's
+`inventoryScan_aCallPastItsOwnLimitSaysWhichStep` ("no progress for 6 s") was the same cause: the
+scan ends itself through `Sak.ScanProcess` from that DLL, and without it the quiet limit ended it
+instead. The bootsect.exe PROBLEM in that run was fixed in 2b392fed (above).
+
+**test_program_integrity (7 failures).** It named Release's files (`Qt6Core.dll`,
+`platforms\qwindows.dll`, `z.dll`); it now names the build's own (`Qt6Cored.dll`, `qwindowsd.dll`,
+`zd.dll` in Debug). The program manifest pinned only Release's vcpkg DLLs, so a Debug build's
+`zd.dll`, `bz2d.dll`, its own `liblzma.dll` and the ASan runtime failed the shipped-file check and
+the module audit. A Debug build now compiles a list of its own (`cmake/program_manifest.cmake`,
+under `_DEBUG`: vcpkg's `debug/bin` in place of `bin` and, with ENABLE_ASAN, the ASan runtime); the
+Release list is line for line what it was. The helper-missing case was the layout above.
+
+**Tests and drills.** Locally, Debug + ASan as the nightly configures it, through the no-dialogs
+wrapper at -j 6: the `product` and `fuzz-extended` labels, 304 of 304 (303 passed; the
+skipped one is test_single_instance_app, which starts the application and so runs only where
+`SAK_TEST_ALLOW_REAL_HARDWARE` is set: its cause is read from sak_utility's imports above).
+test_partition_manager_core 528 s, test_app_theme 1188 s. Drills, each red with the fix broken and
+green with every byte restored: `asan-debug-dlls-release-names` (Debug staged the Release names:
+both CLI tests red, the CLI exiting -1073741515, STATUS_DLL_NOT_FOUND, at once under the wrapper),
+`asan-dlls-staged-for-the-app-only` (the CLIs built alone, as before: the same), `asan-tests-in-tests-debug`
+("helper is missing", test_script_types red), `asan-integrity-release-names` (5 cases red: "open
+failed" and the copies), `asan-debug-manifest-is-release` (the audit names the ASan runtime; the
+shipped-file check names bz2d.dll, the ASan runtime and zd.dll), `asan-no-debug-offscreen`
+(test_elevation_hardening 0xc0000409, "no Qt platform plugin could be initialized"),
+`asan-no-debug-qttest` (the audit names Qt6Testd.dll from Qt's own folder) and
+`no-default-timeout` (configure: "These tests have no TIMEOUT, so a hang would wait out the whole CI
+job"). The first round's greens of the three test_program_integrity drills failed on `z.dll` and
+`bz2.dll` that the first drill's red half had staged in `build\Debug`; with those removed all three
+ran again, red then green. A fresh Debug build never has them, and a Debug tree from before this
+change needs them deleted once: the shipped-file check names them.
+
+**A missing DLL fails at once, and is found before the tests.** The coordinator's addition, in the
+same change. Every ctest call in the workflows and under `scripts/` now passes
+`--interactive-debug-mode 0` (ci.yml's T2 shards and registration query, nightly.yml's T4 job,
+the coverage, branch-coverage, mutation, shard-planning, skip-audit and AI smoke runners), so a
+test program that cannot load a DLL exits with 0xC0000135 instead of waiting on a box. One call
+keeps the default: the nightly's Debug + ASan test step. Measured on testpc1 (2026-11-13, a
+throwaway crash probe, LocalDumps set as that job sets it, then removed): at error mode 0 Windows
+Error Reporting wrote a dump for an access violation and for a fail-fast; at 0x0003, what the
+flag gives, it wrote neither; at 0x0001 it wrote one. ctest can give only 0x0003, so the flag
+there would have left that job's dump and stack steps nothing to read. That step says so in a
+`ctest-error-mode-exempt:` comment, and what guards it instead: every test's TIMEOUT, and a new
+step before it. `scripts/check_ctest_error_mode.ps1` (a T2 static gate, `test_check_ctest_error_mode`)
+fails on a ctest call without the flag (15 calls found: each form the tree uses, its flag on a
+continued line included), allows the exemption only in nightly.yml, only with the words dump,
+TIMEOUT and check_program_imports in it, and only once, and fails when it finds no workflow call
+at all. `scripts/check_program_imports.ps1` reads each executable's import and delay-import tables
+from the file (no dumpbin), follows the DLLs beside it transitively, and fails naming each
+executable and each DLL that is neither beside it nor in System32 (API sets aside). ci.yml's
+shards, nightly's T4 job and the ASan job run it on their output folder before their tests:
+locally 305 executables in Release and 299 in Debug pass, in about 15 s. Drilled by moving
+`zd.dll` out of the Debug folder: it named sak_apfs_writer_cli, sak_hfs_writer_cli and
+sak_utility (60 missing imports in all), and passed with the DLL back. `test_check_program_imports`
+runs it on a real writer CLI alone (red, naming its zlib and Qt DLLs), with the DLLs it names
+copied in (green), with its zlib DLL removed again (red, naming z.dll, and zd.dll against the Debug
+build), on a stand-in import table (a DLL beside the program is followed and its own missing import
+named with it), and on a folder with no executables (red). Drills, each red then green with every
+byte restored: `imports-not-transitive`, `imports-anything-resolves`, `imports-empty-folder-passes`,
+`ctest-flag-any-value`, `ctest-exemption-anywhere`, `ctest-exemption-no-reasons`,
+`ctest-no-continuation`, `ctest-strings-read-as-calls`, `ctest-two-exemptions-allowed`,
+`ctest-vacuous-passes`, `ci-t2-without-flag`, `mutation-runner-without-flag`,
+`nightly-exemption-without-timeout`. Not drilled: the delay-import table, since no executable here
+has one to remove.
+
+**Gate.** Alone on the PC, on 99f69abc with this change uncommitted: configure; full Release build, 0 errors
+and 0 compiler warnings; T2 labels at -j 6, 333 of 333; cert-tooling 8 of 8; tooling-extended 17 of 17; the
+mutation label 1 of 1 and `run_all_mutation_catalogs.py --validate` PASS (61 catalogs); the clang-tidy naming gate,
+non-core 155 of 155 TUs clean and core 174 of 174 healthy (5,291 measured, unchanged); every ci.yml static gate,
+19 of 19, the new one included; the hooks on the commit. The first T2 run took 9 minutes, against 5 for the same
+suites minutes before and after, with every long suite 2 to 4 times slower than it runs: something else loaded the
+PC, and it lost `test_partition_manager_release_claims` to process capture's cleanup budget and
+`test_partition_image_volume_lock_selected_mbr_unpinned_guid` to its 210 s limit; run again, all 333 passed, those
+two in 36 s and 16 s. The Release T2 run before the ctest flag and the import check were added (the same CMake and
+test changes): 331 of 331. The coverage job has no import step: it builds RelWithDebInfo, whose tests run from
+`build/tests/RelWithDebInfo` with Qt on PATH, and its sixteen core suites start none of the four programs. release.yml
+runs no ctest.
+
+### Merge of ops: the Partition Manager operation proof onto lane2 (2026-11-13)
+
+The `ops` branch (89139e37, 73 commits since 5585dca5) merged into lane2 after the ASan fix: the
+operation-proof driver (`scripts/run_partition_manager_operation_proof.ps1`), its plan, rows,
+checks, VM hygiene and Defender records, and the `-OperationProof` paths of the certification
+runner and the rig. Where both sides changed a file, lane2's version is kept. The step client
+(`partition_manager_scenario_step.cpp`) had reached lane2 already (3259cccc, the opsfix commits,
+the fix1 patch), so the merged file is lane2's; its one conflict, the assistant route, keeps
+`sak::assistantPartitionOperation` (e3c021ed) over the `makeOperation` call that commit replaced.
+`tests/CMakeLists.txt` and `test_partition_manager_live_certifier.ps1` carried the same change on
+both sides. The certification runner's one conflict, its param block, keeps both lane2's
+`-ApprovalPath` and ops's `-OperationProof`.
+
+Made to hold lane2's rules, which ops's scripts predate, each a T2 or cert-tooling test that
+failed on the merge as it came:
+
+- **The settle** (`test_partition_manager_scan_settle`, cert-tooling). The operation proof's own
+  readers ran chkdsk's and Repair-Volume's online scans with no settle after them, and rows then
+  take their virtual disks down. Each scan now settles in a finally through
+  `Wait-RbVolumeScanSettle`; `-NoSettle` keeps the volsnap drills' own timing (Drill D none,
+  Drill E its `-SettleSeconds`), as `Close-OpsRowVolumes -NoSettle` already did, and
+  `Close-OpsRowVolumes` waits through the shared helper instead of its own 15 s sleep. The rows
+  and the checks refuse to load without the readback, which the runner loads first. The guard
+  itself: it now lists scripts by extension (Windows PowerShell 5.1 ignores `-Include` beside
+  `-LiteralPath`, so its 5.1 run had been reading every file under scripts/, the plan's data
+  among them), and a comment naming the readback no longer counts as loading it. Drills, each
+  red then green: `ops-chkdsk-without-settle`, `ops-refs-scan-without-settle`,
+  `ops-checks-without-readback` (red only once comments stopped counting), `guard-include-listing`.
+- **No `-ErrorAction SilentlyContinue` in a `run_partition_manager_*.ps1`**
+  (`test_partition_manager_storage_helpers`, cert). The driver had eight. Listings of a folder
+  that may not exist yet (the PC's claims, the run's output, the runs folder) test for it first
+  and stop on any other error; a stale virtual disk is dismounted only when Windows has it
+  attached; the run's own temporary files (a job script removing itself, the unpacked package,
+  the scratch folder) use `-ErrorAction Ignore`, as the group runner removes its job file.
+- **Certification rows stop at the first that fails** (`test_partition_manager_rig_pc_target`,
+  cert): the runner now runs every row only under `-OperationProof`; the test reads that form.
+
+Not run here: the operation proof itself (testpc2 and the VM). Its `-PlanOnly` lists 116 rows
+(device 3, none 2, testpc2 102, vm 9) and the plan agrees with the row bodies.
+
+**Checks**, on the merge staged, alone on the PC: configure and the Release build, 0 errors and 0 compiler
+warnings (the code digest changes, as expected); cert-tooling 8 of 8; `test_partition_manager_row_evidence`, its
+operation-proof guard included; the T2 labels, 333 of 333; `-PlanOnly`; every ci.yml static gate, 19 of 19; the
+hooks on the merge commit. Drills for the two T2 fixes, red then green: `ops-driver-silentlycontinue`,
+`runner-stops-proof-rows-too`.
+
+### Fix batch 3: what the screenshot retakes and the 1db87df4 recertification found (2026-11-13)
+
+On the `fix3` branch from 1db87df4, one commit per item, each test drilled red with the fix broken and green
+with every byte restored.
+
+**iPerf3 server refusal.** Unelevated, a server on an address other PCs can reach said "iPerf3 server not
+started: Windows Firewall did not add its inbound rule (The requested operation requires elevation (Run as
+administrator).). Adding it needs S.A.K. running as administrator." Three faults: the status bar's permanent
+widgets (the Standard label and Run as Admin) cut it off at "S.A", so the instruction was lost; netsh's own
+sentence gave nested brackets and ".)."; and it named administrator rights as the cause even when S.A.K. was
+elevated and the rule failed for another reason. Now (`bandwidth_tester.cpp`): unelevated, such a start is
+refused before anything runs (no stale-rule sweep, no server process, no netsh) with "Run as Admin to start the
+iPerf3 server: adding its firewall rule needs administrator rights.", leading with the action and naming the
+status bar's button by its own text. Elevated, a rule Windows still does not add says "iPerf3 server not
+started: Windows Firewall did not add its inbound rule: <netsh's words>." with netsh's trailing punctuation
+dropped, so it ends with one full stop, and no claim of a cause. Loopback is unchanged: no rule, so no
+administrator. The Bandwidth tab says it before Start Server is pressed: Start Server's tooltip ends "(requires
+admin on this address, for its firewall rule: Run as Admin)", as Reset Network's says "(requires admin)", and the
+stopped server reads "Server: Stopped (needs Run as Admin)", for a non-loopback Listen on address only.
+Tests: `test_bandwidth_tester` (unelevated, refused at once with no process started and nothing late; elevated,
+injected with `setElevatedForTesting`, the rule attempted and refused by the test hardware guard, netsh's reason
+and no administrator claim; loopback unelevated starts; `serverNeedsElevation` for IPv4, IPv6 and loopback; the
+message's punctuation for a reason ending in ".", ")", "!", ";", "...", spaces or nothing),
+`test_network_diagnostic_panel` (the note on a LAN address and not on 127.0.0.1, and Start Server's refusal).
+Drills: `iperf-no-up-front-refusal`, `iperf-sweep-before-refusal`, `iperf-loopback-needs-admin`,
+`iperf-old-admin-claim`, `iperf-punctuation-kept`, `panel-no-admin-note`, `panel-note-ignores-loopback`.
+
+**vhd.clear-disk-wipe on the 1db87df4 recertification.** Its step `refused_on_thin` failed: 9623ad18 moved Wipe
+Disk's thin-provisioned refusal from Apply to the queue, so the step client reported "Not added to the queue: Wipe
+Disk needs a full format, and Windows does not allow one on a thin-provisioned disk, such as a virtual disk file.
+Nothing was changed." as Failed, while the row still asked for `failed` (an Apply that failed). The cert agent's
+static check of every step against the queue refusals that 9623ad18, 66ecdd53, f5e55dfd, 51b318da and opsfix
+moved found this one alone. The row body and the matrix generator now both say `refused` (the matrix regenerated,
+never edited), and no matrix step expects `failed` any more; `expectedFailure` stays. The row's readback still
+proves the thin disk unchanged: its raw table and its file manifest before and after. A refused step needs no
+helper connection (`Test-PmStep`), which a queue refusal never makes. And so the class cannot recur silently: a
+step that expected Apply to fail and was refused before Apply now reports "expected Apply to fail; it was refused
+at queue: <text>" (or "at apply"), self-test `step-a-failure-refused-at-queue-says-so`. Tests:
+`test_partition_manager_row_evidence` reads every row body's `Invoke-CertStep -Step ... -Expect` (to the end of
+the call, past a multi-line `-Choices` table) and the matrix, and requires them to agree, this row a refusal in
+both; it accepts a queue-time refusal for a `refused` step (no execution, no helper), names a matrix that still
+asks for `failed`, and refuses a refused step whose client failed. Drills: `thin-row-body-expects-failed`,
+`thin-matrix-expects-failed`, `evidence-wants-a-helper-for-refusals`, `body-reader-first-line-only`,
+`step-client-plain-queue-wording`. Not drilled: the two call sites of the new wording (no local test reaches a
+real queue refusal), only the function both call.
+
+**Network Diagnostics' report test, a flake on the Debug+ASan nightly (43501912348, 1db87df4).**
+`generateReportWaitsForARunningDiagnostic` failed "'driver.saw_message_box' returned FALSE". The test started a
+real adapter scan (`scanAdapters`, off the GUI thread) and clicked Generate Report, counting on the scan to be
+still running. Generate Report's click is connected `Qt::QueuedConnection`, and the scan's end reaches the
+controller queued too (`QThread::finished`, then `removeOperation`): a scan that ended before the click put its
+end ahead of the click in the queue, `sendPostedEvents` delivered it first, the report saw nothing running and
+asked for details instead of saying a diagnostic runs. Forced: `QTest::qSleep(3000)` after the scan started
+turned the old test red with exactly the nightly's failure. Now the diagnostic is one the test holds running: the
+DNS cache read, whose one PowerShell call a `ScopedProcessFaultInjector` holds in its worker until the test lets
+it go, after the click has been answered. The same forced 3 s sleep leaves the new test green, and letting the
+read go before the click turns it red (drill `report-test-releases-before-the-click`, red then green with every
+byte restored). Fifty runs of the whole suite under load (18 CPU burners on a 20-thread PC, 36 minutes): 50
+passed.
+
+**The same suite started real servers.** `listenOnStartsOnTheDefaultRouteAndRemembersEachServer` pressed Start
+Server for both servers for real: the nightly's log shows netsh.exe and powershell.exe ("QProcess: Destroyed while
+process ... is still running") and "Failed to add firewall rule for port 5201: " with nothing after the colon, and
+an elevated run would have added a real inbound firewall rule to the PC. Start Server now reaches the
+controller's `setServerStartRecorderForTesting` seam in that test, which records which server, port and address
+it was asked for and starts nothing; the test checks the iPerf3 server was asked for 10.8.0.2 and the LAN server
+for 192.168.1.20, that no QProcess exists under the panel, and, as before, that each address is remembered for
+its own server. The empty reason was netsh stopped mid-run (its QProcess destroyed with the panel), which exits
+with no output: `BandwidthTester::netshFailureReason` always says why (netsh's words, or "netsh was stopped before
+it finished", or "netsh exited with code N and said nothing"), for the add and the delete. Sweep: the guard was
+built, for one run and never committed, to print every process the suite starts; after this change
+`test_network_diagnostic_panel` starts three, all `iperf3.exe -c 127.0.0.1 -p 5201` clients from the three
+bandwidth-button tests, which point at loopback where nothing listens on purpose (refused at once, no traffic off
+the PC); no netsh, no PowerShell, no server; `test_network_diagnostic_controller` starts none. Drills:
+`controller-starts-the-iperf3-server-anyway`, `netsh-stopped-says-nothing`.
+
+**Check File System on an NTFS USB stick (the capture `partition_manager_check_fs_unplug_note`).** It failed
+with "Repair-Volume : A snapshot error occurred while scanning this drive. Run an offline scan and fix. Activity
+ID: {...}". Confirmed on testpc1's stick (D: USBSTICK, USB DISK 3.0, removable, elevated): `Repair-Volume -Scan`
+throws FullyQualifiedErrorId `StorageWMI 43012,Repair-Volume`, `chkdsk D: /scan` exits 11, and plain `chkdsk D:`
+says "Shadow copying the specified volume is not supported ... Running CHKDSK in read-only mode" and exits 0: the
+online scan reads a volsnap snapshot and Windows takes none of a removable drive. The opsproof check-ntfs row ran
+on a fixed VHD, never on a stick. Now (`volumeScanStatement`): an NTFS volume Windows calls removable is locked
+(`Sak.ScanVolumeLock.LockAndDismount`: FSCTL_LOCK_VOLUME, which fails while any other handle is open, so a drive
+in use is refused "D: is in use, so it was not checked. Close the files and programs using it, then check it
+again. Nothing was changed."), dismounted, the handle closed so chkdsk takes the volume itself, and read by chkdsk
+with no /f, /r, /x or /scan. Its result is one of three: exit 0, no problems found; problems found ("chkdsk found
+problems on D: Reading only, it fixed none of them (exit 3).", from chkdsk's own "found problems", "found
+errors", "Errors found" or "is corrupt"); or "chkdsk could not check D: (exit N): <its last line>". A fixed NTFS or
+ReFS volume keeps `Repair-Volume -Scan`, and a snapshot it cannot take (StorageWMI 43012) reads "Windows could not
+take the snapshot it reads D: through, so D: was not checked. Nothing was changed.": a read-only check does not
+pass on "Run an offline scan and fix" as its own advice. The 15 s settle wraps both routes, passed or failed.
+Messages: `PartitionExecutor::scriptFailureReason`, which the elevated path already used, drops a cmdlet's name
+("Repair-Volume : "), "Activity ID: {...}" and PowerShell's "Exception calling ..." wrapper, and the in-process
+path (S.A.K. itself elevated) now gives the same words (`localFailureMessage`) instead of the whole of standard
+error. The unplug note, shown with the finished result, reads "Eject the drive in Windows before you unplug it."
+instead of "Wait a few seconds after this finishes before unplugging the drive." Sweep of where PowerShell error
+text reaches the person: in Partition Manager, every script failure goes through `scriptFailureReason`, on both
+paths; outside it, Quick Actions' Check Disk Errors had the same snapshot failure on a stick, fixed separately
+(below), and the other paths that show a process's standard error each have their own (below).
+Tests: `test_partition_manager_core` `generatedScripts_volumeScanOnARemovableDriveNeedsNoSnapshot` (Windows
+PowerShell 5.1 runs the generated script against stand-ins for Get-Volume, the lock, chkdsk and Repair-Volume:
+the lock before chkdsk and no Repair-Volume; in use refused with chkdsk never run; problems found; not checked; a
+fixed drive's snapshot error in S.A.K.'s words; no /f, /r, /x or /scan anywhere); `test_partition_os_migration`
+(a captured snapshot error and a captured in-use refusal, both paths); `test_partition_manager_panel` (the note);
+and the elevated `test_raw_partition_write` `readOnlyCheckWithoutASnapshotLocksAndWritesNothing` (in CI's
+must-run-elevated lists): on a 600 MiB VHDX through Windows itself, the fixed route runs Repair-Volume -Scan and
+settles, the forced removable route runs chkdsk read-only, finds no problems and settles, a file held open makes
+it "in use" with chkdsk not run, and the file's SHA-256 is unchanged; with SAK_TEST_REMOVABLE_NTFS_LETTER it also
+checks a real removable drive, expecting SAK_TEST_REMOVABLE_NTFS_EXPECT (none, problems or in-use). testpc1, its
+stick, elevated: none (exit 0, "found no problems"), in-use (a file held open on the stick: the plain refusal,
+chkdsk not run), the whole suite (20 passed), problems (one file record on the stick deliberately damaged by
+zeroing its FILE signature, confirmed first by a separate read-only chkdsk, exit 3, "Errors found. CHKDSK cannot
+continue in read-only mode."; S.A.K. said "chkdsk found problems on D: Reading only, it fixed none of them (exit
+3)."), then the stick reformatted to an empty NTFS USBSTICK with its 4096-byte clusters and checked again: no
+problems. Each run settled 15 s. Drills: `removable-ntfs-takes-the-snapshot-scan`,
+`removable-check-skips-the-lock`, `chkdsk-problems-said-as-not-checked`, `snapshot-error-passes-on-windows-advice`,
+`cmdlet-name-reaches-the-person`, `activity-id-reaches-the-person`, `in-process-failure-gives-all-of-stderr`,
+`unplug-note-says-after-this-finishes`; on testpc1, `stick-takes-the-snapshot-scan` (the stick's own run red with
+the snapshot error) and `lock-refusal-not-called-in-use`.
+
+**APFS Resize dialog (the capture `partition_manager_resize_apfs_refusal`).** The target size went down to 1 MB
+and Add to Queue then refused the shrink ("S.A.K. cannot shrink APFS partitions"), and the dialog said "Windows
+online resize cannot move partition start", which is not how an APFS partition is resized. The size bounds now
+come from the queue's own rule (`resizeDirectionQueueable`, which asks `PartitionFileSystemRegistry::
+windowsResizeBlocker`, the rule the safety validator applies, about a 1 MB step each way; ext is resized by
+S.A.K.'s own tools both ways): an APFS partition starts at its own size and grows only, and a FAT32 or exFAT one,
+which Windows neither shrinks nor grows (F4), keeps its size, with the reason in place ("Windows cannot shrink or
+grow FAT32 or exFAT partitions. ..."; for an APFS partition with nothing after it, "S.A.K. grows an APFS partition
+only into free space that follows it, and there is none after this one."). The Windows online resize note is for
+NTFS and ReFS only; other file systems read "Queued only until Apply." The size format stays the panel's own
+("1.00 GB" next to "1.0 MB" is deliberate, review 4, `test_one_byte_format`): not offering 1 MB is the fix.
+Every file system checked: `resizeOffersOnlySizesTheQueueTakes` opens Resize for NTFS, ReFS, FAT32, exFAT, APFS,
+ext4 and HFS+ and requires the smallest and the largest size offered to be sizes the queue takes (one the queue
+resizes neither way, such as HFS+, is offered only its own size, or no Resize at all);
+`resizeGrowsAnApfsPartitionOnly` (minimum the current size, a grow accepted, no Windows online resize text) and
+`resizeSaysWindowsCannotResizeFat32` (one size only, the reason, no Add to Queue). Drills:
+`apfs-offers-sizes-below-its-own`, `fat-offers-a-grow`, `apfs-says-windows-online-resize`,
+`fixed-size-gives-no-reason`.
+
+**Change Partition Type ID on GPT (the capture `partition_manager_type_id_prompt`, 446 px).** The prompt "New GPT
+type GUID, such as {ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}:" broke the GUID at a hyphen. The example is now on a line
+of its own ("New GPT type GUID, such as the basic data type:" then the GUID) in a label that never wraps:
+QInputDialog turns word wrap on when it first lays itself out, so the prompt is laid out first and wrap then turned
+off, and the dialog is never narrower than the GUID. Its hyphens are plain, so a copy is the GUID itself (no U+2011),
+and the label is selectable by mouse and keyboard. Test `typeIdPromptKeepsTheExampleGuidWhole`: the GUID on the last
+line with plain hyphens, the label selectable and unwrapped, and the dialog made 446 px and 200 px wide still as
+wide as the GUID at its own font. Drills: `type-id-prompt-wraps`, `type-id-guid-in-the-sentence`,
+`type-id-label-not-selectable`.
+
+**Fit checks for this batch's texts, and the status bar.** The texts items 5 to 7 added fit where they are shown
+at 1024 and 1280 px: `newCheckTextsFitTheResultBox` (Check File System's results on a USB drive: in use, the
+snapshot one and problems found, each with the eject note), `newResizeTextsFitTheResizeDialog` (the FAT32 and APFS
+reasons) and `newTypeIdPromptFitsItsDialog`. Each dialog is narrower than a 1024 px screen less the frame
+allowance, and no label is cut off (a wrapped one has the height its text needs at its width; an unwrapped one the
+width of its longest line). The offscreen test platform draws every glyph as a box as wide as the font is tall,
+about twice a real font's width, so these are conservative. The status bar: a timed message
+(`QStatusBar::showMessage`, which every panel's status message with a timeout uses) is drawn only up to the bar's
+first visible permanent widget (`QStatusBarPrivate::messageRect`). On the AI Assistant tab that is the AI status
+label, an expanding `ElidingLabel` that took the free space: at 1280 px the message had about 77 px, so every timed
+message there was cut after a dozen letters, in every build with the AI Assistant. The label is shown only on that
+tab, so the iPerf3 refusal on the Network tab was limited by the Theme, Standard and Run as Admin widgets instead.
+Now `MainWindow::updateAiStatusBarVisibility` also requires the bar to have no timed message, and runs again on
+`QStatusBar::messageChanged`: worked out afresh each time, never toggled, so a message replacing a message keeps it
+aside, a message clearing brings it back, and a message on another tab, where the label is not shown, does not show
+it. Its neighbours are right-aligned, so nothing moves but the label. The capture's pictures were taken with the
+label hidden and are not affected. Measured, `iperfAdministratorMessageFitsTheStatusBar`, with the AI label present
+before the message: the text's width in Segoe UI at the theme's size as Windows itself draws it (GDI,
+`GetTextExtentPoint32W`), against the message's room in the laid-out bar. At 1280 px the room is 739 px: the iPerf3
+refusal needs 522 px and the longest other timed message ("Disk inventory changed while the operation was being
+reviewed. Refresh and confirm it again.") 545 px, both whole. At 1024 px the room is 483 px: their leading clauses
+fit ("Run as Admin to start the iPerf3 server", 225 px; "Disk inventory changed while the operation was being
+reviewed.", 373 px), and by this measure the last 39 and 62 px are cut. The room is measured with the box glyphs,
+which make the Theme, Standard and Run as Admin widgets wider than they are on screen, so the real room is larger
+and the cut smaller or none. `aiStatusLabelStandsAsideOnlyWhileAMessageShows` covers the label's state. Drills:
+`ai-label-stays-beside-a-message` (the measure fails at 77 px), `ai-label-not-told-of-messages`,
+`resize-reason-not-wrapped`. Not drilled: the result box is Qt's own QMessageBox, which wraps any text, a long
+unbroken word included (a drill that made the eject note one 85-character word left it fitting), so nothing in
+S.A.K. can cut it; that test stands as the measurement.
+
+**Keyboard route in Partition Manager (testpc1 and testpc2).** After a click on a disk map tile the focus stayed
+on "Partition disk map", Tab went Log > Disk 0 tile > Disk 0 partition 1 and never to the disk table, and Up and
+Down did nothing among the tiles. Cause: the map is drawn again on every selection (`rebuildDiskMap`, hide and
+`deleteLater`), so a clicked tile, which took the focus (`Qt::StrongFocus`), was deleted under it; the focus fell to
+the map's scroll area, and the new tiles came at the end of the window's tab order. Now nothing in the map takes the
+focus (tiles and segments have no focus policy, the scroll area `Qt::NoFocus`), so it looks the same and has no
+focus ring; a click on a tile or segment, and its menu, give the table the focus at the row selected
+(`selectTargetFromMap`), wherever the focus was (the tab bar, testpc2; a control in the panel; the map, testpc1).
+The table is the keyboard route: Tab moves on from it (`setTabKeyNavigation(false)`, so not along a row's seven
+cells), the arrow keys move between rows, and Shift+F10, the Menu key and Windows' own keyboard menu request open
+the current row's menu, the one a right-click on it opens (`eventFilter`, `showCurrentRowContextMenu`; for
+Windows' own request, whatever position it names). Checked: no `setTabOrder` and no `setFocusProxy` in the panel;
+the map's row frames and bars take no focus. Tests: `keyboardReachesTheDiskTableFromEveryControl` (the panel as a
+page of a tab widget: Tab and Shift+Tab from the tab bar and from every focusable control reach the table, every
+stop inside the panel), `tabMovesOnFromTheDiskTableAndBack`, `mapClickGivesTheDiskTableTheKeyboard` (tile and segment clicks with the focus first on the tab bar or a ribbon
+button, then Tab and Shift+Tab, and a tile's menu closing), `keyboardOpensTheRowMenuARightClickOpens`. Drills:
+`map-tile-takes-the-focus`, `map-click-leaves-the-keyboard-behind`, `table-tab-walks-the-cells`,
+`table-menu-key-not-handled`, `map-scroll-area-is-a-tab-stop`, `table-out-of-the-tab-order`. Sweep of every main
+tab on testpc1 (offscreen, the main window built there, since it builds every panel, disk inventory included; a
+diagnostic never committed): Tab from the tab bar reaches the page's main list or table on File Management
+(Category Mappings Table), Partition Manager (Pending operations, then the disk table), Benchmark and Diagnostics
+(SMART Health Table), Email Tools (Email Folder Tree), Application Management (Package Search Results) and Network
+Management (Ping results); Backup and Restore, Image Flasher, Help and Support and About have none. Not the same
+cause, so not changed here: on the AI Assistant tab Tab stops in the message box, which takes Tab as text (Ctrl+Tab
+leaves it); and from the tab bar Tab first visits its scroll arrows and the status bar's Theme button.
+
+**Check Disk Errors on an NTFS USB stick, from the same code as Check File System.** Found in item 5's sweep:
+Quick Actions' Check Disk Errors counts a removable drive as scannable and ran only `Repair-Volume -Scan`, so on a
+stick it reported "Scan failed (A snapshot error occurred while scanning this drive. Run an offline scan and
+fix.)", passing on Windows' advice and checking nothing. One implementation now, three statements in
+`PartitionScriptBuilder` that both build from: `volumeScanTargetStatement` (the drive, its Get-Volume, and whether
+it is NTFS on a drive Windows calls removable), `onlineVolumeScanStatement` (Repair-Volume -Scan, a StorageWMI 43012
+in S.A.K.'s words), and `readOnlyVolumeCheckStatement` (lock, dismount, chkdsk without /f, its verdict in
+`$sakScanVerdict`: None, Problems or NotChecked, the lock's refusal unwrapped from "Exception calling ..."). Check
+File System's `volumeScanStatement` is now those three; Check Disk Errors' `buildScanVolumeScript` runs the target,
+then the read-only check for a removable NTFS drive or the online scan otherwise, each inside the 15 s settle, and
+reports the read-only verdict as "ReadOnlyCheck": "Drive D: (check) No errors found (read-only chkdsk)", "Drive D:
+(warning) Errors found by a read-only chkdsk, which fixed none of them" with "Repair recommended", or "Drive D: - Not
+checked (D: is in use, so it was not checked. ...)". Tests: `test_check_disk_errors_action`
+`aRemovableNtfsDriveGetsCheckFileSystemsReadOnlyCheck`, `aRemovableNtfsDriveNotCheckedSaysWhy` and
+`aFixedDriveKeepsTheOnlineScan` (Windows PowerShell 5.1 runs Check Disk Errors' script against stand-ins for
+Get-Volume, the lock, chkdsk and Repair-Volume, and the action's own parser makes the report), and
+`bothChecksAreBuiltFromTheSameStatements` (each script contains the shared statements verbatim); the elevated
+`readOnlyCheckWithoutASnapshotLocksAndWritesNothing` runs the real action (`OneVolumeCheckDisk`, its volume list
+narrowed to one) over the VHDX, online, forced removable and in use, and over the stick by
+SAK_TEST_REMOVABLE_NTFS_EXPECT. testpc1, its stick, elevated, Check File System and Check Disk Errors each: none
+("Drive D: (check) No errors found (read-only chkdsk)"), in use ("Drive D: - Not checked (D: is in use, so it was not
+checked. ...)", the plain sentence), the whole suite (20 passed), problems after one MFT record was damaged again
+("Drive D: (warning) Errors found by a read-only chkdsk, which fixed none of them"), and none again after the stick
+was reformatted to an empty NTFS USBSTICK; the VHDX's online route and every route settled. Drills, each turning both
+callers' tests red where the part is shared: `shared-removable-test-broken`, `shared-problems-not-recognized`,
+`shared-snapshot-words-dropped`, and Check Disk Errors' own `check-disk-read-only-verdict-unreported`. Not drilled
+locally: the lock's refusal unwrapped, since a stand-in throws plain text; testpc1's in-use run shows the plain
+sentence in both reports.
+
+**One cleaner for PowerShell errors a person reads.** `PartitionExecutor::scriptFailureReason`'s cleaning is now
+`sak::readablePowerShellError` (process_runner), which it calls: the error's message without the lines after it
+("At line:", "+ ..."), the cmdlet's name in front, a Write-Error's position in front (from a -Command script that
+is the whole script, then " : "), a Storage cmdlet's "Activity ID: {...}", or PowerShell's "Exception calling ..."
+account of a .NET method's exception. Applied only where PowerShell error text reaches a dialog, a status line or
+a report, with no other change to those paths: the DNS cache read (`DnsDiagnosticTool::cacheReadFailureMessage`,
+the Network panel's error), a restore point that failed (`RestorePointManager`'s failure message; the once-a-day
+limit is still read from the whole text), the bootable USB's drive-letter query (`WindowsUSBCreator::
+driveLetterQueryFailure`, its error), Check Disk Errors' drive with no result (its report), and Partition Manager's
+inventory scan (`StorageInventoryWorker::scanFailureWarning`, shown on the disk map). Each is shown with a record
+captured on testpc1 as S.A.K. runs PowerShell (no console, output redirected; read-only: a DNS name not cached, disk
+number 99, the restore point script with a type Windows refuses, so none was made, and Repair-Volume -Scan of the
+stick): `test_process_runner` `readablePowerShellErrorKeepsOnlyTheMessage` (all of them, and the in-use refusal),
+`test_dns_diagnostic_tool` `cacheReadFailureSaysWhyInReadableWords`, `test_restore_point_manager`
+`aFailedCheckpointSaysWhyInReadableWords`, `test_windows_usb_creator` `driveLetterQueryFailureSaysWhyInReadableWords`,
+`test_check_disk_errors_action` `aDriveWithNoResultSaysWhyInReadableWords`, `test_partition_manager_core`
+`inventoryScanFailureSaysWhyInReadableWords`. Left as they are, since none shows a PowerShell error record to a
+person: `network_adapter_admin`, `wifi_setup_script` and `ethernet_config_manager` (netsh's own text),
+`microsoft_defender_action` (MpCmdRun's), `optimize_power_settings_action` (powercfg's), `backup_bitlocker_keys_action`
+(the log only), the USB creator's disk-safety probe (it shows `$_.Exception.Message`, which has neither a cmdlet's
+name nor an Activity ID: captured, "No MSFT_Disk objects found with property 'Number' equal to '99'. ...") and its
+volume-label and 7-Zip lines (the log), `thermal_monitor`, `uninstall_worker`, `verify_system_files_action`,
+`reset_network_action`, `generate_system_report_action` and Partition Manager's controller output (the log only),
+and the elevated helper's "Failed to start elevated PowerShell" (PowerShell did not run, so there is no record). Drills:
+`cleaner-keeps-the-cmdlet-name`, `cleaner-keeps-the-write-error-script`, `dns-shows-the-whole-record`,
+`restore-point-shows-the-whole-record`, `usb-drive-letter-shows-the-whole-record`,
+`check-disk-no-result-shows-the-whole-record`, `inventory-warning-shows-the-whole-record`.
+
+**clang-tidy on what this batch changed (item 13, part one).** The full check set of `.clang-tidy`, run over the
+13 product files this batch changed, reported 1086 distinct findings at fe6af332, 10 of them on lines changed since
+1db87df4: redundant `()` on three lambdas and two missing trailing commas (the disk map's activation lambdas, the
+status bar's `messageChanged` slot), two `const` locals that stopped a return's automatic move
+(`netshFailureReason`, `scanFailureWarning`), the nested `?:` of Resize's 1 MB probe, now `resizeProbeTarget`, and
+two `static_cast`s of `QEvent` in Partition Manager's `eventFilter`, now `isKeyboardMenuRequest`, which checks the
+event's type first and then casts with `dynamic_cast`, checked for null. Behaviour unchanged (the item 6 and item 9
+tests pass as they were; drill `keyboard-menu-request-ignores-the-menu-key` turns the item 9 test red). After: 1076
+distinct findings in those files, none on a line changed since 1db87df4. The naming gate is the project's tidy gate
+and passes; the rest is the files' own older debt.
+
+**The AI Assistant's message box held Tab (item 12, from item 9's sweep).** Tab in "AI message input" typed a
+tab character, so the keyboard could not leave the box by Tab (Ctrl+Tab could): a keyboard trap, and nobody types a
+tab into a chat message. The box (`QPlainTextEdit`) now has `setTabChangesFocus(true)`: Tab and Shift+Tab move the
+focus on and back. Enter, Ctrl+Enter and Up/Down go through the panel's own key filter (`composerKeyAction`) before
+the box sees them and keep their meaning. Nothing is drawn differently, so the AI tab's pictures stand. Test
+`tabMovesTheFocusOffTheMessageBoxAndBack`: Tab moves the focus off the box and Shift+Tab brings it back with the
+draft untouched, Ctrl+Enter adds one line and no tab, and Enter with nothing typed sends nothing and adds no line.
+Drill: `ai-message-box-keeps-tab`. The item 9 sweep, run again on testpc1 with this build and now noting whether Tab
+gets back to the tab bar: on the AI Assistant tab Tab goes AI run details > the transcript > AI message input >
+Attach and on, back to the tab bar in 16 stops (before, it stayed in the message box); every other tab as before.
+
+**The inventory scan tests' margins (item 13, part two).** `inventoryScan_aSlowScanThatKeepsMovingFinishes`
+failed once on the workstation while a package was being zipped beside it: its stand-in stepped every 500 ms
+against a 1.5 s quiet limit, and the limit's clock starts with the PowerShell process, so a PowerShell slow to start
+on a loaded PC spends the headroom before the first step. The product's own quiet limit is 90 s
+(`kInventoryScanIdleLimitMs`): this was the test's margin, not a product risk. Now: 250 ms steps against 3 s (twelve
+steps of headroom, and room for a slow start), 32 steps that run past 2.5 times the limit, which the test requires;
+`inventoryScan_aScanThatGoesQuietDidNotFinish` 3 s instead of 1.5 s, so a slow start still writes the first step
+the warning names; `inventoryScan_aScanPastItsCeilingDidNotFinish` a 4 s quiet limit against 200 ms steps (it was
+2 s) and the ceiling at 6 s (it was 3 s), so the ceiling and not a slow start stops it;
+`inventoryScan_aCallPastItsOwnLimitSaysWhichStep` allows 20 s (it was 9 s) against a call that would run 120 s;
+`inventoryScan_quietIsLoggedAndStoppedAtNinetySeconds` logs every 1 s (it was 100 ms, back to back with the check
+that it did not log twice) and reads the seconds it counts as a number. The others have no timing or wide margins
+(the slow-call test's 8 s limit against a 1 s heartbeat). Load runs on testpc1, the ten inventoryScan_ functions
+20 times with a busy loop on each of its 12 logical processors and a zip loop beside them, the same load both
+times: 0 of 20 runs failed before the change and 0 of 20 after; the single failure on the workstation did not reproduce there, and the wider margins hold under the same load.
 
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
@@ -3406,8 +4738,8 @@ deletions (`git show --numstat`; whitespace-insensitive where a block was only u
   evidence is for other code") because "Bundle smartmontools" rewrote the tracked `tools/smartmontools/README.txt`
   in the checkout, and the certification digest covers it. The release workflow now bundles smartmontools and iPerf3
   into the runner's temp folder and requires the tracked binaries to match those pinned copies byte for byte, checks
-  that no step has changed a tracked file (after bundling and before readiness), and prints what the
-  smartmontools existing-binary check sees on the runner.
+  that no step has changed a tracked file (after bundling and before readiness). The script's own fault is fixed in
+  "Fix round N" above.
 - Intermittent, cause unidentified: once in a `-j 8` full suite (2026-10-24)
   `test_advanced_uninstall_controller` failed because `ConfigManager::sync` got a settings access
   error on the shared `data/config/Utility.ini`, at the serial tail with no other CTest test

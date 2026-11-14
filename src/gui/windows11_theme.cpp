@@ -29,16 +29,12 @@ constexpr double kChromeViewAlpha = 0.96;
 constexpr double kChromeProgressTrackAlpha = 0.85;
 constexpr double kChromeBorderAlpha = 0.40;
 constexpr double kChromeBorderSubtleAlpha = 0.35;
-constexpr double kChromeBorderMediumAlpha = 0.45;
-constexpr double kChromeBorderStrongAlpha = 0.55;
 constexpr double kSelectionSubtleAlpha = 0.15;
 constexpr double kSelectionSoftAlpha = 0.18;
-constexpr double kSelectionMediumAlpha = 0.20;
 constexpr double kSelectionStrongAlpha = 0.22;
 constexpr double kGridLineAlpha = 0.30;
 constexpr double kInputBackgroundAlpha = 0.98;
 constexpr double kPrimaryGradientTopAlpha = 0.92;
-constexpr double kPrimaryGradientBottomAlpha = 0.88;
 constexpr double kPrimaryGradientChunkAlpha = 0.90;
 constexpr double kScrollHandleAlpha = 0.60;
 constexpr double kScrollHandleHoverAlpha = 0.70;
@@ -77,15 +73,19 @@ QString themeBaseAndChromeStyles() {
         .arg(QString::fromLatin1(kColorTextMuted));
 }
 
+// The selected tab is filled as the page under it and outlined in the accent, as a Windows 11
+// tab or selector is, with its text in the heading colour. On the blue gradient it had, the tab
+// icons' own colours were lost (0-15% of their pixels at 3:1 in the light theme), so the icon was
+// drawn as a white silhouette, which lost every line inside the drawing (the owner, 2026-11-10).
+// Every tab has the 2 px border, transparent until selected, so selecting a tab does not move it.
 QString themeTabAndButtonStyles() {
     return QString::fromLatin1(kWindows11ThemeTabAndButtonStyles)
                .arg(QString::fromLatin1(kColorBorderDefault),
                     colorWithAlpha(kColorBgWhite, kChromeTabPaneAlpha),
                     colorWithAlpha(kColorBorderDefault, kChromeTabAlpha),
                     QString::fromLatin1(kColorTextHeading),
-                    colorWithAlpha(kColorSelectedTabTop, kPrimaryGradientTopAlpha),
-                    colorWithAlpha(kColorSelectedTabBottom, kPrimaryGradientBottomAlpha),
-                    QString::fromLatin1(kColorButtonTextOnTone)) +
+                    QString::fromLatin1(kColorBgWhite),
+                    QString::fromLatin1(kColorPrimary)) +
            actionButtonStyle(
                "QPushButton, QToolButton", kPrimaryButtonTone, false, kButtonPaddingCompactCss) +
            tabBarScrollControlsStyle();

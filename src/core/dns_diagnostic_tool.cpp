@@ -142,17 +142,6 @@ int countSuccessfulResults(const QVector<sak::DnsQueryResult>& results) {
         std::ranges::count_if(results, [](const sak::DnsQueryResult& r) { return r.success; }));
 }
 
-// Fail-closed failure text for the DNS cache read, appending the child's stderr when present so
-// the real OS error reaches the user instead of an empty cache being reported.
-QString displayDnsFailureMessage(const sak::ProcessResult& result) {
-    const QString detail = result.std_err.trimmed();
-    QString message = QStringLiteral("Failed to read the DNS resolver cache.");
-    if (!detail.isEmpty()) {
-        message += QLatin1Char(' ') + detail;
-    }
-    return message;
-}
-
 void appendTxtRecords(DNS_RECORD* rec, sak::DnsQueryResult& result) {
     for (DWORD i = 0; i < rec->Data.TXT.dwStringCount; ++i) {
         result.answers.append(QString::fromWCharArray(rec->Data.TXT.pStringArray[i]));
@@ -439,11 +428,24 @@ void DnsDiagnosticTool::inspectDnsCache() {
     // Fail closed: a failed enumeration must surface as an error, not an empty cache -- emitting
     // no results here would be indistinguishable from a genuinely empty resolver cache.
     if (!result.succeeded()) {
-        Q_EMIT errorOccurred(displayDnsFailureMessage(result));
+        Q_EMIT errorOccurred(cacheReadFailureMessage(result));
         return;
     }
 
     Q_EMIT dnsCacheResults(parseDnsClientCacheJson(result.std_out));
+}
+
+// Fail-closed failure text for the DNS cache read, with the reason Windows gave, so the real error
+// reaches the user instead of an empty cache. It once carried the whole error record: the cmdlet's
+// name, the script's position and its CategoryInfo lines.
+QString DnsDiagnosticTool::cacheReadFailureMessage(const ProcessResult& result) {
+    const QString readable = readablePowerShellError(result.std_err);
+    const QString detail = readable.isEmpty() ? result.std_err.trimmed() : readable;
+    QString message = QStringLiteral("Failed to read the DNS resolver cache.");
+    if (!detail.isEmpty()) {
+        message += QLatin1Char(' ') + detail;
+    }
+    return message;
 }
 
 QVector<QPair<QString, QString>> DnsDiagnosticTool::parseDnsClientCacheJson(const QString& json) {

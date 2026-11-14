@@ -23,6 +23,7 @@
 #include <memory>
 #include <type_traits>
 
+class QHostAddress;
 class QTcpServer;
 class QTcpSocket;
 
@@ -132,7 +133,20 @@ public:
         bool bidirectional{false};
         bool udp{false};
     };
-    void startIperfServer(uint16_t port);
+    /// @brief Start the iPerf3 server listening only on @p bind_address (see
+    ///        BandwidthTester::startIperfServer).
+    void startIperfServer(uint16_t port, const QHostAddress& bind_address);
+
+    /// @brief What Start Server asked for: which server ("iPerf3" or "LAN transfer"), its port
+    ///        and the address it would listen on.
+    using ServerStartRecorder =
+        std::function<void(const QString& server, uint16_t port, const QHostAddress& address)>;
+    /// @brief Tests: record each server start in @p recorder instead of starting it, so a test can
+    ///        check the address a server would use with no server process, socket, netsh or
+    ///        firewall rule (an elevated test run would otherwise add a real inbound rule).
+    void setServerStartRecorderForTesting(ServerStartRecorder recorder) {
+        m_serverStartRecorder = std::move(recorder);
+    }
     void stopIperfServer();
     [[nodiscard]] bool isIperfServerRunning() const;
     void runBandwidthTest(const BandwidthTestParams& params);
@@ -160,8 +174,29 @@ public:
 
     // -- LAN File Transfer Speed Test --
 
-    /// @brief Start a TCP server to receive data from a peer for speed measurement
-    void startLanTransferServer(uint16_t port);
+    /// @brief Start a TCP server to receive data from a peer for speed measurement, listening
+    ///        only on @p bind_address: one of this PC's adapter addresses, or loopback. A
+    ///        wildcard (any address) is refused, so the server is never open on every network
+    ///        the PC is on.
+    void startLanTransferServer(uint16_t port, const QHostAddress& bind_address);
+
+    /// @brief An address a server can be told to listen on, as the panel offers it.
+    struct ServerListenChoice {
+        QString label;              ///< "Ethernet - 10.0.0.5"
+        QString address;            ///< "10.0.0.5"
+        bool default_route{false};  ///< the adapter has an IPv4 gateway: the default route
+    };
+
+    /// @brief The IPv4 addresses of the connected adapters in @p adapters, in order, one choice
+    ///        each: what the iPerf3 and LAN transfer servers may listen on. Pure; testable.
+    [[nodiscard]] static QVector<ServerListenChoice> serverListenChoices(
+        const QVector<NetworkAdapterInfo>& adapters);
+
+    /// @brief Which of @p choices a server's address list starts on: @p remembered (the address
+    ///        last used) when it is still offered, else the first adapter holding the default
+    ///        route, else the first choice. -1 when there are none. Pure; testable.
+    [[nodiscard]] static int preferredListenChoice(const QVector<ServerListenChoice>& choices,
+                                                   const QString& remembered);
 
     /// @brief Stop the LAN transfer server
     void stopLanTransferServer();
@@ -291,6 +326,7 @@ private:
     // LAN transfer server state
     QTcpServer* m_lanTransferServer = nullptr;
     std::atomic<bool> m_lanTransferServerRunning{false};
+    ServerStartRecorder m_serverStartRecorder;  ///< setServerStartRecorderForTesting
 
     // Cached results for report generation
     QVector<NetworkAdapterInfo> m_cachedAdapters;

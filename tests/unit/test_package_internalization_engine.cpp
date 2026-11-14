@@ -4,8 +4,16 @@
 /// @file test_package_internalization_engine.cpp
 /// @brief Unit tests for PackageInternalizationEngine pure seams (B10-11).
 
+#include "sak/app_paths.h"
 #include "sak/file_explorer_archive_service.h"
+#include "sak/format_utils.h"
+#include "sak/network_transfer_runner.h"
+#include "sak/offline_deployment_constants.h"
 #include "sak/package_internalization_engine.h"
+
+#include "../support/junction_fixture.h"
+#include "../support/large_allocation_counter.h"
+#include "../support/loopback_http_server.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -14,6 +22,8 @@
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
+
+#include <atomic>
 
 #include <private/qzipwriter_p.h>
 
@@ -46,6 +56,13 @@ private Q_SLOTS:
     void latestFeedVersion_readsEveryPage();
     void parseFeedPage_refusesAnythingButAWellFormedFeed();
     void sameFeedOrigin_requiresSchemeHostAndPort();
+    void downloadVerifiedFile_streamsALargeInstallerToDiskInBoundedMemory();
+    void downloadVerifiedFile_commitsNothingWhenTheBytesDoNotMatch();
+    void streamedTransfer_stopsAtTheResponseCap();
+    void cleanNugetArtifacts_neverFollowsAJunction();
+    void resetWorkFolder_neverFollowsAJunction();
+    void downloadVerifiedFile_stagesInTheRunFolderTheAppSetsAtStartup();
+    void downloadVerifiedFile_needsRoomForItsDeclaredSize();
 };
 
 namespace {
@@ -780,6 +797,294 @@ void TestPackageInternalizationEngine::scriptHasNetworkDownload_ignoresLocalOnly
     QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(
         QStringLiteral("Import-Module chocolatey-core.extension")));
     QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(QString()));
+}
+
+namespace {
+
+QByteArray fileSha256(const QString& path) {
+    QFile file(path);
+    QCryptographicHash hasher(QCryptographicHash::Sha256);
+    if (!file.open(QIODevice::ReadOnly) || !hasher.addData(&file)) {
+        return {};
+    }
+    return hasher.result();
+}
+
+QStringList stagedDownloadsIn(const QString& folder) {
+    return QDir(folder).entryList({QStringLiteral("sak-download-*.part")}, QDir::Files);
+}
+
+// Points the process temp folder (TMP and TEMP, what QDir::tempPath reads) at @p folder for one
+// test, as the app points it at its own per-run folder.
+class ScopedProcessTemp {
+public:
+    explicit ScopedProcessTemp(const QString& folder)
+        : m_tmp(qgetenv("TMP")), m_temp(qgetenv("TEMP")) {
+        qputenv("TMP", QDir::toNativeSeparators(folder).toLocal8Bit());
+        qputenv("TEMP", QDir::toNativeSeparators(folder).toLocal8Bit());
+    }
+    ~ScopedProcessTemp() {
+        qputenv("TMP", m_tmp);
+        qputenv("TEMP", m_temp);
+    }
+    ScopedProcessTemp(const ScopedProcessTemp&) = delete;
+    ScopedProcessTemp& operator=(const ScopedProcessTemp&) = delete;
+    ScopedProcessTemp(ScopedProcessTemp&&) = delete;
+    ScopedProcessTemp& operator=(ScopedProcessTemp&&) = delete;
+
+private:
+    QByteArray m_tmp;
+    QByteArray m_temp;
+};
+
+}  // namespace
+
+// Installers were downloaded whole into RAM -- up to offline::kMaxBinarySizeBytes, 4 GiB -- to be
+// hashed before they were written. A download now streams to a file in the process's own temp
+// folder and is copied into place while it is hashed. 64 MiB served over loopback: no Qt
+// allocation of 1 MiB or more on the way, the partial file seen in the temp folder and never in
+// the destination, and the result exactly the served bytes.
+void TestPackageInternalizationEngine::
+    downloadVerifiedFile_streamsALargeInstallerToDiskInBoundedMemory() {
+    constexpr qint64 kBodyBytes = 64LL * 1024 * 1024;
+    const QByteArray sha256 = sak::test::LoopbackHttpServer::patternSha256(kBodyBytes);
+    const auto digest = PackageInternalizationEngine::installerDigest(
+        QString::fromLatin1(sha256.toHex()), QStringLiteral("sha256"));
+    QVERIFY(digest.has_value());
+    QTemporaryDir out;
+    QTemporaryDir run_temp;
+    QVERIFY(out.isValid() && run_temp.isValid());
+    const ScopedProcessTemp process_temp(run_temp.path());
+    const QString target = out.filePath(QStringLiteral("setup.exe"));
+    const sak::test::LoopbackHttpServer server(kBodyBytes);
+    QVERIFY(server.listening());
+
+    std::atomic<bool> seen_in_temp{false};
+    std::atomic<bool> seen_beside_target{false};
+    PackageInternalizationEngine::VerifiedDownload download;
+    int large_allocations = 0;
+    {
+        const sak::test::LargeAllocationCounter counter;
+        download = PackageInternalizationEngine::downloadVerifiedFile(
+            server.url(QStringLiteral("setup.exe")),
+            target,
+            *digest,
+            {},
+            [&](qint64 received, qint64) {
+                if (received > 0 && !seen_in_temp.load()) {
+                    seen_in_temp = !stagedDownloadsIn(run_temp.path()).isEmpty();
+                    seen_beside_target = !QDir(out.path()).isEmpty();
+                }
+            });
+        large_allocations = sak::test::LargeAllocationCounter::count();
+    }
+    QVERIFY2(download.ok, qPrintable(download.error));
+    QVERIFY2(large_allocations == 0,
+             qPrintable(QStringLiteral("%1 Qt allocations of 1 MiB or more downloading %2 bytes")
+                            .arg(large_allocations)
+                            .arg(kBodyBytes)));
+    QVERIFY(seen_in_temp.load());
+    QVERIFY(!seen_beside_target.load());
+    QCOMPARE(QFileInfo(target).size(), kBodyBytes);
+    QCOMPARE(fileSha256(target), sha256);
+    QVERIFY(stagedDownloadsIn(run_temp.path()).isEmpty());  // the partial file goes with it
+}
+
+// The bytes are checked as they are copied into place, and a mismatch commits nothing: no file at
+// the target, no partial file left in the temp folder.
+void TestPackageInternalizationEngine::downloadVerifiedFile_commitsNothingWhenTheBytesDoNotMatch() {
+    constexpr qint64 kBodyBytes = 1024 * 1024;
+    const auto digest = PackageInternalizationEngine::installerDigest(
+        QString::fromLatin1(QCryptographicHash::hash(QByteArrayLiteral("another installer"),
+                                                     QCryptographicHash::Sha256)
+                                .toHex()),
+        QStringLiteral("sha256"));
+    QVERIFY(digest.has_value());
+    QTemporaryDir out;
+    QTemporaryDir run_temp;
+    QVERIFY(out.isValid() && run_temp.isValid());
+    const ScopedProcessTemp process_temp(run_temp.path());
+    const QString target = out.filePath(QStringLiteral("setup.exe"));
+    const sak::test::LoopbackHttpServer server(kBodyBytes);
+    QVERIFY(server.listening());
+
+    const auto download = PackageInternalizationEngine::downloadVerifiedFile(
+        server.url(QStringLiteral("setup.exe")), target, *digest, {});
+    QVERIFY(!download.ok);
+    QVERIFY(download.mismatch);
+    QVERIFY(!QFileInfo::exists(target));
+    QVERIFY(QDir(out.path()).entryList(QDir::Files | QDir::Hidden | QDir::System).isEmpty());
+    QVERIFY(stagedDownloadsIn(run_temp.path()).isEmpty());
+}
+
+// A streamed body is still capped: the total handed to the sink, not just a buffer, stops at
+// max_response_bytes, and the transfer fails rather than returning a truncated "success".
+void TestPackageInternalizationEngine::streamedTransfer_stopsAtTheResponseCap() {
+    constexpr qint64 kBodyBytes = 4LL * 1024 * 1024;
+    constexpr qint64 kCapBytes = 1024 * 1024;
+    const sak::test::LoopbackHttpServer server(kBodyBytes);
+    QVERIFY(server.listening());
+    qint64 streamed = 0;
+    NetworkTransferRequest request;
+    request.url = server.url(QStringLiteral("big.bin"));
+    request.timeout_ms = 30'000;
+    request.max_response_bytes = kCapBytes;
+    request.body_sink = [&streamed](const char*, qint64 size) {
+        streamed += size;
+        return true;
+    };
+    const NetworkTransferResult result = runNetworkTransfer(request);
+    QVERIFY(!result.success);
+    QCOMPARE(result.error_message, QStringLiteral("Response exceeded the maximum allowed size"));
+    QVERIFY(result.body.isEmpty());
+    QVERIFY2(streamed <= kCapBytes, qPrintable(QString::number(streamed)));
+}
+
+// The NuGet metadata folders are removed without following a junction: _rels itself a junction,
+// and one inside package\. QDir::removeRecursively walked into each and emptied what it points at.
+void TestPackageInternalizationEngine::cleanNugetArtifacts_neverFollowsAJunction() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString extract = root.filePath(QStringLiteral("extract"));
+    const QString rels_target = root.filePath(QStringLiteral("outside-rels"));
+    const QString package_target = root.filePath(QStringLiteral("outside-package"));
+    const QString canary_name = QStringLiteral("canary.txt");
+    const QByteArray canary = QByteArrayLiteral("must stay exactly this");
+    QVERIFY(sak::test::createCanary(rels_target, canary_name, canary));
+    QVERIFY(sak::test::createCanary(package_target, canary_name, canary));
+    QVERIFY(QDir().mkpath(extract + QStringLiteral("/package/services")));
+    QVERIFY(sak::test::createJunction(extract + QStringLiteral("/_rels"), rels_target));
+    QVERIFY(sak::test::createJunction(extract + QStringLiteral("/package/services/link"),
+                                      package_target));
+    writeFixtureFile(extract + QStringLiteral("/tools/chocolateyInstall.ps1"), "Write-Host hi");
+
+    QVERIFY(PackageInternalizationEngine::cleanNugetArtifacts(extract));
+    QVERIFY(!QFileInfo::exists(extract + QStringLiteral("/_rels")));
+    QVERIFY(!QFileInfo::exists(extract + QStringLiteral("/package")));
+    QVERIFY(QFileInfo::exists(extract + QStringLiteral("/tools/chocolateyInstall.ps1")));
+    QVERIFY2(sak::test::canaryIntact(rels_target, canary_name, canary),
+             "removing _rels deleted what the junction points at");
+    QVERIFY2(sak::test::canaryIntact(package_target, canary_name, canary),
+             "removing package deleted what a junction inside it points at");
+}
+
+// A package's work folder is emptied before it is reused without following a junction inside.
+void TestPackageInternalizationEngine::resetWorkFolder_neverFollowsAJunction() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString work = root.filePath(QStringLiteral("pkg.1.0.0"));
+    const QString outside = root.filePath(QStringLiteral("outside"));
+    const QString canary_name = QStringLiteral("canary.txt");
+    const QByteArray canary = QByteArrayLiteral("must stay exactly this");
+    QVERIFY(sak::test::createCanary(outside, canary_name, canary));
+    writeFixtureFile(work + QStringLiteral("/leftover.txt"), "from a crashed build");
+    QVERIFY(sak::test::createJunction(work + QStringLiteral("/link"), outside));
+
+    QVERIFY(PackageInternalizationEngine::resetWorkFolder(work));
+    QVERIFY(QFileInfo(work).isDir());
+    QVERIFY(
+        QDir(work).isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System));
+    QVERIFY2(sak::test::canaryIntact(outside, canary_name, canary),
+             "emptying the work folder deleted what a junction inside it points at");
+}
+
+// The app points TEMP and TMP at its own run folder (data\temp\run-<pid>-...) at startup, and a
+// download stages its partial file in QDir::tempPath(). This runs that startup step itself, so it
+// proves Qt reads the folder the app set, and the partial file is in the run folder while the
+// download runs, not in the user's %TEMP%.
+void TestPackageInternalizationEngine::
+    downloadVerifiedFile_stagesInTheRunFolderTheAppSetsAtStartup() {
+    constexpr qint64 kBodyBytes = 8LL * 1024 * 1024;
+    const QByteArray sha256 = sak::test::LoopbackHttpServer::patternSha256(kBodyBytes);
+    const auto digest = PackageInternalizationEngine::installerDigest(
+        QString::fromLatin1(sha256.toHex()), QStringLiteral("sha256"));
+    QVERIFY(digest.has_value());
+    QTemporaryDir out;
+    QVERIFY(out.isValid());
+    const QByteArray original_tmp = qgetenv("TMP");
+    const QByteArray original_temp = qgetenv("TEMP");
+    const auto restore = qScopeGuard([&] {
+        qputenv("TMP", original_tmp);
+        qputenv("TEMP", original_temp);
+    });
+    const auto established = sak::app_paths::establishSessionTempDirectory();
+    QVERIFY2(established, qPrintable(established ? QString() : established.error()));
+    const QString run = QDir::cleanPath(QDir::fromNativeSeparators(*established));
+    QVERIFY2(QFileInfo(run).fileName().startsWith(
+                 QStringLiteral("run-%1-").arg(QCoreApplication::applicationPid())),
+             qPrintable(run));
+    QVERIFY2(run.startsWith(QDir::cleanPath(sak::app_paths::tempDirectory()) + QLatin1Char('/'),
+                            Qt::CaseInsensitive),
+             qPrintable(run));
+
+    const QString target = out.filePath(QStringLiteral("setup.exe"));
+    const sak::test::LoopbackHttpServer server(kBodyBytes);
+    QVERIFY(server.listening());
+    std::atomic<bool> seen_in_run{false};
+    const auto download = PackageInternalizationEngine::downloadVerifiedFile(
+        server.url(QStringLiteral("setup.exe")), target, *digest, {}, [&](qint64 received, qint64) {
+            if (received > 0 && !seen_in_run.load()) {
+                seen_in_run = !stagedDownloadsIn(run).isEmpty();
+            }
+        });
+    QVERIFY2(download.ok, qPrintable(download.error));
+    QVERIFY2(seen_in_run.load(), "the partial download was not in the app's run folder");
+    QCOMPARE(fileSha256(target), sha256);
+    QVERIFY(stagedDownloadsIn(run).isEmpty());
+}
+
+// Once the server declares a download's size, the drive it is staged on must hold it, twice when
+// the copy into place lands on that drive too, plus offline::kWorkSpaceMarginBytes; the 1 GiB floor
+// is only for before any size is known. A stand-in for the free space shows the boundary: one byte
+// short is refused before the body is taken, leaving nothing at the target or in the staging
+// folder, and exactly enough downloads.
+void TestPackageInternalizationEngine::downloadVerifiedFile_needsRoomForItsDeclaredSize() {
+    constexpr qint64 kBodyBytes = 4LL * 1024 * 1024;
+    QCOMPARE(PackageInternalizationEngine::downloadWorkBytes(kBodyBytes, true),
+             2 * kBodyBytes + offline::kWorkSpaceMarginBytes);
+    QCOMPARE(PackageInternalizationEngine::downloadWorkBytes(kBodyBytes, false),
+             kBodyBytes + offline::kWorkSpaceMarginBytes);
+    const QByteArray sha256 = sak::test::LoopbackHttpServer::patternSha256(kBodyBytes);
+    const auto digest = PackageInternalizationEngine::installerDigest(
+        QString::fromLatin1(sha256.toHex()), QStringLiteral("sha256"));
+    QVERIFY(digest.has_value());
+    QTemporaryDir out;
+    QTemporaryDir run_temp;
+    QVERIFY(out.isValid() && run_temp.isValid());
+    const ScopedProcessTemp process_temp(run_temp.path());
+    const qint64 needed = PackageInternalizationEngine::downloadWorkBytes(kBodyBytes, true);
+    qint64 free_bytes = needed - 1;
+    QStringList asked;
+    const auto previous = PackageInternalizationEngine::setFreeSpaceProbeForTesting(
+        [&free_bytes, &asked](const QString& folder) {
+            asked.append(folder);
+            return free_bytes;
+        });
+    const auto restore = qScopeGuard(
+        [&previous] { (void)PackageInternalizationEngine::setFreeSpaceProbeForTesting(previous); });
+    const sak::test::LoopbackHttpServer server(kBodyBytes);
+    QVERIFY(server.listening());
+    const QString target = out.filePath(QStringLiteral("setup.exe"));
+
+    const auto refused = PackageInternalizationEngine::downloadVerifiedFile(
+        server.url(QStringLiteral("setup.exe")), target, *digest, {});
+    QVERIFY(!refused.ok);
+    QVERIFY2(refused.error.startsWith(QStringLiteral("Not enough free space for the work files")),
+             qPrintable(refused.error));
+    QVERIFY2(refused.error.contains(sak::formatBytes(needed)), qPrintable(refused.error));
+    QVERIFY(!QFileInfo::exists(target));
+    QVERIFY(stagedDownloadsIn(run_temp.path()).isEmpty());
+    QVERIFY(!asked.isEmpty());
+    QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(asked.first())).toLower(),
+             QDir::cleanPath(run_temp.path()).toLower());
+
+    free_bytes = needed;
+    const sak::test::LoopbackHttpServer second(kBodyBytes);  // a server answers once
+    QVERIFY(second.listening());
+    const auto taken = PackageInternalizationEngine::downloadVerifiedFile(
+        second.url(QStringLiteral("setup.exe")), target, *digest, {});
+    QVERIFY2(taken.ok, qPrintable(taken.error));
+    QCOMPARE(fileSha256(target), sha256);
 }
 
 QTEST_GUILESS_MAIN(TestPackageInternalizationEngine)

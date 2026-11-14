@@ -9,7 +9,9 @@
 #include "sak/elevation_broker.h"
 #include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/partition_file_system_detector.h"
+#include "sak/partition_file_system_registry.h"
 #include "sak/partition_safety_validator.h"
 #include "sak/partition_script_builder.h"
 #include "sak/process_runner.h"
@@ -27,9 +29,27 @@
 #include <optional>
 #include <thread>
 
+#include <windows.h>
+
 namespace sak {
 
 namespace {
+
+// Windows' own name for its edition ("Professional", "Enterprise", "ServerStandard", ...), which
+// decides whether it formats ReFS. Empty when it cannot be read: then ReFS is not offered.
+QString windowsEditionId() {
+    constexpr DWORD kEditionIdChars = 128;
+    wchar_t value[kEditionIdChars] = {};
+    DWORD bytes = sizeof(value);
+    const LSTATUS status = RegGetValueW(HKEY_LOCAL_MACHINE,
+                                        L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+                                        L"EditionID",
+                                        RRF_RT_REG_SZ,
+                                        nullptr,
+                                        value,
+                                        &bytes);
+    return status == ERROR_SUCCESS ? QString::fromWCharArray(value) : QString();
+}
 
 constexpr auto kHelperScanCancelPoll = std::chrono::milliseconds(200);
 constexpr int kMsPerSecond = 1000;
@@ -130,6 +150,11 @@ PartitionVolumeInfo parseVolume(const QJsonObject& object) {
     volume.dirty_bit_set = volume.dirty_bit_known &&
                            jsonBool(object, QStringLiteral("DirtyBitSet"));
     volume.dirty_bit_error = object.value(QStringLiteral("DirtyBitError")).toString().trimmed();
+    volume.shadow_storage_known = jsonBool(object, QStringLiteral("ShadowStorageKnown"));
+    if (volume.shadow_storage_known) {
+        volume.shadow_storage_max_bytes = jsonUInt64(object, QStringLiteral("ShadowStorageMax"));
+        volume.shadow_storage_used_bytes = jsonUInt64(object, QStringLiteral("ShadowStorageUsed"));
+    }
     return volume;
 }
 
@@ -548,6 +573,7 @@ PartitionDiskInfo parseDisk(const QJsonObject& object) {
     disk.serial_number = object.value(QStringLiteral("SerialNumber")).toString();
     disk.bus_type = object.value(QStringLiteral("BusType")).toString();
     disk.media_type = object.value(QStringLiteral("MediaType")).toString();
+    disk.provisioning_type = object.value(QStringLiteral("ProvisioningType")).toString().trimmed();
     disk.rotation_rate_rpm = std::max(0, object.value(QStringLiteral("RotationRateRpm")).toInt(0));
     QString partitionStyleText = object.value(QStringLiteral("PartitionStyle")).toString();
     if (partitionStyleText.isEmpty()) {
@@ -639,16 +665,30 @@ void markAdministratorStatePending(PartitionInventory* inventory) {
     }
 }
 
+/// A lettered volume the raw probe identified as ext, HFS+, APFS or Linux swap: fsutil and
+/// BitLocker have nothing to answer about it (PartitionFileSystemRegistry::
+/// identifiedNonWindowsVolume). A RAW volume that nothing identified still warns.
+bool windowsCannotProbe(const PartitionVolumeInfo& volume) {
+    return PartitionFileSystemRegistry::identifiedNonWindowsVolume(volume);
+}
+
+/// Whether a lettered volume's unread dirty bit says the scan cannot be trusted. A locked volume
+/// has no readable file system, so fsutil cannot answer, and that says nothing about whether this
+/// scan can be trusted. Saying it did would stop every Apply on the PC, including the one that
+/// unlocks it. The same for a volume Windows cannot probe at all (windowsCannotProbe).
+bool dirtyBitUnknownMatters(const PartitionInfoEx& partition) {
+    if (!partition.volume || !partition.volume->hasDriveLetter() ||
+        partition.volume->dirty_bit_known || partition.volume->administrator_state_pending) {
+        return false;
+    }
+    return !windowsCannotProbe(*partition.volume) &&
+           !(partition.volume->bitlocker_state_known && partition.volume->bitlocker_locked);
+}
+
 void appendVolumeProbeWarnings(PartitionInventory* inventory) {
     for (const auto& disk : inventory->disks) {
         for (const auto& partition : disk.partitions) {
-            // A locked volume has no readable file system, so fsutil cannot answer, and that says
-            // nothing about whether this scan can be trusted. Saying it did would stop every Apply
-            // on the PC, including the one that unlocks it.
-            if (!partition.volume || !partition.volume->hasDriveLetter() ||
-                partition.volume->dirty_bit_known ||
-                partition.volume->administrator_state_pending ||
-                (partition.volume->bitlocker_state_known && partition.volume->bitlocker_locked)) {
+            if (!dirtyBitUnknownMatters(partition)) {
                 continue;
             }
             const QString reason = partition.volume->dirty_bit_error.trimmed().isEmpty()
@@ -677,7 +717,7 @@ void appendPartitionMetadataWarnings(const PartitionDiskInfo& disk,
                 .arg(reason));
     }
     if (partition.volume && !partition.volume->bitlocker_state_known &&
-        !partition.volume->administrator_state_pending &&
+        !partition.volume->administrator_state_pending && !windowsCannotProbe(*partition.volume) &&
         !partition.volume->bitlocker_state_error.trimmed().isEmpty()) {
         inventory->warnings.append(QStringLiteral("BitLocker query failed for volume %1: %2; "
                                                   "protection and lock state are unknown")
@@ -734,6 +774,7 @@ void InventoryScanLiveness::feed(const QString& stderr_chunk) {
             m_last_step = stepOfProgressLine(line.mid(kScanProgressPrefix.size()).trimmed());
             m_armed = true;
             m_since_progress.start();
+            m_quiet_reported_ms = 0;
             const auto match = disk_of.match(m_last_step);
             if (match.hasMatch()) {
                 reached = InventoryScanProgress{.disk = match.captured(kDiskGroup).toInt(),
@@ -752,6 +793,29 @@ void InventoryScanLiveness::feed(const QString& stderr_chunk) {
 bool InventoryScanLiveness::idleExpired() const {
     std::lock_guard lock(m_mutex);
     return m_armed && m_since_progress.elapsed() >= m_limits.idle_ms;
+}
+
+QString InventoryScanLiveness::reportQuiet() {
+    QString line;
+    {
+        std::lock_guard lock(m_mutex);
+        if (!m_armed || m_stopped || m_limits.quiet_log_ms <= 0) {
+            return {};
+        }
+        const qint64 quiet_ms = m_since_progress.elapsed();
+        if (quiet_ms < m_quiet_reported_ms + m_limits.quiet_log_ms) {
+            return {};
+        }
+        m_quiet_reported_ms = quiet_ms - (quiet_ms % m_limits.quiet_log_ms);
+        line = QStringLiteral(
+                   "Disk scan: no progress for %1 s (last step: %2); it is stopped at "
+                   "%3 s")
+                   .arg(quiet_ms / kMsPerSecond)
+                   .arg(m_last_step.isEmpty() ? QStringLiteral("none") : m_last_step)
+                   .arg(m_limits.idle_ms / kMsPerSecond);
+    }
+    logInfo("{}", line.toStdString());
+    return line;
 }
 
 void InventoryScanLiveness::markStopped() {
@@ -859,6 +923,7 @@ std::expected<ProcessResult, QString> runInventoryScriptInHelper(
                 broker->cancelCurrentTask();
                 return;
             }
+            (void)liveness.reportQuiet();
             if (liveness.idleExpired()) {
                 liveness.markStopped();
                 broker->cancelCurrentTask();
@@ -925,6 +990,7 @@ ProcessResult StorageInventoryWorker::runInventoryScript(
         if (cancellationRequested(should_cancel)) {
             return true;
         }
+        (void)liveness.reportQuiet();
         if (liveness.idleExpired()) {
             liveness.markStopped();
             return true;
@@ -997,6 +1063,16 @@ StorageInventoryScanResult StorageInventoryWorker::scanCurrentSystemResult(
         should_cancel);
 }
 
+QString StorageInventoryWorker::scanFailureWarning(const ProcessResult& result,
+                                                   const QString& fallback) {
+    QString readable = readablePowerShellError(result.std_err);
+    if (!readable.isEmpty()) {
+        return readable;
+    }
+    const QString whole = result.std_err.trimmed();
+    return whole.isEmpty() ? fallback : whole;
+}
+
 StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResult& result,
                                                               ReadLevel level,
                                                               bool allow_elevation,
@@ -1009,19 +1085,21 @@ StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResul
         } else if (result.timed_out || result.exit_code == kInventoryScanDidNotFinishExitCode) {
             // Whatever it wrote before it stopped is not a list of this PC's disks.
             inventory.scan_did_not_finish = true;
-            inventory.warnings.append(result.std_err.trimmed());
+            inventory.warnings.append(scanFailureWarning(result, QString()));
         } else {
-            inventory.warnings.append(result.std_err.trimmed().isEmpty()
-                                          ? QStringLiteral("Inventory scan failed")
-                                          : result.std_err.trimmed());
+            inventory.warnings.append(
+                scanFailureWarning(result, QStringLiteral("Inventory scan failed")));
         }
         return {.inventory = std::move(inventory),
                 .cancelled = result.cancelled || cancellationRequested(should_cancel)};
     }
 
-    auto inventory = parseInventory(result.std_out.toUtf8(), level);
+    auto inventory = parseInventory(result.std_out.toUtf8(), level, VolumeStateWarnings::Later);
+    inventory.refs_format_available =
+        PartitionFileSystemRegistry::editionFormatsRefs(windowsEditionId());
     applyRawFileSystemDetection(
         &inventory, allow_elevation, should_cancel, level == ReadLevel::WhatAStandardUserCanRead);
+    appendVolumeStateWarnings(&inventory);
     if (cancellationRequested(should_cancel) &&
         !inventory.warnings.contains(QStringLiteral("Inventory scan cancelled"))) {
         inventory.warnings.append(QStringLiteral("Inventory scan cancelled"));
@@ -1043,8 +1121,14 @@ PartitionInventory StorageInventoryWorker::parseStandardUserInventoryJson(
     return parseInventory(json_data, ReadLevel::WhatAStandardUserCanRead);
 }
 
+void StorageInventoryWorker::appendVolumeStateWarnings(PartitionInventory* inventory) {
+    appendVolumeProbeWarnings(inventory);
+    appendInventoryMetadataWarnings(inventory);
+}
+
 PartitionInventory StorageInventoryWorker::parseInventory(const QByteArray& json_data,
-                                                          ReadLevel level) {
+                                                          ReadLevel level,
+                                                          VolumeStateWarnings warnings) {
     PartitionInventory inventory;
     inventory.captured_at = QDateTime::currentDateTime();
     QJsonParseError error{};
@@ -1070,8 +1154,9 @@ PartitionInventory StorageInventoryWorker::parseInventory(const QByteArray& json
         markAdministratorStatePending(&inventory);
     }
     appendPartitionEnumerationWarnings(&inventory);
-    appendVolumeProbeWarnings(&inventory);
-    appendInventoryMetadataWarnings(&inventory);
+    if (warnings == VolumeStateWarnings::Now) {
+        appendVolumeStateWarnings(&inventory);
+    }
     inventory.layout_hash = buildLayoutHash(inventory);
     return inventory;
 }
@@ -1121,6 +1206,16 @@ if (-not $answer.Finished) {
   $physicalDiskQueryError = $answer.Error
 } else {
   $physicalDisks = @($answer.Items)
+}
+# Shadow-copy storage, which Migrate OS's image route depends on. Windows answers an administrator
+# only ("Initialization failure" otherwise); the sizes go out as text, since no limit is UINT64_MAX.
+$sakShadowStorage = @()
+if ($sakReadAdministratorState) {
+  Write-SakScanProgress 'shadow-copy storage'
+  $answer = Invoke-SakBoundedCall -Step 'shadow-copy storage' -Script {
+    Get-CimInstance -ClassName Win32_ShadowStorage -ErrorAction Stop | ForEach-Object {
+      [pscustomobject]@{ Volume = "$($_.Volume.DeviceID)"; Max = "$([uint64]$_.MaxSpace)"; Used = "$([uint64]$_.UsedSpace)" } } }
+  if ($answer.Finished -and -not ($answer.ErrorId -or $answer.Error)) { $sakShadowStorage = @($answer.Items) }
 }
 )PS");
 }
@@ -1251,6 +1346,7 @@ static QString inventoryPowerShellDiskQueriesScript() {
     HealthStatus = "$($disk.HealthStatus)"
     OperationalStatus = @($disk.OperationalStatus) -join ', '
     BusType = "$($disk.BusType)"
+    ProvisioningType = "$($disk.ProvisioningType)"
     # Get-Disk has no media type. Only the physical disk says HDD, SSD or Unspecified.
     MediaType = if ($physical) { "$($physical.MediaType)" } else { '' }
     RotationRateRpm = $rotationRateRpm
@@ -1316,14 +1412,17 @@ static QString inventoryPowerShellPartitionProbeScript() {
           }
         }
       }
+      $shadowStorage = if ($volume) {
+        @($sakShadowStorage | Where-Object { $_.Volume -and ($_.Volume -eq "$($volume.UniqueId)" -or $_.Volume -eq "$($volume.Path)") }) | Select-Object -First 1
+      } else { $null }
+      $dirty = $false
+      $dirtyKnown = $false
+      $dirtyError = ''
 )PS");
 }
 
 static QString inventoryPowerShellPartitionResultScript() {
     return QStringLiteral(R"PS(
-      $dirty = $false
-      $dirtyKnown = $false
-      $dirtyError = ''
       if ($volume -and $volume.DriveLetter -and $sakReadAdministratorState) {
         $dirtyStep = "dirty bit of partition $($partition.PartitionNumber) of disk $sakDiskIndex"
         Write-SakScanProgress $dirtyStep
@@ -1383,6 +1482,9 @@ static QString inventoryPowerShellPartitionResultScript() {
             DirtyBitKnown = [bool]$dirtyKnown
             DirtyBitSet = [bool]$dirty
             DirtyBitError = "$dirtyError"
+            ShadowStorageKnown = [bool]$shadowStorage
+            ShadowStorageMax = if ($shadowStorage) { $shadowStorage.Max } else { '0' }
+            ShadowStorageUsed = if ($shadowStorage) { $shadowStorage.Used } else { '0' }
           }
         } else { $null }
       }
@@ -1440,11 +1542,7 @@ function Stop-SakScanProcess {
   param([int]$ExitCode)
   [Console]::Out.Flush()
   [Console]::Error.Flush()
-  if (-not ('Sak.ScanProcess' -as [type])) {
-    Add-Type -Namespace Sak -Name ScanProcess -MemberDefinition (
-      '[DllImport("kernel32.dll")] public static extern System.IntPtr GetCurrentProcess();' +
-      '[DllImport("kernel32.dll")] public static extern bool TerminateProcess(System.IntPtr process, uint exitCode);')
-  }
+  # Sak.ScanProcess comes from sak_script_types.dll, loaded at the top of the scan.
   [void][Sak.ScanProcess]::TerminateProcess([Sak.ScanProcess]::GetCurrentProcess(), [uint32]$ExitCode)
 }
 # A step the scan cannot go on without, that did not answer within its limit: the scan says it did
@@ -1570,7 +1668,8 @@ function Invoke-SakBoundedQuery {
                .arg(kInventoryQueryCapSeconds)
                .arg(kInventoryHeartbeatSeconds)
                .arg(kInventoryScanDidNotFinishExitCode) +
-           boundedScanStopScript() + boundedCallFunctionScript();
+           PartitionScriptBuilder::scriptTypesLoaderScript() + boundedScanStopScript() +
+           boundedCallFunctionScript();
 }
 
 QString StorageInventoryWorker::inventoryPowerShellScript(bool read_administrator_state) {

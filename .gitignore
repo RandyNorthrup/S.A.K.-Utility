@@ -46,6 +46,9 @@ install_manifest.txt
 !cmake/SakProductLibrary.cmake
 # Compiles Partition Manager's scripts into the program; must be tracked despite *.cmake
 !cmake/embed_text_files.cmake
+# The program-file manifest and the script-types pin an elevation checks; first-party build code.
+!cmake/program_manifest.cmake
+!cmake/script_types_pin.cmake
 
 # ============================================================================
 # Visual Studio / MSBuild

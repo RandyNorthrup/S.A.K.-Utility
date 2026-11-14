@@ -173,4 +173,18 @@ QString formatPartitionBytes(uint64_t bytes) {
     return formatBytes(bytes);
 }
 
+namespace {
+constexpr auto kExtendedContainerTypeWord = "Extended";
+}  // namespace
+
+bool isExtendedPartitionContainer(const QString& type_name) {
+    return type_name.contains(QLatin1String(kExtendedContainerTypeWord), Qt::CaseInsensitive);
+}
+
+QString dataPartitionsOnlyPowerShell() {
+    // -notlike is case-insensitive, and *word* matches the word anywhere: contains(), as above.
+    return QStringLiteral("Where-Object { \"$($_.Type)\" -notlike '*%1*' }")
+        .arg(QLatin1String(kExtendedContainerTypeWord));
+}
+
 }  // namespace sak

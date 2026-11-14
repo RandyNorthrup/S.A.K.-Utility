@@ -4,18 +4,18 @@
     "scenario_id":  "vhd.empty-style-conversion",
     "status":  "Passed",
     "failure":  "",
-    "run_id":  "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
-    "started_utc":  "2026-11-10T16:02:32.5723755Z",
-    "completed_utc":  "2026-11-10T16:03:13.5635063Z",
+    "run_id":  "d05759ba-27f4-4e6e-aee6-6fe634b55d6a",
+    "started_utc":  "2026-11-14T10:17:17.8859032Z",
+    "completed_utc":  "2026-11-14T10:18:36.6641837Z",
     "code":  {
-                 "digest":  "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
-                 "commit":  "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+                 "digest":  "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
+                 "commit":  "d8c27a155c90123c34d82b56fd92d61b75d1f602",
                  "dirty":  false
              },
     "binaries":  {
-                     "client_sha256":  "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
-                     "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-                     "app_sha256":  "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+                     "client_sha256":  "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132",
+                     "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+                     "app_sha256":  "fb9bd0213aa322589223a9701cb6c45fad7724d44a6421a3a8c0e2f74c18f702"
                  },
     "rig":  {
                 "machine_manufacturer":  "innotek GmbH",
@@ -42,11 +42,11 @@
                       "expect":  "success",
                       "report":  "to_mbr.client.json",
                       "observed":  {
-                                       "client_pid":  6992,
+                                       "client_pid":  6840,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  1248,
-                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_pid":  9392,
+                                       "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -57,11 +57,11 @@
                       "expect":  "success",
                       "report":  "to_gpt.client.json",
                       "observed":  {
-                                       "client_pid":  5964,
+                                       "client_pid":  2352,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  6076,
-                                       "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
+                                       "helper_pid":  9996,
+                                       "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -71,18 +71,18 @@
     "artifacts":  [
                       {
                           "path":  "independent.json",
-                          "sha256":  "8c19332b8e78bf1ed06e6933ef96c39f8446efa704c3ebe7170d795439e03b57",
+                          "sha256":  "ea974858c613cc118ad748d5cb30b8f480d765216f510ea54241a06e14b6532a",
                           "bytes":  78561
                       },
                       {
                           "path":  "to_mbr.client.json",
-                          "sha256":  "fb3241c05d83c5c02b1e0ec9fdfd0971a700197264ac77330aed2fef19de3d0f",
-                          "bytes":  3139
+                          "sha256":  "6ba8644a97b4900e09337a9e03659615fb42504923d0d2eec485179b50de4a77",
+                          "bytes":  3352
                       },
                       {
                           "path":  "to_gpt.client.json",
-                          "sha256":  "f349d1f6a10d9034100365250d968701c6379097627a6350fee04584d5c4f7b1",
-                          "bytes":  3139
+                          "sha256":  "c165ae209730bec853483dc02f176b373806e30678cd627e0344b31abff9f524",
+                          "bytes":  3352
                       }
                   ]
 }

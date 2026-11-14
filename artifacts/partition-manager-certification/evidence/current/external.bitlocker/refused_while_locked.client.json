@@ -7,13 +7,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
-    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-10T16:33:27.425Z",
+    "completed_utc": "2026-11-14T10:44:38.201Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -37,18 +37,18 @@
     ],
     "queued_operations": [
         {
-            "id": "6b3aef9e-0935-4f9c-8e79-d8d563acbaa8",
+            "id": "0cae7ef4-b114-4aa9-85fe-d3ca54913c6b",
             "payload": {
                 "allocation_unit_bytes": "4096",
                 "file_system": "NTFS",
                 "full_format": false,
                 "label": "SAKNOPE"
             },
-            "script_sha256": "3078055d10be9d0a6e8c1da1e98149f5a738bcd90a690886d30f7ea6942b7838",
+            "script_sha256": "81404fc4bf24efbf0643a6b24ca2fc0996dc591cf852c76884b47bce0c687106",
             "summary": "Format Partition - Disk 1 Partition 2",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "60022480649FAC92DE061C1FDA7EFE01",
+                "disk_unique_id": "60022480D145D98BE2FF3ED3CCA08D31",
                 "drive_letter": "T",
                 "kind": "Partition",
                 "offset_bytes": "16777216",
@@ -62,15 +62,15 @@
     ],
     "refused_at": "apply",
     "review": {
-        "fingerprint": "f24741e5349b2331644c3f959db81af469716d915d4440bc1963c9fba3ceb71e",
-        "layout_hash": "93fa52e036b2bd0f624e525c11bb61ac98a745515b742ead46713059179305e2",
+        "fingerprint": "5a21f4088ae107cd38f382bb683fccc6c3af6344dfa5292426546700997b9924",
+        "layout_hash": "f3e11e51b760daa4ece36bd5c647cf033ae73bf4e5fb32f503f51184e3ed0f35",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "6dabd3e9-9548-4b37-b588-cd518f92232c",
+    "run_id": "e916643c-4469-457b-8e3a-c9f90609069a",
     "scenario_id": "external.bitlocker",
     "schema_version": 1,
-    "started_utc": "2026-11-10T16:33:10.684Z",
+    "started_utc": "2026-11-14T10:44:19.794Z",
     "status": "Passed",
     "step": "refused_while_locked",
     "tool": "partition-manager-scenario-step"

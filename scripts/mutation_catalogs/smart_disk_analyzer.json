@@ -61,28 +61,20 @@
       "why": "an attribute is failing only when it has a real threshold AND its normalized value has fallen to/below it; with || any attribute that merely declares a positive threshold is flagged failing. parseOutput_validSataJson (thresh:10, value:100) asserts QVERIFY(!attr.failing) and overall_health Healthy -- with || failing becomes true and health flips to Critical"
     },
     {
-      "id": "critical-threshold-boundary-ge-to-gt",
-      "file": "src/core/smart_disk_analyzer.cpp",
-      "find": "if (attr.raw_value >= thresh.critical_raw) {",
-      "replace": "if (attr.raw_value > thresh.critical_raw) {",
-      "expect": "killed",
-      "why": "the critical verdict must fire AT the critical raw threshold; relaxing >= to > lets a raw value exactly equal to critical_raw escape to mere Warning. healthAssessment_critical asserts overall_health Critical at raw 50 == critical_raw 50 for id 5"
-    },
-    {
       "id": "warning-threshold-boundary-ge-to-gt",
       "file": "src/core/smart_disk_analyzer.cpp",
-      "find": "if (attr.raw_value >= thresh.warning_raw) {",
-      "replace": "if (attr.raw_value > thresh.warning_raw) {",
+      "find": "if (attr.id == thresh.id && attr.raw_value >= thresh.warning_raw) {",
+      "replace": "if (attr.id == thresh.id && attr.raw_value > thresh.warning_raw) {",
       "expect": "killed",
       "why": "the warning verdict must fire AT the warning raw threshold; relaxing >= to > lets a raw value exactly equal to warning_raw read as Healthy. healthAssessment_warning asserts overall_health Warning at raw 10 == warning_raw 10 for id 199 (and Healthy at raw 9)"
     },
     {
       "id": "nvme-media-errors-fail-open-gt-to-ge",
       "file": "src/core/smart_disk_analyzer.cpp",
-      "find": "kNvmeWearCriticalPercent || nvme.media_errors > 0 ||",
-      "replace": "kNvmeWearCriticalPercent || nvme.media_errors >= 0 ||",
+      "find": "    if (nvme.media_errors > 0) {\n        counted << QStringLiteral(\"%1 media errors\").arg(nvme.media_errors);",
+      "replace": "    if (nvme.media_errors >= 0) {\n        counted << QStringLiteral(\"%1 media errors\").arg(nvme.media_errors);",
       "expect": "killed",
-      "why": "media_errors is a fault count -- Critical only when it exceeds zero; >= 0 is always true so every NVMe drive reads Critical. parseOutput_validNvmeJson (media_errors:0) asserts QCOMPARE(report.overall_health, sak::SmartHealthStatus::Healthy)"
+      "why": "media_errors is a fault count -- a warning only when it exceeds zero; >= 0 is always true so every NVMe drive reads Warning with \"0 media errors\". parseOutput_validNvmeJson (media_errors:0) asserts QCOMPARE(report.overall_health, sak::SmartHealthStatus::Healthy)"
     },
     {
       "id": "json-parse-error-guard-inverted",

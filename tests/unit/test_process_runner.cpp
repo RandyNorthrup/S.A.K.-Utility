@@ -16,7 +16,10 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QtTest/QtTest>
 
 #include <atomic>
@@ -29,6 +32,9 @@ class ProcessRunnerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void readablePowerShellErrorKeepsOnlyTheMessage();
+    void readablePowerShellErrorDropsTheActivityIdAndTheWrapper();
+    void elevatedChildStartsInSystem32WithoutCurrentDirectorySearch();
     // runProcess
     void runProcess_echoCommand();
     void runProcess_exitCode();
@@ -55,6 +61,7 @@ private Q_SLOTS:
     void powerShellInvocation_longScriptReadsItselfFromStandardInput();
     void runProcessStreaming_standardInputReachesTheChild();
     void runPowerShell_longScriptRunsAndKeepsItsExitCode();
+    void runPowerShell_childBuildsItsOwnModulePath();
 
     // B5-07: bounded output accumulation
     void appendCappedOutput_boundsAccumulation();
@@ -613,6 +620,10 @@ void ProcessRunnerTests::powerShellInvocation_longScriptReadsItselfFromStandardI
     QCOMPARE(QString::fromUtf8(large.std_in), long_script);
     QVERIFY(!large.args.contains(long_script));
     QVERIFY(large.args.join(u' ').size() < sak::kMaxPowerShellCommandLineScriptChars);
+    // Dot-sourced: run as a child scriptblock, a long script's $ErrorActionPreference never
+    // reached the Storage cmdlets (operation proof, 2026-11-12).
+    QVERIFY(large.args.join(u' ').contains(
+        QStringLiteral("Remove-Variable -Name sakReader, sakScript; . $sakStdinScriptBlock")));
 }
 
 void ProcessRunnerTests::runProcessStreaming_standardInputReachesTheChild() {
@@ -644,6 +655,52 @@ void ProcessRunnerTests::runPowerShell_longScriptRunsAndKeepsItsExitCode() {
     QVERIFY(thrown.exit_code != 0);
     QVERIFY2(thrown.std_err.contains(QStringLiteral("refused on purpose")),
              qPrintable(thrown.std_err));
+    // A Storage cmdlet's error stops a long script as it stops a short one. As a child scriptblock
+    // the script went on to its next line and exited 0 (operation proof, 2026-11-12, testpc2).
+    const auto storage = sak::runPowerShell(
+        padding + QStringLiteral("$ErrorActionPreference = 'Stop'\nGet-Partition -DiskNumber "
+                                 "99999\nWrite-Output 'went on'\n"),
+        60'000);
+    QVERIFY(storage.exit_code != 0);
+    QVERIFY2(!storage.std_out.contains(QStringLiteral("went on")), qPrintable(storage.std_out));
+    // Dot-sourced, the script shares the reader's scope: the reader's own variables are gone
+    // before it runs, so it finds nothing a short script would not.
+    const auto scope = sak::runPowerShell(
+        padding + QStringLiteral("'LEFT ' + @(Get-Variable -Name sakReader, sakScript "
+                                 "-ErrorAction SilentlyContinue).Count"),
+        60'000);
+    QVERIFY2(scope.std_out.contains(QStringLiteral("LEFT 0")),
+             qPrintable(scope.std_out + scope.std_err));
+}
+
+// Windows PowerShell 5.1 started with PowerShell 7's module path (S.A.K. started from a PowerShell
+// 7 window, or CI's) cannot load Get-FileHash, which the partition scripts' tool hash checks call.
+// A Windows PowerShell child gets no PSModulePath and builds its own; any other child keeps it.
+void ProcessRunnerTests::runPowerShell_childBuildsItsOwnModulePath() {
+    const bool had = qEnvironmentVariableIsSet("PSModulePath");
+    const QByteArray saved = qgetenv("PSModulePath");
+    const auto restore = qScopeGuard([had, saved] {
+        if (had) {
+            qputenv("PSModulePath", saved);
+        } else {
+            qunsetenv("PSModulePath");
+        }
+    });
+    const QString planted = QStringLiteral("C:\\sak-powershell7-like-module-path");
+    qputenv("PSModulePath", planted.toLocal8Bit());
+    const auto powershell = sak::runPowerShell(
+        QStringLiteral("'PATH=' + $env:PSModulePath; 'HASH=' + [bool](Get-Command Get-FileHash "
+                       "-ErrorAction SilentlyContinue)"),
+        60'000);
+    QVERIFY2(powershell.std_out.contains(QStringLiteral("PATH=")), qPrintable(powershell.std_err));
+    QVERIFY2(!powershell.std_out.contains(planted), qPrintable(powershell.std_out));
+    QVERIFY2(powershell.std_out.contains(QStringLiteral("HASH=True")),
+             qPrintable(powershell.std_out));
+    const auto other =
+        sak::runProcess(sak::system32Path(QStringLiteral("cmd.exe")),
+                        {QStringLiteral("/c"), QStringLiteral("echo %PSModulePath%")},
+                        30'000);
+    QVERIFY2(other.std_out.contains(planted), qPrintable(other.std_out));
 }
 
 // B5-07: output accumulation must be bounded so a runaway child cannot exhaust
@@ -1069,6 +1126,123 @@ void ProcessRunnerTests::installersAndUninstallersWaitForTheirFamily() {
     const QString offline =
         readRepoSource(QStringLiteral("src/core/offline_deployment_worker.cpp"));
     QVERIFY(offline.contains(QStringLiteral("request.options = packageFamilyOptions()")));
+}
+
+// Security brief 4c: a child of an elevated S.A.K. must not start in (or search for programs in)
+// whatever directory S.A.K. was started from, which can be a folder another account writes to.
+void ProcessRunnerTests::elevatedChildStartsInSystem32WithoutCurrentDirectorySearch() {
+    QProcessEnvironment caller;
+    caller.insert(QStringLiteral("SAK_CALLER_VALUE"), QStringLiteral("kept"));
+    QProcess process;
+    sak::applyElevatedChildDefaults(process, &caller);
+    const QString system32 = QFileInfo(sak::system32Path(QStringLiteral("cmd.exe"))).absolutePath();
+    QVERIFY(!system32.isEmpty());
+    QCOMPARE(QDir::cleanPath(process.workingDirectory()), QDir::cleanPath(system32));
+    const QProcessEnvironment child = process.processEnvironment();
+    QCOMPARE(child.value(QStringLiteral("NoDefaultCurrentDirectoryInExePath")),
+             QStringLiteral("1"));
+    QCOMPARE(child.value(QStringLiteral("SAK_CALLER_VALUE")), QStringLiteral("kept"));
+
+    QProcess inherited;
+    sak::applyElevatedChildDefaults(inherited, nullptr);
+    QCOMPARE(inherited.processEnvironment().value(
+                 QStringLiteral("NoDefaultCurrentDirectoryInExePath")),
+             QStringLiteral("1"));
+    QVERIFY(inherited.processEnvironment().contains(QStringLiteral("PATH")));
+}
+
+// What a person reads of a PowerShell error is its message alone (readablePowerShellError), from
+// records captured on testpc1 (2026-11-13) as S.A.K. runs PowerShell: a CIM cmdlet's (its name in
+// front, the position after), a Write-Error's from a -Command script (the whole script in front),
+// a Storage cmdlet's with its Activity ID, and a .NET method's own exception.
+void ProcessRunnerTests::readablePowerShellErrorKeepsOnlyTheMessage() {
+    QCOMPARE(
+        sak::readablePowerShellError(QStringLiteral(
+            "Get-DnsClientCache : No matching MSFT_DNSClientCache objects found by CIM query for "
+            "instances of the \r\n"
+            "ROOT/StandardCimv2/MSFT_DNSClientCache class on the  CIM server: SELECT * FROM "
+            "MSFT_DNSClientCache  WHERE ((Entry LIKE \r\n"
+            "'sak-not-cached.invalid')) AND ((Type = 1) OR (Type = 28)). Verify query parameters "
+            "and "
+            "retry.\r\n"
+            "At line:1 char:32\r\n"
+            "+ ... nce='Stop'; Get-DnsClientCache -Type A,AAAA -Entry 'sak-not-cached.in ...\r\n"
+            "+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n"
+            "    + CategoryInfo          : ObjectNotFound: (MSFT_DNSClientCache:String) "
+            "[Get-DnsClientCache], CimJobException\r\n"
+            "    + FullyQualifiedErrorId : CmdletizationQuery_NotFound,Get-DnsClientCache\r\n")),
+        QStringLiteral(
+            "No matching MSFT_DNSClientCache objects found by CIM query for instances of the "
+            "ROOT/StandardCimv2/MSFT_DNSClientCache class on the  CIM server: SELECT * FROM "
+            "MSFT_DNSClientCache  WHERE ((Entry LIKE 'sak-not-cached.invalid')) AND ((Type = 1) OR "
+            "(Type = 28)). Verify query parameters and retry."));
+    QCOMPARE(
+        sak::readablePowerShellError(QStringLiteral(
+            "Get-Partition : No MSFT_Partition objects found with property 'DiskNumber' equal to "
+            "'99'.  Verify the value of the \r\n"
+            "property and retry.\r\n"
+            "At line:1 char:2\r\n"
+            "+ (Get-Partition -DiskNumber 99 | Get-Volume | Where-Object {$_.DriveLe ...\r\n"
+            "+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n"
+            "    + CategoryInfo          : ObjectNotFound: (99:UInt32) [Get-Partition], "
+            "CimJobException\r\n"
+            "    + FullyQualifiedErrorId : "
+            "CmdletizationQuery_NotFound_DiskNumber,Get-Partition\r\n")),
+        QStringLiteral(
+            "No MSFT_Partition objects found with property 'DiskNumber' equal to '99'.  Verify the "
+            "value of the property and retry."));
+    QCOMPARE(
+        sak::readablePowerShellError(QStringLiteral(
+            "try {   Checkpoint-Computer -Description 'SAK capture'     -RestorePointType "
+            "'SAK_NOT_A_TYPE'     -ErrorAction Stop    \r\n"
+            " -WarningVariable wv     -WarningAction Continue;   if ($wv) { Write-Error $wv; exit "
+            "1; "
+            "}   Write-Output 'SUCCESS'; } \r\n"
+            "catch {   Write-Error $_.Exception.Message;   exit 1; } : Cannot validate argument on "
+            "parameter 'RestorePointType'. \r\n"
+            "The argument \"SAK_NOT_A_TYPE\" does not belong to the set \r\n"
+            "\"APPLICATION_INSTALL,APPLICATION_UNINSTALL,DEVICE_DRIVER_INSTALL,MODIFY_SETTINGS,"
+            "CANCELLED_OPERATION\" specified by the \r\n"
+            "ValidateSet attribute. Supply an argument that is in the set and then try the command "
+            "again.\r\n"
+            "    + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException\r\n"
+            "    + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException\r\n")),
+        QStringLiteral(
+            "Cannot validate argument on parameter 'RestorePointType'. The argument "
+            "\"SAK_NOT_A_TYPE\" does not belong to the set "
+            "\"APPLICATION_INSTALL,APPLICATION_UNINSTALL,DEVICE_DRIVER_INSTALL,MODIFY_SETTINGS,"
+            "CANCELLED_OPERATION\" specified by the ValidateSet attribute. Supply an argument that "
+            "is in the set and then try the command again."));
+}
+
+// A Storage cmdlet's record (Repair-Volume -Scan of testpc1's stick) loses its Activity ID with its
+// name, and a .NET method's own exception (Check File System's lock, on the stick in use) its
+// "Exception calling" account; nothing that is not a message is left.
+void ProcessRunnerTests::readablePowerShellErrorDropsTheActivityIdAndTheWrapper() {
+    QCOMPARE(
+        sak::readablePowerShellError(
+            QStringLiteral("Repair-Volume : A snapshot error occurred while scanning this drive. "
+                           "Run an offline scan "
+                           "and fix.\r\n"
+                           "Activity ID: {11fe18b0-71ba-0004-e119-fe11ba71dd01}\r\n"
+                           "At line:1 char:1\r\n"
+                           "+ Repair-Volume -DriveLetter D -Scan -ErrorAction Stop\r\n"
+                           "+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n"
+                           "    + CategoryInfo          : NotSpecified: "
+                           "(StorageWMI:ROOT/Microsoft/...age/MSFT_Volume) "
+                           "[Repair-Volume], CimExcepti \r\n"
+                           "   on\r\n"
+                           "    + FullyQualifiedErrorId : StorageWMI 43012,Repair-Volume\r\n")),
+        QStringLiteral(
+            "A snapshot error occurred while scanning this drive. Run an offline scan and fix."));
+    QCOMPARE(sak::readablePowerShellError(QStringLiteral(
+                 "Exception calling \"LockAndDismount\" with \"1\" argument(s): \"D: is in use, so "
+                 "it was not checked. \r\nClose the files and programs using it, then check it "
+                 "again. Nothing was changed.\"\r\nAt line:3 char:932\r\n")),
+             QStringLiteral("D: is in use, so it was not checked. Close the files and programs "
+                            "using it, then check it again. Nothing was changed."));
+    QVERIFY(sak::readablePowerShellError(QString()).isEmpty());
+    QVERIFY(sak::readablePowerShellError(QStringLiteral("At line:1 char:1\r\n")).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(ProcessRunnerTests)

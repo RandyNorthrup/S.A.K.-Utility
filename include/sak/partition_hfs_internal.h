@@ -10324,10 +10324,30 @@ private:
         loadExtentsOverflowLeafRecords();
     }
 
+    // A B-tree's leaves form a list through each node's forward link. A node reached a second time
+    // is a loop -- corruption or a hostile image -- and following it would read the same records
+    // again and again, up to the 200,000-node scan cap, repeating them in whatever the walk builds.
+    [[nodiscard]] bool enterLeafNode(QSet<uint32_t>* visited,
+                                     uint32_t nodeNumber,
+                                     const QString& tree) {
+        if (visited->contains(nodeNumber)) {
+            m_blockers.append(QStringLiteral("HFS+ %1 leaf chain loops back to node %2")
+                                  .arg(tree)
+                                  .arg(nodeNumber));
+            return false;
+        }
+        visited->insert(nodeNumber);
+        return true;
+    }
+
     void loadExtentsOverflowLeafRecords() {
         uint32_t nodeNumber = m_extents.first_leaf_node;
         int visited = 0;
+        QSet<uint32_t> seen;
         while (nodeNumber != 0 && visited < kMaxCatalogLeafNodesToScan) {
+            if (!enterLeafNode(&seen, nodeNumber, QStringLiteral("extents overflow"))) {
+                return;
+            }
             const auto node = readExtentsNode(nodeNumber);
             if (!node.has_value()) {
                 return;
@@ -10682,7 +10702,11 @@ private:
         HfsCatalogScanSummary summary;
         uint32_t nodeNumber = m_catalog.first_leaf_node;
         int visited = 0;
+        QSet<uint32_t> seen;
         while (nodeNumber != 0 && visited < kMaxCatalogLeafNodesToScan) {
+            if (!enterLeafNode(&seen, nodeNumber, QStringLiteral("catalog"))) {
+                return std::nullopt;
+            }
             const auto node = readCatalogNode(nodeNumber);
             if (!node.has_value() ||
                 !scanCatalogLeafNode(*node, nodeNumber, maxRecords, &summary)) {
@@ -10807,7 +10831,11 @@ private:
         }
         uint32_t nodeNumber = attributes.first_leaf_node;
         int visited = 0;
+        QSet<uint32_t> seen;
         while (nodeNumber != 0 && visited < kMaxCatalogLeafNodesToScan) {
+            if (!enterLeafNode(&seen, nodeNumber, QStringLiteral("attributes"))) {
+                return std::nullopt;
+            }
             const auto node = readAttributeNode(attributes, nodeNumber);
             if (!node.has_value() ||
                 !scanAttributeLeafNode(
@@ -11866,6 +11894,25 @@ private:
         return recordType == kHfsCatalogFolderRecord || recordType == kHfsCatalogFileRecord;
     }
 
+    // The catalog leaf @p nodeNumber, next in a leaf-chain walk; nullopt (blocker appended) when
+    // the walk has been there already, the node cannot be read, or it is not a leaf.
+    [[nodiscard]] std::optional<QByteArray> nextCatalogLeaf(QSet<uint32_t>* seen,
+                                                            uint32_t nodeNumber) {
+        if (!enterLeafNode(seen, nodeNumber, QStringLiteral("catalog"))) {
+            return std::nullopt;
+        }
+        auto node = readCatalogNode(nodeNumber);
+        if (!node.has_value()) {
+            return std::nullopt;
+        }
+        if (static_cast<int8_t>(node->at(kBTreeKindOffset)) != kBTreeLeafNode ||
+            static_cast<uint8_t>(node->at(kBTreeHeightOffset)) != 1) {
+            m_blockers.append(QStringLiteral("Invalid HFS+ catalog leaf node"));
+            return std::nullopt;
+        }
+        return node;
+    }
+
     [[nodiscard]] std::optional<QVector<HfsCatalogRecord>> childRecords(uint32_t folderId,
                                                                         int maxEntries) {
         QVector<HfsCatalogRecord> records;
@@ -11877,14 +11924,10 @@ private:
                                                                          : maxEntries;
         uint32_t nodeNumber = m_catalog.first_leaf_node;
         int visited = 0;
+        QSet<uint32_t> seen;
         while (nodeNumber != 0 && visited < kMaxCatalogLeafNodesToScan) {
-            const auto node = readCatalogNode(nodeNumber);
+            const auto node = nextCatalogLeaf(&seen, nodeNumber);
             if (!node.has_value()) {
-                return std::nullopt;
-            }
-            if (static_cast<int8_t>(node->at(kBTreeKindOffset)) != kBTreeLeafNode ||
-                static_cast<uint8_t>(node->at(kBTreeHeightOffset)) != 1) {
-                m_blockers.append(QStringLiteral("Invalid HFS+ catalog leaf node"));
                 return std::nullopt;
             }
             appendChildRecords(*node, nodeNumber, folderId, scanCap, &records);

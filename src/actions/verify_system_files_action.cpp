@@ -150,6 +150,7 @@ ProcessResult VerifySystemFilesAction::runStep(const QString& script,
                                 .args = std::move(invocation.args),
                                 .timeout_ms = timeout_ms,
                                 .on_output = on_output,
+                                .on_started = {},
                                 .should_cancel = cancelled,
                                 .std_in = std::move(invocation.std_in)});
 }

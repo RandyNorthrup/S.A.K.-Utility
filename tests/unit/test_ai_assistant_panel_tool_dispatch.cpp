@@ -1388,6 +1388,34 @@ private Q_SLOTS:
         QVERIFY(!open_memory.contains(QStringLiteral("memory after the switch")));
     }
 
+    // Tab in the message box typed a tab character and kept the keyboard there (fix batch 3's tab
+    // sweep): a keyboard trap, and nobody types a tab into a chat message. Tab moves the focus off
+    // the box and Shift+Tab brings it back, the draft untouched; Ctrl+Enter still makes a new line,
+    // and Enter still sends, which with nothing typed sends nothing and adds no line.
+    void tabMovesTheFocusOffTheMessageBoxAndBack() {
+        AiAssistantPanel panel;
+        panel.resize(1000, 700);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowActive(&panel));
+        QVERIFY(panel.m_messageEdit != nullptr);
+        panel.m_messageEdit->setFocus(Qt::TabFocusReason);
+        QTRY_VERIFY(panel.m_messageEdit->hasFocus());
+        QTest::keyClick(panel.m_messageEdit, Qt::Key_Return);
+        QVERIFY(panel.m_messageEdit->toPlainText().isEmpty());
+        panel.m_messageEdit->setPlainText(QStringLiteral("draft"));
+        QTest::keyClick(panel.m_messageEdit, Qt::Key_Tab);
+        QWidget* next = QApplication::focusWidget();
+        QVERIFY2(next != nullptr && next != panel.m_messageEdit,
+                 qPrintable(next == nullptr ? QStringLiteral("(nothing)")
+                                            : next->accessibleName()));
+        QCOMPARE(panel.m_messageEdit->toPlainText(), QStringLiteral("draft"));
+        QTest::keyClick(next, Qt::Key_Tab, Qt::ShiftModifier);
+        QCOMPARE(QApplication::focusWidget(), panel.m_messageEdit);
+        QTest::keyClick(panel.m_messageEdit, Qt::Key_Return, Qt::ControlModifier);
+        QCOMPARE(panel.m_messageEdit->toPlainText().count(QLatin1Char('\n')), 1);
+        QVERIFY(!panel.m_messageEdit->toPlainText().contains(QLatin1Char('\t')));
+    }
+
     // A fresh panel starts with least privilege: local execution is opt-in.
     void defaultAccessModeIsChatAndResearch() {
         AiAssistantPanel panel;

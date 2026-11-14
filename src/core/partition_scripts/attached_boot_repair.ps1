@@ -32,7 +32,9 @@ function Get-SakAttachedSystemPartition($disk, $partitions, $windowsPartition) {
     "$((Get-Volume -Partition $_ -ErrorAction SilentlyContinue).FileSystemLabel)" -eq 'System Reserved' }) | Select-Object -First 1
   $choice = if ($reserved) { $reserved } else { $windowsPartition }
   Set-Partition -DiskNumber $disk.Number -PartitionNumber $choice.PartitionNumber -IsActive $true -ErrorAction Stop
-  Write-Output "Disk $($disk.Number) had no active partition. Partition $($choice.PartitionNumber) is now active."
+  # To the log, not the pipeline: the caller uses what this returns, and the notice came back
+  # with the partition as an array (audit e4).
+  [Console]::Out.WriteLine("Disk $($disk.Number) had no active partition. Partition $($choice.PartitionNumber) is now active.")
   return Get-Partition -DiskNumber $disk.Number -PartitionNumber $choice.PartitionNumber -ErrorAction Stop
 }
 # The letter this Windows calls its own, from its own registry. Empty when that cannot be read.
@@ -50,6 +52,7 @@ function Get-SakWindowsOwnLetter([string]$windowsRoot) {
   } finally { $ErrorActionPreference = $previous }
 }
 
+if ($sakRepairMode -eq 'BIOS') { Assert-SakBootsectPresent }
 $disk = Get-Disk -Number $sakRepairDisk -ErrorAction Stop
 if ($disk.IsBoot -or $disk.IsSystem) {
   throw "Disk $sakRepairDisk is the disk Windows is running from, so this repair does not run on it. Repair of the running Windows is a separate choice."

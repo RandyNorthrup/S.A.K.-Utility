@@ -334,7 +334,7 @@ try {
         $steps.Add((Invoke-LoggedCommand `
             -Name "ai_ctest_slice" `
             -FilePath "ctest" `
-            -Arguments @("--test-dir", $buildRootPath, "-C", $Configuration, "-R", $ctestRegex, "--no-tests=error", "--output-on-failure") `
+            -Arguments @("--interactive-debug-mode", "0", "--test-dir", $buildRootPath, "-C", $Configuration, "-R", $ctestRegex, "--no-tests=error", "--output-on-failure") `
             -WorkingDirectory $projectRootPath `
             -Environment $ctestEnv `
             -LogPath (Join-Path $logRoot "ai_ctest_slice.log")))

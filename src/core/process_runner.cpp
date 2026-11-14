@@ -16,6 +16,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QThread>
 
@@ -300,6 +301,24 @@ private:
     ContainedProcessRun m_run;
 };
 
+/// Whether this process runs with an elevated token (TokenElevation), asked once.
+bool elevatedProcess() {
+    static const bool kElevated = [] {
+        HANDLE token = nullptr;
+        if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token) == 0) {
+            return false;
+        }
+        TOKEN_ELEVATION elevation{};
+        DWORD size = 0;
+        const bool is_elevated =
+            GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size) != 0 &&
+            elevation.TokenIsElevated != 0;
+        CloseHandle(token);
+        return is_elevated;
+    }();
+    return kElevated;
+}
+
 void retainUnprovenRun(ContainedProcessRun& run, const QString& error) {
     // QProcess::moveToThread must run on the QProcess's own thread, which is this one.
     const QCoreApplication* const application = QCoreApplication::instance();
@@ -312,11 +331,32 @@ void retainUnprovenRun(ContainedProcessRun& run, const QString& error) {
     run = {};
 }
 
+// Windows PowerShell 5.1 started with PowerShell 7's module path (S.A.K. started from a
+// PowerShell 7 window, or CI's) finds 7's Microsoft.PowerShell.Utility first and cannot load
+// Get-FileHash from it (measured), which the partition scripts' tool hash checks call. A Windows
+// PowerShell child gets no PSModulePath and builds its own.
+bool isWindowsPowerShell(const QString& program) {
+    const QString system = systemPowerShellPath();
+    return !system.isEmpty() &&
+           QFileInfo(program).absoluteFilePath().compare(QFileInfo(system).absoluteFilePath(),
+                                                         Qt::CaseInsensitive) == 0;
+}
+
 std::expected<void, QString> startProcess(const ProcessRunRequest& request,
                                           QProcess* proc,
                                           WindowsProcessJob& job) {
-    if (request.environment != nullptr) {
-        proc->setProcessEnvironment(*request.environment);
+    const QProcessEnvironment* environment = request.environment;
+    std::optional<QProcessEnvironment> powerShellEnvironment;
+    if (isWindowsPowerShell(request.program)) {
+        powerShellEnvironment = environment != nullptr ? *environment
+                                                       : QProcessEnvironment::systemEnvironment();
+        powerShellEnvironment->remove(QStringLiteral("PSModulePath"));
+        environment = &*powerShellEnvironment;
+    }
+    if (elevatedProcess()) {
+        applyElevatedChildDefaults(*proc, environment);
+    } else if (environment != nullptr) {
+        proc->setProcessEnvironment(*environment);
     }
     const auto installed = job.installOn(*proc);
     if (!installed) {
@@ -561,6 +601,39 @@ ProcessResult runProcessWithEnvironment(const QString& program,
     });
 }
 
+QString readablePowerShellError(const QString& std_err) {
+    QStringList message;
+    for (const auto& line : std_err.split(QLatin1Char('\n'))) {
+        const QString text = line.trimmed();
+        if (text.startsWith(QStringLiteral("At line:")) ||
+            text.startsWith(QStringLiteral("At C:")) || text.startsWith(QStringLiteral("+ "))) {
+            break;
+        }
+        if (!text.isEmpty()) {
+            message.append(text);
+        }
+    }
+    QString text = message.join(QLatin1Char(' '));
+    // A Write-Error from a script leads with where it was written, the script's own text (from
+    // -Command) or its path, then " : "; a cmdlet's error leads with the cmdlet's name.
+    static const QRegularExpression kCmdletName(QStringLiteral("^[A-Z][A-Za-z]*-[A-Za-z]+ : "));
+    static const QRegularExpression kActivityId(
+        QStringLiteral("\\s*Activity ID: \\{[0-9A-Fa-f-]+\\}\\.?"));
+    const QString position_separator = QStringLiteral(" : ");
+    const qsizetype separator = text.indexOf(position_separator);
+    if (std_err.contains(QStringLiteral("[Write-Error], WriteErrorException")) && separator >= 0) {
+        text.remove(0, separator + position_separator.size());
+    } else {
+        text.remove(kCmdletName);
+    }
+    text.remove(kActivityId);
+    text = text.trimmed();
+    static const QRegularExpression kWrappedCall(
+        QStringLiteral("^Exception calling \"[^\"]*\" with \"\\d+\" argument\\(s\\): \"(.*)\"$"));
+    const auto wrapped = kWrappedCall.match(text);
+    return wrapped.hasMatch() ? wrapped.captured(1) : text;
+}
+
 PowerShellInvocation powerShellInvocation(const QString& script,
                                           bool no_profile,
                                           bool bypass_policy) {
@@ -575,12 +648,19 @@ PowerShellInvocation powerShellInvocation(const QString& script,
         invocation.args << "-Command" << script;
         return invocation;
     }
+    // Dot-sourced, so the script runs in the global scope as a short one does. Called with &, its
+    // $ErrorActionPreference stayed in a child scope the Storage module's cmdlets do not see: a
+    // failed Resize-Partition or Repair-Volume went on to the next line and exited 0 (operation
+    // proof, 2026-11-12, testpc2). The reader's own variables are removed first, so the script
+    // finds only what a short one would, and one variable it would not use.
     invocation.args << "-Command"
                     << QStringLiteral(
                            "$sakReader = New-Object System.IO.StreamReader("
                            "[Console]::OpenStandardInput(), [System.Text.Encoding]::UTF8); "
                            "$sakScript = $sakReader.ReadToEnd(); $sakReader.Dispose(); "
-                           "& ([scriptblock]::Create($sakScript))");
+                           "$sakStdinScriptBlock = [scriptblock]::Create($sakScript); "
+                           "Remove-Variable -Name sakReader, sakScript; "
+                           ". $sakStdinScriptBlock");
     invocation.std_in = script.toUtf8();
     return invocation;
 }
@@ -607,6 +687,8 @@ ProcessResult runPowerShell(const QString& script,
                                .args = std::move(invocation.args),
                                .timeout_ms = timeout_ms,
                                .should_cancel = should_cancel,
+                               .on_output = {},
+                               .on_started = {},
                                .std_in = std::move(invocation.std_in)});
 }
 
@@ -630,6 +712,17 @@ QString system32Path(const QString& relativeExe) {
     }
     return QDir::cleanPath(QString::fromWCharArray(buffer, static_cast<int>(len)) +
                            QLatin1Char('/') + relativeExe);
+}
+
+void applyElevatedChildDefaults(QProcess& process, const QProcessEnvironment* environment) {
+    QProcessEnvironment child = environment != nullptr ? *environment
+                                                       : QProcessEnvironment::systemEnvironment();
+    child.insert(QStringLiteral("NoDefaultCurrentDirectoryInExePath"), QStringLiteral("1"));
+    process.setProcessEnvironment(child);
+    const QString cmd = system32Path(QStringLiteral("cmd.exe"));
+    if (!cmd.isEmpty()) {
+        process.setWorkingDirectory(QFileInfo(cmd).absolutePath());
+    }
 }
 
 QString resolveBareExecutable(const QString& name) {

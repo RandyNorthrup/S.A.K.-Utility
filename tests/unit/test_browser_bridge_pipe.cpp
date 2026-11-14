@@ -4,8 +4,13 @@
 #include "sak/win32mcp/browser_bridge_pipe.h"
 #include "sak/win32mcp/native_messaging.h"
 
+#include "../support/large_allocation_counter.h"
+
+#include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonObject>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QtEndian>
 #include <QtTest/QtTest>
@@ -155,6 +160,8 @@ private Q_SLOTS:
     void send_beforeAnyClientReturnsNotConnected();
     void handshake_refusesForgedTokenAndUnknownType();
     void handshake_refusesProtocolMismatch();
+    void handshake_refusesAnOversizedHelloBeforeReadingIt();
+    void handshake_dropsAForeignPeerBeforeReadingAnything();
     void ancestorChain_boundsDepthAndMatchesImage();
     void handshake_thenCommandReplyRoundTrips();
     void silentPeer_deadlineResetsConnection();
@@ -314,6 +321,132 @@ void BrowserBridgePipeTests::handshake_refusesProtocolMismatch() {
     // protocol gate must leave it at zero. clientConnected() is an instantaneous sample that a
     // peer counted and then dropped would slip past.
     QCOMPARE(server.connectionGeneration(), quint64{0});
+    server.stop();
+}
+
+namespace {
+
+// What a peer's dropped connection looks like from its side: a blocking read that fails. Returns
+// how long the server took to drop it, or -1 if the read returned data (it was not dropped).
+qint64 millisecondsUntilDropped(HANDLE handle) {
+    QElapsedTimer timer;
+    timer.start();
+    char byte = 0;
+    DWORD got = 0;
+    if (ReadFile(handle, &byte, 1, &got, nullptr) != FALSE && got > 0) {
+        return -1;
+    }
+    return timer.elapsed();
+}
+
+// The server's deadline in the two tests below: far longer than the drop they expect, so a server
+// that waits for the peer instead of refusing it is plainly red.
+constexpr DWORD kPatientDeadlineMs = 30'000;
+constexpr qint64 kPromptDropMs = 5000;
+
+}  // namespace
+
+// The hello is the one frame a peer sends before it is trusted, and it was read against the
+// 64 MiB native-messaging limit: a length prefix alone made the server allocate up to 64 MiB and
+// wait out the deadline for a body that never came. A hello over a few KiB is now refused from
+// its length prefix, before anything is allocated.
+void BrowserBridgePipeTests::handshake_refusesAnOversizedHelloBeforeReadingIt() {
+    QTemporaryDir dir;
+    BrowserBridgePipeServer server(
+        testOptions(dir.filePath(QStringLiteral("r.json")), kPatientDeadlineMs));
+    QString error;
+    QVERIFY2(server.start(&error), qPrintable(error));
+    const QString name = server.pipeName();
+
+    constexpr quint32 kClaimedHelloBytes = 60U * 1024U * 1024U;
+    qint64 dropped_after_ms = -1;
+    int large_allocations = 0;
+    {
+        const sak::test::LargeAllocationCounter counter;
+        std::thread client([&] {
+            const HANDLE handle = clientConnect(name);
+            if (handle == INVALID_HANDLE_VALUE) {
+                return;
+            }
+            uchar header[4];
+            qToLittleEndian<quint32>(kClaimedHelloBytes, header);
+            DWORD wrote = 0;
+            if (WriteFile(handle, header, sizeof(header), &wrote, nullptr) != FALSE) {
+                dropped_after_ms = millisecondsUntilDropped(handle);
+            }
+            CloseHandle(handle);
+        });
+        client.join();
+        large_allocations = sak::test::LargeAllocationCounter::count();
+    }
+    QVERIFY2(dropped_after_ms >= 0 && dropped_after_ms < kPromptDropMs,
+             qPrintable(QStringLiteral("dropped after %1 ms").arg(dropped_after_ms)));
+    QVERIFY2(large_allocations == 0,
+             qPrintable(QStringLiteral("%1 allocations of 1 MiB or more for a hello that claimed "
+                                       "%2 bytes")
+                            .arg(large_allocations)
+                            .arg(kClaimedHelloBytes)));
+    QCOMPARE(server.connectionGeneration(), quint64{0});
+
+    verifyGoodHandshakeIsAdmittedExactlyOnce(server, name, server.token());
+    server.stop();
+}
+
+// The peer check ran after the hello was read, so any process that could open the pipe held its
+// single instance for the whole deadline and had the server read what it sent. The peer is now
+// checked the moment it connects: a process that is not the bridge binary is dropped at once, and
+// the real relay is not kept waiting behind it.
+void BrowserBridgePipeTests::handshake_dropsAForeignPeerBeforeReadingAnything() {
+    QTemporaryDir dir;
+    BrowserBridgePipeServer server(
+        testOptions(dir.filePath(QStringLiteral("r.json")), kPatientDeadlineMs));
+    QString error;
+    QVERIFY2(server.start(&error), qPrintable(error));
+    const QString name = server.pipeName();
+    const QString shortName = name.mid(QStringLiteral("\\\\.\\pipe\\").size());
+
+    // Windows PowerShell is the foreign peer: another program, run by the same user. It connects,
+    // sends nothing, and reports when the server hangs up on it.
+    const QString script = QStringLiteral(
+                               "$p = [System.IO.Pipes.NamedPipeClientStream]::new('.', '%1', "
+                               "[System.IO.Pipes.PipeDirection]::InOut); $p.Connect(20000); "
+                               "[Console]::Out.WriteLine('connected'); [Console]::Out.Flush(); "
+                               "$b = [byte[]]::new(256); "
+                               "try { while ($p.Read($b, 0, $b.Length) -gt 0) { } } catch { } "
+                               "[Console]::Out.WriteLine('dropped'); [Console]::Out.Flush()")
+                               .arg(shortName);
+    QProcess peer;
+    peer.start(QDir(qEnvironmentVariable("SystemRoot"))
+                   .filePath(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe")),
+               {QStringLiteral("-NoProfile"),
+                QStringLiteral("-NonInteractive"),
+                QStringLiteral("-Command"),
+                script});
+    QVERIFY2(peer.waitForStarted(10'000), qPrintable(peer.errorString()));
+    QByteArray said;
+    QElapsedTimer startup;
+    startup.start();
+    while (!said.contains("connected") && startup.elapsed() < 30'000) {
+        peer.waitForReadyRead(1000);
+        said += peer.readAllStandardOutput();
+    }
+    QVERIFY2(said.contains("connected"), said.constData());
+    QElapsedTimer sinceConnect;
+    sinceConnect.start();
+    while (!said.contains("dropped") && sinceConnect.elapsed() < kPromptDropMs) {
+        peer.waitForReadyRead(250);
+        said += peer.readAllStandardOutput();
+    }
+    const bool dropped = said.contains("dropped");
+    peer.kill();
+    peer.waitForFinished(5000);
+    QVERIFY2(dropped,
+             qPrintable(QStringLiteral("a foreign peer still held the pipe %1 ms after it "
+                                       "connected")
+                            .arg(sinceConnect.elapsed())));
+    QCOMPARE(server.connectionGeneration(), quint64{0});
+
+    verifyGoodHandshakeIsAdmittedExactlyOnce(server, name, server.token());
     server.stop();
 }
 

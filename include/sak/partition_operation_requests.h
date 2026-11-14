@@ -17,6 +17,7 @@
 #include <QVector>
 
 #include <cstdint>
+#include <expected>
 #include <optional>
 
 namespace sak {
@@ -67,6 +68,39 @@ struct BackupRestoreChoices {
 
 [[nodiscard]] QJsonObject resizePartitionPayload(uint64_t target_size_bytes,
                                                  uint64_t adjacent_free_bytes);
+
+/// A Resize carries the file system the scan it is queued from found on the partition, unless it
+/// names one itself: the script checks the partition still holds it just before it resizes, and
+/// the safety validator refuses a resize whose file system is unknown or not the one it names.
+void bindResizeFileSystem(const PartitionInventory& inventory, PartitionOperation* operation);
+
+/// Why @p backup_directory cannot take a backup of @p needed_bytes, in plain words, or empty: it
+/// must exist and be a real folder reached through no junction or symbolic link (the no-follow
+/// rule for a folder S.A.K. writes into as administrator), with room for the files (0: room not
+/// checked). A folder that did not exist was accepted and refused only by the script at Apply
+/// ("Backup directory does not exist"; secfix, on the VM, 2026-11-11); the script still checks.
+[[nodiscard]] QString backupDirectoryBlocker(const QString& backup_directory,
+                                             uint64_t needed_bytes);
+
+/// backupDirectoryBlocker for a queued operation that keeps a backup (Reformat for New Serial
+/// Number, Cluster Size, Allocate Free Space, Move, and the other backup-and-recreate
+/// operations): its backup_directory, and room for what the partition's volume holds (and the
+/// donor's, for Allocate Free Space), as @p inventory has them. Empty when it keeps no backup.
+[[nodiscard]] QString queuedBackupBlocker(const PartitionInventory& inventory,
+                                          const PartitionOperation& operation);
+
+/// What the assistant's partition.apply_operation and preview_operation run for a model's request:
+/// the operation it states, with what only the app may set derived by the app. A model states
+/// intent: the target, the file system, sizes and labels the tool documents. The partition's
+/// identity, the file system a resize or a check acts on (from @p inventory), the routing to a
+/// bundled tool and the raw partition path it writes, and the destructive-change confirmation are
+/// the app's: the person confirms the operation in the app's own dialog before it runs. A payload
+/// that carries any of those is refused, as is a target that does not match the scan.
+[[nodiscard]] std::expected<PartitionOperation, QString> assistantPartitionOperation(
+    PartitionOperationType type,
+    const PartitionTarget& target,
+    const QJsonObject& payload,
+    const PartitionInventory& inventory);
 
 /// Adds what moving a partition's start needs to a resize's payload, or starts a payload for it.
 void addMovePartitionFields(QJsonObject* payload,

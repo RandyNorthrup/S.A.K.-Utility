@@ -299,14 +299,14 @@ try {
     $rawTarget = "\\?\GLOBALROOT\Device\Harddisk$DiskNumber\Partition$($partition.PartitionNumber)"
 
     Invoke-NativeCommand -Name "mke2fs-format-$FileSystem" -FilePath $mke2fs.path -Arguments @("-q", "-t", $FileSystem, "-F", "-L", "SAKEXTVM", $rawTarget) | Out-Null
-    Invoke-NativeCommand -Name "e2fsck-repair-clean-$FileSystem" -FilePath $e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Out-Null
-    Invoke-NativeCommand -Name "e2fsck-readonly-after-format-$FileSystem" -FilePath $e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
+    Invoke-NativeCommand -Name "e2fsck-repair-clean-$FileSystem" -FilePath $e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Assert-SakE2fsckPassed | Out-Null
+    Invoke-NativeCommand -Name "e2fsck-readonly-after-format-$FileSystem" -FilePath $e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Assert-SakE2fsckPassed | Out-Null
 
     $grownSize = [uint64]$partition.Size + [uint64]$GrowByBytes
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $grownSize
     Update-HostStorageCache -ErrorAction Stop
     Invoke-NativeCommand -Name "resize2fs-grow-$FileSystem" -FilePath $resize2fs.path -Arguments @($rawTarget) | Out-Null
-    Invoke-NativeCommand -Name "e2fsck-readonly-after-grow-$FileSystem" -FilePath $e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
+    Invoke-NativeCommand -Name "e2fsck-readonly-after-grow-$FileSystem" -FilePath $e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Assert-SakE2fsckPassed | Out-Null
 
     if ($ShrinkByBytes -le 0 -or $ShrinkByBytes -ge $grownSize) {
         throw "ShrinkByBytes must be smaller than the grown partition size."
@@ -316,11 +316,11 @@ try {
         throw "ShrinkByBytes must leave the shrunk partition larger than the initial partition."
     }
     $shrunkKilobytes = [uint64][Math]::Floor([double]$shrunkSize / 1KB)
-    Invoke-NativeCommand -Name "e2fsck-repair-before-shrink-$FileSystem" -FilePath $e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Out-Null
+    Invoke-NativeCommand -Name "e2fsck-repair-before-shrink-$FileSystem" -FilePath $e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Assert-SakE2fsckPassed | Out-Null
     Invoke-NativeCommand -Name "resize2fs-shrink-$FileSystem" -FilePath $resize2fs.path -Arguments @("-p", $rawTarget, "$($shrunkKilobytes)K") | Out-Null
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $shrunkSize
     Update-HostStorageCache -ErrorAction Stop
-    Invoke-NativeCommand -Name "e2fsck-readonly-after-shrink-$FileSystem" -FilePath $e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
+    Invoke-NativeCommand -Name "e2fsck-readonly-after-shrink-$FileSystem" -FilePath $e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Assert-SakE2fsckPassed | Out-Null
 
     $after = Get-DiskSnapshot -Number $DiskNumber
 

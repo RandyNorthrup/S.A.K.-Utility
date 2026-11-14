@@ -20,6 +20,13 @@ file(MAKE_DIRECTORY "${TEST_OUTPUT_DIR}")
 # windeployqt placed in build/Release/.  Using the config-specific property
 # (RUNTIME_OUTPUT_DIRECTORY_RELEASE) avoids the extra subdirectory.
 set(SAK_MAIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/Release")
+# A Debug build's tests sit beside its sak_utility.exe too (build/Debug), as the Release tests do:
+# tests that start the elevated helper or load sak_script_types.dll find them beside themselves.
+# In build/tests/Debug they did not, and the Debug+ASan nightly on 9170b149 failed
+# test_elevation_hardening ("helper is missing") and test_script_types for it. Every test target
+# here takes this unless it names its own Debug folder.
+set(SAK_DEBUG_OUTPUT_DIR "${CMAKE_BINARY_DIR}/Debug")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG "${SAK_DEBUG_OUTPUT_DIR}")
 
 # Product code a test exercises comes from the static product libraries declared in the root
 # CMakeLists.txt (sak_foundation and the layers above it): a test target lists its own test
@@ -136,6 +143,21 @@ else()
     message(FATAL_ERROR
         "qoffscreen.dll not found next to Qt6::Core - the GUI test suites "
         "force QT_QPA_PLATFORM=offscreen and would abort at startup")
+endif()
+# The same two for a Debug build, whose tests sit in build/Debug beside its program (see
+# CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG above) and load Qt's Debug DLLs: Qt6Testd.dll, and
+# qoffscreend.dll, since windeployqt deploys only qwindowsd.dll there and Qt looks for the platform
+# plugin beside the program. A Qt without Debug DLLs cannot build Debug at all, so their absence
+# is not an error here.
+get_target_property(_qt_test_dll_debug Qt6::Test IMPORTED_LOCATION_DEBUG)
+if(_qt_test_dll_debug AND EXISTS "${_qt_test_dll_debug}")
+    file(COPY "${_qt_test_dll_debug}" DESTINATION "${SAK_DEBUG_OUTPUT_DIR}")
+    message(STATUS "Deployed ${_qt_test_dll_debug} -> ${SAK_DEBUG_OUTPUT_DIR}")
+endif()
+if(_qt_bin_dir AND EXISTS "${_qt_bin_dir}/../plugins/platforms/qoffscreend.dll")
+    file(COPY "${_qt_bin_dir}/../plugins/platforms/qoffscreend.dll"
+         DESTINATION "${SAK_DEBUG_OUTPUT_DIR}/platforms")
+    message(STATUS "Deployed qoffscreend.dll for headless Debug GUI tests")
 endif()
 
 # ============================================================================
@@ -318,6 +340,7 @@ set(SAK_PARTITION_CORE_RUNTIME_SOURCES
     ../src/core/file_recovery_engine.cpp
     ../src/core/apfs_crypto.cpp
     ../src/core/apfs_keybag.cpp
+    ../src/core/bounded_inflate.cpp
     ../src/core/partition_apfs_file_system_reader.cpp
     ../src/core/partition_apfs_writer.cpp
     ../src/core/partition_ext_file_system_reader.cpp
@@ -344,6 +367,8 @@ set(SAK_PARTITION_CORE_RUNTIME_SOURCES
     ../src/core/partition_operation_queue.cpp
     ${SAK_PROCESS_RUNNER_SOURCES}
     ../src/core/logger.cpp
+    ../src/core/log_file_sink.cpp
+    ../src/core/no_follow_fs.cpp
     ../include/sak/partition_executor.h
     ../include/sak/partition_manager_types.h
     ../include/sak/partition_file_system_detector.h
@@ -391,6 +416,8 @@ target_compile_definitions(test_partition_manager_core PRIVATE
 add_test(NAME test_partition_manager_core COMMAND test_partition_manager_core
          -o "${TEST_OUTPUT_DIR}/test_partition_manager_core.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# It loads sak_script_types.dll, which sak_utility's post-build step puts beside the program.
+add_dependencies(test_partition_manager_core sak_utility)
 # About 3x the measured 201 s (Wave 69 serial run). COST makes a parallel run start the
 # longest test first instead of leaving it as the tail.
 set_tests_properties(test_partition_manager_core PROPERTIES TIMEOUT 600 COST 201)
@@ -502,6 +529,7 @@ message(STATUS "Added unit test: test_elevated_helper_connection")
 # test_partition_operation_requests - what the panel and the certification step both queue
 add_executable(test_partition_operation_requests
     unit/test_partition_operation_requests.cpp
+    support/junction_fixture.h
 )
 set_target_properties(test_partition_operation_requests PROPERTIES
     AUTOMOC ON
@@ -553,15 +581,22 @@ set(SAK_PARTITION_LIVE_CERTIFIER_SOURCES
     certification/partition_manager_scenario_step.h
     ${SAK_PARTITION_CORE_RUNTIME_SOURCES}
     ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
+    ../src/core/app_paths.cpp
     ../src/core/elevation_manager.cpp
+    ../src/core/program_integrity.cpp
     ../src/core/file_hash.cpp
     ../src/core/partition_manager_controller.cpp
     ../src/core/partition_report_generator.cpp
     ../include/sak/elevation_manager.h
     ../include/sak/file_hash.h
     ../include/sak/partition_manager_controller.h
+    # The assistant's create_restore_point engine, which the operation proof runs in-process.
+    ../src/core/restore_point_manager.cpp
+    ../include/sak/restore_point_manager.h
 )
 add_executable(partition_manager_live_certifier ${SAK_PARTITION_LIVE_CERTIFIER_SOURCES})
+# It compiles program_integrity.cpp itself, which includes the script-types pin.
+add_dependencies(partition_manager_live_certifier sak_script_types)
 set_target_properties(partition_manager_live_certifier PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
@@ -659,6 +694,7 @@ add_executable(partition_filesystem_probe_certifier
     certification/partition_filesystem_probe_certifier.cpp
     ../src/core/apfs_crypto.cpp
     ../src/core/apfs_keybag.cpp
+    ../src/core/bounded_inflate.cpp
     ../src/core/partition_apfs_file_system_reader.cpp
     ../src/core/partition_apfs_writer.cpp
     ../src/core/partition_file_system_detector.cpp
@@ -676,7 +712,7 @@ set_target_properties(partition_filesystem_probe_certifier PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(partition_filesystem_probe_certifier PRIVATE
-    Qt6::Core sak_lzfse
+    Qt6::Core ZLIB::ZLIB sak_lzfse
 )
 target_include_directories(partition_filesystem_probe_certifier PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -709,8 +745,11 @@ add_executable(file_management_live_certifier
     ../src/core/file_hash.cpp
     ../src/core/file_management_file_system.cpp
     ../src/core/logger.cpp
+    ../src/core/log_file_sink.cpp
+    ../src/core/no_follow_fs.cpp
     ../src/core/apfs_crypto.cpp
     ../src/core/apfs_keybag.cpp
+    ../src/core/bounded_inflate.cpp
     ../src/core/partition_apfs_file_system_reader.cpp
     ../src/core/partition_apfs_writer.cpp
     ../src/core/partition_ext_file_system_reader.cpp
@@ -767,6 +806,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/flash_live_certifier.cpp")
         ../src/core/file_hash.cpp
         ../src/core/keep_awake.cpp
         ../src/core/logger.cpp
+        ../src/core/log_file_sink.cpp
+        ../src/core/no_follow_fs.cpp
         ../include/sak/flash_worker.h
         ../include/sak/image_source.h
         ../include/sak/worker_base.h
@@ -1687,6 +1728,11 @@ target_link_libraries(test_main_window_help PRIVATE
 target_include_directories(test_main_window_help PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+# The About tab's testing line is checked against the certification document's generated "What
+# the site may say" block, read at test time.
+target_compile_definitions(test_main_window_help PRIVATE
+    SAK_CERTIFICATION_DOC="${CMAKE_CURRENT_SOURCE_DIR}/../docs/PARTITION_MANAGER_CERTIFICATION.md"
+)
 add_test(NAME test_main_window_help COMMAND test_main_window_help
          -o "${TEST_OUTPUT_DIR}/test_main_window_help.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -1716,8 +1762,11 @@ target_include_directories(test_app_theme PRIVATE
 add_test(NAME test_app_theme COMMAND test_app_theme
          -o "${TEST_OUTPUT_DIR}/test_app_theme.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# 21 s in Release, but 1182 s and 1760 s under Debug + ASan on the last two nightlies (9aa97f95,
+# 9170b149), the slowest suite there by far: the default limit, scaled, would be 1500 s. 600 s
+# scaled is 3000 s, 1.7 times the slower of the two.
 set_tests_properties(test_app_theme PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 600)
 message(STATUS "Added unit test: test_app_theme")
 
 # test_theme_widget_states - what the theme draws for checked, selected, disabled, focused and
@@ -2484,6 +2533,29 @@ add_test(NAME test_fuzz_hfs_reader COMMAND test_fuzz_hfs_reader
          -o "${TEST_OUTPUT_DIR}/test_fuzz_hfs_reader.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_fuzz_hfs_reader")
+
+# test_bounded_inflate - inflateZlibExactly, the one zlib decode the APFS and HFS+ decmpfs readers
+# and the PST 4K block reader share: exact size, refusal past it, and a 64 MiB bomb that declares
+# 4 KiB decoded without one allocation of 1 MiB or more.
+add_executable(test_bounded_inflate
+    unit/test_bounded_inflate.cpp
+    support/large_allocation_counter.h
+)
+set_target_properties(test_bounded_inflate PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_bounded_inflate PRIVATE
+    sak_partition_fs
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_bounded_inflate PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_bounded_inflate COMMAND test_bounded_inflate
+         -o "${TEST_OUTPUT_DIR}/test_bounded_inflate.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_bounded_inflate")
 
 # test_fuzz_apfs_reader - deterministic mutation-fuzz of the read-only APFS container reader
 # (G14-7). An APFS container has a 64 MiB floor, so instead of whole-buffer mutation the harness
@@ -3833,6 +3905,7 @@ message(STATUS "Added unit test: test_streaming_decompressor")
 # test_logger - initialization, level filtering, file output, thread safety
 add_executable(test_logger
     unit/test_logger.cpp
+    support/junction_fixture.h
 )
 set_target_properties(test_logger PROPERTIES
     AUTOMOC ON
@@ -3849,6 +3922,143 @@ add_test(NAME test_logger COMMAND test_logger
          -o "${TEST_OUTPUT_DIR}/test_logger.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_logger")
+
+# test_logger_concurrency - the logger's lock, through an in-memory sink (also the WSL TSan row)
+add_executable(test_logger_concurrency
+    unit/test_logger_concurrency.cpp
+)
+set_target_properties(test_logger_concurrency PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_logger_concurrency PRIVATE
+    sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_logger_concurrency PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_logger_concurrency COMMAND test_logger_concurrency
+         -o "${TEST_OUTPUT_DIR}/test_logger_concurrency.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_logger_concurrency")
+
+# test_no_follow_fs - junctions never redirect a held directory, a staged write or a tree delete
+add_executable(test_no_follow_fs
+    unit/test_no_follow_fs.cpp
+    support/junction_fixture.h
+)
+set_target_properties(test_no_follow_fs PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_no_follow_fs PRIVATE
+    sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_no_follow_fs PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_no_follow_fs COMMAND test_no_follow_fs
+         -o "${TEST_OUTPUT_DIR}/test_no_follow_fs.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_no_follow_fs")
+
+# test_program_integrity - what an elevation accepts from the program folder (security brief 4c/4d)
+add_executable(test_program_integrity
+    unit/test_program_integrity.cpp
+    support/junction_fixture.h
+)
+set_target_properties(test_program_integrity PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_program_integrity PRIVATE
+    sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_program_integrity PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+# It reads the built programs' load configuration (/DEPENDENTLOADFLAG), so they are built first.
+add_dependencies(test_program_integrity
+    sak_utility sak_elevated_helper sak_apfs_writer_cli sak_hfs_writer_cli)
+add_test(NAME test_program_integrity COMMAND test_program_integrity
+         -o "${TEST_OUTPUT_DIR}/test_program_integrity.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_program_integrity")
+
+# test_script_types - sak_script_types.dll in Windows PowerShell 5.1 (security brief 4a/4b)
+add_executable(test_script_types
+    unit/test_script_types.cpp
+    support/junction_fixture.h
+)
+set_target_properties(test_script_types PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_script_types PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_script_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+# The DLL it loads is copied beside the program by sak_utility's post-build step.
+add_dependencies(test_script_types sak_utility)
+add_test(NAME test_script_types COMMAND test_script_types
+         -o "${TEST_OUTPUT_DIR}/test_script_types.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_script_types")
+
+# test_fat_volumes - the no-follow primitive, the program-file check and the scripts' SafeFiles on
+# real FAT32 and exFAT volumes (two small VHDX files it makes and mounts). Needs administrator and
+# SAK_TEST_ALLOW_REAL_HARDWARE=1: CI's elevated step runs it, and it skips everywhere else.
+add_executable(test_fat_volumes
+    unit/test_fat_volumes.cpp
+)
+set_target_properties(test_fat_volumes PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_fat_volumes PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_fat_volumes PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+# It copies sak_script_types.dll, which sak_utility's post-build step puts beside the program.
+add_dependencies(test_fat_volumes sak_utility)
+add_test(NAME test_fat_volumes COMMAND test_fat_volumes
+         -o "${TEST_OUTPUT_DIR}/test_fat_volumes.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_fat_volumes")
+
+# test_raw_partition_write - the C++ and the scripts' partition writers on real NTFS, FAT32 and
+# exFAT partitions (three small VHDX files it makes and mounts): the last sectors are reached and
+# a partition in use is refused. Needs administrator and SAK_TEST_ALLOW_REAL_HARDWARE=1: CI's
+# elevated step runs it, and it skips everywhere else.
+add_executable(test_raw_partition_write
+    unit/test_raw_partition_write.cpp
+)
+set_target_properties(test_raw_partition_write PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_raw_partition_write PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_raw_partition_write PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+# It loads sak_script_types.dll, which sak_utility's post-build step puts beside the program.
+add_dependencies(test_raw_partition_write sak_utility)
+add_test(NAME test_raw_partition_write COMMAND test_raw_partition_write
+         -o "${TEST_OUTPUT_DIR}/test_raw_partition_write.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_raw_partition_write")
 
 # ============================================================================
 # Unit Tests - Offline Deployment
@@ -4141,6 +4351,10 @@ target_link_libraries(test_check_disk_errors_action PRIVATE
 target_include_directories(test_check_disk_errors_action PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+
+# It runs the removable drive's read-only check, which loads sak_script_types.dll, against
+# stand-ins; sak_utility's post-build step puts the DLL beside the program.
+add_dependencies(test_check_disk_errors_action sak_utility)
 
 add_test(NAME test_check_disk_errors_action
          COMMAND test_check_disk_errors_action
@@ -4705,6 +4919,7 @@ message(STATUS "Added unit test: test_app_installation_busy")
 # test_user_profile_restore_worker - Restore flow, conflict resolution, signals (TST-06)
 add_executable(test_user_profile_restore_worker
     unit/test_user_profile_restore_worker.cpp
+    support/junction_fixture.h
 )
 set_target_properties(test_user_profile_restore_worker PROPERTIES
     AUTOMOC ON
@@ -5351,6 +5566,7 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_pipe.cpp")
 endif()
     add_executable(test_browser_bridge_pipe
         unit/test_browser_bridge_pipe.cpp
+        support/large_allocation_counter.h
     )
     set_target_properties(test_browser_bridge_pipe PROPERTIES
         AUTOMOC ON
@@ -5772,6 +5988,7 @@ message(STATUS "Added unit test: test_network_adapter_inspector")
 # Links the whole tool set the controller owns; none of the tests start a tool.
 add_executable(test_network_diagnostic_controller
     unit/test_network_diagnostic_controller.cpp
+    support/tcp_listeners.h
 )
 set_target_properties(test_network_diagnostic_controller PROPERTIES
     AUTOMOC ON
@@ -5859,6 +6076,7 @@ message(STATUS "Added unit test: test_wifi_analyzer")
 # per-instance firewall-rule-name seam (composeFirewallRuleName uniqueness).
 add_executable(test_bandwidth_tester
     unit/test_bandwidth_tester.cpp
+    support/tcp_listeners.h
 )
 set_target_properties(test_bandwidth_tester PROPERTIES
     AUTOMOC ON
@@ -6452,6 +6670,8 @@ message(STATUS "Added unit test: test_email_search_worker")
 # test_email_export_worker - config, result, format coverage
 add_executable(test_email_export_worker
     unit/test_email_export_worker.cpp
+    support/pst_store_builder.h
+    support/junction_fixture.h
 )
 set_target_properties(test_email_export_worker PROPERTIES
     AUTOMOC ON
@@ -6614,6 +6834,8 @@ message(STATUS "Added unit test: test_email_report_generator")
 # app's zip engine (QZipWriter builds the hostile fixtures). No network at runtime.
 add_executable(test_package_internalization_engine
     unit/test_package_internalization_engine.cpp
+    support/large_allocation_counter.h
+    support/loopback_http_server.h
 )
 set_target_properties(test_package_internalization_engine PROPERTIES
     AUTOMOC ON
@@ -6964,6 +7186,22 @@ add_test(NAME test_run_ctest_no_dialogs
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_ctest_no_dialogs.ps1")
 set_tests_properties(test_run_ctest_no_dialogs PROPERTIES TIMEOUT 120)
 
+# Every ctest call in the workflows and scripts/ passes --interactive-debug-mode 0, so a test that
+# cannot load a DLL exits at once instead of waiting on a Windows error box; the one exemption is
+# the nightly's Debug + ASan step, which keeps its crash dumps.
+add_test(NAME test_check_ctest_error_mode
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_check_ctest_error_mode.ps1")
+set_tests_properties(test_check_ctest_error_mode PROPERTIES TIMEOUT 120)
+
+# The import check the CI jobs run before their tests: a real writer CLI without its DLLs is named
+# with each, with them it passes, and with its zlib DLL removed again that DLL is named.
+add_test(NAME test_check_program_imports
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_check_program_imports.ps1"
+                 -CliPath "$<TARGET_FILE:sak_apfs_writer_cli>")
+set_tests_properties(test_check_program_imports PROPERTIES TIMEOUT 120)
+
 # The CI toolchain's pinned downloads: an outage is retried, a 4xx or a wrong file is refused, and a
 # cached copy is used only when it is the pinned file.
 add_test(NAME test_pinned_download
@@ -7128,6 +7366,20 @@ add_test(NAME test_new_partition_manager_automation_vm_security_windows_powershe
 set_tests_properties(
     test_new_partition_manager_automation_vm_security_windows_powershell PROPERTIES TIMEOUT 120)
 
+# No script in scripts/ takes a disk down within 15 s of an online scan (volsnap, 2026-11-12):
+# every scan sits in a try whose finally is the readback's Wait-RbVolumeScanSettle. Script text and
+# stand-ins only; nothing touches a disk.
+add_test(NAME test_partition_manager_scan_settle
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_scan_settle.ps1")
+set_tests_properties(test_partition_manager_scan_settle PROPERTIES TIMEOUT 120)
+
+add_test(NAME test_partition_manager_scan_settle_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_scan_settle.ps1")
+set_tests_properties(test_partition_manager_scan_settle_windows_powershell PROPERTIES TIMEOUT 120)
+
 add_test(NAME test_false_green_command_propagation
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
@@ -7182,16 +7434,66 @@ add_test(NAME test_run_folder_retention_windows_powershell
 set_tests_properties(test_run_folder_retention test_run_folder_retention_windows_powershell
                      PROPERTIES TIMEOUT 60)
 
+# check_powershell_syntax.ps1, the T1 and T2 gate, under both hosts the hook and CI call it from:
+# what it refuses (an exit code read after a native command's pipeline is cut short, one variable
+# under two casings) and what it passes.
+add_test(NAME test_powershell_syntax_gate
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_powershell_syntax_gate.ps1")
+add_test(NAME test_powershell_syntax_gate_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_powershell_syntax_gate.ps1")
+set_tests_properties(test_powershell_syntax_gate test_powershell_syntax_gate_windows_powershell
+                     PROPERTIES TIMEOUT 120)
+
+# bundle_smartmontools.ps1 accepts a pinned smartctl.exe in a fresh PowerShell 7 session and rewrites
+# no tracked file. The re-bundle downloads the pinned installer, so it runs in T4 only.
+add_test(NAME test_bundle_smartmontools
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_bundle_smartmontools.ps1")
+add_test(NAME test_bundle_smartmontools_rebundle
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_bundle_smartmontools.ps1" -Rebundle)
+set_tests_properties(test_bundle_smartmontools PROPERTIES TIMEOUT 60)
+set_tests_properties(test_bundle_smartmontools_rebundle PROPERTIES TIMEOUT 300)
+
 add_test(NAME test_verify_authenticode_signatures
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_verify_authenticode_signatures.ps1")
 set_tests_properties(test_verify_authenticode_signatures PROPERTIES TIMEOUT 120)
+
+# sign-exe.ps1 pins who signed the Artifact Signing dlib (Microsoft) and the exe it signed (the
+# project publisher): the checks against real signed files, and sign-exe.ps1 run in a sandbox up
+# to its dlib check with a stand-in az. Needs a Windows SDK signtool, as sign-exe.ps1 does.
+add_test(NAME test_sign_exe_signers
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sign_exe_signers.ps1")
+set_tests_properties(test_sign_exe_signers PROPERTIES TIMEOUT 120)
 
 add_test(NAME test_stage_portable_release
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
                  -BuildDirectory "${CMAKE_BINARY_DIR}" -SkipArchiveContracts)
 set_tests_properties(test_stage_portable_release PROPERTIES TIMEOUT 240)
+
+# Defender must find nothing in the tests and scripts trees or in the program folder a package is
+# staged from: it quarantined a test fixture on testpc2 (2026-11-11), and a flagged file breaks
+# any builder, CI runner or technician PC with Defender on.
+add_test(NAME test_defender_clean
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_defender_clean.ps1"
+                 "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts"
+                 "$<TARGET_FILE_DIR:sak_utility>")
+set_tests_properties(test_defender_clean PROPERTIES TIMEOUT 900)
+
+# ... and never passes where Defender is not running: with its antivirus answering "off" it fails,
+# or with -AllowMissingDefender passes saying nothing was scanned (the nightly turns that into a
+# warning). Starts no scan, so it runs in T2.
+add_test(NAME test_defender_clean_status
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_defender_clean_status.ps1")
+set_tests_properties(test_defender_clean_status PROPERTIES TIMEOUT 120)
 
 add_test(NAME test_release_archive_recovery
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -7357,13 +7659,16 @@ set(_sak_labels_product
     test_partition_image_volume_lock_offline_whole_disk
     test_partition_image_volume_lock_offline_selected_partition)
 set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_dependencies
-    test_verify_authenticode_signatures)
+    test_verify_authenticode_signatures test_sign_exe_signers)
 set(_sak_labels_tooling
     test_process_capture test_process_capture_windows_powershell test_assert_built_target
-    test_run_ctest_no_dialogs test_pinned_download test_run_lizard_js_baseline
+    test_run_ctest_no_dialogs test_check_ctest_error_mode test_check_program_imports
+    test_pinned_download test_run_lizard_js_baseline
     test_cppcheck_qt_slot_classifier
     test_dialog_buttons_deferred
-    test_run_folder_retention test_run_folder_retention_windows_powershell)
+    test_run_folder_retention test_run_folder_retention_windows_powershell
+    test_powershell_syntax_gate test_powershell_syntax_gate_windows_powershell
+    test_bundle_smartmontools test_defender_clean_status)
 set(_sak_labels_cert test_apple_filesystem_capability_matrix
     test_partition_manager_code_digest test_partition_manager_row_evidence
     test_partition_manager_certification_status test_partition_manager_matrix_generated
@@ -7377,7 +7682,8 @@ set(_sak_labels_tooling_extended
     test_process_capture_stdin test_process_capture_stdin_windows_powershell
     test_process_capture_environment test_process_capture_environment_windows_powershell
     test_false_green_command_propagation test_false_green_command_propagation_windows_powershell
-    test_stage_portable_release test_release_archive_recovery test_linux_iso_catalog_live)
+    test_stage_portable_release test_release_archive_recovery test_linux_iso_catalog_live
+    test_bundle_smartmontools_rebundle test_defender_clean)
 set(_sak_labels_mutation test_mutation_runner)
 set(_sak_labels_coverage test_coverage_runners test_coverage_runners_windows_powershell)
 set(_sak_labels_tidy test_clang_tidy_naming_gate)
@@ -7386,7 +7692,8 @@ set(_sak_labels_cert_tooling
     test_partition_manager_live_certifier test_partition_filesystem_probe_certifier
     test_file_management_live_certifier_gate
     test_new_partition_manager_automation_vm_security
-    test_new_partition_manager_automation_vm_security_windows_powershell)
+    test_new_partition_manager_automation_vm_security_windows_powershell
+    test_partition_manager_scan_settle test_partition_manager_scan_settle_windows_powershell)
 # Fuzz suites are product tests that also carry `fuzz`. One measured over the 60-second T2 fuzz
 # budget (about 127 s serially), so it runs in T4 under fuzz-extended instead of product.
 set(_sak_labels_fuzz_extended test_fuzz_backup_codec)
@@ -7420,11 +7727,14 @@ set(_sak_lock_image_scratch test_partition_manager_core)
 # VS2022 configure/build fixtures and archive recovery zips and re-verifies the whole package.
 # Alone they take about 110 s and 76 s; started together with the other heavy tests by a
 # -j 8 run, both crossed their 180 s limits (2026-10-24). The limits stay; the overlap goes.
+# test_dedicated_threads times how soon Windows' shared thread pool starts a job while its own
+# spinners hold two cores; under a -j 4 T2 shard the neighbours' load made that time the test's,
+# and it failed once on unchanged code (PR #3, 2026-11-10).
 set(_sak_run_serial
     test_process_capture_deadline test_process_capture_deadline_windows_powershell
     test_startup_budget test_windows_process_job test_resource_soak
     test_ai_mcp_stdio_session test_ai_mcp_session_pool
-    test_source_fingerprint test_release_archive_recovery)
+    test_source_fingerprint test_release_archive_recovery test_dedicated_threads)
 
 # ============================================================================
 # Test hardware guard
@@ -7445,6 +7755,56 @@ foreach(_sak_guard_target IN LISTS _sak_guard_targets)
 endforeach()
 
 get_property(_sak_label_tests DIRECTORY PROPERTY TESTS)
+
+# Every test has a time limit. ctest has none of its own here (no include(CTest), so no
+# DART_TESTING_TIMEOUT), and a test that sets none waits as long as whatever it waits on: on the
+# 9170b149 nightly (43277300774) test_sak_apfs_writer_cli and test_sak_hfs_writer_cli waited on a
+# writer CLI that could not load zd.dll until the job's 330-minute limit ended the whole job; they
+# were two of 283 tests with none. A test that sets none above gets this one: 300 s is 4.7 times
+# the slowest of them in Release (test_file_explorer_archive_service, 64 s on a workstation) and,
+# scaled below, 7 times the slowest under Debug + ASan (test_file_management_explorer_panel, 204 s on
+# that nightly). A test that needs longer sets its own where it is added, as test_app_theme does.
+# ctest 4.4.5 ends the test's whole process tree at its limit, a program the test started included
+# (measured 2026-11-12 with a test whose child slept 90 s holding its output: ended at 8 s, its
+# limit, and no process left).
+set(SAK_TEST_DEFAULT_TIMEOUT 300)
+foreach(_sak_test IN LISTS _sak_label_tests)
+    get_test_property(${_sak_test} TIMEOUT _sak_timeout)
+    if(NOT _sak_timeout)
+        set_tests_properties(${_sak_test} PROPERTIES TIMEOUT ${SAK_TEST_DEFAULT_TIMEOUT})
+    endif()
+endforeach()
+
+# Every TIMEOUT above was set against the Release build. Debug + AddressSanitizer runs the same
+# suites several times slower: the first nightly (42913851120, 2026-11-10), set against T2 on the
+# same code (42913774013), ran 51 suites of over 2 s 2-30 times slower (GUI suites 6-23 times, core
+# suites 5-7), and three crossed their Release limits: test_partition_manager_core (200 s in
+# Release, limit 600), test_partition_manager_panel (13 s, limit 120) and
+# test_ai_assistant_panel_tool_dispatch (57 s, limit 300). The ASan job sets this scale
+# (.github/workflows/nightly.yml); it is refused without ENABLE_ASAN, so every other build keeps
+# the limits as written. The scale is 5: measured alone on a workstation, Release against Debug +
+# ASan, test_partition_manager_panel went from 10.7 s to 174 s (16 times; limit 120),
+# test_ai_assistant_panel_tool_dispatch from 37 s to 227 s (6 times; limit 300) and
+# test_partition_manager_core from 128 s to 296 s (2.3 times; limit 600). The runner was 1.3-1.6
+# times slower than the workstation in Release and runs them under -j 4; five times each limit
+# leaves each at least about 1.8 times what it is estimated to need there.
+set(SAK_TEST_TIMEOUT_SCALE 1 CACHE STRING
+    "Multiplies every test TIMEOUT; only the Debug + AddressSanitizer build sets it")
+if(NOT SAK_TEST_TIMEOUT_SCALE MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "SAK_TEST_TIMEOUT_SCALE must be a positive whole number")
+endif()
+if(NOT SAK_TEST_TIMEOUT_SCALE EQUAL 1)
+    if(NOT ENABLE_ASAN)
+        message(FATAL_ERROR "SAK_TEST_TIMEOUT_SCALE is for the AddressSanitizer build only")
+    endif()
+    foreach(_sak_test IN LISTS _sak_label_tests)
+        get_test_property(${_sak_test} TIMEOUT _sak_timeout)
+        if(_sak_timeout)
+            math(EXPR _sak_timeout "${_sak_timeout} * ${SAK_TEST_TIMEOUT_SCALE}")
+            set_tests_properties(${_sak_test} PROPERTIES TIMEOUT ${_sak_timeout})
+        endif()
+    endforeach()
+endif()
 foreach(_sak_pair IN LISTS _sak_label_lists)
     string(REPLACE ":" ";" _sak_pair_parts "${_sak_pair}")
     list(GET _sak_pair_parts 1 _sak_list_var)
@@ -7524,17 +7884,12 @@ message(STATUS "Test labels: ${_sak_label_test_count} tests labelled; "
 # Debug / sanitizer run environment
 # ============================================================================
 #
-# Debug test binaries run from tests/Debug, not beside sak_utility as Release's do, and the suites
-# that use a bundled tool look beside the executable.
-set(_sak_stage_tools_for_debug_tests
-    "${CMAKE_COMMAND}"
-    "-DSAK_TOOLS_SOURCE=${CMAKE_SOURCE_DIR}/tools"
-    "-DSAK_TOOLS_DESTINATION=${CMAKE_CURRENT_BINARY_DIR}/Debug/tools"
-    -P "${CMAKE_SOURCE_DIR}/cmake/copy_tools_bundle.cmake")
-add_custom_target(sak_stage_tools_for_debug_tests ALL
-    COMMAND "$<$<CONFIG:Debug>:${_sak_stage_tools_for_debug_tests}>"
-    COMMAND_EXPAND_LISTS
-    VERBATIM)
+# Debug test binaries sit beside sak_utility in build/Debug (CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG at
+# the top of this file), where its build already puts the bundled tools and the application the
+# suites look for beside themselves. Until 2026-11-12 they ran from tests/Debug, and a step copied
+# the tools and sak_utility.exe there (without it the first Debug + ASan nightly failed the
+# built-in MCP cases with "Built-in MCP app is missing", 2026-11-10); the helper and
+# sak_script_types.dll it did not copy.
 
 # Release test binaries find their Qt DLLs because the packaging step stages
 # them next to the executables. The Debug configuration has no such step, so a
@@ -7583,4 +7938,21 @@ else()
             "Could not resolve the Qt6::Core location, so test binaries would "
             "not find their Qt DLLs. Refusing to configure a test suite that "
             "cannot run.")
+endif()
+
+# Last, after every add_test: a test registered without a time limit is refused, whichever line of
+# this file adds it (the default above reaches only the tests added before it). See
+# SAK_TEST_DEFAULT_TIMEOUT for why.
+get_property(_sak_timed_tests DIRECTORY PROPERTY TESTS)
+set(_sak_untimed_tests "")
+foreach(_sak_test IN LISTS _sak_timed_tests)
+    get_test_property(${_sak_test} TIMEOUT _sak_timeout)
+    if(NOT _sak_timeout OR _sak_timeout LESS_EQUAL 0)
+        list(APPEND _sak_untimed_tests ${_sak_test})
+    endif()
+endforeach()
+if(_sak_untimed_tests)
+    list(JOIN _sak_untimed_tests ", " _sak_untimed_text)
+    message(FATAL_ERROR "These tests have no TIMEOUT, so a hang would wait out the whole CI job: "
+                        "${_sak_untimed_text}")
 endif()

@@ -11,6 +11,7 @@
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/no_follow_fs.h"
 #include "sak/process_runner.h"
 
 #include <QDateTime>
@@ -734,7 +735,7 @@ bool BackupBitlockerKeysAction::extractKeysGatePassed(const QDateTime& start_tim
 // plaintext keys may remain, so that is a failure -- not a clean cancel.
 void BackupBitlockerKeysAction::emitCancelWithCleanup(const QString& backup_dir_path,
                                                       const QDateTime& start_time) {
-    if (!QDir(backup_dir_path).removeRecursively()) {
+    if (!sak::no_follow::removeTree(backup_dir_path).has_value()) {
         emitFailedResult(
             "BitLocker key backup cancelled, but the partial backup directory "
             "could not be removed; plaintext recovery keys may remain at " +
@@ -754,7 +755,7 @@ void BackupBitlockerKeysAction::emitFailWithCleanup(const QString& message,
                                                     const QString& log,
                                                     const QString& backup_dir_path,
                                                     const QDateTime& start_time) {
-    if (!QDir(backup_dir_path).removeRecursively()) {
+    if (!sak::no_follow::removeTree(backup_dir_path).has_value()) {
         const QString partial = message +
                                 "; the partial backup directory could not be removed, so plaintext "
                                 "recovery keys may remain at " +
@@ -1005,7 +1006,7 @@ bool BackupBitlockerKeysAction::lockDownNewBackupDirectory(const QDateTime& star
     // If the restriction cannot be applied, remove the empty directory and fail
     // closed rather than proceeding to write plaintext under a permissive ACL.
     if (!restrictFilePermissions(backup_dir_path)) {
-        if (!QDir(backup_dir_path).removeRecursively()) {
+        if (!sak::no_follow::removeTree(backup_dir_path).has_value()) {
             Q_EMIT logMessage("Failed to remove unsecured backup directory: " + backup_dir_path);
         }
         emitFailedResult("Failed to secure backup directory",
@@ -1035,7 +1036,7 @@ bool BackupBitlockerKeysAction::secureBackupDirectory(const QDateTime& start_tim
     // leave insufficiently protected secrets on disk, so delete the backup and
     // fail closed -- and only claim the keys were removed if removal succeeded.
     Q_EMIT logMessage("Could not restrict backup permissions; removing exposed key backup");
-    if (QDir(backup_dir_path).removeRecursively()) {
+    if (sak::no_follow::removeTree(backup_dir_path).has_value()) {
         emitFailedResult(
             "Failed to secure the recovery key backup",
             "The recovery keys could not be protected with restricted permissions, "

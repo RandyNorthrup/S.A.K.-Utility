@@ -238,7 +238,9 @@ function New-ArchiveContractFixture {
     $fixtureBuild = New-StageContractDirectory $Root
     $name = "ArchiveContract"
     $package = Join-Path $fixtureBuild $name
-    $files = @("sak_utility.exe", "sak_elevated_helper.exe")
+    # The archive refuses a package without any of these (sak_script_types.dll since 2026-11-11:
+    # the scripts' own types, held and pinned with the rest of the program).
+    $files = @("sak_utility.exe", "sak_elevated_helper.exe", "sak_script_types.dll")
     foreach ($relative in $files) {
         $path = Join-Path $package $relative
         New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null

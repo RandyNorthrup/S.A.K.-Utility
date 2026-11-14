@@ -208,13 +208,13 @@ if(MSVC)
         set(SAK_ASAN_STATE "ENABLED for the Debug configuration")
         message(STATUS "Address Sanitizer:  ${SAK_ASAN_STATE}")
         message(STATUS "ASan runtime:       ${SAK_ASAN_RUNTIME}")
-        # Stage it beside both Debug output roots at configure time, so every
-        # Debug executable finds it without depending on the developer's PATH.
-        # An instrumented binary that cannot load this DLL dies with
-        # STATUS_DLL_NOT_FOUND before main, which reads as a broken test
-        # rather than a missing runtime -- measured, not assumed.
+        # Stage it beside the Debug output root at configure time (the tests sit
+        # there too), so every Debug executable finds it without depending on
+        # the developer's PATH. An instrumented binary that cannot load this DLL
+        # dies with STATUS_DLL_NOT_FOUND before main, which reads as a broken
+        # test rather than a missing runtime -- measured, not assumed. The Debug
+        # program manifest pins it (sak_write_program_manifest's DEBUG_FILES).
         file(COPY "${SAK_ASAN_RUNTIME}" DESTINATION "${CMAKE_BINARY_DIR}/Debug")
-        file(COPY "${SAK_ASAN_RUNTIME}" DESTINATION "${CMAKE_BINARY_DIR}/tests/Debug")
     endif()
 endif()
 
@@ -336,7 +336,7 @@ endif()
 # Windows libraries: Registry access, WMI, DXGI, performance counters,
 # networking (IP Helper, Winsock, DNS, WLAN, NetBIOS), COM (Firewall).
 set(PLATFORM_LIBS advapi32 crypt32 shell32 user32 dxgi pdh
-    iphlpapi ws2_32 dnsapi wlanapi netapi32 ole32 oleaut32 dbghelp)
+    iphlpapi ws2_32 dnsapi wlanapi netapi32 ole32 oleaut32 dbghelp wintrust imagehlp psapi)
 
 # ============================================================================
 # Project Configuration
@@ -369,7 +369,10 @@ include_directories(
 # pulling in anything above it.
 set(SAK_FOUNDATION_SOURCES
     src/core/logger.cpp
+    src/core/log_file_sink.cpp
     src/core/app_paths.cpp
+    src/core/no_follow_fs.cpp
+    src/core/program_integrity.cpp
     src/core/path_utils.cpp
     src/core/file_hash.cpp
     src/core/media_read_back.cpp
@@ -382,7 +385,10 @@ set(SAK_FOUNDATION_SOURCES
     src/threading/thread_custody.cpp
     src/threading/dedicated_threads.cpp
     include/sak/logger.h
+    include/sak/log_file_sink.h
     include/sak/app_paths.h
+    include/sak/no_follow_fs.h
+    include/sak/program_integrity.h
     include/sak/path_utils.h
     include/sak/secure_memory.h
     include/sak/file_hash.h
@@ -407,6 +413,7 @@ set(SAK_FOUNDATION_SOURCES
 set(SAK_PARTITION_FS_SOURCES
     src/core/apfs_crypto.cpp
     src/core/apfs_keybag.cpp
+    src/core/bounded_inflate.cpp
     src/core/partition_apfs_file_system_reader.cpp
     src/core/partition_apfs_writer.cpp
     src/core/partition_ext_file_system_reader.cpp
@@ -421,6 +428,7 @@ set(SAK_PARTITION_FS_SOURCES
     src/core/decompressor_factory.cpp
     include/sak/apfs_crypto.h
     include/sak/apfs_keybag.h
+    include/sak/bounded_inflate.h
     include/sak/partition_apfs_file_system_reader.h
     include/sak/partition_apfs_writer.h
     include/sak/partition_ext_file_system_reader.h
@@ -443,7 +451,6 @@ set(SAK_PARTITION_FS_SOURCES
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_text_files.cmake")
 set(SAK_PARTITION_SCRIPTS_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/partition_scripts_embedded.cpp")
 sak_embed_text_files("${SAK_PARTITION_SCRIPTS_CPP}" sak::embedded_partition_scripts
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/os_migration_native.cs" kOsMigrationNativeCs
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/os_migration.ps1" kOsMigrationPs1
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/target_boot_files.ps1" kTargetBootFilesPs1
     "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/attached_boot_repair.ps1" kAttachedBootRepairPs1
@@ -1504,6 +1511,18 @@ if(MSVC)
     )
 endif()
 
+# Security brief 4c: the programs that run as administrator resolve their own imports only from
+# their folder and System32 (/DEPENDENTLOADFLAG:0x1000, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS). Measured
+# 2026-11-11 with a two-file stand-in: a DLL found only on PATH or in the current folder no longer
+# loads (STATUS_DLL_NOT_FOUND) and one beside the program still does. What the elevated process
+# loads later is covered by its SetDefaultDllDirectories call. link.exe and lld-link both take it.
+if(MSVC)
+    foreach(_sak_elevated_program sak_utility sak_elevated_helper sak_apfs_writer_cli
+            sak_hfs_writer_cli)
+        target_link_options(${_sak_elevated_program} PRIVATE /DEPENDENTLOADFLAG:0x1000)
+    endforeach()
+endif()
+
 # Copy helper to main output directory so they sit side-by-side
 add_custom_command(TARGET sak_elevated_helper POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -1714,20 +1733,53 @@ if(_sak_vcpkg_dlls_required AND NOT DEFINED VCPKG_INSTALLED_DIR)
         "or bundled. Configure with the vcpkg toolchain file so VCPKG_INSTALLED_DIR is "
         "defined, or use a -static triplet.")
 endif()
+# The same libraries as a Debug build imports them: vcpkg keeps Debug's own DLLs under debug/bin,
+# some under other names (zd.dll, bz2d.dll). The programs linked with /DEPENDENTLOADFLAG:0x1000
+# below resolve their imports only from their folder and System32, never PATH, so a Debug build
+# that staged only the Release names could not start them. On the 9170b149 nightly the Debug+ASan
+# writer CLIs (whose one import not beside them was zd.dll) never ended, their tests running until
+# the job's limit, and sak_utility (zd.dll and bz2d.dll) never started: under ctest without
+# --interactive-debug-mode 0 a missing import is a Windows error box that waits for an answer.
+# Each configuration stages its own; a Release package is unchanged.
+set(SAK_VCPKG_DEBUG_RUNTIME_DLL_GROUPS
+    "zd.dll|zlibd1.dll|zlibd.dll"
+    "bz2d.dll|libbz2d.dll"
+    "liblzma.dll|lzmad.dll|lzma.dll"
+)
+# The programs that resolve their imports only from their own folder, and so need the DLLs staged
+# beside them whichever of them is built first.
+set(SAK_VCPKG_DLL_STAGED_FOR sak_utility sak_apfs_writer_cli sak_hfs_writer_cli)
 if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
     set(SAK_VCPKG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+    set(SAK_VCPKG_DEBUG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
+    set(_sak_group_index 0)
     foreach(group ${SAK_VCPKG_RUNTIME_DLL_GROUPS})
         string(REPLACE "|" ";" group_dlls "${group}")
+        list(GET SAK_VCPKG_DEBUG_RUNTIME_DLL_GROUPS ${_sak_group_index} _sak_debug_group)
+        math(EXPR _sak_group_index "${_sak_group_index} + 1")
+        string(REPLACE "|" ";" _sak_debug_dlls "${_sak_debug_group}")
+        set(_sak_debug_dll "")
+        foreach(_sak_debug_name ${_sak_debug_dlls})
+            if(NOT _sak_debug_dll AND EXISTS "${SAK_VCPKG_DEBUG_BIN}/${_sak_debug_name}")
+                set(_sak_debug_dll "${SAK_VCPKG_DEBUG_BIN}/${_sak_debug_name}")
+            endif()
+        endforeach()
         set(group_found FALSE)
         foreach(dll ${group_dlls})
             set(runtime_dll "${SAK_VCPKG_BIN}/${dll}")
             if(EXISTS "${runtime_dll}")
-                add_custom_command(TARGET sak_utility POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${runtime_dll}"
-                        "$<TARGET_FILE_DIR:sak_utility>"
-                    COMMENT "Bundling ${dll} from vcpkg..."
-                )
+                set(_sak_staged_dll "${runtime_dll}")
+                if(_sak_debug_dll)
+                    set(_sak_staged_dll "$<IF:$<CONFIG:Debug>,${_sak_debug_dll},${runtime_dll}>")
+                endif()
+                foreach(_sak_staging_target ${SAK_VCPKG_DLL_STAGED_FOR})
+                    add_custom_command(TARGET ${_sak_staging_target} POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${_sak_staged_dll}"
+                            "$<TARGET_FILE_DIR:${_sak_staging_target}>"
+                        COMMENT "Bundling ${dll} (Debug: its debug build) from vcpkg..."
+                    )
+                endforeach()
                 set(group_found TRUE)
             endif()
         endforeach()
@@ -1800,6 +1852,85 @@ else()
         )
     endforeach()
 endif()
+
+# ============================================================================
+# sak_script_types.dll (security brief 4a)
+# ============================================================================
+# The native types the elevated PowerShell scripts use, compiled here with the .NET Framework 4 C#
+# compiler every Windows has (C# 5, what Windows PowerShell 5.1 itself compiles with). The scripts
+# used to compile them with Add-Type, which writes source and a DLL into the temporary folder and
+# loads that DLL: a window in which another account could change it on a drive with no ACLs. The
+# DLL ships beside the program, is verified and held with every program file before an elevation,
+# and is pinned below by its SHA-256 for an unsigned build (a release signs it).
+find_program(SAK_FRAMEWORK_CSC csc.exe
+    PATHS "$ENV{WINDIR}/Microsoft.NET/Framework64/v4.0.30319" NO_DEFAULT_PATH)
+if(NOT SAK_FRAMEWORK_CSC)
+    message(FATAL_ERROR
+        "The .NET Framework 4 C# compiler was not found at "
+        "%WINDIR%\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe. It is part of Windows; "
+        "the elevated scripts' native types are built with it.")
+endif()
+set(SAK_SCRIPT_TYPES_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/sak_script_types.cs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/os_migration_native.cs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/partition_scripts/dynamic_disk_probe.cs")
+set(SAK_SCRIPT_TYPES_DLL "${CMAKE_CURRENT_BINARY_DIR}/script_types/sak_script_types.dll")
+set(SAK_SCRIPT_TYPES_PIN "${CMAKE_CURRENT_BINARY_DIR}/include/sak/script_types_pin.inc")
+file(TO_NATIVE_PATH "${SAK_SCRIPT_TYPES_DLL}" _sak_script_types_native)
+# csc reads a leading '/' as an option, so it is given native paths.
+set(_sak_script_types_native_sources "")
+foreach(_sak_cs IN LISTS SAK_SCRIPT_TYPES_SOURCES)
+    file(TO_NATIVE_PATH "${_sak_cs}" _sak_cs_native)
+    list(APPEND _sak_script_types_native_sources "${_sak_cs_native}")
+endforeach()
+add_custom_command(OUTPUT "${SAK_SCRIPT_TYPES_DLL}" "${SAK_SCRIPT_TYPES_PIN}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/script_types"
+    COMMAND "${SAK_FRAMEWORK_CSC}" /nologo /noconfig /target:library /optimize+ /warnaserror+
+            /reference:System.dll "/out:${_sak_script_types_native}"
+            ${_sak_script_types_native_sources}
+    COMMAND ${CMAKE_COMMAND} -DSAK_FILE=${SAK_SCRIPT_TYPES_DLL} -DSAK_OUTPUT=${SAK_SCRIPT_TYPES_PIN}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/script_types_pin.cmake"
+    DEPENDS ${SAK_SCRIPT_TYPES_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/script_types_pin.cmake"
+    COMMENT "Building sak_script_types.dll"
+    VERBATIM)
+add_custom_target(sak_script_types DEPENDS "${SAK_SCRIPT_TYPES_DLL}" "${SAK_SCRIPT_TYPES_PIN}")
+add_dependencies(sak_foundation sak_script_types)
+set_source_files_properties(src/core/program_integrity.cpp PROPERTIES
+    OBJECT_DEPENDS "${SAK_SCRIPT_TYPES_PIN}")
+add_custom_command(TARGET sak_utility POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SAK_SCRIPT_TYPES_DLL}"
+        "$<TARGET_FILE_DIR:sak_utility>/sak_script_types.dll"
+    COMMENT "Copying sak_script_types.dll next to sak_utility")
+
+# ============================================================================
+# Program-file manifest (security brief 4c; cmake/program_manifest.cmake)
+# ============================================================================
+# The Qt, MSVC runtime, vcpkg and bundled-tool files this build ships, by path and SHA-256, compiled
+# into the program so an elevation can tell them from a file planted beside them.
+if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+    list(GET CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS 0 _sak_first_runtime)
+    get_filename_component(_sak_vc_runtime_dir "${_sak_first_runtime}" DIRECTORY)
+else()
+    set(_sak_vc_runtime_dir "${LATEST_MSVC}/x64/Microsoft.VC143.CRT")
+endif()
+get_target_property(_sak_qt_core_dll Qt6::Core IMPORTED_LOCATION_RELEASE)
+get_filename_component(_sak_qt_bin_dir "${_sak_qt_core_dll}" DIRECTORY)
+# A Debug build pins what it puts beside its programs instead: vcpkg's Debug DLLs (staged above)
+# and, with ENABLE_ASAN, the AddressSanitizer runtime. The Debug+ASan nightly on 9170b149 found
+# test_program_integrity's audit and shipped-file checks refusing those.
+set(_sak_manifest_debug_files "")
+if(MSVC AND ENABLE_ASAN)
+    list(APPEND _sak_manifest_debug_files "${SAK_ASAN_RUNTIME}")
+endif()
+include(cmake/program_manifest.cmake)
+sak_write_program_manifest("${CMAKE_CURRENT_BINARY_DIR}/include/sak/program_manifest.inc"
+    QT_BIN "${_sak_qt_bin_dir}"
+    QT_PLUGINS "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_PLUGINS}"
+    VC_RUNTIME "${_sak_vc_runtime_dir}"
+    VCPKG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+    DEBUG_VCPKG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin"
+    DEBUG_FILES ${_sak_manifest_debug_files}
+    TOOLS "${CMAKE_CURRENT_SOURCE_DIR}/tools")
 
 # ============================================================================
 # Code Signing (Azure Trusted Signing)

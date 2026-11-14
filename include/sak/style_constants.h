@@ -407,17 +407,17 @@ inline constexpr auto kWindows11ThemeTabAndButtonStyles = R"SAK(
 
         QTabBar::tab {
             background: %3;
+            border: 2px solid transparent;
             border-radius: 10px;
-            padding: 6px 12px;
+            padding: 4px 10px;
             margin: 2px;
             color: %4;
         }
 
         QTabBar::tab:selected {
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 %5,
-                stop:1 %6);
-            color: %7;
+            background: %5;
+            border-color: %6;
+            color: %4;
         }
     )SAK";
 
@@ -715,6 +715,12 @@ inline constexpr auto kWindows11DarkTabAndInputStyles = R"SAK(
 
         QTabBar::tab {
             background: %3;
+            color: %4;
+        }
+
+        QTabBar::tab:selected {
+            background: %1;
+            border-color: %7;
             color: %4;
         }
 

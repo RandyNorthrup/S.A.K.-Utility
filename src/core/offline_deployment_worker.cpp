@@ -10,7 +10,7 @@
 #include "sak/bundled_tools_manager.h"
 #include "sak/format_utils.h"
 #include "sak/logger.h"
-#include "sak/network_transfer_runner.h"
+#include "sak/no_follow_fs.h"
 #include "sak/offline_deployment_constants.h"
 #include "sak/process_runner.h"
 #include "sak/windows_reserved_names.h"
@@ -28,12 +28,13 @@
 #include <QMetaObject>
 #include <QProcessEnvironment>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QSet>
 #include <QtConcurrent>
-#include <QTemporaryDir>
 #include <QTextStream>
 #include <QUrl>
 #include <QUrlQuery>
+#include <QUuid>
 #include <QXmlStreamReader>
 
 #include <algorithm>
@@ -152,26 +153,6 @@ QString installOutcomeText(const ProcessResult& process, bool success) {
     }
     return (process.std_out.isEmpty() ? process.std_err : process.std_out)
         .left(kInstallErrorPreviewChars);
-}
-
-/// @brief Commit @p body to @p output_path via QSaveFile. Fails CLOSED on a short write
-/// or a failed commit -- the temp file is discarded -- so a truncated artifact is never
-/// counted as a downloaded package.
-bool writeDownloadedBody(const QString& output_path, const QByteArray& body) {
-    QSaveFile file(output_path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        sak::logError("[DirectDownload] Cannot write {}", output_path.toStdString());
-        return false;
-    }
-    const qint64 written = file.write(body);
-    if (written != body.size() || !file.commit()) {
-        sak::logError("[DirectDownload] Short write for {}: {} of {} bytes",
-                      output_path.toStdString(),
-                      written,
-                      static_cast<qint64>(body.size()));
-        return false;
-    }
-    return true;
 }
 
 /// @brief True if @p base (already reduced to a single path segment) is hazardous as
@@ -301,7 +282,46 @@ bool OfflineDeploymentWorker::removeOwnedWorkDir(const QString& work_dir) {
     if (!info.exists()) {
         return true;
     }
-    return QDir(work_dir).removeRecursively();
+    // Not QDir::removeRecursively: it walks into a junction inside the tree and deletes what the
+    // junction points at.
+    const auto removed = no_follow::removeTree(work_dir);
+    if (!removed) {
+        sak::logError("[OfflineDeployment] Could not remove work directory {}: {}",
+                      work_dir.toStdString(),
+                      removed.error().toStdString());
+    }
+    return removed.has_value();
+}
+
+QString OfflineDeploymentWorker::newWorkDirPath(const QString& purpose) {
+    // QDir::tempPath() is the run folder: the app points TEMP and TMP at data\temp\run-* at
+    // startup (app_paths::establishSessionTempDirectory), so nothing lands on the user's PC
+    // outside the app's folder (owner ruling 2026-11-11).
+    return QDir(QDir::tempPath())
+        .filePath(purpose + QLatin1Char('-') + QUuid::createUuid().toString(QUuid::Id128));
+}
+
+std::expected<void, QString> OfflineDeploymentWorker::placeVerifiedCopy(
+    const QString& source, const QString& target, const QByteArray& expected_sha256) {
+    const auto copied = no_follow::copyFileTo(source, target, no_follow::Publish::NoReplace);
+    if (!copied) {
+        return std::unexpected(copied.error());
+    }
+    QFile placed(target);
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    const bool read_back = placed.open(QIODevice::ReadOnly) && hash.addData(&placed);
+    placed.close();
+    if (read_back && hash.result() == expected_sha256) {
+        return {};
+    }
+    const auto removed = no_follow::removeTree(target);
+    return std::unexpected(
+        QStringLiteral("the copy at %1 does not read back as the original, so it was %2")
+            .arg(QDir::toNativeSeparators(target),
+                 removed ? QStringLiteral("removed")
+                         : QStringLiteral("left (it could not be "
+                                          "removed: ") +
+                               removed.error() + QLatin1Char(')')));
 }
 
 QString OfflineDeploymentWorker::safeInstallerFilename(const QString& raw_name,
@@ -403,9 +423,9 @@ void OfflineDeploymentWorker::buildDeploymentBundle(
         return;
     }
 
-    // Reject an empty output dir: it would compose work_dir="/_work" and a later
-    // removeRecursively() at the drive root. Fail closed rather than derive a
-    // dangerous path from a missing value (folder-picker callers always pass one).
+    // Reject an empty output dir: it would compose "/packages" at the drive root. Fail
+    // closed rather than derive a path from a missing value (folder-picker callers always
+    // pass one).
     if (output_dir.trimmed().isEmpty()) {
         Q_EMIT operationError("No output directory specified");
         return;
@@ -447,16 +467,14 @@ void OfflineDeploymentWorker::executeBuildBundle(const QString& output_dir,
                                                  const QString& description) {
     BuildBundleContext ctx;
     ctx.packages_dir = output_dir + "/" + offline::kPackagesSubdir;
-    ctx.work_dir = output_dir + "/_work";
+    // The work files live in the app's own run folder, never in the output folder (owner ruling
+    // 2026-11-11): only the finished bundle goes there.
+    ctx.work_dir = newWorkDirPath(QStringLiteral("offline-bundle"));
     ctx.output_dir = output_dir;
 
-    // Establish ownership of _work BEFORE any content is written there, so the
-    // recursive cleanup in finalizeBundle can never wipe a foreign directory.
-    QString work_err;
-    if (!prepareOwnedWorkDir(ctx.work_dir, work_err)) {
-        m_running = false;
-        QMetaObject::invokeMethod(
-            this, [this, work_err]() { Q_EMIT operationError(work_err); }, Qt::QueuedConnection);
+    // Room for the work files first, then ownership of the work folder BEFORE any content is
+    // written there, so the recursive cleanup in finalizeBundle can never wipe a foreign one.
+    if (!workCanStartIn(ctx.work_dir, true)) {
         return;
     }
     QDir(ctx.packages_dir).mkpath(".");
@@ -1359,7 +1377,7 @@ void OfflineDeploymentWorker::directDownload(const QVector<QPair<QString, QStrin
         return;
     }
 
-    // Reject an empty output dir before it becomes a mkpath/QTemporaryDir root.
+    // Reject an empty output dir before it becomes a mkpath root.
     if (output_dir.trimmed().isEmpty()) {
         Q_EMIT operationError("No output directory specified");
         return;
@@ -1377,6 +1395,10 @@ void OfflineDeploymentWorker::directDownload(const QVector<QPair<QString, QStrin
 
 void OfflineDeploymentWorker::executeDirectDownload(
     const QVector<QPair<QString, QString>>& packages, const QString& output_dir) {
+    // Each package unpacks in a work folder in the app's own run folder: room there first.
+    if (!workCanStartIn(newWorkDirPath(QStringLiteral("direct-download")), false)) {
+        return;
+    }
     QDir(output_dir).mkpath(".");
 
     PackageInternalizationEngine resolver;
@@ -1435,7 +1457,10 @@ void OfflineDeploymentWorker::executeDirectDownload(
             [this, pkg_id, ok, msg]() { Q_EMIT packageProgress(pkg_id, ok, msg); },
             Qt::QueuedConnection);
     }
+    finishDirectDownload(total, completed, failed);
+}
 
+void OfflineDeploymentWorker::finishDirectDownload(int total, int completed, int failed) {
     BatchStats stats;
     stats.total = total;
     stats.completed = completed;
@@ -1444,6 +1469,18 @@ void OfflineDeploymentWorker::executeDirectDownload(
 
     QMetaObject::invokeMethod(
         this, [this, stats]() { Q_EMIT operationCompleted(stats); }, Qt::QueuedConnection);
+}
+
+bool OfflineDeploymentWorker::workCanStartIn(const QString& work_dir, bool owned_folder) {
+    QString refusal = PackageInternalizationEngine::workSpaceRefusal(
+        QFileInfo(work_dir).absolutePath(), m_min_work_free_bytes);
+    if (refusal.isEmpty() && (!owned_folder || prepareOwnedWorkDir(work_dir, refusal))) {
+        return true;
+    }
+    m_running = false;
+    QMetaObject::invokeMethod(
+        this, [this, refusal]() { Q_EMIT operationError(refusal); }, Qt::QueuedConnection);
+    return false;
 }
 
 // ============================================================================
@@ -1466,17 +1503,22 @@ int OfflineDeploymentWorker::downloadOnePackageInstallers(const QString& pkg_id,
         return 0;
     }
 
-    // Unique, owned scratch dir (random suffix) auto-removed on scope exit. This
-    // replaces a PREDICTABLE path that was recursively deleted -- a foreign dir or
-    // symlink can no longer pre-occupy it, and there is no manual recursive delete
-    // of a guessable path to be tricked into wiping unrelated data.
-    QTemporaryDir temp(output_dir + "/_sak_temp_XXXXXX");
-    if (!temp.isValid()) {
+    // A new scratch folder of its own (random name) in the app's run folder, never beside the
+    // user's files (owner ruling 2026-11-11: no work file outside the app's folder), removed on
+    // scope exit without following a link inside it.
+    const QString temp_dir = newWorkDirPath(QStringLiteral("direct-download"));
+    if (!QDir().mkdir(temp_dir)) {
         emitLog(QString("[%1] Could not create a temp working directory").arg(pkg_id));
         return 0;
     }
-    temp.setAutoRemove(true);
-    const QString temp_dir = temp.path();
+    const auto remove_temp = qScopeGuard([temp_dir] {
+        const auto removed = no_follow::removeTree(temp_dir);
+        if (!removed) {
+            sak::logError("[DirectDownload] Could not remove {}: {}",
+                          temp_dir.toStdString(),
+                          removed.error().toStdString());
+        }
+    });
 
     // Steps 1-2: Download and extract the nupkg
     const QString extract_dir = downloadAndExtractNupkg(pkg_id, resolved_version, temp_dir);
@@ -1607,11 +1649,20 @@ int OfflineDeploymentWorker::copyEmbeddedInstallers(const QString& pkg_id,
         const QString dest_name = uniqueFilename(safeInstallerFilename(name, name), used_names);
         const QString src = tools_dir.filePath(name);
         const QString dest = output_dir + "/" + dest_name;
-        if (QFile::copy(src, dest)) {
+        // The work folder is on the drive S.A.K. runs from, the output wherever the user chose:
+        // a checked copy, never a rename.
+        QFile source(src);
+        QCryptographicHash source_hash(QCryptographicHash::Sha256);
+        const bool hashed = source.open(QIODevice::ReadOnly) && source_hash.addData(&source);
+        source.close();
+        const auto placed = hashed
+                                ? placeVerifiedCopy(src, dest, source_hash.result())
+                                : std::expected<void, QString>(std::unexpect, source.errorString());
+        if (placed) {
             ++copied;
             sak::logInfo("[DirectDownload] Embedded: {}", dest_name.toStdString());
         } else {
-            emitLog(QString("[%1] Copy failed: %2").arg(pkg_id, name));
+            emitLog(QString("[%1] Copy failed: %2 (%3)").arg(pkg_id, name, placed.error()));
         }
     }
     return copied;
@@ -1726,39 +1777,30 @@ bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url,
         return false;
     }
 
-    NetworkTransferRequest request;
-    request.url = QUrl(url);
-    request.timeout_ms = offline::kDownloadTimeoutMs;
-    // Cap the buffered body so a hostile URL returning an unbounded response cannot
-    // exhaust memory before the bytes are checksummed and written.
-    request.max_response_bytes = offline::kMaxBinarySizeBytes;
-    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
-                                                             QByteArrayLiteral("SAK-Utility/1.0")});
-
-    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
-    if (!transfer.success || transfer.body.isEmpty()) {
+    // Integrity-gate: a declared checksum that is empty or unresolvable fails closed before
+    // anything is fetched, and one that does not match fails closed before anything reaches
+    // output_path, so a tampered or corrupt installer is never written or counted. The body
+    // streams to disk (downloadVerifiedFile): an installer was once held whole in RAM, up to
+    // 4 GiB, to be hashed.
+    const auto digest = PackageInternalizationEngine::installerDigest(expected_checksum,
+                                                                      checksum_type);
+    if (!digest) {
+        sak::logError("[DirectDownload] No usable checksum declared for {}", url.toStdString());
+        return false;
+    }
+    const auto download = PackageInternalizationEngine::downloadVerifiedFile(
+        QUrl(url), output_path, *digest, [this]() { return m_cancelled.load(); });
+    if (download.mismatch) {
+        sak::logError("[DirectDownload] Checksum mismatch for {}", url.toStdString());
+        return false;
+    }
+    if (!download.ok && !download.cancelled) {
         sak::logError("[DirectDownload] HTTP {} for {}: {}",
-                      transfer.http_status,
+                      download.http_status,
                       url.toStdString(),
-                      transfer.error_message.toStdString());
-        return false;
+                      download.error.toStdString());
     }
-
-    // Integrity-gate BEFORE anything is committed to disk: a declared checksum that
-    // does not match (or is declared but unresolvable) fails closed, so a tampered
-    // or corrupt installer is never written or counted. An empty declared checksum now
-    // FAILS CLOSED too (installerVerified rejects an unverifiable installer) rather than
-    // shipping an unauthenticated direct download.
-    if (!PackageInternalizationEngine::installerVerified(
-            transfer.body, expected_checksum, checksum_type)) {
-        sak::logError("[DirectDownload] Unverifiable or mismatched checksum for {}",
-                      url.toStdString());
-        return false;
-    }
-
-    // QSaveFile: fail closed on a short write / flush failure so a truncated installer is never
-    // counted as a downloaded package; the temp file is discarded on any failure.
-    return writeDownloadedBody(output_path, transfer.body);
+    return download.ok;
 }
 
 // ============================================================================

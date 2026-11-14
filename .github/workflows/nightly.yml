@@ -40,6 +40,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
@@ -70,7 +72,8 @@ jobs:
       shell: pwsh
       run: |
         $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
-        $targets = @($plan.build_targets) -join ';'
+        # The program and its helper too: the Defender step below scans the built Release folder.
+        $targets = @(@($plan.build_targets) + 'sak_utility' + 'sak_elevated_helper' | Select-Object -Unique) -join ';'
         msbuild build/SAK_Utility.sln /m /nologo /verbosity:minimal /p:Configuration=Release /p:Platform=x64 "/t:$targets"
         $buildExit = $LASTEXITCODE
         "BUILD EXIT: $buildExit"
@@ -84,14 +87,51 @@ jobs:
         $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         icacls $env:GITHUB_WORKSPACE /grant "*${sid}:(OI)(CI)F" /T /C /Q
         exit $LASTEXITCODE
+    # Every import of every program and test executable built here resolves beside it or in
+    # System32, before any test runs: the four programs linked with /DEPENDENTLOADFLAG:0x1000 never
+    # search PATH, and a missing DLL is named here instead of failing a test, or hanging one on a
+    # Windows error box (the 9170b149 nightly). scripts/check_program_imports.ps1.
+    - name: Imports resolve beside each executable
+      shell: pwsh
+      run: '& scripts/check_program_imports.ps1 -Directory build/Release'
+
     - name: Test (T4 labels)
       shell: pwsh
       run: |
-        & scripts/invoke_unelevated.ps1 -FilePath ctest -- --test-dir build -C Release `
-          -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error -L $env:T4_LABELS
+        & scripts/invoke_unelevated.ps1 -FilePath ctest -- --interactive-debug-mode 0 `
+          --test-dir build -C Release -j $env:NUMBER_OF_PROCESSORS --output-on-failure `
+          --no-tests=error -L $env:T4_LABELS `
+          -E '^test_defender_clean$'
         $ctestExit = $LASTEXITCODE
         "CTEST EXIT: $ctestExit"
         exit $ctestExit
+
+    # test_defender_clean (tooling-extended) runs here instead of in the ctest step above: it scans
+    # the repository's tests and scripts trees and the built Release folder (minutes, so not in T2),
+    # and a hosted runner may have no Defender running. Then the scan proves nothing, and this step
+    # says so as a warning in the run's summary instead of passing quietly.
+    - name: Defender scan (tests, scripts, build/Release)
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $why = ''
+        try {
+          $status = Get-MpComputerStatus -ErrorAction Stop
+          if (-not ($status.AMServiceEnabled -and $status.AntivirusEnabled)) {
+            $why = "service enabled: $($status.AMServiceEnabled), antivirus enabled: $($status.AntivirusEnabled)"
+          }
+        } catch {
+          $why = "Get-MpComputerStatus failed: $($_.Exception.Message)"
+        }
+        if (-not $why) {
+          & pwsh -NoProfile -NonInteractive -File scripts/test_defender_clean.ps1 tests scripts build/Release
+          exit $LASTEXITCODE
+        }
+        $note = "Microsoft Defender is not running on this runner ($why), so test_defender_clean scanned nothing tonight."
+        Write-Host "::warning title=Defender scan not run::$note"
+        Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### Defender scan`n`n**Not run.** $note`n"
+        & pwsh -NoProfile -NonInteractive -File scripts/test_defender_clean.ps1 tests scripts build/Release -AllowMissingDefender
+        exit $LASTEXITCODE
 
     - name: Upload test logs
       if: ${{ failure() && steps.build.outcome == 'success' }}
@@ -115,6 +155,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
@@ -205,6 +247,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
@@ -217,6 +261,7 @@ jobs:
           -DVCPKG_APPLOCAL_DEPS=OFF `
           -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TRIPLET" `
           -DENABLE_ASAN=ON `
+          -DSAK_TEST_TIMEOUT_SCALE=5 `
           -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
           -DSAK_PYTHON_EXECUTABLE="$env:pythonLocation\python.exe"
         $configureExit = $LASTEXITCODE
@@ -239,14 +284,76 @@ jobs:
         $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         icacls $env:GITHUB_WORKSPACE /grant "*${sid}:(OI)(CI)F" /T /C /Q
         exit $LASTEXITCODE
+
+    # The first run (42913851120, 2026-11-10) lost a suite to 0xc0000409 with no message and two
+    # more with no detail: ctest's console shows the program's log, while QTest writes its verdicts
+    # to test_results/*.txt, and nothing kept either. Windows Error Reporting now writes a dump for
+    # any test process that ends abnormally (a fail-fast included), the next step prints a stack for
+    # each, and the result files and dumps are kept.
+    - name: Keep crash dumps of the test executables
+      shell: pwsh
+      run: |
+        $dumps = Join-Path $env:RUNNER_TEMP 'crash-dumps'
+        New-Item -ItemType Directory -Force -Path $dumps | Out-Null
+        icacls $dumps /grant '*S-1-1-0:(OI)(CI)F' /C /Q | Out-Null
+        $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+        New-Item -Path $key -Force | Out-Null
+        New-ItemProperty -Path $key -Name DumpFolder -Value $dumps -PropertyType ExpandString -Force | Out-Null
+        New-ItemProperty -Path $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
+        New-ItemProperty -Path $key -Name DumpCount -Value 30 -PropertyType DWord -Force | Out-Null
+
+    # Every import of every program and test executable built here resolves beside it or in
+    # System32, before any test runs: the four programs linked with /DEPENDENTLOADFLAG:0x1000 never
+    # search PATH, and a missing DLL is named here instead of failing a test, or hanging one on a
+    # Windows error box (the 9170b149 nightly). scripts/check_program_imports.ps1.
+    - name: Imports resolve beside each executable
+      shell: pwsh
+      run: '& scripts/check_program_imports.ps1 -Directory build-debug/Debug'
+
     - name: Test (Debug, ASan, native suites)
       shell: pwsh
       run: |
+        # ctest-error-mode-exempt: the one ctest call without --interactive-debug-mode 0. Its
+        # error mode 0x0003 stops Windows Error Reporting writing a crash dump for an access
+        # violation or a fail-fast (measured on testpc1, 2026-11-13), and the steps below collect
+        # this job's dumps. What a missing DLL would do here is caught before it: the
+        # check_program_imports step above; and a test that waits anyway ends at its TIMEOUT
+        # (every test has one, scaled 5 times here). scripts/check_ctest_error_mode.ps1.
         & scripts/invoke_unelevated.ps1 -FilePath ctest -- --test-dir build-debug -C Debug `
           -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error -L '^(product|fuzz-extended)$'
         $ctestExit = $LASTEXITCODE
         "CTEST EXIT: $ctestExit"
         exit $ctestExit
+
+    - name: Stacks from any crash dumps
+      if: ${{ always() }}
+      shell: pwsh
+      run: |
+        $dumps = Join-Path $env:RUNNER_TEMP 'crash-dumps'
+        $files = @(Get-ChildItem -LiteralPath $dumps -Filter *.dmp -ErrorAction SilentlyContinue)
+        "crash dumps: $($files.Count)"
+        $cdb = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
+        if ($files.Count -gt 0 -and -not (Test-Path -LiteralPath $cdb)) { 'cdb is not on this runner; the dumps are in the artifact' }
+        $symbols = "srv*$env:RUNNER_TEMP\symbols*https://msdl.microsoft.com/download/symbols;" +
+          "$env:GITHUB_WORKSPACE\build-debug\Debug"
+        foreach ($file in $files) {
+          "===== $($file.Name)"
+          if (Test-Path -LiteralPath $cdb) {
+            & $cdb -z $file.FullName -y $symbols -c '.ecxr; kb 80; !analyze -v; q' 2>&1 | Select-Object -Last 250
+          }
+        }
+        exit 0
+
+    - name: Keep the QTest results and crash dumps
+      if: ${{ always() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+      with:
+        name: asan-test-results
+        path: |
+          ${{ runner.temp }}/crash-dumps/
+          build-debug/test_results/*.txt
+        if-no-files-found: warn
+        retention-days: 14
 
   # ==========================================================================================
   # Line coverage (OpenCppCoverage) over the curated core set. RelWithDebInfo, because the
@@ -260,6 +367,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        persist-credentials: false
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
@@ -267,7 +376,7 @@ jobs:
     - name: Install OpenCppCoverage
       shell: pwsh
       run: |
-        choco install opencppcoverage -y --no-progress
+        choco install opencppcoverage --version 0.9.9 -y --no-progress
         if ($LASTEXITCODE -ne 0) { throw "choco install opencppcoverage exited $LASTEXITCODE" }
 
     - name: Configure

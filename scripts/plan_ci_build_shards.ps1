@@ -135,7 +135,8 @@ foreach ($root in $baseRoots) { $base.UnionWith((Get-Closure $root)) }
 
 # The tier's tests, and the build executables each one's Release command references.
 $ctest = (Get-Command ctest -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
-$selection = (& $ctest --test-dir $buildFull -C Release --show-only=json-v1 -L $LabelRegex) -join "`n"
+$selection = (& $ctest --interactive-debug-mode 0 --test-dir $buildFull -C Release --show-only=json-v1 `
+    -L $LabelRegex) -join "`n"
 if ($LASTEXITCODE -ne 0) { throw "ctest --show-only failed with exit code $LASTEXITCODE" }
 $selectedNames = @(($selection | ConvertFrom-Json).tests | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
 if ($selectedNames.Count -eq 0) { throw "Label regex '$LabelRegex' selects no tests; refusing an empty plan." }

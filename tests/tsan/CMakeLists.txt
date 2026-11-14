@@ -41,7 +41,8 @@ function(sak_add_tsan_test target production_source test_source)
     target_link_options(${target} PRIVATE ${TSAN_FLAGS})
 endfunction()
 
-# sak::logger -- a Meyer's singleton written to from several threads at once. Its test spawns
-# four threads x 25 messages specifically to prove the writes do not interleave, which makes it
-# the one unit whose existing test is already a race exerciser.
-sak_add_tsan_test(tsan_logger src/core/logger.cpp tests/unit/test_logger.cpp)
+# sak::logger -- a Meyer's singleton written to from several threads at once. Its concurrency test
+# spawns four threads x 25 messages specifically to prove the writes do not interleave. It writes
+# through an in-memory sink: the file sink (log_file_sink.cpp) opens its file through the Windows
+# no-follow primitive (security brief 4a.3), and the logger's lock is what this row is for.
+sak_add_tsan_test(tsan_logger src/core/logger.cpp tests/unit/test_logger_concurrency.cpp)

@@ -43,7 +43,7 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('Stage', 'Deploy', 'On', 'Off', 'Snapshot', 'Restore', 'NewDisk', 'AttachDisk', 'DetachDisk', 'DeleteDisk',
         'Rows', 'BootProof', 'VmCreate', 'VmFirmware', 'VmRemove', 'VmFacts', 'UsbList', 'UsbOn', 'UsbOff', 'GuestJob',
-        'RootWrapper', 'RootTidy', 'PcPrepare', 'WritePins', 'CloneSystemDisk')]
+        'RootWrapper', 'RootTidy', 'PcPrepare', 'WritePins', 'CloneSystemDisk', 'Fetch')]
     [string]$Action,
     [string]$CredFile = 'temp\vm-auth\sak-capture-technician.json',
     [string]$Vm = 'Windows 11',
@@ -61,6 +61,8 @@ param(
     [uint64]$DataDiskBytes = 0,
     [string]$PinFile = '',
     [switch]$DataRowsOnDevice,
+    # Runs -Rows as operation-proof rows (scripts/run_partition_manager_operation_proof.ps1).
+    [switch]$OperationProof,
     [ValidateSet('efi', 'bios')] [string]$Firmware = 'efi',
     [string]$ProofName = '',
     [string]$ProofOutput = '',
@@ -68,6 +70,9 @@ param(
     [int]$WaitMinutes = 20,
     [switch]$ExpectNoBoot,
     [string]$JobFile = '',
+    # Fetch: one file from the guest, into -StageDir (the operation proof keeps a failed row's logs
+    # this way before the VM goes back to its snapshot).
+    [string]$GuestPath = '',
     [int]$JobMinutes = 240,
     [string]$PcFile = '',
     [string]$PinSpec = ''
@@ -392,8 +397,17 @@ function New-RigStage {
     if (-not (Test-Path -LiteralPath (Join-Path $release 'partition_manager_live_certifier.exe'))) { throw "No step client in $release" }
     Remove-RigFile -Path $stage
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
-    Copy-Item (Join-Path $release 'partition_manager_live_certifier.exe') (Join-Path $stage 'sak_utility.exe')
+    # The operation proof stages a whole release package, as on testpc2: since the security round
+    # its scripts load sak_script_types.dll from the program's folder, which the list below leaves
+    # out. No other program goes in: the app checks what is in its folder. A certification stage is
+    # unchanged.
+    if ($OperationProof) {
+        Copy-Item -Path (Join-Path $release '*') -Destination $stage -Recurse -Force -Exclude 'partition_manager_live_certifier.exe', 'partition_filesystem_probe_certifier.exe'
+    }
+    Copy-Item (Join-Path $release 'partition_manager_live_certifier.exe') (Join-Path $stage 'sak_utility.exe') -Force
     Copy-Item (Join-Path $release 'sak_elevated_helper.exe') $stage
+    # The elevated scripts' native types: the step client's scripts load them from beside it.
+    Copy-Item (Join-Path $release 'sak_script_types.dll') $stage
     foreach ($dll in 'Qt6Core', 'Qt6Gui', 'Qt6Network', 'Qt6Concurrent', 'Qt6Widgets', 'Qt6Xml', 'Qt6Svg', 'msvcp140', 'msvcp140_1', 'msvcp140_2', 'msvcp140_atomic_wait', 'vcruntime140', 'vcruntime140_1', 'concrt140', 'z', 'zlib1', 'bz2', 'liblzma', 'pcre2-16', 'double-conversion', 'icudt', 'icuin', 'icuuc', 'b2-1') {
         $source = Join-Path $release "$dll.dll"
         if (Test-Path -LiteralPath $source) { Copy-Item $source $stage }
@@ -428,7 +442,8 @@ function Send-RigStage {
     Send-ToGuest -LocalPaths @($zip) -GuestFolder $Script:GuestRoot -VmName $VmName
     Invoke-GuestPS -Code "Expand-Archive -LiteralPath '$Script:GuestRoot\$(Split-Path -Leaf $zip)' -DestinationPath '$Script:GuestRoot\stage' -Force; (Get-ChildItem '$Script:GuestRoot\stage').Count" -VmName $VmName
     $scripts = @('run_partition_manager_app_certification.ps1', 'partition_manager_certification_row_bodies.ps1', 'partition_manager_readback.ps1',
-        'partition_manager_row_evidence.ps1', 'partition_manager_certification_bios_fixture.ps1') |
+        'partition_manager_row_evidence.ps1', 'partition_manager_certification_bios_fixture.ps1',
+        'partition_manager_operation_proof_rows.ps1', 'partition_manager_operation_proof_checks.ps1') |
         ForEach-Object { Join-Path $ProjectRoot "scripts\$_" }
     $scripts += (Join-Path $ProjectRoot 'src\core\partition_scripts\os_migration_native.cs')
     Send-ToGuest -LocalPaths $scripts -GuestFolder "$Script:GuestRoot\scripts" -VmName $VmName
@@ -442,6 +457,7 @@ function Invoke-RigRows {
     if ($Phase) { $extra += " -Phase '$Phase'" }
     if ($DataDiskBytes -gt 0) { $extra += " -DataDiskBytes $DataDiskBytes" }
     if ($DataRowsOnDevice) { $extra += ' -DataRowsOnDevice' }
+    if ($OperationProof) { $extra += ' -OperationProof' }
     if ($PinFile) {
         Send-ToGuest -LocalPaths @((Resolve-RigPath $PinFile)) -GuestFolder "$Script:GuestRoot\jobs" -VmName $VmName
         $extra += " -PhysicalPins '$Script:GuestRoot\jobs\$(Split-Path -Leaf $PinFile)'"
@@ -526,17 +542,37 @@ function New-RigThrowawayVm {
 "@
 }
 
+function Get-RigReadbackFunctionText {
+    # The text of one function of partition_manager_readback.ps1, for a job that runs where that
+    # file is not: one definition, copied, never a second one written here.
+    param([Parameter(Mandatory = $true)] [string]$Name)
+    $tokens = $null
+    $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'partition_manager_readback.ps1'), [ref]$tokens, [ref]$errors)
+    $found = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $Name }, $true)
+    if (-not $found) { throw "partition_manager_readback.ps1 has no function $Name" }
+    return $found.Extent.Text
+}
+
 function Get-RigBootFacts {
-    # Windows' own account of itself, from inside the VM.
+    # Windows' own account of itself, from inside the VM. Its repair scan is an online scan, and
+    # the throwaway VM is powered off and its disk detached after it, so the scan settles first
+    # (Wait-RbVolumeScanSettle, copied from the readback).
     param([string]$VmName)
     $job = Join-Path ([IO.Path]::GetTempPath()) "sakcert-check-$PID.ps1"
     $marker = if ($MarkerPath) { "'$MarkerPath'" } else { '$null' }
+    $settle = Get-RigReadbackFunctionText -Name 'Wait-RbVolumeScanSettle'
     [IO.File]::WriteAllText($job, @"
+$settle
 `$marker = $marker
+`$repairScan = ''
+try {
+    `$repairScan = "`$(Repair-Volume -DriveLetter (`$env:SystemDrive.Substring(0,1)) -Scan)"
+} finally { Wait-RbVolumeScanSettle }
 `$facts = [ordered]@{
     firmware = "`$env:firmware_type"
     system_drive = "`$env:SystemDrive"
-    repair_scan = "`$(Repair-Volume -DriveLetter (`$env:SystemDrive.Substring(0,1)) -Scan)"
+    repair_scan = `$repairScan
     disk_count = @(Get-Disk).Count
     source_marker = if (`$marker -and (Test-Path -LiteralPath `$marker)) { "`$(Get-Content -LiteralPath `$marker -Raw)".Trim() } else { '' }
 }
@@ -746,6 +782,13 @@ S=`$("`$V" showvminfo '$Vm' --machinereadable | grep '^"SATA-ImageUUID-0-0"=' | 
         $result | ConvertTo-Json
     }
     'GuestJob' { Invoke-GuestElevated -LocalScript (Resolve-RigPath $JobFile) -Minutes $JobMinutes }
+    'Fetch' {
+        if (-not $GuestPath) { throw 'Fetch needs -GuestPath' }
+        $into = Resolve-RigPath $StageDir
+        New-Item -ItemType Directory -Force -Path $into | Out-Null
+        Get-FromGuest -GuestPath $GuestPath -LocalFolder $into
+        Get-ChildItem -LiteralPath $into -Filter (Split-Path -Leaf $GuestPath) | Select-Object Name, Length
+    }
     'RootWrapper' {
         # umask 022: what root copies out of the guest has to be readable by this user afterwards.
         Invoke-MacVBox @"

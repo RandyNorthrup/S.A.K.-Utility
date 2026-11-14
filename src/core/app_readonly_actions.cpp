@@ -52,6 +52,7 @@
 #include "sak/organizer_worker.h"
 #include "sak/partition_manager_types.h"
 #include "sak/partition_operation_planner.h"
+#include "sak/partition_operation_requests.h"
 #include "sak/port_scanner.h"
 #include "sak/program_enumerator.h"
 #include "sak/pst_parser.h"
@@ -564,12 +565,15 @@ AppActionResult previewPartitionOperation(const QJsonObject& args) {
     const PartitionInventory inventory = StorageInventoryWorker::scanCurrentSystem(false);
     const PartitionTarget target =
         buildPartitionOpTarget(args, static_cast<uint32_t>(disk_number), parsed->kind);
-    const QJsonObject payload = args.value(QStringLiteral("payload")).toObject();
-    const PartitionOperation operation =
-        PartitionOperationPlanner::makeOperation(parsed->type, target, payload);
+    // The same operation the apply would run, with what only the app may set derived by the app.
+    const auto operation = assistantPartitionOperation(
+        parsed->type, target, args.value(QStringLiteral("payload")).toObject(), inventory);
+    if (!operation) {
+        return {false, operation.error(), {}};
+    }
 
     PartitionOperationPlanner planner;
-    const OperationPreview preview = planner.previewOperation(inventory, operation);
+    const OperationPreview preview = planner.previewOperation(inventory, *operation);
 
     QJsonArray operations;
     for (const PartitionOperation& op : preview.operations) {
@@ -5025,11 +5029,10 @@ QJsonObject listDrivesParamsSchema() {
 }
 
 QJsonObject previewParamsSchema() {
-    QJsonObject payload_prop{
-        {QStringLiteral("type"), QStringLiteral("object")},
-        {QStringLiteral("description"),
-         QStringLiteral("Operation-specific fields (e.g. file_system, label, drive_letter)")},
-        {QStringLiteral("additionalProperties"), true}};
+    QJsonObject payload_prop{{QStringLiteral("type"), QStringLiteral("object")},
+                             {QStringLiteral("description"),
+                              partitionOperationPayloadDescription()},
+                             {QStringLiteral("additionalProperties"), true}};
     QJsonObject properties{
         {QStringLiteral("operation"),
          stringProp(QStringLiteral("Operation to preview (one of: ") + supportedPartitionOpTypes() +

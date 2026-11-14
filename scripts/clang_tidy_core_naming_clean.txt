@@ -19,3 +19,9 @@ src/core/iso_analyzer.cpp
 src/core/recycle_bin.cpp
 src/core/thermal_monitor.cpp
 src/core/vulnerability_scanner.cpp
+src/core/no_follow_fs.cpp
+src/core/program_integrity.cpp
+src/core/log_file_sink.cpp
+src/core/app_paths.cpp
+src/core/partition_executor.cpp
+src/core/partition_stop_cleanup.cpp

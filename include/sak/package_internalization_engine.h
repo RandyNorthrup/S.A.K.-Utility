@@ -17,6 +17,7 @@
 #include "sak/script_rewriter.h"
 
 #include <QByteArray>
+#include <QCryptographicHash>
 #include <QHash>
 #include <QObject>
 #include <QPair>
@@ -26,6 +27,7 @@
 #include <QVector>
 
 #include <atomic>
+#include <functional>
 #include <optional>
 namespace sak {
 
@@ -211,6 +213,69 @@ public:
                                                const QString& expected_base64,
                                                const QString& algorithm);
 
+    // --- Verified downloads, streamed to disk --------------------------------------------------
+
+    /// @brief What a download's bytes must hash to: the algorithm, and the test its digest must
+    ///        pass (a hex checksum from an install script, a base64 PackageHash from the feed).
+    struct DownloadDigest {
+        QCryptographicHash::Algorithm algorithm{QCryptographicHash::Sha256};
+        std::function<bool(const QByteArray& digest)> matches;
+    };
+
+    /// @brief The digest an installer's declared checksum names, compared as hex without regard
+    ///        to case; the algorithm comes from @p checksum_type, or the checksum's hex length when
+    ///        the type is empty. Nullopt when nothing was declared or the algorithm cannot be
+    ///        resolved: such an installer cannot be verified (see installerVerified). Pure.
+    [[nodiscard]] static std::optional<DownloadDigest> installerDigest(
+        const QString& expected_checksum, const QString& checksum_type);
+
+    /// @brief The digest a feed PackageHash names, compared as exact base64. Nullopt when the
+    ///        hash is empty or the algorithm unknown (see nupkgHashMatches). Pure.
+    [[nodiscard]] static std::optional<DownloadDigest> nupkgDigest(const QString& expected_base64,
+                                                                   const QString& algorithm);
+
+    /// @brief Outcome of downloadVerifiedFile.
+    struct VerifiedDownload {
+        bool ok{false};         ///< downloaded, verified and in place
+        bool cancelled{false};  ///< a Stop was observed
+        bool mismatch{false};   ///< downloaded whole, but the bytes do not match the digest
+        int http_status{0};
+        QString error;          ///< why it failed, when none of the above
+    };
+
+    /// @brief Free bytes on the drive holding a folder, or -1 when Windows cannot say.
+    using FreeSpaceProbe = std::function<qint64(const QString& folder)>;
+
+    /// @brief Replace how free space is read (QStorageInfo), so a test can stand a drive of any
+    ///        size in; returns the probe it replaced. An empty probe restores QStorageInfo.
+    static FreeSpaceProbe setFreeSpaceProbeForTesting(FreeSpaceProbe probe);
+
+    /// @brief Why work files cannot go under @p work_root, or empty when they can: the drive
+    ///        holding it needs @p needed_bytes free. Names the folder and both sizes.
+    [[nodiscard]] static QString workSpaceRefusal(const QString& work_root, qint64 needed_bytes);
+
+    /// @brief What a download of @p declared_bytes needs on the drive it is staged on: the staged
+    ///        file, a second copy when its target is on that drive too, and
+    ///        offline::kWorkSpaceMarginBytes.
+    [[nodiscard]] static qint64 downloadWorkBytes(qint64 declared_bytes, bool target_on_same_drive);
+
+    /// @brief Download @p url and put it at @p output_path only when its bytes match @p digest.
+    ///
+    /// Memory stays bounded at any size up to offline::kMaxBinarySizeBytes: the body streams to a
+    /// file in the process's temp folder (QDir::tempPath, the per-run folder the app points TEMP
+    /// at), and is then copied into place through a QSaveFile while being hashed, so the bytes
+    /// that land are exactly the bytes that were checked and nothing is committed on a mismatch.
+    /// When the server declares the size, the drive the file is staged on must have
+    /// downloadWorkBytes free before the body is taken, or the download stops with
+    /// workSpaceRefusal's message. Callers decide which URLs are acceptable
+    /// (isAllowedInstallerUrl) before calling.
+    [[nodiscard]] static VerifiedDownload downloadVerifiedFile(
+        const QUrl& url,
+        const QString& output_path,
+        const DownloadDigest& digest,
+        const NetworkCancelCheck& cancel,
+        const NetworkProgressCallback& progress = {});
+
     // --- The app's one NuGet feed client (FindPackagesById) -----------------------------------
 
     /// @brief Why a feed listing is, or is not, the authoritative version list.
@@ -280,8 +345,8 @@ public:
 
     /// @brief Download @p package_id @p version's .nupkg to @p output_path, authenticated
     ///        against the PackageHash the feed publishes for that version. The hash is looked
-    ///        up FIRST (no trusted hash, no download), the bytes are verified before anything
-    ///        reaches disk, and the file is written with QSaveFile.
+    ///        up FIRST (no trusted hash, no download), and the file goes through
+    ///        downloadVerifiedFile, so nothing reaches @p output_path unless it matches.
     [[nodiscard]] static NupkgDownload downloadVerifiedNupkg(const QString& package_id,
                                                              const QString& version,
                                                              const QString& output_path,
@@ -296,6 +361,17 @@ public:
     ///        LOCAL paths before this runs, so their cmdlet names are intentionally
     ///        NOT treated as download indicators. Pure; unit-testable.
     [[nodiscard]] static bool scriptHasNetworkDownload(const QString& script_text);
+
+    /// @brief Remove NuGet-specific metadata files from the extracted package.
+    ///        Returns false if any removal failed, so the caller can fail closed
+    ///        rather than repack leftover NuGet metadata into the output nupkg. A folder is
+    ///        removed without following a link inside it (sak::no_follow::removeTree).
+    [[nodiscard]] static bool cleanNugetArtifacts(const QString& extract_dir);
+
+    /// @brief Make @p dir an empty folder: whatever a crashed earlier build left there is removed
+    ///        without following a link inside it (sak::no_follow::removeTree), then the folder is
+    ///        made again. False if either step failed.
+    [[nodiscard]] static bool resetWorkFolder(const QString& dir);
 
 private:
     struct InternalizationPaths {
@@ -340,19 +416,13 @@ private:
                                            const QString& tools_dir,
                                            InternalizationResult& result);
 
-    /// @brief Fetch one binary to @p output_path (with progress + fail-closed
-    ///        write). Returns the bytes on success; std::nullopt on cancellation
-    ///        (silent) or a real failure (which emits the error via the result).
-    [[nodiscard]] std::optional<QByteArray> fetchBinary(const QString& url,
-                                                        const QString& output_path,
-                                                        InternalizationResult& result);
-
-    /// @brief True iff @p body passes its declared checksum (fail-closed on a
-    ///        missing checksum). Emits the error via @p result on failure.
-    [[nodiscard]] bool binaryChecksumOk(const QByteArray& body,
-                                        const QString& url,
-                                        const QHash<QString, QPair<QString, QString>>& checksums,
-                                        InternalizationResult& result);
+    /// @brief Download one binary to @p output_path, verified against its declared checksum
+    ///        (no usable checksum, no download) and streamed to disk. False on cancellation
+    ///        (silent; the caller's gate reports it) or a failure, emitted via @p result.
+    [[nodiscard]] bool fetchVerifiedBinary(const QString& url,
+                                           const QString& output_path,
+                                           const QHash<QString, QPair<QString, QString>>& checksums,
+                                           InternalizationResult& result);
 
     /// @brief Map each primary URL that declares a checksum to its (checksum,
     ///        type) so a downloaded binary can be verified before repack.
@@ -369,11 +439,6 @@ private:
     /// @brief Build URL-to-local-filename map from parsed resources
     [[nodiscard]] QHash<QString, QString> buildLocalFilenameMap(
         const ParsedInstallScript& parsed) const;
-
-    /// @brief Remove NuGet-specific metadata files from the extracted package.
-    ///        Returns false if any removal failed, so the caller can fail closed
-    ///        rather than repack leftover NuGet metadata into the output nupkg.
-    [[nodiscard]] bool cleanNugetArtifacts(const QString& extract_dir) const;
 
     /// @brief Compute SHA-256 checksum of a file
     [[nodiscard]] QString computeChecksum(const QString& file_path) const;

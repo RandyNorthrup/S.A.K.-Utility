@@ -22,8 +22,8 @@ namespace sak {
  * @brief Check Disk Errors Action
  *
  * Runs Repair-Volume -Scan on writable drive-letter volumes to detect file system errors without
- *
- * scheduling or applying a repair.
+ * scheduling or applying a repair; an NTFS volume on a removable drive, which Windows does not
+ * snapshot for that scan, gets Check File System's read-only chkdsk instead.
  */
 /// How long one run of the check may take across all its drives.
 inline constexpr int kCheckDiskErrorsTimeoutMs = 2 * 60 * 60 * 1000;
@@ -136,6 +136,8 @@ private:
         QString status;
         QString error;   ///< Real exception text from a failed scan, if reported.
         QString result;  ///< Repair-Volume's own result, one Volume.RepairStatus name.
+        /// A removable drive's read-only chkdsk: "None" or "Problems" found; empty otherwise.
+        QString read_only_check;
     };
 
     /// @brief Aggregated per-run tallies passed to report building.
@@ -185,6 +187,12 @@ private:
     static void processScanKeyValue(const QString& key,
                                     const QString& value,
                                     ParsedDriveState& state);
+    /// @return true when @p state is a read-only chkdsk's verdict, now in @p report.
+    static bool appendReadOnlyCheckEntry(const ParsedDriveState& state,
+                                         QString& report,
+                                         int& drives_scanned,
+                                         int& errors_found,
+                                         int& repairs_recommended);
     void appendDriveScanEntry(const ParsedDriveState& state,
                               QString& report,
                               int& drives_scanned,

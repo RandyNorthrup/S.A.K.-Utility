@@ -56,10 +56,16 @@ void TestDedicatedThreads::spinningJobsLeaveTheSharedThreadPoolFree() {
         const qint64 latency_ms = sak::test::threadPoolStartLatencyMs(3000);
         stop.store(true);
         threads.joinAll();
+        qInfo(
+            "shared thread pool started a job %lld ms after it was asked (-1: not within 3000 ms)",
+            static_cast<long long>(latency_ms));
 
         QVERIFY2(latency_ms >= 0,
                  "a thread-pool job did not start while the dedicated threads spun");
-        QVERIFY2(latency_ms < 1000, qPrintable(QString::number(latency_ms)));
+        // With the jobs back on the shared pool the probe never starts within its 3000 ms (three
+        // of three drill runs, 2026-11-10); with them on threads of their own it starts in 0-100 ms
+        // on a workstation. A busy machine is given twenty times that, still short of "never".
+        QVERIFY2(latency_ms < 2000, qPrintable(QString::number(latency_ms)));
     }
 }
 

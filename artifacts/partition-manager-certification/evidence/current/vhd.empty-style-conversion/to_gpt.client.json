@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
-    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-10T16:03:10.821Z",
+    "completed_utc": "2026-11-14T10:18:32.615Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -29,11 +29,17 @@
         "message": "Partition operation batch complete",
         "steps": [
             {
+                "cancelled": false,
                 "error_message": "",
-                "operation_id": "3cb1cb89-1b1d-427a-981d-b08f8ee41848",
+                "may_still_run_in_windows": false,
+                "operation_id": "97e6c559-70f0-43c2-9584-f8a8c28ed455",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Convert Disk 1 to GPT\r\n",
+                "stop_cleanup_not_removed": [
+                ],
+                "stop_cleanup_removed": [
+                ],
                 "success": true,
                 "summary": "Convert MBR/GPT - Disk 1"
             }
@@ -53,15 +59,15 @@
     ],
     "queued_operations": [
         {
-            "id": "3cb1cb89-1b1d-427a-981d-b08f8ee41848",
+            "id": "97e6c559-70f0-43c2-9584-f8a8c28ed455",
             "payload": {
                 "target_style": "GPT"
             },
-            "script_sha256": "29d9e5c83def42d63b697293e58f851a45d57b3b23c053de170c955973310a30",
+            "script_sha256": "e4d8064fea1ea66bdda2d36adb1f367c002bfc2155970dc629c72a77f9b7ad59",
             "summary": "Convert MBR/GPT - Disk 1",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "600224807B511C980CC6F664DDC7957D",
+                "disk_unique_id": "600224803152F88379280E7A7E595947",
                 "drive_letter": "",
                 "kind": "Disk",
                 "offset_bytes": "0",
@@ -74,15 +80,15 @@
         }
     ],
     "review": {
-        "fingerprint": "0c879bd61c9d75b75801b5429fb8f4011e793cbe70f88448bfc8c98376943952",
-        "layout_hash": "288b07833bbf6b384cb9fecb34c5c82d7d3682e5437821d75a70cd90a7419463",
+        "fingerprint": "ac03aa7350203084547dbe75b4870a651575be99378f6c7fa61f0fb6804cf678",
+        "layout_hash": "f6660968e94c18259682766b750fca8463cb5c4935a7c33f0ed1390241c67c6f",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "run_id": "d05759ba-27f4-4e6e-aee6-6fe634b55d6a",
     "scenario_id": "vhd.empty-style-conversion",
     "schema_version": 1,
-    "started_utc": "2026-11-10T16:02:56.988Z",
+    "started_utc": "2026-11-14T10:18:03.191Z",
     "status": "Passed",
     "step": "to_gpt",
     "tool": "partition-manager-scenario-step"

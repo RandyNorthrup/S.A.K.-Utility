@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
-    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-10T16:34:31.824Z",
+    "completed_utc": "2026-11-14T10:45:44.489Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -29,11 +29,17 @@
         "message": "Partition operation batch complete",
         "steps": [
             {
+                "cancelled": false,
                 "error_message": "",
-                "operation_id": "f3a77f4d-3586-4c41-9e8e-07bf2e4010dd",
+                "may_still_run_in_windows": false,
+                "operation_id": "e9f7948f-8085-41e6-8cc0-c5d5e6efe2b4",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: BitLocker Unlock T:\r\nBitLocker Drive Encryption: Configuration Tool version 10.0.26100\r\nCopyright (C) 2013 Microsoft Corporation. All rights reserved.\r\n\r\nVolume T: [Label Unknown]\r\n[Data Volume]\r\n\r\n    Size:                 Unknown GB\r\n    BitLocker Version:    2.0\r\n    Conversion Status:    Unknown\r\n    Percentage Encrypted: Unknown%\r\n    Encryption Method:    AES 128\r\n    Protection Status:    Unknown\r\n    Lock Status:          Locked\r\n    Identification Field: Unknown\r\n    Automatic Unlock:     Disabled\r\n    Key Protectors:\r\n        Password\r\n        Numerical Password\r\n\r\n\r\n\r\nMountPoint       : T:\r\nVolumeStatus     : FullyEncrypted\r\nProtectionStatus : On\r\nLockStatus       : Unlocked\r\nEncryptionMethod : Aes128\r\n\r\n\r\n\r\n\r\n",
+                "stop_cleanup_not_removed": [
+                ],
+                "stop_cleanup_removed": [
+                ],
                 "success": true,
                 "summary": "BitLocker Unlock - Disk 1 Partition 2"
             }
@@ -53,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "f3a77f4d-3586-4c41-9e8e-07bf2e4010dd",
+            "id": "e9f7948f-8085-41e6-8cc0-c5d5e6efe2b4",
             "payload": {
                 "drive_letter": "T",
                 "recovery_password": "<withheld>"
@@ -62,7 +68,7 @@
             "summary": "BitLocker Unlock - Disk 1 Partition 2",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "60022480A7B6F63CB83354B8D955FAD0",
+                "disk_unique_id": "60022480827F3F32D0FE95251FC77C53",
                 "drive_letter": "T",
                 "kind": "Partition",
                 "offset_bytes": "16777216",
@@ -75,15 +81,15 @@
         }
     ],
     "review": {
-        "fingerprint": "2ed035e5e86d37a8a7fcf683e3654182ca99fc48f3102a15859f7bcfda22f3aa",
-        "layout_hash": "d4eec07e9b521338fc257cf13238d98766cbb1d2647116ec7561f6d5aa8ee1d0",
+        "fingerprint": "a3818257c004e079ecc83859735554366d42c8f4a9c8f080843aa490f20077f9",
+        "layout_hash": "e189877056496f4e5ad9e369c685f27018d5fce36ce0fc4a8a173e53345335c7",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "6dabd3e9-9548-4b37-b588-cd518f92232c",
+    "run_id": "e916643c-4469-457b-8e3a-c9f90609069a",
     "scenario_id": "external.bitlocker-mutation",
     "schema_version": 1,
-    "started_utc": "2026-11-10T16:34:08.253Z",
+    "started_utc": "2026-11-14T10:45:20.342Z",
     "status": "Passed",
     "step": "unlock",
     "tool": "partition-manager-scenario-step"

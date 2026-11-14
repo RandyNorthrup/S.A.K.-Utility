@@ -4,18 +4,18 @@
     "scenario_id":  "external.file-level-data-recovery",
     "status":  "Passed",
     "failure":  "",
-    "run_id":  "6dabd3e9-9548-4b37-b588-cd518f92232c",
-    "started_utc":  "2026-11-10T16:32:19.3139498Z",
-    "completed_utc":  "2026-11-10T16:32:48.4493174Z",
+    "run_id":  "e916643c-4469-457b-8e3a-c9f90609069a",
+    "started_utc":  "2026-11-14T10:43:26.5049506Z",
+    "completed_utc":  "2026-11-14T10:43:57.1764019Z",
     "code":  {
-                 "digest":  "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
-                 "commit":  "ab9cc5047c882847dc5d4d5b0035681ea0769298",
+                 "digest":  "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
+                 "commit":  "d8c27a155c90123c34d82b56fd92d61b75d1f602",
                  "dirty":  false
              },
     "binaries":  {
-                     "client_sha256":  "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f",
-                     "helper_sha256":  "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-                     "app_sha256":  "ef9b1c03f5e50738ded5616ebf67976967bb9b79bbcdf3ed44fe86494ab3d63c"
+                     "client_sha256":  "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132",
+                     "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+                     "app_sha256":  "fb9bd0213aa322589223a9701cb6c45fad7724d44a6421a3a8c0e2f74c18f702"
                  },
     "rig":  {
                 "machine_manufacturer":  "innotek GmbH",
@@ -43,7 +43,7 @@
                       "report":  "recover.client.json",
                       "observed":  {
                                        "client_token_elevated":  true,
-                                       "client_pid":  5868,
+                                       "client_pid":  7588,
                                        "exit_code":  0
                                    }
                   }
@@ -52,12 +52,12 @@
     "artifacts":  [
                       {
                           "path":  "independent.json",
-                          "sha256":  "a0240ce1988be7a627a671bb13bf832f0146e2105f017fbc0d7f657ad3c718f6",
+                          "sha256":  "a421e39d892d2bf12a7acac4dd7bb423b32da13286272bd03e15190d5a04a94d",
                           "bytes":  496
                       },
                       {
                           "path":  "recover.client.json",
-                          "sha256":  "1be9b421db01b723af3ffca57c0cdc74b5cb5e10cc275747f073ede7c8eba620",
+                          "sha256":  "05489190bbe54187cfe9ec061438d65da3b25ad33c90c6872e40850d4a86c5ac",
                           "bytes":  1294
                       }
                   ]

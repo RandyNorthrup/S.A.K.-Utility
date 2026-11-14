@@ -150,6 +150,25 @@ void FileExplorerDetailsView::fitNameColumn() {
     m_fitting_name = false;
 }
 
+void FileExplorerDetailsView::scheduleFitNameColumn() {
+    // The header emits sectionResized from inside its layout pass (QHeaderViewPrivate::
+    // resizeSections), which has already queued one width per column then shown. A column shown
+    // or hidden there leaves the pass a column it queued nothing for: QList::takeFirst on an empty
+    // list, an assert in Debug and undefined behaviour in Release (the first nightly's ASan job).
+    // So the refit runs once, after the pass has returned.
+    if (m_fit_name_queued) {
+        return;
+    }
+    m_fit_name_queued = true;
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+            m_fit_name_queued = false;
+            fitNameColumn();
+        },
+        Qt::QueuedConnection);
+}
+
 int FileExplorerDetailsView::dropColumnsForRoom(int room) {
     for (const int column : std::as_const(m_dropped_for_room)) {
         setColumnHidden(column, false);
@@ -184,7 +203,7 @@ void FileExplorerDetailsView::showEvent(QShowEvent* event) {
                 this,
                 [this](int section, int /*old_size*/, int /*new_size*/) {
                     if (section != FileExplorerItemModel::NameColumn) {
-                        fitNameColumn();
+                        scheduleFitNameColumn();
                     }
                 });
         connect(horizontalHeader(), &QHeaderView::sectionResized, this, [this]() {

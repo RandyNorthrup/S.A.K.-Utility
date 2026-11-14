@@ -42,8 +42,12 @@ private:
     /// beside a readable Name. Returns the width the kept columns other than Name take.
     int dropColumnsForRoom(int room);
 
+    /// fitNameColumn, once, after the current header layout pass has returned: never inside it.
+    void scheduleFitNameColumn();
+
     bool m_save_connections_installed{false};
     bool m_fitting_name{false};
+    bool m_fit_name_queued{false};
     QSet<int> m_dropped_for_room;
 };
 

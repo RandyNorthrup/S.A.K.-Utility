@@ -10,14 +10,36 @@ import sys
 import threading
 import time
 
-SELF_EXPIRY_SECONDS = 8
-ACK_SECONDS = 2
 POLL_SECONDS = 0.005
 MAX_RECEIPT_DELAY_MS = 10000
 
+# Each wait for the outer test's acknowledgement must outlast the window the outer side
+# (scripts/test_process_capture.ps1) gives itself to produce it. Otherwise a slow but valid outer
+# side loses the race and the fixture exits 1 for a reason that is not the case under test: on the
+# 317211fc nightly, stdout-exact under Windows PowerShell 5.1 failed with "expected '0', got '1'"
+# because this wait was 2 s while the outer side was still inside its 10 s. With each wait above
+# its outer window, an outer side that is truly too slow fails first on its own message.
+#  - The output cases bind identities within $identitySetupLimitSeconds = 10 s and write
+#    output-ready.ack, output-release.ack and output-drain.ack inside that setup or a capture
+#    whose timeout is at most 10 s.
+#  - The deadline cases write bound.ack and parent-release.ack inside their 30 s outer watchdog.
+# Each margin is 5 s: well above the outer side's own polling (5-10 ms) and scheduling stalls
+# seen on a loaded runner, and small next to the 60 s ctest TIMEOUT these tests run under.
+OUTER_OUTPUT_WINDOW_SECONDS = 10
+OUTER_DEADLINE_WINDOW_SECONDS = 30
+ACK_MARGIN_SECONDS = 5
+OUTPUT_ACK_SECONDS = OUTER_OUTPUT_WINDOW_SECONDS + ACK_MARGIN_SECONDS
+BIND_ACK_SECONDS = OUTER_DEADLINE_WINDOW_SECONDS + ACK_MARGIN_SECONDS
+# How long a fixture lives when nobody stops it. Every case kills the processes it holds, so this
+# bounds only a fixture the outer side lost track of. It must outlast the longest valid output
+# run (the largest receipt delay, two output acknowledgements and the writes) and the deadline
+# parent's release wait and holders, which must stay alive until the outer side has checked them
+# inside its 30 s watchdog: 10 + 2 * 15 + 5 = 45 s.
+SELF_EXPIRY_SECONDS = MAX_RECEIPT_DELAY_MS // 1000 + 2 * OUTPUT_ACK_SECONDS + ACK_MARGIN_SECONDS
+
 
 def wait_ack(path: Path) -> None:
-    deadline = time.monotonic() + ACK_SECONDS
+    deadline = time.monotonic() + OUTPUT_ACK_SECONDS
     while not path.exists():
         if time.monotonic() >= deadline:
             raise TimeoutError("Outer fixture did not bind output process identities")
@@ -102,7 +124,7 @@ def main() -> None:
         close_fds=True,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    deadline = time.monotonic() + ACK_SECONDS
+    deadline = time.monotonic() + BIND_ACK_SECONDS
     while not (directory / "bound.ack").exists():
         if time.monotonic() >= deadline:
             raise TimeoutError("Outer fixture did not bind parent and child identities")

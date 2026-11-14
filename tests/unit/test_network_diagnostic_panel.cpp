@@ -5,8 +5,11 @@
 /// @brief The Network panel's start-up adapter scan runs, off-thread, in every run mode.
 
 #include "sak/accessible_name_rule.h"
+#include "sak/bandwidth_tester.h"
+#include "sak/elevation_manager.h"
 #include "sak/network_diagnostic_controller.h"
 #include "sak/network_diagnostic_panel.h"
+#include "sak/portable_settings.h"
 #include "sak/process_runner.h"
 #include "sak/quick_action_controller.h"
 #include "sak/style_constants.h"
@@ -28,7 +31,10 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QProcess>
 #include <QPushButton>
+#include <QScopeGuard>
+#include <QSemaphore>
 #include <QStandardPaths>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -161,6 +167,46 @@ private:
     }
 
     QList<QStringList> m_netsh_calls;
+    sak::ScopedProcessFaultInjector m_injector;
+};
+
+/// A diagnostic the test holds running: the DNS cache read (its one PowerShell call) waits in its
+/// worker until release(), then answers an empty cache. Only that call is held; every other launch
+/// takes its usual path.
+class HeldDnsCacheRead {
+public:
+    HeldDnsCacheRead()
+        : m_injector(
+              [this](const QString&, const QStringList& args) -> std::optional<sak::ProcessResult> {
+                  if (!args.join(QLatin1Char(' ')).contains(QStringLiteral("Get-DnsClientCache"))) {
+                      return std::nullopt;
+                  }
+                  m_entered.release();
+                  m_released.acquire();
+                  sak::ProcessResult result;
+                  result.exit_code = 0;
+                  result.std_out = QStringLiteral("[]");
+                  return result;
+              }) {}
+    ~HeldDnsCacheRead() { release(); }
+    HeldDnsCacheRead(const HeldDnsCacheRead&) = delete;
+    HeldDnsCacheRead& operator=(const HeldDnsCacheRead&) = delete;
+    HeldDnsCacheRead(HeldDnsCacheRead&&) = delete;
+    HeldDnsCacheRead& operator=(HeldDnsCacheRead&&) = delete;
+
+    /// True once the read has reached its worker and is waiting there.
+    [[nodiscard]] bool waitUntilHeld(int timeout_ms) { return m_entered.tryAcquire(1, timeout_ms); }
+    void release() {
+        if (!m_let_go) {
+            m_let_go = true;
+            m_released.release();
+        }
+    }
+
+private:
+    QSemaphore m_entered;
+    QSemaphore m_released;
+    bool m_let_go{false};
     sak::ScopedProcessFaultInjector m_injector;
 };
 
@@ -402,6 +448,8 @@ class NetworkDiagnosticPanelTests : public QObject {
 
 private Q_SLOTS:
     void cleanup();
+    void listenOnStartsOnTheDefaultRouteAndRemembersEachServer();
+    void iperfServerSaysBeforeStartWhenItNeedsRunAsAdmin();
     // Review 5 (Z6): Reset Network, which resets the PC's whole network stack, was drawn as
     // neutral as Copy Config, beside three filled buttons. It takes the danger tone, and Backup
     // and Restore Settings are not filled.
@@ -706,15 +754,20 @@ void NetworkDiagnosticPanelTests::generateReportAddsTheExtensionItWasNotGiven() 
     QVERIFY(QFile::exists(dir.filePath(QStringLiteral("net.html"))));
 }
 
-// The first thing the panel does is scan adapters. A click during that says so, and does not ask
-// for details the controller would then refuse.
+// A click on Generate Report while a diagnostic runs says so, and does not ask for details the
+// controller would then refuse. The click reaches the panel queued, so a real adapter scan that
+// ended first (its end is queued too, and ahead) let the report through: the Debug+ASan nightly on
+// 1db87df4 saw no box. The diagnostic here is one the test holds running until the click has been
+// answered, however fast or slow this PC is.
 void NetworkDiagnosticPanelTests::generateReportWaitsForARunningDiagnostic() {
     sak::QuickActionController quick_actions;
     sak::NetworkDiagnosticPanel panel(quick_actions);
     auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
     QVERIFY(controller != nullptr);
     QVERIFY(waitForStartupScan(panel));
-    controller->scanAdapters();  // marks the operation active before it returns
+    HeldDnsCacheRead held;
+    controller->dnsInspectCache();
+    QVERIFY(held.waitUntilHeld(kAdapterScanTimeoutMs));
     QVERIFY(!controller->canGenerateReport());
     QPushButton* button = reportButton(panel);
     QVERIFY(button != nullptr);
@@ -723,6 +776,8 @@ void NetworkDiagnosticPanelTests::generateReportWaitsForARunningDiagnostic() {
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
     QVERIFY(driver.saw_message_box);
     QVERIFY(!driver.details_answered);
+    held.release();
+    QTRY_VERIFY_WITH_TIMEOUT(controller->canGenerateReport(), kAdapterScanTimeoutMs);
 }
 
 // Seen on a VM: the log held DL 171.31 Mbps, UL 26.98 Mbps, latency 227.0 ms and the screen was
@@ -1273,6 +1328,149 @@ void NetworkDiagnosticPanelTests::toolbarRestoreStartsOnTheBackedUpAdapter() {
              QStringList({QStringLiteral("Ethernet"), QStringLiteral("Wi-Fi")}));
     QCOMPARE(driver.adapter_chosen_first, expected);
     QVERIFY(commands.netshCalls().isEmpty());
+}
+
+namespace {
+
+// The two adapters the "Listen on" test scans: a VPN without a gateway, and the Ethernet adapter
+// holding the default route. Neither address belongs to the PC running the test, so a server
+// started on one fails without listening anywhere.
+QVector<sak::NetworkAdapterInfo> listenTestAdapters() {
+    sak::NetworkAdapterInfo vpn;
+    vpn.name = QStringLiteral("VPN");
+    vpn.isConnected = true;
+    vpn.ipv4Addresses = {QStringLiteral("10.8.0.2")};
+    sak::NetworkAdapterInfo ethernet;
+    ethernet.name = QStringLiteral("Ethernet");
+    ethernet.isConnected = true;
+    ethernet.ipv4Addresses = {QStringLiteral("192.168.1.20")};
+    ethernet.ipv4Gateway = QStringLiteral("192.168.1.1");
+    return {vpn, ethernet};
+}
+
+QComboBox* comboNamed(sak::NetworkDiagnosticPanel& panel, const QString& accessible_name) {
+    for (auto* combo : panel.findChildren<QComboBox*>()) {
+        if (combo->accessibleName() == accessible_name) {
+            return combo;
+        }
+    }
+    return nullptr;
+}
+
+const QStringList kListenAddressKeys{QStringLiteral("NetworkDiagnostics/iperfServerListenAddress"),
+                                     QStringLiteral("NetworkDiagnostics/lanServerListenAddress")};
+
+}  // namespace
+
+// The iPerf3 and LAN transfer servers each listen on one chosen adapter address. A server's list
+// starts on the adapter holding the default route; the address a server was started on is
+// remembered for that server alone and chosen again the next time the list is filled. Start
+// Server reaches the controller's recorder, not a server: it used to start netsh (and, elevated,
+// add a real inbound firewall rule) and a LAN server's PowerShell, on this PC, for real.
+void NetworkDiagnosticPanelTests::listenOnStartsOnTheDefaultRouteAndRemembersEachServer() {
+    for (const QString& key : kListenAddressKeys) {
+        sak::PortableSettings().remove(key);
+    }
+    const auto forget = qScopeGuard([]() {
+        for (const QString& key : kListenAddressKeys) {
+            sak::PortableSettings().remove(key);
+        }
+    });
+    const QString iperf_name = QStringLiteral("iPerf3 server listen address");
+    const QString lan_name = QStringLiteral("LAN transfer server listen address");
+    {
+        sak::QuickActionController quick_actions;
+        sak::NetworkDiagnosticPanel panel(quick_actions);
+        auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+        QVERIFY(controller != nullptr);
+        Q_EMIT controller->adaptersScanComplete(listenTestAdapters());
+        QComboBox* iperf = comboNamed(panel, iperf_name);
+        QComboBox* lan = comboNamed(panel, lan_name);
+        QVERIFY(iperf != nullptr && lan != nullptr);
+        QCOMPARE(iperf->count(), 2);
+        QCOMPARE(iperf->currentData().toString(), QStringLiteral("192.168.1.20"));
+        QCOMPARE(lan->currentData().toString(), QStringLiteral("192.168.1.20"));
+
+        QStringList starts;
+        controller->setServerStartRecorderForTesting(
+            [&starts](const QString& server, uint16_t, const QHostAddress& address) {
+                starts.append(server + QLatin1Char('@') + address.toString());
+            });
+        iperf->setCurrentIndex(iperf->findData(QStringLiteral("10.8.0.2")));
+        QVERIFY(QMetaObject::invokeMethod(&panel, "onStartIperfServer", Qt::DirectConnection));
+        QVERIFY(
+            QMetaObject::invokeMethod(&panel, "onStartLanTransferServer", Qt::DirectConnection));
+        QCOMPARE(starts,
+                 QStringList({QStringLiteral("iPerf3@10.8.0.2"),
+                              QStringLiteral("LAN transfer@192.168.1.20")}));
+        QVERIFY2(panel.findChildren<QProcess*>().isEmpty(), "Start Server started a process");
+    }
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    Q_EMIT controller->adaptersScanComplete(listenTestAdapters());
+    QCOMPARE(comboNamed(panel, iperf_name)->currentData().toString(), QStringLiteral("10.8.0.2"));
+    QCOMPARE(comboNamed(panel, lan_name)->currentData().toString(), QStringLiteral("192.168.1.20"));
+}
+
+// Before Start Server is pressed, the Bandwidth tab says when the chosen address needs Run as
+// Admin (a server other PCs can reach needs its firewall rule), on Start Server's tooltip as the
+// app's other administrator-only controls do, and on the stopped server's status. This PC only
+// (loopback) needs neither. Starting from such an address is refused at once with what to do.
+void NetworkDiagnosticPanelTests::iperfServerSaysBeforeStartWhenItNeedsRunAsAdmin() {
+    sak::PortableSettings().remove(kListenAddressKeys.first());
+    const auto forget =
+        qScopeGuard([]() { sak::PortableSettings().remove(kListenAddressKeys.first()); });
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    auto adapters = listenTestAdapters();
+    sak::NetworkAdapterInfo loopback;
+    loopback.name = QStringLiteral("Loopback");
+    loopback.isConnected = true;
+    loopback.ipv4Addresses = {QStringLiteral("127.0.0.1")};
+    adapters.append(loopback);
+    Q_EMIT controller->adaptersScanComplete(adapters);
+    QComboBox* listen = comboNamed(panel, QStringLiteral("iPerf3 server listen address"));
+    QVERIFY(listen != nullptr);
+    QPushButton* start = nullptr;
+    for (auto* button : panel.findChildren<QPushButton*>()) {
+        if (button->accessibleDescription() == QStringLiteral("Start iPerf3 server")) {
+            start = button;
+        }
+    }
+    QVERIFY(start != nullptr);
+    const auto status_text = [&panel]() {
+        QStringList texts;
+        for (const auto* label : panel.findChildren<QLabel*>()) {
+            texts.append(label->text());
+        }
+        return texts;
+    };
+    const bool elevated = sak::ElevationManager::isElevated();
+
+    listen->setCurrentIndex(listen->findData(QStringLiteral("192.168.1.20")));
+    QCOMPARE(start->toolTip().contains(QStringLiteral("requires admin")), !elevated);
+    QCOMPARE(status_text().contains(QStringLiteral("Server: Stopped (needs Run as Admin)")),
+             !elevated);
+
+    listen->setCurrentIndex(listen->findData(QStringLiteral("127.0.0.1")));
+    QVERIFY2(!start->toolTip().contains(QStringLiteral("requires admin")),
+             qPrintable(start->toolTip()));
+    QVERIFY(!status_text().contains(QStringLiteral("Server: Stopped (needs Run as Admin)")));
+
+    if (elevated) {
+        return;
+    }
+    listen->setCurrentIndex(listen->findData(QStringLiteral("192.168.1.20")));
+    QSignalSpy errors(controller, &sak::NetworkDiagnosticController::errorOccurred);
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onStartIperfServer", Qt::DirectConnection));
+    QTRY_VERIFY_WITH_TIMEOUT(!errors.isEmpty(), 5000);
+    QVERIFY2(errors.first().at(0).toString().contains(
+                 sak::BandwidthTester::needsElevationMessage()),
+             qPrintable(errors.first().at(0).toString()));
 }
 
 QTEST_MAIN(NetworkDiagnosticPanelTests)

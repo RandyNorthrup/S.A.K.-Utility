@@ -55,6 +55,24 @@ struct WindowsContinuedPhase {
                                                 const QString& size_expression,
                                                 const QString& statement);
 
+/// Seconds a script waits after an online file system scan before it goes on or reports done.
+/// volsnap.sys (Windows 11 26100) can leave a timer queued in a volume's device object after an
+/// online scan, and removing the whole disk (an unplug, an eject, a detach) within seconds frees
+/// the object under it: Windows bugchecks (operation proof's crash investigation, 2026-11-12; with
+/// a 10 s settle after the scan, 24 rounds of scan-then-detach under heavy load did not).
+inline constexpr int kVolumeScanSettleSeconds = 15;
+
+/// PowerShell, one statement, that says why it waits and then waits kVolumeScanSettleSeconds:
+/// what follows every online scan (Repair-Volume -Scan, and chkdsk without /f).
+[[nodiscard]] QString volumeScanSettleStatement();
+
+/// PowerShell, one line: the online scan @p statement between the volume-scan markers
+/// (windowsContinuedStatement), inside a try whose finally is volumeScanSettleStatement. The wait
+/// runs whether the scan passed or threw, since a person who reads "failed" is as likely to pull
+/// the drive at once, and an error the scan threw still stops the script, unchanged, after it.
+[[nodiscard]] QString volumeScanSettledStatement(const QString& size_expression,
+                                                 const QString& statement);
+
 /// Whether @p line is a Windows-continued marker line, well formed or not: never text for a person.
 [[nodiscard]] bool isWindowsContinuedMarkerLine(const QString& line);
 

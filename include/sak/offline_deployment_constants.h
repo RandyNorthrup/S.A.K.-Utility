@@ -90,10 +90,23 @@ constexpr auto kInstallersSubdir = "installers";
 constexpr auto kLogsSubdir = "logs";
 constexpr auto kReadmeFilename = "README.txt";
 
-// Ownership stamp dropped into a build's <output>/_work directory so a later
-// recursive cleanup only ever deletes a work tree this app created (a
-// pre-existing FOREIGN _work is refused, never wiped).
+// Ownership stamp dropped into a build's work directory so a later recursive
+// cleanup only ever deletes a work tree this app created (a pre-existing FOREIGN
+// directory is refused, never wiped).
 constexpr auto kWorkDirOwnershipMarker = ".sak_offline_work";
+
+// A build's work files (each package's .nupkg, what it unpacks to, and the
+// installers it downloads) live in the app's own run folder (data\temp\run-*,
+// owner ruling 2026-11-11: no work file on the user's PC outside the app's
+// folder), never in the output folder. Before a bundle or a direct download
+// starts, no installer's size is known yet, so the drive S.A.K. runs from must
+// have at least this much free; a single installer can be well over half of it.
+constexpr int64_t kMinWorkFreeBytes = 1024LL * 1024 * 1024;
+
+// Once a download's server declares its size (Content-Length), its own room is
+// checked: the staged file, a second copy when its target is on the same drive,
+// and this much more for everything else the build writes meanwhile.
+constexpr int64_t kWorkSpaceMarginBytes = 64LL * 1024 * 1024;
 
 // ============================================================================
 // Package list presets

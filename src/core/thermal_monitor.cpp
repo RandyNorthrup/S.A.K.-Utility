@@ -63,8 +63,9 @@ constexpr double kMaxPlausibleCelsius = 150.0;
 // without an apostrophe cannot end that string (PowerShell also ends it on curly quotes, which
 // are not ASCII); an identity with anything else is simply asked again on every poll.
 [[nodiscard]] bool isScriptSafeIdentity(const QString& identity) {
-    static const QRegularExpression safe(QStringLiteral("^[\\x20-\\x26\\x28-\\x7E]{1,200}$"));
-    return !identity.trimmed().isEmpty() && safe.match(identity).hasMatch();
+    static const QRegularExpression kSafeIdentity(
+        QStringLiteral("^[\\x20-\\x26\\x28-\\x7E]{1,200}$"));
+    return !identity.trimmed().isEmpty() && kSafeIdentity.match(identity).hasMatch();
 }
 
 [[nodiscard]] QMap<QString, QString> diskIdentities(const QString& output) {
@@ -352,9 +353,9 @@ QStringList ThermalMonitor::rememberQuietDisks(const ThermalPollResult& poll, Qu
         quiet->status_by_identity.clear();
         quiet->present = present;
     }
-    static const QRegularExpression disk_status(QStringLiteral("^status_disk(\\d+)=unavailable:"));
+    static const QRegularExpression kDiskStatus(QStringLiteral("^status_disk(\\d+)=unavailable:"));
     for (const QString& status : poll.sensor_statuses) {
-        const QRegularExpressionMatch match = disk_status.match(status);
+        const QRegularExpressionMatch match = kDiskStatus.match(status);
         if (!match.hasMatch()) {
             continue;
         }
@@ -373,7 +374,7 @@ QStringList ThermalMonitor::rememberQuietDisks(const ThermalPollResult& poll, Qu
             continue;
         }
         QString remembered = it.value();
-        remembered.replace(disk_status, QStringLiteral("status_disk%1=unavailable:").arg(number));
+        remembered.replace(kDiskStatus, QStringLiteral("status_disk%1=unavailable:").arg(number));
         if (!all.contains(remembered)) {
             all.append(remembered);
         }

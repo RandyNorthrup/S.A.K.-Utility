@@ -9,10 +9,15 @@
 #include <QJsonArray>
 
 #include <algorithm>
+#include <limits>
 
 namespace sak {
 
 namespace {
+
+// The image route warns when the shadow-copy storage left is under this share of the bytes
+// it captures (shadowStorageTooSmallForCapture).
+constexpr uint64_t kShadowStorageCaptureShare = 4;
 
 uint64_t alignUp(uint64_t value) {
     const uint64_t remainder = value % kOsMigrationAlignmentBytes;
@@ -364,6 +369,9 @@ QString osMigrationPlanSummary(const OsMigrationPlan& plan) {
                                       "on the target, and applied to a new NTFS volume there.")
                      : QStringLiteral("Used blocks are copied from each volume's snapshot, and the "
                                       "Windows volume is then extended to fit."));
+    if (const QString shadow = osMigrationShadowStorageText(plan); !shadow.isEmpty()) {
+        lines.append(shadow);
+    }
     for (const auto& entry : plan.partitions) {
         lines.append(QStringLiteral("%1, %2 at byte %3 on the source: %4 at byte %5 on the target, "
                                     "%6")
@@ -376,6 +384,53 @@ QString osMigrationPlanSummary(const OsMigrationPlan& plan) {
                                                   : QStringLiteral("read raw")));
     }
     return lines.join(QLatin1Char('\n'));
+}
+
+bool shadowStorageTooSmallForCapture(uint64_t max_bytes,
+                                     uint64_t used_bytes,
+                                     uint64_t windows_used_bytes) {
+    if (max_bytes == std::numeric_limits<uint64_t>::max()) {
+        return false;
+    }
+    const uint64_t left = max_bytes > used_bytes ? max_bytes - used_bytes : 0;
+    return left < windows_used_bytes / kShadowStorageCaptureShare;
+}
+
+QString osMigrationShadowStorageText(const OsMigrationPlan& plan) {
+    const auto* windows = plan.windowsPartition();
+    if (plan.route != OsMigrationRoute::Image || windows == nullptr) {
+        return {};
+    }
+    const QString letter = windows->drive_letter.isEmpty()
+                               ? QStringLiteral("the Windows volume")
+                               : windows->drive_letter.left(1).toUpper() + QLatin1Char(':');
+    if (!plan.windows_shadow_storage_known) {
+        return QStringLiteral(
+                   "Shadow-copy storage for %1 was not read: Windows shows it to an administrator "
+                   "only (Scan Disks as administrator). S.A.K. reads it before it writes the "
+                   "target, and warns there if it is small.")
+            .arg(letter);
+    }
+    const uint64_t max = plan.windows_shadow_storage_max_bytes;
+    const uint64_t used = plan.windows_shadow_storage_used_bytes;
+    QString text = max == std::numeric_limits<uint64_t>::max()
+                       ? QStringLiteral("Shadow-copy storage for %1 has no limit, %2 in use.")
+                             .arg(letter, formatPartitionBytes(used))
+                       : QStringLiteral("Shadow-copy storage for %1 up to %2, %3 in use.")
+                             .arg(letter, formatPartitionBytes(max), formatPartitionBytes(used));
+    if (shadowStorageTooSmallForCapture(max, used, plan.windows_used_bytes)) {
+        text += QStringLiteral(
+                    "\nWarning: that leaves %1 for the capture, less than a quarter of the %2 in "
+                    "use on %3. While DISM reads every file, Windows keeps the old copy of each "
+                    "block that changes on %3 there, and if it fills, Windows deletes the snapshot "
+                    "and the capture stops (Windows Update can change several GB). Let Windows "
+                    "Update finish first, or give it more room: vssadmin resize shadowstorage "
+                    "/for=%3 /on=%3 /maxsize=10%")
+                    .arg(formatPartitionBytes(max > used ? max - used : 0),
+                         formatPartitionBytes(plan.windows_used_bytes),
+                         letter);
+    }
+    return text;
 }
 
 const OsMigrationPartition* OsMigrationPlan::windowsPartition() const {
@@ -398,6 +453,11 @@ OsMigrationPlan planOsMigration(const PartitionDiskInfo& source, uint64_t target
         if (partition.is_boot && partition.volume &&
             partition.volume->total_bytes >= partition.volume->free_bytes) {
             plan.windows_used_bytes = partition.volume->total_bytes - partition.volume->free_bytes;
+        }
+        if (partition.is_boot && partition.volume) {
+            plan.windows_shadow_storage_known = partition.volume->shadow_storage_known;
+            plan.windows_shadow_storage_max_bytes = partition.volume->shadow_storage_max_bytes;
+            plan.windows_shadow_storage_used_bytes = partition.volume->shadow_storage_used_bytes;
         }
     }
     if (target_bytes == 0) {

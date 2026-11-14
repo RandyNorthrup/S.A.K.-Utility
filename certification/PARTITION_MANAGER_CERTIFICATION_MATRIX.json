@@ -559,7 +559,7 @@
         {
           "id": "refused_on_thin",
           "operation": "WipeDisk",
-          "expect": "failed"
+          "expect": "refused"
         },
         {
           "id": "wipe",

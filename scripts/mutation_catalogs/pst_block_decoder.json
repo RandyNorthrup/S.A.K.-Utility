@@ -54,27 +54,27 @@
     },
     {
       "id": "4k-exact-size-check-inverted",
-      "file": "src/core/pst_parser.cpp",
-      "find": "decompressed.size() != uncompressed_size",
-      "replace": "decompressed.size() == uncompressed_size",
+      "file": "src/core/bounded_inflate.cpp",
+      "find": "produced != static_cast<uLong>(expected_bytes)",
+      "replace": "produced == static_cast<uLong>(expected_bytes)",
       "expect": "killed",
-      "why": "an inflated block is accepted only when its length EQUALS the footer's declared uncompressed_size; inverting the guard fails the valid compressed block (its sizes match) so the inflate fixture cannot open"
+      "why": "an inflated block is accepted only when its length EQUALS the footer's declared uncompressed_size; since sec2 that check is inflateZlibExactly's (bounded_inflate.cpp). Inverting it fails the valid compressed block (its sizes match), so the inflate fixture cannot open"
     },
     {
       "id": "4k-exact-size-check-disabled",
-      "file": "src/core/pst_parser.cpp",
-      "find": "decompressed.size() != uncompressed_size",
-      "replace": "decompressed.size() != decompressed.size()",
+      "file": "src/core/bounded_inflate.cpp",
+      "find": "produced != static_cast<uLong>(expected_bytes)",
+      "replace": "produced != produced",
       "expect": "killed",
-      "why": "disabling the exact-size invariant lets a stream whose inflated length differs from the declared uncompressed_size through; the size-mismatch fixture (declared = inflated+5) then opens instead of failing closed. Validates that fail-close test is non-vacuous"
+      "why": "disabling the exact-size invariant in inflateZlibExactly lets a stream whose inflated length differs from the declared uncompressed_size through; the size-mismatch fixture (declared = inflated+5) then opens instead of failing closed. Validates that fail-close test is non-vacuous"
     },
     {
       "id": "4k-decompress-failure-isEmpty-masked",
-      "file": "src/core/pst_parser.cpp",
-      "find": "decompressed.isEmpty()",
-      "replace": "decompressed.size() < 0",
-      "expect": "equivalent",
-      "why": "a failed qUncompress returns an empty buffer; suppressing the isEmpty fail-close (size() < 0 is never true for a signed qsizetype) only defers rejection to the downstream exact-size check (0 != a nonzero declared uncompressed_size), which fails the bad-zlib block closed identically. The emitted result is identical for every input"
+      "file": "src/core/bounded_inflate.cpp",
+      "find": "result != Z_STREAM_END || ",
+      "replace": "(result < 0 && result > 0) || ",
+      "expect": "killed",
+      "why": "the decompress-failure check, which was qUncompress's empty result and is now inflate's own result in inflateZlibExactly. Masked, a stream that produced exactly the declared length but failed (its adler32 is wrong, or its trailer is cut) is accepted. Under qUncompress this was equivalent (the empty buffer still failed the size check); it is not now, and unicode4kCorruptChecksumFailsClosed (declared = the true length, last checksum byte flipped) kills it"
     }
   ]
 }

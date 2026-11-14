@@ -25,10 +25,13 @@
 
 #pragma once
 
+#include "sak/bounded_inflate.h"
+
 #include <QByteArray>
 #include <QtEndian>
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 
 namespace sak {
@@ -132,17 +135,13 @@ inline constexpr uint64_t kApfsInodeHasUncompressedSize = 0x00'04'00'00;
         }
         return stored;
     }
-    QByteArray prefixed;
-    prefixed.reserve(payload.size() + static_cast<qsizetype>(sizeof(quint32)));
-    QByteArray sizePrefix(sizeof(quint32), '\0');
-    qToBigEndian<quint32>(static_cast<quint32>(expectedBytes), sizePrefix.data());
-    prefixed.append(sizePrefix);
-    prefixed.append(payload);
-    const QByteArray out = qUncompress(prefixed);
-    if (static_cast<uint64_t>(out.size()) != expectedBytes) {
+    // Inflate no further than the declared size: qUncompress grew its buffer to whatever the
+    // stream held and was checked only afterwards, so a crafted payload could inflate to
+    // gigabytes first.
+    if (expectedBytes > static_cast<uint64_t>(std::numeric_limits<qsizetype>::max())) {
         return std::nullopt;
     }
-    return out;
+    return inflateZlibExactly(payload, static_cast<qsizetype>(expectedBytes));
 }
 
 // Parsed view of a com.apple.decmpfs attribute header.

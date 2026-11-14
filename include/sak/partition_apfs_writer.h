@@ -1130,6 +1130,17 @@ public:
     ///        requests derive @c allow_raw_device_target from this so their opt-in
     ///        stays consistent with the engine's own classification.
     [[nodiscard]] static bool acceptsRawDeviceTargetPath(const QString& path);
+
+    /// @brief The name S.A.K.'s writer records in each volume it formats (apfs_formatted_by),
+    ///        which the disk scan reports as "APFS volume formatted by: <name>".
+    [[nodiscard]] static QString sakFormatterName();
+    /// @brief Why repair-raw's generated-layout guard would refuse a container of this
+    ///        geometry, or empty when the geometry passes: 4096-byte blocks and one
+    ///        space-manager chunk at most (repairMaxContainerBytes()). The guard itself
+    ///        uses this, and so does the panel before it offers the repair.
+    [[nodiscard]] static QString repairGeometryBlocker(uint64_t block_size, uint64_t block_count);
+    /// @brief The largest container the generated repair handles: 128 MiB.
+    [[nodiscard]] static uint64_t repairMaxContainerBytes();
     [[nodiscard]] static PartitionApfsImageVolumeLabelResult changeImageOnlyVolumeLabel(
         const PartitionApfsImageVolumeLabelRequest& request);
     [[nodiscard]] static PartitionApfsRawVolumeLabelResult changeRawVolumeLabel(

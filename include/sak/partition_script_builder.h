@@ -60,6 +60,28 @@ class PartitionScriptBuilder {
 public:
     [[nodiscard]] PartitionScript buildScript(const PartitionOperation& operation) const;
     [[nodiscard]] static QString quotePowerShell(const QString& value);
+
+    /// The line an elevated script starts its native types with (security brief 4a):
+    /// sak_script_types.dll beside the program, verified and held with every program file before
+    /// the helper started, loaded from its bytes. Nothing is compiled into the temporary folder.
+    [[nodiscard]] static QString scriptTypesLoaderScript();
+
+    /// The read-only volume check Check File System and Check Disk Errors share, in three parts
+    /// that run in order. The target: $sakScanDrive is @p drive (a PowerShell expression),
+    /// $sakScanVolume its Get-Volume, and $sakScanRemovableNtfs whether it is NTFS on a drive
+    /// Windows calls removable, which Windows does not snapshot for the online scan.
+    [[nodiscard]] static QString volumeScanTargetStatement(const QString& drive);
+    /// The online scan of $sakScanDrive (Repair-Volume -Scan), its result put in
+    /// @p result_variable when one is named. A snapshot Windows could not take is said in S.A.K.'s
+    /// words: a read-only check does not pass on Windows' advice to run a scan that fixes.
+    [[nodiscard]] static QString onlineVolumeScanStatement(const QString& result_variable,
+                                                           bool verbose);
+    /// chkdsk of $sakScanDrive without /f, /r, /x or /scan, which only reads. A removable NTFS
+    /// drive is locked first, so one in use is said to be and not checked, and dismounted, so
+    /// chkdsk reads what is on it (Sak.ScanVolumeLock). $sakScanVerdict says which it was:
+    /// 'None' (no problems found), 'Problems' (found, and, reading only, none fixed) or
+    /// 'NotChecked'; the last two also stop the script in S.A.K.'s words.
+    [[nodiscard]] static QString readOnlyVolumeCheckStatement();
     [[nodiscard]] static bool isValidDriveLetter(const QString& value);
     [[nodiscard]] static bool isSupportedFileSystem(const QString& value);
     /// PowerShell function: which file system a 512-byte sector is the boot sector of, or $null.
@@ -73,6 +95,34 @@ public:
     [[nodiscard]] static QString recoveredPartitionFitFunctionScript();
     /// PowerShell function: a drive letter nothing holds, the preferred one if it is free.
     [[nodiscard]] static QString freeBootLetterFunctionScript();
+    /// PowerShell that removes a partition's drive letters and folder paths (its own
+    /// \\?\Volume{...}\ path is not one). A non-Windows Format runs it before it takes the
+    /// partition: a lettered RAW volume is what Explorer holds open to offer "You need to format
+    /// the disk", and the APFS writer could not lock one (VM proof, 2026-11-11). Public so a test
+    /// can run it.
+    [[nodiscard]] static QString removePartitionAccessPathsScript(const QString& disk,
+                                                                  const QString& partition);
+    /// PowerShell run after S.A.K. formats or creates a partition with a file system Windows does
+    /// not mount (ext2/3/4, Linux swap, HFS+, APFS): removes the partition's drive letters and
+    /// folder paths, then sets that file system's own partition type (GPT: Linux file system,
+    /// Linux swap, Apple HFS+, APFS; MBR: 0x83, 0x82, 0xAF), so Windows never offers to format
+    /// it. Empty for any other file system. @p disk and @p partition are PowerShell expressions.
+    /// Public so a test can run it.
+    [[nodiscard]] static QString nonWindowsPartitionTypeScript(const QString& file_system,
+                                                               const QString& disk,
+                                                               const QString& partition);
+    /// PowerShell run before Windows formats a partition (Format-Volume): a partition with one of
+    /// the types above has no Windows volume to format, so its type is set back to a Windows data
+    /// partition (GPT basic data; MBR 0x07, or 0x0C for FAT32) and the volume waited for. Any
+    /// other type is left as it is. Public so a test can run it.
+    [[nodiscard]] static QString windowsDataPartitionTypeScript(const QString& file_system,
+                                                                const QString& disk,
+                                                                const QString& partition);
+    /// PowerShell functions every Resize and APFS grow runs: Invoke-SakResizeAsDataPartition
+    /// resizes a partition of any type, as a data partition for the moment of the resize when it
+    /// is not one, and gives it its own type, attributes and letters back afterwards, the resize
+    /// failed or not. Public so a test can run it against Windows itself.
+    [[nodiscard]] static QString resizeAsDataPartitionFunctionScript();
 
 private:
     using Builder = PartitionScript (PartitionScriptBuilder::*)(const PartitionOperation&) const;

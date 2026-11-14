@@ -43,8 +43,8 @@ struct Custody {
 // Deliberately never destroyed: a static destructor would run at exit and destroy state that a
 // still-running retained thread is using -- the exact teardown custody exists to prevent.
 Custody& custody() {
-    static auto* const instance = new Custody;
-    return *instance;
+    static auto* const kInstance = new Custody;
+    return *kInstance;
 }
 
 std::optional<RetainedThread> takeRetained(quint64 id) {

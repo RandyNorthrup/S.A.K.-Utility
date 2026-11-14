@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <memory>
 #include <mutex>
 #include <print>
 #include <source_location>
@@ -24,6 +25,25 @@
 #include <vector>
 
 namespace sak {
+
+/// Where log entries go: the no-follow file sink in production (log_file_sink.h), an in-memory one
+/// in a test. Called under the logger's lock, one entry at a time.
+class LogSink {
+public:
+    LogSink() = default;
+    virtual ~LogSink() = default;
+    LogSink(const LogSink&) = delete;
+    LogSink& operator=(const LogSink&) = delete;
+    LogSink(LogSink&&) = delete;
+    LogSink& operator=(LogSink&&) = delete;
+
+    /// Write all of @p entry. False if any of it did not land.
+    [[nodiscard]] virtual bool write(std::string_view entry) = 0;
+    /// Start a new file (the current one reached the size limit). False if none could be made.
+    [[nodiscard]] virtual bool rotate() = 0;
+    /// Where entries go now, for getLogFile() and the "Logger initialized" line.
+    [[nodiscard]] virtual std::filesystem::path location() const = 0;
+};
 
 /// @brief Log severity levels
 enum class log_level {
@@ -66,9 +86,14 @@ public:
     /// @param log_dir Directory to store log files
     /// @param prefix Prefix for log file names
     /// @return Expected containing success or error code
+    /// @note The file half lives in log_file_sink.cpp (FileLogSink, held without following a
+    ///       link); the application and the elevated helper use sak::startFileLogging.
     [[nodiscard]] auto initialize(const std::filesystem::path& log_dir,
                                   std::string_view prefix = "sak")
         -> std::expected<void, error_code>;
+
+    /// @brief Send every entry to @p sink from now on (the previous sink is let go).
+    [[nodiscard]] auto initialize(std::unique_ptr<LogSink> sink) -> std::expected<void, error_code>;
 
     /// @brief Set minimum log level
     /// @param level Minimum level to log
@@ -100,7 +125,7 @@ public:
     void log(log_level level, std::string_view format, const T& arg1, const Args&... args) noexcept;
 
     /// @brief Flush pending log entries to disk
-    void flush() noexcept;
+    void flush() const noexcept;
 
     /// @brief Get current log file path
     /// @return Path to current log file
@@ -182,27 +207,20 @@ private:
     /// @brief Write a formatted log entry to console (stdout/stderr)
     void writeEntryToConsole(std::string_view log_entry, log_level level) noexcept;
 
-    /// @brief Collect existing log files matching the current prefix
-    [[nodiscard]] std::vector<std::filesystem::path> collectRotationCandidates() const;
 
-    mutable std::mutex m_mutex;                              ///< Mutex for thread safety
-    std::ofstream m_file_stream;                             ///< Output file stream
-    std::filesystem::path m_log_file;                        ///< Current log file path
-    std::filesystem::path m_log_dir;                         ///< Log directory
-    std::string m_prefix;                                    ///< Log file prefix
-    std::atomic<log_level> m_min_level{log_level::info};     ///< Minimum log level
-    std::atomic<bool> m_console_output{true};                ///< Console output enabled
-    std::atomic<bool> m_initialized{false};                  ///< Initialization flag
-    std::atomic<bool> m_write_failed{false};                 ///< One-shot write-failure latch
-    std::atomic<std::size_t> m_bytes_written{0};             ///< Bytes written to current file
+    mutable std::mutex m_mutex;                           ///< Mutex for thread safety
+    std::unique_ptr<LogSink> m_sink;                      ///< Where entries go
+    std::atomic<log_level> m_min_level{log_level::info};  ///< Minimum log level
+    std::atomic<bool> m_console_output{true};             ///< Console output enabled
+    std::atomic<bool> m_initialized{false};               ///< Initialization flag
+    std::atomic<bool> m_write_failed{false};              ///< One-shot write-failure latch
+    std::atomic<std::size_t> m_bytes_written{0};          ///< Bytes written to current file
 
+public:
     static constexpr std::size_t MAX_LOG_SIZE = 10'000'000;  ///< 10MB max log size
     static constexpr std::size_t MAX_LOG_FILES = 5;          ///< Keep last 5 log files
     static constexpr std::size_t kMaxSessionLogs = 30;       ///< Session logs kept at startup
     static constexpr std::uintmax_t kMaxSessionLogBytes = 200ULL * 1024 * 1024;  ///< ...and bytes
-
-    /// @brief Delete old session logs (sessionLogsToPrune) before a new session opens its log.
-    void pruneSessionLogs() const noexcept;
 };
 
 /// @brief Log a debug message

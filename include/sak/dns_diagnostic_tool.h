@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/network_diagnostic_types.h"
+#include "sak/process_runner.h"
 
 #include <QObject>
 #include <QPair>
@@ -88,6 +89,10 @@ public:
     /// JSON array, a bare object (a single record), or empty input (an empty cache).
     [[nodiscard]] static QVector<QPair<QString, QString>> parseDnsClientCacheJson(
         const QString& json);
+
+    /// The error a failed DNS cache read shows: PowerShell's reason in readable words
+    /// (readablePowerShellError), or the whole of standard error when it gave no message.
+    [[nodiscard]] static QString cacheReadFailureMessage(const ProcessResult& result);
 
 Q_SIGNALS:
     void queryComplete(sak::DnsQueryResult result);

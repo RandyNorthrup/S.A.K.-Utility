@@ -349,7 +349,8 @@ if ($packagedLocalProviderFiles) {
 
 $requiredPackageFiles = @(
     "sak_utility.exe",
-    "sak_elevated_helper.exe"
+    "sak_elevated_helper.exe",
+    "sak_script_types.dll"
 )
 foreach ($relativePath in $requiredPackageFiles) {
     $fullPath = Join-Path $packageDir $relativePath

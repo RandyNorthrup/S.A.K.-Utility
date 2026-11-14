@@ -9,6 +9,7 @@
 #pragma once
 
 #include "sak/apfs_lzbitmap.h"
+#include "sak/bounded_inflate.h"
 #include "sak/partition_hfs_case_folding.h"
 #include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
@@ -884,15 +885,9 @@ QByteArray decmpfsHeaderBytes(uint32_t compressionType, uint64_t uncompressedSiz
 }
 
 std::optional<QByteArray> zlibDecompressStream(const QByteArray& stream, uint32_t expectedBytes) {
-    QByteArray prefixed;
-    prefixed.reserve(stream.size() + static_cast<qsizetype>(kUint32Size));
-    prefixed.append(be32Bytes(expectedBytes));
-    prefixed.append(stream);
-    const QByteArray decompressed = qUncompress(prefixed);
-    if (decompressed.size() != static_cast<qsizetype>(expectedBytes)) {
-        return std::nullopt;
-    }
-    return decompressed;
+    // Inflate no further than the declared size: qUncompress grew its buffer to whatever the
+    // stream held and was checked only afterwards, so a crafted chunk could inflate to gigabytes.
+    return inflateZlibExactly(stream, static_cast<qsizetype>(expectedBytes));
 }
 
 std::optional<QByteArray> decodeDecmpfsChunk(const QByteArray& chunk, uint32_t expectedBytes) {

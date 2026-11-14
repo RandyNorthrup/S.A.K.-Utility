@@ -12,6 +12,7 @@
 #include "sak/elevation_gate.h"
 #include "sak/elevation_manager.h"
 #include "sak/error_codes.h"
+#include "sak/program_integrity.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -23,6 +24,9 @@ class TestElevationHardening : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void initTestCase();
+    void helperIsNotStartedFromAFolderThatFailsTheCheck();
+    void runAsAdminIsRefusedForAFolderThatFailsTheCheck();
     // ====================================================================
     // 5.1 -- Legacy Removal Verification
     // ====================================================================
@@ -357,6 +361,41 @@ void TestElevationHardening::session_helperReusedOnlyWellInsideItsIdleTimeout() 
     }
     QVERIFY(last_reusable > 0);
     QVERIFY(last_reusable < sak::kHelperTimeoutMs - 1000);
+}
+
+// Every program that can ask for elevation records its own file first, as the app does.
+void TestElevationHardening::initTestCase() {
+    sak::program_integrity::captureRunningImageIdentity();
+}
+
+// Security brief 4c/4d: the program files are checked before anything asks for elevation. A test
+// runs from the build's output folder, which holds hundreds of test programs that are not part
+// of S.A.K., so the check refuses there: no UAC request is made and the refusal is its own error.
+void TestElevationHardening::helperIsNotStartedFromAFolderThatFailsTheCheck() {
+    QString shown;
+    sak::program_integrity::setRefusalObserver(
+        [&shown](const QString& message) { shown = message; });
+    sak::ElevationBroker broker;
+    const auto result = broker.executeTask(QStringLiteral("ReadThermalData"),
+                                           QStringLiteral("Integrity check test"),
+                                           QJsonObject{});
+    sak::program_integrity::setRefusalObserver({});
+    QVERIFY(!result.has_value());
+    QCOMPARE(result.error(), sak::error_code::untrusted_program_file);
+    QVERIFY2(shown.contains(QStringLiteral("isn't part of S.A.K.")), qPrintable(shown));
+}
+
+void TestElevationHardening::runAsAdminIsRefusedForAFolderThatFailsTheCheck() {
+    sak::program_integrity::setRefusalObserver([](const QString&) {});
+    const auto result = sak::ElevationManager::restartElevated();
+    sak::program_integrity::setRefusalObserver({});
+    if (sak::ElevationManager::isElevated()) {
+        QVERIFY(result.has_value());  // already elevated: nothing to restart, nothing checked
+        return;
+    }
+    QVERIFY(!result.has_value());
+    QCOMPARE(result.error(), sak::error_code::untrusted_program_file);
+    QVERIFY(!sak::ElevationManager::restartFailureNeedsNotice(result.error()));
 }
 
 QTEST_MAIN(TestElevationHardening)

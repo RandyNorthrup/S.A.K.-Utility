@@ -10,6 +10,7 @@
 #include "sak/encryption.h"
 #include "sak/logger.h"
 #include "sak/media_read_back.h"
+#include "sak/no_follow_fs.h"
 
 #include <QCryptographicHash>
 #include <QDataStream>
@@ -19,6 +20,7 @@
 #include <QFileInfo>
 
 #include <memory>
+#include <optional>
 
 #include <zlib.h>
 
@@ -165,16 +167,62 @@ private:
     bool m_ended{false};
 };
 
+/// @brief Give the open file @p file the modified time @p modified. Conflict rules and the person
+/// looking at the file both read this, and a file written today would otherwise say today. Set on
+/// the staged file's own handle before it is published. A failure is reported but does not fail
+/// the copy: the content is intact.
+void stampModifiedTime(QFile& file, const QDateTime& modified) {
+    if (!modified.isValid() || !file.setFileTime(modified, QFileDevice::FileModificationTime)) {
+        logWarning("Backup codec: could not set the modified time of {}",
+                   file.fileName().toStdString());
+    }
+}
+
+/// @brief A staged file for @p dest_path in its folder, held without following a link.
+auto stageBeside(const QString& dest_path) -> std::expected<no_follow::StagedFile, error_code> {
+    const QFileInfo dest(dest_path);
+    const auto folder = no_follow::HeldDirectory::open(dest.absolutePath());
+    if (!folder) {
+        logError("Backup codec: cannot use the folder of {}: {}",
+                 dest_path.toStdString(),
+                 folder.error().toStdString());
+        return std::unexpected(error_code::write_error);
+    }
+    auto staged = no_follow::StagedFile::create(*folder, dest.fileName());
+    if (!staged) {
+        logError("Backup codec: cannot stage {}: {}",
+                 dest_path.toStdString(),
+                 staged.error().toStdString());
+        return std::unexpected(error_code::write_error);
+    }
+    return std::move(*staged);
+}
+
+/// @brief Publish a staged file under its real name, replacing that NAME if it is taken (a link
+/// there is replaced, never written through).
+auto publishStaged(no_follow::StagedFile* staged) -> std::expected<void, error_code> {
+    if (auto published = staged->publish(no_follow::Publish::ReplaceName); !published) {
+        logError("Backup codec: cannot publish {}: {}",
+                 staged->finalPath().toStdString(),
+                 published.error().toStdString());
+        return std::unexpected(error_code::write_error);
+    }
+    return {};
+}
+
 /// @brief Destination file plus the optional encryptor, so the write path has one sink.
 class ContainerSink {
 public:
     [[nodiscard]] auto open(const QString& dest_path, const BackupCodecOptions& options)
         -> std::expected<void, error_code> {
-        m_file.setFileName(dest_path);
-        if (!m_file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            logError("Backup codec: cannot open destination {}", dest_path.toStdString());
-            return std::unexpected(error_code::write_error);
+        // A fresh random name in the destination folder, opened without following a link and
+        // published by a rename relative to that held folder (security brief 4b B3): a link
+        // planted at the destination name, or a junction above it, is never written through.
+        auto staged = stageBeside(dest_path);
+        if (!staged) {
+            return std::unexpected(staged.error());
         }
+        m_staged.emplace(std::move(*staged));
         if (!options.encrypt) {
             return writeRaw(plainMagic());
         }
@@ -201,7 +249,7 @@ public:
         return writeRaw(ciphertext.value());
     }
 
-    [[nodiscard]] auto close() -> std::expected<void, error_code> {
+    [[nodiscard]] auto close(const QDateTime& modified) -> std::expected<void, error_code> {
         if (m_encryptor) {
             auto tail = m_encryptor->finish();
             if (!tail.has_value()) {
@@ -212,21 +260,19 @@ public:
             }
         }
         // flush() surfaces a full disk that close() alone would swallow.
-        if (!m_file.flush()) {
-            logError("Backup codec: flush failed for {}", m_file.fileName().toStdString());
+        if (!m_staged->device().flush()) {
+            logError("Backup codec: flush failed for {}", m_staged->stagingPath().toStdString());
             return std::unexpected(error_code::write_error);
         }
-        m_file.close();
-        return {};
+        stampModifiedTime(m_staged->device(), modified);
+        return publishStaged(&*m_staged);
     }
 
     [[nodiscard]] qint64 bytesWritten() const { return m_written; }
 
     void discard() {
-        m_file.close();
-        if (m_file.exists() && !m_file.remove()) {
-            logWarning("Backup codec: could not remove partial file {}",
-                       m_file.fileName().toStdString());
+        if (m_staged) {
+            m_staged->discard();
         }
     }
 
@@ -235,15 +281,15 @@ private:
         if (bytes.isEmpty()) {
             return {};
         }
-        if (m_file.write(bytes) != bytes.size()) {
-            logError("Backup codec: short write to {}", m_file.fileName().toStdString());
+        if (m_staged->device().write(bytes) != bytes.size()) {
+            logError("Backup codec: short write to {}", m_staged->stagingPath().toStdString());
             return std::unexpected(error_code::write_error);
         }
         m_written += bytes.size();
         return {};
     }
 
-    QFile m_file;
+    std::optional<no_follow::StagedFile> m_staged;
     std::unique_ptr<StreamEncryptor> m_encryptor;
     qint64 m_written{0};
 };
@@ -284,17 +330,6 @@ auto pushChunk(ZlibStream* deflater, ContainerSink* sink, const QByteArray& chun
         return std::unexpected(error_code::corrupted_data);
     }
     return sink->writeBody(compressed);
-}
-
-/// @brief Give @p path the modified time @p modified. Conflict rules and the person looking at
-/// the restored file both read this, and a container written today would otherwise say today.
-/// A failure is reported but does not fail the copy: the content is intact.
-void stampModifiedTime(const QString& path, const QDateTime& modified) {
-    QFile file(path);
-    if (!modified.isValid() || !file.open(QIODevice::ReadWrite) ||
-        !file.setFileTime(modified, QFileDevice::FileModificationTime)) {
-        logWarning("Backup codec: could not set the modified time of {}", path.toStdString());
-    }
 }
 
 /// @brief What was read from the original, for the result a caller checks against.
@@ -398,11 +433,10 @@ auto writeBackupFile(const QString& source_path,
         sink.discard();
         return std::unexpected(copied.error());
     }
-    if (auto closed = sink.close(); !closed.has_value()) {
+    if (auto closed = sink.close(QFileInfo(source_path).lastModified()); !closed.has_value()) {
         sink.discard();
         return std::unexpected(closed.error());
     }
-    stampModifiedTime(dest_path, QFileInfo(source_path).lastModified());
     return BackupCodecResult{.plain_bytes = tally.bytes,
                              .stored_bytes = sink.bytesWritten(),
                              .plain_sha256 = tally.sha256.result()};
@@ -581,20 +615,6 @@ auto decodeBody(ReadContext* ctx,
     return readEncryptedBody(ctx, cancelled);
 }
 
-/// @brief Move the fully verified staging file onto the destination name.
-auto publishRestored(const QString& staged_path, const QString& dest_path)
-    -> std::expected<void, error_code> {
-    if (QFile::exists(dest_path) && !QFile::remove(dest_path)) {
-        logError("Backup codec: cannot replace {}", dest_path.toStdString());
-        return std::unexpected(error_code::write_error);
-    }
-    if (!QFile::rename(staged_path, dest_path)) {
-        logError("Backup codec: cannot publish restored file {}", dest_path.toStdString());
-        return std::unexpected(error_code::write_error);
-    }
-    return {};
-}
-
 }  // namespace
 
 auto readBackupFile(const QString& source_path,
@@ -614,25 +634,21 @@ auto readBackupFile(const QString& source_path,
     }
     source.seek(kMagicBytes);
 
-    // Stage beside the destination: an encrypted payload is not authenticated until the
-    // very last chunk, so it must never appear under the final name before then.
-    const QString staged_path = dest_path + QStringLiteral(".sakpart");
-    QFile staged(staged_path);
-    if (!staged.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        logError("Backup codec: cannot stage restore at {}", staged_path.toStdString());
-        return std::unexpected(error_code::write_error);
+    // Stage beside the destination under a fresh random name (security brief 4b B2: this used to
+    // be the predictable <dest>.sakpart, opened with Truncate): an encrypted payload is not
+    // authenticated until the very last chunk, so it must never appear under the final name
+    // before then, and a link planted beside the destination is never written through.
+    auto staged = stageBeside(dest_path);
+    if (!staged) {
+        return std::unexpected(staged.error());
     }
 
     ReadContext ctx;
     ctx.source = &source;
-    ctx.staged = &staged;
+    ctx.staged = &staged->device();
 
     auto fail = [&staged](error_code code) -> std::expected<BackupCodecResult, error_code> {
-        staged.close();
-        if (!staged.remove()) {
-            logWarning("Backup codec: could not remove staged file {}",
-                       staged.fileName().toStdString());
-        }
+        staged->discard();
         return std::unexpected(code);
     };
 
@@ -642,16 +658,15 @@ auto readBackupFile(const QString& source_path,
     if (auto verified = verifyDecoded(ctx); !verified.has_value()) {
         return fail(verified.error());
     }
-    if (!staged.flush()) {
+    if (!staged->device().flush()) {
         return fail(error_code::write_error);
     }
-    staged.close();
+    stampModifiedTime(staged->device(), QFileInfo(source_path).lastModified());
 
     // Publish only now, once the tag verified and the size matched.
-    if (auto published = publishRestored(staged_path, dest_path); !published.has_value()) {
+    if (auto published = publishStaged(&*staged); !published.has_value()) {
         return fail(published.error());
     }
-    stampModifiedTime(dest_path, QFileInfo(source_path).lastModified());
     return BackupCodecResult{.plain_bytes = ctx.plain_bytes,
                              .stored_bytes = QFileInfo(source_path).size(),
                              .plain_sha256 = ctx.plain_hash.result()};

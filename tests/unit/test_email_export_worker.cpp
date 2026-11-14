@@ -10,11 +10,37 @@
 #include "sak/mbox_parser.h"
 #include "sak/pst_parser.h"
 
+#include "../support/junction_fixture.h"
+#include "../support/pst_store_builder.h"
+
+#include <QDate>
+#include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+#include <QTime>
+#include <QTimeZone>
 #include <QtTest/QtTest>
+
+using namespace sak::pst_fixture;
+
+namespace {
+
+const sak::PstFolder* folderNamed(const sak::PstFolderTree& tree, const QString& name) {
+    for (const sak::PstFolder& folder : tree) {
+        if (folder.display_name == name) {
+            return &folder;
+        }
+        if (const auto* found = folderNamed(folder.children, name)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+}  // namespace
 
 class TestEmailExportWorker : public QObject {
     Q_OBJECT
@@ -52,6 +78,8 @@ private Q_SLOTS:
 
     // -- B7: MBOX must reject non-per-message formats, not coerce to EML --
     void mboxRejectsNonMessageFormat();
+    void sidecarAttachmentsNeverFollowAJunction();
+    void junctionOutputFolderIsRefused();
 };
 
 namespace {
@@ -730,6 +758,93 @@ void TestEmailExportWorker::mboxRejectsNonMessageFormat() {
         QVERIFY2(QDir(each_dir.path()).entryList(QDir::Files).isEmpty(), label.constData());
     }
     parser.close();
+}
+
+// Security brief 4b B7: when S.A.K. runs as administrator, an attachments folder another account
+// planted as a junction received the attachments (mkpath accepted it, QFile::open followed it).
+// The folder is now opened without following a link, so nothing lands where the junction points,
+// and the message whose attachment could not be saved is not counted as exported.
+void TestEmailExportWorker::sidecarAttachmentsNeverFollowAJunction() {
+    BuilderMessage mail;
+    mail.subject = QStringLiteral("Has Attachment");
+    mail.body_plain = QStringLiteral("Body text.");
+    mail.date = QDateTime(QDate(2024, 1, 1), QTime(0, 0), QTimeZone::UTC);
+    mail.attachments.append(
+        BuilderAttachment{.name = QStringLiteral("data.bin"),
+                          .mime_type = QStringLiteral("application/octet-stream"),
+                          .data = QByteArrayLiteral("Hello Attach")});
+    BuilderFolder inbox;
+    inbox.name = QStringLiteral("Inbox");
+    inbox.messages.append(mail);
+
+    QTemporaryDir store_dir;
+    QTemporaryDir out_dir;
+    QTemporaryDir outside;
+    QVERIFY(store_dir.isValid() && out_dir.isValid() && outside.isValid());
+    const QString store = store_dir.filePath(QStringLiteral("store.pst"));
+    {
+        QFile file(store);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(PstStoreBuilder{}.build({inbox}));
+    }
+    PstParser parser;
+    parser.open(store);
+    QVERIFY(parser.isOpen());
+    const sak::PstFolder* folder = folderNamed(parser.folderTree(), QStringLiteral("Inbox"));
+    QVERIFY(folder != nullptr);
+
+    QVERIFY(sak::test::createJunction(QDir(out_dir.path()).filePath(QStringLiteral("attachments")),
+                                      outside.path()));
+    sak::EmailExportConfig config;
+    config.format = sak::ExportFormat::Text;
+    config.output_path = out_dir.path();
+    config.has_folder = true;
+    config.folder_id = folder->node_id;
+    config.flatten_attachments = true;
+    config.save_attachments_with_messages = true;
+    EmailExportWorker worker;
+    QSignalSpy complete_spy(&worker, &EmailExportWorker::exportComplete);
+    worker.exportItems(&parser, config);
+    parser.close();
+
+    QVERIFY2(QDir(outside.path()).entryList(QDir::Files | QDir::Hidden | QDir::System).isEmpty(),
+             "an attachment was written through the junction");
+    QCOMPARE(complete_spy.count(), 1);
+    const auto result = complete_spy.first().first().value<sak::EmailExportResult>();
+    QCOMPARE(result.items_exported, 0);
+}
+
+// The output folder itself as a junction is refused before anything is written.
+void TestEmailExportWorker::junctionOutputFolderIsRefused() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    mbox.write(attachmentMboxFixture());
+    mbox.close();
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    QTemporaryDir root;
+    QTemporaryDir outside;
+    QVERIFY(root.isValid() && outside.isValid());
+    const QString link = QDir(root.path()).filePath(QStringLiteral("export"));
+    QVERIFY(sak::test::createJunction(link, outside.path()));
+
+    sak::EmailExportConfig config;
+    config.format = sak::ExportFormat::Eml;
+    config.output_path = link;
+    EmailExportWorker worker;
+    QSignalSpy complete_spy(&worker, &EmailExportWorker::exportComplete);
+    worker.exportMboxItems(&parser, config);
+    parser.close();
+
+    QVERIFY(QDir(outside.path()).entryList(QDir::Files | QDir::Hidden | QDir::System).isEmpty());
+    QCOMPARE(complete_spy.count(), 1);
+    const auto result = complete_spy.first().first().value<sak::EmailExportResult>();
+    QCOMPARE(result.items_exported, 0);
+    QVERIFY2(!result.errors.isEmpty() && result.errors.first().contains(QStringLiteral("link")),
+             qPrintable(result.errors.join(QLatin1Char('|'))));
 }
 
 QTEST_MAIN(TestEmailExportWorker)

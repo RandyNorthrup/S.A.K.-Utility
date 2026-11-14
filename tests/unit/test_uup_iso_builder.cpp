@@ -3,8 +3,11 @@
 
 #include "sak/uup_iso_builder.h"
 
+#include "../support/junction_fixture.h"
+
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -22,6 +25,9 @@ class TestUupIsoBuilder : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    // -- The workspace (security brief 4a) --------------------
+    void workspaceThatIsAJunctionIsRemovedNotFollowed();
+    void foreignWorkspaceIsNotReused();
     // -- Construction defaults -------------------------------
     void testInitialPhase();
     void testNotRunningInitially();
@@ -412,6 +418,48 @@ void TestUupIsoBuilder::hasIso9660Signature_rejectsNonIso() {
 
     // Missing file entirely.
     QVERIFY(!UupIsoBuilder::hasIso9660Signature(QDir(dir.path()).filePath("nope.iso")));
+}
+
+// The workspace keeps its deterministic name so a download can resume, and an administrator's build
+// writes and deletes in it: a junction planted under that name is removed as itself, and what it
+// points at is never touched.
+void TestUupIsoBuilder::workspaceThatIsAJunctionIsRemovedNotFollowed() {
+    QTemporaryDir temp;
+    QTemporaryDir outside;
+    QVERIFY(temp.isValid() && outside.isValid());
+    const QByteArray canary = QByteArrayLiteral("not a download");
+    QVERIFY(sak::test::createCanary(outside.path(), QStringLiteral("keep.esd"), canary));
+    const QString name = QStringLiteral("sak_uup_0123456789ab");
+    QVERIFY(sak::test::createJunction(QDir(temp.path()).filePath(name), outside.path()));
+    const auto root = sak::no_follow::HeldDirectory::open(temp.path());
+    QVERIFY(root);
+
+    // Unelevated, the new SYSTEM-and-Administrators folder cannot be opened again; elevated, it
+    // can. Either way the junction is gone and its target is untouched.
+    (void)UupIsoBuilder::openUupWorkspace(*root, name);
+    QVERIFY(sak::no_follow::entryKind(QDir(temp.path()).filePath(name)) !=
+            sak::no_follow::EntryKind::Link);
+    QVERIFY(sak::test::canaryIntact(outside.path(), QStringLiteral("keep.esd"), canary));
+}
+
+// A workspace S.A.K. did not make for itself (on NTFS: not owned by Administrators or SYSTEM with
+// a protected DACL) is never reused: what another account put in it is removed.
+void TestUupIsoBuilder::foreignWorkspaceIsNotReused() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString name = QStringLiteral("sak_uup_ba9876543210");
+    const QString planted = QDir(temp.path()).filePath(name + QStringLiteral("/UUPs/planted.esd"));
+    QVERIFY(QDir().mkpath(QFileInfo(planted).absolutePath()));
+    QVERIFY(sak::test::createCanary(QFileInfo(planted).absolutePath(),
+                                    QStringLiteral("planted.esd"),
+                                    QByteArrayLiteral("someone else's")));
+    const auto root = sak::no_follow::HeldDirectory::open(temp.path());
+    QVERIFY(root);
+    if (!sak::no_follow::volumeKeepsAcls(root->handle())) {
+        return;  // FAT keeps no owner to tell ours from another's; every file is re-hashed instead
+    }
+    (void)UupIsoBuilder::openUupWorkspace(*root, name);
+    QVERIFY2(!QFileInfo::exists(planted), "a workspace S.A.K. did not make was reused");
 }
 
 QTEST_MAIN(TestUupIsoBuilder)

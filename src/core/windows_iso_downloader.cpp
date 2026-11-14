@@ -18,7 +18,6 @@
 
 #include <limits>
 
-constexpr int kGbDisplayPrecision = 2;
 
 // ============================================================================
 // Construction / Destruction

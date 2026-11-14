@@ -13,6 +13,7 @@
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
 #include "sak/partition_apfs_file_system_reader.h"
+#include "sak/partition_apfs_writer.h"
 #include "sak/partition_ext_file_system_reader.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_registry.h"
@@ -353,12 +354,6 @@ constexpr int kFileRecoveryDialogMinHeight = 420;
     return quotient;
 }
 
-[[nodiscard]] uint64_t clonePreviewScaledBytes(uint64_t bytes,
-                                               uint64_t target_bytes,
-                                               uint64_t source_bytes) noexcept {
-    return saturatingMultiplyDivide(bytes, target_bytes, source_bytes);
-}
-
 /// The narrowest a disk segment is drawn in a before/after bar, so a 2 or 3 GB partition on a
 /// 256 GB disk is still seen (review 3: on testpc1 the 3 GB E: and 2 GB F: were not, and a queued
 /// delete of F: did not show).
@@ -427,11 +422,6 @@ QVector<QPair<int, int>> segmentSpans(const QVector<uint64_t>& sizes,
         spans.append({left, std::max(1, static_cast<int>(std::lround(x)) - left)});
     }
     return spans;
-}
-
-/// segmentSpans with one floor, @p min_px, for every segment.
-QVector<QPair<int, int>> segmentSpans(const QVector<uint64_t>& sizes, int width, int min_px) {
-    return segmentSpans(sizes, width, QVector<int>(sizes.size(), min_px));
 }
 
 /// segmentSpans for segments drawn on a bar that stands for @p total_bytes: what the segments do
@@ -763,13 +753,12 @@ PartitionActionAvailability fileSystemActionAvailability(const QString& file_sys
                               .arg(file_system)};
     }
 
-    if (policy.resize_filesystem && capability.non_native && !isExtFilesystem(file_system)) {
+    // ext is resized with the bundled tools, and APFS grows in place; the queue's own sentence
+    // says why anything else is not.
+    if (policy.resize_filesystem && capability.non_native && !isExtFilesystem(file_system) &&
+        !PartitionFileSystemRegistry::isApfs(file_system)) {
         return {.enabled = false,
-                .reason =
-                    QObject::tr(
-                        "%1 resize is not supported yet. Non-Windows resize currently supports "
-                        "ext2/ext3/ext4 only.")
-                        .arg(file_system)};
+                .reason = PartitionFileSystemRegistry::windowsResizeBlocker(file_system, 0, 1)};
     }
 
     return {};
@@ -915,7 +904,7 @@ bool partitionAllowsNonNativeRepair(const PartitionInfoEx& partition) {
     return !partitionHasProtectedRole(partition) && !partition.is_read_only;
 }
 
-bool hasGeneratedApfsRepairEvidence(const QStringList& details);
+QString generatedApfsRepairRefusal(const QStringList& details);
 
 void applyNonNativeRepairState(NonNativeFilesystemCheckState* state,
                                const PartitionInfoEx& partition) {
@@ -923,12 +912,12 @@ void applyNonNativeRepairState(NonNativeFilesystemCheckState* state,
         return;
     }
 
-    if (isApfsFilesystem(state->file_system) &&
-        !hasGeneratedApfsRepairEvidence(state->metadata_details)) {
-        state->repair_reason = QObject::tr(
-            "APFS repair is available only for APFS containers created by this tool; repairing "
-            "other APFS containers is not supported.");
-        return;
+    if (isApfsFilesystem(state->file_system)) {
+        const QString refusal = generatedApfsRepairRefusal(state->metadata_details);
+        if (!refusal.isEmpty()) {
+            state->repair_reason = refusal;
+            return;
+        }
     }
 
     state->repair_available = partitionAllowsNonNativeRepair(partition);
@@ -940,13 +929,52 @@ void applyNonNativeRepairState(NonNativeFilesystemCheckState* state,
         "Repair is disabled for system, boot, EFI, MSR, recovery, or read-only partitions.");
 }
 
-bool hasGeneratedApfsRepairEvidence(const QStringList& details) {
-    const QString joined = details.join(QLatin1Char('\n'));
-    return joined.contains(QStringLiteral("APFS space manager block: 10")) &&
-           joined.contains(QStringLiteral("APFS volume candidate block 6")) &&
-           joined.contains(QStringLiteral("volume object map OID 103")) &&
-           joined.contains(QStringLiteral("root tree OID 104")) &&
-           joined.contains(QStringLiteral("Volume OIDs: 102"));
+/// The value of the scan detail "<name>: <number>", or nullopt when the scan did not report it.
+std::optional<uint64_t> scanDetailNumber(const QStringList& details, const QString& name) {
+    const QString prefix = name + QStringLiteral(": ");
+    for (const QString& detail : details) {
+        if (detail.startsWith(prefix)) {
+            bool ok = false;
+            const uint64_t value = detail.mid(prefix.size()).trimmed().toULongLong(&ok);
+            return ok ? std::optional<uint64_t>(value) : std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
+// The generated repair is offered for a container whose volume S.A.K.'s writer formatted, as the
+// scan reads it from the volume itself (apfs_formatted_by), and whose geometry the writer's own
+// repair guard accepts (PartitionApfsWriter::repairGeometryBlocker: one space-manager chunk, 128
+// MiB). It used to need one fixed layout the writer no longer produces, so it was never offered;
+// then, offered for any container the writer formatted, a 256 MiB one failed at Apply because the
+// guard refuses it (both found on the VM, 2026-11-11). Empty when the repair can be offered;
+// otherwise the reason, in the words the window shows.
+QString generatedApfsRepairRefusal(const QStringList& details) {
+    const QString limit =
+        QObject::tr("S.A.K. can repair only APFS containers it formatted itself, up to %1.")
+            .arg(formatPartitionBytes(sak::PartitionApfsWriter::repairMaxContainerBytes()));
+    if (!details.contains(QStringLiteral("APFS volume formatted by: %1")
+                              .arg(sak::PartitionApfsWriter::sakFormatterName()))) {
+        return limit + QLatin1Char(' ') +
+               QObject::tr(
+                   "This container was formatted by something else (a Mac, for "
+                   "example), so only the read-only metadata check is offered.");
+    }
+    const auto block_size = scanDetailNumber(details, QStringLiteral("Block size"));
+    const auto block_count = scanDetailNumber(details, QStringLiteral("Block count"));
+    if (!block_size || !block_count ||
+        !sak::PartitionApfsWriter::repairGeometryBlocker(*block_size, *block_count).isEmpty()) {
+        const bool sized = block_size && block_count && *block_size != 0 &&
+                           *block_count <= std::numeric_limits<uint64_t>::max() / *block_size;
+        const uint64_t bytes = sized ? *block_size * *block_count : 0;
+        return limit + QLatin1Char(' ') +
+               (bytes > 0 ? QObject::tr("This container is %1, so only the read-only metadata "
+                                        "check is offered.")
+                                .arg(formatPartitionBytes(bytes))
+                          : QObject::tr("The scan could not read this container's size, so only "
+                                        "the read-only metadata check is offered."));
+    }
+    return {};
 }
 
 bool hasInternalMetadataCheck(const QString& file_system) {
@@ -2010,8 +2038,9 @@ public:
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         m_on_activated = std::move(spec.on_activated);
         if (m_on_activated) {
+            // Clicked, not tabbed to: the disk table is the keyboard route to the same targets,
+            // and a click moves the keyboard focus there (selectTargetFromMap).
             setCursor(Qt::PointingHandCursor);
-            setFocusPolicy(Qt::StrongFocus);
         }
     }
 
@@ -2083,16 +2112,6 @@ protected:
         QWidget::mouseReleaseEvent(event);
     }
 
-    void keyPressEvent(QKeyEvent* event) override {
-        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
-            event->key() == Qt::Key_Space) {
-            activate();
-            event->accept();
-            return;
-        }
-        QWidget::keyPressEvent(event);
-    }
-
 private:
     void activate() {
         if (m_on_activated) {
@@ -2137,8 +2156,8 @@ public:
         setMinimumHeight(kDiskTileMinHeight);
         setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
         if (m_on_activated) {
+            // Clicked, not tabbed to, as a partition segment is.
             setCursor(Qt::PointingHandCursor);
-            setFocusPolicy(Qt::StrongFocus);
         }
     }
 
@@ -2195,16 +2214,6 @@ protected:
             return;
         }
         QWidget::mouseReleaseEvent(event);
-    }
-
-    void keyPressEvent(QKeyEvent* event) override {
-        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
-            event->key() == Qt::Key_Space) {
-            activate();
-            event->accept();
-            return;
-        }
-        QWidget::keyPressEvent(event);
     }
 
 private:
@@ -4074,6 +4083,41 @@ QString selectedAllocationUnitText(const QComboBox* combo) {
                : QObject::tr("%1 cluster size").arg(combo->currentText());
 }
 
+// Offers only the cluster sizes Windows formats @p file_system with on @p partition_bytes, and
+// says why Format-Volume would refuse what is chosen (empty when it would not). Format-Volume
+// writes the start of the volume before it refuses a FAT32 cluster size: an NTFS volume asked for
+// FAT32 with 4 KiB clusters on 256 MiB was left RAW (operation proof, 2026-11-11).
+QString offerWindowsFormatChoices(QComboBox* allocation_unit,
+                                  const QString& file_system,
+                                  uint64_t partition_bytes,
+                                  const QString& label) {
+    const auto choice = [&](uint64_t unit, const QString& text) {
+        return PartitionFileSystemRegistry::windowsFormatBlocker(
+            {.file_system = file_system,
+             .partition_bytes = partition_bytes,
+             .allocation_unit_bytes = unit,
+             .label = text,
+             .refs_available = true});
+    };
+    if (auto* model = qobject_cast<QStandardItemModel*>(allocation_unit->model());
+        model != nullptr) {
+        for (int index = 0; index < allocation_unit->count(); ++index) {
+            if (auto* item = model->item(index); item != nullptr) {
+                item->setEnabled(
+                    choice(allocation_unit->itemData(index).toULongLong(), QString()).isEmpty());
+            }
+        }
+        const auto* current = model->item(allocation_unit->currentIndex());
+        const auto* fallback = model->item(0);
+        if (current != nullptr && !current->isEnabled() && fallback != nullptr &&
+            fallback->isEnabled()) {
+            const QSignalBlocker blocker(allocation_unit);
+            allocation_unit->setCurrentIndex(0);
+        }
+    }
+    return choice(selectedAllocationUnitBytes(allocation_unit), label);
+}
+
 QString selectedPartitionTypeText(const QComboBox* combo) {
     return combo->currentData().toString().isEmpty() ? QObject::tr("default type")
                                                      : combo->currentText();
@@ -4237,6 +4281,10 @@ void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
                       .arg(formatPartitionBytes(requested_bytes),
                            formatPartitionBytes(before_bytes + after_bytes)),
           .offset_bytes = before_bytes}});
+    const QString refusal = offerWindowsFormatChoices(widgets.allocation_unit,
+                                                      widgets.file_system->currentText(),
+                                                      requested_bytes,
+                                                      widgets.label->text());
     const QString format_text =
         QObject::tr(" Format with %1.").arg(selectedAllocationUnitText(widgets.allocation_unit));
     dialog.setPreviewText(QObject::tr("Create %1 MB %2 %3 partition labeled \"%4\".")
@@ -4244,7 +4292,9 @@ void updateCreatePartitionPreview(PartitionOperationDialog& dialog,
                               .arg(selectedPartitionTypeText(widgets.partition_type),
                                    widgets.file_system->currentText(),
                                    widgets.label->text()) +
-                          format_text);
+                          format_text +
+                          (refusal.isEmpty() ? QString() : QStringLiteral("\n") + refusal));
+    dialog.setAcceptEnabled(refusal.isEmpty());
 }
 
 QJsonObject createPartitionPayload(const CreatePartitionWidgets& widgets) {
@@ -4445,6 +4495,8 @@ struct FormatPartitionWidgets {
     QLineEdit* apfs_recovery_key{nullptr};
     QCheckBox* full_format{nullptr};
     QCheckBox* raw_format_confirm{nullptr};
+    /// The partition's size, which decides the cluster sizes Windows formats it with.
+    uint64_t partition_bytes{0};
 };
 
 RawFormatKind rawFormatKindForFileSystem(const QString& file_system) {
@@ -4541,6 +4593,7 @@ QComboBox* createLinuxSwapPageSizeSelector(QWidget* parent) {
 FormatPartitionWidgets addFormatPartitionControls(PartitionOperationDialog& dialog,
                                                   const PartitionInfoEx& partition) {
     FormatPartitionWidgets widgets;
+    widgets.partition_bytes = partition.size_bytes;
     widgets.file_system = new QComboBox(&dialog);
     widgets.file_system->addItems({QStringLiteral("NTFS"),
                                    QStringLiteral("exFAT"),
@@ -4636,9 +4689,16 @@ void updateFormatPartitionPreview(PartitionOperationDialog& dialog,
     }
     nameConfirmationBox(widgets.raw_format_confirm, rawFormatConfirmationAccessibleName(raw_kind));
     const bool encrypt_ready = !encrypt_checked || !widgets.apfs_volume_password->text().isEmpty();
+    const QString refusal = raw_selected
+                                ? QString()
+                                : offerWindowsFormatChoices(widgets.allocation_unit,
+                                                            widgets.file_system->currentText(),
+                                                            widgets.partition_bytes,
+                                                            widgets.label->text());
     dialog.setAcceptEnabled((!raw_selected || widgets.raw_format_confirm->isChecked()) &&
-                            encrypt_ready);
-    dialog.setPreviewText(formatPartitionPreviewText(widgets, raw_kind));
+                            encrypt_ready && refusal.isEmpty());
+    dialog.setPreviewText(formatPartitionPreviewText(widgets, raw_kind) +
+                          (refusal.isEmpty() ? QString() : QStringLiteral("\n") + refusal));
 }
 
 void connectFormatPartitionControls(PartitionOperationDialog& dialog,
@@ -5810,14 +5870,47 @@ QComboBox* createResizeDonorSelector(QWidget* parent,
     return combo;
 }
 
+// Whether the queue would take a resize of this partition one way: Windows' rule for NTFS and
+// ReFS, none for FAT32 and exFAT, grow only for APFS (PartitionFileSystemRegistry::
+// windowsResizeBlocker, which the safety validator applies), and S.A.K.'s own tools for ext.
+// The size a 1 MB step from @p current reaches, growing or shrinking, never below zero.
+uint64_t resizeProbeTarget(uint64_t current, bool grow) {
+    if (grow) {
+        return current + kMegabyteBytes;
+    }
+    if (current > kMegabyteBytes) {
+        return current - kMegabyteBytes;
+    }
+    return 0;
+}
+
+bool resizeDirectionQueueable(const ResizePartitionWidgets& widgets, bool grow) {
+    if (widgets.non_native_ext) {
+        return true;
+    }
+    const uint64_t current = widgets.current_bytes;
+    return PartitionFileSystemRegistry::windowsResizeBlocker(widgets.file_system,
+                                                             current,
+                                                             resizeProbeTarget(current, grow))
+        .isEmpty();
+}
+
 void addResizeTargetSizeControls(PartitionOperationDialog& dialog,
                                  ResizePartitionWidgets* widgets,
                                  const PartitionInfoEx& partition) {
     widgets->target_size_mb = new QSpinBox(&dialog);
-    const int minimum_mb = std::min(widgets->current_mb,
-                                    resizeInputMb(partitionUsedBytesForResize(partition), true));
-    const int maximum_mb = std::max(widgets->current_mb,
-                                    resizeInputMb(widgets->max_online_bytes, false));
+    // The sizes offered are the sizes the queue takes: an APFS partition, which grows only, starts
+    // at its own size (the capture of 1db87df4 offered one 1 MB, then refused it), and a FAT32 or
+    // exFAT one, which Windows neither shrinks nor grows, keeps it.
+    const int minimum_mb =
+        resizeDirectionQueueable(*widgets, false)
+            ? std::min(widgets->current_mb,
+                       resizeInputMb(partitionUsedBytesForResize(partition), true))
+            : widgets->current_mb;
+    const int maximum_mb = resizeDirectionQueueable(*widgets, true)
+                               ? std::max(widgets->current_mb,
+                                          resizeInputMb(widgets->max_online_bytes, false))
+                               : widgets->current_mb;
     widgets->target_size_mb->setRange(minimum_mb, maximum_mb);
     widgets->target_size_mb->setValue(widgets->current_mb);
     widgets->target_size_mb->setSuffix(QObject::tr(" MB"));
@@ -5917,26 +6010,103 @@ ResizePartitionWidgets addResizePartitionControls(PartitionOperationDialog& dial
     return widgets;
 }
 
+// Why Windows would not resize this partition in place, or empty: it resizes NTFS and ReFS, and
+// neither shrinks nor grows FAT32 or exFAT (testpc1, 2026-11-12), and a partition whose file system
+// the scan did not identify is not resized at all. ext goes through S.A.K.'s own tools instead.
+QString inPlaceResizeRefusal(const ResizePartitionWidgets& widgets) {
+    if (widgets.non_native_ext || selectedResizeMode(widgets) != adjacentResizeMode() ||
+        !selectedResizeTargetChanged(widgets)) {
+        return {};
+    }
+    return PartitionFileSystemRegistry::windowsResizeBlocker(widgets.file_system,
+                                                             widgets.current_bytes,
+                                                             selectedResizeTargetBytes(widgets));
+}
+
+// An APFS partition grows in place only, and the container is grown into it afterwards: what the
+// dialog says for one, refusal or note. For any other file system, inPlaceResizeRefusal.
+QString resizeRefusalOrApfsNote(const ResizePartitionWidgets& widgets) {
+    if (!PartitionFileSystemRegistry::isApfs(widgets.file_system)) {
+        return inPlaceResizeRefusal(widgets);
+    }
+    if (selectedResizeMode(widgets) != adjacentResizeMode()) {
+        return QObject::tr(
+            "APFS partitions grow in place only. Move and donor rebuild are not available for "
+            "APFS partitions.");
+    }
+    if (const QString refusal = inPlaceResizeRefusal(widgets); !refusal.isEmpty()) {
+        return refusal;
+    }
+    return selectedResizeTargetChanged(widgets) ? PartitionFileSystemRegistry::apfsGrowNote()
+                                                : QString();
+}
+
+// Why the size cannot change in place, when the dialog offers only the current size: what the
+// queue would say both ways, or, for an APFS partition, that nothing follows it to grow into.
+// Empty when it offers other sizes, or the change is not in place.
+QString fixedResizeReason(const ResizePartitionWidgets& widgets, const QString& mode) {
+    if (mode != adjacentResizeMode() || widgets.non_native_ext ||
+        widgets.target_size_mb->minimum() != widgets.target_size_mb->maximum()) {
+        return {};
+    }
+    if (PartitionFileSystemRegistry::isApfs(widgets.file_system)) {
+        return QObject::tr(
+            "S.A.K. grows an APFS partition only into free space that follows it, and there is "
+            "none after this one.");
+    }
+    const QString fs = widgets.file_system.trimmed();
+    if (fs.compare(QStringLiteral("FAT32"), Qt::CaseInsensitive) == 0 ||
+        fs.compare(QStringLiteral("exFAT"), Qt::CaseInsensitive) == 0) {
+        return QObject::tr(
+            "Windows cannot shrink or grow FAT32 or exFAT partitions. Back up the files, then "
+            "delete and recreate the partition at the size you want.");
+    }
+    return PartitionFileSystemRegistry::windowsResizeBlocker(
+        widgets.file_system, widgets.current_bytes, widgets.current_bytes + kMegabyteBytes);
+}
+
+// The status of an ext partition's resize, which S.A.K.'s own tools carry out.
+QString extResizeStatusText(const ResizePartitionWidgets& widgets, const QString& mode) {
+    if (mode != adjacentResizeMode()) {
+        return QObject::tr(
+            "Ext resize supports growing or shrinking in place only. Move and donor "
+            "rebuild are not available for ext partitions.");
+    }
+    if (selectedResizeTargetBytes(widgets) < widgets.current_bytes) {
+        return QObject::tr(
+            "Ext shrink will check the file system, shrink it, then shrink the partition "
+            "and recheck it.");
+    }
+    if ((widgets.non_native_confirmation == nullptr) ||
+        !widgets.non_native_confirmation->isChecked()) {
+        return QObject::tr("Confirm ext filesystem resize before queueing.");
+    }
+    return QObject::tr("Ext grow will resize the partition, then grow the file system to fill it.");
+}
+
+// The Resize dialog's note. Windows resizes NTFS and ReFS online; other file systems are not
+// Windows' online resize (APFS grows in place through S.A.K., ext through its tools, FAT32 and
+// exFAT not at all), so it is not spoken of for them.
+QString resizeDialogNote(const PartitionInfoEx& partition) {
+    const QString fs = partition.volume ? partition.volume->file_system.trimmed() : QString();
+    const bool windows_online = fs.compare(QStringLiteral("NTFS"), Qt::CaseInsensitive) == 0 ||
+                                fs.compare(QStringLiteral("ReFS"), Qt::CaseInsensitive) == 0;
+    return windows_online
+               ? QObject::tr(
+                     "Windows online resize cannot move partition start. Queued only until Apply.")
+               : QObject::tr("Queued only until Apply.");
+}
+
 QString resizeModeStatusText(const ResizePartitionWidgets& widgets) {
     const QString mode = selectedResizeMode(widgets);
+    if (const QString fixed = fixedResizeReason(widgets, mode); !fixed.isEmpty()) {
+        return fixed;
+    }
+    if (const QString refusal = resizeRefusalOrApfsNote(widgets); !refusal.isEmpty()) {
+        return refusal;
+    }
     if (widgets.non_native_ext) {
-        const uint64_t target_bytes = selectedResizeTargetBytes(widgets);
-        if (mode != adjacentResizeMode()) {
-            return QObject::tr(
-                "Ext resize supports growing or shrinking in place only. Move and donor "
-                "rebuild are not available for ext partitions.");
-        }
-        if (target_bytes < widgets.current_bytes) {
-            return QObject::tr(
-                "Ext shrink will check the file system, shrink it, then shrink the partition "
-                "and recheck it.");
-        }
-        if ((widgets.non_native_confirmation == nullptr) ||
-            !widgets.non_native_confirmation->isChecked()) {
-            return QObject::tr("Confirm ext filesystem resize before queueing.");
-        }
-        return QObject::tr(
-            "Ext grow will resize the partition, then grow the file system to fill it.");
+        return extResizeStatusText(widgets, mode);
     }
     if (mode == moveStartResizeMode()) {
         return QObject::tr(
@@ -5993,7 +6163,8 @@ bool resizeMoveReady(const ResizePartitionWidgets& widgets,
                      bool move_mode,
                      uint64_t target_bytes,
                      uint64_t target_offset_bytes) {
-    if (!move_mode) {
+    // An APFS partition is never moved: only grown in place.
+    if (!move_mode || PartitionFileSystemRegistry::isApfs(widgets.file_system)) {
         return false;
     }
     const bool changed = target_offset_bytes != widgets.current_offset_bytes ||
@@ -6030,6 +6201,19 @@ void updateResizeControlState(const ResizePartitionWidgets& widgets, bool move_m
     widgets.donor_partition->setEnabled(selectedResizeMode(widgets) == donorResizeMode());
 }
 
+// An in-place resize the dialog may queue: Windows' own for NTFS and ReFS (nothing it would refuse,
+// inPlaceResizeRefusal), or the bundled tools' for ext once the person confirms it.
+bool resizeInPlaceReady(const ResizePartitionWidgets& widgets, uint64_t target_bytes) {
+    if (selectedResizeMode(widgets) != adjacentResizeMode()) {
+        return false;
+    }
+    if (!widgets.non_native_ext) {
+        return selectedResizeTargetChanged(widgets) && inPlaceResizeRefusal(widgets).isEmpty();
+    }
+    return target_bytes != widgets.current_bytes && (widgets.non_native_confirmation != nullptr) &&
+           widgets.non_native_confirmation->isChecked();
+}
+
 void updateResizePartitionPreview(PartitionOperationDialog& dialog,
                                   const ResizePartitionWidgets& widgets) {
     const uint64_t target_bytes = selectedResizeTargetBytes(widgets);
@@ -6040,16 +6224,7 @@ void updateResizePartitionPreview(PartitionOperationDialog& dialog,
                                           target_bytes);
     updateResizePreviewRows(widgets, target_bytes, scale_bytes);
     const bool move_ready = resizeMoveReady(widgets, move_mode, target_bytes, target_offset_bytes);
-    const bool native_adjacent_ready = !widgets.non_native_ext &&
-                                       selectedResizeMode(widgets) == adjacentResizeMode() &&
-                                       selectedResizeTargetChanged(widgets);
-    const bool ext_adjacent_ready = widgets.non_native_ext &&
-                                    selectedResizeMode(widgets) == adjacentResizeMode() &&
-                                    target_bytes != widgets.current_bytes &&
-                                    (widgets.non_native_confirmation != nullptr) &&
-                                    widgets.non_native_confirmation->isChecked();
-    const bool adjacent_ready = native_adjacent_ready || ext_adjacent_ready;
-    const bool queueable = adjacent_ready || move_ready;
+    const bool queueable = resizeInPlaceReady(widgets, target_bytes) || move_ready;
     updateResizeControlState(widgets, move_mode);
     {
         const QSignalBlocker target_handle_blocker(widgets.target_size_handle);
@@ -6059,10 +6234,15 @@ void updateResizePartitionPreview(PartitionOperationDialog& dialog,
     }
     widgets.mode_status->setText(resizeModeStatusText(widgets));
     dialog.setAcceptEnabled(queueable);
+    const bool apfs_grow = PartitionFileSystemRegistry::isApfs(widgets.file_system) &&
+                           target_bytes > widgets.current_bytes;
     dialog.setPreviewText(QObject::tr("%1 from %2 to %3.")
                               .arg(resizeActionText(target_bytes, widgets.current_bytes),
                                    formatPartitionBytes(widgets.current_bytes),
-                                   formatPartitionBytes(target_bytes)));
+                                   formatPartitionBytes(target_bytes)) +
+                          (apfs_grow
+                               ? QStringLiteral(" ") + PartitionFileSystemRegistry::apfsGrowNote()
+                               : QString()));
 }
 
 void connectResizePartitionControls(PartitionOperationDialog& dialog,
@@ -6459,6 +6639,10 @@ void showMetadataConsistencyDialog(QWidget* parent, const NonNativeFilesystemChe
                 QObject::tr("Result"),
                 warning ? QObject::tr("Warnings found") : QObject::tr("No sanity warnings"));
     addProperty(&rows, QObject::tr("Findings"), findings.join('\n'));
+    // Why no repair is offered here, so a technician is not left guessing.
+    if (!state.repair_available && !state.repair_reason.isEmpty()) {
+        addProperty(&rows, QObject::tr("Repair"), state.repair_reason);
+    }
     addProperty(&rows, QObject::tr("Read-only metadata"), state.metadata_details.join('\n'));
     showPropertiesDialog(parent,
                          QObject::tr("%1 Metadata (Last Disk Scan)").arg(state.file_system),
@@ -8684,6 +8868,7 @@ QString osMigrationWizardSizingText(const OsMigrationPlan& plan) {
         text += QStringLiteral(
             "\nThis target is smaller than the Windows partition, so Windows goes through a "
             "temporary image on the target. Allow extra time, and room for it.");
+        text += QStringLiteral("\n") + osMigrationShadowStorageText(plan);
     }
     for (const auto& blocker : plan.blockers) {
         text += QStringLiteral("\nBlocked: %1").arg(blocker);
@@ -9162,7 +9347,7 @@ PartitionManagerPanel::PartitionManagerPanel(QWidget* parent)
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
 QVector<QPair<int, int>> partitionSegmentSpansForTest(const QVector<uint64_t>& sizes, int width) {
-    return segmentSpans(sizes, width, kMinimumSegmentPixels);
+    return segmentSpans(sizes, width, QVector<int>(sizes.size(), kMinimumSegmentPixels));
 }
 
 QStringList partitionCopyTargetLabelsForTest(const PartitionDiskInfo& source,
@@ -9288,7 +9473,7 @@ QJsonArray partitionConsumeFreeSpanForTest(uint64_t segment_offset,
 }
 
 uint64_t partitionScaledBytesForTest(uint64_t bytes, uint64_t multiplier, uint64_t divisor) {
-    return clonePreviewScaledBytes(bytes, multiplier, divisor);
+    return saturatingMultiplyDivide(bytes, multiplier, divisor);
 }
 
 int partitionUsedPercentForTest(uint64_t used_bytes, uint64_t total_bytes) {
@@ -9899,6 +10084,11 @@ QWidget* PartitionManagerPanel::createWorkspace(QWidget* parent) {
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    // The table is the keyboard route through the disks and partitions the map draws: the arrow
+    // keys move between its rows, Tab moves on from it (not along a row's seven cells), and
+    // Shift+F10 or the Menu key opens a row's menu, as a right-click does (eventFilter).
+    m_table->setTabKeyNavigation(false);
+    m_table->installEventFilter(this);
     setAccessible(m_table, tr("Disk and partition table"), tr("Select a disk or partition"));
     // QTableWidget owns its model as soon as it is constructed, so the overlay binds to a
     // live model here. Parented to m_table, it self-manages its lifetime.
@@ -9941,6 +10131,10 @@ QWidget* PartitionManagerPanel::createDiskMapPane(QWidget* parent) {
     setAccessible(scroll,
                   tr("Partition disk map"),
                   tr("Visual proportional map of disks, partitions, and free space"));
+    // The map is drawn again on every selection, so a focused tile was deleted under the keyboard
+    // focus, which fell to this scroll area and then to tiles appended to the end of the tab
+    // order (testpc1). Nothing in the map takes the keyboard focus: the table does.
+    scroll->setFocusPolicy(Qt::NoFocus);
     frame_layout->addWidget(scroll);
     return frame;
 }
@@ -10359,13 +10553,15 @@ QWidget* PartitionManagerPanel::createPartitionSegment(
                                                       : partition.type_name,
                                      formatPartitionBytes(partition.size_bytes));
     auto* segment = new PartitionSegmentWidget(
-        {.text = label,
-         .tooltip = tooltip,
-         .color_role = partitionColorRole(disk, partition),
-         .color = partitionColor(disk, partition),
-         .used_percent = usedPercent(partition),
-         .selected = targetMatchesPartition(selected, disk, partition),
-         .on_activated = [this, segment_target]() { selectTargetInTable(segment_target); }},
+        {
+            .text = label,
+            .tooltip = tooltip,
+            .color_role = partitionColorRole(disk, partition),
+            .color = partitionColor(disk, partition),
+            .used_percent = usedPercent(partition),
+            .selected = targetMatchesPartition(selected, disk, partition),
+            .on_activated = [this, segment_target] { selectTargetFromMap(segment_target); },
+        },
         m_disk_map_container);
     attachDiskMapContextMenu(segment, segment_target);
     return segment;
@@ -10379,13 +10575,15 @@ QWidget* PartitionManagerPanel::createUnallocatedSegment(
     segment_target.offset_bytes = region.offset_bytes;
     segment_target.size_bytes = region.size_bytes;
     auto* segment = new PartitionSegmentWidget(
-        {.text = tr("Unallocated %1").arg(formatPartitionBytes(region.size_bytes)),
-         .tooltip = tr("Disk %1 unallocated space").arg(region.disk_number.value()),
-         .color_role = QStringLiteral("Unallocated"),
-         .color = unallocatedColor(),
-         .used_percent = 0,
-         .selected = targetMatchesRegion(selected, region),
-         .on_activated = [this, segment_target]() { selectTargetInTable(segment_target); }},
+        {
+            .text = tr("Unallocated %1").arg(formatPartitionBytes(region.size_bytes)),
+            .tooltip = tr("Disk %1 unallocated space").arg(region.disk_number.value()),
+            .color_role = QStringLiteral("Unallocated"),
+            .color = unallocatedColor(),
+            .used_percent = 0,
+            .selected = targetMatchesRegion(selected, region),
+            .on_activated = [this, segment_target] { selectTargetFromMap(segment_target); },
+        },
         m_disk_map_container);
     attachDiskMapContextMenu(segment, segment_target);
     return segment;
@@ -10408,7 +10606,7 @@ QWidget* PartitionManagerPanel::createDiskTile(const PartitionDiskInfo& disk) {
     spec.color = partitionColorForRole(color_role);
     spec.selected = targetMatchesDisk(selected, disk);
     spec.on_activated = [this, target]() {
-        selectTargetInTable(target);
+        selectTargetFromMap(target);
     };
     auto* tile = new DiskTileWidget(std::move(spec), m_disk_map_container);
     attachDiskMapContextMenu(tile, target);
@@ -10436,6 +10634,14 @@ void PartitionManagerPanel::selectTargetInTable(const PartitionTarget& target) {
     }
 }
 
+void PartitionManagerPanel::selectTargetFromMap(const PartitionTarget& target) {
+    selectTargetInTable(target);
+    // The keyboard follows the click to the table, at the row it selected, and stays in the panel.
+    if (m_table != nullptr) {
+        m_table->setFocus(Qt::OtherFocusReason);
+    }
+}
+
 void PartitionManagerPanel::attachDiskMapContextMenu(QWidget* widget,
                                                      const PartitionTarget& target) {
     if (widget == nullptr) {
@@ -10447,7 +10653,8 @@ void PartitionManagerPanel::attachDiskMapContextMenu(QWidget* widget,
             this,
             [this, widget, target](const QPoint& position) {
                 const QPoint global_position = widget->mapToGlobal(position);
-                selectTargetInTable(target);
+                // The table has the keyboard before the menu opens, so the menu gives it back.
+                selectTargetFromMap(target);
                 showSelectedTargetContextMenuAt(global_position);
             });
 }
@@ -10844,6 +11051,49 @@ void PartitionManagerPanel::showPartitionContextMenu(const QPoint& position) {
         m_table->selectRow(item->row());
     }
     showSelectedTargetContextMenuAt(m_table->viewport()->mapToGlobal(position));
+}
+
+namespace {
+
+// Shift+F10, the Menu key, or Windows' own keyboard menu request, whose position is not the current
+// row's. The event's type is checked first, and then the checked cast to its class.
+bool isKeyboardMenuRequest(const QEvent* event) {
+    if (event->type() == QEvent::KeyPress) {
+        const auto* key = dynamic_cast<const QKeyEvent*>(event);
+        if (key == nullptr) {
+            return false;
+        }
+        const bool menu_key = key->key() == Qt::Key_Menu && key->modifiers() == Qt::NoModifier;
+        const bool shift_f10 = key->key() == Qt::Key_F10 && key->modifiers() == Qt::ShiftModifier;
+        return menu_key || shift_f10;
+    }
+    if (event->type() == QEvent::ContextMenu) {
+        const auto* request = dynamic_cast<const QContextMenuEvent*>(event);
+        return request != nullptr && request->reason() == QContextMenuEvent::Keyboard;
+    }
+    return false;
+}
+
+}  // namespace
+
+bool PartitionManagerPanel::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_table && m_table != nullptr && isKeyboardMenuRequest(event)) {
+        showCurrentRowContextMenu();
+        return true;
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void PartitionManagerPanel::showCurrentRowContextMenu() {
+    // The menu a right-click on the current row opens, at that row.
+    const int row = m_table->currentRow();
+    QPoint anchor = m_table->viewport()->rect().topLeft();
+    if (row >= 0) {
+        m_table->selectRow(row);
+        const QRect cell = m_table->visualRect(m_table->model()->index(row, ColPartition));
+        anchor = QPoint(cell.left() + (cell.height() / kCenteringDivisor), cell.center().y());
+    }
+    showSelectedTargetContextMenuAt(m_table->viewport()->mapToGlobal(anchor));
 }
 
 void PartitionManagerPanel::showSelectedTargetContextMenuAt(const QPoint& global_position) {
@@ -11368,6 +11618,21 @@ void PartitionManagerPanel::onExploreSelected() {
     }
 }
 
+namespace {
+
+// A drive a technician can pull out: one Windows calls removable, or one on a bus whose drives are
+// unplugged (a USB hard drive calls itself fixed).
+bool diskCanBeUnplugged(const PartitionDiskInfo* disk) {
+    if (disk == nullptr) {
+        return false;
+    }
+    const QString bus = disk->bus_type.trimmed().toUpper();
+    return disk->is_removable || bus == QStringLiteral("USB") || bus == QStringLiteral("SD") ||
+           bus == QStringLiteral("MMC") || bus == QStringLiteral("1394");
+}
+
+}  // namespace
+
 void PartitionManagerPanel::onCheckFileSystem() {
     const auto availability = partitionActionAvailability(selectedPartition(),
                                                           windowsNativePolicy());
@@ -11375,7 +11640,11 @@ void PartitionManagerPanel::onCheckFileSystem() {
         showWarningLogged(this, tr("Check File System"), availability.reason);
         return;
     }
-    runReadOnlyOperation(PartitionOperationType::CheckFileSystem);
+    // A drive removed right after an online scan can crash Windows (volsnap, 2026-11-12). The
+    // script waits after the scan; the result also says to wait, for a drive that can be pulled.
+    const bool unpluggable = diskCanBeUnplugged(selectedDisk());
+    m_unplug_note_pending = runReadOnlyOperation(PartitionOperationType::CheckFileSystem) &&
+                            unpluggable;
 }
 
 void PartitionManagerPanel::onInspectNonNativeFileSystem() {
@@ -11738,18 +12007,18 @@ void PartitionManagerPanel::onSurfaceTest() {
     runReadOnlyOperation(PartitionOperationType::SurfaceTest);
 }
 
-void PartitionManagerPanel::runReadOnlyOperation(PartitionOperationType type) {
+bool PartitionManagerPanel::runReadOnlyOperation(PartitionOperationType type) {
     // A scan changes nothing, so it runs now rather than waiting in the Apply queue behind a
     // review dialog. The controller re-checks that the type is read-only and refuses otherwise.
     if (queueMutationBlockedByRunningOperation()) {
-        return;
+        return false;
     }
     const auto target = selectedTarget();
     if (!target) {
         Q_EMIT statusMessage(tr("Select a target first"), sak::kTimerStatusDefaultMs);
-        return;
+        return false;
     }
-    m_controller->runReadOnlyOperation(type, *target);
+    return m_controller->runReadOnlyOperation(type, *target);
 }
 
 void PartitionManagerPanel::onSpaceAnalyzer() {
@@ -11826,13 +12095,34 @@ void PartitionManagerPanel::onSetPartitionTypeId() {
         return;
     }
     const QString expected_layout_hash = m_controller->inventory().layout_hash;
-    bool ok = false;
-    const QString type_id = QInputDialog::getText(this,
-                                                  tr("Change Partition Type ID"),
-                                                  tr("New MBR type or GPT GUID:"),
-                                                  QLineEdit::Normal,
-                                                  QString(),
-                                                  &ok);
+    // As the disk's table holds a type: one byte in hex on MBR (as diskpart's SET ID reads it),
+    // a GUID on GPT.
+    const auto* disk = selectedDisk();
+    const QString table = disk == nullptr ? QString() : disk->partition_style.trimmed().toUpper();
+    const QString prompt =
+        table == QStringLiteral("MBR")
+            ? tr("New MBR type, one byte in hex, such as 07 (NTFS, exFAT) or 83 (Linux); 83, "
+                 "0x83 and 83h all mean 83:")
+        // The example GUID on a line of its own: run into the sentence, the prompt broke it at
+        // a hyphen (the capture of 1db87df4). Plain hyphens, so a copy of it is the GUID.
+        : table == QStringLiteral("GPT")
+            ? tr("New GPT type GUID, such as the basic data type:\n"
+                 "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}")
+            : tr("New MBR type (one byte in hex, such as 83) or GPT type GUID:");
+    QInputDialog prompt_dialog(this);
+    prompt_dialog.setWindowTitle(tr("Change Partition Type ID"));
+    prompt_dialog.setLabelText(prompt);
+    prompt_dialog.setInputMode(QInputDialog::TextInput);
+    // The example can be selected and copied into the field, and is never wrapped: a wrapped
+    // label breaks a GUID at its hyphens, and unwrapped, the dialog is never narrower than it.
+    // QInputDialog wraps its label when it first lays itself out, so it is laid out first.
+    (void)prompt_dialog.minimumSizeHint();
+    for (auto* label : prompt_dialog.findChildren<QLabel*>()) {
+        label->setWordWrap(false);
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    }
+    const bool ok = prompt_dialog.exec() == QDialog::Accepted;
+    const QString type_id = prompt_dialog.textValue();
     if (ok && !type_id.trimmed().isEmpty()) {
         queueOperation(PartitionOperationType::SetPartitionTypeId,
                        *target,
@@ -12066,11 +12356,10 @@ void PartitionManagerPanel::onResizePartition() {
     const PartitionInfoEx partition = *partition_ptr;
     const QString expected_layout_hash = m_controller->inventory().layout_hash;
 
-    PartitionOperationDialog dialog(
-        tr("Resize/Move Partition"),
-        targetIdentityText(target, &disk, &partition),
-        tr("Windows online resize cannot move partition start. Queued only until Apply."),
-        this);
+    PartitionOperationDialog dialog(tr("Resize/Move Partition"),
+                                    targetIdentityText(target, &disk, &partition),
+                                    resizeDialogNote(partition),
+                                    this);
     const auto widgets = addResizePartitionControls(
         dialog, disk, partition, adjacentFreeBytesAfter(&disk, &partition));
     connectResizePartitionControls(dialog, widgets);
@@ -13546,11 +13835,17 @@ void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& 
         std::ranges::any_of(result.steps, [](const PartitionExecutionStep& step) {
             return step.may_still_run_in_windows || !step.stop_cleanup_not_removed.isEmpty();
         });
+    QString message = result.message;
+    if (m_unplug_note_pending) {
+        m_unplug_note_pending = false;
+        // Shown once the check has finished, so it does not say "after this finishes".
+        message += QStringLiteral("\n\n") + tr("Eject the drive in Windows before you unplug it.");
+    }
     if (result.success || (result.cancelled && !needs_attention)) {
-        showInformationLogged(this, tr("Partition Manager"), result.message);
+        showInformationLogged(this, tr("Partition Manager"), message);
         return;
     }
-    showWarningLogged(this, tr("Partition Manager"), result.message);
+    showWarningLogged(this, tr("Partition Manager"), message);
 }
 
 std::optional<PartitionTarget> PartitionManagerPanel::selectedTarget() const {

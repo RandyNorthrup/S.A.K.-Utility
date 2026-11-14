@@ -34,6 +34,12 @@ namespace sak {
 ///        this one authority instead of each re-deriving the rule.
 [[nodiscard]] QString canonicalRawDevicePath(const QString& path);
 
+/// @brief True when @p path is a raw device that addresses one partition or volume (a file
+///        system can be mounted on it), false for a whole disk (PhysicalDriveN,
+///        \Device\HarddiskN\Partition0 or DRn) or anything that is not a raw device. A writable
+///        open of a partition takes its volume (lock and dismount) before writing.
+[[nodiscard]] bool rawDevicePathIsPartition(const QString& path);
+
 /// @brief Physical drive number a raw-device path addresses, accepting both the \\.\ and the
 ///        \\?\ PhysicalDriveN spellings. Returns nullopt when @p path is not a physical-drive
 ///        device path, so an unresolvable target fails closed at the call site.

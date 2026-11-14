@@ -13,8 +13,194 @@ Manager's certification now drives the app itself, and
 [docs/PARTITION_MANAGER_CERTIFICATION.md](docs/PARTITION_MANAGER_CERTIFICATION.md) says what its final run covered;
 a Windows install USB is FAT32 and starts UEFI PCs; Email Inspector reads whole Outlook files, NST files included;
 Reset Network keeps settings typed in by hand; Cancel no longer calls work Windows carries on with "cancelled"; the
-theme follows Windows; one S.A.K. Utility runs per folder; Qt 6.12 LTS and security updates to what ships; and a
-smaller download.
+theme follows Windows; one S.A.K. Utility runs per folder; Qt 6.12 LTS and security updates to what ships; a
+smaller download; and S.A.K. Utility running as administrator from a drive other accounts can write to, with nothing
+of its own put on the PC.
+
+- **Running as administrator from a flash drive is checked first** - S.A.K. Utility runs as administrator straight
+  from its folder, often a USB drive any account can write to. Before anything of it runs as administrator (Run as
+  Administrator, or the helper that partition, disk and repair work run in), every program file in its folder must be
+  one this release ships, byte for byte, or carry the same signature as S.A.K. Utility itself; anything else stops
+  the elevation with "S.A.K. won't run as administrator while <path> is in its folder; it isn't part of S.A.K.".
+  While the administrator side runs, its program files cannot be changed, replaced or deleted. It loads DLLs only
+  from its folder and Windows, and stops if anything else was loaded into it. Nothing is copied to the PC to do this.
+- **Nothing of S.A.K. Utility's is left on the PC, not even for a moment** - Temporary files now live only in a
+  folder of the run's own under the program's `data\temp`, which on NTFS only Administrators, SYSTEM and the person
+  running S.A.K. Utility can open, and which is removed at exit (a run that was killed is cleaned up at the next
+  start). Programs S.A.K. Utility starts get the same TEMP and TMP. The script diskpart runs, a Wi-Fi profile handed
+  to netsh, the FileVault password handed to the APFS writer and the payload of an HFS+ or APFS file change are
+  written new there and locked against change until the program reading them is done. Scripts' own types ship as
+  `sak_script_types.dll`; nothing is compiled into a temporary folder at run time.
+- **A link planted in a folder no longer redirects an administrator's writes or deletes** - File Organizer, backup
+  files, the profile backup and restore, Email Inspector's attachments, Partition Manager's backup copies and image
+  files, the Windows-via-UUP workspace, the log folder and the temporary-folder cleanup each open the folder they work
+  in without following a link (a junction or symbolic link) and refuse when there is one where a folder should be;
+  deleting a folder removes a link inside it as a link and never touches what it points to. Partition Manager's
+  backups copy with `/E`, never `/MIR`, so a chosen folder is never emptied to match.
+- **HFS+ format and repair work through the app, from an NTFS drive** - They had never worked through the app: since
+  August they stopped at their first step ("The property 'Value' cannot be found on this object."), and before that
+  they failed reading the Mac tool's result ("Cannot convert the "System.Object[]" value ... to type
+  "System.Int32"") and writing a partition Windows had a file system on. They stage an image of the partition in
+  S.A.K. Utility's own data folder, and only NTFS holds that image, so on a FAT32 or exFAT drive, or one without room
+  for the partition's data, they now say so before touching the target: run S.A.K. Utility from an NTFS-formatted
+  drive for them.
+- **Format to HFS+ or APFS of an NTFS, FAT32 or exFAT partition works** - Windows keeps the file system it knows
+  mounted on a partition, letter or not, and through it the partition's last sectors could not be written ("Unable
+  to zero APFS format target: Unknown error", or "Access to the path is denied."). S.A.K. Utility now takes the
+  partition first, locked and its file system dismounted, and says so when something else has it open: "The
+  partition is in use, so Windows will not hand it over: close File Explorer windows and programs using it, then try
+  again".
+- **ext format, grow, shrink and repair, Linux swap format and APFS repair work through the app** - The bundled
+  ext tools print their version to the error stream, and the script stopped at that first line; a partition with a
+  drive letter stopped earlier, at a command Windows PowerShell does not have; and Partition Manager offered APFS
+  repair only for a layout its own format no longer produced, so the option never appeared. The scripts now take the
+  partition (locked, its file system let go, refused while something else has it open), clear the old file system
+  before a format, and read each tool's exit code. APFS repair is offered for a container S.A.K. Utility formatted
+  that its repair can handle, up to 128 MiB; for any other the check says why: "S.A.K. can repair only APFS
+  containers it formatted itself, up to 128.0 MB." HFS+ staging no longer reads fsutil's translated output, so it
+  works on a Windows in any language. Merge Partitions makes its destination folder new and holds it while it copies.
+- **Windows no longer offers to format a Linux or Mac partition S.A.K. Utility just made** - Format to ext2/3/4,
+  Linux swap, HFS+ or APFS now removes the partition's drive letters and folder paths before it writes (File
+  Explorer held a lettered partition open and the APFS writer could not take it) and gives it that file
+  system's own partition type (GPT: Linux file system, Linux swap, Apple HFS+, APFS; MBR: 0x83, 0x82, 0xAF), so
+  Windows leaves it alone instead of asking "You need to format the disk in drive T:". Format back to NTFS, FAT32 or
+  exFAT sets a Windows data type first, which also lets it format a Linux or Mac partition brought in from another
+  computer: Windows has no volume on such a partition to format.
+- **A Linux or Mac volume with a drive letter no longer stops Apply** - Windows can read neither the dirty bit nor
+  BitLocker on a volume it shows as RAW, and those two warnings made the scan after a good Format fail ("Post-apply
+  verification failed") and refused every later Apply; an ext repair of such a volume was not even added to the
+  queue ("BitLocker protection and lock state could not be determined"). The scan and the queue skip them for a
+  volume identified as ext, HFS+, APFS or Linux swap, and still refuse a RAW volume nothing could identify.
+- **Merge Partitions works on an ordinary NTFS volume** - It stopped with robocopy exit 9 copying the source's
+  `System Volume Information\WPSettings.dat`, which only SYSTEM can read. The copy now leaves out the root's
+  `System Volume Information` and `$RECYCLE.BIN`, as its file check already did; folders of those names deeper down
+  are copied.
+- **A long partition script stops when a disk command fails** - A script too long for a command line (Migrate OS,
+  and a file change carrying a large file to an HFS+ or APFS partition) ran in a scope the disk commands did not
+  take their stop-on-error setting from, so a failed one was passed over and Apply reported success. It now runs
+  as a short script does.
+- **Restore Image runs again** - Every restore stopped at once with "Unable to find type [SakLockedFilePath]";
+  nothing was written. The script now loads its types before it uses them, and the check over the generated
+  scripts now sees a script of every operation and branch.
+- **Change Cluster Size and Allocate Free Space run again** - Both stopped at once with "The term
+  'New-SakBackupFolder' is not recognized": their script called the new backup-folder function before defining
+  it. Nothing was changed on the disk. The scripts now define it first, and a check over every generated script
+  refuses a call that comes before its function's definition.
+- **A drive checked for errors is given time before it is unplugged** - On Windows 11 a disk removed within seconds
+  of an online file system scan can crash Windows (a timer the volume snapshot driver leaves behind). After every
+  such scan S.A.K. Utility runs (Check File System, Scan File Systems, Check Disk Errors, and the scan that ends a
+  defragmentation or a rebuild), passed or failed, it says "Letting Windows finish with the volume before reporting
+  the result" and waits 15 seconds; a scan that failed is then reported as before. Check File System on a USB or
+  removable drive also ends with "Wait a few seconds after this finishes before unplugging the drive."
+- **Resize of a Linux partition works on a GPT disk** - Every ext Resize on a GPT disk failed with "Windows did not
+  give the partition its type back ... This operation is only supported on data partitions", nothing changed:
+  the partition's no-letter attribute was set before it had the data type Windows resizes, and Windows takes that
+  attribute on a data partition only. The attribute now follows the type there and goes back before it, and that
+  message appears only when the type really did not come back.
+- **Check Non-Windows File System works on HFS+** - The read-only check failed on every healthy HFS+ volume with
+  "Device is not a block device". It now reads the partition into an image in S.A.K. Utility's own folder, checks
+  the image, removes it and writes nothing to the partition; like HFS+ repair, it needs S.A.K. Utility on an NTFS
+  drive and says so.
+- **Convert logical to primary gets past Apply** - It stopped every time with "Primary/logical conversion
+  requires a single data partition on the disk", counting the extended container Windows lists beside a logical
+  partition. The check before the run and the one in the run now share one rule.
+- **Hide on an MBR disk hides only that partition** - Hiding one partition of an MBR disk hid every partition on
+  it and took all their drive letters, because Windows keeps the hidden and no-letter flags for the whole disk
+  there. One MBR partition is now hidden by its type's hidden form (NTFS 07 becomes 17) and shown by its own; a type
+  with no hidden form is refused before anything changes.
+- **Merge ends where the second partition ended** - Merging two partitions also took any free space after the
+  second one (two 256 MB partitions on a 1 GB disk became 1008 MB). The merged partition now ends where the second
+  partition ended.
+- **Wipe Free Space tidies up after cipher** - It left cipher's EFSTMPWP folder at the root of the drive. A folder
+  this run made is removed once cipher has finished, without following any link inside it.
+- **A Migrate OS capture says when Windows dropped its snapshot** - When Windows aborted the snapshot the image is
+  captured from (its shadow-copy storage full), DISM sometimes stops with "The system cannot find the path
+  specified"; S.A.K. Utility now says the snapshot was deleted and what to do, as it already did for DISM's other
+  code, also when Windows deleted it before the capture began.
+- **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
+  or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
+  refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **Tab leaves the AI Assistant's message box** - Tab in the message box typed a tab character and kept the
+  keyboard there. Tab and Shift+Tab now move to the next and previous control; Enter still sends, Ctrl+Enter still
+  starts a new line, and Up and Down still recall earlier prompts.
+- **PowerShell errors read as one plain sentence** - Where a PowerShell error reaches a dialog, a status line or a
+  report (the DNS cache view, a restore point, the bootable USB's drive letter, Check Disk Errors, Partition
+  Manager's disk scan and its operations), it no longer carries the cmdlet's name in front, the script's position
+  and code after it, a Write-Error's whole script, or an "Activity ID". The log keeps the whole error.
+- **Check Disk Errors checks an NTFS USB stick too** - Quick Actions' Check Disk Errors had Check File System's
+  failure on a removable NTFS drive ("A snapshot error occurred ... Run an offline scan and fix."). It now runs the
+  same read-only check Check File System does, from the same code: no errors found (read-only chkdsk), errors found
+  (none fixed), or not checked with the reason, "in use" among them. A fixed drive whose snapshot fails says so in
+  the same plain words.
+- **Partition Manager's disk table is the keyboard route** - After a click on the disk map the keyboard focus
+  stayed on the map, and Tab went to the map's tiles and never to the disk table. A click on the map now gives the
+  table the keyboard, at the row it selected; Tab moves on from the table instead of along a row's cells; and
+  Shift+F10 or the Menu key opens a row's menu, as a right-click does. The map looks the same.
+- **Status messages on the AI Assistant tab are no longer cut short** - A status message that clears itself is
+  drawn only up to the status bar's first permanent widget, and on the AI Assistant tab the AI status line took all
+  the free space, leaving the message about 77 px at 1280 px. The AI status line now stands aside while such a
+  message shows and comes back when it clears.
+- **The partition type ID prompt keeps its example GUID whole** - On a GPT disk, Change Partition Type ID broke
+  the example GUID across two lines at a hyphen. The example is now on a line of its own that never wraps, and it
+  can be selected and copied into the field.
+- **Resize offers only the sizes it can make** - The Resize dialog of an APFS partition offered sizes down to
+  1 MB, then refused the shrink, and spoke of "Windows online resize", which APFS does not use. An APFS partition
+  now starts at its own size and grows only, and a FAT32 or exFAT partition, which Windows neither shrinks nor
+  grows, keeps its size and says why. No file system's dialog offers a size the queue then refuses.
+- **Check File System checks an NTFS USB stick** - It failed on every NTFS drive Windows calls removable with
+  "Repair-Volume : A snapshot error occurred while scanning this drive. Run an offline scan and fix. Activity ID:
+  {...}": the online scan reads a snapshot, and Windows does not take one of a removable drive. Such a drive is now
+  locked, taken offline and read by chkdsk without /f, which changes nothing, and the result says which it was: no
+  problems found, problems found (none fixed), or not checked, with "D: is in use, so it was not checked" when
+  something holds it open. A fixed drive whose snapshot fails says so in plain words, without Windows' advice to run
+  a scan that fixes. No Partition Manager result shows a cmdlet's name or an Activity ID, and the note for a drive
+  that can be unplugged now reads "Eject the drive in Windows before you unplug it."
+- **The iPerf3 server says what to do when it needs administrator rights** - Started without administrator rights
+  on an address other PCs can reach, it said "iPerf3 server not started: Windows Firewall did not add its inbound
+  rule (... (Run as administrator).). Adding it needs S.A.K. running as administrator.", which the status bar cut
+  off at "S.A". It now refuses at once, before it runs anything, with "Run as Admin to start the iPerf3 server:
+  adding its firewall rule needs administrator rights.", and the Bandwidth tab says so beside Start Server before
+  it is pressed. Running as administrator, a rule Windows still does not add gives Windows Firewall's own reason
+  and no guess. A server for this PC only (127.0.0.1) needs no administrator rights, as before.
+- **Format to APFS asks for a volume name before it starts** - A partition with no label (a RAW or unlabelled
+  volume) went to Apply and failed with only "APFS writer helper failed with exit code 1"; Add to Queue now says
+  "An APFS volume needs a name: type one in Volume label".
+- **A slow PC no longer times out starting the administrator helper** - S.A.K. Utility waited 10 seconds for the
+  helper, which checks every program file before it answers; a slow USB drive or a busy PC could run past that
+  ("Elevated helper did not respond in time"). It now waits 30 seconds and says in the log that it is still waiting.
+- **Started from a PowerShell 7 window, S.A.K. Utility's scripts still find their commands** - Windows PowerShell
+  given PowerShell 7's module path cannot load `Get-FileHash`, which the HFS+ tool check and other partition scripts
+  use. The scripts S.A.K. Utility starts now get Windows PowerShell's own module path.
+- **A slow sender can no longer hold the administrator helper's connection** - Each message to or from the helper
+  must now arrive whole within one deadline; one sent a byte at a time no longer keeps it waiting.
+- **The network test servers listen on one adapter** - The iPerf3 server and the LAN Transfer server
+  listened on every network the PC was on. Each now has a "Listen on" list of the connected
+  adapters' addresses: it starts on the adapter holding the default route and remembers the one
+  you last used for that server. The iPerf3 server drops a peer that connects and goes quiet, and
+  starts only when its Windows Firewall rule is in place: run as a standard user, it no longer
+  starts half-working while Windows asks whether to let iperf3 through, and says it needs S.A.K.
+  running as administrator instead.
+- **Offline installer downloads no longer fill memory** - Bundling a package read each installer
+  whole into memory, up to 4 GiB, before checking it. Downloads now go to disk as they arrive and
+  are checked as they are copied into the bundle, so only a file that matches its checksum lands
+  there; an installer whose package declares no usable checksum is refused before it is
+  downloaded.
+- **Crafted disk images and mail files are refused sooner** - An HFS+ image whose B-tree leaves
+  loop, an APFS image with overlapping B-tree entries or two copies of one extended attribute, and
+  a compressed APFS or HFS+ file or Outlook block that inflates past its declared size are now
+  refused before they can repeat records or use large amounts of memory.
+- **The assistant says plainly why it does not move a partition or allocate free space** - Both copy the
+  volume's files to a backup folder first, and S.A.K. Utility checks that folder only when you queue the operation
+  in Partition Manager, so the assistant was always refused with "requires an off-volume backup directory", even
+  when it had named one. It now says the operation backs the volume up first and asks you to queue it in Partition
+  Manager.
+- **Offline deployment keeps its work files in S.A.K. Utility's own folder** - Building a bundle and Direct
+  Download kept their work folders (`_work`, `_sak_temp_...`) in the output folder you chose. They now live in
+  S.A.K. Utility's own run folder, and only the finished bundle or installers go to the output folder: a
+  downloaded installer is checked as it is copied there, and one taken from inside a package is read back after
+  the copy. With less than 1 GB free on the drive S.A.K. Utility runs from it says so before it starts, and a
+  download whose size the server gives must fit there before it begins: "Not enough free space for the work
+  files: S.A.K. keeps them in its own folder (...)". Removing a work folder no longer follows a link inside it.
 
 - **A cancelled step reads as cancelled** - The Log window's report listed a step a Cancel had stopped as "Failed:".
   It now reads "Cancelled:", in the report text, its HTML and its JSON, for a cancel from the Cancel button, a close,
@@ -155,6 +341,20 @@ smaller download.
   bolder, and Network Management's outline is a whole pixel wide. In the dark theme, Partition Manager and Network
   Management are lighter, Backup and Restore's arrowhead is a lighter blue and Benchmark and Diagnostics'
   stethoscope tube is drawn in light grey. Panel headers follow the theme too.
+- **The selected tab shows its icon whole** - The selected tab drew its icon as a flat white silhouette, which lost
+  every line inside it. It now shows the icon's own drawing, in the colours every other tab shows it in, and is
+  filled like the page under it with a blue outline, so the icon reads on it in both themes.
+- **The About tab says what was tested** - It said Partition Manager had not been tested through the app on real
+  hardware. It now says what the certification of this version found, in its words: what ran on virtual machines and
+  virtual disks, the two real disks some operations were tested on, and the limits (internal SATA drives were not
+  tested; SSD erase is TRIM plus overwrite, not an ATA or NVMe sanitize). Back up before changing a disk. Of
+  Apple's file systems it says only what that evidence was: on earlier code (June to August 2026), S.A.K.'s HFS+
+  and APFS write engine was validated with Apple's own tools.
+- **File system support says plainly what is not available** - Partition Manager's Properties said XFS format and
+  repair "remain blocked until the bundled tools have been tested" and listed xfs_repair as a required bundled tool,
+  and Btrfs listed btrfs; neither ships. They now say these are not available because S.A.K. Utility includes no XFS
+  or Btrfs tools. HFS+ and Linux swap limits no longer promise later testing, and ext says that writing files inside
+  an ext volume is not available.
 - **Readable download line** - The Windows and Linux ISO downloads' "Downloading..." line is the app's success
   green, readable in both themes.
 - **"Wi-Fi" and "network adapters"** - Wi-Fi is spelled one way everywhere (the Network Management tabs, the

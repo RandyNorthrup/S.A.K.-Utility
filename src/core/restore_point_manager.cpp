@@ -91,10 +91,18 @@ QString buildCheckpointScript(const QString& safe_desc) {
         .arg(safe_desc);
 }
 
-/// @brief The detail worth reporting from a checkpoint run: stderr, or stdout when stderr is bare.
+/// @brief Everything a checkpoint run said about its failure: stderr, or stdout when stderr is
+///        bare. What the frequency limit is read from.
 QString checkpointErrorDetail(const sak::ProcessResult& result) {
     const QString err = result.std_err.trimmed();
     return err.isEmpty() ? result.std_out.trimmed() : err;
+}
+
+/// @brief The same in readable words, for the user: the script's Write-Error record led with the
+///        whole script and ended with its CategoryInfo lines (readablePowerShellError).
+QString checkpointErrorReason(const sak::ProcessResult& result) {
+    const QString readable = sak::readablePowerShellError(result.std_err);
+    return readable.isEmpty() ? checkpointErrorDetail(result) : readable;
 }
 
 /// @brief Why @p result is not a created restore point; an empty string means it is one.
@@ -126,12 +134,12 @@ QString checkpointFailureReason(const sak::ProcessResult& result) {
                 "Windows limits restore point creation to once per 24 hours. "
                 "A recent restore point already exists.");
         }
-        return QString("Failed to create restore point: %1").arg(checkpointErrorDetail(result));
+        return QString("Failed to create restore point: %1").arg(checkpointErrorReason(result));
     }
 
     if (!result.std_out.contains(QStringLiteral("SUCCESS"))) {
         return QString("Restore point creation did not confirm success: %1")
-            .arg(checkpointErrorDetail(result));
+            .arg(checkpointErrorReason(result));
     }
 
     return {};

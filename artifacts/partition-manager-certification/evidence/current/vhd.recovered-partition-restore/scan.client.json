@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
-    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-10T16:01:53.360Z",
+    "completed_utc": "2026-11-14T10:16:32.561Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -29,11 +29,17 @@
         "message": "Partition operation batch complete",
         "steps": [
             {
+                "cancelled": false,
                 "error_message": "",
-                "operation_id": "2971cc63-d27e-4b62-b3c8-ab029f188cbc",
+                "may_still_run_in_windows": false,
+                "operation_id": "c86b2ee4-be4a-4152-8c81-50dc0415f3b6",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Quick partition recovery scan on Disk 1\r\nCandidate partition boot sector at byte offset 134217728 (NTFS, size 268435456 bytes)\r\n",
+                "stop_cleanup_not_removed": [
+                ],
+                "stop_cleanup_removed": [
+                ],
                 "success": true,
                 "summary": "Partition Recovery Scan - Disk 1"
             }
@@ -53,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "2971cc63-d27e-4b62-b3c8-ab029f188cbc",
+            "id": "c86b2ee4-be4a-4152-8c81-50dc0415f3b6",
             "payload": {
                 "scan_mode": "Quick"
             },
@@ -61,7 +67,7 @@
             "summary": "Partition Recovery Scan - Disk 1",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "600224806A922BFB1FFC419A5BB8AD9C",
+                "disk_unique_id": "60022480409B18F29B5F4C02BA2CEF51",
                 "drive_letter": "",
                 "kind": "Disk",
                 "offset_bytes": "0",
@@ -74,15 +80,15 @@
         }
     ],
     "review": {
-        "fingerprint": "a17d6274f273cb35b72e505764e25a53ec0d89e595ecf59008663540d61118e7",
-        "layout_hash": "c0f06ead8499a988cb50ce0352a7f5ee806654952a141c37dca8c88f142a5396",
+        "fingerprint": "3696f488de30010a7f993834c527e821fc0db3cfe8d1279c03f2a9db50030f26",
+        "layout_hash": "ffee554753c8c9de932a4fb12b4e281e9fa1d36e511fd65fe2e48d8528cbdebf",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "54ad3e2d-3080-41b0-8c06-3b5a1eee530c",
+    "run_id": "d05759ba-27f4-4e6e-aee6-6fe634b55d6a",
     "scenario_id": "vhd.recovered-partition-restore",
     "schema_version": 1,
-    "started_utc": "2026-11-10T16:01:21.902Z",
+    "started_utc": "2026-11-14T10:16:19.824Z",
     "status": "Passed",
     "step": "scan",
     "tool": "partition-manager-scenario-step"

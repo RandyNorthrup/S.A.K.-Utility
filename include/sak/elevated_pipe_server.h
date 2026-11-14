@@ -9,6 +9,7 @@
 #include "sak/elevated_pipe_protocol.h"
 #include "sak/error_codes.h"
 
+#include <QDeadlineTimer>
 #include <QObject>
 #include <QString>
 
@@ -159,7 +160,7 @@ private:
     [[nodiscard]] bool sendRaw(const QByteArray& data);
 
     /// @brief Read exactly N bytes
-    [[nodiscard]] bool readExact(char* buffer, int size, int timeout_ms);
+    [[nodiscard]] bool readExact(char* buffer, int size, const QDeadlineTimer& deadline);
 
     /// @brief Validate the connecting client's parent PID
     [[nodiscard]] bool validateClient() const;

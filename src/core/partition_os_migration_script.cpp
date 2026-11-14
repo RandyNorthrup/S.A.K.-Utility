@@ -12,7 +12,6 @@ namespace sak {
 
 // CMake turns src/core/partition_scripts into this table: see cmake/embed_text_files.cmake.
 namespace embedded_partition_scripts {
-extern const char kOsMigrationNativeCs[];
 extern const char kOsMigrationPs1[];
 extern const char kTargetBootFilesPs1[];
 extern const char kAttachedBootRepairPs1[];
@@ -29,14 +28,10 @@ QString quoted(const QString& text) {
     return PartitionScriptBuilder::quotePowerShell(text);
 }
 
+// SakMigration.* (os_migration_native.cs) is compiled into sak_script_types.dll: a VSS snapshot
+// still belongs to this PowerShell process, which loads the types from the verified, held DLL.
 QString nativeTypesScript() {
-    return QStringLiteral(
-               "if (-not ('SakMigration.Copy' -as [type])) {\n"
-               "Add-Type -TypeDefinition @'\n") +
-           embedded(embedded_partition_scripts::kOsMigrationNativeCs) +
-           QStringLiteral(
-               "'@\n"
-               "}\n");
+    return PartitionScriptBuilder::scriptTypesLoaderScript();
 }
 
 QString partitionLiteral(const OsMigrationPartition& entry) {
@@ -108,7 +103,9 @@ QString migrationParametersScript(const PartitionOperation& operation,
 }  // namespace
 
 QString dynamicDiskFunctionsScript() {
-    return embedded(embedded_partition_scripts::kDynamicDisksPs1);
+    // Its probe is in sak_script_types.dll (security brief 4a: no Add-Type).
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
+           embedded(embedded_partition_scripts::kDynamicDisksPs1);
 }
 
 QString targetBootFilesFunctionScript() {

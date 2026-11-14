@@ -6,12 +6,16 @@
 
 #include "sak/partition_stop_cleanup.h"
 
+#include "sak/partition_script_builder.h"
 #include "sak/windows_continued_work.h"
 
 #include <QHash>
 #include <QRegularExpression>
 
 #include <algorithm>
+#include <string>
+
+#include <windows.h>
 
 namespace sak {
 
@@ -56,13 +60,13 @@ std::optional<StopLeftoverKind> kindForToken(const QString& token) {
 }
 
 // Exactly what the application's own scripts write, and nothing a cleanup could be turned toward:
-// Win32_ShadowCopy.Create's "{GUID}", a "sak-shadow-<32 hex>" link the backup helper names
-// itself, and one drive letter.
+// Win32_ShadowCopy.Create's "{GUID}", "<letter>=\Device\HarddiskVolumeShadowCopy<n>" for the
+// drive letter mapped to it, and one drive letter.
 bool valueIsOurs(StopLeftoverKind kind, const QString& value) {
     static const QRegularExpression kShadowId(QStringLiteral(
         "^\\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\\}$"));
     static const QRegularExpression kShadowLink(
-        QStringLiteral("^[A-Za-z]:\\\\(?:[^\\\\/:*?\"<>|\\r\\n]+\\\\)*sak-shadow-[0-9a-f]{32}$"));
+        QStringLiteral("^[A-Za-z]=\\\\Device\\\\HarddiskVolumeShadowCopy[0-9]+$"));
     static const QRegularExpression kDriveLetter(QStringLiteral("^[A-Za-z]$"));
     switch (kind) {
     case StopLeftoverKind::ShadowCopy:
@@ -88,51 +92,52 @@ QString powerShellLiteral(const QString& value) {
 
 // The functions the cleanup calls, each writing one result line for what it was given.
 QString stopCleanupFunctionsScript() {
-    return QStringLiteral(
-        "$ErrorActionPreference = 'Stop'\n"
-        "function Write-SakCleanupResult([string]$state, [string]$kind, [string]$what, "
-        "[string]$why) {\n"
-        "  [Console]::Out.WriteLine(('SAK-CLEANUP-RESULT|{0}|{1}|{2}|{3}' -f $state, $kind, "
-        "$what, ($why -replace '[\\r\\n|]+', ' ')))\n"
-        "  [Console]::Out.Flush()\n"
-        "}\n"
-        "function Remove-SakShadowLink([string]$path) {\n"
-        "  try {\n"
-        "    $item = Get-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue\n"
-        "    if (-not $item) { Write-SakCleanupResult 'GONE' 'LINK' $path ''; return }\n"
-        "    if (-not ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) { "
-        "Write-SakCleanupResult 'KEPT' 'LINK' $path 'it is not a link'; return }\n"
-        "    [System.IO.Directory]::Delete($path)\n"
-        "    Write-SakCleanupResult 'REMOVED' 'LINK' $path ''\n"
-        "  } catch { Write-SakCleanupResult 'KEPT' 'LINK' $path $_.Exception.Message }\n"
-        "}\n"
-        "function Remove-SakShadowCopy([string]$id) {\n"
-        "  try {\n"
-        "    $shadow = Get-CimInstance Win32_ShadowCopy -Filter (\"ID='{0}'\" -f $id) "
-        "-ErrorAction Stop\n"
-        "    if (-not $shadow) { Write-SakCleanupResult 'GONE' 'SHADOW' $id ''; return }\n"
-        "    Remove-CimInstance -InputObject $shadow -ErrorAction Stop\n"
-        "    Write-SakCleanupResult 'REMOVED' 'SHADOW' $id ''\n"
-        "  } catch { Write-SakCleanupResult 'KEPT' 'SHADOW' $id $_.Exception.Message }\n"
-        "}\n"
-        "function Remove-SakCipherFolder([string]$letter) {\n"
-        "  $folder = ('{0}:\\EFSTMPWP' -f $letter)\n"
-        "  try {\n"
-        "    $item = Get-Item -LiteralPath $folder -Force -ErrorAction SilentlyContinue\n"
-        "    if (-not $item) { Write-SakCleanupResult 'GONE' 'CIPHER' $letter ''; return }\n"
-        "    if (-not $item.PSIsContainer -or ($item.Attributes -band "
-        "[System.IO.FileAttributes]::ReparsePoint)) { Write-SakCleanupResult 'KEPT' 'CIPHER' "
-        "$letter 'it is not a plain folder'; return }\n"
-        "    $inside = @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction Stop)\n"
-        "    if (@($inside | Where-Object { $_.PSIsContainer -or ($_.Attributes -band "
-        "[System.IO.FileAttributes]::ReparsePoint) }).Count -gt 0) { Write-SakCleanupResult "
-        "'KEPT' 'CIPHER' $letter 'it holds a folder or a link, which cipher does not create'; "
-        "return }\n"
-        "    foreach ($file in $inside) { [System.IO.File]::Delete($file.FullName) }\n"
-        "    [System.IO.Directory]::Delete($folder)\n"
-        "    Write-SakCleanupResult 'REMOVED' 'CIPHER' $letter ''\n"
-        "  } catch { Write-SakCleanupResult 'KEPT' 'CIPHER' $letter $_.Exception.Message }\n"
-        "}\n");
+    return PartitionScriptBuilder::scriptTypesLoaderScript() +
+           QStringLiteral(
+               "$ErrorActionPreference = 'Stop'\n"
+               "function Write-SakCleanupResult([string]$state, [string]$kind, [string]$what, "
+               "[string]$why) {\n"
+               "  [Console]::Out.WriteLine(('SAK-CLEANUP-RESULT|{0}|{1}|{2}|{3}' -f $state, $kind, "
+               "$what, ($why -replace '[\\r\\n|]+', ' ')))\n"
+               "  [Console]::Out.Flush()\n"
+               "}\n"
+               "function Remove-SakShadowLink([string]$mapping) {\n"
+               "  try {\n"
+               "    $letter, $device = $mapping -split '=', 2\n"
+               "    if (-not [Sak.ShadowMapping]::Unmap(($letter + ':'), $device)) { "
+               "Write-SakCleanupResult 'GONE' 'LINK' $mapping ''; return }\n"
+               "    Write-SakCleanupResult 'REMOVED' 'LINK' $mapping ''\n"
+               "  } catch { Write-SakCleanupResult 'KEPT' 'LINK' $mapping $_.Exception.Message }\n"
+               "}\n"
+               "function Remove-SakShadowCopy([string]$id) {\n"
+               "  try {\n"
+               "    $shadow = Get-CimInstance Win32_ShadowCopy -Filter (\"ID='{0}'\" -f $id) "
+               "-ErrorAction Stop\n"
+               "    if (-not $shadow) { Write-SakCleanupResult 'GONE' 'SHADOW' $id ''; return }\n"
+               "    Remove-CimInstance -InputObject $shadow -ErrorAction Stop\n"
+               "    Write-SakCleanupResult 'REMOVED' 'SHADOW' $id ''\n"
+               "  } catch { Write-SakCleanupResult 'KEPT' 'SHADOW' $id $_.Exception.Message }\n"
+               "}\n"
+               "function Remove-SakCipherFolder([string]$letter) {\n"
+               "  $folder = ('{0}:\\EFSTMPWP' -f $letter)\n"
+               "  try {\n"
+               "    $item = Get-Item -LiteralPath $folder -Force -ErrorAction SilentlyContinue\n"
+               "    if (-not $item) { Write-SakCleanupResult 'GONE' 'CIPHER' $letter ''; return }\n"
+               "    if (-not $item.PSIsContainer -or ($item.Attributes -band "
+               "[System.IO.FileAttributes]::ReparsePoint)) { Write-SakCleanupResult 'KEPT' "
+               "'CIPHER' "
+               "$letter 'it is not a plain folder'; return }\n"
+               "    $inside = @(Get-ChildItem -LiteralPath $folder -Force -ErrorAction Stop)\n"
+               "    if (@($inside | Where-Object { $_.PSIsContainer -or ($_.Attributes -band "
+               "[System.IO.FileAttributes]::ReparsePoint) }).Count -gt 0) { Write-SakCleanupResult "
+               "'KEPT' 'CIPHER' $letter 'it holds a folder or a link, which cipher does not "
+               "create'; "
+               "return }\n"
+               "    foreach ($file in $inside) { [System.IO.File]::Delete($file.FullName) }\n"
+               "    [System.IO.Directory]::Delete($folder)\n"
+               "    Write-SakCleanupResult 'REMOVED' 'CIPHER' $letter ''\n"
+               "  } catch { Write-SakCleanupResult 'KEPT' 'CIPHER' $letter $_.Exception.Message }\n"
+               "}\n");
 }
 
 QString cleanupCall(const StopLeftover& leftover) {
@@ -261,11 +266,43 @@ QString describeStopLeftover(const StopLeftover& leftover) {
     case StopLeftoverKind::ShadowCopy:
         return QStringLiteral("the shadow copy %1").arg(leftover.value);
     case StopLeftoverKind::ShadowLink:
-        return QStringLiteral("the shadow copy's link %1").arg(leftover.value);
+        return QStringLiteral("the drive letter mapped to the shadow copy (%1)")
+            .arg(leftover.value);
     case StopLeftoverKind::CipherFolder:
         return QStringLiteral("cipher's temporary folder %1:\\EFSTMPWP").arg(leftover.value);
     }
     return leftover.value;
+}
+
+bool isShadowCopyDevice(const QString& target) {
+    static const QRegularExpression kShadowDevice(
+        QStringLiteral("^\\\\Device\\\\HarddiskVolumeShadowCopy[0-9]+$"),
+        QRegularExpression::CaseInsensitiveOption);
+    return kShadowDevice.match(target).hasMatch();
+}
+
+int removeStaleShadowMappings() {
+    constexpr DWORD kTargetChars = 1024;
+    int removed = 0;
+    for (wchar_t letter = L'A'; letter <= L'Z'; ++letter) {
+        const std::wstring device{letter, L':'};
+        std::wstring target(kTargetChars, L'\0');
+        const DWORD length = QueryDosDeviceW(device.c_str(), target.data(), kTargetChars);
+        if (length == 0) {
+            continue;
+        }
+        const QString first = QString::fromWCharArray(target.c_str());  // up to the first NUL
+        if (!isShadowCopyDevice(first)) {
+            continue;
+        }
+        if (DefineDosDeviceW(DDD_RAW_TARGET_PATH | DDD_REMOVE_DEFINITION |
+                                 DDD_EXACT_MATCH_ON_REMOVE,
+                             device.c_str(),
+                             reinterpret_cast<LPCWSTR>(first.utf16())) != 0) {
+            ++removed;
+        }
+    }
+    return removed;
 }
 
 bool isScriptMarkerLine(const QString& line) {

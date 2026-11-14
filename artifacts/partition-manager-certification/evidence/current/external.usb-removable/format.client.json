@@ -4,16 +4,16 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "cffdc3db47de1ea50497c5474ba28a06b2666367e284101ec67117fec1ec0c38",
-        "sha256": "1640686d9fd5b78d02feb83d6ce1fbef36d4a91bf022cbf18e4c239c5787094f"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9751df9d35d3f13f1b31e3b11ce0f6ffc3b00be2",
-    "code_digest": "4c5f1e38c3561cf90969f1bdca5bd8f0b5e7602e6d72a49bb19e2d962e5d5e7b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-10T16:13:23.651Z",
+    "completed_utc": "2026-11-14T10:26:23.918Z",
     "disk_before": {
         "bus_type": "USB",
-        "disk_number": 3,
+        "disk_number": 2,
         "is_boot": false,
         "is_system": false,
         "media_type": "Unspecified",
@@ -29,13 +29,19 @@
         "message": "Partition operation batch complete",
         "steps": [
             {
+                "cancelled": false,
                 "error_message": "",
-                "operation_id": "87f44253-8feb-4213-9d3e-54c7067e579f",
+                "may_still_run_in_windows": false,
+                "operation_id": "763dc812-dbf3-49e2-be37-b72ffc4cc067",
                 "skipped": false,
                 "stderr": "",
-                "stdout": "SAK Partition Manager: Format Disk 3 Partition 2 as NTFS\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining    Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------    ----\r\nD           SAKUSB       NTFS           Fixed     Healthy      OK                   1007.11 MB 1024 MB\r\n\r\n\r\n",
+                "stdout": "SAK Partition Manager: Format Disk 2 Partition 2 as NTFS\r\nWindows formats NTFS with these choices on this partition\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining    Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------    ----\r\nD           SAKUSB       NTFS           Fixed     Healthy      OK                   1007.11 MB 1024 MB\r\n\r\n\r\n",
+                "stop_cleanup_not_removed": [
+                ],
+                "stop_cleanup_removed": [
+                ],
                 "success": true,
-                "summary": "Format Partition - Disk 3 Partition 2"
+                "summary": "Format Partition - Disk 2 Partition 2"
             }
         ],
         "success": true,
@@ -53,17 +59,17 @@
     ],
     "queued_operations": [
         {
-            "id": "87f44253-8feb-4213-9d3e-54c7067e579f",
+            "id": "763dc812-dbf3-49e2-be37-b72ffc4cc067",
             "payload": {
                 "allocation_unit_bytes": "4096",
                 "file_system": "NTFS",
                 "full_format": false,
                 "label": "SAKUSB"
             },
-            "script_sha256": "01e2dbb787b0c5e1824737fd3cf19b5f1890017e6ad2e2dcd5f4494167653c60",
-            "summary": "Format Partition - Disk 3 Partition 2",
+            "script_sha256": "3e608471a9d7cc24cb85348aadebb82750bd5b22f9b5dea73decc36e7a0f1d05",
+            "summary": "Format Partition - Disk 2 Partition 2",
             "target": {
-                "disk_number": 3,
+                "disk_number": 2,
                 "disk_unique_id": "3E4141413351564B",
                 "drive_letter": "D",
                 "kind": "Partition",
@@ -77,15 +83,15 @@
         }
     ],
     "review": {
-        "fingerprint": "a4a72059e52f8cee90f9e2a22721e79ea1e261057c40def823db1ae39ec88c8c",
-        "layout_hash": "ea782dc5eb6c2eb9aeb0296eb59fde15bf7a865b599bd5bf5974d926a17982b1",
+        "fingerprint": "8674e6864fda48b2b5f8239f3a990ee55caed4ddc3cd315c40c357468bb629b6",
+        "layout_hash": "616e5b3e6603fc0ad67194150402af510ef7671b1f5c9fe10d034723f2cbbfd5",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "76cd81fd-2359-4d47-952e-c8ebff17e70b",
+    "run_id": "a8ef1664-5c58-4746-959b-1d32e9efd03e",
     "scenario_id": "external.usb-removable",
     "schema_version": 1,
-    "started_utc": "2026-11-10T16:13:04.655Z",
+    "started_utc": "2026-11-14T10:26:03.593Z",
     "status": "Passed",
     "step": "format",
     "tool": "partition-manager-scenario-step"

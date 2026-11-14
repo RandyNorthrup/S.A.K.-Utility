@@ -209,6 +209,51 @@ function Test-PartitionManagerStorageHelpers {
     } $helperPath
 }
 
+function Test-E2fsckOutputRule {
+    # e2fsck -n exits 0 after answering no to "Abort?" (operation proof, 2026-11-11): the
+    # validation scripts read its output as the app does, and every e2fsck they run goes through it.
+    . (Join-Path $ProjectRoot 'scripts\partition_manager_storage.ps1')
+    $cut = @(
+        'e2fsck 1.47.1 (20-May-2024)',
+        'The filesystem size (according to the superblock) is 131072 blocks',
+        'The physical size of the device is 65536 blocks',
+        'Either the superblock or the partition table is likely to be corrupt!',
+        'Abort? no',
+        '',
+        'Pass 1: Checking inodes, blocks, and sizes'
+    ) -join "`n"
+    Assert-Condition -Condition ([bool](Get-SakE2fsckOutputProblem -Output $cut)) `
+        -Message 'e2fsck output that asked to abort passed'
+    foreach ($line in @('Either the superblock or the partition table is likely to be corrupt!',
+                        'The physical size of the device is 65536 blocks',
+                        'Abort? no')) {
+        Assert-Condition -Condition ([bool](Get-SakE2fsckOutputProblem -Output "Pass 1`n$line`nPass 2")) `
+            -Message "e2fsck output with only '$line' passed"
+    }
+    $clean = "e2fsck 1.47.1 (20-May-2024)`nPass 5: Checking group summary information`n" +
+        'SAK_EXT4: 11/65536 files (0.0% non-contiguous), 8859/262144 blocks'
+    Assert-Condition -Condition (-not (Get-SakE2fsckOutputProblem -Output $clean)) `
+        -Message 'a clean e2fsck run was refused'
+    $passed = [pscustomobject]@{ name = 'e2fsck-clean'; exit_code = 0; output = $clean } | Assert-SakE2fsckPassed
+    Assert-Condition -Condition ($passed.name -eq 'e2fsck-clean') -Message 'Assert-SakE2fsckPassed did not hand the run on'
+    $refused = $false
+    try {
+        [pscustomobject]@{ name = 'e2fsck-cut'; exit_code = 0; output = $cut } | Assert-SakE2fsckPassed | Out-Null
+    } catch { $refused = $_.Exception.Message -match 'e2fsck-cut: exit code 0, but' }
+    Assert-Condition -Condition $refused -Message 'Assert-SakE2fsckPassed let exit code 0 with "Abort? no" pass'
+
+    foreach ($relativePath in @('scripts\run_partition_manager_ext_filesystem_vm_gate.ps1',
+                                'scripts\run_partition_manager_physical_cross_filesystem_destructive_validation.ps1')) {
+        $calls = @(Get-Content -LiteralPath (Join-Path $ProjectRoot $relativePath) -ErrorAction Stop |
+            Where-Object { $_ -match 'Invoke-NativeCommand -Name "e2fsck-' })
+        Assert-Condition -Condition ($calls.Count -ge 5) -Message "$relativePath runs fewer e2fsck checks than expected"
+        $unread = @($calls | Where-Object { $_ -notmatch '\| Assert-SakE2fsckPassed' })
+        Assert-Condition -Condition ($unread.Count -eq 0) `
+            -Message "$relativePath reads only the exit code of: $($unread -join ' / ')"
+    }
+}
+
 Assert-NoCertificationFailureSilences
 Test-PartitionManagerStorageHelpers
+Test-E2fsckOutputRule
 Write-Host 'Partition Manager storage helper and run scripts: all checks held.'

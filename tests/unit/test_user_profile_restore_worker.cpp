@@ -21,6 +21,9 @@
 #include "sak/user_profile_restore_worker.h"
 #include "sak/user_profile_types.h"
 
+#include "../support/junction_fixture.h"
+#include "../support/link_following_calls.h"
+
 #include <QDir>
 #include <QMutex>
 #include <QSignalSpy>
@@ -152,6 +155,8 @@ private Q_SLOTS:
 
     // ---- Core restore flow ----
     void singleFileRestoreSucceeds();
+    void restoreNeverWritesThroughAJunction();    // security brief 4b B2
+    void restoreCopiesWithNoLinkFollowingCall();  // security brief 4b B2
     void unselectedMappingSkipped();
     void sourceUserNotInManifest();
     void multipleFoldersRestored();
@@ -576,6 +581,67 @@ void UserProfileRestoreWorkerTests::singleFileRestoreSucceeds() {
     QFile f(destFile);
     QVERIFY(f.open(QIODevice::ReadOnly));
     QCOMPARE(f.readAll(), QByteArray("hello from backup"));
+}
+
+// Security brief 4b B2: a profile's owner can plant a junction in their own profile. A restore,
+// run as administrator, that followed <profile>/Documents to another folder would write there; it
+// is refused instead, and the folder the junction points at is untouched.
+void UserProfileRestoreWorkerTests::restoreNeverWritesThroughAJunction() {
+    QTemporaryDir backupDir;
+    QVERIFY(backupDir.isValid());
+    createBackupTree(backupDir,
+                     QStringLiteral("TestUser"),
+                     {QStringLiteral("Documents/hello.txt")},
+                     "hello from backup");
+    QTemporaryDir destDir;
+    QTemporaryDir outside;
+    QVERIFY(destDir.isValid() && outside.isValid());
+    const QByteArray canary = QByteArrayLiteral("must stay exactly this");
+    QVERIFY(sak::test::createCanary(outside.path(), QStringLiteral("canary.txt"), canary));
+    qputenv("SystemDrive", destDir.path().toLocal8Bit());
+    QVERIFY(QDir(destDir.path()).mkpath(QStringLiteral("Users/TestUser")));
+    QVERIFY(sak::test::createJunction(destDir.path() + QStringLiteral("/Users/TestUser/Documents"),
+                                      outside.path()));
+
+    auto folder = makeFolder(sak::FolderType::Documents,
+                             QStringLiteral("Documents"),
+                             QStringLiteral("Documents"),
+                             18,
+                             1);
+    auto manifest = buildManifest(QStringLiteral("TestUser"), {folder});
+    auto mapping = makeMapping(QStringLiteral("TestUser"));
+    sak::UserProfileRestoreWorker worker;
+    QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QVERIFY(completeSpy.isValid());
+    worker.startRestore(backupDir.path(),
+                        manifest,
+                        {mapping},
+                        {sak::ConflictResolution::SkipDuplicate,
+                         sak::PermissionMode::PreserveOriginal,
+                         false,
+                         false,
+                         {}});
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
+
+    QVERIFY2(!QFileInfo::exists(QDir(outside.path()).filePath(QStringLiteral("hello.txt"))),
+             "the restore wrote through the junction");
+    QVERIFY(sak::test::canaryIntact(outside.path(), QStringLiteral("canary.txt"), canary));
+    QCOMPARE(QDir(outside.path())
+                 .entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System),
+             QStringList{QStringLiteral("canary.txt")});
+    QCOMPARE(completeSpy.first().at(0).toBool(), false);
+}
+
+// Security brief 4b B2, the copy itself: the test above is refused before any copy (the worker
+// checks the target and its folder for a link first), so it passes with a copy that follows one
+// too. What is left is a link planted at the target's name between that check and the copy, which
+// no test can time: the worker's copies and renames go through sak::no_follow, and its source has
+// no Qt copy or rename, which would follow such a link.
+void UserProfileRestoreWorkerTests::restoreCopiesWithNoLinkFollowingCall() {
+    const QString source = QFINDTESTDATA("../../src/core/user_profile_restore_worker.cpp");
+    QVERIFY2(!source.isEmpty(), "cannot find the worker's source from the test's");
+    const QStringList calls = sak::test::linkFollowingFileCalls(source);
+    QVERIFY2(calls.isEmpty(), qPrintable(calls.join(QLatin1Char('\n'))));
 }
 
 // ---------------------------------------------------------------------------

@@ -6,6 +6,8 @@
 
 #include "sak/organizer_worker.h"
 
+#include "../support/junction_fixture.h"
+
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
@@ -461,6 +463,63 @@ private Q_SLOTS:
         QCOMPARE(worker.movedCount(), 1);
         QVERIFY(QFile::exists(
             QDir(folder).filePath(QStringLiteral("Images/") + name + QStringLiteral(".png"))));
+    }
+
+    // Security brief 4b B1: when the app runs as administrator, a junction another account planted
+    // as a category folder used to receive every moved file (create_directories accepted it and
+    // std::filesystem::rename followed it), and with "overwrite" it replaced what was there, so a
+    // junction to System32 let the files from the picked folder replace system files. The category
+    // folder is now opened without following a link and the move is a rename relative to it.
+    void junctionCategoryFolderIsRefusedAndItsTargetUntouched() {
+        QTemporaryDir tmpDir;
+        QTemporaryDir outside;
+        QVERIFY(tmpDir.isValid() && outside.isValid());
+        const QByteArray victim_bytes = QByteArrayLiteral("a file the junction points at");
+        QVERIFY(sak::test::createCanary(outside.path(), QStringLiteral("image.png"), victim_bytes));
+        createDummyFile(tmpDir.path(), "image.png", "from the picked folder");
+        QVERIFY(sak::test::createJunction(QDir(tmpDir.path()).filePath(QStringLiteral("Images")),
+                                          outside.path()));
+
+        OrganizerWorker::Config config;
+        config.target_directory = tmpDir.path();
+        config.category_mapping = defaultCategoryMapping();
+        config.collision_strategy = QStringLiteral("overwrite");
+        OrganizerWorker worker(config);
+        QSignalSpy failed(&worker, &OrganizerWorker::failed);
+        worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 1, 5000);
+        QVERIFY(worker.wait(5000));
+
+        QVERIFY(sak::test::canaryIntact(outside.path(), QStringLiteral("image.png"), victim_bytes));
+        QCOMPARE(QDir(outside.path()).entryList(QDir::Files).size(), 1);
+        QVERIFY(QFile::exists(QDir(tmpDir.path()).filePath(QStringLiteral("image.png"))));
+        QCOMPARE(worker.movedCount(), 0);
+        QCOMPARE(worker.failedMoves().size(), 1);
+        QVERIFY2(worker.failedMoves().first().contains(QStringLiteral("link")),
+                 qPrintable(worker.failedMoves().first()));
+    }
+
+    // The same for a fresh name: a junction category folder receives nothing even when the move
+    // would not replace anything.
+    void junctionCategoryFolderReceivesNoNewFile() {
+        QTemporaryDir tmpDir;
+        QTemporaryDir outside;
+        QVERIFY(tmpDir.isValid() && outside.isValid());
+        createDummyFile(tmpDir.path(), "report.pdf");
+        QVERIFY(sak::test::createJunction(QDir(tmpDir.path()).filePath(QStringLiteral("Documents")),
+                                          outside.path()));
+
+        OrganizerWorker::Config config;
+        config.target_directory = tmpDir.path();
+        config.category_mapping = defaultCategoryMapping();
+        OrganizerWorker worker(config);
+        QSignalSpy failed(&worker, &OrganizerWorker::failed);
+        worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 1, 5000);
+        QVERIFY(worker.wait(5000));
+
+        QVERIFY(QDir(outside.path()).entryList(QDir::Files | QDir::Hidden).isEmpty());
+        QVERIFY(QFile::exists(QDir(tmpDir.path()).filePath(QStringLiteral("report.pdf"))));
     }
 };
 

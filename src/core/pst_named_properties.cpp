@@ -29,7 +29,6 @@ constexpr int kFirstStreamGuidIndex = 3;
 constexpr uint16_t kEntryIsStringBit = 0x0001;
 constexpr int kEntryGuidIndexShift = 1;
 constexpr int kPropertySetTagOffset = 0;
-constexpr uint16_t kPropertySetTagBytes = 2;
 
 // The sets are all {000620xx-0000-0000-C000-000000000046}. On disk a GUID's first DWORD is
 // little-endian, so xx is byte 0.

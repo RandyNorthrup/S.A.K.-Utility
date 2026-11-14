@@ -6,6 +6,7 @@
 
 #include "sak/pst_parser.h"
 
+#include "sak/bounded_inflate.h"
 #include "sak/email_folder_selection.h"
 #include "sak/email_html_sanitizer.h"
 #include "sak/eml_writer.h"
@@ -2135,36 +2136,20 @@ std::expected<QByteArray, error_code> PstParser::decompressBlockIf4k(const QByte
         return raw;
     }
 
-    // Block is zlib-compressed -- decompress using qUncompress.
-    // qUncompress expects a 4-byte big-endian size prefix before the
-    // raw zlib stream.
-    QByteArray prefixed;
-    prefixed.reserve(kInt32PropertyBytes + raw.size());
-    uint32_t be_size = qToBigEndian(static_cast<uint32_t>(uncompressed_size));
-    prefixed.append(reinterpret_cast<const char*>(&be_size), kInt32PropertyBytes);
-    prefixed.append(raw);
-
-    QByteArray decompressed = qUncompress(prefixed);
-    if (decompressed.isEmpty()) {
-        // The footer said this block is compressed; a decompress failure means the block is
-        // corrupt. Fail closed -- returning the compressed bytes would feed garbage upstream.
-        sak::logError("Block decompression failed at offset {}", std::to_string(file_offset));
+    // Block is zlib-compressed. The footer's uncompressed_size is the block's declared inflated
+    // length, and nothing inflates past it: qUncompress took it only as an allocation hint and
+    // grew to whatever the stream held, so a crafted block could inflate to many times the
+    // declared size before the size was compared. A stream that is not zlib, ends short or runs
+    // long is a corrupt (or crafted) block. Fail closed -- returning the compressed bytes, or a
+    // short/long buffer, would feed garbage to the size-sensitive readers downstream.
+    auto decompressed = sak::inflateZlibExactly(raw, uncompressed_size);
+    if (!decompressed) {
+        sak::logError("Block decompression failed at offset {} (declared {} bytes)",
+                      std::to_string(file_offset),
+                      std::to_string(uncompressed_size));
         return std::unexpected(error_code::pst_decompression_failed);
     }
-
-    // The footer's uncompressed_size is the block's declared inflated length; qUncompress trusts
-    // the BE size prefix only for its allocation hint, so a stream that inflates to a different
-    // length is a corrupt (or crafted) block. Enforce the exact-size invariant fail-closed rather
-    // than handing a short/long buffer to the size-sensitive readers downstream.
-    if (decompressed.size() != uncompressed_size) {
-        sak::logError("Block decompressed size {} != declared {} at offset {}",
-                      std::to_string(decompressed.size()),
-                      std::to_string(uncompressed_size),
-                      std::to_string(file_offset));
-        return std::unexpected(error_code::pst_decompression_failed);
-    }
-
-    return decompressed;
+    return std::move(*decompressed);
 }
 
 void PstParser::decryptBlock(std::span<uint8_t> data) const {

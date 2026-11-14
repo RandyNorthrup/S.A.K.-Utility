@@ -77,6 +77,9 @@ public:
     void reportTestWindowsPhaseForReview(const std::optional<WindowsContinuedPhase>& phase);
 #endif
 
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
@@ -251,6 +254,10 @@ private:
                                       const std::optional<PartitionTarget>& selected);
     QWidget* createDiskTile(const PartitionDiskInfo& disk);
     void selectTargetInTable(const PartitionTarget& target);
+    /// A click on the disk map: selects @p target in the table and gives the table the keyboard.
+    void selectTargetFromMap(const PartitionTarget& target);
+    /// Shift+F10 or the Menu key on the table: the current row's menu, at that row.
+    void showCurrentRowContextMenu();
     /// @brief Health/operational/temperature/wear/error fragments shown in a disk row tooltip
     static QStringList diskStatusParts(const PartitionDiskInfo& disk);
     void addDiskRow(const PartitionDiskInfo& disk);
@@ -272,8 +279,9 @@ private:
     void updateWindowsPhaseNotice();
     void updateRefreshButtonState();
     void updateDetails();
-    // Runs a read-only scan of the selected target now, outside the Apply queue.
-    void runReadOnlyOperation(PartitionOperationType type);
+    // Runs a read-only scan of the selected target now, outside the Apply queue. True when the
+    // run was started.
+    bool runReadOnlyOperation(PartitionOperationType type);
     void queueOperation(PartitionOperationType type, const QJsonObject& payload = {});
     // Binds an explicit, already-confirmed target instead of re-reading the live selection, so a
     // mid-modal reselection cannot retarget a destructive operation confirmed against another row.
@@ -345,6 +353,9 @@ private:
     /// Scan Disks put its message over the table, and the scan has not come back yet.
     bool m_scan_overlay_shown{false};
     bool m_inventory_load_started{false};
+    /// The run going now is Check File System of a drive that can be unplugged, so its result
+    /// says to wait before unplugging it.
+    bool m_unplug_note_pending{false};
 };
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS

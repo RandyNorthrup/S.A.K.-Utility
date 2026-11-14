@@ -15,6 +15,7 @@
 #include "sak/html_email_writer.h"
 #include "sak/io_write_utils.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/mbox_parser.h"
 #include "sak/pdf_email_writer.h"
 #include "sak/pst_parser.h"
@@ -25,6 +26,7 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QSet>
 #include <QTextStream>
 
@@ -82,6 +84,24 @@ bool isCsvFormat(sak::ExportFormat format) {
 bool isMessageFileFormat(sak::ExportFormat format) {
     return format == sak::ExportFormat::Eml || format == sak::ExportFormat::Html ||
            format == sak::ExportFormat::Text || format == sak::ExportFormat::Pdf;
+}
+
+/// Why an MBOX export request cannot run; empty when it can. Fail closed instead of silently
+/// coercing an unsupported request to EML: MBOX export only produces per-message files
+/// (EML/HTML/TXT/PDF). A CSV/ICS/VCF request here is a caller error and must be surfaced, not
+/// reinterpreted.
+QString mboxExportRequestError(const void* parser, const sak::EmailExportConfig& config) {
+    if (parser == nullptr) {
+        return QStringLiteral("No MBOX file open for export");
+    }
+    if (config.output_path.isEmpty()) {
+        return QStringLiteral("Export output path is empty");
+    }
+    if (!isMessageFileFormat(config.format)) {
+        return QStringLiteral(
+            "MBOX export supports only per-message formats (EML, HTML, TXT, PDF)");
+    }
+    return {};
 }
 
 struct ExportFormatName {
@@ -519,11 +539,13 @@ void EmailExportWorker::exportItems(PstParser* parser, const sak::EmailExportCon
     result.started = QDateTime::currentDateTime();
     result.export_format = formatDisplayName(config.format);
 
-    const QDir output_dir(config.output_path);
-    if (!output_dir.mkpath(QStringLiteral("."))) {
-        emitEarlyFailure(QStringLiteral("Failed to create output directory"));
+    const auto output_folder = openOutputFolder(config.output_path);
+    if (!output_folder) {
+        emitEarlyFailure(output_folder.error());
         return;
     }
+    // Let go of the folder when this export ends, however it ends.
+    const auto release_output_folder = qScopeGuard([this] { m_output_folder.reset(); });
 
     const QVector<uint64_t> item_ids = collectItemIds(parser, config, result);
     if (item_ids.isEmpty()) {
@@ -791,20 +813,8 @@ void EmailExportWorker::exportCsvFormat(PstParser* parser,
 // ============================================================================
 
 void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExportConfig& config) {
-    if (parser == nullptr) {
-        emitEarlyFailure(QStringLiteral("No MBOX file open for export"));
-        return;
-    }
-    if (config.output_path.isEmpty()) {
-        emitEarlyFailure(QStringLiteral("Export output path is empty"));
-        return;
-    }
-    // Fail closed instead of silently coercing an unsupported request to EML: MBOX
-    // export only produces per-message files (EML/HTML/TXT/PDF). A CSV/ICS/VCF
-    // request here is a caller error and must be surfaced, not reinterpreted.
-    if (!isMessageFileFormat(config.format)) {
-        emitEarlyFailure(
-            QStringLiteral("MBOX export supports only per-message formats (EML, HTML, TXT, PDF)"));
+    if (const QString refusal = mboxExportRequestError(parser, config); !refusal.isEmpty()) {
+        emitEarlyFailure(refusal);
         return;
     }
 
@@ -816,11 +826,13 @@ void EmailExportWorker::exportMboxItems(MboxParser* parser, const sak::EmailExpo
     const auto effective_format = messageFormatOrEml(config.format);
     result.export_format = formatDisplayName(effective_format) + QStringLiteral(" (from MBOX)");
 
-    const QDir output_dir(config.output_path);
-    if (!output_dir.mkpath(QStringLiteral("."))) {
-        emitEarlyFailure(QStringLiteral("Failed to create output directory"));
+    const auto output_folder = openOutputFolder(config.output_path);
+    if (!output_folder) {
+        emitEarlyFailure(output_folder.error());
         return;
     }
+    // Let go of the folder when this export ends, however it ends.
+    const auto release_output_folder = qScopeGuard([this] { m_output_folder.reset(); });
 
     QVector<int> indices = collectMboxIndices(parser, config.item_ids, result);
 
@@ -1184,17 +1196,54 @@ bool EmailExportWorker::extractAttachment(PstParser* parser,
     filename = sanitizeFilename(filename, kMaxFilenameLength);
     filename = resolveFilenameConflict(output_dir, filename);
 
-    QFile file(output_dir + QLatin1Char('/') + filename);
-    if (!file.open(QIODevice::WriteOnly)) {
-        return false;
-    }
     // Full write or fail: a truncated attachment must not count as extracted (B7-18).
-    if (!sak::writeFully(file, data.value())) {
-        file.close();
+    return writeNewFile(output_dir, filename, data.value());
+}
+
+// ============================================================================
+// Writing into the folder the person picked (security brief 4b B7)
+// ============================================================================
+
+// When S.A.K. runs as administrator, a junction another account planted as (or above) the output
+// folder, or a link planted under a name the export was about to use, turned the export into an
+// administrator's write somewhere else. The folder is opened without following a link and held
+// for the run, and each attachment is written under a fresh random name and renamed into place
+// relative to its held folder, never replacing a name that appeared meanwhile.
+std::expected<QString, QString> EmailExportWorker::openOutputFolder(const QString& output_path) {
+    if (!QDir(output_path).mkpath(QStringLiteral("."))) {
+        return std::unexpected(QStringLiteral("Failed to create output directory"));
+    }
+    auto folder = sak::no_follow::HeldDirectory::open(output_path);
+    if (!folder) {
+        sak::logError("Email export: output folder refused: {}", folder.error().toStdString());
+        return std::unexpected(
+            QStringLiteral("The output folder cannot be used: %1").arg(folder.error()));
+    }
+    m_output_folder.emplace(std::move(*folder));
+    return QString();
+}
+
+bool EmailExportWorker::writeNewFile(const QString& folder_path,
+                                     const QString& name,
+                                     const QByteArray& data) {
+    const auto folder = sak::no_follow::HeldDirectory::open(folder_path);
+    if (!folder) {
+        sak::logError("Email export: cannot write into {}: {}",
+                      folder_path.toStdString(),
+                      folder.error().toStdString());
         return false;
     }
-    file.close();
-    return true;
+    auto staged = sak::no_follow::StagedFile::create(*folder, name);
+    if (!staged || !sak::writeFully(staged->device(), data)) {
+        return false;
+    }
+    const auto published = staged->publish(sak::no_follow::Publish::NoReplace);
+    if (!published) {
+        sak::logError("Email export: cannot save {}: {}",
+                      name.toStdString(),
+                      published.error().toStdString());
+    }
+    return published.has_value();
 }
 
 // ============================================================================
@@ -1424,14 +1473,8 @@ bool EmailExportWorker::saveSidecarAttachments(
             safe_name = QStringLiteral("attachment");
         }
         safe_name = resolveFilenameConflict(attach_dir, safe_name);
-        QFile file(attach_dir + QLatin1Char('/') + safe_name);
-        if (!file.open(QIODevice::WriteOnly)) {
-            all_saved = false;
-            continue;
-        }
-        const qint64 written = file.write(data);
-        if (written == data.size()) {
-            bytes_written += written;
+        if (writeNewFile(attach_dir, safe_name, data)) {
+            bytes_written += data.size();
         } else {
             all_saved = false;
         }

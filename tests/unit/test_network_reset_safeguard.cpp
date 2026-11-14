@@ -314,7 +314,7 @@ void TestNetworkResetSafeguard::aOneItemListWrittenAsTextIsRead() {
         "{\"next_hop\":\"10.0.0.1\",\"metric\":0},\"dns_servers\":[],\"static_dns_servers\":"
         "\"10.0.0.1\"},\"ipv6\":{\"present\":false}}]}");
     const auto parsed = sak::parseNetworkCapture(json);
-    QVERIFY2(parsed.has_value(), qPrintable(parsed.error()));
+    QVERIFY2(parsed.has_value(), qPrintable(parsed ? QString() : parsed.error()));
     const AdapterSettings& ethernet = parsed->adapters.first();
     QCOMPARE(ethernet.ipv4.static_addresses, QStringList{QStringLiteral("10.0.0.5/8")});
     QCOMPARE(ethernet.ipv4.static_gateways.first().next_hop, QStringLiteral("10.0.0.1"));
@@ -328,13 +328,13 @@ void TestNetworkResetSafeguard::backupFileRoundTrips() {
     before.captured_at = QStringLiteral("2026-11-09T12:00:00");
     before.computer_name = QStringLiteral("VM");
     const auto saved = sak::saveNetworkCapture(before, folder.path());
-    QVERIFY2(saved.has_value(), qPrintable(saved.error()));
+    QVERIFY2(saved.has_value(), qPrintable(saved ? QString() : saved.error()));
     QVERIFY(
         QFileInfo(*saved).fileName().startsWith(QStringLiteral("network-settings-before-reset-")));
     QFile file(*saved);
     QVERIFY(file.open(QIODevice::ReadOnly));
     const auto reread = sak::parseNetworkCapture(QString::fromUtf8(file.readAll()));
-    QVERIFY2(reread.has_value(), qPrintable(reread.error()));
+    QVERIFY2(reread.has_value(), qPrintable(reread ? QString() : reread.error()));
     QCOMPARE(reread->adapters.size(), before.adapters.size());
     const AdapterSettings* ethernet = reread->find(QStringLiteral("Ethernet"));
     QVERIFY(ethernet != nullptr);

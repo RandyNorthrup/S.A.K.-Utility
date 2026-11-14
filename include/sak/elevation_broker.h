@@ -8,7 +8,9 @@
 
 #include "sak/elevated_pipe_protocol.h"
 #include "sak/error_codes.h"
+#include "sak/program_integrity.h"
 
+#include <QDeadlineTimer>
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
@@ -155,7 +157,7 @@ private:
     [[nodiscard]] auto readMessage() -> std::expected<PipeMessage, sak::error_code>;
 
     /// @brief Read exactly N bytes from the pipe
-    [[nodiscard]] bool readExact(char* buffer, int size, int timeout_ms);
+    [[nodiscard]] bool readExact(char* buffer, int size, const QDeadlineTimer& deadline);
 
     /// @brief Peek at available bytes in the pipe (0 if none or broken)
     [[nodiscard]] DWORD peekAvailable() const;
@@ -204,6 +206,10 @@ private:
     // and tear the handle mid-call. The atomic does NOT replace that mutex.
     std::atomic<HANDLE> m_pipe_handle{INVALID_HANDLE_VALUE};
     HANDLE m_helper_process{nullptr};
+    /// Every program file, verified and held from before the helper starts until it is gone
+    /// (security brief 4c/4d): nothing the helper loads or runs from the program folder can be
+    /// changed, renamed or replaced meanwhile.
+    program_integrity::ProgramHold m_program_hold;
     /// Monotonic milliseconds of the last message sent to or read from the helper.
     std::atomic<qint64> m_last_activity_ms{0};
 };

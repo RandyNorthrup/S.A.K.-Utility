@@ -8,6 +8,7 @@
 
 #include "sak/network_diagnostic_types.h"
 
+#include <QHostAddress>
 #include <QObject>
 #include <QProcess>
 
@@ -19,6 +20,10 @@
 namespace sak {
 
 inline constexpr int kDefaultUdpBandwidthMbps = 100;
+
+/// A peer that connects to the iPerf3 server and then goes quiet is dropped after this long, and
+/// the server goes back to listening (iperf3 --idle-timeout).
+inline constexpr int kIperfServerIdleTimeoutSec = 30;
 
 /// @brief Bandwidth testing via bundled iPerf3 and HTTP download
 ///
@@ -49,8 +54,53 @@ public:
     BandwidthTester(BandwidthTester&&) = delete;
     BandwidthTester& operator=(BandwidthTester&&) = delete;
 
-    /// @brief Start iPerf3 server (other SAK instances test against this)
-    void startIperfServer(uint16_t port = netdiag::kDefaultIperfPort);
+    /// @brief Start the iPerf3 server (other SAK instances test against this), listening only on
+    ///        @p bind_address: one of this PC's adapter addresses, or loopback.
+    ///
+    /// A server other PCs can reach starts only once its inbound Windows Firewall rule (private
+    /// profile, local subnet, this iperf3.exe, this address and port) is in place. Adding the
+    /// rule needs administrator rights: without them the start is refused before anything runs
+    /// (needsElevationMessage), and a rule Windows still does not add stops the server too
+    /// (firewallRuleRefusalMessage). A loopback server needs no rule, so no administrator:
+    /// Windows Firewall does not filter loopback. A peer that goes quiet is dropped after
+    /// kIperfServerIdleTimeoutSec.
+    void startIperfServer(uint16_t port, const QHostAddress& bind_address);
+
+    /// @brief True when a server on @p bind_address needs S.A.K. running as administrator: any
+    ///        address but loopback needs an inbound firewall rule, and @p elevated is false.
+    ///        Pure; the Bandwidth panel asks it before Start Server is pressed.
+    [[nodiscard]] static bool serverNeedsElevation(const QHostAddress& bind_address, bool elevated);
+
+    /// @brief What a start refused for want of administrator rights says. It leads with what to
+    ///        do, naming the status bar's Run as Admin button: the status bar it is shown in
+    ///        leaves it little room beside that button.
+    [[nodiscard]] static QString needsElevationMessage();
+
+    /// @brief What a start says when Windows Firewall did not add the server's inbound rule, with
+    ///        @p why (netsh's own words) as its last clause. Its trailing punctuation goes, so
+    ///        the message ends with one full stop whatever @p why ends with. Pure; testable.
+    [[nodiscard]] static QString firewallRuleRefusalMessage(const QString& why);
+
+    /// @brief Why a netsh call that did not succeed failed, never empty: what netsh said, or that
+    ///        it was stopped before it finished, or its exit code when it said nothing. The log
+    ///        used to read "Failed to add firewall rule for port 5201: " when netsh was stopped
+    ///        mid-run.
+    [[nodiscard]] static QString netshFailureReason(int exit_code,
+                                                    QProcess::ExitStatus status,
+                                                    const QString& output);
+
+    /// @brief Tests: answer "is S.A.K. running as administrator?" with @p elevated instead of
+    ///        asking Windows, so both routes run without real elevation.
+    void setElevatedForTesting(bool elevated) { m_elevatedForTesting = elevated; }
+
+    /// @brief The iperf3 arguments for a server on @p port that listens only on
+    ///        @p bind_address and drops an idle peer. Pure; testable.
+    [[nodiscard]] static QStringList iperfServerArguments(uint16_t port,
+                                                          const QHostAddress& bind_address);
+
+    /// @brief True when @p address names one interface a server can listen on: not null, not
+    ///        a wildcard (any address), not broadcast or multicast. Pure; testable.
+    [[nodiscard]] static bool isSpecificListenAddress(const QHostAddress& address);
 
     /// @brief Stop iPerf3 server
     void stopIperfServer();
@@ -120,7 +170,9 @@ Q_SIGNALS:
 
 private:
     QString m_iperf3Path;
-    QProcess* m_serverProcess = nullptr;       ///< Owned; destroyed in destructor
+    QProcess* m_serverProcess = nullptr;  ///< Owned; destroyed in destructor
+    /// setElevatedForTesting's answer; empty asks ElevationManager.
+    std::optional<bool> m_elevatedForTesting;
     QProcess* m_firewallAddProcess = nullptr;  ///< In-flight add; removes serialize behind it
     QString m_firewallRuleName;                ///< Unique inbound rule for the running server
     std::atomic<bool> m_cancelled{false};
@@ -129,7 +181,23 @@ private:
     [[nodiscard]] std::optional<double> measureTransferMbps(
         int sample_count, const std::function<std::pair<double, double>()>& sampler);
     void connectServerProcessSignals(const QString& ruleName, uint16_t port);
-    void createFirewallRule(const QString& ruleName, uint16_t port);
+    /// True (errorOccurred emitted) when a server cannot start: no specific address, no
+    /// iperf3.exe, or a server already exists.
+    [[nodiscard]] bool serverStartRefused(const QHostAddress& bind_address);
+    /// The server's QProcess, prepared and installed in its own Job (m_serverProcess), or null
+    /// (errorOccurred emitted).
+    [[nodiscard]] QProcess* containedServerProcess(uint16_t port,
+                                                   const QHostAddress& bind_address,
+                                                   const QString& ruleName);
+    /// Start the prepared server process; its Job (held by a child of the process) contains it.
+    void launchServer(QProcess* server);
+    /// Called once the inbound rule for @p server is in place (@p added) or could not be added.
+    void onServerFirewallRule(QProcess* server, bool added, const QString& why);
+    using FirewallRuleDone = std::function<void(bool added, const QString& why)>;
+    void createFirewallRule(const QString& ruleName,
+                            uint16_t port,
+                            const QHostAddress& bind_address,
+                            FirewallRuleDone done);
     void removeFirewallRule(const QString& ruleName);
     void executeFirewallDelete(const QString& ruleName);
     /// Starts an asynchronous sweep that deletes rules a crashed earlier server left behind.

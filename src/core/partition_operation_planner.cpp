@@ -164,10 +164,12 @@ OperationRisk riskForType(PartitionOperationType type) {
 // The type alone does not decide the risk of a file-system check: a Windows check is a scan,
 // but the non-Windows check queues the bundled tool's REPAIR (fsck/e2fsck/fsck_hfs/APFS repair),
 // which rewrites metadata. Classifying that as read-only showed a repair as "Read-only" in the
-// Apply review and would have let it bypass the queue.
+// Apply review and would have let it bypass the queue. The read-only check the helper runs for
+// Check Non-Windows File System (read_only_check, F25) changes nothing, and is read-only.
 OperationRisk riskForOperation(PartitionOperationType type, const QJsonObject& payload) {
     if (type == PartitionOperationType::CheckFileSystem &&
-        payload.value(QStringLiteral("non_native_file_system_tool")).toBool(false)) {
+        payload.value(QStringLiteral("non_native_file_system_tool")).toBool(false) &&
+        !payload.value(QStringLiteral("read_only_check")).toBool(false)) {
         return OperationRisk::Destructive;
     }
     return riskForType(type);

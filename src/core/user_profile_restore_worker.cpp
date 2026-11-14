@@ -7,12 +7,14 @@
 #include "sak/user_profile_restore_worker.h"
 
 #include "sak/app_data_sources.h"
+#include "sak/app_paths.h"
 #include "sak/backup_destination_guard.h"
 #include "sak/backup_file_codec.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/media_read_back.h"
+#include "sak/no_follow_fs.h"
 #include "sak/path_utils.h"
 #include "sak/permission_manager.h"
 #include "sak/process_runner.h"
@@ -25,7 +27,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRandomGenerator>
-#include <QTemporaryFile>
+#include <QScopeGuard>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -157,14 +159,43 @@ bool destinationParentWithinRoot(const QString& canonicalRoot, const QString& de
            canonicalParent.startsWith(canonicalRoot + QLatin1Char('/'));
 }
 
+// Every copy and rename below goes through sak::no_follow (security brief 4b B2): the folder is
+// opened without following a link and held, the copy lands under a fresh random name and is
+// renamed into place relative to that held folder, and a rename never replaces a name it was not
+// asked to. A profile's owner can plant a junction or a link in their own profile; as
+// administrator, a restore that followed one would write wherever it pointed.
+bool copyNoFollow(const QString& source, const QString& target, no_follow::Publish mode) {
+    const auto copied = no_follow::copyFileTo(source, target, mode);
+    if (!copied) {
+        sak::logError("Restore: cannot copy {} to {}: {}",
+                      source.toStdString(),
+                      target.toStdString(),
+                      copied.error().toStdString());
+    }
+    return copied.has_value();
+}
+
+// Rename @p from to @p to within one folder, never replacing what is at @p to.
+bool renameNoFollow(const QString& from, const QString& to) {
+    const auto moved = no_follow::moveTo(from, to, no_follow::Publish::NoReplace);
+    if (!moved) {
+        sak::logError("Restore: cannot rename {} to {}: {}",
+                      from.toStdString(),
+                      to.toStdString(),
+                      moved.error().toStdString());
+    }
+    return moved.has_value();
+}
+
 // Save the pre-restore contents of an about-to-be-overwritten file to a
 // recoverable sidecar so the user can undo the overwrite. Returns false (fail
 // closed) if the copy fails, so the caller never destroys the original without
 // a recovery copy in hand.
 bool createRestoreRecoveryCopy(const QString& finalDestPath) {
     const QString recoveryPath = finalDestPath + QStringLiteral(".sakbak");
-    QFile::remove(recoveryPath);  // Drop a stale copy from an earlier restore.
-    return QFile::copy(finalDestPath, recoveryPath);
+    // Replaces a stale copy from an earlier restore by name: a link planted at the .sakbak name is
+    // replaced, never written through.
+    return copyNoFollow(finalDestPath, recoveryPath, no_follow::Publish::ReplaceName);
 }
 
 // An unpredictable per-operation staging path in the destination directory. The internal
@@ -197,7 +228,7 @@ bool materializeBackupPayload(const QString& source,
                               QByteArray& plainDigest) {
     plainDigest.clear();
     if (backupContainerKind(source) == BackupContainerKind::None) {
-        return QFile::copy(source, target);
+        return copyNoFollow(source, target, no_follow::Publish::NoReplace);
     }
     const auto decoded = readBackupFile(source, target, password);
     if (!decoded.has_value()) {
@@ -237,15 +268,15 @@ bool copyFileReplacingExisting(const QString& source,
     // renamed, and a rename failure between the two left the destination gone.
     const QString oldPath = makeRestoreTempPath(finalDestPath, QStringLiteral("old"));
     QFile::remove(oldPath);
-    if (!QFile::rename(finalDestPath, oldPath)) {
+    if (!renameNoFollow(finalDestPath, oldPath)) {
         QFile::remove(tempPath);
         return false;  // Could not move the original aside -- leave everything intact.
     }
-    if (!QFile::rename(tempPath, finalDestPath)) {
+    if (!renameNoFollow(tempPath, finalDestPath)) {
         // Roll back: move the original back into place. If even the rollback fails, do
         // NOT delete oldPath -- the original stays there for manual recovery rather
         // than being silently lost, and the failure is surfaced.
-        if (!QFile::rename(oldPath, finalDestPath)) {
+        if (!renameNoFollow(oldPath, finalDestPath)) {
             sak::logError(
                 "Restore rollback failed: original preserved at '{}' (could not move back to '{}')",
                 oldPath.toStdString(),
@@ -281,7 +312,7 @@ void finalizeMovedAsideOriginal(const QString& finalDestPath,
         return;
     }
     QFile::remove(finalDestPath);  // Roll back: discard the unverified replacement...
-    if (!QFile::rename(movedAsideOriginal, finalDestPath)) {  // ...and restore the original.
+    if (!renameNoFollow(movedAsideOriginal, finalDestPath)) {  // ...and restore the original.
         sak::logError(
             "Restore rollback failed: original preserved at '{}' (could not move back to '{}')",
             movedAsideOriginal.toStdString(),
@@ -1357,23 +1388,24 @@ bool UserProfileRestoreWorker::restoreWifiProfile(const WifiProfileInfo& profile
         return false;
     }
 
-    // Stage the profile XML to a temp file for `netsh wlan add profile`.
-    QTemporaryFile xmlFile(QDir::tempPath() + QStringLiteral("/sak_wlan_XXXXXX.xml"));
-    xmlFile.setAutoRemove(true);
-    if (!xmlFile.open()) {
-        Q_EMIT logMessage(tr("Failed to stage Wi-Fi profile XML for: %1").arg(profile.profile_name),
+    // Security brief 4a: the profile XML is written CREATE_NEW into this run's own temporary
+    // folder in the program's data folder, read back whole, and held read-only until netsh has read
+    // it (netsh reads through the hold: measured on testpc1, 2026-11-11).
+    auto staged = sak::app_paths::writeHeldSessionTempFile(
+        QStringLiteral("sak_wlan_%1.xml").arg(sak::no_follow::randomToken()),
+        profile.xml_data.toUtf8());
+    if (!staged) {
+        Q_EMIT logMessage(tr("Failed to stage Wi-Fi profile XML for: %1 (%2)")
+                              .arg(profile.profile_name, staged.error()),
                           true);
         return false;
     }
-    const QByteArray xmlBytes = profile.xml_data.toUtf8();
-    if (xmlFile.write(xmlBytes) != xmlBytes.size()) {
-        Q_EMIT logMessage(tr("Failed to write Wi-Fi profile XML for: %1").arg(profile.profile_name),
-                          true);
-        return false;
-    }
-    xmlFile.flush();
+    const auto remove_staged = qScopeGuard([&staged] {
+        staged->first.reset();
+        QFile::remove(staged->second);
+    });
 
-    const QString xmlPath = QDir::toNativeSeparators(xmlFile.fileName());
+    const QString xmlPath = QDir::toNativeSeparators(staged->second);
     const ProcessResult result = runProcess(netsh,
                                             {QStringLiteral("wlan"),
                                              QStringLiteral("add"),
