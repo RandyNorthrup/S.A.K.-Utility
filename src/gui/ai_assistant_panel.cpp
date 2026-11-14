@@ -4639,6 +4639,10 @@ void AiAssistantPanel::setupComposerInput(QVBoxLayout* layout, QWidget* composer
     m_messageEdit->setMaximumHeight(kMessageEditMaxHeight);
     m_messageEdit->setFrameShape(QFrame::NoFrame);
     m_messageEdit->setStyleSheet(composerEditStyle());
+    // Tab typed a tab character and kept the keyboard in the box (fix batch 3's tab sweep):
+    // nobody types a tab into a chat message, so Tab and Shift+Tab move the focus on and back.
+    // Enter, Ctrl+Enter and Up/Down keep their own meaning (composerKeyAction).
+    m_messageEdit->setTabChangesFocus(true);
     m_messageEdit->installEventFilter(this);
     setAccessible(m_messageEdit, tr("AI message input"));
     connect(m_messageEdit, &QPlainTextEdit::textChanged, this, [this]() {

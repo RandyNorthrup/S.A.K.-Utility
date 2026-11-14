@@ -120,6 +120,9 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **Tab leaves the AI Assistant's message box** - Tab in the message box typed a tab character and kept the
+  keyboard there. Tab and Shift+Tab now move to the next and previous control; Enter still sends, Ctrl+Enter still
+  starts a new line, and Up and Down still recall earlier prompts.
 - **PowerShell errors read as one plain sentence** - Where a PowerShell error reaches a dialog, a status line or a
   report (the DNS cache view, a restore point, the bootable USB's drive letter, Check Disk Errors, Partition
   Manager's disk scan and its operations), it no longer carries the cmdlet's name in front, the script's position

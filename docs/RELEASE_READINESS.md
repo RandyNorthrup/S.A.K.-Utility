@@ -3956,6 +3956,17 @@ tests pass as they were; drill `keyboard-menu-request-ignores-the-menu-key` turn
 distinct findings in those files, none on a line changed since 1db87df4. The naming gate is the project's tidy gate
 and passes; the rest is the files' own older debt.
 
+**The AI Assistant's message box held Tab (item 12, from item 9's sweep).** Tab in "AI message input" typed a
+tab character, so the keyboard could not leave the box by Tab (Ctrl+Tab could): a keyboard trap, and nobody types a
+tab into a chat message. The box (`QPlainTextEdit`) now has `setTabChangesFocus(true)`: Tab and Shift+Tab move the
+focus on and back. Enter, Ctrl+Enter and Up/Down go through the panel's own key filter (`composerKeyAction`) before
+the box sees them and keep their meaning. Nothing is drawn differently, so the AI tab's pictures stand. Test
+`tabMovesTheFocusOffTheMessageBoxAndBack`: Tab moves the focus off the box and Shift+Tab brings it back with the
+draft untouched, Ctrl+Enter adds one line and no tab, and Enter with nothing typed sends nothing and adds no line.
+Drill: `ai-message-box-keeps-tab`. The item 9 sweep, run again on testpc1 with this build and now noting whether Tab
+gets back to the tab bar: on the AI Assistant tab Tab goes AI run details > the transcript > AI message input >
+Attach and on, back to the tab bar in 16 stops (before, it stayed in the message box); every other tab as before.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and
