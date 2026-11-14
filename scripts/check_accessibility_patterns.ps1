@@ -207,10 +207,11 @@ try {
         $failure = Get-AuditFailureLines -Process $auditProcess -AuditPath $auditPath -Tail 80
         throw "Accessibility runtime audit timed out after ${TimeoutSeconds}s.`nAUDIT:`n$($failure -join "`n")"
     }
-    $auditOutput = if (Test-Path -LiteralPath $auditPath) {
-        @(Get-Content -LiteralPath $auditPath)
-    } else {
-        @()
+    # Assigned, not the output of an if: a one-line audit, as the app writes, came out of an if as a
+    # string, and [0] of a string is its first character.
+    $auditOutput = @()
+    if (Test-Path -LiteralPath $auditPath) {
+        $auditOutput = @(Get-Content -LiteralPath $auditPath)
     }
     $exitCode = $auditProcess.exit_code
     # A string, never "nothing": no line at all compared as an empty collection, which -notmatch

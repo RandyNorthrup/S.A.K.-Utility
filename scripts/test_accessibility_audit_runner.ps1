@@ -19,6 +19,8 @@
          that exits 0 having written no audit fails the check.
       2. With -PackageRoot the audit runs a copy of the package in a folder of its own, removes it,
          and leaves the package as it was; a package program older than HEAD's commit is refused.
+         The stand-in writes a one-line audit, as the app does: read back as a string, its first
+         character was taken for the header (testpc2, elevated, 2026-11-14).
       3. check_release_readiness.ps1 passes the package to the audit, after the signatures of a
          signed package are checked.
 #>
@@ -66,10 +68,11 @@ public static class StandIn {
                             .FirstOrDefault();
         string[] entries = Directory.GetFileSystemEntries(dir, "*", SearchOption.AllDirectories)
                                .Select(e => "ENTRY " + e.Substring(dir.Length + 1)).ToArray();
-        string[] lines = new[] { "SAK_ACCESSIBILITY_AUDIT_OK stand-in", "RAN-FROM " + dir }
-                             .Concat(entries).ToArray();
-        File.WriteAllLines(output, lines);
-        if (!string.IsNullOrEmpty(evidence)) { File.WriteAllLines(evidence, lines); }
+        // One line, as the app writes its audit; where it ran goes to the evidence file only.
+        File.WriteAllLines(output, new[] { "SAK_ACCESSIBILITY_AUDIT_OK missing=0 stand-in" });
+        if (!string.IsNullOrEmpty(evidence)) {
+            File.WriteAllLines(evidence, new[] { "RAN-FROM " + dir }.Concat(entries).ToArray());
+        }
         // As the app does: its runtime data beside it.
         Directory.CreateDirectory(Path.Combine(dir, "data", "logs"));
         return 0;

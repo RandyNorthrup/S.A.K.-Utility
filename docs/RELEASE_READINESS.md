@@ -3798,7 +3798,11 @@ passed on the same runner. And the branch for a missing audit built an array tha
 so `-join` printed each as "System.Object[]" and the refusal's "Fatal: ..." line on stderr was lost; the timed-out
 branch joined flat arrays, and both now build their text in one function (`Get-AuditFailureLines`). One more fault
 was found while fixing it: with no audit file, comparing "nothing" with `-notmatch` answers nothing, so a program
-that exited 0 having written no audit would have passed; the header is now always a string.
+that exited 0 having written no audit would have passed; the header is now always a string. The elevated run on
+testpc2 found a third: the app writes its audit as one line, which, as the output of an `if`, came back as a string,
+and `[0]` of a string is its first character, so the clean package's own passing audit ("SAK_ACCESSIBILITY_AUDIT_OK
+missing=0 ... checked=2807") was refused; the test's stand-in had written several lines. The file is now read into an
+array by assignment, and the stand-in writes one line.
 T2 never ran the audit elevated against a populated folder: ci.yml's "Accessibility runtime audit" runs it through
 `scripts/invoke_unelevated.ps1` with a standard-user token, and `hardenProcessStart` returns at once when not
 elevated, so the other programs in `build/Release` never mattered there. T2 stays as it is: it audits what a
@@ -3832,7 +3836,8 @@ the package only, the copy is gone afterwards and the package unchanged, and a p
 refused; the readiness gate passes `-PackageRoot` and checks a signed package's signatures before the audit. Drills,
 each red then green with the bytes restored: the audit script as it was at bfd57ed5 (red with the dry run's own text,
 "No audit output written. STDOUT: System.Object[] STDERR: System.Object[]"); the arrays unflattened; the package run in
-place; the gate passing no package; the signatures checked after the audit; the header read as "nothing" again.
+place; the gate passing no package; the signatures checked after the audit; the header read as "nothing" again; the
+one-line audit read back as a string (red with the text testpc2 printed).
 
 ### Fix batch 3: what the screenshot retakes and the 1db87df4 recertification found (2026-11-13)
 
