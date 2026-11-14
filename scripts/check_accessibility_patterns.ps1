@@ -8,6 +8,9 @@ param(
     [ValidateRange(300, 2147483647)]
     [int]$MinimumExplicitAccessors = 300,
     [string]$ExePath = "",
+    # The package that ships (a clean extract of the release zip). The audit then runs a copy of it,
+    # in a folder that holds the package and nothing else (New-PackageAuditCopy says why).
+    [string]$PackageRoot = "",
     [ValidateRange(1, 3600)]
     [int]$TimeoutSeconds = 60
 )
@@ -19,6 +22,60 @@ if (-not (Test-Path -LiteralPath $processCaptureScript -PathType Leaf)) {
     throw "Captured-process helper not found: $processCaptureScript"
 }
 . $processCaptureScript
+
+# What the audit left, as one flat list of lines: its own output, then the program's stdout and
+# stderr. An array that held the stdout and stderr arrays printed "System.Object[]" for each, and
+# the "Fatal: ..." line an elevated program writes to stderr when it refuses to start was lost (the
+# v0.9.3-rc.1 release dry run, 2026-11-14).
+function Get-AuditFailureLines([object]$Process, [string]$AuditPath, [int]$Tail) {
+    $lines = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path -LiteralPath $AuditPath) {
+        foreach ($line in @(Get-Content -LiteralPath $AuditPath -Tail $Tail)) {
+            $lines.Add([string]$line)
+        }
+    } else {
+        $lines.Add("No audit output written.")
+    }
+    foreach ($stream in @("stdout", "stderr")) {
+        $lines.Add("$($stream.ToUpperInvariant()):")
+        foreach ($line in @(([string]$Process.$stream) -split '\r?\n' | Select-Object -Last $Tail)) {
+            $lines.Add([string]$line)
+        }
+    }
+    return , $lines.ToArray()
+}
+
+# build/Release holds the test programs, the release zip and the clean-*-extract folders beside the
+# app. Running as administrator (a hosted runner always does), the app checks every program file in
+# its folder and below, and refuses to start while one is not part of S.A.K., before it writes a
+# line of the audit: the v0.9.3-rc.1 dry run failed so. The copy holds the package and nothing
+# else, and the package itself gets no data folder from the run. Returns the new folder.
+function New-PackageAuditCopy([string]$Package) {
+    $copy = Join-Path ([System.IO.Path]::GetTempPath()) ("sak_accessibility_package_" +
+        [System.Guid]::NewGuid().ToString("N"))
+    if (Test-Path -LiteralPath $copy) {
+        throw "Accessibility audit package copy already exists: ${copy}"
+    }
+    New-Item -ItemType Directory -Path $copy | Out-Null
+    foreach ($entry in @(Get-ChildItem -LiteralPath $Package -Force)) {
+        if ($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            throw "The package holds a link, which ships in no package: $($entry.FullName)"
+        }
+        Copy-Item -LiteralPath $entry.FullName -Destination $copy -Recurse -Force
+    }
+    return $copy
+}
+
+# A package's program was built after the commit it was built from. The checkout's file times say
+# when it was checked out, which in the release workflow's verify job is after the build and the
+# signing, so for a package the commit's own time is the bound. Returns it, in UTC.
+function Get-HeadCommitTimeUtc([string]$Repository) {
+    $seconds = @(& git -C $Repository log -1 --format=%ct HEAD)
+    if ($LASTEXITCODE -ne 0 -or $seconds.Count -ne 1 -or $seconds[0] -notmatch '^\d+$') {
+        throw "Could not read HEAD's commit time in ${Repository} (git exit $LASTEXITCODE)"
+    }
+    return [System.DateTimeOffset]::FromUnixTimeSeconds([int64]$seconds[0]).UtcDateTime
+}
 
 $repo = (Resolve-Path -LiteralPath $Root).Path
 Push-Location $repo
@@ -76,6 +133,16 @@ try {
         throw "A button or menu action opens a dialog inside its press"
     }
 
+    $fromPackage = -not [string]::IsNullOrWhiteSpace($PackageRoot)
+    if ($fromPackage -and -not [string]::IsNullOrWhiteSpace($ExePath)) {
+        throw "Give -ExePath or -PackageRoot, not both: the audit runs one program."
+    }
+    if ($fromPackage) {
+        if (-not (Test-Path -LiteralPath $PackageRoot -PathType Container)) {
+            throw "Accessibility runtime audit package not found: ${PackageRoot}"
+        }
+        $ExePath = Join-Path (Resolve-Path -LiteralPath $PackageRoot).Path "sak_utility.exe"
+    }
     if ([string]::IsNullOrWhiteSpace($ExePath)) {
         $ExePath = Join-Path $repo "build/Release/sak_utility.exe"
     }
@@ -91,10 +158,18 @@ try {
         throw "Accessibility runtime audit executable must be a local path: ${ExePath}"
     }
     # Bind the runtime evidence to the source that was just inspected: an executable older
-    # than the newest audited source proves nothing about the current tree.
-    $newestSource = $scanFiles | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-    if ($exeItem.LastWriteTimeUtc -lt $newestSource.LastWriteTimeUtc) {
-        throw "Accessibility runtime audit executable ${ExePath} is older than $($newestSource.FullName); rebuild before running this gate."
+    # than the newest audited source proves nothing about the current tree. A package's program is
+    # bound to HEAD's commit instead (Get-HeadCommitTimeUtc says why).
+    if ($fromPackage) {
+        $commitTime = Get-HeadCommitTimeUtc $repo
+        if ($exeItem.LastWriteTimeUtc -lt $commitTime) {
+            throw "Accessibility runtime audit executable ${ExePath} is older than HEAD's commit ($($commitTime.ToString('o'))); it was not built from this checkout."
+        }
+    } else {
+        $newestSource = $scanFiles | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+        if ($exeItem.LastWriteTimeUtc -lt $newestSource.LastWriteTimeUtc) {
+            throw "Accessibility runtime audit executable ${ExePath} is older than $($newestSource.FullName); rebuild before running this gate."
+        }
     }
 
     $runId = [System.Guid]::NewGuid().ToString("N")
@@ -107,37 +182,49 @@ try {
     New-Item -ItemType Directory -Path $auditDir | Out-Null
     $auditPath = Join-Path $auditDir "audit.txt"
 
-    $auditProcess = Invoke-CapturedProcess -FilePath $ExePath -Arguments @(
-        "--accessibility-audit",
-        "--no-splash",
-        "--accessibility-audit-output=$auditPath"
-    ) -WorkingDirectory $repo -TimeoutSeconds $TimeoutSeconds
-    if ($auditProcess.timed_out) {
-        $stdoutOutput = @($auditProcess.stdout -split '\r?\n' | Select-Object -Last 80)
-        $stderrOutput = @($auditProcess.stderr -split '\r?\n' | Select-Object -Last 80)
-        $auditOutput = if (Test-Path -LiteralPath $auditPath) {
-            Get-Content -LiteralPath $auditPath -Tail 80
-        } else {
-            @("No audit output written.")
+    $packageCopy = $null
+    try {
+        $auditExe = $ExePath
+        if ($fromPackage) {
+            $packageCopy = New-PackageAuditCopy (Split-Path -Parent $ExePath)
+            $auditExe = Join-Path $packageCopy "sak_utility.exe"
+            Write-Host "Accessibility runtime audit runs a copy of the package: ${packageCopy}"
         }
-        throw "Accessibility runtime audit timed out after ${TimeoutSeconds}s.`nAUDIT:`n$($auditOutput -join "`n")`nSTDOUT:`n$($stdoutOutput -join "`n")`nSTDERR:`n$($stderrOutput -join "`n")"
+        $auditProcess = Invoke-CapturedProcess -FilePath $auditExe -Arguments @(
+            "--accessibility-audit",
+            "--no-splash",
+            "--accessibility-audit-output=$auditPath"
+        ) -WorkingDirectory $repo -TimeoutSeconds $TimeoutSeconds
+    } finally {
+        if ($null -ne $packageCopy) {
+            Remove-Item -LiteralPath $packageCopy -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $packageCopy) {
+                Write-Warning "Could not remove the audit's package copy: ${packageCopy}"
+            }
+        }
+    }
+    if ($auditProcess.timed_out) {
+        $failure = Get-AuditFailureLines -Process $auditProcess -AuditPath $auditPath -Tail 80
+        throw "Accessibility runtime audit timed out after ${TimeoutSeconds}s.`nAUDIT:`n$($failure -join "`n")"
     }
     $auditOutput = if (Test-Path -LiteralPath $auditPath) {
-        Get-Content -LiteralPath $auditPath
+        @(Get-Content -LiteralPath $auditPath)
     } else {
-        $stdoutOutput = @($auditProcess.stdout -split '\r?\n' | Select-Object -Last 80)
-        $stderrOutput = @($auditProcess.stderr -split '\r?\n' | Select-Object -Last 80)
-        @("No audit output written.", "STDOUT:", $stdoutOutput, "STDERR:", $stderrOutput)
+        @()
     }
     $exitCode = $auditProcess.exit_code
-    $auditHeader = ($auditOutput | Select-Object -First 1)
+    # A string, never "nothing": no line at all compared as an empty collection, which -notmatch
+    # answers with nothing, and a program that wrote no audit would have passed this check.
+    $auditHeader = if ($auditOutput.Count -gt 0) { [string]$auditOutput[0] } else { "" }
     if ($auditHeader -notmatch '^SAK_ACCESSIBILITY_AUDIT_OK\b') {
-        throw "Accessibility runtime audit failed with exit code ${exitCode}:`n$($auditOutput -join "`n")"
+        $failure = Get-AuditFailureLines -Process $auditProcess -AuditPath $auditPath -Tail 80
+        throw "Accessibility runtime audit failed with exit code ${exitCode}:`n$($failure -join "`n")"
     }
     # An OK header is not sufficient on its own: the process must also have finished cleanly
     # and must not have reported a failure anywhere later in the same audit output.
     if ($exitCode -ne 0) {
-        throw "Accessibility runtime audit printed OK but exited with code ${exitCode}:`n$($auditOutput -join "`n")"
+        $failure = Get-AuditFailureLines -Process $auditProcess -AuditPath $auditPath -Tail 80
+        throw "Accessibility runtime audit printed OK but exited with code ${exitCode}:`n$($failure -join "`n")"
     }
     if (@($auditOutput | Select-String -SimpleMatch -Pattern "SAK_ACCESSIBILITY_AUDIT_FAILED").Count -gt 0) {
         throw "Accessibility runtime audit reported a failure after its OK header:`n$($auditOutput -join "`n")"

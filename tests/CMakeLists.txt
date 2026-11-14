@@ -7380,6 +7380,14 @@ add_test(NAME test_partition_manager_scan_settle_windows_powershell
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_scan_settle.ps1")
 set_tests_properties(test_partition_manager_scan_settle_windows_powershell PROPERTIES TIMEOUT 120)
 
+# The accessibility runtime audit says why a program that refused to start did (its "Fatal:" line,
+# which the v0.9.3-rc.1 dry run printed as System.Object[]), and the release readiness gate audits
+# a copy of the package that ships, never build/Release. A compiled stand-in plays the program.
+add_test(NAME test_accessibility_audit_runner
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_accessibility_audit_runner.ps1")
+set_tests_properties(test_accessibility_audit_runner PROPERTIES TIMEOUT 300)
+
 add_test(NAME test_false_green_command_propagation
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
@@ -7659,7 +7667,7 @@ set(_sak_labels_product
     test_partition_image_volume_lock_offline_whole_disk
     test_partition_image_volume_lock_offline_selected_partition)
 set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_dependencies
-    test_verify_authenticode_signatures test_sign_exe_signers)
+    test_verify_authenticode_signatures test_sign_exe_signers test_accessibility_audit_runner)
 set(_sak_labels_tooling
     test_process_capture test_process_capture_windows_powershell test_assert_built_target
     test_run_ctest_no_dialogs test_check_ctest_error_mode test_check_program_imports

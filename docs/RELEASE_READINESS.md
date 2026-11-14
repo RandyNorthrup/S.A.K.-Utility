@@ -3713,6 +3713,55 @@ also checks the drive and the log for both refusals, and the unknown-space one i
 green with the bytes restored: no warning box on a refusal; the refusal naming the folder instead of the drive; the
 folder not logged; no box for a run with failures.
 
+**D. The v0.9.3-rc.1 release dry run stopped at its readiness gate.** Run 43600917371 (the tag on main 9277c08b)
+failed in the build job at step 20, "Release readiness gate from clean extracted package", with "Accessibility
+runtime audit failed with exit code 1: No audit output written. STDOUT: System.Object[] STDERR: System.Object[]";
+nothing was signed or published. The coordinator's reading holds, from the code. `check_release_readiness.ps1` ran
+`check_accessibility_patterns.ps1` without `-ExePath`, so the audit started `build/Release/sak_utility.exe`. A hosted
+runner is an elevated administrator, so `hardenProcessStart` (`main.cpp`) runs `ProgramHold::verify` on the
+program's folder and every folder below it before it writes "parsed-arguments", and `build/Release` holds the test
+programs and the `clean-smoke-extract` and `clean-readiness-extract` folders, whose programs are not first-party by
+name and not pinned at those paths: the app refused and exited 1. Steps 17 and 18, the smokes from the clean extract,
+passed on the same runner. And the branch for a missing audit built an array that held the stdout and stderr arrays,
+so `-join` printed each as "System.Object[]" and the refusal's "Fatal: ..." line on stderr was lost; the timed-out
+branch joined flat arrays, and both now build their text in one function (`Get-AuditFailureLines`). One more fault
+was found while fixing it: with no audit file, comparing "nothing" with `-notmatch` answers nothing, so a program
+that exited 0 having written no audit would have passed; the header is now always a string.
+T2 never ran the audit elevated against a populated folder: ci.yml's "Accessibility runtime audit" runs it through
+`scripts/invoke_unelevated.ps1` with a standard-user token, and `hardenProcessStart` returns at once when not
+elevated, so the other programs in `build/Release` never mattered there. T2 stays as it is: it audits what a
+standard user starts, and it stages no package; the elevated folder check is covered by `test_program_integrity`
+and `test_elevation_hardening`, and by T3, which audits the package that ships.
+The fix: given `-PackageRoot`, the audit runs a copy of the package in a new folder of its own under the temp folder,
+which holds the package and nothing else, and removes it afterwards, so the package gets no `data` folder from the
+run (`verify_portable_release_smoke.ps1` refuses one). A package's program is bound to HEAD's commit time instead of
+the checkout's file times: the verify job checks out after the build and the signing, which is why it re-dated a
+copy in `build/Release`; that line is gone. With `-RequireSignedPackage` the signatures are checked before the audit
+runs anything of the package; they were checked before the smokes only, and the audit ran first. The verify job's
+signed gate would have failed the same way at rc.2: its `build/Release` held the signed package, the unsigned probe
+certifier and the package's own folder.
+Every T3 step that starts a program, and from where. Build job: "Verify build output" runs `smartctl.exe` and
+`aria2c.exe` `--version` (bundled third-party tools, no folder check); 17 runs no program of S.A.K.'s
+(`verify_portable_release_smoke.ps1` reads the package; its runtime-DLL check reads imports); 18 runs
+`sak_utility.exe` from `build/Release/clean-smoke-extract`, the package only; 20 runs `sak_utility.exe` for the
+accessibility audit (now from a copy of `build/Release/clean-readiness-extract`), `partition_filesystem_probe_certifier.exe`
+and the bundled `newfs_hfs`/`fsck_hfs` for the filesystem self-tests (none of them checks its folder; only
+`sak_utility.exe`, `sak_elevated_helper.exe` and the live certifier do), and `sak_utility.exe` for the two smokes, from
+the clean extract; 23 runs `sak_filesystem_manifest_check.exe` from `build/filesystem-manifest-check/Release` (built
+from `partition_file_system_tool_manifest.cpp` alone, no folder check), which reads the staged package and runs nothing
+of it. Verify job: the re-pin checks before and after run the same manifest check from `RUNNER_TEMP\sak-release-tools`;
+the signed readiness gate runs the audit from a copy of the signed package, the certifier and the HFS tools from
+`build/Release` as laid out, and the smokes from `build/Release/SAK-Utility-v<version>`, the package only. No step starts
+`sak_elevated_helper.exe` on its own; an elevated app does not need it. Test (`test_accessibility_audit_runner`,
+release-tooling, so T2): a stand-in `sak_utility.exe`, compiled by Windows PowerShell's Add-Type, refuses with a
+"Fatal:" line when a stray program sits in its folder, as an elevated S.A.K. does. The failure text carries the Fatal
+line and no "System.Object[]"; one that exits 0 with no audit fails; with `-PackageRoot` it runs from a copy that holds
+the package only, the copy is gone afterwards and the package unchanged, and a program older than HEAD's commit is
+refused; the readiness gate passes `-PackageRoot` and checks a signed package's signatures before the audit. Drills,
+each red then green with the bytes restored: the audit script as it was at bfd57ed5 (red with the dry run's own text,
+"No audit output written. STDOUT: System.Object[] STDERR: System.Object[]"); the arrays unflattened; the package run in
+place; the gate passing no package; the signatures checked after the audit; the header read as "nothing" again.
+
 ### Fix batch 3: what the screenshot retakes and the 1db87df4 recertification found (2026-11-13)
 
 On the `fix3` branch from 1db87df4, one commit per item, each test drilled red with the fix broken and green
