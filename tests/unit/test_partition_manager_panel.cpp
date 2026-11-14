@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/color_constants.h"
+#include "sak/detachable_log_window.h"
 #include "sak/layout_constants.h"
 #include "sak/partition_apfs_writer.h"
 #include "sak/partition_executor.h"
@@ -204,6 +205,12 @@ private Q_SLOTS:
     void extFilesystemWriteActionsQueueWithConfirmation() const;
     void resizeSaysWindowsCannotResizeFat32() const;
     void resizeGrowsAnApfsPartitionOnly() const;
+    void aDisabledSizeHandleKnobIsDrawnDisabled_data() const;
+    void aDisabledSizeHandleKnobIsDrawnDisabled() const;
+    void aDisabledSizeBarDrawsItsHandlesDisabled_data() const;
+    void aDisabledSizeBarDrawsItsHandlesDisabled() const;
+    void aDisabledLogSwitchIsDrawnDisabled_data() const;
+    void aDisabledLogSwitchIsDrawnDisabled() const;
     void resizeOffersOnlySizesTheQueueTakes() const;
     void resizeShowsNoUsableFreeSpaceWhereTheSizeCannotChange() const;
     void apfsContainerActionAllowsWritableApfsVolumes();
@@ -6123,11 +6130,11 @@ struct ResizeSizeLook {
     QString adjacent_free;
     QString preview;               ///< the size preview's rows, as it tells a screen reader
     int usable_colour_pixels{-1};  ///< pixels of the Max online bar's "can grow into" colour
+    QImage handle_image;           ///< the size handle as drawn
 };
 
-/// The pixels of @p widget drawn in exactly @p colour.
-int pixelsOfColour(QWidget* widget, const QColor& colour) {
-    const QImage image = widget->grab().toImage();
+/// The pixels of @p image in exactly @p colour.
+int pixelsOfColour(const QImage& image, const QColor& colour) {
     int count = 0;
     for (int y = 0; y < image.height(); ++y) {
         for (int x = 0; x < image.width(); ++x) {
@@ -6135,6 +6142,31 @@ int pixelsOfColour(QWidget* widget, const QColor& colour) {
         }
     }
     return count;
+}
+
+/// The pixels of @p widget drawn in exactly @p colour.
+int pixelsOfColour(QWidget* widget, const QColor& colour) {
+    return pixelsOfColour(widget->grab().toImage(), colour);
+}
+
+/// Applies the theme a fix batch 5 (G) paint test row asks for, and returns the colour a disabled
+/// control is drawn in there.
+QColor applyThemeForRow(bool dark) {
+    sak::ui::applyWindows11Theme(*qApp,
+                                 dark ? sak::ui::AppThemeMode::Dark : sak::ui::AppThemeMode::Light);
+    return QColor(
+        QString::fromLatin1(dark ? sak::ui::kColorDarkTextDisabled : sak::ui::kColorTextDisabled));
+}
+
+/// The Resize dialog's size handle: whether it is on, and how it is drawn.
+void readResizeSizeHandle(QDialog* dialog, ResizeSizeLook* look) {
+    auto* handle = findAccessibleWidget<QSlider>(dialog,
+                                                 QStringLiteral("Target partition size handle"));
+    if (handle == nullptr) {
+        return;
+    }
+    look->handle_enabled = handle->isEnabled();
+    look->handle_image = handle->grab().toImage();
 }
 
 /// Opens Resize/Move on @p row of a panel holding @p inventory and reads it. Not opened when the
@@ -6162,10 +6194,8 @@ ResizeSizeLook lookAtResizeSize(const sak::PartitionInventory& inventory, int ro
         look.opened = true;
         const auto* size = findAccessibleWidget<QSpinBox>(dialog,
                                                           QStringLiteral("Target partition size"));
-        const auto* handle =
-            findAccessibleWidget<QSlider>(dialog, QStringLiteral("Target partition size handle"));
         look.size_enabled = size != nullptr && size->isEnabled();
-        look.handle_enabled = handle != nullptr && handle->isEnabled();
+        readResizeSizeHandle(dialog, &look);
         for (const auto* label : dialog->findChildren<QLabel*>()) {
             if (label->accessibleDescription() ==
                 QStringLiteral("Contiguous free space after selected partition")) {
@@ -6282,6 +6312,114 @@ void PartitionManagerPanelTests::resizeShowsNoUsableFreeSpaceWhereTheSizeCannotC
                  qPrintable(name + QStringLiteral(": ") + problem + QStringLiteral(" | ") +
                             look.adjacent_free + QStringLiteral(" | ") + look.preview));
     }
+}
+
+void PartitionManagerPanelTests::aDisabledSizeHandleKnobIsDrawnDisabled_data() const {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+}
+
+// Fix batch 5 (G): in Resize with a size that cannot change (FAT32), the size box was greyed and
+// the size handle's knob was still the enabled blue: the theme's handle rule had no disabled
+// state. A disabled slider's knob is drawn in the theme's disabled colour, the colour of the
+// greyed box's text; an enabled one (NTFS) keeps the accent.
+void PartitionManagerPanelTests::aDisabledSizeHandleKnobIsDrawnDisabled() const {
+    QFETCH(bool, dark);
+    const auto light =
+        qScopeGuard([] { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+    const QColor disabled = applyThemeForRow(dark);
+    const QColor accent(QString::fromLatin1(sak::ui::kColorPrimary));
+    for (const QString& file_system : {QStringLiteral("FAT32"), QStringLiteral("NTFS")}) {
+        auto inventory = unallocatedAllocateInventoryFixture();
+        inventory.disks[0].partitions[0].volume->file_system = file_system;
+        const ResizeSizeLook look = lookAtResizeSize(inventory, 1);
+        QVERIFY2(look.opened, qPrintable(file_system));
+        const bool fixed = file_system == QStringLiteral("FAT32");
+        QCOMPARE(look.handle_enabled, !fixed);
+        const int accent_pixels = pixelsOfColour(look.handle_image, accent);
+        const int disabled_pixels = pixelsOfColour(look.handle_image, disabled);
+        QVERIFY2(fixed ? (accent_pixels == 0 && disabled_pixels > 0) : accent_pixels > 0,
+                 qPrintable(QStringLiteral("%1 size handle: %2 accent, %3 disabled pixels")
+                                .arg(file_system)
+                                .arg(accent_pixels)
+                                .arg(disabled_pixels)));
+    }
+}
+
+void PartitionManagerPanelTests::aDisabledSizeBarDrawsItsHandlesDisabled_data() const {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+}
+
+// Fix batch 5 (G): the size bar draws its drag handles itself, in the palette's Highlight, which
+// was the accent blue in the disabled state too. Create Partition's bar, with a handle at each
+// end of the new partition, draws them in the theme's disabled colour when it is disabled.
+void PartitionManagerPanelTests::aDisabledSizeBarDrawsItsHandlesDisabled() const {
+    QFETCH(bool, dark);
+    const auto light =
+        qScopeGuard([] { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+    const QColor disabled = applyThemeForRow(dark);
+    const QColor accent(QString::fromLatin1(sak::ui::kColorPrimary));
+    sak::PartitionManagerPanel panel;
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition Manager table should exist");
+    addUnallocatedTestSelection(table);
+    int enabled_accent = -1;
+    int disabled_accent = -1;
+    int disabled_handles = -1;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        if (dialog == nullptr) {
+            return;
+        }
+        QCoreApplication::processEvents();
+        if (auto* preview =
+                dialog->findChild<QWidget*>(QStringLiteral("partitionOperationSizePreview"))) {
+            enabled_accent = pixelsOfColour(preview, accent);
+            preview->setEnabled(false);
+            disabled_accent = pixelsOfColour(preview, accent);
+            disabled_handles = pixelsOfColour(preview, disabled);
+        }
+        dialog->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onCreatePartition", Qt::DirectConnection));
+    QVERIFY2(enabled_accent > 0 && disabled_accent == 0 && disabled_handles > 0,
+             qPrintable(QStringLiteral("%1 accent enabled; %2 accent and %3 disabled pixels "
+                                       "disabled")
+                            .arg(enabled_accent)
+                            .arg(disabled_accent)
+                            .arg(disabled_handles)));
+}
+
+void PartitionManagerPanelTests::aDisabledLogSwitchIsDrawnDisabled_data() const {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+}
+
+// Fix batch 5 (G): the Log switch draws itself, and its track, switched on, was the accent blue
+// with the switch disabled as well. Disabled, it is drawn in the theme's disabled colour.
+void PartitionManagerPanelTests::aDisabledLogSwitchIsDrawnDisabled() const {
+    QFETCH(bool, dark);
+    const auto light =
+        qScopeGuard([] { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+    const QColor disabled = applyThemeForRow(dark);
+    const QColor accent(QString::fromLatin1(sak::ui::kColorPrimary));
+    sak::PartitionManagerPanel panel;
+    sak::LogToggleSwitch* log = panel.logToggle();
+    QVERIFY(log != nullptr);
+    log->setChecked(true);
+    QVERIFY(pixelsOfColour(log, accent) > 0);
+    log->setEnabled(false);
+    const int accent_pixels = pixelsOfColour(log, accent);
+    const int disabled_pixels = pixelsOfColour(log, disabled);
+    QVERIFY2(accent_pixels == 0 && disabled_pixels > 0,
+             qPrintable(QStringLiteral("%1 accent, %2 disabled pixels")
+                            .arg(accent_pixels)
+                            .arg(disabled_pixels)));
 }
 
 // An APFS partition grows in place only (coordinator, 2026-11-12): the dialog accepts a grow and

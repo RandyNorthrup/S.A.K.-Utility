@@ -519,8 +519,14 @@ void LogToggleSwitch::paintEvent(QPaintEvent* /*event*/) {
     // Track
     const QRect track_rect(
         0, (height() - track_height) / kToggleTrackRadiusDivisor, track_width, track_height);
-    const QColor track_color = m_checked ? QColor(QString::fromLatin1(ui::kColorPrimary))
-                                         : ui::themedColor(ui::kColorBorderMuted);
+    // A disabled switch is drawn in the theme's disabled colour, on or off; its knob's place still
+    // says which. The track stayed the enabled blue (fix batch 5, G).
+    QColor track_color = ui::themedColor(ui::kColorBorderMuted);
+    if (!isEnabled()) {
+        track_color = QApplication::palette().color(QPalette::Disabled, QPalette::WindowText);
+    } else if (m_checked) {
+        track_color = QColor(QString::fromLatin1(ui::kColorPrimary));
+    }
     p.setBrush(track_color);
     p.setPen(Qt::NoPen);
     p.drawRoundedRect(track_rect,
@@ -531,7 +537,8 @@ void LogToggleSwitch::paintEvent(QPaintEvent* /*event*/) {
     const int knob_x = m_checked ? (track_width - knob_size - kToggleKnobInsetPx)
                                  : kToggleKnobInsetPx;
     const int knob_y = (height() - knob_size) / kToggleTrackRadiusDivisor;
-    p.setBrush(QColor(QString::fromLatin1(ui::kColorBgWhite)));
+    p.setBrush(isEnabled() ? QColor(QString::fromLatin1(ui::kColorBgWhite))
+                           : QApplication::palette().color(QPalette::Disabled, QPalette::Base));
     p.drawEllipse(knob_x, knob_y, knob_size, knob_size);
 
     // Label

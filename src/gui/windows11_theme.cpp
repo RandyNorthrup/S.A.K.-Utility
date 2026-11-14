@@ -187,9 +187,12 @@ QString themeContainerAndTableStyles() {
 
 QString themeSliderStyles() {
     return QString::fromLatin1(kWindows11ThemeSliderStyles)
-        .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderAlpha))
-        .arg(QString::fromLatin1(kColorPrimary))
-        .arg(QString::fromLatin1(kColorPrimaryDark));
+               .arg(colorWithAlpha(kColorBorderMuted, kChromeBorderAlpha))
+               .arg(QString::fromLatin1(kColorPrimary))
+               .arg(QString::fromLatin1(kColorPrimaryDark)) +
+           QString::fromLatin1(kWindows11ThemeSliderDisabledStyles)
+               .arg(QString::fromLatin1(kColorTextDisabled),
+                    QString::fromLatin1(kColorTextDisabled));
 }
 
 QString themeScrollBarStyles() {
@@ -259,7 +262,10 @@ QString darkShadowedRules() {
 
 QString darkThemeOverrideStyles() {
     return darkBaseChromeStyles() + darkTabAndInputStyles() + darkContainerAndViewStyles() +
-           themeInputSelectorStyles(true) + darkShadowedRules();
+           themeInputSelectorStyles(true) + darkShadowedRules() +
+           QString::fromLatin1(kWindows11ThemeSliderDisabledStyles)
+               .arg(QString::fromLatin1(kColorDarkTextDisabled),
+                    QString::fromLatin1(kColorDarkTextMuted));
 }
 
 struct ThemePaletteSpec {
@@ -369,6 +375,9 @@ QPalette themePalette(AppThemeMode mode) {
     palette.setColor(QPalette::Disabled, QPalette::WindowText, color(spec.disabled));
     palette.setColor(QPalette::Disabled, QPalette::Text, color(spec.disabled));
     palette.setColor(QPalette::Disabled, QPalette::ButtonText, color(spec.disabled));
+    // A disabled control's accent, for what is drawn in Highlight (a size bar's drag handles):
+    // the theme's disabled colour, as its text. It stayed the enabled blue (fix batch 5, G).
+    palette.setColor(QPalette::Disabled, QPalette::Highlight, color(spec.disabled));
     return palette;
 }
 
