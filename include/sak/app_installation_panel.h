@@ -97,6 +97,9 @@ public:
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdated(int current, int maximum);
+    /// The operation ended without running to its end (refused, failed or cancelled): the
+    /// status bar hides its progress bar at once, as when idle (MainWindow::resetProgress).
+    void progressReset();
     void logOutput(const QString& message);
 
 private Q_SLOTS:

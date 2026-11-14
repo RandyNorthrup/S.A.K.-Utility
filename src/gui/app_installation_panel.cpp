@@ -437,6 +437,12 @@ void AppInstallationPanel::setupWorkerLifecycleConnections() {
                                      .arg(stats.success)
                                      .arg(stats.failed)
                                      .arg(stats.skipped));
+                // Nothing installed or failed: every entry was skipped, or the run was cancelled
+                // before its first package. The bar was left busy, or full from the cancelled
+                // entries; it goes as when idle (fix batch 5, F).
+                if (stats.success + stats.failed == 0) {
+                    Q_EMIT progressReset();
+                }
                 Q_EMIT statusMessage(QString("App Installation: %1 succeeded, %2 failed")
                                          .arg(stats.success)
                                          .arg(stats.failed),
@@ -938,7 +944,10 @@ void AppInstallationPanel::onOfflineOperationError(const QString& error) {
     m_offlineStatusLabel->setToolTip(error);
     m_offlineStatusLabel->setVisible(true);
     setOfflineInProgressUi(false);
-    Q_EMIT progressUpdated(std::max(m_offline_total, 1), std::max(m_offline_total, 1));
+    // Nothing ran to its end, so the status bar's bar goes at once, as when idle. Ended at its
+    // maximum, a refusal read 100%: the worker reports a run started before it checks the work
+    // space (fix batch 5, F).
+    Q_EMIT progressReset();
 
     // The status bar says the refusal's short form, which fits at 1024 px; the box says it whole.
     // The message's time starts when the box closes (MainWindow::updateStatus, fix batch 5, E).

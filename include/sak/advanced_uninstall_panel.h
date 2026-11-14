@@ -63,6 +63,9 @@ public:
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
+    /// The operation ended without running to its end (refused, failed or cancelled): the
+    /// status bar hides its progress bar at once, as when idle (MainWindow::resetProgress).
+    void progressReset();
     void logOutput(const QString& message);
 
 private Q_SLOTS:
@@ -202,6 +205,9 @@ private:
     void setOperationRunning(bool running);
     /// Tells the status bar the current operation ended, so it hides its progress bar.
     void endStatusBarProgress();
+    /// Tells the status bar the current operation failed or was cancelled: its progress bar
+    /// goes at once, as when idle, and never reads 100%.
+    void resetStatusBarProgress();
     [[nodiscard]] ProgramInfo selectedProgram() const;
     /// The checked programs. When @p all_resolved is non-null it is set to false if any CHECKED
     /// row could not be resolved back to a program, so a destructive batch is never run against a

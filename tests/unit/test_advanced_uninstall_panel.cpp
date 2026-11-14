@@ -58,6 +58,7 @@ private Q_SLOTS:
     void ticksSurviveTheSearchText();
     void aProvisionedPackageSaysWhatItIs();
     void aFinishedRefreshLeavesNoProgressBar();
+    void aFailedOrCancelledOperationLeavesNoFullBar();
     void aRegistryKeyIsShownWholeOnOneLine();
     void theUninstallConfirmationMatchesTheOtherUninstalls();
     void theNameColoursHaveAKey();
@@ -279,6 +280,32 @@ void AdvancedUninstallPanelTests::aFinishedRefreshLeavesNoProgressBar() {
     const QList<QVariant> last = progress.last();
     QVERIFY(last.at(1).toInt() > 0);
     QCOMPARE(last.at(0).toInt(), last.at(1).toInt());
+}
+
+// Fix batch 5 (F): a failed or cancelled operation ended the status bar's bar at 1 of 1, which read
+// 100% though it had not finished. Each resets the bar, as when idle, and sends no value; a
+// finished one still ends it full (aFinishedRefreshLeavesNoProgressBar).
+void AdvancedUninstallPanelTests::aFailedOrCancelledOperationLeavesNoFullBar() {
+    sak::AdvancedUninstallPanel panel;
+    QSignalSpy progress(&panel, &sak::AdvancedUninstallPanel::progressUpdate);
+    QSignalSpy reset(&panel, &sak::AdvancedUninstallPanel::progressReset);
+    QTimer closer;
+    closer.setInterval(1);
+    connect(&closer, &QTimer::timeout, &panel, []() {
+        if (auto* box = qobject_cast<QDialog*>(QApplication::activeModalWidget())) {
+            box->accept();
+        }
+    });
+    closer.start();
+    panel.onEnumerationCancelled();
+    panel.onUninstallCancelled();
+    panel.onCleanupCancelled();
+    panel.onEnumerationFailed(QStringLiteral("The registry could not be read"));
+    panel.onUninstallFailed(1603, QStringLiteral("Fatal error during installation"));
+    panel.onCleanupFailed(5, QStringLiteral("Access denied"));
+    panel.onBatchFailed(QStringLiteral("The batch could not continue"));
+    QCOMPARE(reset.count(), 7);
+    QVERIFY2(progress.isEmpty(), "an end that did not run to its end sends no value");
 }
 
 // Review 2 (N7): the Registry Key label wrapped "...\Notepad++" into "Notepad+" and a lone "+".

@@ -100,6 +100,11 @@ public Q_SLOTS:
      */
     void updateProgress(int current, int maximum);
 
+    /// @brief Hide the progress bar at once, with no value: the work it showed was refused,
+    ///        failed before it ran, or was cancelled. The bar is as it is when idle, never at
+    ///        100% (updateProgress's end) or busy.
+    void resetProgress();
+
     /// @brief Restore the window if minimized and bring it to the foreground. A second launch
     ///        on the same data folder asks for this (SingleInstanceGuard); a window that was
     ///        never shown (a headless smoke run) is left alone.

@@ -191,6 +191,7 @@ private Q_SLOTS:
     void noVisibleTextSaysCertified();
     void refusedOperationSaysWhy();
     void applyRefusalSaysNotAppliedWhileTheBoxSaysWhy();
+    void theControllersResetReachesTheStatusBar();
     void logShowsPlainTextWhenARunFinishes();
     void createDialogHasNoTypeItCannotQueue();
     void readOnlyCheckButtonSaysItRunsNow();
@@ -5538,6 +5539,17 @@ void PartitionManagerPanelTests::applyRefusalSaysNotAppliedWhileTheBoxSaysWhy() 
     Q_EMIT controller->applyRefused({reason});
     QCOMPARE(shown, reason);
     QCOMPARE(status_while_open, QStringLiteral("Not applied"));
+}
+
+// Fix batch 5 (F): the controller ends the bar as when idle when Apply is refused or a run does not
+// pass; the panel passes that on, as it passes on the bar's values.
+void PartitionManagerPanelTests::theControllersResetReachesTheStatusBar() {
+    sak::PartitionManagerPanel panel;
+    auto* controller = panel.findChild<sak::PartitionManagerController*>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy reset(&panel, &sak::PartitionManagerPanel::progressReset);
+    Q_EMIT controller->progressReset();
+    QCOMPARE(reset.count(), 1);
 }
 
 void PartitionManagerPanelTests::logShowsPlainTextWhenARunFinishes() {

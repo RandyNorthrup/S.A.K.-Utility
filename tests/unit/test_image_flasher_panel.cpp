@@ -621,6 +621,11 @@ private Q_SLOTS:
     void imagePickerOffersOnlyWhatFlashes();
     void readingACompressedImageIsNotShownAsWriting();
     void aRefusalBeforeWritingSaysNothingWasWritten();
+    void aCancelledWriteLeavesNoFullBar();
+    void aRunThatStartsShowsNothingOfTheLastRun();
+    void aWindowsRunWithNoDriveLeavesNoBar();
+    void aFailedLinuxDownloadPutsItsBarBack();
+    void aFailedWindowsBuildPutsItsBarsBack();
     void aWindowsUsbStepReachesTheStatusBar();
     void aBuiltIsoIsNotAnnouncedTwice();
     void shredOsStillGetsASaveLocation();
@@ -652,6 +657,8 @@ void ImageFlasherPanelTests::aRefusalBeforeWritingSaysNothingWasWritten() {
     auto* coordinator = m_panel->findChild<FlashCoordinator*>();
     QVERIFY(coordinator != nullptr);
     QString dialog_text;
+    QSignalSpy progress(m_panel.get(), &ImageFlasherPanel::progressUpdate);
+    QSignalSpy reset(m_panel.get(), &ImageFlasherPanel::progressReset);
     QTimer::singleShot(0, this, [&dialog_text]() {
         auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
         if (box != nullptr) {
@@ -662,6 +669,90 @@ void ImageFlasherPanelTests::aRefusalBeforeWritingSaysNothingWasWritten() {
     Q_EMIT coordinator->flashError(QStringLiteral("Refusing to flash: too small"));
     QVERIFY2(dialog_text.contains(QStringLiteral("Nothing was written")), qPrintable(dialog_text));
     QVERIFY2(!dialog_text.contains(QStringLiteral("unusable")), qPrintable(dialog_text));
+    // Fix batch 5 (F): nothing was written, so the status bar's bar is reset, as when idle. It
+    // was ended at its maximum, and read 100%.
+    QCOMPARE(reset.count(), 1);
+    QVERIFY(progress.isEmpty());
+}
+
+// Fix batch 5 (F): a cancelled write ended the status bar's bar at its maximum, and it read 100%.
+void ImageFlasherPanelTests::aCancelledWriteLeavesNoFullBar() {
+    QSignalSpy progress(m_panel.get(), &ImageFlasherPanel::progressUpdate);
+    QSignalSpy reset(m_panel.get(), &ImageFlasherPanel::progressReset);
+    m_panel->showCancelledOutcome(QStringLiteral("Nothing was written to the target drive."),
+                                  nullptr);
+    QCOMPARE(reset.count(), 1);
+    QVERIFY(progress.isEmpty());
+}
+
+// Fix batch 5 (F): the progress page kept the last run's "Written: 3.2 GB / 3.2 GB" and its
+// speed, and a run refused before its first block showed them under its error box. A run's page
+// starts empty.
+void ImageFlasherPanelTests::aRunThatStartsShowsNothingOfTheLastRun() {
+    m_panel->m_flashDetailsLabel->setText(QStringLiteral("Written: 3.2 GB / 3.2 GB"));
+    m_panel->m_flashSpeedLabel->setText(QStringLiteral("Speed: 41.0 MB/s"));
+    QString details_under_the_box = QStringLiteral("no box");
+    QTimer::singleShot(0, this, [this, &details_under_the_box]() {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            details_under_the_box = m_panel->m_flashDetailsLabel->text() +
+                                    m_panel->m_flashSpeedLabel->text();
+            box->accept();
+        }
+    });
+    // A Windows image with no drive chosen is refused before anything starts.
+    m_panel->beginConfirmedFlash(true);
+    QVERIFY2(details_under_the_box.isEmpty(), qPrintable(details_under_the_box));
+}
+
+// Fix batch 5 (F): a Windows image with no drive chosen was refused with the status bar's bar left
+// at the 0% the run's start put there. The refusal resets it, as when idle.
+void ImageFlasherPanelTests::aWindowsRunWithNoDriveLeavesNoBar() {
+    QSignalSpy reset(m_panel.get(), &ImageFlasherPanel::progressReset);
+    const ModalAnswerer told;
+    m_panel->beginConfirmedFlash(true);
+    QVERIFY2(told.seen.contains(QStringLiteral("No target drives selected")),
+             qPrintable(told.seen));
+    QCOMPARE(reset.count(), 1);
+}
+
+// Fix batch 5 (F): a failed or cancelled download kept the bar's text, "37%" over an empty bar,
+// and a retry refused at its checks showed it so. A failure puts the bar back as before a
+// download.
+void ImageFlasherPanelTests::aFailedLinuxDownloadPutsItsBarBack() {
+    LinuxISODownloader linux_downloader;
+    LinuxISODownloadDialog linux_dialog(&linux_downloader);
+    auto* linux_bar = linux_dialog.findChild<QProgressBar*>();
+    QVERIFY(linux_bar != nullptr);
+    Q_EMIT linux_downloader.progressUpdated(37,
+                                            QStringLiteral("1.1 GB of 3.0 GB"),
+                                            QStringLiteral("37%"));
+    QCOMPARE(linux_bar->value(), 37);
+    {
+        const ModalAnswerer told;
+        Q_EMIT linux_downloader.downloadError(QStringLiteral("The connection was reset"));
+    }
+    QCOMPARE(linux_bar->value(), 0);
+    QCOMPARE(linux_bar->format(), QStringLiteral("%p%"));
+}
+
+// Fix batch 5 (F): a failed Windows build left both bars where it stopped, and a retry refused at
+// its checks showed them so. A failure puts both back as before a build.
+void ImageFlasherPanelTests::aFailedWindowsBuildPutsItsBarsBack() {
+    WindowsISODownloader windows_downloader;
+    WindowsISODownloadDialog windows_dialog(&windows_downloader);
+    Q_EMIT windows_downloader.phaseChanged(UupIsoBuilder::Phase::ConvertingToISO,
+                                           QStringLiteral("Converting"));
+    Q_EMIT windows_downloader.progressUpdated(90, QStringLiteral("Converting"));
+    const auto bars = windows_dialog.findChildren<QProgressBar*>();
+    QVERIFY(std::ranges::any_of(bars, [](const QProgressBar* bar) { return bar->value() > 0; }));
+    {
+        const ModalAnswerer told;
+        Q_EMIT windows_downloader.downloadError(QStringLiteral("DISM failed"));
+    }
+    for (const QProgressBar* bar : bars) {
+        QCOMPARE(bar->value(), 0);
+        QCOMPARE(bar->format(), QStringLiteral("%p%"));
+    }
 }
 
 // testpc1: through a whole Windows USB run the status bar read "Ready" beside its progress bar, as

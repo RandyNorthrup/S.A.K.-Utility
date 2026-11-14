@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QDateEdit>
 #include <QLineEdit>
+#include <QSignalSpy>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QtTest/QtTest>
@@ -30,6 +31,29 @@ private:
     }
 
 private Q_SLOTS:
+    // Fix batch 5 (F): the end of every run sent (0, 0) to hide the status bar's bar, and (0, 0)
+    // is its busy state: the bar ran on, after a run whose files all failed before their first
+    // item too. A run that converted nothing resets the bar, as when idle; one that converted a
+    // file ends it full.
+    void aRunThatConvertedNothingLeavesNoBusyBar() {
+        sak::OstConverterWidget widget;
+        QSignalSpy progress(&widget, &sak::OstConverterWidget::progressUpdate);
+        QSignalSpy reset(&widget, &sak::OstConverterWidget::progressReset);
+        sak::OstConversionBatchResult result;
+        result.files_total = 2;
+        result.files_failed = 2;
+        widget.onAllConversionsComplete(result);
+        QCOMPARE(reset.count(), 1);
+        QVERIFY(progress.isEmpty());
+        result.files_succeeded = 1;
+        result.files_failed = 1;
+        widget.onAllConversionsComplete(result);
+        QCOMPARE(reset.count(), 1);
+        QCOMPARE(progress.size(), 1);
+        QCOMPARE(progress.last().at(0).toInt(), 2);
+        QCOMPARE(progress.last().at(1).toInt(), 2);
+    }
+
     // Review 2 (S17): the filters' fields started at 120, 96 and 108 px.
     void theFilterFieldsShareALeftEdge() {
         sak::OstConverterWidget widget;

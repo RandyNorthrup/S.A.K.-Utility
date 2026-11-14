@@ -12770,6 +12770,13 @@ void AiAssistantPanel::finishWorkflowProgressUi(const ai::AiOrchestratorResult& 
     } else {
         m_activeWorkflowCompletedPhaseCount = workflowCompletedPhaseCount();
     }
+    // A run that ended before any of its phases ran (refused at its checks, or stopped first) is
+    // shown as idle: its bar read "Failed: 0/3 complete", or a count kept from the run it
+    // resumed, full when that one had finished (fix batch 5, F).
+    if (result.status != ai::AiRunStatus::Completed && result.phases.isEmpty()) {
+        clearWorkflowProgressUi();
+        return;
+    }
     if (!result.phases.isEmpty()) {
         m_activeWorkflowCurrentPhase = result.phases.last().phase_id;
     }

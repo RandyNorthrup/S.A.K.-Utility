@@ -594,8 +594,14 @@ void OstConverterWidget::onFileConversionComplete(int file_index, OstConversionR
 void OstConverterWidget::onAllConversionsComplete(OstConversionBatchResult result) {
     setConvertingState(false);
 
-    // Reset progress bar (0/0 hides it in MainWindow)
-    Q_EMIT progressUpdate(0, 0);
+    // The bar ends at 100% only when a file converted, and otherwise goes as when idle. (0, 0),
+    // sent here to hide it, is MainWindow's busy state: the bar ran on after every run, and
+    // after one whose every file failed before its first item (fix batch 5, F).
+    if (result.files_succeeded > 0 && result.files_total > 0) {
+        Q_EMIT progressUpdate(result.files_total, result.files_total);
+    } else {
+        Q_EMIT progressReset();
+    }
 
     // Enable report button if a report was generated
     const QString report = m_controller->reportPath();

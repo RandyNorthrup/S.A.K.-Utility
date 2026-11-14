@@ -1100,16 +1100,21 @@ void DiagnosticBenchmarkPanel::refreshPrimaryControls() {
     }
 }
 
-void DiagnosticBenchmarkPanel::setOperationRunning(bool running) {
+void DiagnosticBenchmarkPanel::setOperationRunning(bool running, bool ran_to_end) {
     m_operation_running = running;
     refreshPrimaryControls();
 
     if (running) {
         Q_EMIT statusMessage("Running...", 0);
         Q_EMIT progressUpdate(0, kProgressMaximum);
-    } else {
+    } else if (ran_to_end) {
         Q_EMIT statusMessage("Ready", sak::kTimerStatusMessageMs);
         Q_EMIT progressUpdate(kProgressMaximum, kProgressMaximum);
+    } else {
+        // Stopped or failed before its end: the bar goes at once, as when idle; ended at its
+        // maximum it read 100% (fix batch 5, F).
+        Q_EMIT progressReset();
+        Q_EMIT statusMessage("Ready", sak::kTimerStatusMessageMs);
     }
 }
 

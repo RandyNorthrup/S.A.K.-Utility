@@ -140,6 +140,25 @@ bool waitUntil(const std::function<bool()>& predicate, int timeout_ms = kAsyncTi
     return predicate();
 }
 
+/// How each end of @p controller's progress bar went, in order: "full" for an end at its
+/// maximum, "reset" for a reset (fix batch 5, F).
+std::shared_ptr<QStringList> recordProgressEnds(sak::PartitionManagerController* controller) {
+    auto ends = std::make_shared<QStringList>();
+    QObject::connect(controller,
+                     &sak::PartitionManagerController::progressUpdate,
+                     controller,
+                     [ends](int current, int maximum) {
+                         if (maximum > 0 && current >= maximum) {
+                             ends->append(QStringLiteral("full"));
+                         }
+                     });
+    QObject::connect(controller,
+                     &sak::PartitionManagerController::progressReset,
+                     controller,
+                     [ends]() { ends->append(QStringLiteral("reset")); });
+    return ends;
+}
+
 bool statesAppearInOrder(const QVector<sak::PartitionManagerState>& states,
                          const QVector<sak::PartitionManagerState>& expected) {
     qsizetype next = 0;
@@ -170,6 +189,9 @@ private Q_SLOTS:
     void quickPartitionBatchUsesSequentialProjectedInventory();
     void queueChecksEachOperationAgainstTheLayoutBeforeIt();
     void changedQueueReviewTokenRefusesApply();
+    void aRunThatFailsEndsWithTheBarReset();
+    void aCancelledApplyCheckEndsWithTheBarReset();
+    void aChangedLayoutAtApplyEndsWithTheBarReset();
     void undoLastOperationRestoresReadyState();
     void freshSameHashMetadataBlocksApply();
     void blankSerialDiskSwapWithSameLayoutTextBlocksApply();
@@ -372,6 +394,7 @@ void PartitionManagerControllerTests::applyRefusesOnWhatItsOwnScanFinds() {
             return sak::PartitionExecutionResult{};
         });
     QSignalSpy refused(&controller, &sak::PartitionManagerController::applyRefused);
+    const auto ends = recordProgressEnds(&controller);
 
     QVERIFY2(controller.queueOperation(sak::PartitionOperationType::Format,
                                        volumeTarget(),
@@ -381,6 +404,7 @@ void PartitionManagerControllerTests::applyRefusesOnWhatItsOwnScanFinds() {
     QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
     QVERIFY2(!executed, "a locked volume must stop Apply before it writes");
     QCOMPARE(refused.size(), 1);
+    QCOMPARE(*ends, QStringList{QStringLiteral("reset")});  // fix batch 5, F
     QVERIFY(refused.first()
                 .first()
                 .toStringList()
@@ -443,18 +467,86 @@ void PartitionManagerControllerTests::applyStopsAndSaysWhyWithoutTheHelper() {
             return sak::PartitionExecutionResult{};
         });
     QSignalSpy refused(&controller, &sak::PartitionManagerController::applyRefused);
+    const auto ends = recordProgressEnds(&controller);
     QVERIFY(controller.queueOperation(sak::PartitionOperationType::InitializeDisk,
                                       testDiskTarget(),
                                       QJsonObject{{"target_style", "GPT"}}));
     QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, true));
     QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
     QVERIFY(!executed);
+    // Fix batch 5 (F): refused at its check, Apply ran nothing, so the bar is reset, as when
+    // idle. It was ended at its maximum, and read 100%.
+    QCOMPARE(*ends, QStringList{QStringLiteral("reset")});
     QCOMPARE(refused.size(), 1);
     QVERIFY(refused.first()
                 .first()
                 .toStringList()
                 .join(QLatin1Char(' '))
                 .contains(QStringLiteral("administrator rights")));
+}
+
+// Fix batch 5 (F): a run whose step failed ended the bar at its maximum, and it read 100%. Only a
+// run that passed ends full; this one ends with the bar reset, as when idle.
+void PartitionManagerControllerTests::aRunThatFailsEndsWithTheBarReset() {
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(healthyInventory());
+    controller.setApplyInventoryScannerForTesting(
+        [](const sak::CancelCheck&) { return inventoryResult(healthyInventory()); });
+    controller.setApplyExecutorForTesting(
+        [](const QVector<sak::PartitionOperation>&, bool, bool, const sak::CancelCheck&) {
+            sak::PartitionExecutionResult result;
+            sak::PartitionExecutionStep step;
+            step.success = false;
+            step.error_message = QStringLiteral("DiskPart could not initialize the disk");
+            result.steps = {step};
+            result.message = step.error_message;
+            return result;
+        });
+    const auto ends = recordProgressEnds(&controller);
+    QVERIFY(controller.queueOperation(sak::PartitionOperationType::InitializeDisk,
+                                      testDiskTarget(),
+                                      QJsonObject{{"target_style", "GPT"}}));
+    QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, true));
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+    QVERIFY(!ends->isEmpty());
+    QCOMPARE(ends->last(), QStringLiteral("reset"));
+}
+
+// Fix batch 5 (F): Apply's check, cancelled, ended the bar at its maximum and it read 100%.
+void PartitionManagerControllerTests::aCancelledApplyCheckEndsWithTheBarReset() {
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(healthyInventory());
+    controller.setApplyInventoryScannerForTesting(
+        [](const sak::CancelCheck&) { return inventoryResult(healthyInventory(), true); });
+    controller.setApplyExecutorForTesting(
+        [](const QVector<sak::PartitionOperation>&, bool dry_run, bool, const sak::CancelCheck&) {
+            return successfulResult(dry_run);
+        });
+    const auto ends = recordProgressEnds(&controller);
+    queueInitialize(&controller);
+    QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, true));
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+    QCOMPARE(*ends, QStringList{QStringLiteral("reset")});
+}
+
+// Fix batch 5 (F): Apply refused because the disks changed since the queue was planned ended the
+// bar at its maximum, and it read 100%.
+void PartitionManagerControllerTests::aChangedLayoutAtApplyEndsWithTheBarReset() {
+    sak::PartitionManagerController controller;
+    controller.setTestInventory(healthyInventory());
+    auto changed = healthyInventory();
+    changed.layout_hash = QStringLiteral("changed-since-planning");
+    controller.setApplyInventoryScannerForTesting(
+        [changed](const sak::CancelCheck&) { return inventoryResult(changed); });
+    controller.setApplyExecutorForTesting(
+        [](const QVector<sak::PartitionOperation>&, bool dry_run, bool, const sak::CancelCheck&) {
+            return successfulResult(dry_run);
+        });
+    const auto ends = recordProgressEnds(&controller);
+    queueInitialize(&controller);
+    QVERIFY(controller.applyQueue(controller.queueReviewToken(), false, true));
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+    QCOMPARE(*ends, QStringList{QStringLiteral("reset")});
 }
 
 void PartitionManagerControllerTests::queueRefusalGivesItsReasons() {

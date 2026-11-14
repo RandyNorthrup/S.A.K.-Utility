@@ -10414,6 +10414,10 @@ void PartitionManagerPanel::connectControllerSignals() {
             this,
             &PartitionManagerPanel::progressUpdate);
     connect(m_controller.get(),
+            &PartitionManagerController::progressReset,
+            this,
+            &PartitionManagerPanel::progressReset);
+    connect(m_controller.get(),
             &PartitionManagerController::logOutput,
             this,
             &PartitionManagerPanel::logOutput);

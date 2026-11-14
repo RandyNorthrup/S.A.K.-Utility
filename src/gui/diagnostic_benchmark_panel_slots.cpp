@@ -520,7 +520,7 @@ void DiagnosticBenchmarkPanel::onStopBenchmarkClicked() {
     // onCancelSuiteClicked does for the suite -- or the panel would stay stuck with every
     // primary control disabled and this Stop button stranded enabled.
     m_controller->cancelCurrent();
-    setOperationRunning(false);
+    setOperationRunning(false, /*ran_to_end=*/false);
     m_benchmark_stop_button->setEnabled(false);
 }
 
@@ -1031,7 +1031,13 @@ void DiagnosticBenchmarkPanel::onErrorOccurred(const QString& message) {
     // enabled. Disable it here -- fail closed. It is enabled only by the benchmark start
     // handlers, so during a SMART non-fatal per-drive error it is already disabled and
     // this is a harmless no-op.
+    const bool benchmark_failed = m_benchmark_stop_button->isEnabled();
     m_benchmark_stop_button->setEnabled(false);
+    // A standalone benchmark's failure ends it: no completion follows, so the panel stayed
+    // locked and the status bar's bar stayed where the run began (fix batch 5, F).
+    if (benchmark_failed) {
+        setOperationRunning(false, /*ran_to_end=*/false);
+    }
 
     // Reset suite state if suite was running
     if (m_suite_running) {

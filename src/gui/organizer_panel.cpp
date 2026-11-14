@@ -1149,8 +1149,11 @@ void OrganizerPanel::onWorkerFailed(int error_code, const QString& error_message
     const QString safe_error = error_message.trimmed().isEmpty()
                                    ? tr("the organizer reported no error detail")
                                    : error_message;
+    // Ended without running to its end: the status bar's bar goes at once, as when idle, before
+    // the message. Sent 0 of 100, it stayed at 0% beside "Ready" until the next run (fix batch
+    // 5, F).
+    Q_EMIT progressReset();
     Q_EMIT statusMessage(tr("Organization failed"), sak::kTimerStatusDefaultMs);
-    Q_EMIT progressUpdate(0, kProgressMaximum);
     logMessage(QString("Organization failed: Error %1: %2").arg(error_code).arg(safe_error));
     logError("Organization failed: {}", safe_error.toStdString());
     if (m_worker != nullptr && !m_worker->failedMoves().isEmpty()) {
@@ -1181,8 +1184,8 @@ void OrganizerPanel::onWorkerCancelled() {
     setOperationRunning(false);
     m_progress_bar->setVisible(false);
     logMessage(tr("Organization cancelled by user"));
+    Q_EMIT progressReset();
     Q_EMIT statusMessage(tr("Organization cancelled"), sak::kTimerStatusMessageMs);
-    Q_EMIT progressUpdate(0, kProgressMaximum);
 }
 
 void OrganizerPanel::onFileProgress(int current, int total, const QString& file_path) {
@@ -1601,8 +1604,8 @@ void OrganizerPanel::onDedupWorkerFailed(int error_code, const QString& error_me
     const QString safe_error = error_message.trimmed().isEmpty()
                                    ? tr("the duplicate scan reported no error detail")
                                    : error_message;
+    Q_EMIT progressReset();
     Q_EMIT statusMessage(tr("Duplicate scan failed"), sak::kTimerStatusDefaultMs);
-    Q_EMIT progressUpdate(0, kProgressMaximum);
     logMessage(QString("Duplicate scan failed: Error %1: %2").arg(error_code).arg(safe_error));
     sak::showWarningLogged(this,
                            tr("Scan Failed"),
@@ -1614,8 +1617,8 @@ void OrganizerPanel::onDedupWorkerCancelled() {
     setDedupRunning(false);
     m_dedup_progress_bar->setVisible(false);
     logMessage(tr("Duplicate scan cancelled by user"));
+    Q_EMIT progressReset();
     Q_EMIT statusMessage(tr("Duplicate scan cancelled"), sak::kTimerStatusMessageMs);
-    Q_EMIT progressUpdate(0, kProgressMaximum);
 }
 
 void OrganizerPanel::onDedupScanProgress(int current, int total, const QString& path) {

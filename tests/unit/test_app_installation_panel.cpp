@@ -5,12 +5,14 @@
 /// @brief App Installation is built the same way in every run mode.
 
 #include "sak/app_installation_panel.h"
+#include "sak/app_installation_worker.h"
 #include "sak/offline_deployment_worker.h"
 #include "sak/package_internalization_engine.h"
 #include "sak/style_constants.h"
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QDialog>
 #include <QDir>
 #include <QLabel>
 #include <QListWidget>
@@ -104,6 +106,7 @@ private Q_SLOTS:
     void offlineRefusalIsSaidInView_data();
     void offlineRefusalIsSaidInView();
     void offlineDeployFillsOnlyItsBuildButton();
+    void anOnlineRunThatInstalledNothingLeavesNoProgressBar();
 };
 
 void AppInstallationPanelTests::cleanup() {
@@ -275,6 +278,8 @@ void AppInstallationPanelTests::offlineRefusalIsSaidInView() {
     panel.m_offline_worker->setMinimumWorkSpaceForTesting(std::numeric_limits<qint64>::max());
     QSignalSpy status(&panel, &sak::AppInstallationPanel::statusMessage);
     QSignalSpy logged(&panel, &sak::AppInstallationPanel::logOutput);
+    QSignalSpy progress(&panel, &sak::AppInstallationPanel::progressUpdated);
+    QSignalSpy reset(&panel, &sak::AppInstallationPanel::progressReset);
 
     MessageBoxRecorder recorder;
     if (action == panel.m_buildBundleButton->text()) {
@@ -312,6 +317,36 @@ void AppInstallationPanelTests::offlineRefusalIsSaidInView() {
         QVERIFY2(folder_logged, "the log does not have S.A.K.'s work folder");
     }
     QVERIFY(!panel.packageOperationInFlight());
+    // Fix batch 5 (F): nothing ran, so the status bar's bar is reset, as when idle. It was ended
+    // at its maximum, and read 100%: the worker says a run started before it checks the space.
+    QCOMPARE(reset.count(), 1);
+    QVERIFY(std::ranges::none_of(progress, [](const QList<QVariant>& arguments) {
+        return arguments.at(1).toInt() > 0 && arguments.at(0).toInt() >= arguments.at(1).toInt();
+    }));
+}
+
+// Fix batch 5 (F): an online install whose every entry was skipped left the status bar's bar
+// busy, as its start sent a run of none; one cancelled before its first package ended it full.
+// A run that installed nothing resets the bar, as when idle; one that installed ends as before.
+void AppInstallationPanelTests::anOnlineRunThatInstalledNothingLeavesNoProgressBar() {
+    sak::AppInstallationPanel panel;
+    QSignalSpy reset(&panel, &sak::AppInstallationPanel::progressReset);
+    QTimer closer;
+    closer.setInterval(kDialogPollMs);
+    connect(&closer, &QTimer::timeout, &panel, []() {
+        if (auto* summary = qobject_cast<QDialog*>(QApplication::activeModalWidget())) {
+            summary->reject();
+        }
+    });
+    closer.start();
+    Q_EMIT panel.m_worker->migrationStarted(0);
+    Q_EMIT panel.m_worker->migrationCompleted(sak::AppInstallationWorker::Stats{});
+    QCOMPARE(reset.count(), 1);
+    sak::AppInstallationWorker::Stats installed;
+    installed.total = 1;
+    installed.success = 1;
+    Q_EMIT panel.m_worker->migrationCompleted(installed);
+    QCOMPARE(reset.count(), 1);
 }
 
 // Review 5 (Z6e): Offline Deploy's "Install from Bundle" was a second filled button, green with

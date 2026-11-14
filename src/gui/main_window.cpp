@@ -1067,6 +1067,10 @@ void MainWindow::createEmailToolsPanel() {
             &OstConverterWidget::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_ost_converter_widget.get(),
+            &OstConverterWidget::progressReset,
+            this,
+            &MainWindow::resetProgress);
 
     addTabWithTooltip(m_tab_widget,
                       email_wrapper,
@@ -1516,6 +1520,8 @@ void MainWindow::wireFileManagementPanels() {
             &OrganizerPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(
+        m_organizer_panel.get(), &OrganizerPanel::progressReset, this, &MainWindow::resetProgress);
     connect(m_advanced_search_panel.get(),
             &AdvancedSearchPanel::statusMessage,
             this,
@@ -1526,6 +1532,10 @@ void MainWindow::wireFileManagementPanels() {
             &AdvancedSearchPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_advanced_search_panel.get(),
+            &AdvancedSearchPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connectPanelLog(m_organizer_panel.get());
     connectPanelLog(m_advanced_search_panel.get());
 }
@@ -1542,6 +1552,10 @@ void MainWindow::wirePartitionPanel() {
             &PartitionManagerPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_partition_manager_panel.get(),
+            &PartitionManagerPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connectPartitionManagerNavigation();
     connectPanelLog(m_partition_manager_panel.get());
 }
@@ -1580,6 +1594,10 @@ void MainWindow::wireImageFlasherPanel() {
             &ImageFlasherPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_image_flasher_panel.get(),
+            &ImageFlasherPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connectPanelLog(m_image_flasher_panel.get());
 }
 
@@ -1595,6 +1613,10 @@ void MainWindow::wireDiagnosticPanel() {
             &DiagnosticBenchmarkPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_diagnostic_benchmark_panel.get(),
+            &DiagnosticBenchmarkPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connectPanelLog(m_diagnostic_benchmark_panel.get());
 }
 
@@ -1625,6 +1647,10 @@ void MainWindow::wireAppManagementPanels() {
             &AppInstallationPanel::progressUpdated,
             this,
             &MainWindow::updateProgress);
+    connect(m_app_installation_panel.get(),
+            &AppInstallationPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connect(m_advanced_uninstall_panel.get(),
             &AdvancedUninstallPanel::statusMessage,
             this,
@@ -1635,6 +1661,10 @@ void MainWindow::wireAppManagementPanels() {
             &AdvancedUninstallPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_advanced_uninstall_panel.get(),
+            &AdvancedUninstallPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connect(m_vulnerability_panel.get(),
             &VulnerabilityPanel::statusMessage,
             this,
@@ -1945,6 +1975,22 @@ void MainWindow::bringToFront() {
 void MainWindow::hideProgressBarIfComplete() {
     if ((m_progress_bar != nullptr) && m_progress_bar->value() >= m_progress_bar->maximum()) {
         m_progress_bar->setVisible(false);
+    }
+}
+
+// Fix batch 5 (F): the bar's one way to end was its maximum, so Offline Deploy's refusal ended
+// it at 100% though nothing had started, and (0, 0), sent to hide it, left it busy.
+void MainWindow::resetProgress() {
+    if (m_progress_bar == nullptr) {
+        return;
+    }
+    m_progress_bar->setVisible(false);
+    m_progress_bar->setRange(0, 1);
+    m_progress_bar->setValue(0);
+    // The work is over, so a message about it goes, as at its end.
+    if (m_status_message_is_work) {
+        m_status_message_is_work = false;
+        statusBar()->clearMessage();
     }
 }
 
