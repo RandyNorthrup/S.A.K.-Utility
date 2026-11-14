@@ -120,6 +120,11 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **Resize no longer offers free space a partition cannot use** - For a FAT32 or exFAT partition, which Windows
+  neither shrinks nor grows, an APFS partition with nothing after it, or a file system S.A.K. could not identify,
+  the Resize dialog showed the free space after the partition as the size it could reach, with a size handle that
+  looked live. Max online is now the current size, the free space is said to be not usable for that file system,
+  and the size controls are off. NTFS, ReFS and ext partitions are as before.
 - **Offline Deploy says when a Build, Direct Download or Install from Bundle is refused or fails** - A Build
   refused for want of space said so only in the log and in a line below the buttons, out of view, while the status
   bar read "Ready". A refusal or failure now opens a warning box titled with the action, as Partition Manager does,

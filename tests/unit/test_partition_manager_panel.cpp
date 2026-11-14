@@ -202,6 +202,7 @@ private Q_SLOTS:
     void resizeSaysWindowsCannotResizeFat32() const;
     void resizeGrowsAnApfsPartitionOnly() const;
     void resizeOffersOnlySizesTheQueueTakes() const;
+    void resizeShowsNoUsableFreeSpaceWhereTheSizeCannotChange() const;
     void apfsContainerActionAllowsWritableApfsVolumes();
     void manageBitLockerShowsStatusDialog();
     void theTableHeaderReachesTheRightEdge();
@@ -214,6 +215,7 @@ private Q_SLOTS:
     void checkFileSystemSaysToWaitBeforeUnplugging();
     void newCheckTextsFitTheResultBox();
     void newResizeTextsFitTheResizeDialog();
+    void newResizeFreeSpaceTextsFitTheResizeDialog();
     void newTypeIdPromptFitsItsDialog();
     void windowsPhaseDisablesCancelAndSaysSo();
     void openClosePromptFollowsTheRun();
@@ -6062,6 +6064,177 @@ void PartitionManagerPanelTests::resizeOffersOnlySizesTheQueueTakes() const {
     }
 }
 
+namespace {
+
+/// What the Resize dialog shows of a partition's size and the free space after it.
+struct ResizeSizeLook {
+    bool opened{false};
+    bool size_enabled{false};
+    bool handle_enabled{false};
+    QString adjacent_free;
+    QString preview;               ///< the size preview's rows, as it tells a screen reader
+    int usable_colour_pixels{-1};  ///< pixels of the Max online bar's "can grow into" colour
+};
+
+/// The pixels of @p widget drawn in exactly @p colour.
+int pixelsOfColour(QWidget* widget, const QColor& colour) {
+    const QImage image = widget->grab().toImage();
+    int count = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            count += image.pixel(x, y) == colour.rgb() ? 1 : 0;
+        }
+    }
+    return count;
+}
+
+/// Opens Resize/Move on @p row of a panel holding @p inventory and reads it. Not opened when the
+/// panel does not offer Resize there.
+ResizeSizeLook lookAtResizeSize(const sak::PartitionInventory& inventory, int row) {
+    ResizeSizeLook look;
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+    if (table == nullptr || resize == nullptr) {
+        return look;
+    }
+    table->selectRow(row);
+    if (!resize->isEnabled()) {
+        return look;
+    }
+    const ScopedModalInspection inspection([&look]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        if (dialog == nullptr) {
+            return;
+        }
+        QCoreApplication::processEvents();
+        look.opened = true;
+        const auto* size = findAccessibleWidget<QSpinBox>(dialog,
+                                                          QStringLiteral("Target partition size"));
+        const auto* handle =
+            findAccessibleWidget<QSlider>(dialog, QStringLiteral("Target partition size handle"));
+        look.size_enabled = size != nullptr && size->isEnabled();
+        look.handle_enabled = handle != nullptr && handle->isEnabled();
+        for (const auto* label : dialog->findChildren<QLabel*>()) {
+            if (label->accessibleDescription() ==
+                QStringLiteral("Contiguous free space after selected partition")) {
+                look.adjacent_free = label->text();
+            }
+        }
+        if (auto* preview =
+                dialog->findChild<QWidget*>(QStringLiteral("partitionOperationSizePreview"))) {
+            look.preview = preview->accessibleDescription();
+            look.usable_colour_pixels =
+                pixelsOfColour(preview, QColor(QString::fromLatin1(sak::ui::kColorWarning)));
+        }
+        dialog->reject();
+    });
+    pressAction(resize);
+    return look;
+}
+
+/// The texts a Resize dialog shows for a size that cannot change: Max online is @p current, and
+/// any free space after the partition is not usable for @p file_system.
+struct FixedSizeTexts {
+    QString current;
+    QString free_after;  ///< empty when nothing follows the partition
+    QString file_system;
+};
+
+/// Why @p look does not show a size that cannot change plainly, or empty.
+QString fixedSizeProblem(const ResizeSizeLook& look, const FixedSizeTexts& texts) {
+    QStringList problems;
+    if (look.size_enabled || look.handle_enabled) {
+        problems.append(QStringLiteral("a size control is live"));
+    }
+    if (look.usable_colour_pixels != 0) {
+        problems.append(QStringLiteral("Max online is drawn as space to grow into"));
+    }
+    if (!look.preview.contains(QStringLiteral("Max online: ") + texts.current +
+                               QStringLiteral(", the current size"))) {
+        problems.append(QStringLiteral("Max online is not the current size"));
+    }
+    const QString not_usable = QStringLiteral("not usable for ") + texts.file_system;
+    if (!texts.free_after.isEmpty() &&
+        (look.adjacent_free != texts.free_after + QStringLiteral(", ") + not_usable ||
+         !look.preview.contains(QStringLiteral("free space ") + not_usable))) {
+        problems.append(QStringLiteral("the free space is not said to be ") + not_usable);
+    }
+    return problems.join(QStringLiteral("; "));
+}
+
+/// Why @p look of a size that can change is not as it was before fix batch 4, or empty.
+QString resizableSizeProblem(const ResizeSizeLook& look,
+                             const QString& current,
+                             const QString& free_after) {
+    QStringList problems;
+    if (!look.size_enabled || !look.handle_enabled) {
+        problems.append(QStringLiteral("a size control is off"));
+    }
+    if (look.usable_colour_pixels <= 0) {
+        problems.append(QStringLiteral("Max online is not drawn as space to grow into"));
+    }
+    if (look.adjacent_free != free_after ||
+        !look.preview.contains(QStringLiteral("Max online: ") + current +
+                               QStringLiteral(" current + ") + free_after +
+                               QStringLiteral(" free"))) {
+        problems.append(QStringLiteral("the free space reads differently"));
+    }
+    return problems.join(QStringLiteral("; "));
+}
+
+}  // namespace
+
+// Fix batch 4 (B): the capture of d8c27a15 gave a FAT32 partition "Adjacent free after: 21.89 GB"
+// and a Max online bar of "2.00 GB current + 21.89 GB free" across its whole width, in the colour
+// of space it can grow into, with a size handle that looked live. Where the queue refuses every
+// size change (FAT32, exFAT, a file system S.A.K. does not resize or could not identify, and an
+// APFS partition, which only grows, with nothing after it), Max online is the current size in a
+// muted colour, the free space is said to be not usable for that file system, and the size controls
+// are off. HFS+ offers no Resize at all. NTFS, ReFS, ext4 and an APFS partition with room after it
+// are as they were. Row 1 has 128 MB free after it; row 3, the disk's second partition, none.
+void PartitionManagerPanelTests::resizeShowsNoUsableFreeSpaceWhereTheSizeCannotChange() const {
+    struct Case {
+        const char* file_system;
+        int row;
+        bool fixed;
+    };
+    const QString current = sak::formatPartitionBytes(256 * kTestMegabyteBytes);
+    const QString free_after = sak::formatPartitionBytes(128 * kTestMegabyteBytes);
+    for (const Case& test : {Case{"FAT32", 1, true},
+                             Case{"exFAT", 1, true},
+                             Case{"UDF", 1, true},
+                             Case{"RAW", 1, true},
+                             Case{"HFS+", 1, true},
+                             Case{"APFS", 3, true},
+                             Case{"APFS", 1, false},
+                             Case{"NTFS", 1, false},
+                             Case{"ReFS", 1, false},
+                             Case{"ext4", 1, false}}) {
+        const QString name = QString::fromLatin1(test.file_system);
+        auto inventory = unallocatedAllocateInventoryFixture();
+        inventory.disks[0].partitions[test.row == 1 ? 0 : 1].volume->file_system = name;
+        const ResizeSizeLook look = lookAtResizeSize(inventory, test.row);
+        if (!look.opened) {
+            QVERIFY2(test.fixed, qPrintable(name + QStringLiteral(": Resize is not offered")));
+            continue;
+        }
+        const FixedSizeTexts texts{
+            .current = current,
+            .free_after = test.row == 1 ? free_after : QString(),
+            .file_system = name == QStringLiteral("RAW")
+                               ? QStringLiteral("a file system S.A.K. could not identify")
+                               : name};
+        const QString problem = test.fixed ? fixedSizeProblem(look, texts)
+                                           : resizableSizeProblem(look, current, free_after);
+        QVERIFY2(problem.isEmpty(),
+                 qPrintable(name + QStringLiteral(": ") + problem + QStringLiteral(" | ") +
+                            look.adjacent_free + QStringLiteral(" | ") + look.preview));
+    }
+}
+
 // An APFS partition grows in place only (coordinator, 2026-11-12): the dialog accepts a grow and
 // says the container is grown afterwards, and offers no size below the current one (the capture
 // of 1db87df4 offered 1 MB, then refused it), nor speaks of Windows online resize.
@@ -6808,6 +6981,36 @@ void PartitionManagerPanelTests::newResizeTextsFitTheResizeDialog() {
                                        ? QStringLiteral("S.A.K. grows an APFS partition only")
                                        : QStringLiteral("Windows cannot shrink or grow")),
                  qPrintable(file_system + QStringLiteral(": ") + status));
+        QVERIFY2(problems.isEmpty(), qPrintable(file_system + QStringLiteral(": ") + problems));
+    }
+}
+
+// Fix batch 4 (B): the longest "not usable" texts, an unidentified file system's with free space
+// after it, fit the Resize dialog at 1024 and 1280 px.
+void PartitionManagerPanelTests::newResizeFreeSpaceTextsFitTheResizeDialog() {
+    for (const QString& file_system : {QStringLiteral("FAT32"), QStringLiteral("RAW")}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = unallocatedAllocateInventoryFixture();
+        inventory.disks[0].partitions[0].volume->file_system = file_system;
+        panel.setTestInventoryForReview(inventory);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+        QVERIFY(resize != nullptr);
+        if (!resize->isEnabled()) {
+            continue;  // not offered, so nothing to fit
+        }
+        QString problems = QStringLiteral("no dialog");
+        const ScopedModalInspection inspection([&problems]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(dialog);
+            QVERIFY(dialog != nullptr);
+            QApplication::processEvents();
+            problems = dialogDoesNotFit(dialog);
+            dialog->reject();
+        });
+        pressAction(resize);
         QVERIFY2(problems.isEmpty(), qPrintable(file_system + QStringLiteral(": ") + problems));
     }
 }

@@ -3332,6 +3332,12 @@ public:
 
     void setRows(QVector<SizePreviewRow> rows) {
         m_rows = std::move(rows);
+        // The bars are painted, so what they say is told to a screen reader here as well.
+        QStringList said;
+        for (const auto& row : m_rows) {
+            said.append(row.label + QStringLiteral(": ") + row.text);
+        }
+        setAccessibleDescription(said.join(QStringLiteral("; ")));
         // Tall enough for every row: the resize preview's third row, "Max online", ran past the
         // 82 px the widget kept and was cut (UI review F7).
         const auto count = static_cast<int>(m_rows.size());
@@ -3933,7 +3939,11 @@ struct ResizePartitionWidgets {
     uint64_t current_offset_bytes{0};
     uint64_t adjacent_free_bytes{0};
     uint64_t max_online_bytes{0};
+    /// The partition and the free space after it: the bars' scale for an in-place resize.
+    uint64_t region_bytes{0};
     uint64_t disk_bytes{0};
+    /// The queue refuses every size change (resizeSizeFixed): only the current size is offered.
+    bool size_fixed{false};
 };
 
 struct QuickPartitionWidgets {
@@ -5939,10 +5949,51 @@ void addResizeOffsetControls(PartitionOperationDialog& dialog,
     dialog.formLayout()->addRow(QObject::tr("Start offset:"), widgets->target_offset_mb);
 }
 
+// Fix batch 4 (B): whether the queue refuses every size change, so the dialog offers only the
+// current size: the file system's rule refuses both ways (FAT32, exFAT, a file system S.A.K. does
+// not resize or could not identify), or an APFS partition, which only grows, has nothing after it
+// to grow into. NTFS, ReFS and ext are resized both ways, and are never fixed.
+bool resizeSizeFixed(const ResizePartitionWidgets& widgets) {
+    if (widgets.non_native_ext) {
+        return false;
+    }
+    if (!resizeDirectionQueueable(widgets, true) && !resizeDirectionQueueable(widgets, false)) {
+        return true;
+    }
+    return PartitionFileSystemRegistry::isApfs(widgets.file_system) &&
+           widgets.target_size_mb->minimum() == widgets.target_size_mb->maximum();
+}
+
+// The file system as the Resize dialog names it when the free space after it is not usable: its
+// own name, or that the scan could not identify it.
+QString resizeFileSystemName(const QString& file_system) {
+    const QString fs = file_system.trimmed();
+    if (fs.isEmpty() || fs.compare(QStringLiteral("RAW"), Qt::CaseInsensitive) == 0 ||
+        fs.compare(QStringLiteral("Unknown"), Qt::CaseInsensitive) == 0) {
+        return QObject::tr("a file system S.A.K. could not identify");
+    }
+    return fs;
+}
+
+// Whether the dialog has free space after the partition that its size cannot use.
+bool resizeFreeSpaceUnusable(const ResizePartitionWidgets& widgets) {
+    return widgets.size_fixed && widgets.adjacent_free_bytes >= kMegabyteBytes;
+}
+
 void addResizeAdjacentFreeControl(PartitionOperationDialog& dialog,
                                   ResizePartitionWidgets* widgets,
                                   uint64_t adjacent_free_bytes) {
-    widgets->adjacent_free_label = new QLabel(formatPartitionBytes(adjacent_free_bytes), &dialog);
+    // The capture of d8c27a15 gave a FAT32 partition "Adjacent free after: 21.89 GB" with nothing
+    // to say that the partition cannot grow into it.
+    const QString free_text = resizeFreeSpaceUnusable(*widgets)
+                                  ? QObject::tr("%1, not usable for %2")
+                                        .arg(formatPartitionBytes(adjacent_free_bytes),
+                                             resizeFileSystemName(widgets->file_system))
+                                  : formatPartitionBytes(adjacent_free_bytes);
+    widgets->adjacent_free_label = new QLabel(free_text, &dialog);
+    // Wraps in the room the row has, so the longer "not usable" text never widens the dialog or
+    // squeezes the row's own label.
+    widgets->adjacent_free_label->setWordWrap(true);
     widgets->adjacent_free_label->setAccessibleDescription(
         QObject::tr("Contiguous free space after selected partition"));
     dialog.formLayout()->addRow(QObject::tr("Adjacent free after:"), widgets->adjacent_free_label);
@@ -5978,6 +6029,7 @@ ResizePartitionWidgets addResizePartitionControls(PartitionOperationDialog& dial
     widgets.file_system = partition.volume ? partition.volume->file_system.trimmed() : QString();
     widgets.non_native_ext = isExtFilesystem(widgets.file_system);
     widgets.max_online_bytes = saturatingAdd(partition.size_bytes, adjacent_free_bytes);
+    widgets.region_bytes = widgets.max_online_bytes;
     widgets.disk_bytes = disk.size_bytes;
     widgets.current_mb = resizeInputMb(partition.size_bytes, true);
     widgets.current_offset_mb = inputMegabytesFromBytes(partition.offset_bytes, 0, kMaxSizeInputMb);
@@ -5986,6 +6038,11 @@ ResizePartitionWidgets addResizePartitionControls(PartitionOperationDialog& dial
     dialog.formLayout()->addRow(QObject::tr("Mode:"), widgets.mode);
 
     addResizeTargetSizeControls(dialog, &widgets, partition);
+    // Where the queue refuses every size change, the most it reaches online is its size now.
+    widgets.size_fixed = resizeSizeFixed(widgets);
+    if (widgets.size_fixed) {
+        widgets.max_online_bytes = widgets.current_bytes;
+    }
     addResizeOffsetControls(dialog, &widgets, disk);
     addResizeAdjacentFreeControl(dialog, &widgets, adjacent_free_bytes);
     widgets.donor_partition = createResizeDonorSelector(&dialog, disk, partition);
@@ -6136,27 +6193,46 @@ QString resizeActionText(uint64_t target_bytes, uint64_t current_bytes) {
     return QObject::tr("No change");
 }
 
+// The Max online row: the current size and the free space after it, in the colour of space the
+// partition can grow into. Where the size cannot change, it is the current size, in a muted colour,
+// and says the free space is not usable (the capture of d8c27a15 drew "2.00 GB current + 21.89 GB
+// free" across the whole bar for a FAT32 partition).
+SizePreviewRow resizeMaxOnlineRow(const ResizePartitionWidgets& widgets, uint64_t scale_bytes) {
+    if (!widgets.size_fixed) {
+        return {.label = QObject::tr("Max online"),
+                .total_bytes = scale_bytes,
+                .filled_bytes = widgets.max_online_bytes,
+                .fill_color = QColor(QString::fromLatin1(ui::kColorWarning)),
+                .text = QObject::tr("%1 current + %2 free")
+                            .arg(formatPartitionBytes(widgets.current_bytes),
+                                 formatPartitionBytes(widgets.adjacent_free_bytes))};
+    }
+    return {.label = QObject::tr("Max online"),
+            .total_bytes = scale_bytes,
+            .filled_bytes = widgets.max_online_bytes,
+            .fill_color = QColor(QString::fromLatin1(ui::kColorTextMuted)),
+            .text = resizeFreeSpaceUnusable(widgets)
+                        ? QObject::tr("%1, the current size: free space not usable for %2")
+                              .arg(formatPartitionBytes(widgets.max_online_bytes),
+                                   resizeFileSystemName(widgets.file_system))
+                        : QObject::tr("%1, the current size")
+                              .arg(formatPartitionBytes(widgets.max_online_bytes))};
+}
+
 void updateResizePreviewRows(const ResizePartitionWidgets& widgets,
                              uint64_t target_bytes,
                              uint64_t scale_bytes) {
-    widgets.size_preview->setRows(
-        {{.label = QObject::tr("Current"),
-          .total_bytes = scale_bytes,
-          .filled_bytes = widgets.current_bytes,
-          .fill_color = QColor(QString::fromLatin1(ui::kColorPrimary)),
-          .text = formatPartitionBytes(widgets.current_bytes)},
-         {.label = QObject::tr("Target"),
-          .total_bytes = scale_bytes,
-          .filled_bytes = target_bytes,
-          .fill_color = QColor(QString::fromLatin1(ui::kColorSuccess)),
-          .text = formatPartitionBytes(target_bytes)},
-         {.label = QObject::tr("Max online"),
-          .total_bytes = scale_bytes,
-          .filled_bytes = widgets.max_online_bytes,
-          .fill_color = QColor(QString::fromLatin1(ui::kColorWarning)),
-          .text = QObject::tr("%1 current + %2 free")
-                      .arg(formatPartitionBytes(widgets.current_bytes),
-                           formatPartitionBytes(widgets.adjacent_free_bytes))}});
+    widgets.size_preview->setRows({{.label = QObject::tr("Current"),
+                                    .total_bytes = scale_bytes,
+                                    .filled_bytes = widgets.current_bytes,
+                                    .fill_color = QColor(QString::fromLatin1(ui::kColorPrimary)),
+                                    .text = formatPartitionBytes(widgets.current_bytes)},
+                                   {.label = QObject::tr("Target"),
+                                    .total_bytes = scale_bytes,
+                                    .filled_bytes = target_bytes,
+                                    .fill_color = QColor(QString::fromLatin1(ui::kColorSuccess)),
+                                    .text = formatPartitionBytes(target_bytes)},
+                                   resizeMaxOnlineRow(widgets, scale_bytes)});
 }
 
 bool resizeMoveReady(const ResizePartitionWidgets& widgets,
@@ -6189,8 +6265,10 @@ PartitionActionAvailability resizeMoveBackupAvailability(const ResizePartitionWi
 }
 
 void updateResizeControlState(const ResizePartitionWidgets& widgets, bool move_mode) {
-    widgets.target_size_mb->setEnabled(selectedResizeModeCanQueue(widgets));
-    widgets.target_size_handle->setEnabled(selectedResizeModeCanQueue(widgets));
+    // A size that cannot change is not offered as though it could (fix batch 4, B).
+    const bool size_editable = selectedResizeModeCanQueue(widgets) && !widgets.size_fixed;
+    widgets.target_size_mb->setEnabled(size_editable);
+    widgets.target_size_handle->setEnabled(size_editable);
     widgets.target_offset_mb->setEnabled(move_mode);
     widgets.backup_directory->setEnabled(move_mode);
     widgets.browse_backup->setEnabled(move_mode);
@@ -6220,7 +6298,9 @@ void updateResizePartitionPreview(PartitionOperationDialog& dialog,
     const bool move_mode = selectedResizeMode(widgets) == moveStartResizeMode();
     const uint64_t target_offset_bytes = static_cast<uint64_t>(widgets.target_offset_mb->value()) *
                                          kMegabyteBytes;
-    const uint64_t scale_bytes = std::max(move_mode ? widgets.disk_bytes : widgets.max_online_bytes,
+    // The scale is the partition and the free space after it, whether or not the partition can
+    // grow into that space, so a fixed size's bars stand in proportion to it.
+    const uint64_t scale_bytes = std::max(move_mode ? widgets.disk_bytes : widgets.region_bytes,
                                           target_bytes);
     updateResizePreviewRows(widgets, target_bytes, scale_bytes);
     const bool move_ready = resizeMoveReady(widgets, move_mode, target_bytes, target_offset_bytes);
@@ -6266,11 +6346,16 @@ void connectResizePartitionControls(PartitionOperationDialog& dialog,
                          .confirmation = widgets.confirmation,
                          .status = nullptr},
                         QObject::tr("Move Partition Backup Directory"));
-    widgets.size_preview->setInteractiveSegment(
-        kSizePreviewTargetRow, false, true, [widgets](uint64_t, uint64_t size_bytes) {
-            widgets.target_size_mb->setValue(inputMegabytesFromBytes(
-                size_bytes, widgets.target_size_mb->minimum(), widgets.target_size_mb->maximum()));
-        });
+    // A size that cannot change has no handle to drag on its Target bar.
+    if (!widgets.size_fixed) {
+        widgets.size_preview->setInteractiveSegment(
+            kSizePreviewTargetRow, false, true, [widgets](uint64_t, uint64_t size_bytes) {
+                widgets.target_size_mb->setValue(
+                    inputMegabytesFromBytes(size_bytes,
+                                            widgets.target_size_mb->minimum(),
+                                            widgets.target_size_mb->maximum()));
+            });
+    }
     QObject::connect(
         widgets.donor_partition, &QComboBox::currentTextChanged, &dialog, update_preview);
 }

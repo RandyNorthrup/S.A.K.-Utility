@@ -3713,6 +3713,26 @@ also checks the drive and the log for both refusals, and the unknown-space one i
 green with the bytes restored: no warning box on a refusal; the refusal naming the folder instead of the drive; the
 folder not logged; no box for a run with failures.
 
+**B. Resize/Move on a partition whose size cannot change offered free space it cannot use.** The capture
+`partition_manager_resize_fat32_fixed.png` showed a 2.00 GB FAT32 partition with "Adjacent free after: 21.89 GB",
+a "Max online" bar of "2.00 GB current + 21.89 GB free" across its whole width in the colour of space to grow into,
+and a size handle that looked live, though Windows neither shrinks nor grows FAT32. Where the queue refuses every
+size change (`resizeSizeFixed`, `partition_manager_panel.cpp`): the file system's rule refuses both ways (FAT32,
+exFAT, and a file system S.A.K. does not resize or could not identify: "UDF", "RAW", "Unknown"), or an APFS
+partition, which grows only, has no free space after it. Then Max online is the current size, drawn in the muted
+colour, and reads "2.00 GB, the current size: free space not usable for FAT32"; "Adjacent free after" reads
+"21.89 GB, not usable for FAT32" (wrapping in its row, so the longer text never widens the dialog); the target size,
+the size handle and the Target bar's drag handle are off. The bars keep the partition and the free space after it as
+their scale, so the current size stands in proportion to the space it cannot use. HFS+ offers no Resize at all, so
+it has nothing to mislead. NTFS, ReFS, ext and an APFS partition with room after it are as they were. The size
+preview now also tells a screen reader its rows ("Current: ...; Target: ...; Max online: ..."), which the test reads.
+Tests (`test_partition_manager_panel`): `resizeShowsNoUsableFreeSpaceWhereTheSizeCannotChange` opens Resize for
+FAT32, exFAT, UDF, RAW, HFS+, APFS with nothing after it, APFS with room, NTFS, ReFS and ext4, and checks the size
+controls, the Max online text, the "not usable" texts, and the pixels of the usable colour in the preview (none for a
+fixed size, some otherwise); `newResizeFreeSpaceTextsFitTheResizeDialog` fits the longest texts at 1024 px. Drills,
+each red then green with the bytes restored: never fixed; Max online left at current plus free; the size controls
+left live; the usable colour; the free space not said to be not usable; ext treated as fixed; the label unwrapped.
+
 **D. The v0.9.3-rc.1 release dry run stopped at its readiness gate.** Run 43600917371 (the tag on main 9277c08b)
 failed in the build job at step 20, "Release readiness gate from clean extracted package", with "Accessibility
 runtime audit failed with exit code 1: No audit output written. STDOUT: System.Object[] STDERR: System.Object[]";
