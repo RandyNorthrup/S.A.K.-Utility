@@ -4,16 +4,16 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
-        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
-    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-11T09:02:51.732Z",
+    "completed_utc": "2026-11-14T10:33:41.640Z",
     "disk_before": {
         "bus_type": "USB",
-        "disk_number": 3,
+        "disk_number": 2,
         "is_boot": false,
         "is_system": false,
         "media_type": "Unspecified",
@@ -29,13 +29,19 @@
         "message": "Partition operation batch complete",
         "steps": [
             {
+                "cancelled": false,
                 "error_message": "",
-                "operation_id": "ddee3b19-a8eb-46c0-ace1-abd9bf76d916",
+                "may_still_run_in_windows": false,
+                "operation_id": "14909d62-2eb9-4746-9590-5eb790124301",
                 "skipped": false,
                 "stderr": "",
-                "stdout": "SAK Partition Manager: Regenerate serial number on T:\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Wednesday, November 11, 2026 1:02:39 AM\r\n   Source : C:\\SAKCert\\stage\\data\\temp\\sak-shadow-1729dfb061b240618425f8e58098d14a\\\r\n     Dest : C:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-e4bc639c006b49bfafc05af1aef76538\\\r\n\r\n    Files : *.*\r\n\t    \r\n  Options : *.* /S /E /COPYALL /PURGE /MIR /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-1729dfb061b240618425f8e58098d14a\\\r\n\t  New Dir          5\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-1729dfb061b240618425f8e58098d14a\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-1729dfb061b240618425f8e58098d14a\\fixture\\sub dir\\\r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-1729dfb061b240618425f8e58098d14a\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-1729dfb061b240618425f8e58098d14a\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tC:\\SAKCert\\stage\\data\\temp\\sak-shadow-1729dfb061b240618425f8e58098d14a\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         7         5         2         0         0         0\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           121,077,760 Bytes/sec.\r\n   Speed :             6,928.125 MegaBytes/min.\r\n   Ended : Wednesday, November 11, 2026 1:02:39 AM\r\n\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Wednesday, November 11, 2026 1:02:43 AM\r\n   Source : C:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-e4bc639c006b49bfafc05af1aef76538\\\r\n     Dest : T:\\\r\n\r\n    Files : *.*\r\n\t    \r\n  Options : *.* /S /E /COPYALL /PURGE /MIR /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-e4bc639c006b49bfafc05af1aef76538\\\r\n\t  New Dir          5\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-e4bc639c006b49bfafc05af1aef76538\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-e4bc639c006b49bfafc05af1aef76538\\fixture\\sub dir\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-e4bc639c006b49bfafc05af1aef76538\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-e4bc639c006b49bfafc05af1aef76538\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-e4bc639c006b49bfafc05af1aef76538\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         6         5         1         0         0         1\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           123,548,734 Bytes/sec.\r\n   Speed :             7,069.515 MegaBytes/min.\r\n   Ended : Wednesday, November 11, 2026 1:02:43 AM\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining   Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------   ----\r\nT           SAKSERIAL    NTFS           Fixed     Healthy      OK                    368.06 MB 384 MB\r\nNoErrorsFound\r\nVolume serial changed from 665E-6A8F to AC67-F6F9\r\n\r\n\r\n",
+                "stdout": "SAK Partition Manager: Regenerate serial number on T:\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Saturday, November 14, 2026 2:33:13 AM\r\n   Source : Z:\\\r\n     Dest : C:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-c19ea3e579c84ac6862eab0410225a4f\\\r\n\r\n    Files : *.*\r\n\t    \r\n Exc Dirs : Z:\\System Volume Information\r\n\t    Z:\\$RECYCLE.BIN\r\n\t    \r\n  Options : *.* /S /E /COPYALL /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tZ:\\\r\n\t  New Dir          5\tZ:\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t  New Dir          0\tZ:\\fixture\\sub dir\\\r\n\t  New Dir          0\tZ:\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tZ:\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tZ:\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         7         5         2         0         0         0\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           110,070,690 Bytes/sec.\r\n   Speed :             6,298.295 MegaBytes/min.\r\n   Ended : Saturday, November 14, 2026 2:33:13 AM\r\n\r\n\r\n-------------------------------------------------------------------------------\r\n   ROBOCOPY     ::     Robust File Copy for Windows                              \r\n-------------------------------------------------------------------------------\r\n\r\n  Started : Saturday, November 14, 2026 2:33:17 AM\r\n   Source : C:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-c19ea3e579c84ac6862eab0410225a4f\\\r\n     Dest : T:\\\r\n\r\n    Files : *.*\r\n\t    \r\n Exc Dirs : C:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-c19ea3e579c84ac6862eab0410225a4f\\System Volume Information\r\n\t    C:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-c19ea3e579c84ac6862eab0410225a4f\\$RECYCLE.BIN\r\n\t    \r\n  Options : *.* /S /E /COPYALL /XJ /R:1 /W:1 \r\n\r\n------------------------------------------------------------------------------\r\n\r\n\t                   0\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-c19ea3e579c84ac6862eab0410225a4f\\\r\n\t*EXTRA Dir        -1\tT:\\System Volume Information\\\r\n\t  New Dir          5\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-c19ea3e579c84ac6862eab0410225a4f\\fixture\\\r\n\t    New File  \t\t   60416\tfixture-1.bin\r100%  \r\n\t    New File  \t\t  459776\tfixture-2.bin\r100%  \r\n\t    New File  \t\t   1.5 m\tfixture-4.bin\r 65%  \r100%  \r\n\t    New File  \t\t  752640\tfixture-7.bin\r100%  \r\n\t    New File  \t\t  936960\tfixture-caf‚-5.bin\r100%  \r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-c19ea3e579c84ac6862eab0410225a4f\\fixture\\sub dir\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-c19ea3e579c84ac6862eab0410225a4f\\fixture\\sub dir\\one\\\r\n\t  New Dir          0\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-c19ea3e579c84ac6862eab0410225a4f\\fixture\\sub dir\\one\\two\\\r\n\t  New Dir          3\tC:\\SAKCert\\work\\backup-external.volume-serial-number\\sak-serial-backup-c19ea3e579c84ac6862eab0410225a4f\\fixture\\sub dir\\one\\two\\three\\\r\n\t    New File  \t\t  750592\tfixture-3.bin\r100%  \r\n\t    New File  \t\t  752640\tfixture-6.bin\r100%  \r\n\t    New File  \t\t  732160\tfixture-caf‚-0.bin\r100%  \r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         6         5         1         0         0         1\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :    5.77 m    5.77 m         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n\r\n\r\n   Speed :           54,539,531 Bytes/sec.\r\n   Speed :            3,120.777 MegaBytes/min.\r\n   Ended : Saturday, November 14, 2026 2:33:18 AM\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining   Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------   ----\r\nT           SAKSERIAL    NTFS           Fixed     Healthy      OK                    368.06 MB 384 MB\r\nNoErrorsFound\r\nLetting Windows finish with the volume before reporting the result (a drive removed right after a scan can crash Windows).\r\nVolume serial changed from E684-4ECE to E88E-8628\r\n\r\n\r\n",
+                "stop_cleanup_not_removed": [
+                ],
+                "stop_cleanup_removed": [
+                ],
                 "success": true,
-                "summary": "Reformat for New Volume Serial - Disk 3 Partition 2"
+                "summary": "Reformat for New Volume Serial - Disk 2 Partition 2"
             }
         ],
         "success": true,
@@ -53,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "ddee3b19-a8eb-46c0-ace1-abd9bf76d916",
+            "id": "14909d62-2eb9-4746-9590-5eb790124301",
             "payload": {
                 "backup_directory": "C:\\SAKCert\\work\\backup-external.volume-serial-number",
                 "backup_volume_guid": "\\\\?\\VOLUME{A0941E0D-16DB-4D04-ADF3-270F0EC76BFC}\\",
@@ -63,10 +69,10 @@
                 "label": "SAKSERIAL",
                 "target_wipe_confirmed": true
             },
-            "script_sha256": "4f51fc3d737c8a1c3eda7b4315db177be2a89e0dc7671bf88f378ce17b270648",
-            "summary": "Reformat for New Volume Serial - Disk 3 Partition 2",
+            "script_sha256": "b78a40b2b5bad8647fe28a27dd0d78fcd636aa0dc04b245fdcc3adf2c6a5d38a",
+            "summary": "Reformat for New Volume Serial - Disk 2 Partition 2",
             "target": {
-                "disk_number": 3,
+                "disk_number": 2,
                 "disk_unique_id": "3E4141413351564B",
                 "drive_letter": "T",
                 "kind": "Partition",
@@ -80,15 +86,15 @@
         }
     ],
     "review": {
-        "fingerprint": "7ec00eb7e944f4fecb7d069b6998db521386b77ec97e187f792d28dc8f4f5418",
-        "layout_hash": "8ee00c813f2b13c4f93b22a2fb62e9d8a72bac4a21bd8d2874bdb8cd6cea2c62",
+        "fingerprint": "f07ff6ec42b939e647d9b9792ca6916353f8412515e7c57d6483e198be0e1a33",
+        "layout_hash": "c17cddf17fb82be66101ffbdfb339892b953c4a10fa01c89f8731d541b6bcd73",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "c435eb2d-1e5d-467b-8536-0729af98547e",
+    "run_id": "54e45890-8e31-41fa-947b-db8edf8cbba6",
     "scenario_id": "external.volume-serial-number",
     "schema_version": 1,
-    "started_utc": "2026-11-11T09:02:29.038Z",
+    "started_utc": "2026-11-14T10:33:02.789Z",
     "status": "Passed",
     "step": "change",
     "tool": "partition-manager-scenario-step"

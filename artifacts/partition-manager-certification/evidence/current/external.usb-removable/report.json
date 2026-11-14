@@ -4,18 +4,18 @@
     "scenario_id":  "external.usb-removable",
     "status":  "Passed",
     "failure":  "",
-    "run_id":  "85e0443b-2ac0-4baa-bbec-5ad4f9b14513",
-    "started_utc":  "2026-11-11T08:57:50.4263624Z",
-    "completed_utc":  "2026-11-11T08:59:05.0674560Z",
+    "run_id":  "a8ef1664-5c58-4746-959b-1d32e9efd03e",
+    "started_utc":  "2026-11-14T10:25:35.7405617Z",
+    "completed_utc":  "2026-11-14T10:27:08.8756537Z",
     "code":  {
-                 "digest":  "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
-                 "commit":  "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
+                 "digest":  "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
+                 "commit":  "d8c27a155c90123c34d82b56fd92d61b75d1f602",
                  "dirty":  false
              },
     "binaries":  {
-                     "client_sha256":  "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0",
-                     "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
-                     "app_sha256":  "90c5e5d3ac84b7e29298aa4cdce915a4839be416fcadaadba2d9aa635985e3bf"
+                     "client_sha256":  "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132",
+                     "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+                     "app_sha256":  "fb9bd0213aa322589223a9701cb6c45fad7724d44a6421a3a8c0e2f74c18f702"
                  },
     "rig":  {
                 "machine_manufacturer":  "HP",
@@ -42,11 +42,11 @@
                       "expect":  "success",
                       "report":  "create.client.json",
                       "observed":  {
-                                       "client_pid":  17200,
+                                       "client_pid":  7268,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  3616,
-                                       "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+                                       "helper_pid":  2928,
+                                       "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -57,11 +57,11 @@
                       "expect":  "success",
                       "report":  "format.client.json",
                       "observed":  {
-                                       "client_pid":  14220,
+                                       "client_pid":  5168,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  2236,
-                                       "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+                                       "helper_pid":  3264,
+                                       "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -72,11 +72,11 @@
                       "expect":  "success",
                       "report":  "delete.client.json",
                       "observed":  {
-                                       "client_pid":  2608,
+                                       "client_pid":  3056,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  18296,
-                                       "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+                                       "helper_pid":  12948,
+                                       "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -86,23 +86,23 @@
     "artifacts":  [
                       {
                           "path":  "independent.json",
-                          "sha256":  "5ba4d6ad3dfd646d1445aa3bc7e98d24121af231dc61a9efcaac9f56e90a610d",
+                          "sha256":  "9f9561e5aa0a0459d91058a3d08f691e2c7098f72b26e27f083e6f285e29bafb",
                           "bytes":  79934
                       },
                       {
                           "path":  "create.client.json",
-                          "sha256":  "19e930079e6919c0c7b95ab9e675cb79fc68dd13da1a6e681e62cf7e811c711e",
-                          "bytes":  10935
+                          "sha256":  "ac1ee15ed7f83df2c547d7f423c59e9443081b5ca4e9892e09df079ad6e46938",
+                          "bytes":  11209
                       },
                       {
                           "path":  "format.client.json",
-                          "sha256":  "c6a08e53ccfb79adc5b463eb50674ee264a63fa05daa91b2a0695ef3a6caf77a",
-                          "bytes":  3600
+                          "sha256":  "b48157295d2104769352bb63c4f443577f40c2d5eddbd21d9bc99586ab03f9a8",
+                          "bytes":  3874
                       },
                       {
                           "path":  "delete.client.json",
-                          "sha256":  "82e8ea51f5f5fafa8f9983ff60231ddf0751028ae9d03c2a9c52e1720d020a42",
-                          "bytes":  3102
+                          "sha256":  "ecb40929e25927c565347f91b9bf5a3363eff7f23c37455b2519843f3f1c4c9d",
+                          "bytes":  3315
                       }
                   ]
 }

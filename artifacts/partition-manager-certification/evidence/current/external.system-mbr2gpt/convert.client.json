@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
-        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
-    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-11T11:23:26.928Z",
+    "completed_utc": "2026-11-14T12:53:56.069Z",
     "disk_before": {
         "bus_type": "SATA",
         "disk_number": 0,
@@ -20,7 +20,7 @@
         "model": "VBOX HARDDISK",
         "partition_count": 2,
         "partition_style": "MBR",
-        "serial_sha256": "0f0bb8de237e6b329fd8358ac6e780e1fabb3e668129b8be7bb572470763a15d",
+        "serial_sha256": "7efc180eff2f0f0b6a01fe145e4adb77e92232ff49085e1b437ea87692e2dc00",
         "size_bytes": "107374182400"
     },
     "execution": {
@@ -29,11 +29,17 @@
         "message": "Partition operation batch complete",
         "steps": [
             {
+                "cancelled": false,
                 "error_message": "",
-                "operation_id": "deef5448-9e71-4bcc-9302-c741850872a3",
+                "may_still_run_in_windows": false,
+                "operation_id": "204e96ee-ac46-4c65-a4cc-03fb25294fd2",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Convert Disk 0 to GPT\r\nMBR2GPT: Attempting to validate disk 0\r\nMBR2GPT: Retrieving layout of disk\r\nMBR2GPT: Validating layout, disk sector size is: 512 bytes\r\nMBR2GPT: Validation completed successfully\r\n\r\nMBR2GPT will now attempt to convert disk 0.\r\nIf conversion is successful the disk can only be booted in GPT mode.\r\nThese changes cannot be undone!\r\n\r\nMBR2GPT: Attempting to convert disk 0\r\nMBR2GPT: Retrieving layout of disk\r\nMBR2GPT: Validating layout, disk sector size is: 512 bytes\r\nMBR2GPT: Trying to shrink the OS partition\r\nMBR2GPT: Creating the EFI system partition\r\nMBR2GPT: Installing the new boot files\r\nMBR2GPT: Performing the layout conversion\r\nMBR2GPT: Migrating default boot entry\r\nMBR2GPT: Fixing drive letter mapping\r\nMBR2GPT: Conversion completed successfully\r\nMBR2GPT: Update WinRE config file\r\nMBR2GPT: Before the new system can boot properly you need to switch the firmware to boot to UEFI mode!\r\n",
+                "stop_cleanup_not_removed": [
+                ],
+                "stop_cleanup_removed": [
+                ],
                 "success": true,
                 "summary": "Convert MBR/GPT - Disk 0"
             }
@@ -53,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "deef5448-9e71-4bcc-9302-c741850872a3",
+            "id": "204e96ee-ac46-4c65-a4cc-03fb25294fd2",
             "payload": {
                 "mode": "mbr2gpt",
                 "target_style": "GPT"
@@ -75,15 +81,15 @@
         }
     ],
     "review": {
-        "fingerprint": "572df0ca90194e3f0f418126a2dbe2d44864f58a77bf53777fe3e589f418169a",
-        "layout_hash": "b7f6a369c6589fc36451fe664c236cc4980dfbd048dbd5af6e2f7e3f8695df5a",
+        "fingerprint": "c4c0fc28f6ac768258aef61b3298187c26ac396a33abbf7332a9fd8e6c174b77",
+        "layout_hash": "7e7da9413eae9c8d1755bbdf75f94f061f17307b67d7e30b85db5733669c8af4",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "db9b9d99-1426-4c8e-bfd9-09781be4615c",
+    "run_id": "d05d6aef-3868-464c-819e-af12bc471cc8",
     "scenario_id": "external.system-mbr2gpt",
     "schema_version": 1,
-    "started_utc": "2026-11-11T11:22:53.976Z",
+    "started_utc": "2026-11-14T12:53:23.959Z",
     "status": "Passed",
     "step": "convert",
     "tool": "partition-manager-scenario-step"

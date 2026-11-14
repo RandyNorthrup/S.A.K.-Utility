@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
-        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
-    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-11T08:57:33.020Z",
+    "completed_utc": "2026-11-14T10:25:11.241Z",
     "disk_before": {
         "bus_type": "NVMe",
         "disk_number": 0,
@@ -29,11 +29,17 @@
         "message": "Partition operation batch complete",
         "steps": [
             {
+                "cancelled": false,
                 "error_message": "",
-                "operation_id": "824b026d-0660-4b63-82b1-4e169b78d876",
+                "may_still_run_in_windows": false,
+                "operation_id": "145359d9-abdd-4895-aec7-b0af0e656602",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Wipe Disk 0\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining      Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------      ----\r\n            SAK_WIPE     NTFS           Fixed     Healthy      OK                    476.82 GB 476.92 GB\r\n\r\n\r\n",
+                "stop_cleanup_not_removed": [
+                ],
+                "stop_cleanup_removed": [
+                ],
                 "success": true,
                 "summary": "Wipe Disk - Disk 0"
             }
@@ -53,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "824b026d-0660-4b63-82b1-4e169b78d876",
+            "id": "145359d9-abdd-4895-aec7-b0af0e656602",
             "payload": {
             },
             "script_sha256": "a470f27dadf1be48b40f359a9a08f40863ef8542183a547b79ddc62ec1f12303",
@@ -74,15 +80,15 @@
         }
     ],
     "review": {
-        "fingerprint": "57f28828089823d1d442e6b5c5f310d98758cddbf6d3287dfb58245a4ee11ed9",
-        "layout_hash": "504a5e77a8fe80d3c07e61f1059d0f7ce820929d2759f372b15360d9a7524976",
+        "fingerprint": "282fdd709c7f06f6235d45b3e51399d1195536cea131409792670d31739a0a8a",
+        "layout_hash": "96c981df4757d155a6ca40ab1b9d10f051ebd3ff1ac998e517565ddee7fed122",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "e4a42f54-637d-4c85-969a-9342554a966f",
+    "run_id": "aaee89bc-027c-464e-8794-33ff5eb183a1",
     "scenario_id": "external.hardware-wipe",
     "schema_version": 1,
-    "started_utc": "2026-11-11T08:48:46.562Z",
+    "started_utc": "2026-11-14T10:16:24.622Z",
     "status": "Passed",
     "step": "wipe",
     "tool": "partition-manager-scenario-step"

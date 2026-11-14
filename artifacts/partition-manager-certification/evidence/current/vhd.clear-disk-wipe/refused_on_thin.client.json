@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
-        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
-    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-11T09:08:28.347Z",
+    "completed_utc": "2026-11-14T10:39:52.800Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 2,
@@ -23,65 +23,22 @@
         "serial_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "size_bytes": "268435456"
     },
-    "execution": {
-        "cancelled": false,
-        "dry_run": false,
-        "message": "Wipe Disk needs a full format, and Windows does not allow one on a thin-provisioned disk, such as a virtual disk file. Nothing was changed.",
-        "steps": [
-            {
-                "error_message": "Wipe Disk needs a full format, and Windows does not allow one on a thin-provisioned disk, such as a virtual disk file. Nothing was changed.",
-                "operation_id": "a4c3623f-32c8-4163-9b22-d2cd0378f233",
-                "skipped": false,
-                "stderr": "Wipe Disk needs a full format, and Windows does not allow one on a thin-provisioned disk, such as a virtual disk file. \r\nNothing was changed.\r\nAt line:3 char:80\r\n+ ... q 'Thin') { throw 'Wipe Disk needs a full format, and Windows does no ...\r\n+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : OperationStopped: (Wipe Disk needs...ng was changed.:String) [], RuntimeException\r\n    + FullyQualifiedErrorId : Wipe Disk needs a full format, and Windows does not allow one on a thin-provisioned disk \r\n   , such as a virtual disk file. Nothing was changed.\r\n \r\n",
-                "stdout": "SAK Partition Manager: Wipe Disk 2\r\n",
-                "success": false,
-                "summary": "Wipe Disk - Disk 2"
-            }
-        ],
-        "success": false,
-        "timed_out": false
-    },
     "execution_engine": "PartitionManagerController",
-    "expect": "failed",
+    "expect": "refused",
     "expectation_met": true,
-    "helper_connected": true,
     "helper_connected_after_scan": false,
     "inventory_warnings": [
     ],
     "operation": "WipeDisk",
     "queue_refusal_reasons": [
+        "Wipe Disk needs a full format, and Windows does not allow one on a thin-provisioned disk, such as a virtual disk file. Nothing was changed."
     ],
-    "queued_operations": [
-        {
-            "id": "a4c3623f-32c8-4163-9b22-d2cd0378f233",
-            "payload": {
-            },
-            "script_sha256": "2aac4199b02891f6076bded4c77b05b73a8ea45f7414c71c28be57e50f49d5c4",
-            "summary": "Wipe Disk - Disk 2",
-            "target": {
-                "disk_number": 2,
-                "disk_unique_id": "600224809659F6455B96B095FB00F6B5",
-                "drive_letter": "",
-                "kind": "Disk",
-                "offset_bytes": "0",
-                "partition_number": 0,
-                "size_bytes": "268435456"
-            },
-            "type": "Wipe Disk",
-            "warnings": [
-            ]
-        }
-    ],
-    "review": {
-        "fingerprint": "d17a0097b8ddd974d67baae711625c2f7cf20de04d061f29241af718bb2d65ce",
-        "layout_hash": "7b738686bd42774d056188339dbd5a16a71ac89168194a8e74775f78b392b757",
-        "revision": "2"
-    },
+    "refused_at": "queue",
     "route": "elevated-helper",
-    "run_id": "0ade71bb-7859-4fd6-8c77-3240bfe4c669",
+    "run_id": "2ff6f663-4fcf-450a-a130-0d52f0f758dc",
     "scenario_id": "vhd.clear-disk-wipe",
     "schema_version": 1,
-    "started_utc": "2026-11-11T09:08:12.287Z",
+    "started_utc": "2026-11-14T10:39:47.053Z",
     "status": "Passed",
     "step": "refused_on_thin",
     "tool": "partition-manager-scenario-step"

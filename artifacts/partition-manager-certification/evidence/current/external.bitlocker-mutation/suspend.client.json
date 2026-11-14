@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
-        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
-    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-11T09:14:46.312Z",
+    "completed_utc": "2026-11-14T10:46:07.318Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -29,11 +29,17 @@
         "message": "Partition operation batch complete",
         "steps": [
             {
+                "cancelled": false,
                 "error_message": "",
-                "operation_id": "d0309f25-a852-47cd-8b81-2b852ad6c9fa",
+                "may_still_run_in_windows": false,
+                "operation_id": "449c837b-5d7b-47f3-b4f3-9caf0ae81ab6",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: BitLocker Suspend T:\r\nBitLocker Drive Encryption: Configuration Tool version 10.0.26100\r\nCopyright (C) 2013 Microsoft Corporation. All rights reserved.\r\n\r\nVolume T: [SAKBL]\r\n[Data Volume]\r\n\r\n    Size:                 0.50 GB\r\n    BitLocker Version:    2.0\r\n    Conversion Status:    Used Space Only Encrypted\r\n    Percentage Encrypted: 100.0%\r\n    Encryption Method:    AES 128\r\n    Protection Status:    Protection On\r\n    Lock Status:          Unlocked\r\n    Identification Field: Unknown\r\n    Automatic Unlock:     Disabled\r\n    Key Protectors:\r\n        Password\r\n        Numerical Password\r\n\r\nBitLocker Drive Encryption: Configuration Tool version 10.0.26100\r\nCopyright (C) 2013 Microsoft Corporation. All rights reserved.\r\n\r\nKey protectors are disabled for volume T:.\r\n\r\n\r\nMountPoint       : T:\r\nVolumeStatus     : FullyEncrypted\r\nProtectionStatus : Off\r\nLockStatus       : Unlocked\r\nEncryptionMethod : Aes128\r\n\r\n\r\n\r\n\r\n",
+                "stop_cleanup_not_removed": [
+                ],
+                "stop_cleanup_removed": [
+                ],
                 "success": true,
                 "summary": "BitLocker Suspend - Disk 1 Partition 2"
             }
@@ -53,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "d0309f25-a852-47cd-8b81-2b852ad6c9fa",
+            "id": "449c837b-5d7b-47f3-b4f3-9caf0ae81ab6",
             "payload": {
                 "drive_letter": "T"
             },
@@ -61,7 +67,7 @@
             "summary": "BitLocker Suspend - Disk 1 Partition 2",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "600224806F913807CAF1607436110979",
+                "disk_unique_id": "60022480827F3F32D0FE95251FC77C53",
                 "drive_letter": "T",
                 "kind": "Partition",
                 "offset_bytes": "16777216",
@@ -74,15 +80,15 @@
         }
     ],
     "review": {
-        "fingerprint": "fd628b161a073d55a866c947fb048aeeef71275e5d22c9b43490c58442e6abde",
-        "layout_hash": "4a36298449be3be75a6bacd30bf1d624262d9ab894313b73efea3ff4ea9a6935",
+        "fingerprint": "357a46f0a693bd26299bba8e635fe0973b9066f77009c44345f17b2daf3f26c7",
+        "layout_hash": "68e2853d5c6d46c06a365e1e81227546277d94627dcaebf2d7c5b5ff5dece7e4",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "51eb27c4-d4e4-4cb2-b5ed-1bb8a531f4d1",
+    "run_id": "e916643c-4469-457b-8e3a-c9f90609069a",
     "scenario_id": "external.bitlocker-mutation",
     "schema_version": 1,
-    "started_utc": "2026-11-11T09:14:27.102Z",
+    "started_utc": "2026-11-14T10:45:49.736Z",
     "status": "Passed",
     "step": "suspend",
     "tool": "partition-manager-scenario-step"

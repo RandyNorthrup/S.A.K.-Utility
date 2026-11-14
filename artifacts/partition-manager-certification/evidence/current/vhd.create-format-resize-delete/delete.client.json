@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
-        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
-    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-11T08:39:56.068Z",
+    "completed_utc": "2026-11-14T10:08:06.779Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -29,11 +29,17 @@
         "message": "Partition operation batch complete",
         "steps": [
             {
+                "cancelled": false,
                 "error_message": "",
-                "operation_id": "d247d379-84b9-47b2-84e3-0598c6bd5676",
+                "may_still_run_in_windows": false,
+                "operation_id": "54863cd9-01ad-4c14-ba30-cfdeb652f68a",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Delete Disk 1 Partition 2\r\n",
+                "stop_cleanup_not_removed": [
+                ],
+                "stop_cleanup_removed": [
+                ],
                 "success": true,
                 "summary": "Delete Partition - Disk 1 Partition 2"
             }
@@ -53,14 +59,14 @@
     ],
     "queued_operations": [
         {
-            "id": "d247d379-84b9-47b2-84e3-0598c6bd5676",
+            "id": "54863cd9-01ad-4c14-ba30-cfdeb652f68a",
             "payload": {
             },
-            "script_sha256": "28ee9fbaed55823b7b1e97f73a1723461c73174a1ac5215b9862c3252829a1df",
+            "script_sha256": "0945ec0f3a273f224c01ff63394def2523e653503701052febbac25fe4bdb91c",
             "summary": "Delete Partition - Disk 1 Partition 2",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "60022480D3FF6AE2D13796A896AD9303",
+                "disk_unique_id": "60022480EC1ED3AE70556C6BE40D2965",
                 "drive_letter": "E",
                 "kind": "Partition",
                 "offset_bytes": "16777216",
@@ -73,15 +79,15 @@
         }
     ],
     "review": {
-        "fingerprint": "e26e7059180709554d5629ac03116a7124f12ff3c01c0351a944758e58da51cb",
-        "layout_hash": "cdfdbc870efbf56f6339c4797cf79aaee6842ea8e8c4c40e26d14fe4eef50b06",
+        "fingerprint": "77ed9e7879279dd15e9f32e077b6c7f6e91a8444055d9dfd5db3b0983dfcdf44",
+        "layout_hash": "b01135ba2fa479f888328fce5e6203aeb65fab7ff0d697cc9cd9ea072cc915a5",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "296069e7-d217-4b7d-b364-78ef16b1207c",
+    "run_id": "d05759ba-27f4-4e6e-aee6-6fe634b55d6a",
     "scenario_id": "vhd.create-format-resize-delete",
     "schema_version": 1,
-    "started_utc": "2026-11-11T08:39:41.393Z",
+    "started_utc": "2026-11-14T10:07:44.796Z",
     "status": "Passed",
     "step": "delete",
     "tool": "partition-manager-scenario-step"

@@ -1,5 +1,14 @@
 {
   "broken_files_after": 0,
+  "boot_broken": {
+    "reached_sign_in": false,
+    "firmware": "",
+    "system_drive": "",
+    "repair_scan": "",
+    "only_disk_attached": true,
+    "source_marker_present": false,
+    "shot": "sakcert-bios-broken.png"
+  },
   "boot_after": {
     "reached_sign_in": true,
     "firmware": "Legacy",
@@ -9,15 +18,6 @@
     "source_marker_present": false,
     "shot": "sakcert-bios-after.png",
     "source_marker": ""
-  },
-  "boot_broken": {
-    "reached_sign_in": false,
-    "firmware": "",
-    "system_drive": "",
-    "repair_scan": "",
-    "only_disk_attached": true,
-    "source_marker_present": false,
-    "shot": "sakcert-bios-broken.png"
   },
   "boot_before": {
     "reached_sign_in": true,

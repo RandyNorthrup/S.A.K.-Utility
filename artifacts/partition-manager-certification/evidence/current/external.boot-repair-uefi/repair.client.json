@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
-        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
-    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-11T09:39:09.448Z",
+    "completed_utc": "2026-11-14T11:11:24.168Z",
     "disk_before": {
         "bus_type": "SATA",
         "disk_number": 1,
@@ -20,7 +20,7 @@
         "model": "VBOX HARDDISK",
         "partition_count": 4,
         "partition_style": "GPT",
-        "serial_sha256": "58d1fba61a89d2afde309a264c411ee384422190f1d0dba1ceabaafc2216ef14",
+        "serial_sha256": "9d127b272a4fa88c488db136bdbd9c432425ba25f3115ba62dfffbec2c3c0f29",
         "size_bytes": "343597383680"
     },
     "execution": {
@@ -29,11 +29,17 @@
         "message": "Partition operation batch complete",
         "steps": [
             {
+                "cancelled": false,
                 "error_message": "",
-                "operation_id": "82213cb7-d800-4de8-baf1-979312ab27da",
+                "may_still_run_in_windows": false,
+                "operation_id": "4b38f887-d597-4d84-b57a-be01dc153435",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Repair UEFI boot files for the Windows on Disk 1\r\nFound Windows on Disk 1, partition 3\r\nBoot files successfully created.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nBoot files rebuilt for the Windows on Disk 1. Start from that disk to check.\r\n",
+                "stop_cleanup_not_removed": [
+                ],
+                "stop_cleanup_removed": [
+                ],
                 "success": true,
                 "summary": "Repair Boot - Disk 1"
             }
@@ -53,12 +59,12 @@
     ],
     "queued_operations": [
         {
-            "id": "82213cb7-d800-4de8-baf1-979312ab27da",
+            "id": "4b38f887-d597-4d84-b57a-be01dc153435",
             "payload": {
                 "boot_mode": "UEFI",
                 "repair_scope": "attached"
             },
-            "script_sha256": "34741c8f2a43993c6bb432fddf3fe822b6dbf25616e77412d32e5a9e49169870",
+            "script_sha256": "4a220788459c96e6989e506cfb34d46706dc59fb8ef277214888a8d713137dcc",
             "summary": "Repair Boot - Disk 1",
             "target": {
                 "disk_number": 1,
@@ -75,15 +81,15 @@
         }
     ],
     "review": {
-        "fingerprint": "5c3d660917052dbcdc316bcc4599d4b2f11107fe0f31e95a5275b4f101b3af4d",
-        "layout_hash": "c5616bdfa714b0cb81962ac8ed2f841254f675f398cafa420eaf94ec8641840a",
+        "fingerprint": "95c5d75bc168fc9e3b925a8e77a8106f834934b9db6359703d4f7d7340cffe6a",
+        "layout_hash": "7b4cd6c8a7f786c6fed3e49935b6aa24cce85dcc01f626874421358b152cb520",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "974a16c0-a49b-4201-b7b4-28d45040b7f3",
+    "run_id": "a3eaac2a-e380-4a8b-b289-8b00ca986616",
     "scenario_id": "external.boot-repair-uefi",
     "schema_version": 1,
-    "started_utc": "2026-11-11T09:38:36.914Z",
+    "started_utc": "2026-11-14T11:10:53.385Z",
     "status": "Passed",
     "step": "repair",
     "tool": "partition-manager-scenario-step"

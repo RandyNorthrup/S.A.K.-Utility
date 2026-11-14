@@ -1,6 +1,6 @@
 {
-    "boot_sector_serial_before":  "665E6A8F",
-    "boot_sector_serial_after":  "AC67F6F9",
+    "boot_sector_serial_before":  "E6844ECE",
+    "boot_sector_serial_after":  "E88E8628",
     "volume_after":  {
                          "drive_letter":  "T",
                          "file_system":  "NTFS",
@@ -9,7 +9,7 @@
                          "free_bytes":  379871232,
                          "cluster_bytes":  4096,
                          "health":  "Healthy",
-                         "serial_number":  "AC67F6F9"
+                         "serial_number":  "E88E8628"
                      },
     "files_before":  {
                          "root":  "T:\\fixture",

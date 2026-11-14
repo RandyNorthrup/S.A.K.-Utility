@@ -4,18 +4,18 @@
     "scenario_id":  "vhd.create-format-resize-delete",
     "status":  "Passed",
     "failure":  "",
-    "run_id":  "296069e7-d217-4b7d-b364-78ef16b1207c",
-    "started_utc":  "2026-11-11T08:37:54.7163269Z",
-    "completed_utc":  "2026-11-11T08:39:58.7115150Z",
+    "run_id":  "d05759ba-27f4-4e6e-aee6-6fe634b55d6a",
+    "started_utc":  "2026-11-14T10:05:19.3911928Z",
+    "completed_utc":  "2026-11-14T10:08:11.1150975Z",
     "code":  {
-                 "digest":  "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
-                 "commit":  "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
+                 "digest":  "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
+                 "commit":  "d8c27a155c90123c34d82b56fd92d61b75d1f602",
                  "dirty":  false
              },
     "binaries":  {
-                     "client_sha256":  "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0",
-                     "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
-                     "app_sha256":  "90c5e5d3ac84b7e29298aa4cdce915a4839be416fcadaadba2d9aa635985e3bf"
+                     "client_sha256":  "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132",
+                     "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+                     "app_sha256":  "fb9bd0213aa322589223a9701cb6c45fad7724d44a6421a3a8c0e2f74c18f702"
                  },
     "rig":  {
                 "machine_manufacturer":  "innotek GmbH",
@@ -42,11 +42,11 @@
                       "expect":  "success",
                       "report":  "create.client.json",
                       "observed":  {
-                                       "client_pid":  8232,
+                                       "client_pid":  10144,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  308,
-                                       "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+                                       "helper_pid":  8248,
+                                       "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -57,11 +57,11 @@
                       "expect":  "success",
                       "report":  "format.client.json",
                       "observed":  {
-                                       "client_pid":  6772,
+                                       "client_pid":  9824,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  5232,
-                                       "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+                                       "helper_pid":  9968,
+                                       "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -72,11 +72,11 @@
                       "expect":  "success",
                       "report":  "resize.client.json",
                       "observed":  {
-                                       "client_pid":  5768,
+                                       "client_pid":  5320,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  3824,
-                                       "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+                                       "helper_pid":  9220,
+                                       "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -87,11 +87,11 @@
                       "expect":  "success",
                       "report":  "delete.client.json",
                       "observed":  {
-                                       "client_pid":  1028,
+                                       "client_pid":  9528,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  4348,
-                                       "helper_sha256":  "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
+                                       "helper_pid":  7940,
+                                       "helper_sha256":  "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -101,28 +101,28 @@
     "artifacts":  [
                       {
                           "path":  "independent.json",
-                          "sha256":  "e948a72677578c45cbb7eb5ff35a45e519547958c9fe118c3995489f03f6cf14",
+                          "sha256":  "0ec6855110418d485debc1a22c8664adccbf7733f732eeccb777fffe200b16d2",
                           "bytes":  162340
                       },
                       {
                           "path":  "create.client.json",
-                          "sha256":  "4e9a19210a23eb168a3912a244bca29dea6c46a4629d75a5fdc335bee172ae79",
-                          "bytes":  10999
+                          "sha256":  "a6b23f5c2332bca4a9ebb1b2211991566e6f42f4a67ec3aa2b4f17150cd3139a",
+                          "bytes":  11273
                       },
                       {
                           "path":  "format.client.json",
-                          "sha256":  "2fdf99d6d05257aa6bb5cb06bb87e9083906d5a1b36a166624c5b39cf6b879b2",
-                          "bytes":  3638
+                          "sha256":  "379ba52681ea2fdfc91243c40bc4b1c068f39d0e16c7ccb331ba7e7decd6188b",
+                          "bytes":  3912
                       },
                       {
                           "path":  "resize.client.json",
-                          "sha256":  "1774d6ef6bb5c07c376512aa9b9818749f287756d246ba6435dea3b7ac7b9fd2",
-                          "bytes":  3247
+                          "sha256":  "03c8da514d2037d2d38f2836b8a71333d1a7d62302cde7b59291946727ec76b7",
+                          "bytes":  3544
                       },
                       {
                           "path":  "delete.client.json",
-                          "sha256":  "f0b9634f44c4fb7b2f09fe2f90e04096ccdf23a325b0d14f733908e1e1d695e0",
-                          "bytes":  3134
+                          "sha256":  "86755ba66ff923f1e9da0d5014af61cb98a02e7957e4e7b207cfb0817afe6bb0",
+                          "bytes":  3347
                       }
                   ]
 }

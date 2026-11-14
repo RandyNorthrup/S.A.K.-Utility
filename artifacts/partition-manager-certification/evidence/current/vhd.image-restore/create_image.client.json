@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "40512190b325b11d84dce2af49b4169af115d9628a2112db62c5c708a9541206",
-        "sha256": "b6abe41e8bcb9a5c75c6f8cac7b70c8ab3f393466927372988cc2cfc2db837d0"
+        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
+        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
     },
-    "code_commit": "9aa97f95c12b1142a2af0ef5c96bcd04bb84f497",
-    "code_digest": "790692c34d977b546a3b32b467fcfb3be5c27f13a3a85a82bae5e37d4d78cc4b",
+    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
+    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
     "code_dirty": false,
-    "completed_utc": "2026-11-11T08:52:21.072Z",
+    "completed_utc": "2026-11-14T10:23:41.493Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -29,11 +29,17 @@
         "message": "Partition operation batch complete",
         "steps": [
             {
+                "cancelled": false,
                 "error_message": "",
-                "operation_id": "13758d1c-442e-4e01-9896-34f9c54028cf",
+                "may_still_run_in_windows": false,
+                "operation_id": "750fea4b-a7b6-4ea0-bfa0-5df405cc18a4",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Create Image from \\\\.\\PhysicalDrive1 to C:\\SAKCert\\work\\restore-source.img\r\nRunning full clone verification\r\n",
+                "stop_cleanup_not_removed": [
+                ],
+                "stop_cleanup_removed": [
+                ],
                 "success": true,
                 "summary": "Create Image - Disk 1"
             }
@@ -53,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "13758d1c-442e-4e01-9896-34f9c54028cf",
+            "id": "750fea4b-a7b6-4ea0-bfa0-5df405cc18a4",
             "payload": {
                 "overwrite_confirmed": false,
                 "source_capture_mode": "OfflineDisk",
@@ -63,11 +69,11 @@
                 "target_path": "C:\\SAKCert\\work\\restore-source.img",
                 "verify_mode": "Full"
             },
-            "script_sha256": "96f96534ae09a1497c904752c3583b2b84737430d05806f396ba3cc856e3d47d",
+            "script_sha256": "9c4764cafa9b939c441c1db278647cc15f310bf5b999f45af46f36fa5ef7d411",
             "summary": "Create Image - Disk 1",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "6002248053A3F8AAFCA830687CFF9005",
+                "disk_unique_id": "60022480B6085A8DB8763D34616715FD",
                 "drive_letter": "",
                 "kind": "Disk",
                 "offset_bytes": "0",
@@ -80,15 +86,15 @@
         }
     ],
     "review": {
-        "fingerprint": "b1fb06704b507fc43c78424c4e8cdf0f1909a7175dd2388bd32f8eb0bf175369",
-        "layout_hash": "8bd027e156d734e24cd495d041aaabee3b9db09f57b7ee0cbf12213dc98ed6ac",
+        "fingerprint": "af97a8892fe41bca93bf65c20f19a783d1bade3579ccf17d98aaf3dd8405d32b",
+        "layout_hash": "544abbdc69a6746ab75d0f9629d7c3f5bc8de74ad3a9173a5b367c23e01997b9",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "296069e7-d217-4b7d-b364-78ef16b1207c",
+    "run_id": "d05759ba-27f4-4e6e-aee6-6fe634b55d6a",
     "scenario_id": "vhd.image-restore",
     "schema_version": 1,
-    "started_utc": "2026-11-11T08:51:49.699Z",
+    "started_utc": "2026-11-14T10:23:04.243Z",
     "status": "Passed",
     "step": "create_image",
     "tool": "partition-manager-scenario-step"
