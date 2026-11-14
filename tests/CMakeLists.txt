@@ -356,6 +356,7 @@ set(SAK_PARTITION_CORE_RUNTIME_SOURCES
     ../src/core/elevation_broker.cpp
     ../src/core/partition_safety_validator.cpp
     ../src/core/partition_script_builder.cpp
+    ../src/core/volume_check_outcome.cpp
     ../src/core/partition_operation_requests.cpp
     ../src/core/partition_os_migration.cpp
     ../src/core/partition_os_migration_script.cpp
