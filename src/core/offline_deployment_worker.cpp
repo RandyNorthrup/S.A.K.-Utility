@@ -38,6 +38,7 @@
 #include <QXmlStreamReader>
 
 #include <algorithm>
+#include <array>
 #include <optional>
 
 namespace sak {
@@ -45,6 +46,34 @@ namespace sak {
 namespace {
 constexpr qsizetype kInstallErrorPreviewChars = 200;
 constexpr int kFirstPrintableAscii = 0x20;  // bytes below space are C0 controls
+
+// The worker's long operationError messages, each with the status bar's short form of it (fix
+// batch 5, E). The work-folder refusals come first, in WorkDirRefusal's order.
+constexpr std::size_t kManifestNotWritten = 4;
+constexpr std::array<MessageForm, 5> kErrorForms{{
+    {
+        .message = "Nothing was started: S.A.K.'s work folder on %1 already holds files S.A.K. "
+                   "did not put there.",
+        .short_form = "work folder on %1 is not S.A.K.'s",
+    },
+    {
+        .message = "Nothing was started: S.A.K.'s work folder on %1 is a link to another folder, "
+                   "and S.A.K. does not work through one.",
+        .short_form = "work folder on %1 is a link",
+    },
+    {
+        .message = "Nothing was started: S.A.K. could not create its work folder on %1.",
+        .short_form = "cannot create work folder on %1",
+    },
+    {
+        .message = "Nothing was started: S.A.K. could not write to its work folder on %1.",
+        .short_form = "cannot write to work folder on %1",
+    },
+    {
+        .message = "Failed to write manifest to %1",
+        .short_form = "could not write the manifest",
+    },
+}};
 
 QString packagesCount(qint64 count) {
     return countOf(count, QStringLiteral("package"), QStringLiteral("packages"));
@@ -357,26 +386,18 @@ bool OfflineDeploymentWorker::prepareOwnedWorkDir(const QString& work_dir, QStri
     // Each refusal names the drive, not the folder's random name; workCanStartIn logs the folder.
     const QString drive = PackageInternalizationEngine::workDriveName(work_dir);
     if (disposition == WorkDirDisposition::RefuseForeign) {
-        error_out = QStringLiteral(
-                        "Nothing was started: S.A.K.'s work folder on %1 already holds "
-                        "files S.A.K. did not put there.")
-                        .arg(drive);
+        error_out = workDirRefusal(WorkDirRefusal::Foreign, drive);
         return false;
     }
     // A reparse-point work dir would let a later removeRecursively() follow a junction out of the
     // work tree; refuse it outright (the path is deterministic, so it can be pre-planted).
     const QFileInfo work_info(work_dir);
     if (exists && (work_info.isSymLink() || work_info.isJunction())) {
-        error_out = QStringLiteral(
-                        "Nothing was started: S.A.K.'s work folder on %1 is a link to "
-                        "another folder, and S.A.K. does not work through one.")
-                        .arg(drive);
+        error_out = workDirRefusal(WorkDirRefusal::Link, drive);
         return false;
     }
     if (!QDir().mkpath(work_dir)) {
-        error_out =
-            QStringLiteral("Nothing was started: S.A.K. could not create its work folder on %1.")
-                .arg(drive);
+        error_out = workDirRefusal(WorkDirRefusal::CannotCreate, drive);
         return false;
     }
     // Stamp ownership (fail closed) so a later removeOwnedWorkDir() only ever deletes our tree. If
@@ -385,12 +406,22 @@ bool OfflineDeploymentWorker::prepareOwnedWorkDir(const QString& work_dir, QStri
     QSaveFile stamp(marker);
     const QByteArray body = QByteArrayLiteral("S.A.K. Utility offline-deployment work directory\n");
     if (!stamp.open(QIODevice::WriteOnly) || stamp.write(body) != body.size() || !stamp.commit()) {
-        error_out =
-            QStringLiteral("Nothing was started: S.A.K. could not write to its work folder on %1.")
-                .arg(drive);
+        error_out = workDirRefusal(WorkDirRefusal::CannotWrite, drive);
         return false;
     }
     return true;
+}
+
+QString OfflineDeploymentWorker::workDirRefusal(WorkDirRefusal reason, const QString& drive) {
+    return QString::fromUtf8(kErrorForms.at(static_cast<std::size_t>(reason)).message).arg(drive);
+}
+
+QString OfflineDeploymentWorker::errorShortForm(const QString& error_message) {
+    QString short_form = PackageInternalizationEngine::workSpaceRefusalShortForm(error_message);
+    if (short_form.isEmpty()) {
+        short_form = shortFormOf(error_message, kErrorForms);
+    }
+    return short_form.isEmpty() ? error_message : short_form;
 }
 
 // ============================================================================
@@ -904,7 +935,8 @@ void OfflineDeploymentWorker::finalizeBundle(const DeploymentManifest& manifest,
         QMetaObject::invokeMethod(
             this,
             [this, dir = ctx.output_dir]() {
-                Q_EMIT operationError("Failed to write manifest to " + dir);
+                Q_EMIT operationError(
+                    QString::fromUtf8(kErrorForms.at(kManifestNotWritten).message).arg(dir));
             },
             Qt::QueuedConnection);
         return;

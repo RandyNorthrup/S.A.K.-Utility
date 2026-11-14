@@ -10431,20 +10431,7 @@ void PartitionManagerPanel::connectControllerSignals() {
         // An open close prompt rewrites its note: the step may have just become stoppable.
         RunningOperations::notifyChanged();
     });
-    connect(m_controller.get(),
-            &PartitionManagerController::queueRefused,
-            this,
-            [this](const QStringList& reasons) {
-                showWarningLogged(this,
-                                  tr("Not Added to the Queue"),
-                                  reasons.join(QLatin1Char('\n')));
-            });
-    connect(m_controller.get(),
-            &PartitionManagerController::applyRefused,
-            this,
-            [this](const QStringList& reasons) {
-                showWarningLogged(this, tr("Not Applied"), reasons.join(QLatin1Char('\n')));
-            });
+    connectControllerRefusals();
     connect(m_controller.get(), &PartitionManagerController::stateChanged, this, [this]() {
         updateActionState();
     });
@@ -10458,6 +10445,27 @@ void PartitionManagerPanel::connectControllerSignals() {
                     m_table_empty_state->setLoading(text);
                 }
                 Q_EMIT statusMessage(text, 0);
+            });
+}
+
+void PartitionManagerPanel::connectControllerRefusals() {
+    connect(m_controller.get(),
+            &PartitionManagerController::queueRefused,
+            this,
+            [this](const QStringList& reasons) {
+                // The box says the reasons; the status bar, which cut the controller's line with
+                // them at 1024 px, says what happened (fix batch 5, E).
+                Q_EMIT statusMessage(tr("Not added to the queue"), sak::kTimerStatusLongMs);
+                showWarningLogged(this,
+                                  tr("Not Added to the Queue"),
+                                  reasons.join(QLatin1Char('\n')));
+            });
+    connect(m_controller.get(),
+            &PartitionManagerController::applyRefused,
+            this,
+            [this](const QStringList& reasons) {
+                Q_EMIT statusMessage(tr("Not applied"), sak::kTimerStatusLongMs);
+                showWarningLogged(this, tr("Not Applied"), reasons.join(QLatin1Char('\n')));
             });
 }
 
@@ -13935,6 +13943,33 @@ void PartitionManagerPanel::onWipeSelected() {
     queueOperation(*type, *target, expected_layout_hash);
 }
 
+/// How a run ended, for the status bar while its box says the result whole (fix batch 5, E).
+static QString executionStatusLead(const PartitionExecutionResult& result) {
+    if (result.cancelled) {
+        return QObject::tr("Partition operation cancelled");
+    }
+    if (!result.success) {
+        return QObject::tr("Partition operation failed");
+    }
+    if (result.findings_need_attention) {
+        return QObject::tr("Partition check needs attention");
+    }
+    return result.dry_run ? QObject::tr("Dry run complete")
+                          : QObject::tr("Partition operation complete");
+}
+
+/// How a read-only tool check ended, for the status bar while its box says what it found.
+static QString toolCheckStatusLead(const PartitionFileSystemToolRunResult& result) {
+    if (result.cancelled) {
+        return QObject::tr("Filesystem check cancelled");
+    }
+    if (result.blocked) {
+        return QObject::tr("Filesystem check blocked");
+    }
+    return result.success ? QObject::tr("Filesystem check complete")
+                          : QObject::tr("Filesystem check needs attention");
+}
+
 void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& result) {
     // The run is over, though the controller reports it running until this result is read: an
     // open close prompt that asked about it goes first, so this result never opens over a prompt
@@ -13956,6 +13991,9 @@ void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& 
         // Shown once the check has finished, so it does not say "after this finishes".
         message += QStringLiteral("\n\n") + tr("Eject the drive in Windows before you unplug it.");
     }
+    // The box says the result whole; the status bar says how the run ended. The controller's
+    // line, one sentence a volume, ran past the bar's first permanent widget (fix batch 5, E).
+    Q_EMIT statusMessage(executionStatusLead(result), sak::kTimerStatusDefaultMs);
     // A check that ran to its end and found errors, or gave no answer about a volume, passed as a
     // run and is still a warning (fix batch 4, C).
     if ((result.success && !result.findings_need_attention) ||
@@ -13972,6 +14010,8 @@ void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& 
 void PartitionManagerPanel::onFileSystemCheckFinished(
     const PartitionFileSystemToolRunResult& result) {
     const auto outcome = volume_check::toolCheckOutcome(result, result.file_system);
+    // As onExecutionFinished: the status bar says how the check ended, the box what it found.
+    Q_EMIT statusMessage(toolCheckStatusLead(result), sak::kTimerStatusDefaultMs);
     if (outcome.needs_attention) {
         showWarningLogged(this, tr("Check Non-Windows File System"), outcome.text);
         return;

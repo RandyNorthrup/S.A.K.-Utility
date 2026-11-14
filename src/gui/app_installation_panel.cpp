@@ -864,12 +864,14 @@ void AppInstallationPanel::setupOfflineWorkerProgressConnections() {
 }
 
 QString AppInstallationPanel::offlineStatusBarText(const QString& summary) const {
-    // The status bar names what failed too: it read "9 succeeded, 1 failed" with no name.
-    QString text = tr("Offline operation: %1").arg(summary);
-    if (!m_offline_failures.isEmpty()) {
-        text += tr(" - Failed: %1").arg(m_offline_failures.join(QStringLiteral("; ")));
-    }
-    return text;
+    // The counts, under the action's name. What failed, and why, is in the warning box a run with
+    // a failure opens: named here too, the line ran past the status bar's first permanent widget
+    // and was cut (fix batch 5, E).
+    return tr("%1: %2").arg(offlineActionTitle(), summary);
+}
+
+QString AppInstallationPanel::offlineErrorStatus(const QString& action, const QString& error) {
+    return tr("%1: %2").arg(action, OfflineDeploymentWorker::errorShortForm(error));
 }
 
 QString AppInstallationPanel::offlineActionTitle() const {
@@ -938,8 +940,10 @@ void AppInstallationPanel::onOfflineOperationError(const QString& error) {
     setOfflineInProgressUi(false);
     Q_EMIT progressUpdated(std::max(m_offline_total, 1), std::max(m_offline_total, 1));
 
+    // The status bar says the refusal's short form, which fits at 1024 px; the box says it whole.
+    // The message's time starts when the box closes (MainWindow::updateStatus, fix batch 5, E).
     const QString title = offlineActionTitle();
-    Q_EMIT statusMessage(tr("%1: %2").arg(title, error), sak::kTimerStatusDefaultMs);
+    Q_EMIT statusMessage(offlineErrorStatus(title, error), sak::kTimerStatusDefaultMs);
     if (m_offline_cancel_requested) {
         sak::logInfo("[AppInstallationPanel] {} cancelled: {}",
                      title.toStdString(),

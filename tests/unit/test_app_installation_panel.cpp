@@ -145,6 +145,7 @@ void AppInstallationPanelTests::startupWorkRunsInEveryMode() {
 void AppInstallationPanelTests::offlineBundleNamesWhatFailedAndEndsTheProgress() {
     sak::AppInstallationPanel panel;
     QSignalSpy progress(&panel, &sak::AppInstallationPanel::progressUpdated);
+    QSignalSpy status_bar(&panel, &sak::AppInstallationPanel::statusMessage);
     Q_EMIT panel.m_offline_worker->operationStarted(10);
     Q_EMIT panel.m_offline_worker->batchProgress(8, 10, QStringLiteral("vlc"));
     Q_EMIT panel.m_offline_worker->packageProgress(QStringLiteral("adobereader"),
@@ -170,6 +171,11 @@ void AppInstallationPanelTests::offlineBundleNamesWhatFailedAndEndsTheProgress()
     QVERIFY(recorder.seen);
     QCOMPARE(recorder.icon, QMessageBox::Warning);
     QCOMPARE(recorder.text, status);
+    // Fix batch 5 (E): the box names what failed and why; the status bar says the counts under
+    // the action's name. With the names too, it ran past the bar's first permanent widget.
+    QVERIFY(!status_bar.isEmpty());
+    QCOMPARE(status_bar.last().at(0).toString(),
+             QStringLiteral("Offline Deploy: 9 succeeded, 1 failed"));
 }
 
 // Review 3 (RG1): the failure named in the status label carried a download URL, and unwrapped at
@@ -221,17 +227,22 @@ void AppInstallationPanelTests::offlineRefusalIsSaidInView_data() {
     QTest::addColumn<QString>("action");
     QTest::addColumn<bool>("space_unknown");
     QTest::addColumn<QString>("reason");
+    QTest::addColumn<QString>("status_lead");
     QTest::newRow("Build Offline Bundle, short of space")
         << QStringLiteral("Build Offline Bundle") << false
-        << QStringLiteral("Not enough free space for the work files");
+        << QStringLiteral("Not enough free space for the work files")
+        << QStringLiteral("not enough free space on ");
     QTest::newRow("Build Offline Bundle, free space unknown")
         << QStringLiteral("Build Offline Bundle") << true
-        << QStringLiteral("could not tell how much free space");
+        << QStringLiteral("could not tell how much free space")
+        << QStringLiteral("cannot read free space on ");
     QTest::newRow("Direct Download, short of space")
         << QStringLiteral("Direct Download") << false
-        << QStringLiteral("Not enough free space for the work files");
+        << QStringLiteral("Not enough free space for the work files")
+        << QStringLiteral("not enough free space on ");
     QTest::newRow("Install from Bundle, unreadable manifest")
         << QStringLiteral("Install from Bundle") << false
+        << QStringLiteral("Manifest is empty or unreadable")
         << QStringLiteral("Manifest is empty or unreadable");
 }
 
@@ -244,6 +255,7 @@ void AppInstallationPanelTests::offlineRefusalIsSaidInView() {
     QFETCH(QString, action);
     QFETCH(bool, space_unknown);
     QFETCH(QString, reason);
+    QFETCH(QString, status_lead);
     QTemporaryDir out;
     QVERIFY(out.isValid());
     const auto previous = sak::PackageInternalizationEngine::setFreeSpaceProbeForTesting(
@@ -283,9 +295,13 @@ void AppInstallationPanelTests::offlineRefusalIsSaidInView() {
         qPrintable(QStringLiteral("%1x%2").arg(recorder.size.width()).arg(recorder.size.height())));
     const QString run_folder = QDir::toNativeSeparators(QDir::tempPath());
     QVERIFY2(!recorder.text.contains(run_folder, Qt::CaseInsensitive), qPrintable(recorder.text));
+    // The status bar says the refusal's short form, which fits at 1024 px (test_main_window_help
+    // measures it); the box says it whole (fix batch 5, E).
     QVERIFY(!status.isEmpty());
     const QString status_text = status.last().at(0).toString();
-    QVERIFY2(status_text.startsWith(action + QStringLiteral(": ")) && status_text.contains(reason),
+    QVERIFY2(status_text.startsWith(action + QStringLiteral(": ") + status_lead),
+             qPrintable(status_text));
+    QVERIFY2(status_text == sak::AppInstallationPanel::offlineErrorStatus(action, recorder.text),
              qPrintable(status_text));
     if (reason.contains(QStringLiteral("free space"))) {
         QVERIFY2(recorder.text.contains(QStringLiteral("S.A.K.'s work folder is on ")),

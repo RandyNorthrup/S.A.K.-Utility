@@ -89,6 +89,11 @@ public:
 
     /** @brief Access the log toggle switch for MainWindow connection */
 
+    /// @brief What the status bar says when an offline run started by @p action is refused or
+    ///        fails with @p error: "Build Offline Bundle: not enough free space on V:". The box
+    ///        says @p error whole (OfflineDeploymentWorker::errorShortForm).
+    [[nodiscard]] static QString offlineErrorStatus(const QString& action, const QString& error);
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdated(int current, int maximum);

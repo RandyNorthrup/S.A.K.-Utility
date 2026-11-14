@@ -30,6 +30,7 @@
 #include <QXmlStreamReader>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -48,6 +49,25 @@ constexpr int kSha512HexLength = 128;
 // Code units below this are C0 control characters and are rejected in a path
 // component (U+0000..U+001F).
 constexpr char16_t kFirstNonControlCodeUnit = 0x20;
+
+// The two work-space refusals, each with the status bar's short form of it (fix batch 5, E):
+// "Build Offline Bundle: not enough free space on V:" where the whole sentence was cut after
+// "Free some space" at 1280 px. The box says the whole refusal.
+constexpr std::size_t kWorkSpaceShort = 0;
+constexpr std::size_t kWorkSpaceUnknown = 1;
+constexpr std::array<MessageForm, 2> kWorkSpaceRefusals{{
+    {
+        .message = "Not enough free space for the work files: S.A.K.'s work folder is on %1, which "
+                   "has %2 free; at least %3 is needed. Free some space on %1, or run S.A.K. from "
+                   "a larger drive.",
+        .short_form = "not enough free space on %1",
+    },
+    {
+        .message = "Nothing was started: S.A.K.'s work folder is on %1, and S.A.K. could not tell "
+                   "how much free space that drive has.",
+        .short_form = "cannot read free space on %1",
+    },
+}};
 
 NetworkTransferRequest makeFeedRequest(const QUrl& url) {
     NetworkTransferRequest request;
@@ -393,16 +413,14 @@ QString PackageInternalizationEngine::workSpaceRefusal(const QString& work_root,
                     needed_bytes);
     const QString drive = workDriveName(work_root);
     if (available < 0) {
-        return QStringLiteral(
-                   "Nothing was started: S.A.K.'s work folder is on %1, and S.A.K. could not tell "
-                   "how much free space that drive has.")
-            .arg(drive);
+        return QString::fromUtf8(kWorkSpaceRefusals.at(kWorkSpaceUnknown).message).arg(drive);
     }
-    return QStringLiteral(
-               "Not enough free space for the work files: S.A.K.'s work folder is on %1, which has "
-               "%2 free; at least %3 is needed. Free some space on %1, or run S.A.K. from a "
-               "larger drive.")
+    return QString::fromUtf8(kWorkSpaceRefusals.at(kWorkSpaceShort).message)
         .arg(drive, formatBytes(available), formatBytes(needed_bytes));
+}
+
+QString PackageInternalizationEngine::workSpaceRefusalShortForm(const QString& refusal) {
+    return shortFormOf(refusal, kWorkSpaceRefusals);
 }
 
 qint64 PackageInternalizationEngine::downloadWorkBytes(qint64 declared_bytes,

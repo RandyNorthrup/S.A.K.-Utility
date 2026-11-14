@@ -190,6 +190,7 @@ private Q_SLOTS:
     void labelsSayWhatTheToolDoes();
     void noVisibleTextSaysCertified();
     void refusedOperationSaysWhy();
+    void applyRefusalSaysNotAppliedWhileTheBoxSaysWhy();
     void logShowsPlainTextWhenARunFinishes();
     void createDialogHasNoTypeItCannotQueue();
     void readOnlyCheckButtonSaysItRunsNow();
@@ -5494,18 +5495,49 @@ void PartitionManagerPanelTests::refusedOperationSaysWhy() {
     sak::PartitionTarget absent;
     absent.kind = sak::PartitionTargetKind::Disk;
     absent.disk_number = sak::DiskNumber{42};
+    QSignalSpy statuses(&panel, &sak::PartitionManagerPanel::statusMessage);
 
     QString shown;
+    QString status_while_open;
     const ScopedModalInspection inspection([&]() {
         auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
         const auto reject_on_return = rejectDialogOnReturn(box);
         QVERIFY2(box != nullptr, "A refusal should say why in a warning");
         shown = box->text();
+        status_while_open = statuses.isEmpty() ? QString() : statuses.last().at(0).toString();
         box->accept();
     });
     panel.queueTestOperationForReview(sak::PartitionOperationType::InitializeDisk, absent);
     QVERIFY2(!shown.isEmpty(), "The warning should carry the reasons");
     QVERIFY(panel.testQueuedOperationsForReview().isEmpty());
+    // Fix batch 5 (E): the box says the reasons; the status bar, which cut the controller's line
+    // with them at 1024 px, says what happened while the box is read.
+    QCOMPARE(status_while_open, QStringLiteral("Not added to the queue"));
+}
+
+// Fix batch 5 (E): an Apply refused at its pre-run check says the reasons in a box and, while the
+// box is read, "Not applied" in the status bar, which the reasons ran past at 1024 px.
+void PartitionManagerPanelTests::applyRefusalSaysNotAppliedWhileTheBoxSaysWhy() {
+    sak::PartitionManagerPanel panel;
+    auto* controller = panel.findChild<sak::PartitionManagerController*>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy statuses(&panel, &sak::PartitionManagerPanel::statusMessage);
+    QString shown;
+    QString status_while_open;
+    const ScopedModalInspection inspection([&]() {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(box);
+        QVERIFY2(box != nullptr, "A refused Apply should say why in a warning");
+        shown = box->text();
+        status_while_open = statuses.isEmpty() ? QString() : statuses.last().at(0).toString();
+        box->accept();
+    });
+    const QString reason = QStringLiteral(
+        "Disk 1 changed since the operations were queued: its layout no longer matches the plan, "
+        "so nothing was applied. Refresh the disks and queue the operations again.");
+    Q_EMIT controller->applyRefused({reason});
+    QCOMPARE(shown, reason);
+    QCOMPARE(status_while_open, QStringLiteral("Not applied"));
 }
 
 void PartitionManagerPanelTests::logShowsPlainTextWhenARunFinishes() {
@@ -6961,16 +6993,21 @@ struct ResultBox {
     QString text;
     QMessageBox::Icon icon{QMessageBox::NoIcon};
     bool seen{false};
+    QString status_while_open;  ///< The panel's last status message while the box was open.
 };
 
-/// Closes the next message box that opens, keeping what it said in @p box.
-void closeNextResultBox(QTimer* closer, ResultBox* box) {
+/// Closes the next message box that opens, keeping what it said in @p box, and the last message
+/// @p statuses (a spy on the panel's statusMessage) had caught by then.
+void closeNextResultBox(QTimer* closer, ResultBox* box, const QSignalSpy* statuses = nullptr) {
     closer->setInterval(1);
-    QObject::connect(closer, &QTimer::timeout, [box]() {
+    QObject::connect(closer, &QTimer::timeout, [box, statuses]() {
         if (auto* shown = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
             box->text = shown->text();
             box->icon = shown->icon();
             box->seen = true;
+            if (statuses != nullptr && !statuses->isEmpty()) {
+                box->status_while_open = statuses->last().at(0).toString();
+            }
             shown->accept();
         }
     });
@@ -6988,15 +7025,18 @@ void PartitionManagerPanelTests::checkFileSystemSaysWhatTheCheckFound() {
         const char* output{nullptr};
         const char* said{nullptr};
         QMessageBox::Icon icon{QMessageBox::NoIcon};
+        const char* status{nullptr};  ///< What the status bar says while the box is open.
     };
     for (const Case& test :
          {Case{"Volume check D: read-only chkdsk: None",
                "Drive D: No errors found (read-only chkdsk).",
-               QMessageBox::Information},
+               QMessageBox::Information,
+               "Partition operation complete"},
           Case{"Volume check D: online scan: ScanErrorsFoundNeedSpotFix",
                "Drive D: Errors found (Windows reports ScanErrorsFoundNeedSpotFix). Repair "
                "recommended (this check does not modify the disk).",
-               QMessageBox::Warning}}) {
+               QMessageBox::Warning,
+               "Partition check needs attention"}}) {
         sak::PartitionManagerPanel panel;
         auto inventory = applyReviewInventoryFixture();
         inventory.disks[0].bus_type = QStringLiteral("USB");
@@ -7020,7 +7060,8 @@ void PartitionManagerPanelTests::checkFileSystemSaysWhatTheCheckFound() {
         });
         ResultBox box;
         QTimer closer;
-        closeNextResultBox(&closer, &box);
+        QSignalSpy statuses(&panel, &sak::PartitionManagerPanel::statusMessage);
+        closeNextResultBox(&closer, &box, &statuses);
         auto* table = panel.findChild<QTableWidget*>();
         QVERIFY2(table != nullptr, "Partition table should exist");
         table->selectRow(1);
@@ -7033,6 +7074,8 @@ void PartitionManagerPanelTests::checkFileSystemSaysWhatTheCheckFound() {
                  QString::fromLatin1(test.said) +
                      QStringLiteral("\n\nEject the drive in Windows before you unplug it."));
         QCOMPARE(box.icon, test.icon);
+        // Fix batch 5 (E): the status bar says how the run ended; the box says what it found.
+        QCOMPARE(box.status_while_open, QString::fromLatin1(test.status));
     }
 }
 
@@ -7044,24 +7087,28 @@ void PartitionManagerPanelTests::nonWindowsCheckSaysWhatItFound() {
         const char* problem{nullptr};
         const char* said{nullptr};
         QMessageBox::Icon icon{QMessageBox::NoIcon};
+        const char* status{nullptr};  ///< What the status bar says while the box is open.
     };
     for (const Case& test :
          {Case{true,
                "",
                "The ext4 file system: No errors found (read-only e2fsck).",
-               QMessageBox::Information},
+               QMessageBox::Information,
+               "Filesystem check complete"},
           Case{
               false,
               "e2fsck: e2fsck found errors in the file system and left them uncorrected (exit "
               "code 4).",
               "The ext4 file system: Errors found by a read-only e2fsck, which fixed none of them. "
               "e2fsck found errors in the file system and left them uncorrected (exit code 4).",
-              QMessageBox::Warning}}) {
+              QMessageBox::Warning,
+              "Filesystem check needs attention"}}) {
         sak::PartitionManagerPanel panel;
         panel.setTestInventoryForReview(applyReviewInventoryFixture());
         ResultBox box;
         QTimer closer;
-        closeNextResultBox(&closer, &box);
+        QSignalSpy statuses(&panel, &sak::PartitionManagerPanel::statusMessage);
+        closeNextResultBox(&closer, &box, &statuses);
         const bool success = test.success;
         const QString problem = QString::fromLatin1(test.problem);
         panel.runTestReadOnlyFileSystemCheckForReview(
@@ -7078,6 +7125,9 @@ void PartitionManagerPanelTests::nonWindowsCheckSaysWhatItFound() {
         QTRY_VERIFY2(box.seen, test.said);
         QCOMPARE(box.text, QString::fromLatin1(test.said));
         QCOMPARE(box.icon, test.icon);
+        // Fix batch 5 (E): the controller's line, "Filesystem check failed: " and the tool's
+        // words, ran past the status bar's first permanent widget; the box says them.
+        QCOMPARE(box.status_while_open, QString::fromLatin1(test.status));
     }
 }
 

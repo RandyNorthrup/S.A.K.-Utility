@@ -248,6 +248,9 @@ private:
     void addLegendItem(QHBoxLayout* layout, const QString& text, const QColor& color);
     void connectController();
     void connectControllerSignals();
+    /// Apply's and the queue's refusals: a warning box with the reasons, and what happened in the
+    /// status bar.
+    void connectControllerRefusals();
     void rebuildTable(const PartitionInventory& inventory);
     void rebuildDiskMap(const PartitionInventory& inventory);
     void addDiskMapRow(QVBoxLayout* layout, const PartitionDiskInfo& disk);

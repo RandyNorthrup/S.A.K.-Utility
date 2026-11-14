@@ -582,6 +582,7 @@ private Q_SLOTS:
     void thermalReasonsAreShownInFull();
     void anUnreadDiskSaysSoNotThatThePcCannot();
     void exportScanReportWritesTheHtmlItSays();
+    void savedReportsSayWhereInTheBoxNotTheStatusBar();
 
 private:
     void runInventoryReportAndCheckItsFile();
@@ -678,6 +679,33 @@ void DiagnosticBenchmarkPanelTests::inventoryReportRunsItsRealCollectors() {
             return std::nullopt;
         });
     runInventoryReportAndCheckItsFile();
+}
+
+// Fix batch 5 (E): "Reports saved to " and the folder was the status bar's message as the box that
+// says where opened, and a folder of any length ran past the bar's first permanent widget. While
+// the box says where, the bar says what happened.
+void DiagnosticBenchmarkPanelTests::savedReportsSayWhereInTheBoxNotTheStatusBar() {
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    QSignalSpy status(&panel, &sak::DiagnosticBenchmarkPanel::statusMessage);
+    const QString folder = QStringLiteral(
+        "C:/Users/Technician/Documents/S.A.K. Utility/Diagnostic Reports/2026-11-14 Front Desk PC");
+    QString shown;
+    QString status_while_open;
+    QTimer closer;
+    closer.setInterval(1);
+    connect(&closer, &QTimer::timeout, &panel, [&]() {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            shown = box->text();
+            status_while_open = status.isEmpty() ? QString() : status.last().at(0).toString();
+            box->accept();
+        }
+    });
+    closer.start();
+    QVERIFY(QMetaObject::invokeMethod(
+        &panel, "onReportsGenerated", Qt::DirectConnection, Q_ARG(QString, folder)));
+    QVERIFY2(shown.contains(QDir::toNativeSeparators(folder)), qPrintable(shown));
+    QCOMPARE(status_while_open, QStringLiteral("Diagnostic reports saved"));
 }
 
 void DiagnosticBenchmarkPanelTests::runInventoryReportAndCheckItsFile() {

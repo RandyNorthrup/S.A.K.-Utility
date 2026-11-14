@@ -995,7 +995,9 @@ void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir) {
         return;
     }
     logMessage(QString("Reports generated in %1").arg(output_dir));
-    Q_EMIT statusMessage("Reports saved to " + output_dir, sak::kTimerStatusDefaultMs);
+    // The box says where; the folder in the status bar ran past its first permanent widget, so
+    // the bar says what happened (fix batch 5, E).
+    Q_EMIT statusMessage("Diagnostic reports saved", sak::kTimerStatusDefaultMs);
 
     sak::showInformationLogged(
         this,

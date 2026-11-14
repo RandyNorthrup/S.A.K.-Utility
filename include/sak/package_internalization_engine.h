@@ -255,6 +255,10 @@ public:
     ///        work folder" and both sizes; the folder itself goes to the log only.
     [[nodiscard]] static QString workSpaceRefusal(const QString& work_root, qint64 needed_bytes);
 
+    /// @brief The status bar's short form of a workSpaceRefusal message ("not enough free space on
+    ///        V:"), or empty when @p refusal is not one.
+    [[nodiscard]] static QString workSpaceRefusalShortForm(const QString& refusal);
+
     /// @brief The drive @p work_root is on as a person names it ("V:", or a share's root), or
     ///        "the drive S.A.K. runs from" when Windows cannot say.
     [[nodiscard]] static QString workDriveName(const QString& work_root);

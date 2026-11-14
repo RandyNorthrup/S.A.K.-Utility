@@ -515,6 +515,8 @@ MainWindow::~MainWindow() {
     // Must be first: stops the tab-change status-bar handlers from running while
     // the window is being destroyed (they would dereference freed tool panels).
     m_shutting_down = true;
+    // The panels' windows close as they are destroyed; this window no longer watches for them.
+    qApp->removeEventFilter(this);
     // Child widgets are destroyed after this window's members; focus moving while they go must
     // not reach m_window_shortcuts.
     disconnect(m_focus_connection);
@@ -633,6 +635,17 @@ void MainWindow::createStatusBar() {
     m_progress_bar->setTextVisible(true);
     m_progress_bar->setVisible(false);
     statusBar()->addPermanentWidget(m_progress_bar);
+
+    // A timed message keeps its own time, which stands still while a modal window is open
+    // (eventFilter): Offline Deploy's refusal started its 5 s with its box, and anyone who read
+    // the box for longer came back to "Ready" (fix batch 5, E).
+    m_status_message_timer = new QTimer(this);
+    m_status_message_timer->setSingleShot(true);
+    connect(m_status_message_timer, &QTimer::timeout, this, [this]() {
+        m_status_message_timeout_ms = 0;
+        statusBar()->clearMessage();
+    });
+    qApp->installEventFilter(this);
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     statusBar()->addPermanentWidget(m_ai_status_label);
@@ -1233,6 +1246,10 @@ void MainWindow::createNetworkManagementPanel() {
 
 void MainWindow::clearTabStatus() {
     m_status_message_is_work = false;
+    m_status_message_timeout_ms = 0;
+    if (m_status_message_timer != nullptr) {
+        m_status_message_timer->stop();
+    }
     statusBar()->clearMessage();
     if (m_status_label != nullptr) {
         m_status_label->setText(tr("Ready"));
@@ -1842,7 +1859,36 @@ void MainWindow::updateStatus(const QString& message, int timeout_ms) {
     // one or the end of the work: a recovery scan's ran out after 5 s and left "Ready" beside a
     // bar at 5%.
     m_status_message_is_work = progressShowsRunningWork();
-    statusBar()->showMessage(message, m_status_message_is_work ? 0 : timeout_ms);
+    m_status_message_timeout_ms = m_status_message_is_work ? 0 : timeout_ms;
+    statusBar()->showMessage(message);
+    startStatusMessageTime();
+}
+
+// A message shown with a message box, before it or while it is open, is given its whole time
+// once the person is back from the box: its time begins when the last modal window closes. The
+// status bar's own timeout ran on behind the box (fix batch 5, E).
+void MainWindow::startStatusMessageTime() {
+    if (m_status_message_timer == nullptr) {
+        return;
+    }
+    m_status_message_timer->stop();
+    if (m_status_message_timeout_ms > 0 && QApplication::activeModalWidget() == nullptr) {
+        m_status_message_timer->start(m_status_message_timeout_ms);
+    }
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    const QEvent::Type type = event->type();
+    if ((type == QEvent::Show || type == QEvent::Hide) && m_status_message_timeout_ms > 0 &&
+        !m_shutting_down) {
+        const auto* window = qobject_cast<const QWidget*>(watched);
+        if (window != nullptr && window->isWindow() && window->isModal()) {
+            // Looked at once the event is over, when Qt's list of modal windows has caught up:
+            // a box closing as another opens leaves the time standing.
+            QTimer::singleShot(0, this, &MainWindow::startStatusMessageTime);
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::updateProgress(int current, int maximum) {
