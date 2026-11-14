@@ -3967,6 +3967,22 @@ Drill: `ai-message-box-keeps-tab`. The item 9 sweep, run again on testpc1 with t
 gets back to the tab bar: on the AI Assistant tab Tab goes AI run details > the transcript > AI message input >
 Attach and on, back to the tab bar in 16 stops (before, it stayed in the message box); every other tab as before.
 
+**The inventory scan tests' margins (item 13, part two).** `inventoryScan_aSlowScanThatKeepsMovingFinishes`
+failed once on the workstation while a package was being zipped beside it: its stand-in stepped every 500 ms
+against a 1.5 s quiet limit, and the limit's clock starts with the PowerShell process, so a PowerShell slow to start
+on a loaded PC spends the headroom before the first step. The product's own quiet limit is 90 s
+(`kInventoryScanIdleLimitMs`): this was the test's margin, not a product risk. Now: 250 ms steps against 3 s (twelve
+steps of headroom, and room for a slow start), 32 steps that run past 2.5 times the limit, which the test requires;
+`inventoryScan_aScanThatGoesQuietDidNotFinish` 3 s instead of 1.5 s, so a slow start still writes the first step
+the warning names; `inventoryScan_aScanPastItsCeilingDidNotFinish` a 4 s quiet limit against 200 ms steps (it was
+2 s) and the ceiling at 6 s (it was 3 s), so the ceiling and not a slow start stops it;
+`inventoryScan_aCallPastItsOwnLimitSaysWhichStep` allows 20 s (it was 9 s) against a call that would run 120 s;
+`inventoryScan_quietIsLoggedAndStoppedAtNinetySeconds` logs every 1 s (it was 100 ms, back to back with the check
+that it did not log twice) and reads the seconds it counts as a number. The others have no timing or wide margins
+(the slow-call test's 8 s limit against a 1 s heartbeat). Load runs on testpc1, the ten inventoryScan_ functions
+20 times with a busy loop on each of its 12 logical processors and a zip loop beside them, the same load both
+times: 0 of 20 runs failed before the change and 0 of 20 after; the single failure on the workstation did not reproduce there, and the wider margins hold under the same load.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

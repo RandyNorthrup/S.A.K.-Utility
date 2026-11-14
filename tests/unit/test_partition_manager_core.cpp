@@ -27502,32 +27502,39 @@ QString progressScript(const QString& body) {
 
 }  // namespace
 
-// A slow PC that keeps moving finishes, however long past the quiet limit it takes in all.
+// A slow PC that keeps moving finishes, however long past the quiet limit it takes in all. The
+// stand-in steps every 250 ms against a 3 s quiet limit: twelve steps of headroom, and room for a
+// PowerShell slow to start on a loaded PC, whose start counts against the limit (a 500 ms step
+// against 1.5 s lost a step once on a busy workstation). Its 32 steps run past 2.5 times the limit.
 void PartitionManagerCoreTests::inventoryScan_aSlowScanThatKeepsMovingFinishes() {
+    constexpr int kQuietLimitMs = 3000;
+    constexpr int kRunPastMs = 7500;  // 2.5 times the quiet limit
     QList<sak::InventoryScanProgress> seen;
     QElapsedTimer took;
     took.start();
     const auto scan = StorageInventoryWorker::runBrowsingScanScript(
         progressScript(
-            QStringLiteral("foreach ($i in 1..6) { Write-SakScanProgress \"disk $i of 6\"; "
-                           "Start-Sleep -Milliseconds 500 }\n'[]'\n")),
-        {.idle_ms = 1500, .ceiling_ms = 60'000},
+            QStringLiteral("foreach ($i in 1..32) { Write-SakScanProgress \"disk $i of 32\"; "
+                           "Start-Sleep -Milliseconds 250 }\n'[]'\n")),
+        {.idle_ms = kQuietLimitMs, .ceiling_ms = 60'000},
         {},
         [&seen](const sak::InventoryScanProgress& progress) { seen.append(progress); });
-    QVERIFY2(took.elapsed() >= 2500, "the stand-in must outlast the quiet limit to prove anything");
+    QVERIFY2(took.elapsed() >= kRunPastMs,
+             "the stand-in must outlast the quiet limit to prove anything");
     QVERIFY2(!scan.inventory.scan_did_not_finish, qPrintable(scan.inventory.warnings.join('|')));
     QVERIFY2(scan.inventory.warnings.isEmpty(), qPrintable(scan.inventory.warnings.join('|')));
     QVERIFY(!scan.cancelled);
     QVERIFY(!seen.isEmpty());
     // Which disk, and of how many, read the right way round.
     QCOMPARE(seen.first().disk, 1);
-    QCOMPARE(seen.first().disks, 6);
-    QCOMPARE(seen.last().disk, 6);
-    QCOMPARE(seen.last().disks, 6);
+    QCOMPARE(seen.first().disks, 32);
+    QCOMPARE(seen.last().disk, 32);
+    QCOMPARE(seen.last().disks, 32);
 }
 
 // One that goes quiet is stopped, says it did not finish and where, and what it wrote is not a
-// list.
+// list. The 3 s quiet limit leaves a PowerShell slow to start on a loaded PC time to write its
+// first step, which the warning names.
 void PartitionManagerCoreTests::inventoryScan_aScanThatGoesQuietDidNotFinish() {
     QElapsedTimer took;
     took.start();
@@ -27537,7 +27544,7 @@ void PartitionManagerCoreTests::inventoryScan_aScanThatGoesQuietDidNotFinish() {
                            "[Console]::Out.Write('[{\"Number\":0,\"FriendlyName\":\"Partial\"}')\n"
                            "[Console]::Out.Flush()\n"
                            "Start-Sleep -Seconds 30\n']'\n")),
-        {.idle_ms = 1500, .ceiling_ms = 60'000},
+        {.idle_ms = 3000, .ceiling_ms = 60'000},
         {},
         {});
     QVERIFY2(took.elapsed() < 20'000,
@@ -27546,22 +27553,25 @@ void PartitionManagerCoreTests::inventoryScan_aScanThatGoesQuietDidNotFinish() {
     QVERIFY2(scan.inventory.disks.isEmpty(), "nothing a scan wrote before it stopped is a disk");
     QVERIFY(!scan.cancelled);
     QCOMPARE(scan.inventory.warnings,
-             QStringList{QStringLiteral("The disk scan did not finish: no progress for 1 s "
+             QStringList{QStringLiteral("The disk scan did not finish: no progress for 3 s "
                                         "(last step: disk 1 of 2)")});
 }
 
+// One that keeps moving but runs past its ceiling is stopped there. A step every 200 ms against a
+// 4 s quiet limit, twenty steps of headroom and room for a slow start, so the ceiling, at 6 s, is
+// what stops it.
 void PartitionManagerCoreTests::inventoryScan_aScanPastItsCeilingDidNotFinish() {
     const auto scan = StorageInventoryWorker::runBrowsingScanScript(
         progressScript(QStringLiteral("$i = 0\nwhile ($true) { $i++; Write-SakScanProgress "
                                       "\"disk $i of 99\"; Start-Sleep -Milliseconds 200 }\n")),
-        {.idle_ms = 2000, .ceiling_ms = 3000},
+        {.idle_ms = 4000, .ceiling_ms = 6000},
         {},
         {});
     QVERIFY(scan.inventory.scan_did_not_finish);
     QVERIFY(scan.inventory.disks.isEmpty());
     QCOMPARE(scan.inventory.warnings.size(), 1);
     QVERIFY2(scan.inventory.warnings.first().startsWith(
-                 QStringLiteral("The disk scan did not finish within 3 s (last step: disk ")),
+                 QStringLiteral("The disk scan did not finish within 6 s (last step: disk ")),
              qPrintable(scan.inventory.warnings.first()));
 }
 
@@ -27665,7 +27675,8 @@ void PartitionManagerCoreTests::inventoryScan_aSlowCallThatSaysItIsWaitingFinish
 }
 
 // A call that reaches its own limit ends the scan, which says it did not finish and at which step,
-// and ends at once although the call is still running.
+// and ends at once although the call is still running: well inside the call's own 120 s, with
+// room for a PowerShell slow to start on a loaded PC.
 void PartitionManagerCoreTests::inventoryScan_aCallPastItsOwnLimitSaysWhichStep() {
     for (const auto& [step, start] :
          {// A .NET wait, which a pipeline stop cannot break, as a storage call that never answers
@@ -27692,7 +27703,7 @@ void PartitionManagerCoreTests::inventoryScan_aCallPastItsOwnLimitSaysWhichStep(
                                  .arg(step)});
         QVERIFY2(scan.inventory.scan_did_not_finish, qPrintable(step));
         QVERIFY(scan.inventory.disks.isEmpty());
-        QVERIFY2(took.elapsed() < 9000, qPrintable(step + QStringLiteral(" kept the scan open")));
+        QVERIFY2(took.elapsed() < 20'000, qPrintable(step + QStringLiteral(" kept the scan open")));
     }
 }
 
@@ -27703,8 +27714,11 @@ void PartitionManagerCoreTests::inventoryScan_quietIsLoggedAndStoppedAtNinetySec
     QCOMPARE(sak::InventoryScanLimits{}.idle_ms, 90'000);
     static_assert(sak::kInventoryScanIdleLimitMs >= sak::kInventoryQueryCapSeconds * 1000);
     QCOMPARE(sak::InventoryScanLimits{}.quiet_log_ms, 15'000);
+    // A one-second log interval, so a loaded PC that stops this thread between two reports for a
+    // moment does not report twice (100 ms did, in principle); the seconds the line counts are
+    // whatever passed.
     sak::InventoryScanLiveness liveness(
-        {.idle_ms = 5000, .ceiling_ms = 10'000, .quiet_log_ms = 100}, {});
+        {.idle_ms = 10'000, .ceiling_ms = 20'000, .quiet_log_ms = 1000}, {});
     QVERIFY(liveness.reportQuiet().isEmpty());
     liveness.feed(QStringLiteral("SAK-SCAN-PROGRESS disk 2 of 5\n"));
     const auto quiet_for = [](int ms) {
@@ -27714,13 +27728,14 @@ void PartitionManagerCoreTests::inventoryScan_quietIsLoggedAndStoppedAtNinetySec
             std::this_thread::yield();
         }
     };
-    quiet_for(150);
+    quiet_for(1100);
     const QString line = liveness.reportQuiet();
-    QVERIFY2(line == QStringLiteral("Disk scan: no progress for 0 s (last step: disk 2 of 5); it "
-                                    "is stopped at 5 s"),
-             qPrintable(line));
+    static const QRegularExpression kQuietLine(QStringLiteral(
+        "^Disk scan: no progress for [1-9]\\d* s \\(last step: disk 2 of 5\\); it is "
+        "stopped at 10 s$"));
+    QVERIFY2(kQuietLine.match(line).hasMatch(), qPrintable(line));
     QVERIFY(liveness.reportQuiet().isEmpty());
-    quiet_for(120);
+    quiet_for(1100);
     QVERIFY(!liveness.reportQuiet().isEmpty());
     liveness.feed(QStringLiteral("SAK-SCAN-PROGRESS disk 3 of 5\n"));
     QVERIFY(liveness.reportQuiet().isEmpty());
