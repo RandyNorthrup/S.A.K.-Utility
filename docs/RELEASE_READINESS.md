@@ -3839,6 +3839,48 @@ each red then green with the bytes restored: the audit script as it was at bfd57
 place; the gate passing no package; the signatures checked after the audit; the header read as "nothing" again; the
 one-line audit read back as a string (red with the text testpc2 printed).
 
+**Live proofs (package dc8700ea, `SAK-Utility-v0.9.3-dc8700ea-Windows-x64.zip`, SHA-256 616D7B69...F6F89DDD).** A, on
+testpc2 as a standard user through the capture harness: the package installed to V:\SAK on a throwaway 512 MB VHDX
+(`W:\fix4\space.vhdx` on the spare Samsung; W: pinned as the Samsung by model, serial and size,
+the VHDX by its file, model "Msft Virtual Disk" and size 536870912 before it was formatted; claims tagged fix4), Build
+Offline Bundle with the Kiosk / POS preset opened a warning box titled "Build Offline Bundle": "Not enough free space
+for the work files: S.A.K.'s work folder is on V:, which has 304.0 MB free; at least 1.00 GB is needed. Free some
+space on V:, or run S.A.K. from a larger drive."; with it closed, the status bar read "Build Offline Bundle: Not enough
+free space ...". The VHDX was detached and removed. C, on testpc1 elevated through the capture harness: Check File
+System on the stick D: (USB DISK 3.0, pinned by model, serial and size before and after) said "Drive D:
+No errors found (read-only chkdsk)." and "Eject the drive in Windows before you unplug it."; the stick is still the
+empty, healthy NTFS USBSTICK. The display was set to 1600x900 for the capture and back to 1024x768. D, on testpc2
+elevated over ssh, as a hosted runner is, with the package's clean extract and a checkout at dc8700ea (the later
+follow-ups applied to its working tree, so HEAD's time stays before the package's build): bfd57ed5's audit script on a
+build-like folder with one stray program failed with the dry run's own text, "No audit output written. STDOUT:
+System.Object[] STDERR: System.Object[]"; the fixed script on the same folder said "STDERR: Fatal: S.A.K. won't run as
+administrator while W:\fix4\build-release\test_stray.exe is in its folder; it isn't part of S.A.K."; with
+`-PackageRoot` it passed. That run found the one-line audit fault above. The build job's readiness sequence,
+`check_release_readiness.ps1 -PackageRoot` with the workflow's pinned gitleaks and trufflehog, then passed the secret
+scans, blocking patterns, PowerShell syntax, the accessibility check (the audit from a copy of the package,
+elevated), style tokens, style literals, both magic-number checks (after ffe0e154 named the verdict line's groups,
+which this run found), logged boxes, lizard, licenses, the tool manifest, the probe certifier self-test, the HFS image
+validation and the three matrix checks; `verify_partition_manager_certification.ps1` then stopped with "Partition
+Manager evidence does not match ... the evidence is for other code": B and C change Partition Manager's code, so the
+evidence certified at d8c27a15 no longer applies until the full recertification. The two package smokes after it
+(`verify_portable_release_smoke.ps1`, `run_portable_e2e_smoke.ps1`) passed, run on their own from the same clean
+extract, elevated. A shallow clone first gave gitleaks three findings attributed to its base commit (the extension's
+public key and two test fixtures, which `.gitleaksignore` pins by the commits that added them); with the whole
+history they matched. The full build also found the live certifier's own source list missing `volume_check_outcome.cpp`
+(d381e3cc).
+
+**Gate on db04318a.** The Release build, 0 warnings; T2 labels 334 of 334; cert-tooling 8 of 8; the naming gate
+passed (non-core 155 of 155 TUs clean, core 175 of 175 healthy, 21 ratcheted clean); clang-tidy with every check
+over the 11 product files this round changed, 839 distinct first-party findings and none on a line this round added
+or changed (the first full run found 25 there, trailing commas, a loop for `std::ranges::any_of`, a redundant lambda
+parameter list and a const local that blocked a move, and the naming ratchet one, `drive_letter`; db04318a fixed
+them); the 19 static gates; pre-commit over the 33 files changed since bfd57ed5; the static skip audit. Debug+ASan,
+the binaries this round touches: test_app_installation_panel 12 passed, test_offline_deployment_worker 33,
+test_package_internalization_engine 32, test_partition_manager_panel 156, test_partition_manager_core 455 (10
+skipped, as in Release), test_check_disk_errors_action 21, test_partition_manager_controller 35, no failure and no
+sanitizer report. Earlier runs of this gate also found the live certifier's source list (d381e3cc) and, run on
+testpc2, the magic-number gate on `volume_check` (ffe0e154).
+
 ### Fix batch 3: what the screenshot retakes and the 1db87df4 recertification found (2026-11-13)
 
 On the `fix3` branch from 1db87df4, one commit per item, each test drilled red with the fix broken and green
