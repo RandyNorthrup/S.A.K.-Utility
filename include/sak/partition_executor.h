@@ -77,6 +77,12 @@ public:
                                                         const QString& structured_error,
                                                         const QString& std_err,
                                                         int exit_code);
+    /// What a failed operation run in this process says, as elevatedFailureMessage says it for
+    /// the helper: cancelled, timed out, or the script's own words (scriptFailureReason), and the
+    /// whole of @p std_err only when it gave none.
+    [[nodiscard]] static QString localFailureMessage(const QString& std_err,
+                                                     bool cancelled,
+                                                     bool timed_out);
     /// The helper streams a script's output as progress frames "STDOUT|<chunk>" and
     /// "STDERR|<chunk>". Appends @p chunk's text to @p pending and returns the lines it
     /// completed, leaving a partial last line in @p pending. Empty for any other frame, and

@@ -374,7 +374,7 @@ jobs:
                      foreach ($row in 'NTFS', 'FAT32', 'exFAT') { "$case($row)" }
                    }) + 'formatRoundTripSetsAndRestoresThePartitionType()' + 'restoreImageThroughTheGeneratedScript()' +
                    'resizeAsDataGivesAnExtPartitionItsTypeBack()' + 'hfsReadOnlyCheckStagesAndWritesNothing()' +
-                   'hideOnMbrHidesOnlyThatPartition()'
+                   'hideOnMbrHidesOnlyThatPartition()' + 'readOnlyCheckWithoutASnapshotLocksAndWritesNothing()'
         foreach ($case in $cases) {
           if (-not (Select-String -LiteralPath $log -Quiet -Pattern "^PASS\s+: RawPartitionWriteTests::$([regex]::Escape($case))\s*$")) {
             throw "test_raw_partition_write did not pass ${case}: a skip exits 0 too"
@@ -511,7 +511,8 @@ jobs:
                       'RawPartitionWriteTests::restoreImageThroughTheGeneratedScript()' +
                       'RawPartitionWriteTests::resizeAsDataGivesAnExtPartitionItsTypeBack()' +
                       'RawPartitionWriteTests::hfsReadOnlyCheckStagesAndWritesNothing()' +
-                      'RawPartitionWriteTests::hideOnMbrHidesOnlyThatPartition()'
+                      'RawPartitionWriteTests::hideOnMbrHidesOnlyThatPartition()' +
+                      'RawPartitionWriteTests::readOnlyCheckWithoutASnapshotLocksAndWritesNothing()'
         $required = [ordered]@{
           test_elevated_helper_connection = @('ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe()')
           test_fat_volumes = @($fatCases)

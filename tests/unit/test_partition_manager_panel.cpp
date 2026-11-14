@@ -6275,12 +6275,12 @@ void PartitionManagerPanelTests::readOnlyScansRunNowWithoutQueueing() {
 }
 
 // A drive removed right after an online scan can crash Windows (volsnap, 2026-11-12). The script
-// waits after the scan; Check File System's result also says to wait, but only for a drive that
-// can be pulled out: one on USB, or one Windows calls removable. An NVMe drive inside the PC gets
-// no such line.
+// waits after the scan; Check File System's result also says to eject the drive before unplugging
+// it, but only for a drive that can be pulled out: one on USB, or one Windows calls removable. An
+// NVMe drive inside the PC gets no such line. The result is shown once the check has finished, so
+// it no longer says "after this finishes" (the capture of 1db87df4).
 void PartitionManagerPanelTests::checkFileSystemSaysToWaitBeforeUnplugging() {
-    const QString note =
-        QStringLiteral("Wait a few seconds after this finishes before unplugging the drive.");
+    const QString note = QStringLiteral("Eject the drive in Windows before you unplug it.");
     struct Drive {
         const char* bus;
         bool removable;

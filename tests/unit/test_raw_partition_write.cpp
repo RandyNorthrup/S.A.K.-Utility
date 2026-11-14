@@ -222,6 +222,7 @@ private Q_SLOTS:
     void resizeAsDataGivesAnExtPartitionItsTypeBack();
     void hfsReadOnlyCheckStagesAndWritesNothing();
     void hideOnMbrHidesOnlyThatPartition();
+    void readOnlyCheckWithoutASnapshotLocksAndWritesNothing();
 
 private:
     void addVolumeRows();
@@ -1052,6 +1053,183 @@ sak::PartitionScript hideScript(uint32_t disk,
 // The app's own Hide and Unhide scripts on partition 1 of a two-partition MBR VHDX: partition 1 is
 // hidden with no letter while partition 2 keeps its letter and stays visible, and Unhide gives
 // partition 1 its type and a letter back.
+namespace {
+
+/// Check File System's script for the volume at @p letter, built as the panel queues it.
+sak::PartitionScript checkFileSystemScript(const QString& letter, qint64 size_bytes) {
+    sak::PartitionTarget target;
+    target.kind = sak::PartitionTargetKind::Partition;
+    target.disk_number = sak::DiskNumber{0};
+    target.partition_number = sak::PartitionNumber{1};
+    target.drive_letter = letter;
+    target.size_bytes = static_cast<uint64_t>(size_bytes);
+    return sak::PartitionScriptBuilder().buildScript(sak::PartitionOperationPlanner::makeOperation(
+        sak::PartitionOperationType::CheckFileSystem, target));
+}
+
+constexpr QLatin1StringView kRemovableTest("[string]$sakScanVolume.DriveType -eq 'Removable'");
+constexpr QLatin1StringView kSettleLine("Letting Windows finish with the volume");
+
+/// Writes 256 KiB of random bytes to @p path; their SHA-256, or nothing when the write failed.
+QByteArray writeRandomFile(const QString& path) {
+    QByteArray bytes(256 * 1024, '\0');
+    for (qsizetype i = 0; i < bytes.size(); ++i) {
+        bytes[i] = static_cast<char>(QRandomGenerator::global()->bounded(256));
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+        return {};
+    }
+    return QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+}
+
+/// Check File System of the fixed NTFS volume at @p letter: the online scan as Windows sees the
+/// drive, then its "removable" test forced, chkdsk read only, and with the file at @p path held
+/// open, in use and not checked; the file is @p digest throughout.
+void checkBothRoutes(const QString& letter,
+                     const sak::PartitionScript& check,
+                     const QString& path,
+                     const QByteArray& digest) {
+    QVERIFY2(check.script.contains(kRemovableTest), qPrintable(check.script));
+    QString forced = check.script;
+    forced.replace(kRemovableTest, QStringLiteral("$true"));
+
+    // A fixed drive, as Windows sees this one, still takes the online scan, and settles after it.
+    const sak::ProcessResult online = sak::runPowerShell(check.script, kScriptTimeoutMs);
+    const QString online_out = online.std_out + online.std_err;
+    QVERIFY2(online.exit_code == 0, qPrintable(online_out));
+    QVERIFY2(online_out.contains(kSettleLine), qPrintable(online_out));
+    QVERIFY2(!online_out.contains(QStringLiteral("CHKDSK")), qPrintable(online_out));
+
+    const sak::ProcessResult checked = sak::runPowerShell(forced, kScriptTimeoutMs);
+    const QString checked_out = checked.std_out + checked.std_err;
+    QVERIFY2(checked.exit_code == 0, qPrintable(checked_out));
+    QVERIFY2(checked_out.contains(QStringLiteral("Running CHKDSK in read-only mode")),
+             qPrintable(checked_out));
+    QVERIFY2(checked_out.contains(QStringLiteral("found no problems")), qPrintable(checked_out));
+    QVERIFY2(checked_out.contains(kSettleLine), qPrintable(checked_out));
+    QVERIFY2(!checked_out.contains(QStringLiteral("Repair-Volume")), qPrintable(checked_out));
+
+    // A file held open: the volume is in use, and the check says so and reads nothing.
+    QFile held(path);
+    QVERIFY(held.open(QIODevice::ReadOnly));
+    const sak::ProcessResult refused = sak::runPowerShell(forced, kScriptTimeoutMs);
+    const QString refused_out = refused.std_out + refused.std_err;
+    QVERIFY2(refused.exit_code != 0, qPrintable(refused_out));
+    QVERIFY2(refused_out.contains(
+                 QStringLiteral("%1: is in use, so it was not checked.").arg(letter.toUpper())),
+             qPrintable(refused_out));
+    QVERIFY2(!refused_out.contains(QStringLiteral("Running CHKDSK")), qPrintable(refused_out));
+    QCOMPARE(QCryptographicHash::hash(held.readAll(), QCryptographicHash::Sha256), digest);
+}
+
+/// What the check of a real removable drive must say, by SAK_TEST_REMOVABLE_NTFS_EXPECT: "none"
+/// (the default), "problems" (the PC damaged the drive's file system before the run) or
+/// "in-use" (the test holds a file open on it).
+struct RemovableExpectation {
+    bool fails{false};
+    bool chkdsk_runs{true};
+    QString says;
+};
+
+RemovableExpectation removableExpectation(const QString& expect, const QString& stick) {
+    if (expect == QStringLiteral("problems")) {
+        return {.fails = true,
+                .says = QStringLiteral(
+                            "chkdsk found problems on %1: Reading only, it fixed none of them")
+                            .arg(stick)};
+    }
+    if (expect == QStringLiteral("in-use")) {
+        return {.fails = true,
+                .chkdsk_runs = false,
+                .says = QStringLiteral("%1: is in use, so it was not checked.").arg(stick)};
+    }
+    return {.says = QStringLiteral("found no problems")};
+}
+
+/// Check File System of the removable NTFS drive the PC names in SAK_TEST_REMOVABLE_NTFS_LETTER
+/// (testpc1's stick), by the script unchanged, if it names one.
+void checkTheRemovableDrive() {
+    const QString stick = qEnvironmentVariable("SAK_TEST_REMOVABLE_NTFS_LETTER").left(1).toUpper();
+    if (stick.isEmpty()) {
+        return;
+    }
+    const QString expect = qEnvironmentVariable("SAK_TEST_REMOVABLE_NTFS_EXPECT", "none");
+    const RemovableExpectation expected = removableExpectation(expect, stick);
+    const sak::PartitionScript check = checkFileSystemScript(stick, 0);
+    QVERIFY2(check.valid(), qPrintable(check.blockers.join(QStringLiteral("; "))));
+    QFile held(QStringLiteral("%1:/sak-held-open.bin").arg(stick));
+    if (expect == QStringLiteral("in-use")) {
+        QVERIFY(held.open(QIODevice::ReadWrite));
+    }
+    const sak::ProcessResult run = sak::runPowerShell(check.script, kScriptTimeoutMs);
+    const QString out = run.std_out + run.std_err;
+    qInfo().noquote() << "removable drive" << stick << "expected" << expect << "exit"
+                      << run.exit_code << ":" << out.left(3000);
+    if (held.isOpen()) {
+        held.close();
+        QVERIFY(held.remove());
+    }
+    QCOMPARE(run.exit_code != 0, expected.fails);
+    QVERIFY2(out.contains(expected.says), qPrintable(out));
+    QCOMPARE(out.contains(QStringLiteral("Running CHKDSK")), expected.chkdsk_runs);
+    QVERIFY2(out.contains(kSettleLine), qPrintable(out));
+    QVERIFY2(!out.contains(QStringLiteral("snapshot error")), qPrintable(out));
+    QVERIFY2(!out.contains(QStringLiteral("Repair-Volume")), qPrintable(out));
+}
+
+}  // namespace
+
+// Windows does not snapshot a removable drive, so Check File System of an NTFS USB stick failed
+// with "A snapshot error occurred while scanning this drive" (the capture of 1db87df4). Such a
+// drive is now locked, dismounted and read by chkdsk without /f, /r, /x or /scan. CI has no stick,
+// so a virtual disk takes that route here, its "removable" test forced, through Windows itself:
+// the lock and dismount (Sak.ScanVolumeLock), chkdsk's read-only check, a drive in use refused as
+// in use, and nothing on it changed. On a PC with a removable NTFS drive named in
+// SAK_TEST_REMOVABLE_NTFS_LETTER (testpc1's stick), the script also runs unchanged against it.
+void RawPartitionWriteTests::readOnlyCheckWithoutASnapshotLocksAndWritesNothing() {
+    const QStringList letters = freeDriveLetters(1);
+    QCOMPARE(letters.size(), 1);
+    const QString letter = letters.first();
+    const QString vhd =
+        QDir::toNativeSeparators(QDir(m_vhds).filePath(QStringLiteral("check-ro.vhdx")));
+    // Large enough for Windows to keep a snapshot of it on itself, as the online scan needs.
+    constexpr int kSnapshotVolumeMiB = 600;
+    const QString made =
+        diskpart(*m_work,
+                 {QStringLiteral("create vdisk file=\"%1\" maximum=%2 type=expandable")
+                      .arg(vhd)
+                      .arg(kSnapshotVolumeMiB)});
+    const auto detach = qScopeGuard([this, &vhd] {
+        (void)diskpart(*m_work,
+                       {QStringLiteral("select vdisk file=\"%1\"").arg(vhd),
+                        QStringLiteral("detach vdisk")});
+    });
+    PartitionVolume volume;
+    volume.name = QStringLiteral("NTFS");
+    volume.letter = letter;
+    volume.vhd = vhd;
+    const QString formatted = made + makeVolume(volume);
+    QVERIFY2(formatted.contains(QStringLiteral("FORMATTED")), qPrintable(formatted));
+    const QString path = QStringLiteral("%1:/sak-check-ro.bin").arg(letter);
+    const QByteArray digest = writeRandomFile(path);
+    QVERIFY(!digest.isEmpty());
+
+    const sak::PartitionScript check = checkFileSystemScript(letter,
+                                                             kSnapshotVolumeMiB * kEdgeBytes);
+    QVERIFY2(check.valid(), qPrintable(check.blockers.join(QStringLiteral("; "))));
+    checkBothRoutes(letter, check, path, digest);
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    {
+        QFile reread(path);
+        QVERIFY(reread.open(QIODevice::ReadOnly));
+        QCOMPARE(QCryptographicHash::hash(reread.readAll(), QCryptographicHash::Sha256), digest);
+    }
+    checkTheRemovableDrive();
+}
+
 void RawPartitionWriteTests::hideOnMbrHidesOnlyThatPartition() {
     const QStringList letters = freeDriveLetters(2);
     QCOMPARE(letters.size(), 2);

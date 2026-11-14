@@ -235,6 +235,63 @@ public static class ImageVolumeLock {
     }
 }
 
+// Check File System on a drive Windows does not snapshot, a removable one: Repair-Volume -Scan and
+// chkdsk /scan both need the snapshot, and stop with "A snapshot error occurred while scanning
+// this drive" (testpc1's NTFS USB stick, 2026-11-13). chkdsk then reads the volume live and read
+// only, so nothing else may have it open while it does. FSCTL_LOCK_VOLUME fails while any other
+// handle is open, and the drive is then called in use, not checked; FSCTL_DISMOUNT_VOLUME has
+// Windows write out what it holds and drop the file system; closing the handle leaves the
+// volume to chkdsk, which mounts it again for itself. Nothing on the volume is written.
+public static class ScanVolumeLock {
+    private const uint GenericRead = 0x80000000;
+    private const uint ShareReadWrite = 3;
+    private const uint OpenExisting = 3;
+    private const uint LockVolume = 0x00090018;
+    private const uint DismountVolume = 0x00090020;
+    private const int AccessDenied = 5;
+    private const int SharingViolation = 32;
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(string path, uint access, uint share,
+        IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(SafeFileHandle handle, uint code,
+        IntPtr input, uint inputSize, IntPtr output, uint outputSize,
+        out uint returned, IntPtr overlapped);
+    public static string InUseMessage(string letter) {
+        return letter.ToUpperInvariant() + ": is in use, so it was not checked. Close the files " +
+            "and programs using it, then check it again. Nothing was changed.";
+    }
+    public static void LockAndDismount(string letter) {
+        if (letter == null || letter.Length != 1 || !char.IsLetter(letter[0])) {
+            throw new ArgumentException("Check File System needs a drive letter, not: " + letter);
+        }
+        string path = "\\\\.\\" + letter.ToUpperInvariant() + ":";
+        using (SafeFileHandle handle = CreateFile(path, GenericRead, ShareReadWrite, IntPtr.Zero,
+            OpenExisting, 0, IntPtr.Zero)) {
+            if (handle.IsInvalid) {
+                throw new Win32Exception(Marshal.GetLastWin32Error(),
+                    letter.ToUpperInvariant() + ": could not be opened to check it");
+            }
+            uint returned;
+            if (!DeviceIoControl(handle, LockVolume, IntPtr.Zero, 0, IntPtr.Zero, 0, out returned,
+                IntPtr.Zero)) {
+                int error = Marshal.GetLastWin32Error();
+                if (error == AccessDenied || error == SharingViolation) {
+                    throw new InvalidOperationException(InUseMessage(letter));
+                }
+                throw new Win32Exception(error, letter.ToUpperInvariant() +
+                    ": could not be locked to check it");
+            }
+            if (!DeviceIoControl(handle, DismountVolume, IntPtr.Zero, 0, IntPtr.Zero, 0,
+                out returned, IntPtr.Zero)) {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), letter.ToUpperInvariant() +
+                    ": could not be taken offline to check it");
+            }
+        }
+    }
+}
+
 // Copy Partition holds its source volume with the same lock as Create Image, and says so in its own
 // words. The script used to compile a renamed copy of ImageVolumeLock with Add-Type.
 public static class CopyVolumeLock {

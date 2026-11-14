@@ -120,6 +120,14 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **Check File System checks an NTFS USB stick** - It failed on every NTFS drive Windows calls removable with
+  "Repair-Volume : A snapshot error occurred while scanning this drive. Run an offline scan and fix. Activity ID:
+  {...}": the online scan reads a snapshot, and Windows does not take one of a removable drive. Such a drive is now
+  locked, taken offline and read by chkdsk without /f, which changes nothing, and the result says which it was: no
+  problems found, problems found (none fixed), or not checked, with "D: is in use, so it was not checked" when
+  something holds it open. A fixed drive whose snapshot fails says so in plain words, without Windows' advice to run
+  a scan that fixes. No Partition Manager result shows a cmdlet's name or an Activity ID, and the note for a drive
+  that can be unplugged now reads "Eject the drive in Windows before you unplug it."
 - **The iPerf3 server says what to do when it needs administrator rights** - Started without administrator rights
   on an address other PCs can reach, it said "iPerf3 server not started: Windows Firewall did not add its inbound
   rule (... (Run as administrator).). Adding it needs S.A.K. running as administrator.", which the status bar cut

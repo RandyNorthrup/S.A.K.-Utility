@@ -224,6 +224,21 @@ QString PartitionExecutor::elevatedFailureMessage(const QString& helper_error,
     return QStringLiteral("Operation failed (exit code %1) with no error output").arg(exit_code);
 }
 
+QString PartitionExecutor::localFailureMessage(const QString& std_err,
+                                               bool cancelled,
+                                               bool timed_out) {
+    if (cancelled) {
+        return QStringLiteral("Command cancelled");
+    }
+    if (timed_out) {
+        return QStringLiteral("Command timed out");
+    }
+    // This path once gave the whole of standard error: the cmdlet's name, an Activity ID, and the
+    // lines after them that say where in the script the error was raised.
+    const QString reason = scriptFailureReason(std_err);
+    return reason.isEmpty() ? std_err.trimmed() : reason;
+}
+
 QString PartitionExecutor::scriptFailureReason(const QString& std_err) {
     QStringList reason;
     for (const auto& line : std_err.split(QLatin1Char('\n'))) {
@@ -236,7 +251,16 @@ QString PartitionExecutor::scriptFailureReason(const QString& std_err) {
             reason.append(text);
         }
     }
-    const QString text = reason.join(QLatin1Char(' '));
+    QString text = reason.join(QLatin1Char(' '));
+    // A cmdlet's error leads with the cmdlet's name ("Repair-Volume : A snapshot error ..."), and a
+    // Storage cmdlet's ends with "Activity ID: {...}": neither means anything to the person who
+    // reads the result (the capture of 1db87df4).
+    static const QRegularExpression kCmdletName(QStringLiteral("^[A-Z][A-Za-z]*-[A-Za-z]+ : "));
+    static const QRegularExpression kActivityId(
+        QStringLiteral("\\s*Activity ID: \\{[0-9A-Fa-f-]+\\}\\.?"));
+    text.remove(kCmdletName);
+    text.remove(kActivityId);
+    text = text.trimmed();
     // A failure in the script's own .NET code arrives wrapped in PowerShell's account of the call.
     static const QRegularExpression kWrappedCall(
         QStringLiteral("^Exception calling \"[^\"]*\" with \"\\d+\" argument\\(s\\): \"(.*)\"$"));
@@ -560,9 +584,7 @@ PartitionExecutionStep PartitionExecutor::executeLocalScript(const PartitionOper
     step.stderr_text = proc.std_err;
     if (!step.success) {
         step.cancelled = proc.cancelled;
-        step.error_message = proc.cancelled   ? QStringLiteral("Command cancelled")
-                             : proc.timed_out ? QStringLiteral("Command timed out")
-                                              : proc.std_err.trimmed();
+        step.error_message = localFailureMessage(proc.std_err, proc.cancelled, proc.timed_out);
     }
     // This path does not stream, so only the output it returns can show a phase left open, or
     // what the script made and did not remove.

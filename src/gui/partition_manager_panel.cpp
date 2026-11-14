@@ -13703,8 +13703,8 @@ void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& 
     QString message = result.message;
     if (m_unplug_note_pending) {
         m_unplug_note_pending = false;
-        message += QStringLiteral("\n\n") +
-                   tr("Wait a few seconds after this finishes before unplugging the drive.");
+        // Shown once the check has finished, so it does not say "after this finishes".
+        message += QStringLiteral("\n\n") + tr("Eject the drive in Windows before you unplug it.");
     }
     if (result.success || (result.cancelled && !needs_attention)) {
         showInformationLogged(this, tr("Partition Manager"), message);

@@ -673,6 +673,14 @@ void PartitionOsMigrationTests::aRefusalReachesThePersonInItsOwnWords() {
                             "InitializeForBackup failed with VSS error 0x80042302. Nothing was "
                             "written to the target."));
     QVERIFY(PartitionExecutor::scriptFailureReason(QString()).isEmpty());
+    // A cmdlet's error record names the cmdlet and, for the Storage cmdlets, an Activity ID: the
+    // person sees neither (Check File System on a USB stick, the capture of 1db87df4).
+    QCOMPARE(PartitionExecutor::scriptFailureReason(QStringLiteral(
+                 "Repair-Volume : A snapshot error occurred while scanning this drive.\n"
+                 "Activity ID: {11fe18b0-71ba-0004-e119-fe11ba71dd01}\n"
+                 "At line:1 char:16\n"
+                 "+ ...  try { Repair-Volume -DriveLetter D -Scan -ErrorAction Stop\n")),
+             QStringLiteral("A snapshot error occurred while scanning this drive."));
     // The script's own .NET code fails in PowerShell's words around its own, seen in the VM.
     QCOMPARE(PartitionExecutor::scriptFailureReason(QStringLiteral(
                  "Exception calling \"Verify\" with \"6\" argument(s): \"Verification found a "
@@ -687,6 +695,36 @@ void PartitionOsMigrationTests::aRefusalReachesThePersonInItsOwnWords() {
     QCOMPARE(PartitionExecutor::elevatedFailureMessage(generic, QString(), captured, 0), generic);
     QVERIFY(PartitionExecutor::elevatedFailureMessage(QString(), QString(), QString(), 3)
                 .contains(QStringLiteral("exit code 3")));
+    // Run in this process (S.A.K. itself elevated), the same words: it gave the whole of
+    // standard error, the cmdlet's name and Activity ID and where in the script it was raised.
+    const QString snapshot = QStringLiteral(
+        "Repair-Volume : A snapshot error occurred while scanning this drive.\n"
+        "Activity ID: {11fe18b0-71ba-0004-e119-fe11ba71dd01}\n"
+        "At line:1 char:16\n");
+    QCOMPARE(PartitionExecutor::localFailureMessage(snapshot, false, false),
+             QStringLiteral("A snapshot error occurred while scanning this drive."));
+    QCOMPARE(
+        PartitionExecutor::localFailureMessage(QStringLiteral("At line:1 char:1\n"), false, false),
+        QStringLiteral("At line:1 char:1"));
+    // Check File System's lock refusing a stick in use, captured on testpc1 (2026-11-13).
+    const QString in_use = QStringLiteral(
+        "Exception calling \"LockAndDismount\" with \"1\" argument(s): \"D: is in use, so it was "
+        "not checked. \r\n"
+        "Close the files and programs using it, then check it again. Nothing was changed.\"\r\n"
+        "At line:3 char:932\r\n"
+        "+ ... s.dll')) }; [void][Sak.ScanVolumeLock]::LockAndDismount($sakScanDrive ...\r\n"
+        "+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n"
+        "    + CategoryInfo          : NotSpecified: (:) [], ParentContainsErrorRecordException\r\n"
+        "    + FullyQualifiedErrorId : InvalidOperationException\r\n");
+    const QString plain = QStringLiteral(
+        "D: is in use, so it was not checked. Close the files and programs using it, then check it "
+        "again. Nothing was changed.");
+    QCOMPARE(PartitionExecutor::scriptFailureReason(in_use), plain);
+    QCOMPARE(PartitionExecutor::localFailureMessage(in_use, false, false), plain);
+    QCOMPARE(PartitionExecutor::localFailureMessage(snapshot, true, false),
+             QStringLiteral("Command cancelled"));
+    QCOMPARE(PartitionExecutor::localFailureMessage(snapshot, false, true),
+             QStringLiteral("Command timed out"));
 }
 
 namespace {

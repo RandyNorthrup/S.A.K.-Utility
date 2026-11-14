@@ -1612,6 +1612,8 @@ private Q_SLOTS:
     void generatedScripts_checkerNamesAStorageCmdletThatWouldNotStop();
     void generatedScripts_writerCallsPassEveryArgumentOn();
     void generatedScripts_volumeScanStopsOnWhatItFinds();
+    void generatedScripts_volumeScanOnARemovableDriveNeedsNoSnapshot();
+    void generatedScripts_volumeScanSaysWhatChkdskFound();
     void generatedScripts_volumeScanSettlesBeforeDone();
     void generatedScripts_everyOnlineScanSettles();
     void generatedScripts_toolRunnerSurvivesStderrAndKeepsTheExitCode();
@@ -6356,24 +6358,40 @@ namespace {
 /// is passed as well. chkdsk is a stand-in .cmd that prints a line to stdout and one to stderr and
 /// exits with @p chkdsk_exit. Start-Sleep says "SLEPT <seconds>" and returns at once. "DONE" when
 /// the script ran to its end, "THREW <message>" when not.
+/// What the volume scan's stand-ins answer beyond the file system: the drive's type, the lock a
+/// removable NTFS drive takes (empty: it locks; otherwise the message it throws), chkdsk's own
+/// verdict line, and a Repair-Volume error that carries its FullyQualifiedErrorId.
+struct VolumeScanStandIn {
+    QString drive_type;
+    QString lock_error;
+    QString chkdsk_says;
+    QString repair_error_id;
+};
+
 QString runVolumeScanScript(QString script,
                             const QString& file_system,
                             const QString& repair_error,
-                            int chkdsk_exit) {
+                            int chkdsk_exit,
+                            const VolumeScanStandIn& more = {}) {
     QTemporaryDir dir;
     const QString chkdsk = QStringLiteral("([Environment]::SystemDirectory + '\\chkdsk.exe')");
-    if (!dir.isValid() || !script.contains(chkdsk)) {
-        // Never the real chkdsk: the script must name it where the stand-in replaces it.
+    const QString lock = QStringLiteral("[Sak.ScanVolumeLock]::LockAndDismount($sakScanDrive)");
+    if (!dir.isValid() || !script.contains(chkdsk) || !script.contains(lock)) {
+        // Never the real chkdsk or lock: the script must name them where the stand-ins go.
         return QStringLiteral("NO STAND-IN FOR CHKDSK");
     }
+    script.replace(lock, QStringLiteral("(Invoke-StandInLock $sakScanDrive)"));
     const QString tool = QDir::toNativeSeparators(dir.filePath(QStringLiteral("chkdsk.cmd")));
     QFile file(tool);
-    const QByteArray bytes = QStringLiteral(
-                                 "@echo off\r\necho The type of the file system is %1.\r\necho "
-                                 "stand-in chkdsk stderr line 1>&2\r\nexit /b %2\r\n")
-                                 .arg(file_system)
-                                 .arg(chkdsk_exit)
-                                 .toLatin1();
+    const QByteArray bytes =
+        QStringLiteral(
+            "@echo off\r\necho CHKDSK RAN\r\necho The type of the file system "
+            "is %1.\r\n%3echo stand-in chkdsk stderr line 1>&2\r\nexit /b %2\r\n")
+            .arg(file_system)
+            .arg(chkdsk_exit)
+            .arg(more.chkdsk_says.isEmpty() ? QString()
+                                            : QStringLiteral("echo %1\r\n").arg(more.chkdsk_says))
+            .toLatin1();
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
         return QStringLiteral("NO STAND-IN FOR CHKDSK");
     }
@@ -6384,16 +6402,25 @@ QString runVolumeScanScript(QString script,
         QString(),
         QStringLiteral(
             "function Get-Volume { param($DriveLetter, $ErrorAction) [pscustomobject]@{ "
-            "FileSystem = %1 } }\n"
+            "FileSystem = %1; DriveType = %3 } }\n"
+            "function Invoke-StandInLock { param($Letter) Write-Host ('LOCKED ' + $Letter); if "
+            "(%4) "
+            "{ throw %4 } }\n"
             "function Repair-Volume { [CmdletBinding()] param($DriveLetter, [switch]$Scan) "
-            "Write-Host ('CALL Repair ' + $DriveLetter); if (-not %2) { 'NoErrorsFound'; return "
+            "Write-Host ('CALL Repair ' + $DriveLetter); if (%5) { "
+            "$PSCmdlet.ThrowTerminatingError((New-Object "
+            "System.Management.Automation.ErrorRecord ([Exception]%2), %5, 'NotSpecified', "
+            "$null)) }; if (-not %2) { 'NoErrorsFound'; return "
             "}; if ([string]$PSBoundParameters['ErrorAction'] -eq 'Stop' -or -not "
             "$PSBoundParameters.ContainsKey('Verbose')) { throw %2 }; Write-Host ('NOT STOPPED "
             "BY ' + %2) }\n"
             "function Start-Sleep { param($Seconds) Write-Output ('SLEPT ' + $Seconds) }\n"
             "try {\n")
                 .arg(PartitionScriptBuilder::quotePowerShell(file_system),
-                     PartitionScriptBuilder::quotePowerShell(repair_error)) +
+                     PartitionScriptBuilder::quotePowerShell(repair_error),
+                     PartitionScriptBuilder::quotePowerShell(more.drive_type),
+                     PartitionScriptBuilder::quotePowerShell(more.lock_error),
+                     PartitionScriptBuilder::quotePowerShell(more.repair_error_id)) +
             script + QStringLiteral("\n'DONE'\n} catch { 'THREW ' + $_.Exception.Message }\n"),
         &exit_code);
 }
@@ -6416,8 +6443,8 @@ void PartitionManagerCoreTests::generatedScripts_volumeScanStopsOnWhatItFinds() 
     const auto check = builder.buildScript(
         PartitionOperationPlanner::makeOperation(PartitionOperationType::CheckFileSystem, target));
     QVERIFY2(check.valid(), qPrintable(check.blockers.join(' ')));
-    QVERIFY2(check.script.contains(
-                 QStringLiteral("Repair-Volume -DriveLetter 'E' -Scan -Verbose -ErrorAction Stop")),
+    QVERIFY2(check.script.contains(QStringLiteral(
+                 "Repair-Volume -DriveLetter $sakScanDrive -Scan -Verbose -ErrorAction Stop")),
              qPrintable(check.script));
     QVERIFY(check.script.contains(QStringLiteral("$sakScanDrive = 'E';")));
     QVERIFY(check.script.contains(QStringLiteral(
@@ -6440,9 +6467,123 @@ void PartitionManagerCoreTests::generatedScripts_volumeScanStopsOnWhatItFinds() 
                  !fat.contains(QStringLiteral("CALL Repair")),
              qPrintable(fat));
     const QString exfat = runVolumeScanScript(check.script, QStringLiteral("exFAT"), QString(), 3);
-    QVERIFY2(exfat.contains(QStringLiteral("THREW chkdsk found a problem on E: (exit 3)")) &&
+    QVERIFY2(exfat.contains(QStringLiteral(
+                 "THREW chkdsk could not check E: (exit 3): stand-in chkdsk stderr line")) &&
                  !exfat.contains(QStringLiteral("DONE")),
              qPrintable(exfat));
+    // A FAT32 drive is never locked: only NTFS on a removable drive is.
+    QVERIFY2(!fat.contains(QStringLiteral("LOCKED")), qPrintable(fat));
+}
+
+// Check File System failed on every NTFS USB stick (the capture of 1db87df4, and testpc1's stick):
+// Repair-Volume -Scan reads a snapshot, Windows does not snapshot a removable drive, and the
+// result read "Repair-Volume : A snapshot error occurred while scanning this drive. Run an offline
+// scan and fix. Activity ID: {...}". Such a drive is locked (in use is said, not checked),
+// dismounted, and read by chkdsk without /f, /r, /x or /scan; its result says which it was. A
+// fixed drive whose snapshot fails says so in S.A.K.'s words, without Windows' advice to run a
+// scan that fixes. Windows PowerShell 5.1 runs the whole generated script against stand-ins.
+namespace {
+
+/// Check File System's script for E:, partition 2 of disk 1, as the panel queues it.
+PartitionScript checkFileSystemScriptOnE() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{1};
+    target.partition_number = PartitionNumber{2};
+    target.drive_letter = QStringLiteral("E");
+    target.size_bytes = 256 * kMiBytes;
+    return PartitionScriptBuilder().buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::CheckFileSystem, target));
+}
+
+}  // namespace
+
+void PartitionManagerCoreTests::generatedScripts_volumeScanOnARemovableDriveNeedsNoSnapshot() {
+    const PartitionScript check = checkFileSystemScriptOnE();
+    QVERIFY2(check.valid(), qPrintable(check.blockers.join(' ')));
+    for (const QString& flag : {QStringLiteral(" /f"),
+                                QStringLiteral(" /r"),
+                                QStringLiteral(" /x"),
+                                QStringLiteral("/scan")}) {
+        QVERIFY2(!check.script.contains(flag, Qt::CaseInsensitive), qPrintable(flag));
+    }
+    const QString ntfs = QStringLiteral("NTFS");
+    const QString clean = runVolumeScanScript(
+        check.script, ntfs, QString(), 0, {.drive_type = QStringLiteral("Removable")});
+    QVERIFY2(clean.contains(QStringLiteral("LOCKED E")) &&
+                 clean.indexOf(QStringLiteral("LOCKED E")) <
+                     clean.indexOf(QStringLiteral("CHKDSK RAN")) &&
+                 clean.contains(QStringLiteral("DONE")) &&
+                 !clean.contains(QStringLiteral("CALL Repair")),
+             qPrintable(clean));
+
+    const QString in_use = QStringLiteral(
+        "E: is in use, so it was not checked. Close the files and programs using it, then check "
+        "it again. Nothing was changed.");
+    const QString held =
+        runVolumeScanScript(check.script,
+                            ntfs,
+                            QString(),
+                            0,
+                            {.drive_type = QStringLiteral("Removable"), .lock_error = in_use});
+    QVERIFY2(held.contains(QStringLiteral("THREW ") + in_use) &&
+                 !held.contains(QStringLiteral("CHKDSK RAN")) &&
+                 !held.contains(QStringLiteral("DONE")),
+             qPrintable(held));
+
+    const QString fixed_drive = runVolumeScanScript(
+        check.script,
+        ntfs,
+        QStringLiteral("A snapshot error occurred while scanning this drive. Run an offline scan "
+                       "and fix."),
+        0,
+        {.drive_type = QStringLiteral("Fixed"),
+         .repair_error_id = QStringLiteral("StorageWMI 43012,Repair-Volume")});
+    QVERIFY2(fixed_drive.contains(QStringLiteral(
+                 "THREW Windows could not take the snapshot it reads E: through, so E: was not "
+                 "checked. Nothing was changed.")) &&
+                 !fixed_drive.contains(QStringLiteral("offline scan")) &&
+                 !fixed_drive.contains(QStringLiteral("LOCKED")),
+             qPrintable(fixed_drive));
+}
+
+// The read-only chkdsk of a removable drive says which it was, as Windows PowerShell 5.1 runs the
+// generated script against stand-ins: problems found (and, reading only, none fixed), from
+// chkdsk's own words, or not checked, with chkdsk's last line.
+void PartitionManagerCoreTests::generatedScripts_volumeScanSaysWhatChkdskFound() {
+    const PartitionScript check = checkFileSystemScriptOnE();
+    QVERIFY2(check.valid(), qPrintable(check.blockers.join(' ')));
+    const QString ntfs = QStringLiteral("NTFS");
+    const QString problems = runVolumeScanScript(
+        check.script,
+        ntfs,
+        QString(),
+        3,
+        {.drive_type = QStringLiteral("Removable"),
+         .chkdsk_says = QStringLiteral("Windows has scanned the file system and found problems.")});
+    QVERIFY2(
+        problems.contains(QStringLiteral(
+            "THREW chkdsk found problems on E: Reading only, it fixed none of them (exit 3).")),
+        qPrintable(problems));
+    // What chkdsk said, reading only, on testpc1's stick with one file record damaged.
+    const QString damaged =
+        runVolumeScanScript(check.script,
+                            ntfs,
+                            QString(),
+                            3,
+                            {.drive_type = QStringLiteral("Removable"),
+                             .chkdsk_says = QStringLiteral(
+                                 "Errors found.  CHKDSK cannot continue in read-only mode.")});
+    QVERIFY2(
+        damaged.contains(QStringLiteral(
+            "THREW chkdsk found problems on E: Reading only, it fixed none of them (exit 3).")),
+        qPrintable(damaged));
+
+    const QString unchecked = runVolumeScanScript(
+        check.script, ntfs, QString(), 3, {.drive_type = QStringLiteral("Removable")});
+    QVERIFY2(unchecked.contains(QStringLiteral(
+                 "THREW chkdsk could not check E: (exit 3): stand-in chkdsk stderr line")),
+             qPrintable(unchecked));
 }
 
 // A drive removed within seconds of an online scan can crash Windows: volsnap leaves a timer queued
@@ -6486,7 +6627,7 @@ void PartitionManagerCoreTests::generatedScripts_volumeScanSettlesBeforeDone() {
                 "",
                 3,
                 "The type of the file system is exFAT.",
-                "THREW chkdsk found a problem on E: (exit 3)"}}) {
+                "THREW chkdsk could not check E: (exit 3)"}}) {
         const QString out = runVolumeScanScript(check.script,
                                                 QString::fromLatin1(route.file_system),
                                                 QString::fromLatin1(route.repair_error),
@@ -26183,7 +26324,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAllocateFreeSpaceScript() {
     QVERIFY(script.script.contains(QStringLiteral("Resize-Partition -DiskNumber 2")));
     QVERIFY(script.script.contains(QStringLiteral("New-Partition -DiskNumber 2")));
     QVERIFY(script.script.contains(QStringLiteral("Compare-Object")));
-    QVERIFY(script.script.contains(QStringLiteral("Repair-Volume -DriveLetter $sourceDrive")));
+    QVERIFY(script.script.contains(QStringLiteral("$sakScanDrive = $sourceDrive;")));
+    QVERIFY(script.script.contains(QStringLiteral("Repair-Volume -DriveLetter $sakScanDrive")));
     // P03-10: donor/target backup-root exclusion compares volume identity.
     QVERIFY(script.script.contains(QStringLiteral("function Get-SakVolumeGuid")));
     QVERIFY(script.script.contains(QStringLiteral("function Get-SakOptionalPartitionVolume")));
@@ -26913,11 +27055,12 @@ void PartitionManagerCoreTests::scriptBuilder_buildsChangeClusterSizeScript() {
     QVERIFY(script.script.contains(QStringLiteral("Format-Volume -DriveLetter $drive")));
     QVERIFY(script.script.contains(QStringLiteral("-AllocationUnitSize $allocationUnitBytes")));
     QVERIFY(script.script.contains(QStringLiteral("Compare-Object")));
-    QVERIFY(script.script.contains(QStringLiteral("Repair-Volume -DriveLetter $drive -Scan")));
+    QVERIFY(
+        script.script.contains(QStringLiteral("Repair-Volume -DriveLetter $sakScanDrive -Scan")));
     // The closing scan of a FAT32 or exFAT rebuild is chkdsk: Repair-Volume refuses both, and a
     // FAT32 move failed there after its files were back (operation proof, 2026-11-12).
-    QVERIFY(script.script.contains(
-        QStringLiteral("Repair-Volume -DriveLetter $drive -Scan -ErrorAction Stop } else")));
+    QVERIFY(script.script.contains(QStringLiteral(
+        "Repair-Volume -DriveLetter $sakScanDrive -Scan -ErrorAction Stop } catch")));
     QVERIFY(script.script.contains(QStringLiteral("$sakScanDrive = $drive;")));
     // P03-10: target backup-root exclusion compares volume identity.
     QVERIFY(script.script.contains(QStringLiteral("function Get-SakVolumeGuid")));
@@ -27082,7 +27225,8 @@ void PartitionManagerCoreTests::scriptBuilder_buildsDirectDefragScript() {
     QVERIFY(script.script.contains(
         QStringLiteral("Optimize-Volume -DriveLetter $driveLetter -Defrag")));
     QVERIFY(
-        script.script.contains(QStringLiteral("Repair-Volume -DriveLetter $driveLetter -Scan")));
+        script.script.contains(QStringLiteral("$sakScanDrive = $driveLetter;")) &&
+        script.script.contains(QStringLiteral("Repair-Volume -DriveLetter $sakScanDrive -Scan")));
 }
 
 void PartitionManagerCoreTests::safetyValidator_allowsHddDefragOnlyOnReportedHdd() {

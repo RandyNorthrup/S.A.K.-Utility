@@ -3758,6 +3758,51 @@ bandwidth-button tests, which point at loopback where nothing listens on purpose
 the PC); no netsh, no PowerShell, no server; `test_network_diagnostic_controller` starts none. Drills:
 `controller-starts-the-iperf3-server-anyway`, `netsh-stopped-says-nothing`.
 
+**Check File System on an NTFS USB stick (the capture `partition_manager_check_fs_unplug_note`).** It failed
+with "Repair-Volume : A snapshot error occurred while scanning this drive. Run an offline scan and fix. Activity
+ID: {...}". Confirmed on testpc1's stick (D: USBSTICK, USB DISK 3.0, removable, elevated): `Repair-Volume -Scan`
+throws FullyQualifiedErrorId `StorageWMI 43012,Repair-Volume`, `chkdsk D: /scan` exits 11, and plain `chkdsk D:`
+says "Shadow copying the specified volume is not supported ... Running CHKDSK in read-only mode" and exits 0: the
+online scan reads a volsnap snapshot and Windows takes none of a removable drive. The opsproof check-ntfs row ran
+on a fixed VHD, never on a stick. Now (`volumeScanStatement`): an NTFS volume Windows calls removable is locked
+(`Sak.ScanVolumeLock.LockAndDismount`: FSCTL_LOCK_VOLUME, which fails while any other handle is open, so a drive
+in use is refused "D: is in use, so it was not checked. Close the files and programs using it, then check it
+again. Nothing was changed."), dismounted, the handle closed so chkdsk takes the volume itself, and read by chkdsk
+with no /f, /r, /x or /scan. Its result is one of three: exit 0, no problems found; problems found ("chkdsk found
+problems on D: Reading only, it fixed none of them (exit 3).", from chkdsk's own "found problems", "found
+errors", "Errors found" or "is corrupt"); or "chkdsk could not check D: (exit N): <its last line>". A fixed NTFS or
+ReFS volume keeps `Repair-Volume -Scan`, and a snapshot it cannot take (StorageWMI 43012) reads "Windows could not
+take the snapshot it reads D: through, so D: was not checked. Nothing was changed.": a read-only check does not
+pass on "Run an offline scan and fix" as its own advice. The 15 s settle wraps both routes, passed or failed.
+Messages: `PartitionExecutor::scriptFailureReason`, which the elevated path already used, drops a cmdlet's name
+("Repair-Volume : "), "Activity ID: {...}" and PowerShell's "Exception calling ..." wrapper, and the in-process
+path (S.A.K. itself elevated) now gives the same words (`localFailureMessage`) instead of the whole of standard
+error. The unplug note, shown with the finished result, reads "Eject the drive in Windows before you unplug it."
+instead of "Wait a few seconds after this finishes before unplugging the drive." Sweep of where PowerShell error
+text reaches the person: in Partition Manager, every script failure goes through `scriptFailureReason`, on both
+paths; outside it, Quick Actions' Check Disk Errors had the same snapshot failure on a stick, fixed separately
+(below), and the other paths that show a process's standard error each have their own (below).
+Tests: `test_partition_manager_core` `generatedScripts_volumeScanOnARemovableDriveNeedsNoSnapshot` (Windows
+PowerShell 5.1 runs the generated script against stand-ins for Get-Volume, the lock, chkdsk and Repair-Volume:
+the lock before chkdsk and no Repair-Volume; in use refused with chkdsk never run; problems found; not checked; a
+fixed drive's snapshot error in S.A.K.'s words; no /f, /r, /x or /scan anywhere); `test_partition_os_migration`
+(a captured snapshot error and a captured in-use refusal, both paths); `test_partition_manager_panel` (the note);
+and the elevated `test_raw_partition_write` `readOnlyCheckWithoutASnapshotLocksAndWritesNothing` (in CI's
+must-run-elevated lists): on a 600 MiB VHDX through Windows itself, the fixed route runs Repair-Volume -Scan and
+settles, the forced removable route runs chkdsk read-only, finds no problems and settles, a file held open makes
+it "in use" with chkdsk not run, and the file's SHA-256 is unchanged; with SAK_TEST_REMOVABLE_NTFS_LETTER it also
+checks a real removable drive, expecting SAK_TEST_REMOVABLE_NTFS_EXPECT (none, problems or in-use). testpc1, its
+stick, elevated: none (exit 0, "found no problems"), in-use (a file held open on the stick: the plain refusal,
+chkdsk not run), the whole suite (20 passed), problems (one file record on the stick deliberately damaged by
+zeroing its FILE signature, confirmed first by a separate read-only chkdsk, exit 3, "Errors found. CHKDSK cannot
+continue in read-only mode."; S.A.K. said "chkdsk found problems on D: Reading only, it fixed none of them (exit
+3)."), then the stick reformatted to an empty NTFS USBSTICK with its 4096-byte clusters and checked again: no
+problems. Each run settled 15 s. Drills: `removable-ntfs-takes-the-snapshot-scan`,
+`removable-check-skips-the-lock`, `chkdsk-problems-said-as-not-checked`, `snapshot-error-passes-on-windows-advice`,
+`cmdlet-name-reaches-the-person`, `activity-id-reaches-the-person`, `in-process-failure-gives-all-of-stderr`,
+`unplug-note-says-after-this-finishes`; on testpc1, `stick-takes-the-snapshot-scan` (the stick's own run red with
+the snapshot error) and `lock-refusal-not-called-in-use`.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

@@ -153,21 +153,43 @@ QString volumeScanLine(const QString& statement,
 // Storage cmdlet given -Verbose no longer stops on $ErrorActionPreference, so the scan says
 // -ErrorAction Stop itself (operation proof, 2026-11-12: Check File System on FAT32 and exFAT
 // reported success having checked nothing, and Move of a FAT32 volume failed after moving it).
-// chkdsk's output is captured with Stop relaxed for the call, as the bundled tools' is: under Stop
-// a line on stderr would be a NativeCommandError, and the exit code is read before anything else
-// runs. The drive is held in a variable, since @p drive may be $_ of an enclosing pipeline.
+// Repair-Volume -Scan reads a snapshot, and Windows does not snapshot a removable drive: on an
+// NTFS USB stick it stopped with "A snapshot error occurred while scanning this drive. Run an
+// offline scan and fix." (the capture of 1db87df4; testpc1's stick). Such a volume is locked, so
+// one in use is said to be, dismounted, and read by chkdsk without /f, /r, /x or /scan
+// (Sak.ScanVolumeLock). A snapshot that fails elsewhere is said in S.A.K.'s words: a read-only
+// check does not pass on Windows' advice to run a scan that fixes. chkdsk's output is captured
+// with Stop relaxed for the call, as the bundled tools' is: under Stop a line on stderr would be
+// a NativeCommandError, and the exit code is read before anything else runs. Its result says
+// which it was: no problems, problems found (and, reading only, none fixed), or not checked.
+// Reading only, chkdsk ends "Errors found.  CHKDSK cannot continue in read-only mode." on a
+// damaged volume (testpc1's stick, 2026-11-13). The drive is held in a variable, since @p drive
+// may be $_ of an enclosing pipeline.
 QString volumeScanStatement(const QString& drive, bool verbose = false) {
     return QStringLiteral(
-               "if (@('NTFS', 'ReFS') -contains (Get-Volume -DriveLetter %1 -ErrorAction "
-               "Stop).FileSystem) { Repair-Volume -DriveLetter %1 -Scan%2 -ErrorAction Stop } else "
-               "{ $sakScanDrive = %1; $sakScanPreference = $ErrorActionPreference; "
-               "$ErrorActionPreference = 'Continue'; try { $sakScanOutput = & "
-               "([Environment]::SystemDirectory + '\\chkdsk.exe') ('{0}:' -f $sakScanDrive) 2>&1; "
-               "$sakScanExit = [int]$LASTEXITCODE } finally { $ErrorActionPreference = "
-               "$sakScanPreference }; $sakScanOutput | ForEach-Object { Write-Output ([string]$_) "
-               "}; if ($sakScanExit -ne 0) { throw ('chkdsk found a problem on {0}: (exit {1})' -f "
-               "$sakScanDrive, $sakScanExit) } }")
-        .arg(drive, verbose ? QStringLiteral(" -Verbose") : QString());
+               "$sakScanDrive = %1; $sakScanVolume = Get-Volume -DriveLetter $sakScanDrive "
+               "-ErrorAction Stop; $sakScanRemovableNtfs = $sakScanVolume.FileSystem -eq 'NTFS' "
+               "-and [string]$sakScanVolume.DriveType -eq 'Removable'; if (@('NTFS', 'ReFS') "
+               "-contains $sakScanVolume.FileSystem -and -not $sakScanRemovableNtfs) { try { "
+               "Repair-Volume -DriveLetter $sakScanDrive -Scan%2 -ErrorAction Stop } catch { if "
+               "(\"$($_.FullyQualifiedErrorId)\" -like 'StorageWMI 43012*') { throw ('Windows "
+               "could not take the snapshot it reads {0}: through, so {0}: was not checked. "
+               "Nothing was changed.' -f $sakScanDrive) }; throw } } else { if "
+               "($sakScanRemovableNtfs) { %3"
+               "[void][Sak.ScanVolumeLock]::LockAndDismount($sakScanDrive) }; $sakScanPreference = "
+               "$ErrorActionPreference; $ErrorActionPreference = 'Continue'; try { $sakScanOutput "
+               "= & ([Environment]::SystemDirectory + '\\chkdsk.exe') ('{0}:' -f $sakScanDrive) "
+               "2>&1; $sakScanExit = [int]$LASTEXITCODE } finally { $ErrorActionPreference = "
+               "$sakScanPreference }; $sakScanLines = @($sakScanOutput | ForEach-Object { "
+               "([string]$_).Trim() } | Where-Object { $_ }); $sakScanLines | ForEach-Object { "
+               "Write-Output $_ }; if ($sakScanExit -ne 0) { if (($sakScanLines -join ' ') -match "
+               "'found problems|found errors|errors found|is corrupt') { throw ('chkdsk found "
+               "problems on {0}: Reading only, it fixed none of them (exit {1}).' -f "
+               "$sakScanDrive, $sakScanExit) }; throw ('chkdsk could not check {0}: (exit {1}): "
+               "{2}' -f $sakScanDrive, $sakScanExit, ($sakScanLines | Select-Object -Last 1)) } }")
+        .arg(drive,
+             verbose ? QStringLiteral(" -Verbose") : QString(),
+             PartitionScriptBuilder::scriptTypesLoaderScript().trimmed() + QStringLiteral("; "));
 }
 
 QString requirePartitionIdentity(const PartitionTarget& target) {
