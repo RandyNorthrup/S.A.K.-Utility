@@ -11065,7 +11065,7 @@ void PartitionManagerPanel::showCurrentRowContextMenu() {
     if (row >= 0) {
         m_table->selectRow(row);
         const QRect cell = m_table->visualRect(m_table->model()->index(row, ColPartition));
-        anchor = QPoint(cell.left() + cell.height() / 2, cell.center().y());
+        anchor = QPoint(cell.left() + (cell.height() / kCenteringDivisor), cell.center().y());
     }
     showSelectedTargetContextMenuAt(m_table->viewport()->mapToGlobal(anchor));
 }

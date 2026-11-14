@@ -619,9 +619,10 @@ QString readablePowerShellError(const QString& std_err) {
     static const QRegularExpression kCmdletName(QStringLiteral("^[A-Z][A-Za-z]*-[A-Za-z]+ : "));
     static const QRegularExpression kActivityId(
         QStringLiteral("\\s*Activity ID: \\{[0-9A-Fa-f-]+\\}\\.?"));
-    const qsizetype separator = text.indexOf(QStringLiteral(" : "));
+    const QString position_separator = QStringLiteral(" : ");
+    const qsizetype separator = text.indexOf(position_separator);
     if (std_err.contains(QStringLiteral("[Write-Error], WriteErrorException")) && separator >= 0) {
-        text.remove(0, separator + 3);
+        text.remove(0, separator + position_separator.size());
     } else {
         text.remove(kCmdletName);
     }
