@@ -12046,12 +12046,26 @@ void PartitionManagerPanel::onSetPartitionTypeId() {
         table == QStringLiteral("MBR")
             ? tr("New MBR type, one byte in hex, such as 07 (NTFS, exFAT) or 83 (Linux); 83, "
                  "0x83 and 83h all mean 83:")
+        // The example GUID on a line of its own: run into the sentence, the prompt broke it at
+        // a hyphen (the capture of 1db87df4). Plain hyphens, so a copy of it is the GUID.
         : table == QStringLiteral("GPT")
-            ? tr("New GPT type GUID, such as {ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}:")
+            ? tr("New GPT type GUID, such as the basic data type:\n"
+                 "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}")
             : tr("New MBR type (one byte in hex, such as 83) or GPT type GUID:");
-    bool ok = false;
-    const QString type_id = QInputDialog::getText(
-        this, tr("Change Partition Type ID"), prompt, QLineEdit::Normal, QString(), &ok);
+    QInputDialog prompt_dialog(this);
+    prompt_dialog.setWindowTitle(tr("Change Partition Type ID"));
+    prompt_dialog.setLabelText(prompt);
+    prompt_dialog.setInputMode(QInputDialog::TextInput);
+    // The example can be selected and copied into the field, and is never wrapped: a wrapped
+    // label breaks a GUID at its hyphens, and unwrapped, the dialog is never narrower than it.
+    // QInputDialog wraps its label when it first lays itself out, so it is laid out first.
+    (void)prompt_dialog.minimumSizeHint();
+    for (auto* label : prompt_dialog.findChildren<QLabel*>()) {
+        label->setWordWrap(false);
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    }
+    const bool ok = prompt_dialog.exec() == QDialog::Accepted;
+    const QString type_id = prompt_dialog.textValue();
     if (ok && !type_id.trimmed().isEmpty()) {
         queueOperation(PartitionOperationType::SetPartitionTypeId,
                        *target,

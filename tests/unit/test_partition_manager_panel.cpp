@@ -153,6 +153,7 @@ private Q_SLOTS:
     void restoreImageSourceRefusesUnmappedIdentity();
     void restoreImageSourceRefusesUncAliases();
     void restoreImageQueuesConfirmedTarget();
+    void typeIdPromptKeepsTheExampleGuidWhole();
     void modalQueueBindsReviewedTarget();
     void modalQueueRefusesChangedLayout();
     void cloneAndUsedScalingDoNotOverflow() const;
@@ -3745,6 +3746,57 @@ void PartitionManagerPanelTests::restoreImageQueuesConfirmedTarget() {
     QVERIFY(body.contains(QStringLiteral("expected_layout_hash,")));
     QVERIFY(!body.contains(
         QStringLiteral("queueOperation(PartitionOperationType::RestoreImage, payload)")));
+}
+
+// The GPT prompt's example GUID broke at a hyphen at the prompt's own width (446 px, the capture of
+// 1db87df4). It is on a line of its own now, in a label that never wraps, so the dialog is never
+// narrower than the GUID; its hyphens are plain (no U+2011 to go along with a copy), and the label
+// can be selected to copy it.
+void PartitionManagerPanelTests::typeIdPromptKeepsTheExampleGuidWhole() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = modalTargetBindingInventoryFixture();
+    inventory.disks[0].partition_style = QStringLiteral("GPT");
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    QApplication::processEvents();
+    const QString guid = QStringLiteral("{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}");
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Type ID prompt should open");
+        QVERIFY2(dialog->labelText().endsWith(QStringLiteral("\n") + guid),
+                 qPrintable(dialog->labelText()));
+        QVERIFY(!dialog->labelText().contains(QChar(0x2011)));
+        QVERIFY(!dialog->labelText().contains(QChar(0x2060)));
+        QLabel* label = nullptr;
+        for (auto* candidate : dialog->findChildren<QLabel*>()) {
+            if (candidate->text() == dialog->labelText()) {
+                label = candidate;
+            }
+        }
+        QVERIFY(label != nullptr);
+        QVERIFY(label->textInteractionFlags().testFlag(Qt::TextSelectableByMouse));
+        // Never wrapped, so never broken at a hyphen: made as narrow as the capture (446 px), or
+        // narrower, the dialog stays as wide as the GUID, whatever the font.
+        QVERIFY(!label->wordWrap());
+        const int guid_width = label->fontMetrics().horizontalAdvance(guid);
+        for (const int width : {446, 200}) {
+            dialog->resize(width, dialog->height());
+            QApplication::processEvents();
+            QVERIFY2(guid_width <= label->contentsRect().width(),
+                     qPrintable(QStringLiteral("%1 px: %2 > %3")
+                                    .arg(width)
+                                    .arg(guid_width)
+                                    .arg(label->contentsRect().width())));
+        }
+        inspected = true;
+        dialog->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onSetPartitionTypeId", Qt::DirectConnection));
+    QVERIFY(inspected);
 }
 
 void PartitionManagerPanelTests::modalQueueBindsReviewedTarget() {

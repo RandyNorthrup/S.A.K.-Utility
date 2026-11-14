@@ -120,6 +120,9 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **The partition type ID prompt keeps its example GUID whole** - On a GPT disk, Change Partition Type ID broke
+  the example GUID across two lines at a hyphen. The example is now on a line of its own that never wraps, and it
+  can be selected and copied into the field.
 - **Resize offers only the sizes it can make** - The Resize dialog of an APFS partition offered sizes down to
   1 MB, then refused the shrink, and spoke of "Windows online resize", which APFS does not use. An APFS partition
   now starts at its own size and grows only, and a FAT32 or exFAT partition, which Windows neither shrinks nor

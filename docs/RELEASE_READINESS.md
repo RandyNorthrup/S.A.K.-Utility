@@ -3822,6 +3822,16 @@ resizes neither way, such as HFS+, is offered only its own size, or no Resize at
 `apfs-offers-sizes-below-its-own`, `fat-offers-a-grow`, `apfs-says-windows-online-resize`,
 `fixed-size-gives-no-reason`.
 
+**Change Partition Type ID on GPT (the capture `partition_manager_type_id_prompt`, 446 px).** The prompt "New GPT
+type GUID, such as {ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}:" broke the GUID at a hyphen. The example is now on a line
+of its own ("New GPT type GUID, such as the basic data type:" then the GUID) in a label that never wraps:
+QInputDialog turns word wrap on when it first lays itself out, so the prompt is laid out first and wrap then turned
+off, and the dialog is never narrower than the GUID. Its hyphens are plain, so a copy is the GUID itself (no U+2011),
+and the label is selectable by mouse and keyboard. Test `typeIdPromptKeepsTheExampleGuidWhole`: the GUID on the last
+line with plain hyphens, the label selectable and unwrapped, and the dialog made 446 px and 200 px wide still as
+wide as the GUID at its own font. Drills: `type-id-prompt-wraps`, `type-id-guid-in-the-sentence`,
+`type-id-label-not-selectable`.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and
