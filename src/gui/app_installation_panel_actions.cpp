@@ -669,21 +669,31 @@ void AppInstallationPanel::onBuildBundle() {
     if (output_dir.isEmpty()) {
         return;
     }
+    startBuildBundle(output_dir);
+}
 
-    // Collect packages from list
+QVector<QPair<QString, QString>> AppInstallationPanel::offlineListPackages() const {
     QVector<QPair<QString, QString>> packages;
     for (int row = 0; row < m_offlineListWidget->count(); ++row) {
-        auto* item = m_offlineListWidget->item(row);
-        const QString pkg_id = item->data(Qt::UserRole).toString();
-        const QString version = item->data(Qt::UserRole + 1).toString();
-        packages.append({pkg_id, version});
+        const auto* item = m_offlineListWidget->item(row);
+        packages.append(
+            {item->data(Qt::UserRole).toString(), item->data(Qt::UserRole + 1).toString()});
     }
+    return packages;
+}
 
+void AppInstallationPanel::beginOfflineRun(const QPushButton* action_button) {
+    // What the run reports, refused or failed, goes under the name of the button that started it.
+    m_offline_action = action_button->text();
+    m_offline_cancel_requested = false;
+    setOfflineInProgressUi(true);
+}
+
+void AppInstallationPanel::startBuildBundle(const QString& output_dir) {
+    const auto packages = offlineListPackages();
     Q_EMIT logOutput(
         QString("=== Building Offline Bundle: %1 ===").arg(packagesCount(packages.size())));
-
-    setOfflineInProgressUi(true);
-
+    beginOfflineRun(m_buildBundleButton);
     const auto mode = static_cast<sak::PayloadMode>(m_payloadModeCombo->currentData().toInt());
     m_offline_worker->buildDeploymentBundle(
         packages, output_dir, tr("S.A.K. Utility deployment payload"), mode);
@@ -743,11 +753,14 @@ void AppInstallationPanel::onInstallFromBundle() {
         return;
     }
 
+    startInstallFromBundle(manifest_path, *packages_dir);
+}
+
+void AppInstallationPanel::startInstallFromBundle(const QString& manifest_path,
+                                                  const QString& packages_dir) {
     Q_EMIT logOutput(QString("=== Installing from Bundle: %1 ===").arg(manifest_path));
-
-    setOfflineInProgressUi(true);
-
-    m_offline_worker->installFromBundle(manifest_path, *packages_dir, m_airGapCheck->isChecked());
+    beginOfflineRun(m_installFromBundleButton);
+    m_offline_worker->installFromBundle(manifest_path, packages_dir, m_airGapCheck->isChecked());
 }
 
 void AppInstallationPanel::onDirectDownload() {
@@ -771,24 +784,19 @@ void AppInstallationPanel::onDirectDownload() {
     if (output_dir.isEmpty()) {
         return;
     }
+    startDirectDownload(output_dir);
+}
 
-    QVector<QPair<QString, QString>> packages;
-    for (int row = 0; row < m_offlineListWidget->count(); ++row) {
-        auto* item = m_offlineListWidget->item(row);
-        const QString pkg_id = item->data(Qt::UserRole).toString();
-        const QString version = item->data(Qt::UserRole + 1).toString();
-        packages.append({pkg_id, version});
-    }
-
+void AppInstallationPanel::startDirectDownload(const QString& output_dir) {
+    const auto packages = offlineListPackages();
     Q_EMIT logOutput(QString("=== Direct Download: %1 ===").arg(packagesCount(packages.size())));
-
-    setOfflineInProgressUi(true);
-
+    beginOfflineRun(m_directDownloadButton);
     m_offline_worker->directDownload(packages, output_dir);
 }
 
 void AppInstallationPanel::onCancelOfflineOperation() {
     if (m_offline_worker && m_offline_worker->isRunning()) {
+        m_offline_cancel_requested = true;
         m_offline_worker->cancel();
         Q_EMIT logOutput("Offline operation cancelled by user");
     }

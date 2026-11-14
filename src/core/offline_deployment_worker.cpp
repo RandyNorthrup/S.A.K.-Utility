@@ -354,19 +354,29 @@ bool OfflineDeploymentWorker::prepareOwnedWorkDir(const QString& work_dir, QStri
     const WorkDirDisposition disposition =
         classifyWorkDir(exists, QFile::exists(marker), exists && dir.isEmpty());
 
+    // Each refusal names the drive, not the folder's random name; workCanStartIn logs the folder.
+    const QString drive = PackageInternalizationEngine::workDriveName(work_dir);
     if (disposition == WorkDirDisposition::RefuseForeign) {
-        error_out = "Refusing to reuse existing work directory not created by S.A.K.: " + work_dir;
+        error_out = QStringLiteral(
+                        "Nothing was started: S.A.K.'s work folder on %1 already holds "
+                        "files S.A.K. did not put there.")
+                        .arg(drive);
         return false;
     }
     // A reparse-point work dir would let a later removeRecursively() follow a junction out of the
     // work tree; refuse it outright (the path is deterministic, so it can be pre-planted).
     const QFileInfo work_info(work_dir);
     if (exists && (work_info.isSymLink() || work_info.isJunction())) {
-        error_out = "Work directory is a reparse point; refusing to use: " + work_dir;
+        error_out = QStringLiteral(
+                        "Nothing was started: S.A.K.'s work folder on %1 is a link to "
+                        "another folder, and S.A.K. does not work through one.")
+                        .arg(drive);
         return false;
     }
     if (!QDir().mkpath(work_dir)) {
-        error_out = "Failed to create work directory: " + work_dir;
+        error_out =
+            QStringLiteral("Nothing was started: S.A.K. could not create its work folder on %1.")
+                .arg(drive);
         return false;
     }
     // Stamp ownership (fail closed) so a later removeOwnedWorkDir() only ever deletes our tree. If
@@ -375,7 +385,9 @@ bool OfflineDeploymentWorker::prepareOwnedWorkDir(const QString& work_dir, QStri
     QSaveFile stamp(marker);
     const QByteArray body = QByteArrayLiteral("S.A.K. Utility offline-deployment work directory\n");
     if (!stamp.open(QIODevice::WriteOnly) || stamp.write(body) != body.size() || !stamp.commit()) {
-        error_out = "Failed to write work-directory ownership marker: " + marker;
+        error_out =
+            QStringLiteral("Nothing was started: S.A.K. could not write to its work folder on %1.")
+                .arg(drive);
         return false;
     }
     return true;
@@ -1477,6 +1489,9 @@ bool OfflineDeploymentWorker::workCanStartIn(const QString& work_dir, bool owned
     if (refusal.isEmpty() && (!owned_folder || prepareOwnedWorkDir(work_dir, refusal))) {
         return true;
     }
+    // The refusal names the drive and "S.A.K.'s work folder"; the log line before it has the
+    // folder itself (fix batch 4, A).
+    emitLog(QStringLiteral("S.A.K.'s work folder: %1").arg(QDir::toNativeSeparators(work_dir)));
     m_running = false;
     QMetaObject::invokeMethod(
         this, [this, refusal]() { Q_EMIT operationError(refusal); }, Qt::QueuedConnection);

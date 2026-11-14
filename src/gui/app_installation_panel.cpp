@@ -13,6 +13,7 @@
 #include "sak/install_summary_dialog.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/migration_report.h"
 #include "sak/offline_deployment_worker.h"
 #include "sak/package_list_manager.h"
@@ -871,67 +872,92 @@ QString AppInstallationPanel::offlineStatusBarText(const QString& summary) const
     return text;
 }
 
+QString AppInstallationPanel::offlineActionTitle() const {
+    return m_offline_action.isEmpty() ? tr("Offline Deploy") : m_offline_action;
+}
+
+void AppInstallationPanel::onOfflineOperationCompleted(const BatchStats& stats) {
+    m_offlineProgressBar->setVisible(false);
+    m_offlineProgressLabel->setVisible(false);
+    m_cancelOfflineButton->setVisible(false);
+
+    // Surface skipped/cancelled/pending too: an air-gap run can skip every requires-network
+    // package, which "%1 succeeded, %2 failed" alone would misreport as a clean completion (e.g.
+    // "0 succeeded, 0 failed"). Fail closed on the wording -- only call it "Complete" when
+    // nothing was left undone.
+    const int unfinished = stats.skipped + stats.cancelled + stats.pending + stats.failed;
+    QString summary = tr("%1 succeeded, %2 failed").arg(stats.completed).arg(stats.failed);
+    if (stats.skipped > 0) {
+        summary += tr(", %1 skipped").arg(stats.skipped);
+    }
+    if (stats.cancelled > 0) {
+        summary += tr(", %1 cancelled").arg(stats.cancelled);
+    }
+    if (stats.pending > 0) {
+        summary += tr(", %1 not attempted").arg(stats.pending);
+    }
+    const QString headline = unfinished > 0 ? tr("Incomplete: %1") : tr("Complete: %1");
+    QString status = headline.arg(summary);
+    if (!m_offline_failures.isEmpty()) {
+        status += tr("\nFailed: %1").arg(m_offline_failures.join(QStringLiteral("; ")));
+    }
+    m_offlineStatusLabel->setText(status);
+    m_offlineStatusLabel->setToolTip(status);
+    m_offlineStatusLabel->setVisible(true);
+
+    setOfflineInProgressUi(false);
+    // The status-bar bar follows successes, so a run with a failure ended short of full and
+    // stayed on screen at 80%.
+    Q_EMIT progressUpdated(std::max(m_offline_total, 1), std::max(m_offline_total, 1));
+
+    Q_EMIT statusMessage(offlineStatusBarText(summary), sak::kTimerStatusDefaultMs);
+    // The status label sits below the buttons, out of view at 1280x860, and the status bar's
+    // message times out: a failure is said in a warning box, as Partition Manager does when an
+    // apply fails (fix batch 4, A).
+    if (stats.failed > 0) {
+        sak::showWarningLogged(this, offlineActionTitle(), status);
+    }
+}
+
+// Fix batch 4 (A): a Build Offline Bundle refused for want of space said so in the log and in a
+// "Failed:" line below the buttons, out of view at 1280x860, while the status bar read "Ready".
+// A refused or failed action is reported the way Partition Manager and the network panel report
+// one: a warning box titled with the action (showWarningLogged), and here the status bar too. A
+// run the person cancelled is not a failure, so it gets no box.
+void AppInstallationPanel::onOfflineOperationError(const QString& error) {
+    Q_EMIT logOutput(QString("ERROR: %1").arg(error));
+    // operationError is terminal (no operationCompleted follows). Mirror the completion teardown
+    // so an error after operationStarted does not strand the progress bar, its label, and the
+    // Cancel button; the status label keeps the reason after the box is closed.
+    m_offlineProgressBar->setVisible(false);
+    m_offlineProgressLabel->setVisible(false);
+    m_cancelOfflineButton->setVisible(false);
+    m_offlineStatusLabel->setText(tr("Failed: %1").arg(error));
+    m_offlineStatusLabel->setToolTip(error);
+    m_offlineStatusLabel->setVisible(true);
+    setOfflineInProgressUi(false);
+    Q_EMIT progressUpdated(std::max(m_offline_total, 1), std::max(m_offline_total, 1));
+
+    const QString title = offlineActionTitle();
+    Q_EMIT statusMessage(tr("%1: %2").arg(title, error), sak::kTimerStatusDefaultMs);
+    if (m_offline_cancel_requested) {
+        sak::logInfo("[AppInstallationPanel] {} cancelled: {}",
+                     title.toStdString(),
+                     error.toStdString());
+        return;
+    }
+    sak::showWarningLogged(this, title, error);
+}
+
 void AppInstallationPanel::setupOfflineWorkerCompletionConnections() {
-    connect(
-        m_offline_worker.get(),
-        &OfflineDeploymentWorker::operationCompleted,
-        this,
-        [this](const BatchStats& stats) {
-            m_offlineProgressBar->setVisible(false);
-            m_offlineProgressLabel->setVisible(false);
-            m_cancelOfflineButton->setVisible(false);
-
-            // Surface skipped/cancelled/pending too: an air-gap run can skip every
-            // requires-network package, which "%1 succeeded, %2 failed" alone would
-            // misreport as a clean completion (e.g. "0 succeeded, 0 failed"). Fail
-            // closed on the wording -- only call it "Complete" when nothing was left
-            // undone.
-            const int unfinished = stats.skipped + stats.cancelled + stats.pending + stats.failed;
-            QString summary = tr("%1 succeeded, %2 failed").arg(stats.completed).arg(stats.failed);
-            if (stats.skipped > 0) {
-                summary += tr(", %1 skipped").arg(stats.skipped);
-            }
-            if (stats.cancelled > 0) {
-                summary += tr(", %1 cancelled").arg(stats.cancelled);
-            }
-            if (stats.pending > 0) {
-                summary += tr(", %1 not attempted").arg(stats.pending);
-            }
-            const QString headline = unfinished > 0 ? tr("Incomplete: %1") : tr("Complete: %1");
-            QString status = headline.arg(summary);
-            if (!m_offline_failures.isEmpty()) {
-                status += tr("\nFailed: %1").arg(m_offline_failures.join(QStringLiteral("; ")));
-            }
-            m_offlineStatusLabel->setText(status);
-            m_offlineStatusLabel->setToolTip(status);
-            m_offlineStatusLabel->setVisible(true);
-
-            setOfflineInProgressUi(false);
-            // The status-bar bar follows successes, so a run with a failure ended short of
-            // full and stayed on screen at 80%.
-            Q_EMIT progressUpdated(std::max(m_offline_total, 1), std::max(m_offline_total, 1));
-
-            Q_EMIT statusMessage(offlineStatusBarText(summary), sak::kTimerStatusDefaultMs);
-        });
-
+    connect(m_offline_worker.get(),
+            &OfflineDeploymentWorker::operationCompleted,
+            this,
+            &AppInstallationPanel::onOfflineOperationCompleted);
     connect(m_offline_worker.get(),
             &OfflineDeploymentWorker::operationError,
             this,
-            [this](const QString& error) {
-                sak::logError("[AppInstallationPanel] Offline error: {}", error.toStdString());
-                Q_EMIT logOutput(QString("ERROR: %1").arg(error));
-                // operationError is terminal (no operationCompleted follows). Mirror the
-                // completion teardown so an error after operationStarted does not strand the
-                // progress bar, its label, and the Cancel button; show the reason in the
-                // status label too, so the error state is visible without opening the log.
-                m_offlineProgressBar->setVisible(false);
-                m_offlineProgressLabel->setVisible(false);
-                m_cancelOfflineButton->setVisible(false);
-                m_offlineStatusLabel->setText(tr("Failed: %1").arg(error));
-                m_offlineStatusLabel->setVisible(true);
-                setOfflineInProgressUi(false);
-                Q_EMIT progressUpdated(std::max(m_offline_total, 1), std::max(m_offline_total, 1));
-            });
+            &AppInstallationPanel::onOfflineOperationError);
 
     connect(m_offline_worker.get(),
             &OfflineDeploymentWorker::manifestWritten,

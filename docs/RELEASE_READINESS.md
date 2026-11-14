@@ -3682,6 +3682,37 @@ operation-proof guard included; the T2 labels, 333 of 333; `-PlanOnly`; every ci
 hooks on the merge commit. Drills for the two T2 fixes, red then green: `ops-driver-silentlycontinue`,
 `runner-stops-proof-rows-too`.
 
+### Fix batch 4: what the final capture of d8c27a15 found (2026-11-14)
+
+On the `fix3` branch from bfd57ed5 (lane2's head, d8c27a15 with its recertification), one commit per item, each
+test drilled red with the fix broken and green with every byte restored.
+
+**A. Offline Deployment's refused Build was invisible.** At 1280x860 (`app_mgmt_offline_space_refusal.png`) a
+Build Offline Bundle refused for want of space said so in the log only ("ERROR: Not enough free space for the work
+files: S.A.K. keeps them in its own folder (V:\SAK\data\temp\run-7832-89d4...), ..."); its "Failed:" line stood
+below the buttons, out of view, and the status bar still read "Ready". Partition Manager and the network panel
+report a refused or failed action the same way: a warning box (`showWarningLogged`) titled with the action, with
+the reason as its text; Partition Manager's failed apply and the network panel's "Enable Failed", "DNS
+Configuration Failed" and the rest. Offline Deploy now does that too (`app_installation_panel.cpp`,
+`onOfflineOperationError`): a refused or failed Build Offline Bundle, Direct Download or Install from Bundle opens
+a warning box titled with the button that started it, which needs no scrolling at any window size, and the status
+bar says "<action>: <reason>"; the "Failed:" line stays for after the box is closed. A run the person cancelled
+gets no box. A run that ends with packages failed ("Incomplete: 9 succeeded, 1 failed / Failed: adobereader
+(...)") is said in a warning box too, as Partition Manager's failed apply is. The refusals name the drive and
+S.A.K.'s work folder, not the run folder's random name: "Not enough free space for the work files: S.A.K.'s work
+folder is on V:, which has 304.1 MB free; at least 1.00 GB is needed. Free some space on V:, or run S.A.K. from a
+larger drive." and "Nothing was started: S.A.K.'s work folder is on V:, and S.A.K. could not tell how much free
+space that drive has." (`PackageInternalizationEngine::workSpaceRefusal`, with `workDriveName`); so do the four
+refusals of the work folder itself (one S.A.K. did not make, a link, one it cannot create, one it cannot write).
+The log keeps the whole folder: a line "S.A.K.'s work folder: <path>" before the error, and the free-space
+refusal's own log line. Tests (`test_app_installation_panel`, `offlineRefusalIsSaidInView`, at 1024x768): Build
+short of space, Build with the free space unknown, Direct Download short of space and Install from Bundle with an
+unreadable manifest each open a warning box titled with the action, no larger than 1024x768, whose text has the
+reason and not the run folder, and the status bar says it; the log has the folder (`test_offline_deployment_worker`
+also checks the drive and the log for both refusals, and the unknown-space one is new there). Drills, each red then
+green with the bytes restored: no warning box on a refusal; the refusal naming the folder instead of the drive; the
+folder not logged; no box for a run with failures.
+
 ### Fix batch 3: what the screenshot retakes and the 1db87df4 recertification found (2026-11-13)
 
 On the `fix3` branch from 1db87df4, one commit per item, each test drilled red with the fix broken and green

@@ -365,24 +365,44 @@ PackageInternalizationEngine::setFreeSpaceProbeForTesting(FreeSpaceProbe probe) 
     return std::exchange(freeSpaceProbe(), std::move(probe));
 }
 
+QString PackageInternalizationEngine::workDriveName(const QString& work_root) {
+    static const QRegularExpression drive_letter(QStringLiteral("^([A-Za-z]:)"));
+    const QString native = QDir::toNativeSeparators(QDir(work_root).absolutePath());
+    if (const auto match = drive_letter.match(native); match.hasMatch()) {
+        return match.captured(1).toUpper();
+    }
+    const QStorageInfo volume(work_root);
+    QString root = volume.isValid() ? QDir::toNativeSeparators(volume.rootPath()) : QString();
+    while (root.endsWith(QLatin1Char('\\'))) {
+        root.chop(1);
+    }
+    return root.isEmpty() ? QStringLiteral("the drive S.A.K. runs from") : root;
+}
+
 QString PackageInternalizationEngine::workSpaceRefusal(const QString& work_root,
                                                        qint64 needed_bytes) {
     const qint64 available = freeBytesIn(work_root);
     if (available >= needed_bytes) {
         return {};
     }
-    const QString folder = QDir::toNativeSeparators(work_root);
+    // The message names the drive: the work folder's own name (data\temp\run-7832-89d4...) told a
+    // person nothing (fix batch 4, A). The log keeps the whole folder.
+    sak::logWarning("[WorkSpace] Refused: {} has {} bytes free, {} needed",
+                    QDir::toNativeSeparators(work_root).toStdString(),
+                    available,
+                    needed_bytes);
+    const QString drive = workDriveName(work_root);
     if (available < 0) {
         return QStringLiteral(
-                   "Nothing was started: S.A.K. keeps the work files in its own folder (%1), and "
-                   "could not tell how much free space that drive has.")
-            .arg(folder);
+                   "Nothing was started: S.A.K.'s work folder is on %1, and S.A.K. could not tell "
+                   "how much free space that drive has.")
+            .arg(drive);
     }
     return QStringLiteral(
-               "Not enough free space for the work files: S.A.K. keeps them in its own folder "
-               "(%1), and that drive has %2 free; at least %3 is needed. Free some space on the "
-               "drive S.A.K. runs from, or run it from a larger one.")
-        .arg(folder, formatBytes(available), formatBytes(needed_bytes));
+               "Not enough free space for the work files: S.A.K.'s work folder is on %1, which has "
+               "%2 free; at least %3 is needed. Free some space on %1, or run S.A.K. from a "
+               "larger drive.")
+        .arg(drive, formatBytes(available), formatBytes(needed_bytes));
 }
 
 qint64 PackageInternalizationEngine::downloadWorkBytes(qint64 declared_bytes,

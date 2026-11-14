@@ -351,7 +351,8 @@ private:
     /// @brief Whether work can start in @p work_dir: room on its drive
     ///        (PackageInternalizationEngine::workSpaceRefusal), and,
     ///        when @p owned_folder, the folder made and stamped as ours before anything is written
-    ///        there. Otherwise the run ends with the refusal as its error.
+    ///        there. Otherwise the run ends with the refusal as its error, which names the drive
+    ///        and "S.A.K.'s work folder"; a log line before it gives the folder itself.
     [[nodiscard]] bool workCanStartIn(const QString& work_dir, bool owned_folder);
 
     /// @brief Internalize a single package within the batch loop

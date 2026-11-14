@@ -120,6 +120,12 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **Offline Deploy says when a Build, Direct Download or Install from Bundle is refused or fails** - A Build
+  refused for want of space said so only in the log and in a line below the buttons, out of view, while the status
+  bar read "Ready". A refusal or failure now opens a warning box titled with the action, as Partition Manager does,
+  and the status bar says it; a run with failed packages says which in a warning box too. The refusal names the
+  drive and S.A.K.'s work folder ("S.A.K.'s work folder is on V:, which has 304.1 MB free; at least 1.00 GB is
+  needed") instead of the run folder's random name, which the log keeps.
 - **Tab leaves the AI Assistant's message box** - Tab in the message box typed a tab character and kept the
   keyboard there. Tab and Shift+Tab now move to the next and previous control; Enter still sends, Ctrl+Enter still
   starts a new line, and Up and Down still recall earlier prompts.
