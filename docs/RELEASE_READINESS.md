@@ -3803,6 +3803,25 @@ problems. Each run settled 15 s. Drills: `removable-ntfs-takes-the-snapshot-scan
 `unplug-note-says-after-this-finishes`; on testpc1, `stick-takes-the-snapshot-scan` (the stick's own run red with
 the snapshot error) and `lock-refusal-not-called-in-use`.
 
+**APFS Resize dialog (the capture `partition_manager_resize_apfs_refusal`).** The target size went down to 1 MB
+and Add to Queue then refused the shrink ("S.A.K. cannot shrink APFS partitions"), and the dialog said "Windows
+online resize cannot move partition start", which is not how an APFS partition is resized. The size bounds now
+come from the queue's own rule (`resizeDirectionQueueable`, which asks `PartitionFileSystemRegistry::
+windowsResizeBlocker`, the rule the safety validator applies, about a 1 MB step each way; ext is resized by
+S.A.K.'s own tools both ways): an APFS partition starts at its own size and grows only, and a FAT32 or exFAT one,
+which Windows neither shrinks nor grows (F4), keeps its size, with the reason in place ("Windows cannot shrink or
+grow FAT32 or exFAT partitions. ..."; for an APFS partition with nothing after it, "S.A.K. grows an APFS partition
+only into free space that follows it, and there is none after this one."). The Windows online resize note is for
+NTFS and ReFS only; other file systems read "Queued only until Apply." The size format stays the panel's own
+("1.00 GB" next to "1.0 MB" is deliberate, review 4, `test_one_byte_format`): not offering 1 MB is the fix.
+Every file system checked: `resizeOffersOnlySizesTheQueueTakes` opens Resize for NTFS, ReFS, FAT32, exFAT, APFS,
+ext4 and HFS+ and requires the smallest and the largest size offered to be sizes the queue takes (one the queue
+resizes neither way, such as HFS+, is offered only its own size, or no Resize at all);
+`resizeGrowsAnApfsPartitionOnly` (minimum the current size, a grow accepted, no Windows online resize text) and
+`resizeSaysWindowsCannotResizeFat32` (one size only, the reason, no Add to Queue). Drills:
+`apfs-offers-sizes-below-its-own`, `fat-offers-a-grow`, `apfs-says-windows-online-resize`,
+`fixed-size-gives-no-reason`.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

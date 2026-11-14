@@ -5889,14 +5889,36 @@ QComboBox* createResizeDonorSelector(QWidget* parent,
     return combo;
 }
 
+// Whether the queue would take a resize of this partition one way: Windows' rule for NTFS and
+// ReFS, none for FAT32 and exFAT, grow only for APFS (PartitionFileSystemRegistry::
+// windowsResizeBlocker, which the safety validator applies), and S.A.K.'s own tools for ext.
+bool resizeDirectionQueueable(const ResizePartitionWidgets& widgets, bool grow) {
+    if (widgets.non_native_ext) {
+        return true;
+    }
+    const uint64_t current = widgets.current_bytes;
+    const uint64_t target = grow ? current + kMegabyteBytes
+                                 : (current > kMegabyteBytes ? current - kMegabyteBytes : 0);
+    return PartitionFileSystemRegistry::windowsResizeBlocker(widgets.file_system, current, target)
+        .isEmpty();
+}
+
 void addResizeTargetSizeControls(PartitionOperationDialog& dialog,
                                  ResizePartitionWidgets* widgets,
                                  const PartitionInfoEx& partition) {
     widgets->target_size_mb = new QSpinBox(&dialog);
-    const int minimum_mb = std::min(widgets->current_mb,
-                                    resizeInputMb(partitionUsedBytesForResize(partition), true));
-    const int maximum_mb = std::max(widgets->current_mb,
-                                    resizeInputMb(widgets->max_online_bytes, false));
+    // The sizes offered are the sizes the queue takes: an APFS partition, which grows only, starts
+    // at its own size (the capture of 1db87df4 offered one 1 MB, then refused it), and a FAT32 or
+    // exFAT one, which Windows neither shrinks nor grows, keeps it.
+    const int minimum_mb =
+        resizeDirectionQueueable(*widgets, false)
+            ? std::min(widgets->current_mb,
+                       resizeInputMb(partitionUsedBytesForResize(partition), true))
+            : widgets->current_mb;
+    const int maximum_mb = resizeDirectionQueueable(*widgets, true)
+                               ? std::max(widgets->current_mb,
+                                          resizeInputMb(widgets->max_online_bytes, false))
+                               : widgets->current_mb;
     widgets->target_size_mb->setRange(minimum_mb, maximum_mb);
     widgets->target_size_mb->setValue(widgets->current_mb);
     widgets->target_size_mb->setSuffix(QObject::tr(" MB"));
@@ -6027,29 +6049,72 @@ QString resizeRefusalOrApfsNote(const ResizePartitionWidgets& widgets) {
                                                 : QString();
 }
 
+// Why the size cannot change in place, when the dialog offers only the current size: what the
+// queue would say both ways, or, for an APFS partition, that nothing follows it to grow into.
+// Empty when it offers other sizes, or the change is not in place.
+QString fixedResizeReason(const ResizePartitionWidgets& widgets, const QString& mode) {
+    if (mode != adjacentResizeMode() || widgets.non_native_ext ||
+        widgets.target_size_mb->minimum() != widgets.target_size_mb->maximum()) {
+        return {};
+    }
+    if (PartitionFileSystemRegistry::isApfs(widgets.file_system)) {
+        return QObject::tr(
+            "S.A.K. grows an APFS partition only into free space that follows it, and there is "
+            "none after this one.");
+    }
+    const QString fs = widgets.file_system.trimmed();
+    if (fs.compare(QStringLiteral("FAT32"), Qt::CaseInsensitive) == 0 ||
+        fs.compare(QStringLiteral("exFAT"), Qt::CaseInsensitive) == 0) {
+        return QObject::tr(
+            "Windows cannot shrink or grow FAT32 or exFAT partitions. Back up the files, then "
+            "delete and recreate the partition at the size you want.");
+    }
+    return PartitionFileSystemRegistry::windowsResizeBlocker(
+        widgets.file_system, widgets.current_bytes, widgets.current_bytes + kMegabyteBytes);
+}
+
+// The status of an ext partition's resize, which S.A.K.'s own tools carry out.
+QString extResizeStatusText(const ResizePartitionWidgets& widgets, const QString& mode) {
+    if (mode != adjacentResizeMode()) {
+        return QObject::tr(
+            "Ext resize supports growing or shrinking in place only. Move and donor "
+            "rebuild are not available for ext partitions.");
+    }
+    if (selectedResizeTargetBytes(widgets) < widgets.current_bytes) {
+        return QObject::tr(
+            "Ext shrink will check the file system, shrink it, then shrink the partition "
+            "and recheck it.");
+    }
+    if ((widgets.non_native_confirmation == nullptr) ||
+        !widgets.non_native_confirmation->isChecked()) {
+        return QObject::tr("Confirm ext filesystem resize before queueing.");
+    }
+    return QObject::tr("Ext grow will resize the partition, then grow the file system to fill it.");
+}
+
+// The Resize dialog's note. Windows resizes NTFS and ReFS online; other file systems are not
+// Windows' online resize (APFS grows in place through S.A.K., ext through its tools, FAT32 and
+// exFAT not at all), so it is not spoken of for them.
+QString resizeDialogNote(const PartitionInfoEx& partition) {
+    const QString fs = partition.volume ? partition.volume->file_system.trimmed() : QString();
+    const bool windows_online = fs.compare(QStringLiteral("NTFS"), Qt::CaseInsensitive) == 0 ||
+                                fs.compare(QStringLiteral("ReFS"), Qt::CaseInsensitive) == 0;
+    return windows_online
+               ? QObject::tr(
+                     "Windows online resize cannot move partition start. Queued only until Apply.")
+               : QObject::tr("Queued only until Apply.");
+}
+
 QString resizeModeStatusText(const ResizePartitionWidgets& widgets) {
     const QString mode = selectedResizeMode(widgets);
+    if (const QString fixed = fixedResizeReason(widgets, mode); !fixed.isEmpty()) {
+        return fixed;
+    }
     if (const QString refusal = resizeRefusalOrApfsNote(widgets); !refusal.isEmpty()) {
         return refusal;
     }
     if (widgets.non_native_ext) {
-        const uint64_t target_bytes = selectedResizeTargetBytes(widgets);
-        if (mode != adjacentResizeMode()) {
-            return QObject::tr(
-                "Ext resize supports growing or shrinking in place only. Move and donor "
-                "rebuild are not available for ext partitions.");
-        }
-        if (target_bytes < widgets.current_bytes) {
-            return QObject::tr(
-                "Ext shrink will check the file system, shrink it, then shrink the partition "
-                "and recheck it.");
-        }
-        if ((widgets.non_native_confirmation == nullptr) ||
-            !widgets.non_native_confirmation->isChecked()) {
-            return QObject::tr("Confirm ext filesystem resize before queueing.");
-        }
-        return QObject::tr(
-            "Ext grow will resize the partition, then grow the file system to fill it.");
+        return extResizeStatusText(widgets, mode);
     }
     if (mode == moveStartResizeMode()) {
         return QObject::tr(
@@ -12220,11 +12285,10 @@ void PartitionManagerPanel::onResizePartition() {
     const PartitionInfoEx partition = *partition_ptr;
     const QString expected_layout_hash = m_controller->inventory().layout_hash;
 
-    PartitionOperationDialog dialog(
-        tr("Resize/Move Partition"),
-        targetIdentityText(target, &disk, &partition),
-        tr("Windows online resize cannot move partition start. Queued only until Apply."),
-        this);
+    PartitionOperationDialog dialog(tr("Resize/Move Partition"),
+                                    targetIdentityText(target, &disk, &partition),
+                                    resizeDialogNote(partition),
+                                    this);
     const auto widgets = addResizePartitionControls(
         dialog, disk, partition, adjacentFreeBytesAfter(&disk, &partition));
     connectResizePartitionControls(dialog, widgets);

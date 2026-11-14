@@ -120,6 +120,10 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **Resize offers only the sizes it can make** - The Resize dialog of an APFS partition offered sizes down to
+  1 MB, then refused the shrink, and spoke of "Windows online resize", which APFS does not use. An APFS partition
+  now starts at its own size and grows only, and a FAT32 or exFAT partition, which Windows neither shrinks nor
+  grows, keeps its size and says why. No file system's dialog offers a size the queue then refuses.
 - **Check File System checks an NTFS USB stick** - It failed on every NTFS drive Windows calls removable with
   "Repair-Volume : A snapshot error occurred while scanning this drive. Run an offline scan and fix. Activity ID:
   {...}": the online scan reads a snapshot, and Windows does not take one of a removable drive. Such a drive is now
