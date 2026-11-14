@@ -1065,7 +1065,7 @@ StorageInventoryScanResult StorageInventoryWorker::scanCurrentSystemResult(
 
 QString StorageInventoryWorker::scanFailureWarning(const ProcessResult& result,
                                                    const QString& fallback) {
-    const QString readable = readablePowerShellError(result.std_err);
+    QString readable = readablePowerShellError(result.std_err);
     if (!readable.isEmpty()) {
         return readable;
     }

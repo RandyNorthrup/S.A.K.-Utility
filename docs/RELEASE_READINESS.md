@@ -3945,6 +3945,17 @@ and the elevated helper's "Failed to start elevated PowerShell" (PowerShell did 
 `restore-point-shows-the-whole-record`, `usb-drive-letter-shows-the-whole-record`,
 `check-disk-no-result-shows-the-whole-record`, `inventory-warning-shows-the-whole-record`.
 
+**clang-tidy on what this batch changed (item 13, part one).** The full check set of `.clang-tidy`, run over the
+13 product files this batch changed, reported 1086 distinct findings at fe6af332, 10 of them on lines changed since
+1db87df4: redundant `()` on three lambdas and two missing trailing commas (the disk map's activation lambdas, the
+status bar's `messageChanged` slot), two `const` locals that stopped a return's automatic move
+(`netshFailureReason`, `scanFailureWarning`), the nested `?:` of Resize's 1 MB probe, now `resizeProbeTarget`, and
+two `static_cast`s of `QEvent` in Partition Manager's `eventFilter`, now `isKeyboardMenuRequest`, which checks the
+event's type first and then casts with `dynamic_cast`, checked for null. Behaviour unchanged (the item 6 and item 9
+tests pass as they were; drill `keyboard-menu-request-ignores-the-menu-key` turns the item 9 test red). After: 1076
+distinct findings in those files, none on a line changed since 1db87df4. The naming gate is the project's tidy gate
+and passes; the rest is the files' own older debt.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

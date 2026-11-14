@@ -1677,7 +1677,7 @@ void MainWindow::wireAiPanel() {
     connectPanelLog(m_ai_assistant_panel.get());
     // A timed message has the bar only up to its first permanent widget, and this label, which
     // takes the free space, left it about 77 px at 1280 px: it stands aside while one shows.
-    connect(statusBar(), &QStatusBar::messageChanged, this, [this]() {
+    connect(statusBar(), &QStatusBar::messageChanged, this, [this] {
         updateAiStatusBarVisibility();
     });
     updateAiStatusBarVisibility();

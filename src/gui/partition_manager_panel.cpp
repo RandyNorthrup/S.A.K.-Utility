@@ -5873,14 +5873,25 @@ QComboBox* createResizeDonorSelector(QWidget* parent,
 // Whether the queue would take a resize of this partition one way: Windows' rule for NTFS and
 // ReFS, none for FAT32 and exFAT, grow only for APFS (PartitionFileSystemRegistry::
 // windowsResizeBlocker, which the safety validator applies), and S.A.K.'s own tools for ext.
+// The size a 1 MB step from @p current reaches, growing or shrinking, never below zero.
+uint64_t resizeProbeTarget(uint64_t current, bool grow) {
+    if (grow) {
+        return current + kMegabyteBytes;
+    }
+    if (current > kMegabyteBytes) {
+        return current - kMegabyteBytes;
+    }
+    return 0;
+}
+
 bool resizeDirectionQueueable(const ResizePartitionWidgets& widgets, bool grow) {
     if (widgets.non_native_ext) {
         return true;
     }
     const uint64_t current = widgets.current_bytes;
-    const uint64_t target = grow ? current + kMegabyteBytes
-                                 : (current > kMegabyteBytes ? current - kMegabyteBytes : 0);
-    return PartitionFileSystemRegistry::windowsResizeBlocker(widgets.file_system, current, target)
+    return PartitionFileSystemRegistry::windowsResizeBlocker(widgets.file_system,
+                                                             current,
+                                                             resizeProbeTarget(current, grow))
         .isEmpty();
 }
 
@@ -10542,13 +10553,15 @@ QWidget* PartitionManagerPanel::createPartitionSegment(
                                                       : partition.type_name,
                                      formatPartitionBytes(partition.size_bytes));
     auto* segment = new PartitionSegmentWidget(
-        {.text = label,
-         .tooltip = tooltip,
-         .color_role = partitionColorRole(disk, partition),
-         .color = partitionColor(disk, partition),
-         .used_percent = usedPercent(partition),
-         .selected = targetMatchesPartition(selected, disk, partition),
-         .on_activated = [this, segment_target]() { selectTargetFromMap(segment_target); }},
+        {
+            .text = label,
+            .tooltip = tooltip,
+            .color_role = partitionColorRole(disk, partition),
+            .color = partitionColor(disk, partition),
+            .used_percent = usedPercent(partition),
+            .selected = targetMatchesPartition(selected, disk, partition),
+            .on_activated = [this, segment_target] { selectTargetFromMap(segment_target); },
+        },
         m_disk_map_container);
     attachDiskMapContextMenu(segment, segment_target);
     return segment;
@@ -10562,13 +10575,15 @@ QWidget* PartitionManagerPanel::createUnallocatedSegment(
     segment_target.offset_bytes = region.offset_bytes;
     segment_target.size_bytes = region.size_bytes;
     auto* segment = new PartitionSegmentWidget(
-        {.text = tr("Unallocated %1").arg(formatPartitionBytes(region.size_bytes)),
-         .tooltip = tr("Disk %1 unallocated space").arg(region.disk_number.value()),
-         .color_role = QStringLiteral("Unallocated"),
-         .color = unallocatedColor(),
-         .used_percent = 0,
-         .selected = targetMatchesRegion(selected, region),
-         .on_activated = [this, segment_target]() { selectTargetFromMap(segment_target); }},
+        {
+            .text = tr("Unallocated %1").arg(formatPartitionBytes(region.size_bytes)),
+            .tooltip = tr("Disk %1 unallocated space").arg(region.disk_number.value()),
+            .color_role = QStringLiteral("Unallocated"),
+            .color = unallocatedColor(),
+            .used_percent = 0,
+            .selected = targetMatchesRegion(selected, region),
+            .on_activated = [this, segment_target] { selectTargetFromMap(segment_target); },
+        },
         m_disk_map_container);
     attachDiskMapContextMenu(segment, segment_target);
     return segment;
@@ -11038,22 +11053,33 @@ void PartitionManagerPanel::showPartitionContextMenu(const QPoint& position) {
     showSelectedTargetContextMenuAt(m_table->viewport()->mapToGlobal(position));
 }
 
+namespace {
+
+// Shift+F10, the Menu key, or Windows' own keyboard menu request, whose position is not the current
+// row's. The event's type is checked first, and then the checked cast to its class.
+bool isKeyboardMenuRequest(const QEvent* event) {
+    if (event->type() == QEvent::KeyPress) {
+        const auto* key = dynamic_cast<const QKeyEvent*>(event);
+        if (key == nullptr) {
+            return false;
+        }
+        const bool menu_key = key->key() == Qt::Key_Menu && key->modifiers() == Qt::NoModifier;
+        const bool shift_f10 = key->key() == Qt::Key_F10 && key->modifiers() == Qt::ShiftModifier;
+        return menu_key || shift_f10;
+    }
+    if (event->type() == QEvent::ContextMenu) {
+        const auto* request = dynamic_cast<const QContextMenuEvent*>(event);
+        return request != nullptr && request->reason() == QContextMenuEvent::Keyboard;
+    }
+    return false;
+}
+
+}  // namespace
+
 bool PartitionManagerPanel::eventFilter(QObject* watched, QEvent* event) {
-    if (watched == m_table && m_table != nullptr) {
-        bool from_keyboard = false;
-        if (event->type() == QEvent::KeyPress) {
-            const auto* key = static_cast<QKeyEvent*>(event);
-            from_keyboard = (key->key() == Qt::Key_Menu && key->modifiers() == Qt::NoModifier) ||
-                            (key->key() == Qt::Key_F10 && key->modifiers() == Qt::ShiftModifier);
-        } else if (event->type() == QEvent::ContextMenu) {
-            // Windows' own keyboard menu request: its position is not the current row's.
-            from_keyboard = static_cast<QContextMenuEvent*>(event)->reason() ==
-                            QContextMenuEvent::Keyboard;
-        }
-        if (from_keyboard) {
-            showCurrentRowContextMenu();
-            return true;
-        }
+    if (watched == m_table && m_table != nullptr && isKeyboardMenuRequest(event)) {
+        showCurrentRowContextMenu();
+        return true;
     }
     return QWidget::eventFilter(watched, event);
 }

@@ -401,7 +401,7 @@ QString BandwidthTester::firewallRuleRefusalMessage(const QString& why) {
 QString BandwidthTester::netshFailureReason(int exit_code,
                                             QProcess::ExitStatus status,
                                             const QString& output) {
-    const QString said = output.simplified();
+    QString said = output.simplified();
     if (!said.isEmpty()) {
         return said;
     }
