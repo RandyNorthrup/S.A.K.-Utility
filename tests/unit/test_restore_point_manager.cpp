@@ -25,6 +25,7 @@ private Q_SLOTS:
     void listRestorePoints_doesNotCrash();
     void dailyLimitReusesARecentRestorePoint();
     void dailyLimitWithoutARecentPointStillFails();
+    void aFailedCheckpointSaysWhyInReadableWords();
 };
 
 void TestRestorePointManager::construction_default() {
@@ -189,6 +190,46 @@ void TestRestorePointManager::dailyLimitWithoutARecentPointStillFails() {
                  .kind,
              RestorePointManager::Outcome::Kind::Failed);
     QVERIFY(!listed);
+}
+
+// The checkpoint script's Write-Error record led with the whole script and ended with its
+// CategoryInfo lines. The failure says Windows' reason alone now, from the script's own error path
+// captured on testpc1 (a restore point type Windows refuses, so no restore point was made).
+void TestRestorePointManager::aFailedCheckpointSaysWhyInReadableWords() {
+    sak::ProcessResult failed;
+    failed.exit_code = 1;
+    failed.std_err = QStringLiteral(
+        "try {   Checkpoint-Computer -Description 'SAK capture'     -RestorePointType "
+        "'SAK_NOT_A_TYPE'     -ErrorAction Stop    \r\n"
+        " -WarningVariable wv     -WarningAction Continue;   if ($wv) { Write-Error $wv; exit 1; "
+        "}   Write-Output 'SUCCESS'; } \r\n"
+        "catch {   Write-Error $_.Exception.Message;   exit 1; } : Cannot validate argument on "
+        "parameter 'RestorePointType'. \r\n"
+        "The argument \"SAK_NOT_A_TYPE\" does not belong to the set \r\n"
+        "\"APPLICATION_INSTALL,APPLICATION_UNINSTALL,DEVICE_DRIVER_INSTALL,MODIFY_SETTINGS,"
+        "CANCELLED_OPERATION\" specified by the \r\n"
+        "ValidateSet attribute. Supply an argument that is in the set and then try the command "
+        "again.\r\n"
+        "    + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException\r\n"
+        "    + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException\r\n");
+    const auto outcome = RestorePointManager::outcomeOfCheckpoint(
+        failed,
+        [](bool& query_ok) {
+            query_ok = true;
+            return QVector<QPair<QDateTime, QString>>{};
+        },
+        QDateTime::currentDateTime());
+    QCOMPARE(outcome.kind, RestorePointManager::Outcome::Kind::Failed);
+    QCOMPARE(
+        outcome.message,
+        QStringLiteral("Failed to create restore point: ") +
+            QStringLiteral(
+                "Cannot validate argument on parameter 'RestorePointType'. The argument "
+                "\"SAK_NOT_A_TYPE\" does not belong to the set "
+                "\"APPLICATION_INSTALL,APPLICATION_UNINSTALL,DEVICE_DRIVER_INSTALL,MODIFY_SETTINGS,"
+                "CANCELLED_OPERATION\" specified by the ValidateSet attribute. Supply an argument "
+                "that is "
+                "in the set and then try the command again."));
 }
 
 QTEST_MAIN(TestRestorePointManager)

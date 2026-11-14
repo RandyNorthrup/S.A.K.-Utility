@@ -532,7 +532,8 @@ void CheckDiskErrorsAction::reportDriveWithNoResult(QChar drive,
                                                     const QString& std_err,
                                                     QString& report) {
     // Counted, so it is named: a run once said "1 could not be checked" and named none.
-    const QString said = std_err.trimmed();
+    const QString readable = readablePowerShellError(std_err);
+    const QString said = readable.isEmpty() ? std_err.trimmed() : readable;
     report += QString("Drive %1: - the scan gave no result%2\n\n")
                   .arg(drive)
                   .arg(said.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(said));

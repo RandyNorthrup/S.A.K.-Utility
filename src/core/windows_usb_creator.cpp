@@ -953,6 +953,13 @@ bool WindowsUSBCreator::formatDriveFat32(const QString& diskNumber) {
     return true;
 }
 
+QString WindowsUSBCreator::driveLetterQueryFailure(const QString& diskNumber,
+                                                   const sak::ProcessResult& result) {
+    const QString readable = sak::readablePowerShellError(result.std_err);
+    return QString("PowerShell query failed for disk %1: %2")
+        .arg(diskNumber, readable.isEmpty() ? result.std_err.trimmed() : readable);
+}
+
 QString WindowsUSBCreator::getDriveLetterFromDiskNumber() {
     if (m_diskNumber.isEmpty()) {
         setError("Cannot query drive letter: No disk number set");
@@ -985,8 +992,7 @@ QString WindowsUSBCreator::getDriveLetterFromDiskNumber() {
     }
 
     if (drive_result.exit_code != 0) {
-        const QString errors = drive_result.std_err.trimmed();
-        setError(QString("PowerShell query failed for disk %1: %2").arg(m_diskNumber, errors));
+        setError(driveLetterQueryFailure(m_diskNumber, drive_result));
         sak::logError(lastError().toStdString());
         return QString();
     }

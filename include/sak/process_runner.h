@@ -133,6 +133,15 @@ struct PowerShellInvocation {
                                           const CancelCheck& should_cancel = {});
 [[nodiscard]] ProcessResult runProcessStreaming(const ProcessStreamingRequest& request);
 
+/// @brief What a PowerShell error says, in words a person can read: its own message, without the
+///        lines after it that say where it was raised ("At line:", "+ ..."), the cmdlet's name in
+///        front ("Repair-Volume : "), a Write-Error's position in front (the script's text or path,
+///        then " : "), a Storage cmdlet's "Activity ID: {...}", or PowerShell's account of a .NET
+///        method's own exception ("Exception calling ..."). Empty when @p std_err has no message.
+///        Every place a PowerShell error reaches a dialog, a status line or a report shows it
+///        through this; a log keeps the whole of it.
+[[nodiscard]] QString readablePowerShellError(const QString& std_err);
+
 /// @brief Test-only fault-injection seam for the process launchers (R5-G14-17).
 ///
 /// When an injector is installed, EVERY process launch -- runProcess, runProcessWithEnvironment,

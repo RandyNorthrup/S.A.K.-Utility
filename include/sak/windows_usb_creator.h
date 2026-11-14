@@ -87,6 +87,11 @@ public:
     ///        letter. Pure/testable.
     [[nodiscard]] static QString assignDriveLetterScript(const QString& diskNumber);
 
+    /// @brief The error a failed drive-letter query for @p diskNumber gives: PowerShell's reason in
+    ///        readable words (readablePowerShellError). Pure/testable.
+    [[nodiscard]] static QString driveLetterQueryFailure(const QString& diskNumber,
+                                                         const sak::ProcessResult& result);
+
     /// @brief Defense in depth: only a real regular file (not a symlink/reparse
     ///        point) that canonically resides under @p appDir may be executed as a
     ///        bundled tool. Fails closed. Pure/testable.

@@ -16,6 +16,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QThread>
 
@@ -598,6 +599,38 @@ ProcessResult runProcessWithEnvironment(const QString& program,
         .on_output = {},
         .on_started = {},
     });
+}
+
+QString readablePowerShellError(const QString& std_err) {
+    QStringList message;
+    for (const auto& line : std_err.split(QLatin1Char('\n'))) {
+        const QString text = line.trimmed();
+        if (text.startsWith(QStringLiteral("At line:")) ||
+            text.startsWith(QStringLiteral("At C:")) || text.startsWith(QStringLiteral("+ "))) {
+            break;
+        }
+        if (!text.isEmpty()) {
+            message.append(text);
+        }
+    }
+    QString text = message.join(QLatin1Char(' '));
+    // A Write-Error from a script leads with where it was written, the script's own text (from
+    // -Command) or its path, then " : "; a cmdlet's error leads with the cmdlet's name.
+    static const QRegularExpression kCmdletName(QStringLiteral("^[A-Z][A-Za-z]*-[A-Za-z]+ : "));
+    static const QRegularExpression kActivityId(
+        QStringLiteral("\\s*Activity ID: \\{[0-9A-Fa-f-]+\\}\\.?"));
+    const qsizetype separator = text.indexOf(QStringLiteral(" : "));
+    if (std_err.contains(QStringLiteral("[Write-Error], WriteErrorException")) && separator >= 0) {
+        text.remove(0, separator + 3);
+    } else {
+        text.remove(kCmdletName);
+    }
+    text.remove(kActivityId);
+    text = text.trimmed();
+    static const QRegularExpression kWrappedCall(
+        QStringLiteral("^Exception calling \"[^\"]*\" with \"\\d+\" argument\\(s\\): \"(.*)\"$"));
+    const auto wrapped = kWrappedCall.match(text);
+    return wrapped.hasMatch() ? wrapped.captured(1) : text;
 }
 
 PowerShellInvocation powerShellInvocation(const QString& script,

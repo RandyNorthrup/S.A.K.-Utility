@@ -35,6 +35,7 @@ private Q_SLOTS:
     void selectScanTargets_setsNetworkDrivesApart();
     void aFat32StickIsNamedAsNotCheckedNotFailed();
     void aDriveWithNoResultIsNamed();
+    void aDriveWithNoResultSaysWhyInReadableWords();
     void executeSaysItSkippedANetworkDrive();
     void executeStopsItsScanWhenCancelled();
     void aStopDuringTheScanSaysWindowsMayFinishIt();
@@ -182,6 +183,44 @@ void CheckDiskErrorsActionTests::aDriveWithNoResultIsNamed() {
     QVERIFY2(result.message.contains(QStringLiteral("(D:)")) ||
                  result.message.contains(QStringLiteral("Could not scan any drives")),
              qPrintable(result.message));
+}
+
+// The reason for a drive with no result is PowerShell's message alone, from a Storage cmdlet's
+// record captured on testpc1: not its name, its position or its CategoryInfo lines.
+void CheckDiskErrorsActionTests::aDriveWithNoResultSaysWhyInReadableWords() {
+    class RecordScan final : public ScriptedCheckDisk {
+    protected:
+        sak::ProcessResult runScanProcess(const QString& script,
+                                          int,
+                                          const std::function<bool()>&) override {
+            scripts_run << script;
+            sak::ProcessResult proc;
+            proc.exit_code = 0;
+            proc.std_err = QStringLiteral(
+                "Get-Partition : No MSFT_Partition objects found with property 'DiskNumber' equal "
+                "to "
+                "'99'.  Verify the value of the \r\n"
+                "property and retry.\r\n"
+                "At line:1 char:2\r\n"
+                "+ (Get-Partition -DiskNumber 99 | Get-Volume | Where-Object {$_.DriveLe ...\r\n"
+                "+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n"
+                "    + CategoryInfo          : ObjectNotFound: (99:UInt32) [Get-Partition], "
+                "CimJobException\r\n"
+                "    + FullyQualifiedErrorId : "
+                "CmdletizationQuery_NotFound_DiskNumber,Get-Partition\r\n");
+            return proc;
+        }
+    };
+    RecordScan action;
+    action.volumes = {volume("D:/", kFixed)};
+    action.execute();
+    const QString log = action.lastExecutionResult().log;
+    QVERIFY2(log.contains(QStringLiteral("Drive D: - the scan gave no result (") +
+                          QStringLiteral("No MSFT_Partition objects found with property "
+                                         "'DiskNumber' equal to '99'.  Verify the "
+                                         "value of the property and retry.") +
+                          QLatin1Char(')')),
+             qPrintable(log));
 }
 
 void CheckDiskErrorsActionTests::executeSaysItSkippedANetworkDrive() {

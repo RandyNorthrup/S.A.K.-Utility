@@ -240,32 +240,8 @@ QString PartitionExecutor::localFailureMessage(const QString& std_err,
 }
 
 QString PartitionExecutor::scriptFailureReason(const QString& std_err) {
-    QStringList reason;
-    for (const auto& line : std_err.split(QLatin1Char('\n'))) {
-        const QString text = line.trimmed();
-        if (text.startsWith(QStringLiteral("At line:")) ||
-            text.startsWith(QStringLiteral("At C:")) || text.startsWith(QStringLiteral("+ "))) {
-            break;
-        }
-        if (!text.isEmpty()) {
-            reason.append(text);
-        }
-    }
-    QString text = reason.join(QLatin1Char(' '));
-    // A cmdlet's error leads with the cmdlet's name ("Repair-Volume : A snapshot error ..."), and a
-    // Storage cmdlet's ends with "Activity ID: {...}": neither means anything to the person who
-    // reads the result (the capture of 1db87df4).
-    static const QRegularExpression kCmdletName(QStringLiteral("^[A-Z][A-Za-z]*-[A-Za-z]+ : "));
-    static const QRegularExpression kActivityId(
-        QStringLiteral("\\s*Activity ID: \\{[0-9A-Fa-f-]+\\}\\.?"));
-    text.remove(kCmdletName);
-    text.remove(kActivityId);
-    text = text.trimmed();
-    // A failure in the script's own .NET code arrives wrapped in PowerShell's account of the call.
-    static const QRegularExpression kWrappedCall(
-        QStringLiteral("^Exception calling \"[^\"]*\" with \"\\d+\" argument\\(s\\): \"(.*)\"$"));
-    const auto wrapped = kWrappedCall.match(text);
-    return wrapped.hasMatch() ? wrapped.captured(1) : text;
+    // The cleaner every PowerShell error a person reads goes through (process_runner).
+    return readablePowerShellError(std_err);
 }
 
 PartitionExecutionResult PartitionExecutor::execute(const QVector<PartitionOperation>& operations,

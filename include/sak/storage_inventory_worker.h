@@ -168,6 +168,10 @@ public:
     /// scan adds them after its raw probe, which is what tells a volume Windows shows as RAW
     /// because it holds ext, HFS+, APFS or swap (nothing to ask fsutil) from an unreadable one.
     static void appendVolumeStateWarnings(PartitionInventory* inventory);
+    /// The warning a scan that failed leaves: PowerShell's reason in readable words
+    /// (readablePowerShellError), else the whole of standard error, else @p fallback.
+    [[nodiscard]] static QString scanFailureWarning(const ProcessResult& result,
+                                                    const QString& fallback);
 
 Q_SIGNALS:
     void inventoryReady(const sak::PartitionInventory& inventory);

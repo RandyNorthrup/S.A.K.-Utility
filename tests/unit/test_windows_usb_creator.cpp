@@ -43,6 +43,7 @@ private Q_SLOTS:
     void theExtractionCheckWaitsForASplitImage();
     void extractionProgressIsOnTheStreamItIsReadFrom();
     void initTestCase();
+    void driveLetterQueryFailureSaysWhyInReadableWords();
     void cleanupTestCase();
 
     // ---- Disk number validation (BUG-09 fix) ----
@@ -924,6 +925,28 @@ void WindowsUSBCreatorTests::extractionProgressIsOnTheStreamItIsReadFrom() {
     QCOMPARE(WindowsUSBCreator::extractionPercentIn(
                  QStringLiteral("Path = C:\\w.iso\r\nType = Udf\r\n")),
              -1);
+}
+
+// A failed drive-letter query gave its whole error record; Windows' reason alone now, from a
+// record captured on testpc1 (a disk number that does not exist).
+void WindowsUSBCreatorTests::driveLetterQueryFailureSaysWhyInReadableWords() {
+    sak::ProcessResult failed;
+    failed.exit_code = 1;
+    failed.std_err = QStringLiteral(
+        "Get-Partition : No MSFT_Partition objects found with property 'DiskNumber' equal to "
+        "'99'.  Verify the value of the \r\n"
+        "property and retry.\r\n"
+        "At line:1 char:2\r\n"
+        "+ (Get-Partition -DiskNumber 99 | Get-Volume | Where-Object {$_.DriveLe ...\r\n"
+        "+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n"
+        "    + CategoryInfo          : ObjectNotFound: (99:UInt32) [Get-Partition], "
+        "CimJobException\r\n"
+        "    + FullyQualifiedErrorId : CmdletizationQuery_NotFound_DiskNumber,Get-Partition\r\n");
+    QCOMPARE(WindowsUSBCreator::driveLetterQueryFailure(QStringLiteral("99"), failed),
+             QStringLiteral("PowerShell query failed for disk 99: ") +
+                 QStringLiteral("No MSFT_Partition objects found with property 'DiskNumber' equal "
+                                "to '99'.  Verify the "
+                                "value of the property and retry."));
 }
 
 QTEST_MAIN(WindowsUSBCreatorTests)

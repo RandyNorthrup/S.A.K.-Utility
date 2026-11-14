@@ -14,6 +14,7 @@ class TestDnsDiagnosticTool : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void cacheReadFailureSaysWhyInReadableWords();
     // -- Construction ----------------------------------------------
     void construction_default();
     void construction_nonCopyable();
@@ -48,6 +49,37 @@ private Q_SLOTS:
 // ===================================================================
 // Construction
 // ===================================================================
+
+// A failed DNS cache read showed the whole error record: the cmdlet's name, the script's position
+// and its CategoryInfo lines. It says Windows' reason alone now, from a record captured on testpc1.
+void TestDnsDiagnosticTool::cacheReadFailureSaysWhyInReadableWords() {
+    sak::ProcessResult failed;
+    failed.exit_code = 1;
+    failed.std_err = QStringLiteral(
+        "Get-DnsClientCache : No matching MSFT_DNSClientCache objects found by CIM query for "
+        "instances of the \r\n"
+        "ROOT/StandardCimv2/MSFT_DNSClientCache class on the  CIM server: SELECT * FROM "
+        "MSFT_DNSClientCache  WHERE ((Entry LIKE \r\n"
+        "'sak-not-cached.invalid')) AND ((Type = 1) OR (Type = 28)). Verify query parameters and "
+        "retry.\r\n"
+        "At line:1 char:32\r\n"
+        "+ ... nce='Stop'; Get-DnsClientCache -Type A,AAAA -Entry 'sak-not-cached.in ...\r\n"
+        "+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n"
+        "    + CategoryInfo          : ObjectNotFound: (MSFT_DNSClientCache:String) "
+        "[Get-DnsClientCache], CimJobException\r\n"
+        "    + FullyQualifiedErrorId : CmdletizationQuery_NotFound,Get-DnsClientCache\r\n");
+    QCOMPARE(
+        sak::DnsDiagnosticTool::cacheReadFailureMessage(failed),
+        QStringLiteral("Failed to read the DNS resolver cache. ") +
+            QStringLiteral(
+                "No matching MSFT_DNSClientCache objects found by CIM query for instances of the "
+                "ROOT/StandardCimv2/MSFT_DNSClientCache class on the  CIM server: SELECT * FROM "
+                "MSFT_DNSClientCache  WHERE ((Entry LIKE 'sak-not-cached.invalid')) AND ((Type = "
+                "1) OR "
+                "(Type = 28)). Verify query parameters and retry."));
+    QCOMPARE(sak::DnsDiagnosticTool::cacheReadFailureMessage(sak::ProcessResult{}),
+             QStringLiteral("Failed to read the DNS resolver cache."));
+}
 
 void TestDnsDiagnosticTool::construction_default() {
     DnsDiagnosticTool tool;

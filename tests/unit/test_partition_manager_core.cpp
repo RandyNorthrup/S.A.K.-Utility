@@ -1614,6 +1614,7 @@ private Q_SLOTS:
     void generatedScripts_volumeScanStopsOnWhatItFinds();
     void generatedScripts_volumeScanOnARemovableDriveNeedsNoSnapshot();
     void generatedScripts_volumeScanSaysWhatChkdskFound();
+    void inventoryScanFailureSaysWhyInReadableWords();
     void generatedScripts_volumeScanSettlesBeforeDone();
     void generatedScripts_everyOnlineScanSettles();
     void generatedScripts_toolRunnerSurvivesStderrAndKeepsTheExitCode();
@@ -6550,6 +6551,32 @@ void PartitionManagerCoreTests::generatedScripts_volumeScanOnARemovableDriveNeed
 // The read-only chkdsk of a removable drive says which it was, as Windows PowerShell 5.1 runs the
 // generated script against stand-ins: problems found (and, reading only, none fixed), from
 // chkdsk's own words, or not checked, with chkdsk's last line.
+// A failed inventory scan's warning, shown on the disk map, was the whole error record. It is the
+// message alone now (a Storage cmdlet's record captured on testpc1), or "Inventory scan failed"
+// when the scan said nothing.
+void PartitionManagerCoreTests::inventoryScanFailureSaysWhyInReadableWords() {
+    ProcessResult failed;
+    failed.exit_code = 1;
+    failed.std_err = QStringLiteral(
+        "Get-Partition : No MSFT_Partition objects found with property 'DiskNumber' equal to "
+        "'99'.  Verify the value of the \r\n"
+        "property and retry.\r\n"
+        "At line:1 char:2\r\n"
+        "+ (Get-Partition -DiskNumber 99 | Get-Volume | Where-Object {$_.DriveLe ...\r\n"
+        "+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n"
+        "    + CategoryInfo          : ObjectNotFound: (99:UInt32) [Get-Partition], "
+        "CimJobException\r\n"
+        "    + FullyQualifiedErrorId : CmdletizationQuery_NotFound_DiskNumber,Get-Partition\r\n");
+    QCOMPARE(
+        StorageInventoryWorker::scanFailureWarning(failed, QStringLiteral("unused")),
+        QStringLiteral(
+            "No MSFT_Partition objects found with property 'DiskNumber' equal to '99'.  Verify the "
+            "value of the property and retry."));
+    QCOMPARE(StorageInventoryWorker::scanFailureWarning(ProcessResult{},
+                                                        QStringLiteral("Inventory scan failed")),
+             QStringLiteral("Inventory scan failed"));
+}
+
 void PartitionManagerCoreTests::generatedScripts_volumeScanSaysWhatChkdskFound() {
     const PartitionScript check = checkFileSystemScriptOnE();
     QVERIFY2(check.valid(), qPrintable(check.blockers.join(' ')));

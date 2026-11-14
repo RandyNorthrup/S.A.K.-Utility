@@ -3917,6 +3917,34 @@ callers' tests red where the part is shared: `shared-removable-test-broken`, `sh
 locally: the lock's refusal unwrapped, since a stand-in throws plain text; testpc1's in-use run shows the plain
 sentence in both reports.
 
+**One cleaner for PowerShell errors a person reads.** `PartitionExecutor::scriptFailureReason`'s cleaning is now
+`sak::readablePowerShellError` (process_runner), which it calls: the error's message without the lines after it
+("At line:", "+ ..."), the cmdlet's name in front, a Write-Error's position in front (from a -Command script that
+is the whole script, then " : "), a Storage cmdlet's "Activity ID: {...}", or PowerShell's "Exception calling ..."
+account of a .NET method's exception. Applied only where PowerShell error text reaches a dialog, a status line or
+a report, with no other change to those paths: the DNS cache read (`DnsDiagnosticTool::cacheReadFailureMessage`,
+the Network panel's error), a restore point that failed (`RestorePointManager`'s failure message; the once-a-day
+limit is still read from the whole text), the bootable USB's drive-letter query (`WindowsUSBCreator::
+driveLetterQueryFailure`, its error), Check Disk Errors' drive with no result (its report), and Partition Manager's
+inventory scan (`StorageInventoryWorker::scanFailureWarning`, shown on the disk map). Each is shown with a record
+captured on testpc1 as S.A.K. runs PowerShell (no console, output redirected; read-only: a DNS name not cached, disk
+number 99, the restore point script with a type Windows refuses, so none was made, and Repair-Volume -Scan of the
+stick): `test_process_runner` `readablePowerShellErrorKeepsOnlyTheMessage` (all of them, and the in-use refusal),
+`test_dns_diagnostic_tool` `cacheReadFailureSaysWhyInReadableWords`, `test_restore_point_manager`
+`aFailedCheckpointSaysWhyInReadableWords`, `test_windows_usb_creator` `driveLetterQueryFailureSaysWhyInReadableWords`,
+`test_check_disk_errors_action` `aDriveWithNoResultSaysWhyInReadableWords`, `test_partition_manager_core`
+`inventoryScanFailureSaysWhyInReadableWords`. Left as they are, since none shows a PowerShell error record to a
+person: `network_adapter_admin`, `wifi_setup_script` and `ethernet_config_manager` (netsh's own text),
+`microsoft_defender_action` (MpCmdRun's), `optimize_power_settings_action` (powercfg's), `backup_bitlocker_keys_action`
+(the log only), the USB creator's disk-safety probe (it shows `$_.Exception.Message`, which has neither a cmdlet's
+name nor an Activity ID: captured, "No MSFT_Disk objects found with property 'Number' equal to '99'. ...") and its
+volume-label and 7-Zip lines (the log), `thermal_monitor`, `uninstall_worker`, `verify_system_files_action`,
+`reset_network_action`, `generate_system_report_action` and Partition Manager's controller output (the log only),
+and the elevated helper's "Failed to start elevated PowerShell" (PowerShell did not run, so there is no record). Drills:
+`cleaner-keeps-the-cmdlet-name`, `cleaner-keeps-the-write-error-script`, `dns-shows-the-whole-record`,
+`restore-point-shows-the-whole-record`, `usb-drive-letter-shows-the-whole-record`,
+`check-disk-no-result-shows-the-whole-record`, `inventory-warning-shows-the-whole-record`.
+
 ### UI review round 9: review 4's findings and the screens no picture had covered (2026-11-07)
 
 From the independent review of round 8's pictures (`ui-review\recheck4.md`: two regressions and 28 new findings) and

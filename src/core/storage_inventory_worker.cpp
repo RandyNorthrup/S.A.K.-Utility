@@ -1063,6 +1063,16 @@ StorageInventoryScanResult StorageInventoryWorker::scanCurrentSystemResult(
         should_cancel);
 }
 
+QString StorageInventoryWorker::scanFailureWarning(const ProcessResult& result,
+                                                   const QString& fallback) {
+    const QString readable = readablePowerShellError(result.std_err);
+    if (!readable.isEmpty()) {
+        return readable;
+    }
+    const QString whole = result.std_err.trimmed();
+    return whole.isEmpty() ? fallback : whole;
+}
+
 StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResult& result,
                                                               ReadLevel level,
                                                               bool allow_elevation,
@@ -1075,11 +1085,10 @@ StorageInventoryScanResult StorageInventoryWorker::finishScan(const ProcessResul
         } else if (result.timed_out || result.exit_code == kInventoryScanDidNotFinishExitCode) {
             // Whatever it wrote before it stopped is not a list of this PC's disks.
             inventory.scan_did_not_finish = true;
-            inventory.warnings.append(result.std_err.trimmed());
+            inventory.warnings.append(scanFailureWarning(result, QString()));
         } else {
-            inventory.warnings.append(result.std_err.trimmed().isEmpty()
-                                          ? QStringLiteral("Inventory scan failed")
-                                          : result.std_err.trimmed());
+            inventory.warnings.append(
+                scanFailureWarning(result, QStringLiteral("Inventory scan failed")));
         }
         return {.inventory = std::move(inventory),
                 .cancelled = result.cancelled || cancellationRequested(should_cancel)};
