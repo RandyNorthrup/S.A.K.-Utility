@@ -120,6 +120,23 @@ of its own put on the PC.
 - **BIOS boot repair says when this Windows has no bootsect.exe** - Boot Repair in BIOS mode, of the running Windows
   or of an attached disk, and Migrate OS to an MBR disk check for `bootsect.exe` before they change anything, and
   refuse with "This Windows has no bootsect.exe (...), so nothing was changed" instead of failing midway.
+- **A status message shown with a box waits for the box** - A message the status bar shows for a few seconds
+  started its time as a warning box opened, and the box did not stop it: Offline Deploy's refusal was gone, the bar
+  reading "Ready", by the time its box had been read. Such a message now has its whole time once the last box
+  closes. Where the box says a message in full, the status bar says a short form that fits at 1024 px: "Build
+  Offline Bundle: not enough free space on V:", where the whole refusal was cut after "Free some space";
+  Partition Manager's "Not added to the queue" and "Not applied"; "Network report saved", with the box saying where.
+- **A progress bar shows nothing when nothing ran** - Offline Deploy's status-bar progress bar read 100% after a
+  refusal, though nothing had started, and so did Advanced Uninstall's, Image Flasher's, a stopped benchmark's and
+  Partition Manager's refused Apply; File Organizer's failed runs left it at 0%, and a failed Advanced Search and
+  the OST converter left it busy. A run that is refused, fails before its first step or is cancelled now hides the
+  bar at once, as when nothing runs; a run that finishes still ends at 100%. A benchmark that fails no longer leaves
+  Benchmark and Diagnostics locked, Image Flasher's progress page no longer shows the last run's figures under a
+  refusal, the ISO download dialogs put their bars back after a failure, and an AI workflow refused before its
+  first phase shows no progress.
+- **A disabled slider looks disabled** - In Resize with a size that cannot change, the size box was greyed and the
+  size handle's knob was still the enabled blue. A disabled slider's knob, a disabled size bar's drag handles and a
+  disabled switch are drawn in the theme's disabled colour, in light and dark.
 - **Check File System says what the check found** - Its result said "Partition operation batch complete", with
   the note to eject a USB drive, whatever the check had found. It now says, for each drive, "No errors found",
   "Errors found (Windows reports ...)" with a repair recommended, or "Not checked" and why, in the words Quick

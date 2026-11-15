@@ -3682,6 +3682,129 @@ operation-proof guard included; the T2 labels, 333 of 333; `-PlanOnly`; every ci
 hooks on the merge commit. Drills for the two T2 fixes, red then green: `ops-driver-silentlycontinue`,
 `runner-stops-proof-rows-too`.
 
+### Fix batch 5: what the retakes of 9af638b6 found (2026-11-14)
+
+On the `fix3` branch from 9af638b6 (lane2's head and dev), one commit per item; each item closes its kind
+across the app, not only the instance the retakes found. Every fix was drilled red with the fix taken back out
+and green with every byte restored.
+
+**E. A timed status message ran out behind the box shown with it.** Offline Deploy's refusal started its 5 s
+status-bar message as its warning box opened, and the box did not stop that time: anyone who read the box for
+longer than 5 s came back to "Ready". The message was also the refusal's whole sentence, cut after "Free some
+space" at 1280 px. The app's convention is that MainWindow owns every timed message (`updateStatus`), so the fix is
+there, for all of them: a timed message's time now runs only while no modal window is open (an application event
+filter on modal windows showing and hiding), and it gets its whole time once the last one closes. So the message
+begins when the box closes; it is still timed. Where a box says a message whole, the status bar says a short form
+of it that fits at 1024 px: Offline Deploy's "<action>: <short form>", "Build Offline Bundle: not enough free space
+on V:" (`OfflineDeploymentWorker::errorShortForm`, with the engine's `workSpaceRefusalShortForm`; each short form
+is read off the format string that makes its message, `sak::shortFormOf`, so the two cannot drift), and a finished
+run's counts without the failed packages, which its box lists. The sweep: 88 places show a timed status message in
+the same function as a message box (two scans, a window of lines and the whole function), and the controllers'
+messages that a panel's box follows. Each now waits for the box. Where the bar's text was long and the box says it
+whole, it is now the short form: Offline Deploy's refusals, failures and finished runs; Partition Manager's queue
+and Apply refusals ("Not added to the queue", "Not applied"), and how a run or a read-only check ended, while the
+box says the reasons or the result (the controller's own lines, which the certification reads, are unchanged); the
+Diagnostics and network reports ("Diagnostic reports saved", "Network report saved"; the box says where). Already
+short, with the box saying the detail: Advanced Uninstall's failures, File Organizer's, Image Flasher's, App
+Installation's, the AI Assistant's and Advanced Search's. The rest are in branches that never show both, or show
+the box first and the message after it. Tests: `test_main_window_help` holds a box open for twice a message's time
+at 1024x768 and finds the message whole after it, then gone; every refusal and failure Offline Deploy reports is
+measured against the status bar's room at 1024 px, for each action and with the drive named as Windows names it or
+as "the drive S.A.K. runs from" (the first run found one 4 px too long, and the short forms were shortened);
+`test_app_installation_panel`, `test_partition_manager_panel`, `test_diagnostic_benchmark_panel` and
+`test_network_diagnostic_panel` check each status said while its box is open. Drills (12, and the two Partition
+Manager ones again after their connections moved to `connectControllerRefusals`): the modal check; the event
+filter; the Offline short form, the engine's and the worker's; the finished run's names; each Partition Manager
+lead; each report.
+
+**F. A progress bar read 100% after a refusal.** The status bar's progress bar had one way to end, its maximum, so
+Offline Deploy's refusal, which the worker reports after it has said a run started, read 100%; (0, 0), sent to hide
+the bar, was its busy state. `MainWindow::resetProgress` hides the bar at once with no value, as it is when idle,
+and each panel sends it through a new `progressReset` signal when its work was refused, failed or was cancelled
+before it ran to its end; a finished run still ends at its maximum. Swept across every panel with a progress bar
+(an agent read every bar's refused, failed-before-start and cancelled-before-start paths, and each was checked):
+in the status bar, Offline Deploy's refusals and failures (100%); an online install that installed nothing, all
+skipped (busy) or cancelled before its first package (full); File Organizer's and the duplicate scan's failed and
+cancelled runs (left at 0% until the next run); a failed or cancelled Advanced Search (busy); Advanced Uninstall's
+failed and cancelled operations (100%); a stopped benchmark (100%), and one that failed before its first step,
+which left the bar where it began and the panel locked (no completion follows a failure; it now ends the run);
+Image Flasher's refused, failed and cancelled writes (100%) and a Windows image with no drive (0%); Partition
+Manager's Apply refused or cancelled at its check and a run that did not pass (100%); the OST converter, which sent
+(0, 0) to hide the bar (busy after every run). In the panels: an AI workflow that ran none of its phases is shown
+idle, not "Failed: 0/3 complete" or a full bar kept from the run it resumed; Image Flasher's progress page starts
+each run empty (a refusal showed the last run's "Written: 3.2 GB / 3.2 GB"); the Linux and Windows ISO dialogs put
+their bars and text back after a failed download or build. Left as they were, and why: a stress test whose worker
+fails (no test can hold the panel in a running stress test without running one); Partition Manager's verification
+result missing (unreachable); the profile backup's and restore's runs refused inside the worker's start (the
+wizard checks the password before that page) and the restore's app page when Chocolatey cannot start (it needs
+elevation and Chocolatey, and says "0 succeeded, N failed" beside the bar); the network panel's bar, which nothing
+sends, and the AI Assistant's, which is not connected to the status bar. Every other bar ends hidden or reset.
+Tests at 1024x768: `test_main_window_help` (the bar after a refusal, in the dark theme, and every panel's reset
+reaching it, with every tool tab built) and `test_app_installation_panel` (each refusal row); and each panel's ends
+in its own suite. Drills, as batches, each mutation with a test function of its own: 25 mutations, 21 functions
+red; then the two connections, 2 of 2 red.
+
+**G. A disabled slider kept the enabled blue.** In Resize with a size that cannot change (FAT32) the size box was
+greyed and the size handle's knob was still the enabled blue: the theme's QSlider handle rules had no disabled
+state. A disabled slider's handle now takes the theme's disabled text colour, the colour of the greyed box's text
+(`kWindows11ThemeSliderDisabledStyles`), outlined a step lighter in the dark theme, whose groove is close to that
+colour; this covers every slider (Partition Manager's size, location and amount handles, File Explorer's view
+size). The palette's disabled Highlight is the disabled colour too, so what draws itself in Highlight goes grey
+when disabled: the size bar's drag handles. The Log switch draws itself; disabled, its track is the disabled
+colour, on or off. Contrast against the tokens: light knob #94a3b8 2.35:1 on the page, 2.56:1 on a dialog, 1.72:1
+on its groove; dark knob #475569, outlined #64748b, 2.36:1 on the page (outline 3.75:1) and 2.15:1 on a panel
+(outline 3.42:1), outline 2.18:1 on the groove. A disabled control is outside WCAG 1.4.11; each stays visible and
+apart from the enabled blue (3.37:1 light, 4.85:1 dark) by hue. The other custom-painted controls were swept: the
+disk map's tiles and segments, the layout previews, the email calendar views, the transfer speed graph and the
+splash are never disabled; the status center button's progress arc follows the palette; the window-fitted combo
+box is drawn by the style. Paint tests (`test_partition_manager_panel`, each in light and dark): the FAT32 Resize
+knob has no accent pixels and has the disabled colour's, NTFS keeps the accent; Create Partition's size bar,
+disabled, has no accent pixels; the Log switch, disabled, has none. Drill (4 mutations, 6 rows red): the light
+rule, the dark rule, the palette, the switch; the knob's two rows again after the test's handle reading moved to a
+helper of its own (lizard).
+
+**Live, on testpc2 (the package of 478dcd71).** Two throwaway virtual disks on the spare Samsung W:, which was
+pinned by model, serial and size before each was made (the WD boot disk was not touched); the claims were tagged
+fix5 and removed afterwards, with the disks. S.A.K. ran from the 512 MB NTFS V:, and the 256 MB FAT32 U: was the
+partition to resize. Build Offline Bundle with the Kiosk / POS preset was refused for want of space. Its box, held
+open for 10 s, said the whole refusal ("... V:, which has 303.8 MB free; at least 1.00 GB is needed ...";
+`fix5_offline_box_held_10s.png`). Half a second after the box closed, the status bar read "Build Offline Bundle:
+not enough free space on V:", whole, with no progress bar, in light and in dark (`fix5_offline_status_after_box.png`);
+6 s after it closed the bar read "Ready" (`fix5_offline_status_after_its_time.png`): the message had its 5 s from the
+box's closing. Resize/Move of the FAT32 partition, as administrator: the target size greyed and the size handle's
+knob grey, in light and in dark (`fix5_resize_fat32_knob.png`). The pictures are under
+E:\SAK-Utility-Test-Scratch\capture\fix5-478dcd71\ (`light`, `light2`, `dark`).
+
+**Gate**, on b1743aa6, alone on the workstation: configure and the Release build, 0 errors and 0 compiler
+warnings; cert-tooling 8 of 8; the naming gate (non-core 155 of 155 TUs clean, core 175 of 175 healthy); clang-tidy
+with every check on the 19 product TUs this round changed, no finding on a line it added or changed (the first gate,
+on 478dcd71, found five and a path the secret scan refuses: b1743aa6 fixes them, with no change in behaviour); every
+ci.yml static gate, 19 of 19; the hooks over the 47 changed files; the skip audit. The T2 labels: 333 of 334. Debug
+with ASan for the 14 suites this round touched: no AddressSanitizer report, and 13 passed. Two timing checks failed
+on the workstation, which was busy with other work. The owner then stopped every local run, and both were counted
+on testpc2 (12 cores), from 9af638b6 and from this head, built there side by side with the same configuration and
+run there on the same load, the two sides alternating:
+- `test_ai_assistant_panel_tool_dispatch`'s `destroyingPanelWhileToolRunsDrainsCleanly` (Debug with ASan), which
+  checks that a 200 ms tool is still running once the test sees it start, failed in 2 of 4 runs of the whole suite
+  on the workstation. On testpc2, the function alone: 0 failures in 20 runs at 9af638b6 and 0 in 20 at this head;
+  started 3 s after five suites that load the PC beside it: 0 in 20 and 0 in 20; the whole suite: 0 in 5 and
+  0 in 5 (about 6 min a run).
+  This round changes nothing that function runs: the AI Assistant panel's one change is in
+  `finishWorkflowProgressUi`, which a tool turn does not reach, and E's and F's status-bar changes are in
+  MainWindow, which the suite never constructs. The head is no worse, so nothing was bisected or changed.
+- `test_stress_test_worker` (Release), whose below-normal thread must get its 150 ms of work done while the stress
+  runs, failed under -j 6 on the workstation and passed twice alone there. This round does not touch the stress
+  worker, its test or the stress-test paths of Benchmark and Diagnostics (F changed the panel's Stop and benchmark
+  failure, E its reports' status). On testpc2, started 3 s after five suites that load the PC beside it: 0 failures
+  in 10 runs at 9af638b6 and 0 in 10 at this head. A pre-existing timing margin of a PC loaded past what -j 6 gives
+  it; left as it is.
+
+testpc2's Build Tools have no ATL/MFC libraries, and the .NET Framework compiler that builds
+`sak_script_types.dll` treats the missing folder named in LIB as an error (CS1668 under `/warnaserror+`); that one
+target was built there with `LibraryPath` set to a folder that exists, which gives the same DLL. Everything else
+built as on the workstation. The trees, the claims and every file of the round were removed from testpc2
+afterwards; W: is its empty WORK volume again.
+
 ### Fix batch 4: what the final capture of d8c27a15 found (2026-11-14)
 
 On the `fix3` branch from bfd57ed5 (lane2's head, d8c27a15 with its recertification), one commit per item, each
