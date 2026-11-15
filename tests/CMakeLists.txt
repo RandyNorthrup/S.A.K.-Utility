@@ -7175,6 +7175,16 @@ add_test(NAME test_release_binary_test_hooks
                  -ApplicationExe "$<TARGET_FILE:sak_utility>")
 set_tests_properties(test_release_binary_test_hooks PROPERTIES TIMEOUT 120)
 
+# Every program S.A.K. ships carries its Windows version resource (the UAC prompt names the program
+# by its FileDescription): every sak_*.exe the build puts beside sak_utility.exe, read without
+# running it.
+add_test(NAME test_program_version_resources
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_program_version_resources.ps1"
+                 -ProgramDir "$<TARGET_FILE_DIR:sak_utility>"
+                 -Version "${PROJECT_VERSION}")
+set_tests_properties(test_program_version_resources PROPERTIES TIMEOUT 60)
+
 foreach(_sak_ps_test test_pack_extension test_register_native_host)
     add_test(NAME ${_sak_ps_test}
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -7660,6 +7670,7 @@ set(_sak_label_lists
 set(_sak_labels_product
     test_browser_extension_pure test_pack_extension test_register_native_host
     test_sak_apfs_writer_cli test_sak_hfs_writer_cli test_release_binary_test_hooks
+    test_program_version_resources
     test_single_instance_app test_plural_placeholders test_one_byte_format
     test_user_text_spelling
     test_partition_image_volume_lock_whole_disk
