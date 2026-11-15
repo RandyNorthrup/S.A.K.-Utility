@@ -1,6 +1,6 @@
 {
-    "boot_sector_serial_before":  "E6844ECE",
-    "boot_sector_serial_after":  "E88E8628",
+    "boot_sector_serial_before":  "7E395640",
+    "boot_sector_serial_after":  "A44320D4",
     "volume_after":  {
                          "drive_letter":  "T",
                          "file_system":  "NTFS",
@@ -9,7 +9,7 @@
                          "free_bytes":  379871232,
                          "cluster_bytes":  4096,
                          "health":  "Healthy",
-                         "serial_number":  "E88E8628"
+                         "serial_number":  "A44320D4"
                      },
     "files_before":  {
                          "root":  "T:\\fixture",
