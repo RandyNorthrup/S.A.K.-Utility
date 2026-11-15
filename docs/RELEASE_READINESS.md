@@ -3010,8 +3010,11 @@ Known limitations (documented, not open defects):
   caches it after.
 - While S.A.K. runs as administrator, its program files are locked: they cannot be changed, replaced or deleted
   until it exits (the same for the helper's life). Deliberate: that hold is what makes the check mean anything.
-- A program file is accepted by its pinned path and SHA-256 (what a release does not change: the Qt runtime and
-  plugins, the VC runtime, vcpkg's DLLs, the bundled tools), or by carrying the running program's own signature.
+- A program file is accepted by its pinned path and SHA-256 (the files the build does not make: the Qt runtime and
+  plugins, the VC runtime, vcpkg's DLLs, the bundled tools, as the build has them), or by carrying the running
+  program's own signature. Release signing signs every one of those that ships unsigned (vcpkg's bz2, liblzma and
+  z, and the bundled tools' unsigned files), so in a signed release those pass by the signature, not the pin; the
+  Qt and VC runtime files keep their vendors' signatures and pass by the pin.
   An unsigned (developer) build, having no signature to compare, also accepts its own three other programs unsigned,
   by name only: `sak_elevated_helper.exe`, `sak_apfs_writer_cli.exe` and `sak_hfs_writer_cli.exe`. So on an
   unsigned build a swapped helper is not caught; the 4d check is a signed release's.

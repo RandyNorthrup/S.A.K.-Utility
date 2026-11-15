@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
 # The program-file manifest (security brief 4c): the relative path and SHA-256 of every .exe and
-# .dll this build ships whose bytes a release does not change -- the Qt runtime and plugins, the
-# MSVC runtime, the vcpkg DLLs and the bundled tools. sak::program_integrity accepts a program
-# file before an elevation when its path and hash are listed here, or when it is signed by the
-# same signer as sak_utility.exe (the files a release signs). The list is compiled into the
+# .dll this build ships that it does not build itself -- the Qt runtime and plugins, the MSVC
+# runtime, the vcpkg DLLs and the bundled tools -- as the build has them. sak::program_integrity
+# accepts a program file before an elevation when its path and hash are listed here, or when it is
+# signed by the same signer as sak_utility.exe (the files a release signs). Release signing signs
+# every unsigned file too, the vcpkg DLLs and the bundled tools that ship unsigned among them, so in
+# a release those no longer match these hashes and are accepted by the signer instead; the Qt and
+# MSVC runtime files keep their vendors' signatures and their pins. The list is compiled into the
 # program, so a file planted beside it on a stick is not in it.
 #
 # sak_write_program_manifest(<output.inc> QT_BIN <dir> QT_PLUGINS <dir> VC_RUNTIME <dir>
