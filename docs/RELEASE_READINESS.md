@@ -3687,6 +3687,113 @@ operation-proof guard included; the T2 labels, 333 of 333; `-PlanOnly`; every ci
 hooks on the merge commit. Drills for the two T2 fixes, red then green: `ops-driver-silentlycontinue`,
 `runner-stops-proof-rows-too`.
 
+### Fix batch 6: what the signed v0.9.3-rc.2 run found (2026-11-15)
+
+Release run 43744620769 (tag v0.9.3-rc.2) built the package and signed it through OIDC Artifact Signing, every catalog
+file Valid and timestamped. Its verify job then refused every first-party binary: the publisher pin held CN and O and
+was compared exactly, and the certificate's subject carries the validated identity's locality, state and country after
+them. A dry run on testpc2 and check A on the VM, given the real subject, passed everything else
+(E:\SAK-Utility-Test-Scratch\rc2-checkA\). On lane2 from d3b5e074 (main's tree), one commit per item. Built and tested
+on testpc2 only (the owner's rule since 2026-11-14), W:\fix6; every fix drilled red with the fix taken back out, the
+file's bytes then restored and checked by SHA-256.
+
+**1. One publisher pin: the certificate's full subject.** `$SakPublisherSubject` in `scripts/authenticode_signer.ps1`
+is now the full subject of the Artifact Signing certificate, and the only place it is written.
+`verify_authenticode_signatures.ps1` (the verify job, the publish job's check, the signed readiness gate) and
+`.github/release-tools/repin_signed_filesystem_tools.ps1` each had their own copy of CN and O; given no publisher,
+they now read `$SakPublisherSubject`, and refuse an empty one. The sign job has no checkout, so the build job reads
+the pin from the same file and hands it on as its `publisher` output. The sign job's check compared loosely (any
+subject containing `CN=Randy Northrup`); it now compares exactly with that output, and requires the catalog to name
+the four first-party programs, so a certificate that is not the pin stops the release right after signing, not at
+verify. `test_verify_authenticode_signatures` (release-tooling) now runs all three where the release runs them, on
+real signed files (choco.exe, whose certificate subject also carries a locality, state and country): the verifier, the
+re-pin on a one-tool package whose tool changed when signed, and the sign job's check step read out of release.yml and
+run as the runner runs it, with the pin the build job's step hands on. Each accepts the signer's full subject and
+refuses its CN and O alone and the same subject in another locality, state or country; the verifier and the re-pin
+given no publisher refuse another signer naming `$SakPublisherSubject`; the sign check refuses an empty publisher and
+a catalog without sak_utility.exe; and the pin must be a full subject (CN, O, L, S, C). `test_sign_exe_signers` reads
+that the verifier has no default of its own and takes `$SakPublisherSubject`. Drills (9), each red: the pin back to CN
+and O (the shape check); the verifier's own default back (its refusal named CN and O, and `test_sign_exe_signers`
+failed too); the verifier comparing by prefix (CN and O alone accepted); the re-pin's own default back; the re-pin by
+prefix; the build job's output written as CN and O; the sign job's `PUBLISHER` not taken from the build job; the sign
+check by prefix; the sign check without its catalog check (a catalog without sak_utility.exe accepted). Against the
+rc.2 signed package itself, on testpc2: the build job's step hands on the real subject; the verifier with its default
+pin passes, where d3b5e074's refuses all 5 first-party binaries, as rc.2's verify job did; the re-pin with its default
+re-pins the 6 signed filesystem tool files and writes the same packaged manifest and mapping as the dry run did with
+the subject passed in, where d3b5e074's refuses; the sign job's new check passes its 23 files with the build job's
+output and refuses CN and O alone. Drilled there too: with the pin back to CN and O the verifier refuses rc.2's 5
+first-party binaries again, and the sign check by prefix passes CN and O alone.
+
+**2. The docs that named the short subject** -- the release bar's signature line and two earlier rounds' notes here --
+now name `$SakPublisherSubject`.
+
+**3. A version resource on every program.** Only sak_utility.exe had one, so the UAC prompt for the elevated helper
+showed its bare file name, and the two writers had none either. One template, `resources/sak_version_info.rc.in`, and
+`sak_add_version_resource(<target> <description>)` in CMakeLists.txt now give all four the same resource
+sak_utility.exe had (company, product, copyright, file and product version from project(), the fourth number 0), with
+a description each: "S.A.K. Utility - Elevated Helper", "S.A.K. Utility - APFS Writer", "S.A.K. Utility - HFS+
+Writer", and sak_utility.exe's unchanged "S.A.K. Utility - Swiss Army Knife Utility" (its block moved from
+`sak_utility.rc.in` to the template). `test_program_version_resources` (product) reads `(Get-Item).VersionInfo` of
+every `sak_*.exe` beside sak_utility.exe, so a program added later is checked too, and requires the four: company,
+product, its own file and internal name, the version as text and as numbers, and a description of its own that starts
+"S.A.K. Utility - ". Drill: the helper's `sak_add_version_resource` taken out, reconfigured and rebuilt: the test
+failed on the helper alone, every field empty and its numbers 0.0.0.0; restored, reconfigured and rebuilt, it passed.
+On testpc2's build each of the four reads its own description, S.A.K. Utility, Randy Northrup, 0.9.3 and 0.9.3.0.
+
+**4. Text only: what release signing changes.** `program_integrity.h`, `program_integrity.cpp`,
+`cmake/program_manifest.cmake` and the known-limitations list above said the manifest's files are ones "a release does
+not change". Signing signs every unsigned `.exe` and `.dll` in the package. Comparing rc.2's unsigned and signed
+packages file by file, exactly the 23 files of its signing catalog changed: the four programs and
+`sak_script_types.dll`, vcpkg's bz2, liblzma and z, and 15 bundled tool files (7z.exe and 7z.dll, e2fsck, mke2fs,
+resize2fs, fsck_hfs, newfs_hfs and msys-2.0.dll, iperf3 and cygwin1.dll, smartctl, aria2c, UUPMediaConverter,
+libwim-15.dll and cdimage). Those pass an elevation's check by the same-signer rule in a release, not by their pins;
+the Qt and VC runtime files keep their vendors' signatures and their pins. The text now says so. Behaviour is
+unchanged: check A proved elevated starts from NTFS, FAT32 and exFAT, and the planted DLL refusal.
+
+**5. SHA256SUMS lists what is published.** It listed `SAK-Utility-v0.9.3-Windows-x64.zip`, which the release workflow
+has not uploaded since the v0.9.2.0 change (63b148f4; v0.9.1.9 and earlier published both), beside
+`SAK-Utility-Windows-x64.zip`, which it does. README and every page of sakutility.com link the stable name and
+`SHA256SUMS.txt` only, so the stable name stays the one download: the verify job's alias step now names it in place of
+the versioned zip's line (the same bytes; it refuses unless that line is there once with the zip's hash), so the file
+lists the download and the two programs inside it. The publish job's check found the versioned zip in its downloaded
+`dist/` and passed it; it now copies exactly what it uploads into `upload/`, checks every line against that folder or
+the zip's contents, and Create release uploads `upload/*` and nothing else (`fail_on_unmatched_files`). Rerun against
+the dry run's files on testpc2, as the dry run ran them: the new alias step on rc.2's archive writes the sums of the
+zip and the two programs, and the new publish check passes them, uploading the zip, `SHA256SUMS.txt` and the
+filesystem tool mapping; on rc.2's own `SHA256SUMS.txt` the new check refuses ("SHA256SUMS names
+SAK-Utility-v0.9.3-Windows-x64.zip, which is neither uploaded nor in the zip") where d3b5e074's passed it. Drills,
+each red: the check reading `dist/` again passed rc.2's sums; the alias step appending its line again left the
+versioned line, which the check refused.
+
+**Gate** on f47dd909, on testpc2 (12 cores) in W:\fix6: configure and the Release build of every target, 0 errors and
+0 warnings; the T2 static gates of ci.yml, 19 of 19; the hooks on each commit; cert-tooling 8 of 8; the four tests
+this round touches (`test_program_version_resources`, `test_program_integrity`, `test_verify_authenticode_signatures`,
+`test_sign_exe_signers`), through ctest. The Partition Manager code digest at f47dd909, from
+`scripts/partition_manager_code_digest.py` in the build tree and in a fresh worktree of it:
+dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6 (1635 files); items 1, 3 and 4 change it, so
+Partition Manager is recertified on this head. The T2 labels (product, release-tooling, tooling, cert), run over ssh:
+325 passed, 2 skipped by design (`test_startup_budget`, `test_single_instance_app`) and 8 failed, each for how testpc2
+runs them, not for this round: at d3b5e074, built there with the same configuration and run the same way, the same 8
+fail in the same functions. An ssh session is an elevated administrator, so `test_ai_command_tool_planner` (the
+read-only PC policy), `test_ai_execution_broker` (a child it expects unelevated), `test_permission_manager` (the owner
+a new file gets) and `test_quick_action_controller` (its administrator actions then run in-process, not through the
+helper) see the token T2 removes with `invoke_unelevated.ps1`; `test_keep_awake`'s power request fails there with
+error 50 (not supported); testpc2's Defender has its antivirus off (`test_defender_clean_status`); and
+`test_register_native_host` and `test_partition_manager_rig_pc_target` look for a refusal's words in an error record
+that the ssh console wraps ("... does not look like a 32-char lower-case" / "Chrome extension id", "... has no" /
+"machine_uuid"). Run through `invoke_unelevated.ps1` over the same ssh session (after the grant ci.yml gives the
+workspace), 19 failed instead: that filtered token cannot resolve the junction fixtures under the session's TEMP or
+read WMI there, so it is no runner either. T2 on the push is the run that counts.
+
+**Not proved off a runner.** The build job's `publisher` output reaching the sign job
+(`needs.build.outputs.publisher`), the sign step after a real Artifact Signing run, and the publish job's upload of
+`upload/*` with `fail_on_unmatched_files`: every step body ran here as the runner runs it, against rc.2's real files,
+with the environment set by hand, but GitHub's expressions and the release action's glob run only on a tag, and a
+pre-release tag stops before the publish job, so its first real run is the release itself. The UAC prompt showing
+"S.A.K. Utility - Elevated Helper": the resource is read off the built file here; the prompt itself needs the signed
+package on the VM. The Debug configuration of `test_program_version_resources` (the T4 nightly's Debug with ASan) was
+not built here.
+
 ### Fix batch 5: what the retakes of 9af638b6 found (2026-11-14)
 
 On the `fix3` branch from 9af638b6 (lane2's head and dev), one commit per item; each item closes its kind
