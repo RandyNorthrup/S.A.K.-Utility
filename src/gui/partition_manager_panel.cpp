@@ -13947,8 +13947,10 @@ void PartitionManagerPanel::onWipeSelected() {
     queueOperation(*type, *target, expected_layout_hash);
 }
 
+namespace {
+
 /// How a run ended, for the status bar while its box says the result whole (fix batch 5, E).
-static QString executionStatusLead(const PartitionExecutionResult& result) {
+QString executionStatusLead(const PartitionExecutionResult& result) {
     if (result.cancelled) {
         return QObject::tr("Partition operation cancelled");
     }
@@ -13963,7 +13965,7 @@ static QString executionStatusLead(const PartitionExecutionResult& result) {
 }
 
 /// How a read-only tool check ended, for the status bar while its box says what it found.
-static QString toolCheckStatusLead(const PartitionFileSystemToolRunResult& result) {
+QString toolCheckStatusLead(const PartitionFileSystemToolRunResult& result) {
     if (result.cancelled) {
         return QObject::tr("Filesystem check cancelled");
     }
@@ -13973,6 +13975,8 @@ static QString toolCheckStatusLead(const PartitionFileSystemToolRunResult& resul
     return result.success ? QObject::tr("Filesystem check complete")
                           : QObject::tr("Filesystem check needs attention");
 }
+
+}  // namespace
 
 void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& result) {
     // The run is over, though the controller reports it running until this result is read: an

@@ -641,7 +641,7 @@ void MainWindow::createStatusBar() {
     // the box for longer came back to "Ready" (fix batch 5, E).
     m_status_message_timer = new QTimer(this);
     m_status_message_timer->setSingleShot(true);
-    connect(m_status_message_timer, &QTimer::timeout, this, [this]() {
+    connect(m_status_message_timer, &QTimer::timeout, this, [this] {
         m_status_message_timeout_ms = 0;
         statusBar()->clearMessage();
     });

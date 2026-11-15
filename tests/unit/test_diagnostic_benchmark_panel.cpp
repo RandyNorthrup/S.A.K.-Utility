@@ -691,7 +691,7 @@ void DiagnosticBenchmarkPanelTests::savedReportsSayWhereInTheBoxNotTheStatusBar(
     sak::DiagnosticBenchmarkPanel panel(quick_actions);
     QSignalSpy status(&panel, &sak::DiagnosticBenchmarkPanel::statusMessage);
     const QString folder = QStringLiteral(
-        "C:/Users/Technician/Documents/S.A.K. Utility/Diagnostic Reports/2026-11-14 Front Desk PC");
+        "D:/Service Records/S.A.K. Utility/Diagnostic Reports/2026-11-14 Front Desk PC");
     QString shown;
     QString status_while_open;
     QTimer closer;

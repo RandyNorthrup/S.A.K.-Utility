@@ -55,19 +55,19 @@ constexpr char16_t kFirstNonControlCodeUnit = 0x20;
 // "Free some space" at 1280 px. The box says the whole refusal.
 constexpr std::size_t kWorkSpaceShort = 0;
 constexpr std::size_t kWorkSpaceUnknown = 1;
-constexpr std::array<MessageForm, 2> kWorkSpaceRefusals{{
-    {
+constexpr std::array<MessageForm, 2> kWorkSpaceRefusals{
+    MessageForm{
         .message = "Not enough free space for the work files: S.A.K.'s work folder is on %1, which "
                    "has %2 free; at least %3 is needed. Free some space on %1, or run S.A.K. from "
                    "a larger drive.",
         .short_form = "not enough free space on %1",
     },
-    {
+    MessageForm{
         .message = "Nothing was started: S.A.K.'s work folder is on %1, and S.A.K. could not tell "
                    "how much free space that drive has.",
         .short_form = "cannot read free space on %1",
     },
-}};
+};
 
 NetworkTransferRequest makeFeedRequest(const QUrl& url) {
     NetworkTransferRequest request;

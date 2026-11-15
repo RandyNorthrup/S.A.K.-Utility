@@ -50,30 +50,30 @@ constexpr int kFirstPrintableAscii = 0x20;  // bytes below space are C0 controls
 // The worker's long operationError messages, each with the status bar's short form of it (fix
 // batch 5, E). The work-folder refusals come first, in WorkDirRefusal's order.
 constexpr std::size_t kManifestNotWritten = 4;
-constexpr std::array<MessageForm, 5> kErrorForms{{
-    {
+constexpr std::array<MessageForm, 5> kErrorForms{
+    MessageForm{
         .message = "Nothing was started: S.A.K.'s work folder on %1 already holds files S.A.K. "
                    "did not put there.",
         .short_form = "work folder on %1 is not S.A.K.'s",
     },
-    {
+    MessageForm{
         .message = "Nothing was started: S.A.K.'s work folder on %1 is a link to another folder, "
                    "and S.A.K. does not work through one.",
         .short_form = "work folder on %1 is a link",
     },
-    {
+    MessageForm{
         .message = "Nothing was started: S.A.K. could not create its work folder on %1.",
         .short_form = "cannot create work folder on %1",
     },
-    {
+    MessageForm{
         .message = "Nothing was started: S.A.K. could not write to its work folder on %1.",
         .short_form = "cannot write to work folder on %1",
     },
-    {
+    MessageForm{
         .message = "Failed to write manifest to %1",
         .short_form = "could not write the manifest",
     },
-}};
+};
 
 QString packagesCount(qint64 count) {
     return countOf(count, QStringLiteral("package"), QStringLiteral("packages"));
