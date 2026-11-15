@@ -3130,9 +3130,10 @@ re-checksummed).
 **sign-exe.ps1.** It accepted any valid signature on the Artifact Signing dlib, which signtool runs
 with signing rights, and any valid signature on the exe it had just signed. Now every DLL in the
 dlib's folder must be signed by Microsoft (the client's own DLLs are "Microsoft Corporation", the
-VC runtime it carries "Microsoft Windows"), and the signed exe must be signed by
-`CN=Randy Northrup, O=Randy Northrup` (the publisher `verify_authenticode_signatures.ps1` requires
-of every packaged binary) and timestamped. Test: `test_sign_exe_signers` (release-tooling): the
+VC runtime it carries "Microsoft Windows"), and the signed exe must be signed by the release
+publisher, `$SakPublisherSubject` in `authenticode_signer.ps1` (the publisher
+`verify_authenticode_signatures.ps1` requires of every packaged binary; since fix round 6 the
+certificate's full subject), and timestamped. Test: `test_sign_exe_signers` (release-tooling): the
 checks on real signed files, and `sign-exe.ps1` itself run in a sandbox with a stand-in `az`,
 stopping at a Chocolatey-signed dlib.
 
@@ -3194,7 +3195,8 @@ From the security audit of a brief forwarded by the owner, who ruled that signin
   check tools, for one day. **sign** runs in the `release` environment with `id-token: write` only and no checkout:
   download-artifact, an unpack with .NET's own ZipFile, azure/login (OIDC, `allow-no-subscriptions`), the signing
   action with `cache-dependencies: false` and `exclude-environment-credential: true`, an inline check that every
-  catalog file is Valid, signed by CN=Randy Northrup and timestamped, and the signed zip handed on for one day. The
+  catalog file is Valid, signed by the release publisher (exactly, since fix round 6) and timestamped, and the
+  signed zip handed on for one day. The
   pins of azure/login and the signing action are win-app-migrator's. **verify** (read-only, no environment) re-pins
   the packaged filesystem tools between the application's own check before and after, verifies Authenticode, runs
   the signed readiness gate from a build/Release laid out from the signed package, and builds the archive and
@@ -5731,8 +5733,9 @@ Required before a release candidate is published:
 - Portable package smoke passes from a clean extracted folder.
 - Startup E2E smoke passes from the packaged folder.
 - All packaged `.exe` and `.dll` files have valid Authenticode signatures, and the first-party
-  `sak_*` binaries are signed by exactly `CN=Randy Northrup, O=Randy Northrup`, the publisher
-  sakutility.com names. Bundled third-party tools keep their vendor's signature.
+  `sak_*` binaries are signed by exactly the release publisher, `$SakPublisherSubject` in
+  `scripts/authenticode_signer.ps1` (the certificate's full subject), the publisher sakutility.com
+  names. Bundled third-party tools keep their vendor's signature.
 - `SHA256SUMS.txt` is regenerated after signing.
 
 Use:

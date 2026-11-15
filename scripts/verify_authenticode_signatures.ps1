@@ -13,8 +13,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$RootDir,
 
-    # The subject of the certificate the first-party binaries must be signed with.
-    [string]$ExpectedPublisher = "CN=Randy Northrup, O=Randy Northrup"
+    # The subject of the certificate the first-party binaries must be signed with. Left out, it is
+    # the release publisher, $SakPublisherSubject in authenticode_signer.ps1, the one place that
+    # names it. Tests pass the subject of their own signed fixtures.
+    [string]$ExpectedPublisher
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,6 +26,14 @@ function Stop-Verification([string]$Message) {
     Write-Host $Message
     Write-Error $Message
     exit 1
+}
+
+if (-not $PSBoundParameters.ContainsKey("ExpectedPublisher")) {
+    . (Join-Path $PSScriptRoot "authenticode_signer.ps1")
+    $ExpectedPublisher = $SakPublisherSubject
+}
+if ([string]::IsNullOrWhiteSpace($ExpectedPublisher)) {
+    Stop-Verification "No publisher to check the first-party binaries against"
 }
 
 $root = Resolve-Path -LiteralPath $RootDir

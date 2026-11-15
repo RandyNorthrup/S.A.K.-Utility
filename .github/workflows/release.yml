@@ -59,6 +59,7 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
+      publisher: ${{ steps.publisher.outputs.publisher }}
 
     steps:
     - name: Checkout code
@@ -76,6 +77,19 @@ jobs:
         Write-Host "Detected version: $ver"
         "APP_VERSION=$ver" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         "version=$ver" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+    # The sign job has no checkout, so it takes the release publisher from here: the subject in
+    # scripts/authenticode_signer.ps1, the one place it is written.
+    - name: Read the release publisher
+      id: publisher
+      shell: pwsh
+      run: |
+        . ./scripts/authenticode_signer.ps1
+        if ([string]::IsNullOrWhiteSpace($SakPublisherSubject) -or $SakPublisherSubject -match '[\r\n]') {
+          throw "scripts/authenticode_signer.ps1 names no single-line release publisher: '$SakPublisherSubject'"
+        }
+        Write-Host "Release publisher: $SakPublisherSubject"
+        "publisher=$SakPublisherSubject" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
     # A tag names the version it publishes; a tag that disagrees with VERSION is refused here,
     # before anything is built.
@@ -385,8 +399,9 @@ jobs:
         if-no-files-found: error
 
   # ==========================================================================================
-  # Code signing with Azure Artifact Signing, under the maintainer's verified identity
-  # (CN=Randy Northrup). No password is stored anywhere: Azure accepts GitHub's OIDC token for
+  # Code signing with Azure Artifact Signing, under the maintainer's verified identity (the
+  # release publisher in scripts/authenticode_signer.ps1, which the build job hands on as its
+  # "publisher" output). No password is stored anywhere: Azure accepts GitHub's OIDC token for
   # this repository's "release" environment only, and that environment admits v* tags only. Every
   # step of a job that may sign in to Azure can sign, so nothing else runs here: no checkout, only
   # pinned actions and an inline check of what they signed. The package's binaries are signed, not
@@ -442,22 +457,32 @@ jobs:
         # A build job can write the cache it would restore its signing tools from.
         cache-dependencies: false
 
-    # Every file the catalog named, as signed: valid, by the maintainer, timestamped.
+    # Every file the catalog named, as signed: valid, by exactly the release publisher (the subject
+    # verify_authenticode_signatures.ps1 will require), timestamped. A certificate whose subject is
+    # not the pin stops the release here, before anything is handed on, not at verify. The catalog
+    # must name the four first-party programs, so the check cannot pass by having none of them.
     - name: Check the signatures
       shell: pwsh
+      env:
+        PUBLISHER: ${{ needs.build.outputs.publisher }}
       run: |
+        if ([string]::IsNullOrWhiteSpace($env:PUBLISHER)) { throw 'The build job handed on no release publisher.' }
         $package = Join-Path $env:RUNNER_TEMP 'sak-package'
         $catalog = Join-Path $package 'signing-catalog.txt'
-        $entries = @(Get-Content -LiteralPath $catalog | Where-Object { $_.Trim() -ne '' })
+        $entries = @(Get-Content -LiteralPath $catalog | Where-Object { $_.Trim() -ne '' } | ForEach-Object { $_.Trim() })
         if ($entries.Count -eq 0) { throw 'The signing catalog names no file.' }
+        foreach ($program in 'sak_utility.exe', 'sak_elevated_helper.exe', 'sak_apfs_writer_cli.exe', 'sak_hfs_writer_cli.exe') {
+          if ($entries -notcontains ".\$program") { throw "The signing catalog does not name $program." }
+        }
         foreach ($entry in $entries) {
-          $path = Join-Path $package $entry.Trim()
+          $path = Join-Path $package $entry
           $signature = Get-AuthenticodeSignature -LiteralPath $path
           if ($signature.Status -ne 'Valid') { throw "$entry is $($signature.Status): $($signature.StatusMessage)" }
-          if ($signature.SignerCertificate.Subject -notmatch 'CN=Randy Northrup') { throw "$entry is signed by someone else: $($signature.SignerCertificate.Subject)" }
+          $subject = $signature.SignerCertificate.Subject
+          if ($subject -cne $env:PUBLISHER) { throw "$entry is signed by '$subject', not by the release publisher '$env:PUBLISHER'." }
           if (-not $signature.TimeStamperCertificate) { throw "$entry has no timestamp." }
         }
-        Write-Host "$($entries.Count) file(s) signed by CN=Randy Northrup and timestamped."
+        Write-Host "$($entries.Count) file(s) signed by the release publisher '$env:PUBLISHER' and timestamped."
 
     - name: Pack the signed package
       shell: pwsh

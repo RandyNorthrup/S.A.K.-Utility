@@ -7477,10 +7477,13 @@ add_test(NAME test_bundle_smartmontools_rebundle
 set_tests_properties(test_bundle_smartmontools PROPERTIES TIMEOUT 60)
 set_tests_properties(test_bundle_smartmontools_rebundle PROPERTIES TIMEOUT 300)
 
+# The release publisher pin wherever the release checks it: the package verifier, the filesystem
+# tool re-pin and release.yml's sign job (its check step run from the workflow file), each on real
+# signed files in a process of its own, about 25 of them.
 add_test(NAME test_verify_authenticode_signatures
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_verify_authenticode_signatures.ps1")
-set_tests_properties(test_verify_authenticode_signatures PROPERTIES TIMEOUT 120)
+set_tests_properties(test_verify_authenticode_signatures PROPERTIES TIMEOUT 300)
 
 # sign-exe.ps1 pins who signed the Artifact Signing dlib (Microsoft) and the exe it signed (the
 # project publisher): the checks against real signed files, and sign-exe.ps1 run in a sandbox up
