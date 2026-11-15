@@ -75,6 +75,12 @@ public:
         PartitionManagerController::InventoryScannerWithProgress scanner);
     // Reports a Windows-continued phase for the running apply, as its executor would.
     void reportTestWindowsPhaseForReview(const std::optional<WindowsContinuedPhase>& phase);
+    // Runs Check Non-Windows File System's read-only tool check through @p runner instead of the
+    // bundled tools, as the panel starts it once the check is chosen.
+    void runTestReadOnlyFileSystemCheckForReview(
+        PartitionManagerController::FileSystemCheckRunner runner,
+        const QString& file_system,
+        const QString& target_path);
 #endif
 
 protected:
@@ -83,6 +89,9 @@ protected:
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
+    /// The operation ended without running to its end (refused, failed or cancelled): the
+    /// status bar hides its progress bar at once, as when idle (MainWindow::resetProgress).
+    void progressReset();
     void logOutput(const QString& message);
     void openBenchmarkRequested();
     void openImageFlasherRequested();
@@ -144,6 +153,7 @@ private Q_SLOTS:
     void onWipeSelected();
     void showPartitionContextMenu(const QPoint& position);
     void onExecutionFinished(const sak::PartitionExecutionResult& result);
+    void onFileSystemCheckFinished(const sak::PartitionFileSystemToolRunResult& result);
 
 private:
     void onChangeApfsVolumeLabel();
@@ -241,6 +251,9 @@ private:
     void addLegendItem(QHBoxLayout* layout, const QString& text, const QColor& color);
     void connectController();
     void connectControllerSignals();
+    /// Apply's and the queue's refusals: a warning box with the reasons, and what happened in the
+    /// status bar.
+    void connectControllerRefusals();
     void rebuildTable(const PartitionInventory& inventory);
     void rebuildDiskMap(const PartitionInventory& inventory);
     void addDiskMapRow(QVBoxLayout* layout, const PartitionDiskInfo& disk);

@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
-        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
+        "helper_sha256": "c029acfadadbb89737edc8e22c55cef8848a9a42a5d04e845ce1be511cb9dae8",
+        "sha256": "8a883e939fcfe94899d3c0fe2f35d6ca0740ca34eb3617d43d6d8ece01edf10d"
     },
-    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
-    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
+    "code_commit": "f0eff95d987316733cb52b39ef0f3db53f4a3d74",
+    "code_digest": "1c2376e85073cd3bcceca90bf1f77489e130e351e582fc79b8c9b9fc8ae06fcd",
     "code_dirty": false,
-    "completed_utc": "2026-11-14T10:27:05.018Z",
+    "completed_utc": "2026-11-15T08:50:47.638Z",
     "disk_before": {
         "bus_type": "USB",
         "disk_number": 2,
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "8edafed8-de28-4e4d-ade4-4f0d3addfa2a",
+                "operation_id": "b71e931a-d705-49d8-821f-510dca664b1a",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Delete Disk 2 Partition 2\r\n",
@@ -59,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "8edafed8-de28-4e4d-ade4-4f0d3addfa2a",
+            "id": "b71e931a-d705-49d8-821f-510dca664b1a",
             "payload": {
             },
             "script_sha256": "228148ccc8d7619d6a2bb13ebd8c54a797383f872956cc1a1e11c52accf213c3",
@@ -79,15 +79,15 @@
         }
     ],
     "review": {
-        "fingerprint": "441ffcd143abd4b0f3558de9ed8fce2a249756e35cd249998e6385de4586cf0f",
-        "layout_hash": "616e5b3e6603fc0ad67194150402af510ef7671b1f5c9fe10d034723f2cbbfd5",
+        "fingerprint": "a3cefa97966ce2324b7467991ac765a18b31e76aa3686962fda12abfe8b3975b",
+        "layout_hash": "68bd991f7e9d643836cf5fa9ff46d70689cccd2fd0e226b203b4645da310b5df",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "a8ef1664-5c58-4746-959b-1d32e9efd03e",
+    "run_id": "b2f1591b-976c-4345-a651-bdd59df5c457",
     "scenario_id": "external.usb-removable",
     "schema_version": 1,
-    "started_utc": "2026-11-14T10:26:47.934Z",
+    "started_utc": "2026-11-15T08:50:31.190Z",
     "status": "Passed",
     "step": "delete",
     "tool": "partition-manager-scenario-step"

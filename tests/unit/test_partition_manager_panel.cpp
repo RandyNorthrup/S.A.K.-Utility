@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/color_constants.h"
+#include "sak/detachable_log_window.h"
 #include "sak/layout_constants.h"
 #include "sak/partition_apfs_writer.h"
+#include "sak/partition_executor.h"
 #include "sak/partition_file_system_detector.h"
 #include "sak/partition_file_system_registry.h"
 #include "sak/partition_file_system_tool_runner.h"
@@ -189,6 +191,8 @@ private Q_SLOTS:
     void labelsSayWhatTheToolDoes();
     void noVisibleTextSaysCertified();
     void refusedOperationSaysWhy();
+    void applyRefusalSaysNotAppliedWhileTheBoxSaysWhy();
+    void theControllersResetReachesTheStatusBar();
     void logShowsPlainTextWhenARunFinishes();
     void createDialogHasNoTypeItCannotQueue();
     void readOnlyCheckButtonSaysItRunsNow();
@@ -201,7 +205,14 @@ private Q_SLOTS:
     void extFilesystemWriteActionsQueueWithConfirmation() const;
     void resizeSaysWindowsCannotResizeFat32() const;
     void resizeGrowsAnApfsPartitionOnly() const;
+    void aDisabledSizeHandleKnobIsDrawnDisabled_data() const;
+    void aDisabledSizeHandleKnobIsDrawnDisabled() const;
+    void aDisabledSizeBarDrawsItsHandlesDisabled_data() const;
+    void aDisabledSizeBarDrawsItsHandlesDisabled() const;
+    void aDisabledLogSwitchIsDrawnDisabled_data() const;
+    void aDisabledLogSwitchIsDrawnDisabled() const;
     void resizeOffersOnlySizesTheQueueTakes() const;
+    void resizeShowsNoUsableFreeSpaceWhereTheSizeCannotChange() const;
     void apfsContainerActionAllowsWritableApfsVolumes();
     void manageBitLockerShowsStatusDialog();
     void theTableHeaderReachesTheRightEdge();
@@ -214,6 +225,9 @@ private Q_SLOTS:
     void checkFileSystemSaysToWaitBeforeUnplugging();
     void newCheckTextsFitTheResultBox();
     void newResizeTextsFitTheResizeDialog();
+    void newResizeFreeSpaceTextsFitTheResizeDialog();
+    void checkFileSystemSaysWhatTheCheckFound();
+    void nonWindowsCheckSaysWhatItFound();
     void newTypeIdPromptFitsItsDialog();
     void windowsPhaseDisablesCancelAndSaysSo();
     void openClosePromptFollowsTheRun();
@@ -1221,11 +1235,13 @@ void verifyMetadataCheckDialog(QToolButton* button, const QString& expectedFindi
                      "Refresh Disks re-reads the metadata and recomputes these results"));
         QVERIFY2(dialog->windowTitle().endsWith(QStringLiteral("Metadata (Last Disk Scan)")),
                  qPrintable(dialog->windowTitle()));
+        // Fix batch 4 (C): in the words every read-only check uses.
         QCOMPARE(propertyTableValue(properties, QStringLiteral("Result")),
-                 QStringLiteral("No sanity warnings"));
+                 QStringLiteral(
+                     "No errors found (read-only, in the metadata the last disk scan read)"));
         // The findings cell is the check's ENTIRE verdict list. A contains() on the
         // "Metadata sanity: <FS>" prefix passed regardless of what the sentence went on to
-        // say -- including a warning line the "No sanity warnings" result contradicts.
+        // say -- including a warning line the "No errors found" result contradicts.
         QCOMPARE(propertyTableValue(properties, QStringLiteral("Findings")), expectedFinding);
         inspected = true;
         dialog->reject();
@@ -5487,18 +5503,60 @@ void PartitionManagerPanelTests::refusedOperationSaysWhy() {
     sak::PartitionTarget absent;
     absent.kind = sak::PartitionTargetKind::Disk;
     absent.disk_number = sak::DiskNumber{42};
+    QSignalSpy statuses(&panel, &sak::PartitionManagerPanel::statusMessage);
 
     QString shown;
+    QString status_while_open;
     const ScopedModalInspection inspection([&]() {
         auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
         const auto reject_on_return = rejectDialogOnReturn(box);
         QVERIFY2(box != nullptr, "A refusal should say why in a warning");
         shown = box->text();
+        status_while_open = statuses.isEmpty() ? QString() : statuses.last().at(0).toString();
         box->accept();
     });
     panel.queueTestOperationForReview(sak::PartitionOperationType::InitializeDisk, absent);
     QVERIFY2(!shown.isEmpty(), "The warning should carry the reasons");
     QVERIFY(panel.testQueuedOperationsForReview().isEmpty());
+    // Fix batch 5 (E): the box says the reasons; the status bar, which cut the controller's line
+    // with them at 1024 px, says what happened while the box is read.
+    QCOMPARE(status_while_open, QStringLiteral("Not added to the queue"));
+}
+
+// Fix batch 5 (E): an Apply refused at its pre-run check says the reasons in a box and, while the
+// box is read, "Not applied" in the status bar, which the reasons ran past at 1024 px.
+void PartitionManagerPanelTests::applyRefusalSaysNotAppliedWhileTheBoxSaysWhy() {
+    sak::PartitionManagerPanel panel;
+    auto* controller = panel.findChild<sak::PartitionManagerController*>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy statuses(&panel, &sak::PartitionManagerPanel::statusMessage);
+    QString shown;
+    QString status_while_open;
+    const ScopedModalInspection inspection([&]() {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(box);
+        QVERIFY2(box != nullptr, "A refused Apply should say why in a warning");
+        shown = box->text();
+        status_while_open = statuses.isEmpty() ? QString() : statuses.last().at(0).toString();
+        box->accept();
+    });
+    const QString reason = QStringLiteral(
+        "Disk 1 changed since the operations were queued: its layout no longer matches the plan, "
+        "so nothing was applied. Refresh the disks and queue the operations again.");
+    Q_EMIT controller->applyRefused({reason});
+    QCOMPARE(shown, reason);
+    QCOMPARE(status_while_open, QStringLiteral("Not applied"));
+}
+
+// Fix batch 5 (F): the controller ends the bar as when idle when Apply is refused or a run does not
+// pass; the panel passes that on, as it passes on the bar's values.
+void PartitionManagerPanelTests::theControllersResetReachesTheStatusBar() {
+    sak::PartitionManagerPanel panel;
+    auto* controller = panel.findChild<sak::PartitionManagerController*>();
+    QVERIFY(controller != nullptr);
+    QSignalSpy reset(&panel, &sak::PartitionManagerPanel::progressReset);
+    Q_EMIT controller->progressReset();
+    QCOMPARE(reset.count(), 1);
 }
 
 void PartitionManagerPanelTests::logShowsPlainTextWhenARunFinishes() {
@@ -6060,6 +6118,308 @@ void PartitionManagerPanelTests::resizeOffersOnlySizesTheQueueTakes() const {
             QVERIFY2(minimum < current && current < maximum, qPrintable(file_system));
         }
     }
+}
+
+namespace {
+
+/// What the Resize dialog shows of a partition's size and the free space after it.
+struct ResizeSizeLook {
+    bool opened{false};
+    bool size_enabled{false};
+    bool handle_enabled{false};
+    QString adjacent_free;
+    QString preview;               ///< the size preview's rows, as it tells a screen reader
+    int usable_colour_pixels{-1};  ///< pixels of the Max online bar's "can grow into" colour
+    QImage handle_image;           ///< the size handle as drawn
+};
+
+/// The pixels of @p image in exactly @p colour.
+int pixelsOfColour(const QImage& image, const QColor& colour) {
+    int count = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            count += image.pixel(x, y) == colour.rgb() ? 1 : 0;
+        }
+    }
+    return count;
+}
+
+/// The pixels of @p widget drawn in exactly @p colour.
+int pixelsOfColour(QWidget* widget, const QColor& colour) {
+    return pixelsOfColour(widget->grab().toImage(), colour);
+}
+
+/// Applies the theme a fix batch 5 (G) paint test row asks for, and returns the colour a disabled
+/// control is drawn in there.
+QColor applyThemeForRow(bool dark) {
+    sak::ui::applyWindows11Theme(*qApp,
+                                 dark ? sak::ui::AppThemeMode::Dark : sak::ui::AppThemeMode::Light);
+    return QColor(
+        QString::fromLatin1(dark ? sak::ui::kColorDarkTextDisabled : sak::ui::kColorTextDisabled));
+}
+
+/// The Resize dialog's size handle: whether it is on, and how it is drawn.
+void readResizeSizeHandle(QDialog* dialog, ResizeSizeLook* look) {
+    auto* handle = findAccessibleWidget<QSlider>(dialog,
+                                                 QStringLiteral("Target partition size handle"));
+    if (handle == nullptr) {
+        return;
+    }
+    look->handle_enabled = handle->isEnabled();
+    look->handle_image = handle->grab().toImage();
+}
+
+/// Opens Resize/Move on @p row of a panel holding @p inventory and reads it. Not opened when the
+/// panel does not offer Resize there.
+ResizeSizeLook lookAtResizeSize(const sak::PartitionInventory& inventory, int row) {
+    ResizeSizeLook look;
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+    if (table == nullptr || resize == nullptr) {
+        return look;
+    }
+    table->selectRow(row);
+    if (!resize->isEnabled()) {
+        return look;
+    }
+    const ScopedModalInspection inspection([&look]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        if (dialog == nullptr) {
+            return;
+        }
+        QCoreApplication::processEvents();
+        look.opened = true;
+        const auto* size = findAccessibleWidget<QSpinBox>(dialog,
+                                                          QStringLiteral("Target partition size"));
+        look.size_enabled = size != nullptr && size->isEnabled();
+        readResizeSizeHandle(dialog, &look);
+        for (const auto* label : dialog->findChildren<QLabel*>()) {
+            if (label->accessibleDescription() ==
+                QStringLiteral("Contiguous free space after selected partition")) {
+                look.adjacent_free = label->text();
+            }
+        }
+        if (auto* preview =
+                dialog->findChild<QWidget*>(QStringLiteral("partitionOperationSizePreview"))) {
+            look.preview = preview->accessibleDescription();
+            look.usable_colour_pixels =
+                pixelsOfColour(preview, QColor(QString::fromLatin1(sak::ui::kColorWarning)));
+        }
+        dialog->reject();
+    });
+    pressAction(resize);
+    return look;
+}
+
+/// The texts a Resize dialog shows for a size that cannot change: Max online is @p current, and
+/// any free space after the partition is not usable for @p file_system.
+struct FixedSizeTexts {
+    QString current;
+    QString free_after;  ///< empty when nothing follows the partition
+    QString file_system;
+};
+
+/// Why @p look does not show a size that cannot change plainly, or empty.
+QString fixedSizeProblem(const ResizeSizeLook& look, const FixedSizeTexts& texts) {
+    QStringList problems;
+    if (look.size_enabled || look.handle_enabled) {
+        problems.append(QStringLiteral("a size control is live"));
+    }
+    if (look.usable_colour_pixels != 0) {
+        problems.append(QStringLiteral("Max online is drawn as space to grow into"));
+    }
+    if (!look.preview.contains(QStringLiteral("Max online: ") + texts.current +
+                               QStringLiteral(", the current size"))) {
+        problems.append(QStringLiteral("Max online is not the current size"));
+    }
+    const QString not_usable = QStringLiteral("not usable for ") + texts.file_system;
+    if (!texts.free_after.isEmpty() &&
+        (look.adjacent_free != texts.free_after + QStringLiteral(", ") + not_usable ||
+         !look.preview.contains(QStringLiteral("free space ") + not_usable))) {
+        problems.append(QStringLiteral("the free space is not said to be ") + not_usable);
+    }
+    return problems.join(QStringLiteral("; "));
+}
+
+/// Why @p look of a size that can change is not as it was before fix batch 4, or empty.
+QString resizableSizeProblem(const ResizeSizeLook& look,
+                             const QString& current,
+                             const QString& free_after) {
+    QStringList problems;
+    if (!look.size_enabled || !look.handle_enabled) {
+        problems.append(QStringLiteral("a size control is off"));
+    }
+    if (look.usable_colour_pixels <= 0) {
+        problems.append(QStringLiteral("Max online is not drawn as space to grow into"));
+    }
+    if (look.adjacent_free != free_after ||
+        !look.preview.contains(QStringLiteral("Max online: ") + current +
+                               QStringLiteral(" current + ") + free_after +
+                               QStringLiteral(" free"))) {
+        problems.append(QStringLiteral("the free space reads differently"));
+    }
+    return problems.join(QStringLiteral("; "));
+}
+
+}  // namespace
+
+// Fix batch 4 (B): the capture of d8c27a15 gave a FAT32 partition "Adjacent free after: 21.89 GB"
+// and a Max online bar of "2.00 GB current + 21.89 GB free" across its whole width, in the colour
+// of space it can grow into, with a size handle that looked live. Where the queue refuses every
+// size change (FAT32, exFAT, a file system S.A.K. does not resize or could not identify, and an
+// APFS partition, which only grows, with nothing after it), Max online is the current size in a
+// muted colour, the free space is said to be not usable for that file system, and the size controls
+// are off. HFS+ offers no Resize at all. NTFS, ReFS, ext4 and an APFS partition with room after it
+// are as they were. Row 1 has 128 MB free after it; row 3, the disk's second partition, none.
+void PartitionManagerPanelTests::resizeShowsNoUsableFreeSpaceWhereTheSizeCannotChange() const {
+    struct Case {
+        const char* file_system;
+        int row;
+        bool fixed;
+    };
+    const QString current = sak::formatPartitionBytes(256 * kTestMegabyteBytes);
+    const QString free_after = sak::formatPartitionBytes(128 * kTestMegabyteBytes);
+    for (const Case& test : {Case{"FAT32", 1, true},
+                             Case{"exFAT", 1, true},
+                             Case{"UDF", 1, true},
+                             Case{"RAW", 1, true},
+                             Case{"HFS+", 1, true},
+                             Case{"APFS", 3, true},
+                             Case{"APFS", 1, false},
+                             Case{"NTFS", 1, false},
+                             Case{"ReFS", 1, false},
+                             Case{"ext4", 1, false}}) {
+        const QString name = QString::fromLatin1(test.file_system);
+        auto inventory = unallocatedAllocateInventoryFixture();
+        inventory.disks[0].partitions[test.row == 1 ? 0 : 1].volume->file_system = name;
+        const ResizeSizeLook look = lookAtResizeSize(inventory, test.row);
+        if (!look.opened) {
+            QVERIFY2(test.fixed, qPrintable(name + QStringLiteral(": Resize is not offered")));
+            continue;
+        }
+        const FixedSizeTexts texts{
+            .current = current,
+            .free_after = test.row == 1 ? free_after : QString(),
+            .file_system = name == QStringLiteral("RAW")
+                               ? QStringLiteral("a file system S.A.K. could not identify")
+                               : name};
+        const QString problem = test.fixed ? fixedSizeProblem(look, texts)
+                                           : resizableSizeProblem(look, current, free_after);
+        QVERIFY2(problem.isEmpty(),
+                 qPrintable(name + QStringLiteral(": ") + problem + QStringLiteral(" | ") +
+                            look.adjacent_free + QStringLiteral(" | ") + look.preview));
+    }
+}
+
+void PartitionManagerPanelTests::aDisabledSizeHandleKnobIsDrawnDisabled_data() const {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+}
+
+// Fix batch 5 (G): in Resize with a size that cannot change (FAT32), the size box was greyed and
+// the size handle's knob was still the enabled blue: the theme's handle rule had no disabled
+// state. A disabled slider's knob is drawn in the theme's disabled colour, the colour of the
+// greyed box's text; an enabled one (NTFS) keeps the accent.
+void PartitionManagerPanelTests::aDisabledSizeHandleKnobIsDrawnDisabled() const {
+    QFETCH(bool, dark);
+    const auto light =
+        qScopeGuard([] { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+    const QColor disabled = applyThemeForRow(dark);
+    const QColor accent(QString::fromLatin1(sak::ui::kColorPrimary));
+    for (const QString& file_system : {QStringLiteral("FAT32"), QStringLiteral("NTFS")}) {
+        auto inventory = unallocatedAllocateInventoryFixture();
+        inventory.disks[0].partitions[0].volume->file_system = file_system;
+        const ResizeSizeLook look = lookAtResizeSize(inventory, 1);
+        QVERIFY2(look.opened, qPrintable(file_system));
+        const bool fixed = file_system == QStringLiteral("FAT32");
+        QCOMPARE(look.handle_enabled, !fixed);
+        const int accent_pixels = pixelsOfColour(look.handle_image, accent);
+        const int disabled_pixels = pixelsOfColour(look.handle_image, disabled);
+        QVERIFY2(fixed ? (accent_pixels == 0 && disabled_pixels > 0) : accent_pixels > 0,
+                 qPrintable(QStringLiteral("%1 size handle: %2 accent, %3 disabled pixels")
+                                .arg(file_system)
+                                .arg(accent_pixels)
+                                .arg(disabled_pixels)));
+    }
+}
+
+void PartitionManagerPanelTests::aDisabledSizeBarDrawsItsHandlesDisabled_data() const {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+}
+
+// Fix batch 5 (G): the size bar draws its drag handles itself, in the palette's Highlight, which
+// was the accent blue in the disabled state too. Create Partition's bar, with a handle at each
+// end of the new partition, draws them in the theme's disabled colour when it is disabled.
+void PartitionManagerPanelTests::aDisabledSizeBarDrawsItsHandlesDisabled() const {
+    QFETCH(bool, dark);
+    const auto light =
+        qScopeGuard([] { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+    const QColor disabled = applyThemeForRow(dark);
+    const QColor accent(QString::fromLatin1(sak::ui::kColorPrimary));
+    sak::PartitionManagerPanel panel;
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition Manager table should exist");
+    addUnallocatedTestSelection(table);
+    int enabled_accent = -1;
+    int disabled_accent = -1;
+    int disabled_handles = -1;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        if (dialog == nullptr) {
+            return;
+        }
+        QCoreApplication::processEvents();
+        if (auto* preview =
+                dialog->findChild<QWidget*>(QStringLiteral("partitionOperationSizePreview"))) {
+            enabled_accent = pixelsOfColour(preview, accent);
+            preview->setEnabled(false);
+            disabled_accent = pixelsOfColour(preview, accent);
+            disabled_handles = pixelsOfColour(preview, disabled);
+        }
+        dialog->reject();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onCreatePartition", Qt::DirectConnection));
+    QVERIFY2(enabled_accent > 0 && disabled_accent == 0 && disabled_handles > 0,
+             qPrintable(QStringLiteral("%1 accent enabled; %2 accent and %3 disabled pixels "
+                                       "disabled")
+                            .arg(enabled_accent)
+                            .arg(disabled_accent)
+                            .arg(disabled_handles)));
+}
+
+void PartitionManagerPanelTests::aDisabledLogSwitchIsDrawnDisabled_data() const {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+}
+
+// Fix batch 5 (G): the Log switch draws itself, and its track, switched on, was the accent blue
+// with the switch disabled as well. Disabled, it is drawn in the theme's disabled colour.
+void PartitionManagerPanelTests::aDisabledLogSwitchIsDrawnDisabled() const {
+    QFETCH(bool, dark);
+    const auto light =
+        qScopeGuard([] { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+    const QColor disabled = applyThemeForRow(dark);
+    const QColor accent(QString::fromLatin1(sak::ui::kColorPrimary));
+    sak::PartitionManagerPanel panel;
+    sak::LogToggleSwitch* log = panel.logToggle();
+    QVERIFY(log != nullptr);
+    log->setChecked(true);
+    QVERIFY(pixelsOfColour(log, accent) > 0);
+    log->setEnabled(false);
+    const int accent_pixels = pixelsOfColour(log, accent);
+    const int disabled_pixels = pixelsOfColour(log, disabled);
+    QVERIFY2(accent_pixels == 0 && disabled_pixels > 0,
+             qPrintable(QStringLiteral("%1 accent, %2 disabled pixels")
+                            .arg(accent_pixels)
+                            .arg(disabled_pixels)));
 }
 
 // An APFS partition grows in place only (coordinator, 2026-11-12): the dialog accepts a grow and
@@ -6776,6 +7136,151 @@ void PartitionManagerPanelTests::newCheckTextsFitTheResultBox() {
     }
 }
 
+namespace {
+
+/// The next message box: its text and icon, once it has opened and been closed.
+struct ResultBox {
+    QString text;
+    QMessageBox::Icon icon{QMessageBox::NoIcon};
+    bool seen{false};
+    QString status_while_open;  ///< The panel's last status message while the box was open.
+};
+
+/// Closes the next message box that opens, keeping what it said in @p box, and the last message
+/// @p statuses (a spy on the panel's statusMessage) had caught by then.
+void closeNextResultBox(QTimer* closer, ResultBox* box, const QSignalSpy* statuses = nullptr) {
+    closer->setInterval(1);
+    QObject::connect(closer, &QTimer::timeout, [box, statuses]() {
+        if (auto* shown = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            box->text = shown->text();
+            box->icon = shown->icon();
+            box->seen = true;
+            if (statuses != nullptr && !statuses->isEmpty()) {
+                box->status_while_open = statuses->last().at(0).toString();
+            }
+            shown->accept();
+        }
+    });
+    closer->start();
+}
+
+}  // namespace
+
+// Fix batch 4 (C): Check File System's result on a USB stick said "Partition operation batch
+// complete" and the note to eject the drive, and not what the check found. It now says it, as
+// PartitionExecutor ends a run whose steps passed, with the eject note kept; errors found are a
+// warning though the run passed.
+void PartitionManagerPanelTests::checkFileSystemSaysWhatTheCheckFound() {
+    struct Case {
+        const char* output{nullptr};
+        const char* said{nullptr};
+        QMessageBox::Icon icon{QMessageBox::NoIcon};
+        const char* status{nullptr};  ///< What the status bar says while the box is open.
+    };
+    for (const Case& test :
+         {Case{"Volume check D: read-only chkdsk: None",
+               "Drive D: No errors found (read-only chkdsk).",
+               QMessageBox::Information,
+               "Partition operation complete"},
+          Case{"Volume check D: online scan: ScanErrorsFoundNeedSpotFix",
+               "Drive D: Errors found (Windows reports ScanErrorsFoundNeedSpotFix). Repair "
+               "recommended (this check does not modify the disk).",
+               QMessageBox::Warning,
+               "Partition check needs attention"}}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = applyReviewInventoryFixture();
+        inventory.disks[0].bus_type = QStringLiteral("USB");
+        panel.setTestInventoryForReview(inventory);
+        const QString output = QString::fromLatin1(test.output);
+        panel.setTestApplyExecutorForReview([output](
+                                                const QVector<sak::PartitionOperation>& operations,
+                                                bool,
+                                                bool,
+                                                const sak::CancelCheck&) {
+            sak::PartitionExecutionResult result;
+            sak::PartitionExecutionStep step;
+            step.success = true;
+            step.stdout_text = output;
+            result.steps = {step};
+            result.success = true;
+            const auto summary = sak::PartitionExecutor::successSummary(operations, result.steps);
+            result.message = summary.message;
+            result.findings_need_attention = summary.needs_attention;
+            return result;
+        });
+        ResultBox box;
+        QTimer closer;
+        QSignalSpy statuses(&panel, &sak::PartitionManagerPanel::statusMessage);
+        closeNextResultBox(&closer, &box, &statuses);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        auto* button = findToolButtonByName(&panel, QStringLiteral("Check File System"));
+        QVERIFY(button != nullptr);
+        QTRY_VERIFY(button->isEnabled());
+        pressAction(button);
+        QTRY_VERIFY2(box.seen, test.said);
+        QCOMPARE(box.text,
+                 QString::fromLatin1(test.said) +
+                     QStringLiteral("\n\nEject the drive in Windows before you unplug it."));
+        QCOMPARE(box.icon, test.icon);
+        // Fix batch 5 (E): the status bar says how the run ended; the box says what it found.
+        QCOMPARE(box.status_while_open, QString::fromLatin1(test.status));
+    }
+}
+
+// Check Non-Windows File System's read-only tool check ended in the status bar alone. Its end now
+// opens a result that says what it found: no errors, or errors the check left, as a warning.
+void PartitionManagerPanelTests::nonWindowsCheckSaysWhatItFound() {
+    struct Case {
+        bool success{false};
+        const char* problem{nullptr};
+        const char* said{nullptr};
+        QMessageBox::Icon icon{QMessageBox::NoIcon};
+        const char* status{nullptr};  ///< What the status bar says while the box is open.
+    };
+    for (const Case& test :
+         {Case{true,
+               "",
+               "The ext4 file system: No errors found (read-only e2fsck).",
+               QMessageBox::Information,
+               "Filesystem check complete"},
+          Case{
+              false,
+              "e2fsck: e2fsck found errors in the file system and left them uncorrected (exit "
+              "code 4).",
+              "The ext4 file system: Errors found by a read-only e2fsck, which fixed none of them. "
+              "e2fsck found errors in the file system and left them uncorrected (exit code 4).",
+              QMessageBox::Warning,
+              "Filesystem check needs attention"}}) {
+        sak::PartitionManagerPanel panel;
+        panel.setTestInventoryForReview(applyReviewInventoryFixture());
+        ResultBox box;
+        QTimer closer;
+        QSignalSpy statuses(&panel, &sak::PartitionManagerPanel::statusMessage);
+        closeNextResultBox(&closer, &box, &statuses);
+        const bool success = test.success;
+        const QString problem = QString::fromLatin1(test.problem);
+        panel.runTestReadOnlyFileSystemCheckForReview(
+            [success, problem](const sak::PartitionFileSystemReadOnlyCheckRequest&,
+                               const sak::CancelCheck&) {
+                sak::PartitionFileSystemToolRunResult result;
+                result.tool_id = QStringLiteral("e2fsck");
+                result.success = success;
+                result.problem = problem;
+                return result;
+            },
+            QStringLiteral("ext4"),
+            QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk0\\Partition1"));
+        QTRY_VERIFY2(box.seen, test.said);
+        QCOMPARE(box.text, QString::fromLatin1(test.said));
+        QCOMPARE(box.icon, test.icon);
+        // Fix batch 5 (E): the controller's line, "Filesystem check failed: " and the tool's
+        // words, ran past the status bar's first permanent widget; the box says them.
+        QCOMPARE(box.status_while_open, QString::fromLatin1(test.status));
+    }
+}
+
 // The Resize dialog's reasons for a FAT32 partition and an APFS one with nothing after it fit it.
 void PartitionManagerPanelTests::newResizeTextsFitTheResizeDialog() {
     for (const QString& file_system : {QStringLiteral("FAT32"), QStringLiteral("APFS")}) {
@@ -6808,6 +7313,36 @@ void PartitionManagerPanelTests::newResizeTextsFitTheResizeDialog() {
                                        ? QStringLiteral("S.A.K. grows an APFS partition only")
                                        : QStringLiteral("Windows cannot shrink or grow")),
                  qPrintable(file_system + QStringLiteral(": ") + status));
+        QVERIFY2(problems.isEmpty(), qPrintable(file_system + QStringLiteral(": ") + problems));
+    }
+}
+
+// Fix batch 4 (B): the longest "not usable" texts, an unidentified file system's with free space
+// after it, fit the Resize dialog at 1024 and 1280 px.
+void PartitionManagerPanelTests::newResizeFreeSpaceTextsFitTheResizeDialog() {
+    for (const QString& file_system : {QStringLiteral("FAT32"), QStringLiteral("RAW")}) {
+        sak::PartitionManagerPanel panel;
+        auto inventory = unallocatedAllocateInventoryFixture();
+        inventory.disks[0].partitions[0].volume->file_system = file_system;
+        panel.setTestInventoryForReview(inventory);
+        auto* table = panel.findChild<QTableWidget*>();
+        QVERIFY2(table != nullptr, "Partition table should exist");
+        table->selectRow(1);
+        auto* resize = findToolButtonByName(&panel, QStringLiteral("Resize/Move Partition"));
+        QVERIFY(resize != nullptr);
+        if (!resize->isEnabled()) {
+            continue;  // not offered, so nothing to fit
+        }
+        QString problems = QStringLiteral("no dialog");
+        const ScopedModalInspection inspection([&problems]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            const auto reject_on_return = rejectDialogOnReturn(dialog);
+            QVERIFY(dialog != nullptr);
+            QApplication::processEvents();
+            problems = dialogDoesNotFit(dialog);
+            dialog->reject();
+        });
+        pressAction(resize);
         QVERIFY2(problems.isEmpty(), qPrintable(file_system + QStringLiteral(": ") + problems));
     }
 }

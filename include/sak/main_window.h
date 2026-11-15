@@ -23,6 +23,7 @@ class QHBoxLayout;
 class QKeySequence;
 class QPushButton;
 class QShortcut;
+class QTimer;
 
 // Forward declarations for feature panels (in global namespace)
 // -- none needed; all panels now in sak::
@@ -86,7 +87,9 @@ public Q_SLOTS:
     /**
      * @brief Update status bar message
      * @param message Status message to display
-     * @param timeout_ms Timeout in milliseconds (0 = permanent)
+     * @param timeout_ms Timeout in milliseconds (0 = permanent). The time runs only while no
+     *        modal window is open: a message shown with a message box stays until @p timeout_ms
+     *        after the last such window closes.
      */
     void updateStatus(const QString& message, int timeout_ms = 0);
 
@@ -96,6 +99,11 @@ public Q_SLOTS:
      * @param maximum Maximum progress value
      */
     void updateProgress(int current, int maximum);
+
+    /// @brief Hide the progress bar at once, with no value: the work it showed was refused,
+    ///        failed before it ran, or was cancelled. The bar is as it is when idle, never at
+    ///        100% (updateProgress's end) or busy.
+    void resetProgress();
 
     /// @brief Restore the window if minimized and bring it to the foreground. A second launch
     ///        on the same data folder asks for this (SingleInstanceGuard); a window that was
@@ -267,12 +275,18 @@ private:
     /// @brief Whether the progress bar is showing work that has not finished
     [[nodiscard]] bool progressShowsRunningWork() const;
 
+    /// @brief Start the timed status message's time, unless a modal window is open: it then
+    ///        starts when the last one closes.
+    void startStatusMessageTime();
+
     /// @brief Apply chevron icons to the tab bar scroll buttons
     void applyTabBarChevrons();
     /// @brief Draws every tab's icon again in the current theme's drawing of it.
     void refreshTabIcons();
 
 protected:
+    /// Watches the application for modal windows opening and closing (startStatusMessageTime).
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
     void moveEvent(QMoveEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -344,6 +358,10 @@ private:
     // The bar's current message is about work the progress bar shows running, so it has no
     // timeout and goes when that work ends.
     bool m_status_message_is_work{false};
+    // A timed message's own clock, which stands still while a modal window is open; and the time
+    // the message on the bar is given, 0 when it has none.
+    QTimer* m_status_message_timer{nullptr};
+    int m_status_message_timeout_ms{0};
 
     // Asks before closing or relaunching while long work runs (child of this window).
     RunningWorkExitGuard* m_exit_guard{nullptr};

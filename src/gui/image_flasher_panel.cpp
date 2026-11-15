@@ -1057,7 +1057,9 @@ void ImageFlasherPanel::showFlashFailure(const QString& error, const QString& dr
     updateNavigationButtons();
 
     Q_EMIT flashFailed(reported);
-    Q_EMIT progressUpdate(kPercentMax, kPercentMax);
+    // Refused or failed before its end: the bar goes at once, as when idle; ended at its
+    // maximum it read 100% though nothing was written (fix batch 5, F).
+    Q_EMIT progressReset();
     Q_EMIT statusMessage("Image Flasher: Flash operation failed", sak::kTimerStatusDefaultMs);
 }
 
@@ -1157,7 +1159,7 @@ void ImageFlasherPanel::showCancelledOutcome(const QString& drive_state,
 
     logWarning(("Flash cancelled: " + drive_state).toStdString());
     Q_EMIT flashCancelled();
-    Q_EMIT progressUpdate(kPercentMax, kPercentMax);
+    Q_EMIT progressReset();
     Q_EMIT statusMessage(tr("Image Flasher: Flash cancelled"), kImageFlasherStatusTimeoutMs);
 }
 
@@ -1520,6 +1522,11 @@ void ImageFlasherPanel::beginConfirmedFlash(bool is_windows_iso) {
 
     // The progress page first, then its buttons: they are chosen by the page shown, and chosen
     // before the switch they were drive selection's, so a write had no Cancel (review 5, Z1).
+    // The page shows this run only: a refusal before the first block left the last run's
+    // "Written: 3.2 GB / 3.2 GB" and its speed on it, under the error box (fix batch 5, F).
+    m_flashStateLabel->setText("Preparing...");
+    m_flashDetailsLabel->clear();
+    m_flashSpeedLabel->clear();
     m_stackedWidget->setCurrentWidget(m_flashProgressPage);
     updateNavigationButtons();
 
@@ -1649,8 +1656,9 @@ void ImageFlasherPanel::createWindowsUSB() {
     Q_ASSERT(m_flashButton);
     if (m_selectedDrives.isEmpty()) {
         sak::logError("Windows USB creation attempted with no target drives selected");
-        sak::showCriticalLogged(this, "Error", "No target drives selected");
         m_isFlashing = false;
+        Q_EMIT progressReset();
+        sak::showCriticalLogged(this, "Error", "No target drives selected");
         return;
     }
 

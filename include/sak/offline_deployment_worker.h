@@ -210,6 +210,23 @@ public:
                                                   bool is_reparse_point,
                                                   bool has_ownership_marker);
 
+    /// @brief Why a run did not start in its work folder, as prepareOwnedWorkDir says it.
+    enum class WorkDirRefusal {
+        Foreign,       ///< The folder holds files S.A.K. did not put there.
+        Link,          ///< The folder is a link to another folder.
+        CannotCreate,  ///< The folder could not be made.
+        CannotWrite,   ///< The folder's ownership mark could not be written.
+    };
+
+    /// @brief The operationError message for @p reason, naming @p drive (workDriveName) and not
+    ///        the folder's own name.
+    [[nodiscard]] static QString workDirRefusal(WorkDirRefusal reason, const QString& drive);
+
+    /// @brief The status bar's short form of an operationError message: "not enough free space on
+    ///        V:" for the long work-space and work-folder refusals, and any other message as it is
+    ///        (each is a short phrase). The box says the message whole (fix batch 5, E).
+    [[nodiscard]] static QString errorShortForm(const QString& error_message);
+
     /// @brief Delete a work directory ONLY when workDirSafeToDelete permits it (not a reparse
     ///        point, bears our ownership marker); a missing dir is a successful no-op. Nothing
     ///        inside is followed: a link in the tree is removed itself, never what it points at
@@ -351,7 +368,8 @@ private:
     /// @brief Whether work can start in @p work_dir: room on its drive
     ///        (PackageInternalizationEngine::workSpaceRefusal), and,
     ///        when @p owned_folder, the folder made and stamped as ours before anything is written
-    ///        there. Otherwise the run ends with the refusal as its error.
+    ///        there. Otherwise the run ends with the refusal as its error, which names the drive
+    ///        and "S.A.K.'s work folder"; a log line before it gives the folder itself.
     [[nodiscard]] bool workCanStartIn(const QString& work_dir, bool owned_folder);
 
     /// @brief Internalize a single package within the batch loop

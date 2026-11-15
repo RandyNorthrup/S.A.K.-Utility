@@ -96,6 +96,9 @@ public:
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);
+    /// The operation ended without running to its end (refused, failed or cancelled): the
+    /// status bar hides its progress bar at once, as when idle (MainWindow::resetProgress).
+    void progressReset();
     void logOutput(const QString& message);
 
 protected:
@@ -179,8 +182,10 @@ private:
     void connectSuiteSignals();
     void connectStatusSignals();
 
-    /// @brief Enable/disable inputs based on running state
-    void setOperationRunning(bool running);
+    /// @brief Enable/disable inputs based on running state. An operation that ends with
+    ///        @p ran_to_end false (stopped, or failed) resets the status bar's progress bar
+    ///        instead of ending it at 100%.
+    void setOperationRunning(bool running, bool ran_to_end = true);
 
     /// @brief Enable the operation-starting controls only when fully idle. Single
     ///        authority that mutually excludes a standalone op, the full suite, a

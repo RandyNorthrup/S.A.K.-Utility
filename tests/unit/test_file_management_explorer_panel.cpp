@@ -2505,6 +2505,19 @@ private Q_SLOTS:
         }
     }
 
+    // Fix batch 5 (F): a search that failed or was cancelled sent nothing, and the busy bar its
+    // start sent ran on beside its message. Each resets the bar, as when idle.
+    void aFailedOrCancelledSearchLeavesNoBusyBar() {
+        sak::AdvancedSearchPanel panel;
+        QSignalSpy reset(&panel, &sak::AdvancedSearchPanel::progressReset);
+        QVERIFY(QMetaObject::invokeMethod(&panel,
+                                          "onSearchFailed",
+                                          Qt::DirectConnection,
+                                          Q_ARG(QString, QStringLiteral("Access denied"))));
+        QVERIFY(QMetaObject::invokeMethod(&panel, "onSearchCancelled", Qt::DirectConnection));
+        QCOMPARE(reset.count(), 2);
+    }
+
     // Review 2 (S21): results read "C:/SAK-Samples/Docs/...".
     void searchResultsShowWindowsPaths() {
         sak::AdvancedSearchPanel panel;

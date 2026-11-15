@@ -858,7 +858,9 @@ std::optional<PartitionManagerState> PartitionManagerController::finishApplyPref
     if (cancelled || !request.has_value()) {
         Q_EMIT inventoryChanged(m_inventory);
         emitQueueChanged();
-        Q_EMIT progressUpdate(kPercentMax, kPercentMax);
+        // Refused or cancelled at the pre-run check: nothing ran, so the bar goes at once, as when
+        // idle; ended at its maximum it read 100% (fix batch 5, F).
+        Q_EMIT progressReset();
         Q_EMIT statusMessage(QStringLiteral("Partition apply preflight cancelled"),
                              sak::kTimerStatusDefaultMs);
         return PartitionManagerState::Cancelled;
@@ -866,7 +868,7 @@ std::optional<PartitionManagerState> PartitionManagerController::finishApplyPref
     if (!inventoryIsAuthoritative(m_inventory)) {
         Q_EMIT inventoryChanged(m_inventory);
         emitQueueChanged();
-        Q_EMIT progressUpdate(kPercentMax, kPercentMax);
+        Q_EMIT progressReset();
         Q_EMIT statusMessage(QStringLiteral("Partition apply preflight failed: %1")
                                  .arg(inventoryFailureMessage(m_inventory)),
                              sak::kTimerStatusLongMs);
@@ -877,7 +879,7 @@ std::optional<PartitionManagerState> PartitionManagerController::finishApplyPref
         m_queue.baseLayoutHash() != m_inventory.layout_hash) {
         Q_EMIT inventoryChanged(m_inventory);
         emitQueueChanged();
-        Q_EMIT progressUpdate(kPercentMax, kPercentMax);
+        Q_EMIT progressReset();
         Q_EMIT statusMessage(
             QStringLiteral("Storage changed since planning; refresh and re-review before applying"),
             sak::kTimerStatusDefaultMs);
@@ -888,7 +890,7 @@ std::optional<PartitionManagerState> PartitionManagerController::finishApplyPref
     if (!revalidateQueuedOperations(m_inventory, &operations)) {
         Q_EMIT inventoryChanged(m_inventory);
         emitQueueChanged();
-        Q_EMIT progressUpdate(kPercentMax, kPercentMax);
+        Q_EMIT progressReset();
         QStringList reasons;
         for (const auto& operation : m_queue.operations()) {
             reasons.append(operation.blockers);
@@ -1078,11 +1080,18 @@ PartitionManagerState PartitionManagerController::publishExecutionResult(
         report_generator.generateJson(m_apply_before_inventory, m_inventory, result);
     Q_EMIT inventoryChanged(m_inventory);
     emitQueueChanged();
-    Q_EMIT progressUpdate(kPercentMax, kPercentMax);
+    // Only a run that passed ends at 100%: one that failed or was cancelled, before its first step
+    // or after, goes at once, as the bar is when idle (fix batch 5, F).
+    if (result.success) {
+        Q_EMIT progressUpdate(kPercentMax, kPercentMax);
+    } else {
+        Q_EMIT progressReset();
+    }
+    // A check of several volumes says one sentence a line; the status bar shows one line.
     Q_EMIT statusMessage(result.message.isEmpty()
                              ? (result.success ? QStringLiteral("Partition operation complete")
                                                : QStringLiteral("Partition operation failed"))
-                             : result.message,
+                             : QString(result.message).replace(QLatin1Char('\n'), QLatin1Char(' ')),
                          sak::kTimerStatusDefaultMs);
     Q_EMIT executionFinished(result);
     return result.cancelled ? PartitionManagerState::Cancelled
@@ -1173,16 +1182,16 @@ void PartitionManagerController::runReadOnlyFileSystemCheck(const QString& file_
     connect(watcher,
             &QFutureWatcher<PartitionFileSystemToolRunResult>::finished,
             this,
-            [this, watcher]() {
+            [this, watcher, file_system] {
                 auto result = watcher->result();
                 if (m_file_system_check_watcher != watcher) {
                     return;
                 }
-                if (!result.std_out.trimmed().isEmpty()) {
-                    Q_EMIT logOutput(result.std_out.trimmed());
-                }
-                if (!result.std_err.trimmed().isEmpty()) {
-                    Q_EMIT logOutput(result.std_err.trimmed());
+                result.file_system = file_system;
+                for (const QString& said : {result.std_out.trimmed(), result.std_err.trimmed()}) {
+                    if (!said.isEmpty()) {
+                        Q_EMIT logOutput(said);
+                    }
                 }
                 Q_EMIT statusMessage(readOnlyCheckStatus(result),
                                      result.problem.isEmpty() ? sak::kTimerStatusDefaultMs

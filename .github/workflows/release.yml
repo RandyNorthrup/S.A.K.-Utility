@@ -574,10 +574,12 @@ jobs:
         & $check "build/Release/SAK-Utility-v$env:APP_VERSION"
         exit $LASTEXITCODE
 
-    # The signed readiness gate runs the application from build/Release (the accessibility runtime
-    # audit) and the probe certifier from there (the filesystem self-tests), where the build job
-    # had them. Lay that folder out from the signed package, so what those checks run is what
-    # ships, plus the certifier the build job handed on.
+    # The signed readiness gate runs the probe certifier from build/Release (the filesystem
+    # self-tests), where the build job had it, beside the Qt it loads and the bundled filesystem
+    # tools. Lay that folder out from the signed package, plus the certifier the build job handed
+    # on. The accessibility runtime audit does not run from here: given -PackageRoot it runs a copy
+    # of the package in a folder of its own, since an elevated S.A.K. refuses to start beside
+    # programs that are not part of it (the v0.9.3-rc.1 dry run, 2026-11-14).
     - name: Lay out build/Release as the readiness gate expects
       shell: pwsh
       run: |
@@ -587,11 +589,6 @@ jobs:
         }
         $tools = Join-Path $env:RUNNER_TEMP 'sak-release-tools'
         Copy-Item -LiteralPath (Join-Path $tools 'partition_filesystem_probe_certifier.exe') -Destination build/Release
-        if (-not (Test-Path -LiteralPath build/Release/sak_utility.exe -PathType Leaf)) { throw 'build/Release has no sak_utility.exe' }
-        # The accessibility audit refuses an executable older than the newest source. This one was
-        # built from this commit in the build job; the sources here are newer only because this
-        # job checked them out later. Date the copy now (the package's own copy keeps its date).
-        (Get-Item -LiteralPath build/Release/sak_utility.exe).LastWriteTimeUtc = [DateTime]::UtcNow
 
     - name: Verify packaged signatures
       shell: pwsh

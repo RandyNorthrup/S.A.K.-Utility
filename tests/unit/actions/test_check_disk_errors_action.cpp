@@ -699,8 +699,9 @@ void CheckDiskErrorsActionTests::bothChecksAreBuiltFromTheSameStatements() {
              qPrintable(check_file_system.script));
     QVERIFY(check_disk.contains(
         PartitionScriptBuilder::onlineVolumeScanStatement(QStringLiteral("$scanResult"), false)));
+    // Check File System keeps the scan's answer for its verdict line (fix batch 4, C).
     QVERIFY(check_file_system.script.contains(
-        PartitionScriptBuilder::onlineVolumeScanStatement(QString(), true)));
+        PartitionScriptBuilder::onlineVolumeScanStatement(QStringLiteral("$sakScanResult"), true)));
 }
 
 void CheckDiskErrorsActionTests::evaluateDiskCheckOutcome_aggregatesAllDrives() {

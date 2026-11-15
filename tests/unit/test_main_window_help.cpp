@@ -4,20 +4,33 @@
 /// @file test_main_window_help.cpp
 /// @brief What the Help and About tabs send people to and tell them.
 
+#include "sak/advanced_search_panel.h"
+#include "sak/advanced_uninstall_panel.h"
+#include "sak/app_installation_panel.h"
 #include "sak/bandwidth_tester.h"
+#include "sak/diagnostic_benchmark_panel.h"
+#include "sak/image_flasher_panel.h"
 #include "sak/main_window.h"
+#include "sak/offline_deployment_worker.h"
+#include "sak/organizer_panel.h"
+#include "sak/ost_converter_widget.h"
+#include "sak/package_internalization_engine.h"
+#include "sak/partition_manager_panel.h"
 #include "sak/windows11_theme.h"
 
 #include <QApplication>
 #include <QDesktopServices>
 #include <QFile>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QSizeGrip>
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QTextBrowser>
+#include <QTimer>
 #include <QtTest/QtTest>
 #include <QUrl>
 
@@ -49,9 +62,23 @@ private Q_SLOTS:
     void aboutTestingTextQuotesTheCertification();
     void iperfAdministratorMessageFitsTheStatusBar();
     void aiStatusLabelStandsAsideOnlyWhileAMessageShows();
+    void timedStatusMessageWaitsForTheBoxToClose();
+    void progressBarGoesAsIdleWhenNothingRan();
+    void everyPanelsResetReachesTheStatusBar();
+    void offlineRefusalStatusFitsAt1024();
 };
 
 namespace {
+
+// The smallest screen the app is laid out for.
+constexpr int kSmallScreenWidth = 1024;
+constexpr int kSmallScreenHeight = 768;
+// A timed message's time in the box test: long beside the event loop's own delays, which an ASan
+// build multiplies.
+constexpr int kHeldMessageMs = 2000;
+// Free space on the drive in the refusal the fit test makes: 3 MB, where 512 MB is needed.
+constexpr qint64 kRefusalFreeBytes = qint64{3} * 1024 * 1024;
+constexpr qint64 kRefusalNeededBytes = qint64{512} * 1024 * 1024;
 
 /// The width @p text takes in Segoe UI at @p pixel_size, as Windows itself draws it at 96 DPI. The
 /// offscreen test platform draws every glyph as a box as wide as the font is tall, so its own
@@ -197,6 +224,180 @@ void MainWindowHelpTests::aiStatusLabelStandsAsideOnlyWhileAMessageShows() {
     tabs->setCurrentIndex(ai_tab);
     QApplication::processEvents();
     QVERIFY(ai->isVisible());
+}
+
+// Fix batch 5 (E): Offline Deploy's refusal put its message on the status bar as its box opened,
+// with 5 s to run, and the box did not stop that time: anyone who read the box for longer came
+// back to "Ready". A timed message's time now begins when the last modal window closes, so the
+// message is there, whole, for its time after the box. At 1024x768, the smallest screen the app
+// is laid out for.
+void MainWindowHelpTests::timedStatusMessageWaitsForTheBoxToClose() {
+    sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
+    sak::MainWindow window;
+    window.resize(kSmallScreenWidth, kSmallScreenHeight);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QStatusBar* bar = window.statusBar();
+    const QString message = QStringLiteral("Build Offline Bundle: not enough free space on V:");
+    QVERIFY(QMetaObject::invokeMethod(
+        &window, "updateStatus", Q_ARG(QString, message), Q_ARG(int, kHeldMessageMs)));
+
+    // As a panel does it: the message, then the box, read for twice the message's time.
+    QMessageBox box(QMessageBox::Warning,
+                    QStringLiteral("Build Offline Bundle"),
+                    QStringLiteral("Not enough free space for the work files."),
+                    QMessageBox::Ok,
+                    &window);
+    QString while_open;
+    QTimer::singleShot(2 * kHeldMessageMs, &box, [&box, &while_open, bar]() {
+        while_open = bar->currentMessage();
+        box.accept();
+    });
+    box.exec();
+    QCOMPARE(while_open, message);
+
+    // Its whole time again from the box closing, and then it goes.
+    QTest::qWait(kHeldMessageMs / 4);
+    QCOMPARE(bar->currentMessage(), message);
+    QTRY_VERIFY_WITH_TIMEOUT(bar->currentMessage().isEmpty(), 2 * kHeldMessageMs);
+}
+
+// Fix batch 5 (F): Offline Deploy's refusal ended the status bar's progress bar at its maximum, the
+// only end it had, so the bar read 100% though nothing had started, and in the dark theme it took
+// room the refusal's message needed. A run that did not reach its end now hides the bar at once,
+// as when idle, and the message after it has its time, not the running work's. At 1024x768.
+void MainWindowHelpTests::progressBarGoesAsIdleWhenNothingRan() {
+    sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Dark);
+    const auto light =
+        qScopeGuard([]() { sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light); });
+    sak::MainWindow window;
+    window.resize(kSmallScreenWidth, kSmallScreenHeight);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QStatusBar* bar = window.statusBar();
+    auto* progress = bar->findChild<QProgressBar*>();
+    QVERIFY(progress != nullptr);
+
+    // As Offline Deploy's worker does it: a run of three said to start, then refused.
+    QVERIFY(QMetaObject::invokeMethod(&window, "updateProgress", Q_ARG(int, 0), Q_ARG(int, 3)));
+    QVERIFY(progress->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(&window, "resetProgress"));
+    QVERIFY2(!progress->isVisible(), "the bar goes at once, as when idle");
+    QVERIFY2(progress->value() < progress->maximum(), "and does not read 100%");
+
+    const QString message = QStringLiteral("Build Offline Bundle: not enough free space on V:");
+    QVERIFY(QMetaObject::invokeMethod(
+        &window, "updateStatus", Q_ARG(QString, message), Q_ARG(int, kHeldMessageMs)));
+    QCOMPARE(bar->currentMessage(), message);
+    QTRY_VERIFY_WITH_TIMEOUT(bar->currentMessage().isEmpty(), 2 * kHeldMessageMs);
+    QVERIFY(!progress->isVisible());
+}
+
+// Fix batch 5 (F): each panel whose work shows in the status bar's progress bar can end it as
+// when idle. The audit mode builds every tool tab, as the accessibility scan does.
+void MainWindowHelpTests::everyPanelsResetReachesTheStatusBar() {
+    qApp->setProperty("sakAccessibilityAudit", true);
+    const auto restore =
+        qScopeGuard([]() { qApp->setProperty("sakAccessibilityAudit", QVariant()); });
+    sak::MainWindow window;
+    auto* progress = window.statusBar()->findChild<QProgressBar*>();
+    QVERIFY(progress != nullptr);
+    const auto endsAsIdle = [&window, progress](QObject* panel, auto reset) {
+        if (panel == nullptr) {
+            return false;
+        }
+        (void)QMetaObject::invokeMethod(&window, "updateProgress", Q_ARG(int, 0), Q_ARG(int, 3));
+        const bool shown = !progress->isHidden();
+        reset();
+        return shown && progress->isHidden();
+    };
+    auto* organizer = window.findChild<sak::OrganizerPanel*>();
+    QVERIFY2(endsAsIdle(organizer, [organizer]() { Q_EMIT organizer->progressReset(); }),
+             "Organizer");
+    auto* search = window.findChild<sak::AdvancedSearchPanel*>();
+    QVERIFY2(endsAsIdle(search, [search]() { Q_EMIT search->progressReset(); }), "Search");
+    auto* partitions = window.findChild<sak::PartitionManagerPanel*>();
+    QVERIFY2(endsAsIdle(partitions, [partitions]() { Q_EMIT partitions->progressReset(); }),
+             "Partition Manager");
+    auto* flasher = window.findChild<sak::ImageFlasherPanel*>();
+    QVERIFY2(endsAsIdle(flasher, [flasher]() { Q_EMIT flasher->progressReset(); }),
+             "Image Flasher");
+    auto* diagnostics = window.findChild<sak::DiagnosticBenchmarkPanel*>();
+    QVERIFY2(endsAsIdle(diagnostics, [diagnostics]() { Q_EMIT diagnostics->progressReset(); }),
+             "Diagnostics");
+    auto* install = window.findChild<sak::AppInstallationPanel*>();
+    QVERIFY2(endsAsIdle(install, [install]() { Q_EMIT install->progressReset(); }),
+             "App Installation");
+    auto* uninstall = window.findChild<sak::AdvancedUninstallPanel*>();
+    QVERIFY2(endsAsIdle(uninstall, [uninstall]() { Q_EMIT uninstall->progressReset(); }),
+             "Advanced Uninstall");
+    auto* converter = window.findChild<sak::OstConverterWidget*>();
+    QVERIFY2(endsAsIdle(converter, [converter]() { Q_EMIT converter->progressReset(); }),
+             "OST Converter");
+}
+
+// Fix batch 5 (E): the status bar's message was the refusal's whole sentence, cut after "Free some
+// space" at 1280 px. It is now the short form, "Build Offline Bundle: not enough free space on V:",
+// and the box says the sentence. Every refusal and failure the offline worker reports is measured
+// here, for each action, with the drive named as Windows names it and as the longer "the drive
+// S.A.K. runs from" said when Windows cannot: each fits whole at 1024 px, the progress bar hidden
+// as a refusal leaves it (fix batch 5, F).
+void MainWindowHelpTests::offlineRefusalStatusFitsAt1024() {
+    const QString fallback = QStringLiteral("the drive S.A.K. runs from");
+    const QString work_root = QStringLiteral("V:/SAK/data/temp/run-1");
+    QStringList errors;
+    for (const qint64 free_bytes : {kRefusalFreeBytes, qint64{-1}}) {
+        const auto previous = sak::PackageInternalizationEngine::setFreeSpaceProbeForTesting(
+            [free_bytes](const QString& /*folder*/) { return free_bytes; });
+        const QString refusal =
+            sak::PackageInternalizationEngine::workSpaceRefusal(work_root, kRefusalNeededBytes);
+        (void)sak::PackageInternalizationEngine::setFreeSpaceProbeForTesting(previous);
+        QVERIFY2(refusal.contains(QStringLiteral(" on V:")), qPrintable(refusal));
+        errors << refusal << QString(refusal).replace(QStringLiteral("V:"), fallback);
+    }
+    using Refusal = sak::OfflineDeploymentWorker::WorkDirRefusal;
+    for (const Refusal reason :
+         {Refusal::Foreign, Refusal::Link, Refusal::CannotCreate, Refusal::CannotWrite}) {
+        for (const QString& drive : {QStringLiteral("V:"), fallback}) {
+            errors << sak::OfflineDeploymentWorker::workDirRefusal(reason, drive);
+        }
+    }
+    errors << QStringLiteral("Failed to write manifest to V:/Bundles/Kiosk POS 2026-11-14/output")
+           << QStringLiteral("No packages could be internalized; nothing to bundle")
+           << QStringLiteral("Bundle build cancelled before completion")
+           << QStringLiteral("Failed to write the List payload manifest")
+           << QStringLiteral("Too many packages: 501 (max 500)")
+           << QStringLiteral("Manifest is empty or unreadable")
+           << QStringLiteral("An operation is already running");
+
+    sak::ui::applyWindows11Theme(*qApp, sak::ui::AppThemeMode::Light);
+    sak::MainWindow window;
+    window.resize(kSmallScreenWidth, kSmallScreenHeight);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QApplication::processEvents();
+    QStatusBar* bar = window.statusBar();
+    const auto clear = qScopeGuard([bar]() { bar->clearMessage(); });
+    const QFont font = bar->font();
+    const int pixels = font.pixelSize() > 0 ? font.pixelSize()
+                                            : qRound(font.pointSizeF() * 96.0 / 72.0);
+    for (const QString& action : {QStringLiteral("Build Offline Bundle"),
+                                  QStringLiteral("Direct Download"),
+                                  QStringLiteral("Install from Bundle")}) {
+        for (const QString& error : errors) {
+            const QString status = sak::AppInstallationPanel::offlineErrorStatus(action, error);
+            QVERIFY(status.startsWith(action + QStringLiteral(": ")));
+            QVERIFY(QMetaObject::invokeMethod(
+                &window, "updateStatus", Q_ARG(QString, status), Q_ARG(int, 5000)));
+            const int room = timedMessageRoom(bar);
+            const int width = segoeUiTextWidth(status, pixels);
+            QVERIFY2(width > 0 && width <= room,
+                     qPrintable(QStringLiteral("%1 px in %2 px: %3 (from: %4)")
+                                    .arg(width)
+                                    .arg(room)
+                                    .arg(status, error)));
+        }
+    }
 }
 
 // The button opened a GitHub wiki that does not exist, and its name and tooltip said GitHub.

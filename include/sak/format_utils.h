@@ -8,11 +8,70 @@
 
 #include "sak/layout_constants.h"
 
+#include <QRegularExpression>
 #include <QString>
+#include <QStringList>
 
 #include <cstdint>
+#include <span>
 
 namespace sak {
+
+/// @brief A message and the status bar's short form of it, each a QString::arg format: %1 to %9
+///        in the short form stand for the same text as in the message.
+struct MessageForm {
+    const char* message{nullptr};
+    const char* short_form{nullptr};
+};
+
+namespace detail {
+
+/// @brief A pattern that matches what @p format makes when each %N is filled in, with a group
+///        named "aN" for each; @p names gets those names in the order they first appear.
+[[nodiscard]] inline QString messageFormPattern(const QString& format, QStringList* names) {
+    static const QRegularExpression kPlaceholder(QStringLiteral("%(?<digit>[1-9])"));
+    QString pattern;
+    qsizetype from = 0;
+    auto matches = kPlaceholder.globalMatch(format);
+    while (matches.hasNext()) {
+        const QRegularExpressionMatch match = matches.next();
+        pattern += QRegularExpression::escape(format.mid(from, match.capturedStart() - from));
+        const QString name = QStringLiteral("a") + match.captured(QStringLiteral("digit"));
+        if (names->contains(name)) {
+            pattern += QStringLiteral("\\k<%1>").arg(name);
+        } else {
+            pattern += QStringLiteral("(?<%1>.+?)").arg(name);
+            names->append(name);
+        }
+        from = match.capturedEnd();
+    }
+    return pattern + QRegularExpression::escape(format.mid(from));
+}
+
+}  // namespace detail
+
+/// @brief The short form of @p text when @p text is one of @p forms' messages with its %N filled
+///        in, or empty when it is none of them. The short form is read off the same format string
+///        that made the message, so the two cannot drift apart. Where a box says a message whole,
+///        the status bar says its short form: the bar is cut at its first permanent widget, which
+///        left a sentence about 80 characters long at 1024 px (fix batch 5, E).
+[[nodiscard]] inline QString shortFormOf(const QString& text, std::span<const MessageForm> forms) {
+    for (const MessageForm& form : forms) {
+        QStringList names;
+        const QRegularExpression expression(QRegularExpression::anchoredPattern(
+            detail::messageFormPattern(QString::fromUtf8(form.message), &names)));
+        const QRegularExpressionMatch found = expression.match(text);
+        if (!found.hasMatch()) {
+            continue;
+        }
+        QString short_form = QString::fromUtf8(form.short_form);
+        for (const QString& name : names) {
+            short_form.replace(QStringLiteral("%") + name.mid(1), found.captured(name));
+        }
+        return short_form;
+    }
+    return {};
+}
 
 /// @brief "1 hop", "2 hops": @p count with the noun that agrees with it. Every count the app shows
 ///        is spelled this way, never "hop(s)" (UI review S24); core messages reach the window too.

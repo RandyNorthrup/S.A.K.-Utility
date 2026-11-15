@@ -534,6 +534,8 @@ set(SAK_CORE_SOURCES
     src/core/storage_inventory_worker.cpp
     src/core/partition_safety_validator.cpp
     src/core/partition_script_builder.cpp
+    src/core/volume_check_outcome.cpp
+    include/sak/volume_check_outcome.h
     src/core/partition_operation_planner.cpp
     src/core/partition_operation_requests.cpp
     src/core/partition_os_migration.cpp

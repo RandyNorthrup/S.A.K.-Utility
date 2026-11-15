@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "b8c2f36fcfecbcc015639b3f15c53daafe6e36352e1fa54aec25b4a8d8e50830",
-        "sha256": "fdcd6e7f313fa7ee7f29b7882e27128294dad5dc881ea88ece40deee2f7d3132"
+        "helper_sha256": "c029acfadadbb89737edc8e22c55cef8848a9a42a5d04e845ce1be511cb9dae8",
+        "sha256": "8a883e939fcfe94899d3c0fe2f35d6ca0740ca34eb3617d43d6d8ece01edf10d"
     },
-    "code_commit": "d8c27a155c90123c34d82b56fd92d61b75d1f602",
-    "code_digest": "2bf0d58c187133084cf12d9b42c4d2387536db7da35a551f82a415033ee6b362",
+    "code_commit": "f0eff95d987316733cb52b39ef0f3db53f4a3d74",
+    "code_digest": "1c2376e85073cd3bcceca90bf1f77489e130e351e582fc79b8c9b9fc8ae06fcd",
     "code_dirty": false,
-    "completed_utc": "2026-11-14T10:26:23.918Z",
+    "completed_utc": "2026-11-15T08:50:07.446Z",
     "disk_before": {
         "bus_type": "USB",
         "disk_number": 2,
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "763dc812-dbf3-49e2-be37-b72ffc4cc067",
+                "operation_id": "9ec36242-edd6-4725-8155-f24ba83d0e1e",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Format Disk 2 Partition 2 as NTFS\r\nWindows formats NTFS with these choices on this partition\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining    Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------    ----\r\nD           SAKUSB       NTFS           Fixed     Healthy      OK                   1007.11 MB 1024 MB\r\n\r\n\r\n",
@@ -59,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "763dc812-dbf3-49e2-be37-b72ffc4cc067",
+            "id": "9ec36242-edd6-4725-8155-f24ba83d0e1e",
             "payload": {
                 "allocation_unit_bytes": "4096",
                 "file_system": "NTFS",
@@ -83,15 +83,15 @@
         }
     ],
     "review": {
-        "fingerprint": "8674e6864fda48b2b5f8239f3a990ee55caed4ddc3cd315c40c357468bb629b6",
-        "layout_hash": "616e5b3e6603fc0ad67194150402af510ef7671b1f5c9fe10d034723f2cbbfd5",
+        "fingerprint": "d8a5a62b0c5cf09d61d6e190e44f9108d3a85a90138e78439957d2f675c4425a",
+        "layout_hash": "68bd991f7e9d643836cf5fa9ff46d70689cccd2fd0e226b203b4645da310b5df",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "a8ef1664-5c58-4746-959b-1d32e9efd03e",
+    "run_id": "b2f1591b-976c-4345-a651-bdd59df5c457",
     "scenario_id": "external.usb-removable",
     "schema_version": 1,
-    "started_utc": "2026-11-14T10:26:03.593Z",
+    "started_utc": "2026-11-15T08:49:48.056Z",
     "status": "Passed",
     "step": "format",
     "tool": "partition-manager-scenario-step"

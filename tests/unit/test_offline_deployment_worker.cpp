@@ -8,6 +8,7 @@
 
 #include "sak/offline_deployment_constants.h"
 #include "sak/offline_deployment_worker.h"
+#include "sak/package_internalization_engine.h"
 
 #include "../support/junction_fixture.h"
 
@@ -15,6 +16,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QScopeGuard>
+#include <QStorageInfo>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QtTest/QtTest>
@@ -41,6 +44,7 @@ private Q_SLOTS:
     void newWorkDirPath_isANewFolderInTheRunFolder();
     void bundle_refusesWhenTheRunFolderIsShortOfSpace();
     void directDownload_refusesWhenTheRunFolderIsShortOfSpace();
+    void bundle_refusesWhenTheFreeSpaceIsUnknown();
     void placeVerifiedCopy_keepsOnlyACopyThatReadsBack();
     void safeInstallerFilename_keepsPlainNames();
     void safeInstallerFilename_confinesTraversalNames();
@@ -808,6 +812,33 @@ QString refusalOf(const OfflineDeploymentWorker& worker, QSignalSpy& errors) {
     return errors.isEmpty() ? QString() : errors.first().at(0).toString();
 }
 
+/// The drive @p folder is on as Windows names its root, without the trailing backslash ("C:").
+QString driveOf(const QString& folder) {
+    QString root = QDir::toNativeSeparators(QStorageInfo(folder).rootPath());
+    while (root.endsWith(QLatin1Char('\\'))) {
+        root.chop(1);
+    }
+    return root;
+}
+
+/// Why a refusal fails fix batch 4 (A), or empty: a person is told the drive and "S.A.K.'s work
+/// folder", never the run folder's random name, and the log has that folder.
+QString refusalProblem(const QString& message, const QString& run_path, const QSignalSpy& logged) {
+    const QString folder = QDir::toNativeSeparators(QDir::cleanPath(run_path));
+    if (!message.contains(QStringLiteral("S.A.K.'s work folder is on %1").arg(driveOf(run_path)))) {
+        return QStringLiteral("does not name the drive and S.A.K.'s work folder: ") + message;
+    }
+    if (message.contains(folder, Qt::CaseInsensitive)) {
+        return QStringLiteral("names the run folder: ") + message;
+    }
+    for (const auto& line : logged) {
+        if (line.at(0).toString().contains(folder, Qt::CaseInsensitive)) {
+            return {};
+        }
+    }
+    return QStringLiteral("the log does not have the run folder ") + folder;
+}
+
 }  // namespace
 
 // Owner ruling 2026-11-11 (no work file on the user's PC outside the app's folder): a build's or a
@@ -827,7 +858,10 @@ void TestOfflineDeploymentWorker::newWorkDirPath_isANewFolderInTheRunFolder() {
 }
 
 // A bundle keeps its work files in the run folder, so it checks the free space there first and
-// refuses plainly, before it makes anything, naming that folder and not the output folder.
+// refuses plainly, before it makes anything, naming that folder's drive and not the output folder.
+// Fix batch 4 (A): it named the run folder itself (V:\SAK\data\temp\run-7832-89d4...), a random
+// name that told a person nothing; the drive and "S.A.K.'s work folder" do, and the log has the
+// folder.
 void TestOfflineDeploymentWorker::bundle_refusesWhenTheRunFolderIsShortOfSpace() {
     QTemporaryDir run;
     QTemporaryDir out;
@@ -836,6 +870,7 @@ void TestOfflineDeploymentWorker::bundle_refusesWhenTheRunFolderIsShortOfSpace()
     OfflineDeploymentWorker worker;
     worker.setMinimumWorkSpaceForTesting(std::numeric_limits<qint64>::max());
     QSignalSpy errors(&worker, &OfflineDeploymentWorker::operationError);
+    QSignalSpy logged(&worker, &OfflineDeploymentWorker::logMessage);
     worker.buildDeploymentBundle({{QStringLiteral("sak-no-such-package-for-tests"),
                                    QStringLiteral("1.0.0")}},
                                  out.path(),
@@ -845,9 +880,8 @@ void TestOfflineDeploymentWorker::bundle_refusesWhenTheRunFolderIsShortOfSpace()
     QVERIFY(!worker.isRunning());
     QVERIFY2(message.startsWith(QStringLiteral("Not enough free space for the work files")),
              qPrintable(message));
-    QVERIFY2(message.contains(QDir::toNativeSeparators(QDir::cleanPath(run.path())),
-                              Qt::CaseInsensitive),
-             qPrintable(message));
+    const QString problem = refusalProblem(message, run.path(), logged);
+    QVERIFY2(problem.isEmpty(), qPrintable(problem));
     QVERIFY2(!message.contains(QDir::toNativeSeparators(out.path()), Qt::CaseInsensitive),
              qPrintable(message));
     QVERIFY(emptyFolder(out.path()));
@@ -863,6 +897,7 @@ void TestOfflineDeploymentWorker::directDownload_refusesWhenTheRunFolderIsShortO
     OfflineDeploymentWorker worker;
     worker.setMinimumWorkSpaceForTesting(std::numeric_limits<qint64>::max());
     QSignalSpy errors(&worker, &OfflineDeploymentWorker::operationError);
+    QSignalSpy logged(&worker, &OfflineDeploymentWorker::logMessage);
     const QString installers = out.filePath(QStringLiteral("installers"));
     worker.directDownload(
         {{QStringLiteral("sak-no-such-package-for-tests"), QStringLiteral("1.0.0")}}, installers);
@@ -870,10 +905,39 @@ void TestOfflineDeploymentWorker::directDownload_refusesWhenTheRunFolderIsShortO
     QVERIFY(!worker.isRunning());
     QVERIFY2(message.startsWith(QStringLiteral("Not enough free space for the work files")),
              qPrintable(message));
-    QVERIFY2(message.contains(QDir::toNativeSeparators(QDir::cleanPath(run.path())),
-                              Qt::CaseInsensitive),
-             qPrintable(message));
+    const QString problem = refusalProblem(message, run.path(), logged);
+    QVERIFY2(problem.isEmpty(), qPrintable(problem));
     QVERIFY(!QFileInfo::exists(installers));
+    QVERIFY(emptyFolder(run.path()));
+}
+
+// The second refusal: Windows could not say how much is free. It names the drive and the work
+// folder the same way, and still makes nothing.
+void TestOfflineDeploymentWorker::bundle_refusesWhenTheFreeSpaceIsUnknown() {
+    QTemporaryDir run;
+    QTemporaryDir out;
+    QVERIFY(run.isValid() && out.isValid());
+    const ScopedRunTemp scoped(run.path());
+    const auto previous = PackageInternalizationEngine::setFreeSpaceProbeForTesting(
+        [](const QString&) { return qint64{-1}; });
+    const auto restore = qScopeGuard(
+        [&previous] { (void)PackageInternalizationEngine::setFreeSpaceProbeForTesting(previous); });
+    OfflineDeploymentWorker worker;
+    QSignalSpy errors(&worker, &OfflineDeploymentWorker::operationError);
+    QSignalSpy logged(&worker, &OfflineDeploymentWorker::logMessage);
+    worker.buildDeploymentBundle({{QStringLiteral("sak-no-such-package-for-tests"),
+                                   QStringLiteral("1.0.0")}},
+                                 out.path(),
+                                 QStringLiteral("test"),
+                                 PayloadMode::Bundle);
+    const QString message = refusalOf(worker, errors);
+    QVERIFY(!worker.isRunning());
+    QVERIFY2(message.startsWith(QStringLiteral("Nothing was started")), qPrintable(message));
+    QVERIFY2(message.contains(QStringLiteral("could not tell how much free space")),
+             qPrintable(message));
+    const QString problem = refusalProblem(message, run.path(), logged);
+    QVERIFY2(problem.isEmpty(), qPrintable(problem));
+    QVERIFY(emptyFolder(out.path()));
     QVERIFY(emptyFolder(run.path()));
 }
 

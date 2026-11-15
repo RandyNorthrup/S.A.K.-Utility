@@ -441,9 +441,7 @@ void LinuxISODownloadDialog::onStartDownload() {
     setInputsEnabled(false);
     m_startButton->setEnabled(false);
     m_cancelButton->setEnabled(true);
-    m_progressBar->setValue(0);
-    m_speedLabel->clear();
-    m_detailLabel->clear();
+    resetProgressDisplay();
 
     m_downloader->startDownload(m_selectedDistroId, save_path);
 }
@@ -537,6 +535,7 @@ void LinuxISODownloadDialog::onDownloadError(const QString& error) {
     m_isDownloading = false;
 
     m_statusLabel->setText(QString("Error: %1").arg(error));
+    resetProgressDisplay();
     m_cancelButton->setEnabled(false);
     setInputsEnabled(true);
     updateStartButton();
@@ -572,9 +571,7 @@ void LinuxISODownloadDialog::onCancelDownload() {
         m_downloader->cancel();
         m_isDownloading = false;
         m_phaseLabel->clear();
-        m_speedLabel->clear();
-        m_detailLabel->clear();
-        m_progressBar->setValue(0);
+        resetProgressDisplay();
         m_cancelButton->setEnabled(false);
         setInputsEnabled(true);
         updateStartButton();
@@ -589,6 +586,15 @@ void LinuxISODownloadDialog::updateStartButton() {
     const bool ready = !m_isDownloading && !m_selectedDistroId.isEmpty() &&
                        !m_saveLocationEdit->text().trimmed().isEmpty();
     m_startButton->setEnabled(ready);
+}
+
+// Fix batch 5 (F): the bar's text is set from each update ("0.3%"), and a failed or cancelled
+// download kept it, "37%" over an empty bar, which a refused retry showed as it was.
+void LinuxISODownloadDialog::resetProgressDisplay() {
+    m_progressBar->setValue(0);
+    m_progressBar->setFormat(QStringLiteral("%p%"));
+    m_speedLabel->clear();
+    m_detailLabel->clear();
 }
 
 void LinuxISODownloadDialog::setInputsEnabled(bool enabled) {

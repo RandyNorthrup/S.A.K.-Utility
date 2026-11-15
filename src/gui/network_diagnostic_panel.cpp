@@ -2183,9 +2183,9 @@ void NetworkDiagnosticPanel::connectReportAndEthernetSignals() {
             &NetworkDiagnosticController::reportGenerated,
             this,
             [this](QString path) {
-                Q_EMIT statusMessage(
-                    QStringLiteral("Report saved to %1").arg(QDir::toNativeSeparators(path)),
-                    sak::kTimerStatusDefaultMs);
+                // The box says where; the path in the status bar ran past its first permanent
+                // widget, so the bar says what happened (fix batch 5, E).
+                Q_EMIT statusMessage(tr("Network report saved"), sak::kTimerStatusDefaultMs);
                 sak::showInformationLogged(
                     this,
                     tr("Report Generated"),

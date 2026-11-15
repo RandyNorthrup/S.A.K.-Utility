@@ -54,11 +54,12 @@ Assert-ContainedProjectPath -Path $PartitionCertificationRoot -Label "-Partition
 function Invoke-IsolatedPowerShellScript {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ScriptPath
+        [string]$ScriptPath,
+        [string[]]$Arguments = @()
     )
 
     $hostPath = (Get-Process -Id $PID).Path
-    & $hostPath -NoProfile -NonInteractive -File $ScriptPath
+    & $hostPath -NoProfile -NonInteractive -File $ScriptPath @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "Release readiness check failed: $ScriptPath"
     }
@@ -191,7 +192,26 @@ try {
     Invoke-ReleaseReadinessScript -Name "scripts/check_powershell_syntax.ps1" -Body {
         & scripts/check_powershell_syntax.ps1 -Files $syntaxFiles
     }
-    Invoke-IsolatedPowerShellScript -ScriptPath (Join-Path $ProjectRoot "scripts/check_accessibility_patterns.ps1")
+    # With a package, the accessibility runtime audit runs the program that ships, from a folder
+    # that holds the package only: from build/Release, among the test programs and archives, an
+    # elevated run (every hosted runner) refused to start and wrote nothing (the v0.9.3-rc.1 dry
+    # run, 2026-11-14). A signed package's signatures are checked before any of it runs.
+    $package = $null
+    $auditArguments = @()
+    if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
+        $package = Resolve-Path -LiteralPath $PackageRoot
+        if ($RequireSignedPackage) {
+            # Trust is established BEFORE any package binary runs: the audit and the smoke checks
+            # launch sak_utility.exe from this package, so an unsigned or tampered package must be
+            # rejected first rather than after it has already executed.
+            Invoke-ReleaseReadinessScript -Name "scripts/verify_authenticode_signatures.ps1" -Body {
+                & scripts/verify_authenticode_signatures.ps1 -RootDir $package.Path
+            }
+        }
+        $auditArguments = @("-PackageRoot", $package.Path)
+    }
+    Invoke-IsolatedPowerShellScript -ScriptPath (Join-Path $ProjectRoot "scripts/check_accessibility_patterns.ps1") `
+        -Arguments $auditArguments
     & scripts/check_gui_style_tokens.ps1
     & scripts/check_gui_stylesheet_literals.ps1
     & scripts/check_gui_magic_numbers.ps1
@@ -254,16 +274,7 @@ try {
         & scripts/test_partition_manager_release_claims.ps1
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($PackageRoot)) {
-        $package = Resolve-Path -LiteralPath $PackageRoot
-        if ($RequireSignedPackage) {
-            # Trust is established BEFORE any package binary runs: the smoke checks launch
-            # sak_utility.exe out of this directory, so an unsigned or tampered package must be
-            # rejected first rather than after it has already executed.
-            Invoke-ReleaseReadinessScript -Name "scripts/verify_authenticode_signatures.ps1" -Body {
-                & scripts/verify_authenticode_signatures.ps1 -RootDir $package.Path
-            }
-        }
+    if ($null -ne $package) {
         Invoke-ReleaseReadinessScript -Name "scripts/verify_portable_release_smoke.ps1" -Body {
             & scripts/verify_portable_release_smoke.ps1 -PackageRoot $package.Path -RepoRoot $ProjectRoot
         }

@@ -5,24 +5,37 @@
 /// @brief App Installation is built the same way in every run mode.
 
 #include "sak/app_installation_panel.h"
+#include "sak/app_installation_worker.h"
 #include "sak/offline_deployment_worker.h"
+#include "sak/package_internalization_engine.h"
 #include "sak/style_constants.h"
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QDialog>
+#include <QDir>
 #include <QLabel>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QScopeGuard>
 #include <QScrollArea>
 #include <QSignalSpy>
 #include <QTabWidget>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest/QtTest>
+
+#include <algorithm>
+#include <limits>
 
 namespace {
 
 constexpr int kDialogPollMs = 20;
 constexpr int kDialogTimeoutMs = 5000;
+// The smallest screen the app is laid out for.
+constexpr int kSmallScreenWidth = 1024;
+constexpr int kSmallScreenHeight = 768;
 
 /// Records and dismisses the next message box that opens. Polls, because the box runs its own
 /// nested event loop inside the click that opened it.
@@ -35,6 +48,9 @@ public:
         m_deadline.start();
     }
     QString text;
+    QString title;
+    QSize size;
+    QMessageBox::Icon icon{QMessageBox::NoIcon};
     bool seen{false};
 
 private:
@@ -48,6 +64,9 @@ private:
             return;
         }
         text = box->text();
+        title = box->windowTitle();
+        size = box->frameGeometry().size();
+        icon = box->icon();
         seen = true;
         m_timer.stop();
         box->done(QMessageBox::Ok);
@@ -68,6 +87,11 @@ QPushButton* onlineSearchButton(const QWidget& root) {
     return nullptr;
 }
 
+/// A free-space reading that Windows could not make.
+qint64 freeSpaceUnknown(const QString& /*folder*/) {
+    return -1;
+}
+
 }  // namespace
 
 class AppInstallationPanelTests : public QObject {
@@ -79,7 +103,10 @@ private Q_SLOTS:
     void startupWorkRunsInEveryMode();
     void offlineBundleNamesWhatFailedAndEndsTheProgress();
     void offlineFailureTextNeverWidensThePage();
+    void offlineRefusalIsSaidInView_data();
+    void offlineRefusalIsSaidInView();
     void offlineDeployFillsOnlyItsBuildButton();
+    void anOnlineRunThatInstalledNothingLeavesNoProgressBar();
 };
 
 void AppInstallationPanelTests::cleanup() {
@@ -121,6 +148,7 @@ void AppInstallationPanelTests::startupWorkRunsInEveryMode() {
 void AppInstallationPanelTests::offlineBundleNamesWhatFailedAndEndsTheProgress() {
     sak::AppInstallationPanel panel;
     QSignalSpy progress(&panel, &sak::AppInstallationPanel::progressUpdated);
+    QSignalSpy status_bar(&panel, &sak::AppInstallationPanel::statusMessage);
     Q_EMIT panel.m_offline_worker->operationStarted(10);
     Q_EMIT panel.m_offline_worker->batchProgress(8, 10, QStringLiteral("vlc"));
     Q_EMIT panel.m_offline_worker->packageProgress(QStringLiteral("adobereader"),
@@ -130,6 +158,7 @@ void AppInstallationPanelTests::offlineBundleNamesWhatFailedAndEndsTheProgress()
     stats.total = 10;
     stats.completed = 9;
     stats.failed = 1;
+    MessageBoxRecorder recorder;
     Q_EMIT panel.m_offline_worker->operationCompleted(stats);
 
     const QString status = panel.m_offlineStatusLabel->text();
@@ -140,6 +169,16 @@ void AppInstallationPanelTests::offlineBundleNamesWhatFailedAndEndsTheProgress()
     QVERIFY(!progress.isEmpty());
     const auto last = progress.last();
     QCOMPARE(last.at(0).toInt(), last.at(1).toInt());
+    // The label is below the buttons, out of view at 1280x860: a run with a failure says so in a
+    // warning box too (fix batch 4, A).
+    QVERIFY(recorder.seen);
+    QCOMPARE(recorder.icon, QMessageBox::Warning);
+    QCOMPARE(recorder.text, status);
+    // Fix batch 5 (E): the box names what failed and why; the status bar says the counts under
+    // the action's name. With the names too, it ran past the bar's first permanent widget.
+    QVERIFY(!status_bar.isEmpty());
+    QCOMPARE(status_bar.last().at(0).toString(),
+             QStringLiteral("Offline Deploy: 9 succeeded, 1 failed"));
 }
 
 // Review 3 (RG1): the failure named in the status label carried a download URL, and unwrapped at
@@ -176,13 +215,138 @@ void AppInstallationPanelTests::offlineFailureTextNeverWidensThePage() {
     stats.total = 2;
     stats.completed = 1;
     stats.failed = 1;
+    MessageBoxRecorder recorder;
     Q_EMIT panel.m_offline_worker->operationCompleted(stats);
     QCoreApplication::processEvents();
 
+    QVERIFY(recorder.seen);
     QVERIFY(panel.m_offlineStatusLabel->isVisible());
     QVERIFY(panel.m_offlineStatusLabel->toolTip().contains(QStringLiteral("AcroRdrDCx64")));
     const int after = page->minimumSizeHint().width();
     QVERIFY2(after <= before, qPrintable(QStringLiteral("%1 -> %2 px").arg(before).arg(after)));
+}
+
+void AppInstallationPanelTests::offlineRefusalIsSaidInView_data() {
+    QTest::addColumn<QString>("action");
+    QTest::addColumn<bool>("space_unknown");
+    QTest::addColumn<QString>("reason");
+    QTest::addColumn<QString>("status_lead");
+    QTest::newRow("Build Offline Bundle, short of space")
+        << QStringLiteral("Build Offline Bundle") << false
+        << QStringLiteral("Not enough free space for the work files")
+        << QStringLiteral("not enough free space on ");
+    QTest::newRow("Build Offline Bundle, free space unknown")
+        << QStringLiteral("Build Offline Bundle") << true
+        << QStringLiteral("could not tell how much free space")
+        << QStringLiteral("cannot read free space on ");
+    QTest::newRow("Direct Download, short of space")
+        << QStringLiteral("Direct Download") << false
+        << QStringLiteral("Not enough free space for the work files")
+        << QStringLiteral("not enough free space on ");
+    QTest::newRow("Install from Bundle, unreadable manifest")
+        << QStringLiteral("Install from Bundle") << false
+        << QStringLiteral("Manifest is empty or unreadable")
+        << QStringLiteral("Manifest is empty or unreadable");
+}
+
+// Fix batch 4 (A): Build Offline Bundle refused for want of space, and said so only in the log and
+// in a "Failed:" line below the buttons, out of view at 1280x860, while the status bar read
+// "Ready". A refused or failed run is now reported as Partition Manager and the network panel
+// report one: a warning box titled with the action, which needs no scrolling at 1024x768, and the
+// status bar. The box names the drive and S.A.K.'s work folder; the log keeps the folder itself.
+void AppInstallationPanelTests::offlineRefusalIsSaidInView() {
+    QFETCH(QString, action);
+    QFETCH(bool, space_unknown);
+    QFETCH(QString, reason);
+    QFETCH(QString, status_lead);
+    QTemporaryDir out;
+    QVERIFY(out.isValid());
+    const auto previous = sak::PackageInternalizationEngine::setFreeSpaceProbeForTesting(
+        space_unknown ? sak::PackageInternalizationEngine::FreeSpaceProbe(freeSpaceUnknown)
+                      : sak::PackageInternalizationEngine::FreeSpaceProbe());
+    const auto restore = qScopeGuard([&previous] {
+        (void)sak::PackageInternalizationEngine::setFreeSpaceProbeForTesting(previous);
+    });
+    sak::AppInstallationPanel panel;
+    panel.resize(kSmallScreenWidth, kSmallScreenHeight);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    auto* item = new QListWidgetItem(QStringLiteral("sak-no-such-package-for-tests"),
+                                     panel.m_offlineListWidget);
+    item->setData(Qt::UserRole, QStringLiteral("sak-no-such-package-for-tests"));
+    item->setData(Qt::UserRole + 1, QStringLiteral("1.0.0"));
+    panel.m_offline_worker->setMinimumWorkSpaceForTesting(std::numeric_limits<qint64>::max());
+    QSignalSpy status(&panel, &sak::AppInstallationPanel::statusMessage);
+    QSignalSpy logged(&panel, &sak::AppInstallationPanel::logOutput);
+    QSignalSpy progress(&panel, &sak::AppInstallationPanel::progressUpdated);
+    QSignalSpy reset(&panel, &sak::AppInstallationPanel::progressReset);
+
+    MessageBoxRecorder recorder;
+    if (action == panel.m_buildBundleButton->text()) {
+        panel.startBuildBundle(out.path());
+    } else if (action == panel.m_directDownloadButton->text()) {
+        panel.startDirectDownload(out.filePath(QStringLiteral("installers")));
+    } else {
+        panel.startInstallFromBundle(out.filePath(QStringLiteral("no-such-manifest.json")),
+                                     out.path());
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(recorder.seen, kDialogTimeoutMs);
+
+    QCOMPARE(recorder.title, action);
+    QCOMPARE(recorder.icon, QMessageBox::Warning);
+    QVERIFY2(recorder.text.contains(reason), qPrintable(recorder.text));
+    QVERIFY2(
+        recorder.size.width() <= kSmallScreenWidth && recorder.size.height() <= kSmallScreenHeight,
+        qPrintable(QStringLiteral("%1x%2").arg(recorder.size.width()).arg(recorder.size.height())));
+    const QString run_folder = QDir::toNativeSeparators(QDir::tempPath());
+    QVERIFY2(!recorder.text.contains(run_folder, Qt::CaseInsensitive), qPrintable(recorder.text));
+    // The status bar says the refusal's short form, which fits at 1024 px (test_main_window_help
+    // measures it); the box says it whole (fix batch 5, E).
+    QVERIFY(!status.isEmpty());
+    const QString status_text = status.last().at(0).toString();
+    QVERIFY2(status_text.startsWith(action + QStringLiteral(": ") + status_lead),
+             qPrintable(status_text));
+    QVERIFY2(status_text == sak::AppInstallationPanel::offlineErrorStatus(action, recorder.text),
+             qPrintable(status_text));
+    if (reason.contains(QStringLiteral("free space"))) {
+        QVERIFY2(recorder.text.contains(QStringLiteral("S.A.K.'s work folder is on ")),
+                 qPrintable(recorder.text));
+        const bool folder_logged = std::ranges::any_of(logged, [&run_folder](const auto& line) {
+            return line.at(0).toString().contains(run_folder, Qt::CaseInsensitive);
+        });
+        QVERIFY2(folder_logged, "the log does not have S.A.K.'s work folder");
+    }
+    QVERIFY(!panel.packageOperationInFlight());
+    // Fix batch 5 (F): nothing ran, so the status bar's bar is reset, as when idle. It was ended
+    // at its maximum, and read 100%: the worker says a run started before it checks the space.
+    QCOMPARE(reset.count(), 1);
+    QVERIFY(std::ranges::none_of(progress, [](const QList<QVariant>& arguments) {
+        return arguments.at(1).toInt() > 0 && arguments.at(0).toInt() >= arguments.at(1).toInt();
+    }));
+}
+
+// Fix batch 5 (F): an online install whose every entry was skipped left the status bar's bar
+// busy, as its start sent a run of none; one cancelled before its first package ended it full.
+// A run that installed nothing resets the bar, as when idle; one that installed ends as before.
+void AppInstallationPanelTests::anOnlineRunThatInstalledNothingLeavesNoProgressBar() {
+    sak::AppInstallationPanel panel;
+    QSignalSpy reset(&panel, &sak::AppInstallationPanel::progressReset);
+    QTimer closer;
+    closer.setInterval(kDialogPollMs);
+    connect(&closer, &QTimer::timeout, &panel, []() {
+        if (auto* summary = qobject_cast<QDialog*>(QApplication::activeModalWidget())) {
+            summary->reject();
+        }
+    });
+    closer.start();
+    Q_EMIT panel.m_worker->migrationStarted(0);
+    Q_EMIT panel.m_worker->migrationCompleted(sak::AppInstallationWorker::Stats{});
+    QCOMPARE(reset.count(), 1);
+    sak::AppInstallationWorker::Stats installed;
+    installed.total = 1;
+    installed.success = 1;
+    Q_EMIT panel.m_worker->migrationCompleted(installed);
+    QCOMPARE(reset.count(), 1);
 }
 
 // Review 5 (Z6e): Offline Deploy's "Install from Bundle" was a second filled button, green with

@@ -700,6 +700,7 @@ void NetworkDiagnosticPanelTests::runReportFlow(const QString& report_path, QByt
     QVERIFY(button != nullptr);
 
     QSignalSpy generated(controller, &sak::NetworkDiagnosticController::reportGenerated);
+    QSignalSpy status(&panel, &sak::NetworkDiagnosticPanel::statusMessage);
     ReportDialogDriver driver(report_path);
     button->click();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::MetaCall);
@@ -708,6 +709,10 @@ void NetworkDiagnosticPanelTests::runReportFlow(const QString& report_path, QByt
     // The finished report also says where it went, in a box of its own that the driver answers.
     QTRY_VERIFY_WITH_TIMEOUT(generated.count() == 1, kReportTimeoutMs);
     QVERIFY(driver.saw_message_box);
+    // Fix batch 5 (E): the box says where; the status bar, which the path ran past at 1024 px,
+    // says what happened.
+    QVERIFY(!status.isEmpty());
+    QCOMPARE(status.last().at(0).toString(), QStringLiteral("Network report saved"));
     *written = readAll(generated.first().first().toString());
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
 }

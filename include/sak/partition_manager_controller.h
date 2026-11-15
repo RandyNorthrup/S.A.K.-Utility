@@ -141,6 +141,9 @@ Q_SIGNALS:
     /// Apply read the disks again and refused to start, for these reasons. Nothing was written.
     void applyRefused(const QStringList& reasons);
     void progressUpdate(int current, int maximum);
+    /// The operation ended without running to its end (refused, failed or cancelled): the
+    /// status bar hides its progress bar at once, as when idle (MainWindow::resetProgress).
+    void progressReset();
     /// A scan reached this disk, of this many.
     void inventoryScanProgress(int disk, int disks);
     void logOutput(const QString& message);

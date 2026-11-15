@@ -3682,6 +3682,328 @@ operation-proof guard included; the T2 labels, 333 of 333; `-PlanOnly`; every ci
 hooks on the merge commit. Drills for the two T2 fixes, red then green: `ops-driver-silentlycontinue`,
 `runner-stops-proof-rows-too`.
 
+### Fix batch 5: what the retakes of 9af638b6 found (2026-11-14)
+
+On the `fix3` branch from 9af638b6 (lane2's head and dev), one commit per item; each item closes its kind
+across the app, not only the instance the retakes found. Every fix was drilled red with the fix taken back out
+and green with every byte restored.
+
+**E. A timed status message ran out behind the box shown with it.** Offline Deploy's refusal started its 5 s
+status-bar message as its warning box opened, and the box did not stop that time: anyone who read the box for
+longer than 5 s came back to "Ready". The message was also the refusal's whole sentence, cut after "Free some
+space" at 1280 px. The app's convention is that MainWindow owns every timed message (`updateStatus`), so the fix is
+there, for all of them: a timed message's time now runs only while no modal window is open (an application event
+filter on modal windows showing and hiding), and it gets its whole time once the last one closes. So the message
+begins when the box closes; it is still timed. Where a box says a message whole, the status bar says a short form
+of it that fits at 1024 px: Offline Deploy's "<action>: <short form>", "Build Offline Bundle: not enough free space
+on V:" (`OfflineDeploymentWorker::errorShortForm`, with the engine's `workSpaceRefusalShortForm`; each short form
+is read off the format string that makes its message, `sak::shortFormOf`, so the two cannot drift), and a finished
+run's counts without the failed packages, which its box lists. The sweep: 88 places show a timed status message in
+the same function as a message box (two scans, a window of lines and the whole function), and the controllers'
+messages that a panel's box follows. Each now waits for the box. Where the bar's text was long and the box says it
+whole, it is now the short form: Offline Deploy's refusals, failures and finished runs; Partition Manager's queue
+and Apply refusals ("Not added to the queue", "Not applied"), and how a run or a read-only check ended, while the
+box says the reasons or the result (the controller's own lines, which the certification reads, are unchanged); the
+Diagnostics and network reports ("Diagnostic reports saved", "Network report saved"; the box says where). Already
+short, with the box saying the detail: Advanced Uninstall's failures, File Organizer's, Image Flasher's, App
+Installation's, the AI Assistant's and Advanced Search's. The rest are in branches that never show both, or show
+the box first and the message after it. Tests: `test_main_window_help` holds a box open for twice a message's time
+at 1024x768 and finds the message whole after it, then gone; every refusal and failure Offline Deploy reports is
+measured against the status bar's room at 1024 px, for each action and with the drive named as Windows names it or
+as "the drive S.A.K. runs from" (the first run found one 4 px too long, and the short forms were shortened);
+`test_app_installation_panel`, `test_partition_manager_panel`, `test_diagnostic_benchmark_panel` and
+`test_network_diagnostic_panel` check each status said while its box is open. Drills (12, and the two Partition
+Manager ones again after their connections moved to `connectControllerRefusals`): the modal check; the event
+filter; the Offline short form, the engine's and the worker's; the finished run's names; each Partition Manager
+lead; each report.
+
+**F. A progress bar read 100% after a refusal.** The status bar's progress bar had one way to end, its maximum, so
+Offline Deploy's refusal, which the worker reports after it has said a run started, read 100%; (0, 0), sent to hide
+the bar, was its busy state. `MainWindow::resetProgress` hides the bar at once with no value, as it is when idle,
+and each panel sends it through a new `progressReset` signal when its work was refused, failed or was cancelled
+before it ran to its end; a finished run still ends at its maximum. Swept across every panel with a progress bar
+(an agent read every bar's refused, failed-before-start and cancelled-before-start paths, and each was checked):
+in the status bar, Offline Deploy's refusals and failures (100%); an online install that installed nothing, all
+skipped (busy) or cancelled before its first package (full); File Organizer's and the duplicate scan's failed and
+cancelled runs (left at 0% until the next run); a failed or cancelled Advanced Search (busy); Advanced Uninstall's
+failed and cancelled operations (100%); a stopped benchmark (100%), and one that failed before its first step,
+which left the bar where it began and the panel locked (no completion follows a failure; it now ends the run);
+Image Flasher's refused, failed and cancelled writes (100%) and a Windows image with no drive (0%); Partition
+Manager's Apply refused or cancelled at its check and a run that did not pass (100%); the OST converter, which sent
+(0, 0) to hide the bar (busy after every run). In the panels: an AI workflow that ran none of its phases is shown
+idle, not "Failed: 0/3 complete" or a full bar kept from the run it resumed; Image Flasher's progress page starts
+each run empty (a refusal showed the last run's "Written: 3.2 GB / 3.2 GB"); the Linux and Windows ISO dialogs put
+their bars and text back after a failed download or build. Left as they were, and why: a stress test whose worker
+fails (no test can hold the panel in a running stress test without running one); Partition Manager's verification
+result missing (unreachable); the profile backup's and restore's runs refused inside the worker's start (the
+wizard checks the password before that page) and the restore's app page when Chocolatey cannot start (it needs
+elevation and Chocolatey, and says "0 succeeded, N failed" beside the bar); the network panel's bar, which nothing
+sends, and the AI Assistant's, which is not connected to the status bar. Every other bar ends hidden or reset.
+Tests at 1024x768: `test_main_window_help` (the bar after a refusal, in the dark theme, and every panel's reset
+reaching it, with every tool tab built) and `test_app_installation_panel` (each refusal row); and each panel's ends
+in its own suite. Drills, as batches, each mutation with a test function of its own: 25 mutations, 21 functions
+red; then the two connections, 2 of 2 red.
+
+**G. A disabled slider kept the enabled blue.** In Resize with a size that cannot change (FAT32) the size box was
+greyed and the size handle's knob was still the enabled blue: the theme's QSlider handle rules had no disabled
+state. A disabled slider's handle now takes the theme's disabled text colour, the colour of the greyed box's text
+(`kWindows11ThemeSliderDisabledStyles`), outlined a step lighter in the dark theme, whose groove is close to that
+colour; this covers every slider (Partition Manager's size, location and amount handles, File Explorer's view
+size). The palette's disabled Highlight is the disabled colour too, so what draws itself in Highlight goes grey
+when disabled: the size bar's drag handles. The Log switch draws itself; disabled, its track is the disabled
+colour, on or off. Contrast against the tokens: light knob #94a3b8 2.35:1 on the page, 2.56:1 on a dialog, 1.72:1
+on its groove; dark knob #475569, outlined #64748b, 2.36:1 on the page (outline 3.75:1) and 2.15:1 on a panel
+(outline 3.42:1), outline 2.18:1 on the groove. A disabled control is outside WCAG 1.4.11; each stays visible and
+apart from the enabled blue (3.37:1 light, 4.85:1 dark) by hue. The other custom-painted controls were swept: the
+disk map's tiles and segments, the layout previews, the email calendar views, the transfer speed graph and the
+splash are never disabled; the status center button's progress arc follows the palette; the window-fitted combo
+box is drawn by the style. Paint tests (`test_partition_manager_panel`, each in light and dark): the FAT32 Resize
+knob has no accent pixels and has the disabled colour's, NTFS keeps the accent; Create Partition's size bar,
+disabled, has no accent pixels; the Log switch, disabled, has none. Drill (4 mutations, 6 rows red): the light
+rule, the dark rule, the palette, the switch; the knob's two rows again after the test's handle reading moved to a
+helper of its own (lizard).
+
+**Live, on testpc2 (the package of 478dcd71).** Two throwaway virtual disks on the spare Samsung W:, which was
+pinned by model, serial and size before each was made (the WD boot disk was not touched); the claims were tagged
+fix5 and removed afterwards, with the disks. S.A.K. ran from the 512 MB NTFS V:, and the 256 MB FAT32 U: was the
+partition to resize. Build Offline Bundle with the Kiosk / POS preset was refused for want of space. Its box, held
+open for 10 s, said the whole refusal ("... V:, which has 303.8 MB free; at least 1.00 GB is needed ...";
+`fix5_offline_box_held_10s.png`). Half a second after the box closed, the status bar read "Build Offline Bundle:
+not enough free space on V:", whole, with no progress bar, in light and in dark (`fix5_offline_status_after_box.png`);
+6 s after it closed the bar read "Ready" (`fix5_offline_status_after_its_time.png`): the message had its 5 s from the
+box's closing. Resize/Move of the FAT32 partition, as administrator: the target size greyed and the size handle's
+knob grey, in light and in dark (`fix5_resize_fat32_knob.png`). The pictures are under
+E:\SAK-Utility-Test-Scratch\capture\fix5-478dcd71\ (`light`, `light2`, `dark`).
+
+**Gate**, on b1743aa6, alone on the workstation: configure and the Release build, 0 errors and 0 compiler
+warnings; cert-tooling 8 of 8; the naming gate (non-core 155 of 155 TUs clean, core 175 of 175 healthy); clang-tidy
+with every check on the 19 product TUs this round changed, no finding on a line it added or changed (the first gate,
+on 478dcd71, found five and a path the secret scan refuses: b1743aa6 fixes them, with no change in behaviour); every
+ci.yml static gate, 19 of 19; the hooks over the 47 changed files; the skip audit. The T2 labels: 333 of 334. Debug
+with ASan for the 14 suites this round touched: no AddressSanitizer report, and 13 passed. Two timing checks failed
+on the workstation, which was busy with other work. The owner then stopped every local run, and both were counted
+on testpc2 (12 cores), from 9af638b6 and from this head, built there side by side with the same configuration and
+run there on the same load, the two sides alternating:
+- `test_ai_assistant_panel_tool_dispatch`'s `destroyingPanelWhileToolRunsDrainsCleanly` (Debug with ASan), which
+  checks that a 200 ms tool is still running once the test sees it start, failed in 2 of 4 runs of the whole suite
+  on the workstation. On testpc2, the function alone: 0 failures in 20 runs at 9af638b6 and 0 in 20 at this head;
+  started 3 s after five suites that load the PC beside it: 0 in 20 and 0 in 20; the whole suite: 0 in 5 and
+  0 in 5 (about 6 min a run).
+  This round changes nothing that function runs: the AI Assistant panel's one change is in
+  `finishWorkflowProgressUi`, which a tool turn does not reach, and E's and F's status-bar changes are in
+  MainWindow, which the suite never constructs. The head is no worse, so nothing was bisected or changed.
+- `test_stress_test_worker` (Release), whose below-normal thread must get its 150 ms of work done while the stress
+  runs, failed under -j 6 on the workstation and passed twice alone there. This round does not touch the stress
+  worker, its test or the stress-test paths of Benchmark and Diagnostics (F changed the panel's Stop and benchmark
+  failure, E its reports' status). On testpc2, started 3 s after five suites that load the PC beside it: 0 failures
+  in 10 runs at 9af638b6 and 0 in 10 at this head. A pre-existing timing margin of a PC loaded past what -j 6 gives
+  it; left as it is.
+
+testpc2's Build Tools have no ATL/MFC libraries, and the .NET Framework compiler that builds
+`sak_script_types.dll` treats the missing folder named in LIB as an error (CS1668 under `/warnaserror+`); that one
+target was built there with `LibraryPath` set to a folder that exists, which gives the same DLL. Everything else
+built as on the workstation. The trees, the claims and every file of the round were removed from testpc2
+afterwards; W: is its empty WORK volume again.
+
+### Fix batch 4: what the final capture of d8c27a15 found (2026-11-14)
+
+On the `fix3` branch from bfd57ed5 (lane2's head, d8c27a15 with its recertification), one commit per item, each
+test drilled red with the fix broken and green with every byte restored.
+
+**A. Offline Deployment's refused Build was invisible.** At 1280x860 (`app_mgmt_offline_space_refusal.png`) a
+Build Offline Bundle refused for want of space said so in the log only ("ERROR: Not enough free space for the work
+files: S.A.K. keeps them in its own folder (V:\SAK\data\temp\run-7832-89d4...), ..."); its "Failed:" line stood
+below the buttons, out of view, and the status bar still read "Ready". Partition Manager and the network panel
+report a refused or failed action the same way: a warning box (`showWarningLogged`) titled with the action, with
+the reason as its text; Partition Manager's failed apply and the network panel's "Enable Failed", "DNS
+Configuration Failed" and the rest. Offline Deploy now does that too (`app_installation_panel.cpp`,
+`onOfflineOperationError`): a refused or failed Build Offline Bundle, Direct Download or Install from Bundle opens
+a warning box titled with the button that started it, which needs no scrolling at any window size, and the status
+bar says "<action>: <reason>"; the "Failed:" line stays for after the box is closed. A run the person cancelled
+gets no box. A run that ends with packages failed ("Incomplete: 9 succeeded, 1 failed / Failed: adobereader
+(...)") is said in a warning box too, as Partition Manager's failed apply is. The refusals name the drive and
+S.A.K.'s work folder, not the run folder's random name: "Not enough free space for the work files: S.A.K.'s work
+folder is on V:, which has 304.1 MB free; at least 1.00 GB is needed. Free some space on V:, or run S.A.K. from a
+larger drive." and "Nothing was started: S.A.K.'s work folder is on V:, and S.A.K. could not tell how much free
+space that drive has." (`PackageInternalizationEngine::workSpaceRefusal`, with `workDriveName`); so do the four
+refusals of the work folder itself (one S.A.K. did not make, a link, one it cannot create, one it cannot write).
+The log keeps the whole folder: a line "S.A.K.'s work folder: <path>" before the error, and the free-space
+refusal's own log line. Tests (`test_app_installation_panel`, `offlineRefusalIsSaidInView`, at 1024x768): Build
+short of space, Build with the free space unknown, Direct Download short of space and Install from Bundle with an
+unreadable manifest each open a warning box titled with the action, no larger than 1024x768, whose text has the
+reason and not the run folder, and the status bar says it; the log has the folder (`test_offline_deployment_worker`
+also checks the drive and the log for both refusals, and the unknown-space one is new there). Drills, each red then
+green with the bytes restored: no warning box on a refusal; the refusal naming the folder instead of the drive; the
+folder not logged; no box for a run with failures.
+
+**B. Resize/Move on a partition whose size cannot change offered free space it cannot use.** The capture
+`partition_manager_resize_fat32_fixed.png` showed a 2.00 GB FAT32 partition with "Adjacent free after: 21.89 GB",
+a "Max online" bar of "2.00 GB current + 21.89 GB free" across its whole width in the colour of space to grow into,
+and a size handle that looked live, though Windows neither shrinks nor grows FAT32. Where the queue refuses every
+size change (`resizeSizeFixed`, `partition_manager_panel.cpp`): the file system's rule refuses both ways (FAT32,
+exFAT, and a file system S.A.K. does not resize or could not identify: "UDF", "RAW", "Unknown"), or an APFS
+partition, which grows only, has no free space after it. Then Max online is the current size, drawn in the muted
+colour, and reads "2.00 GB, the current size: free space not usable for FAT32"; "Adjacent free after" reads
+"21.89 GB, not usable for FAT32" (wrapping in its row, so the longer text never widens the dialog); the target size,
+the size handle and the Target bar's drag handle are off. The bars keep the partition and the free space after it as
+their scale, so the current size stands in proportion to the space it cannot use. HFS+ offers no Resize at all, so
+it has nothing to mislead. NTFS, ReFS, ext and an APFS partition with room after it are as they were. The size
+preview now also tells a screen reader its rows ("Current: ...; Target: ...; Max online: ..."), which the test reads.
+Tests (`test_partition_manager_panel`): `resizeShowsNoUsableFreeSpaceWhereTheSizeCannotChange` opens Resize for
+FAT32, exFAT, UDF, RAW, HFS+, APFS with nothing after it, APFS with room, NTFS, ReFS and ext4, and checks the size
+controls, the Max online text, the "not usable" texts, and the pixels of the usable colour in the preview (none for a
+fixed size, some otherwise); `newResizeFreeSpaceTextsFitTheResizeDialog` fits the longest texts at 1024 px. Drills,
+each red then green with the bytes restored: never fixed; Max online left at current plus free; the size controls
+left live; the usable colour; the free space not said to be not usable; ext treated as fixed; the label unwrapped.
+
+**C. Check File System's result did not say what the check found.** The capture
+`partition_manager_check_fs_unplug_note.png` showed a clean check of an NTFS USB stick as "Partition operation batch
+complete" and "Eject the drive in Windows before you unplug it.", nothing more. Every route of the volume scan now
+ends with a verdict line ("Volume check E: online scan: NoErrorsFound", "Volume check E: read-only chkdsk: None";
+`volumeScanStatement`, `partition_script_builder.cpp`), and `PartitionExecutor::successSummary` reads a passed run's
+steps back as one sentence a volume (`volume_check_outcome.cpp`, new): "Drive D: No errors found (read-only
+chkdsk).", "Drive E: No errors found.", "Drive E: Errors found (Windows reports ScanErrorsFoundNeedSpotFix). Repair
+recommended (this check does not modify the disk).", or "Drive E: Not checked (Windows answered "ScanNeedsRetry",
+which is not an answer about the drive)." Errors found, or no answer, are a warning box though the run passed
+(`PartitionExecutionResult::findings_need_attention`). Problems a read-only chkdsk finds, and a drive it could not
+check, already stopped the script with their own words ("chkdsk found problems on D: Reading only, it fixed none of
+them (exit 3).", "D: is in use, so it was not checked. ...", the snapshot sentence), shown as a warning; they are
+unchanged. The eject line stays for a drive that can be unplugged. The words are Quick Actions' Check Disk Errors'
+own: "No errors found", "Errors found and fixed by Windows while the drive stayed online", "Errors found (Windows
+reports ...)", "Errors found by a read-only chkdsk, which fixed none of them" and "Repair recommended (this check does
+not modify the disk)" now come from `volume_check` in both, with the RepairStatus reading Check Disk Errors had
+(`repairStatusFinding`); its report reads exactly as before. Routes: NTFS and ReFS on a fixed drive (the online
+scan), FAT32 and exFAT (chkdsk), NTFS on a removable drive (chkdsk), each through the generated script and stand-ins.
+ext (e2fsck -n) and HFS+ (fsck_hfs -n) run through Check Non-Windows File System's read-only check, which ended in the
+status bar alone ("Filesystem check complete"): its end now opens a result, "The ext4 file system: No errors found
+(read-only e2fsck).", "The ext4 file system: Errors found by a read-only e2fsck, which fixed none of them. e2fsck
+found errors in the file system and left them uncorrected (exit code 4).", fsck_hfs's "found corrupt and needs to be
+repaired" read the same way, and "Not checked." with the reason for a check that could not open the partition, did
+not run, or was stopped (`toolCheckOutcome`; `PartitionFileSystemToolRunner::problemIsAFinding` tells e2fsck's answers
+about the file system from its failures to give one). The APFS metadata check (and XFS and Btrfs, which share it)
+said "Result: No sanity warnings" or "Warnings found": now "No errors found (read-only, in the metadata the last disk
+scan read)" or "Errors found by a read-only metadata check, which fixed none of them (see Findings)"; the HFS+ catalog
+check likewise ("Not checked (see Blockers)" when it could not read the catalog).
+Survey of the other Partition Manager operations whose result is the thing asked for. Ended on a bare "Partition
+operation batch complete", now fixed: Scan File Systems (one sentence a volume, or "Disk 3's reliability counters were
+read; it has no volume with a drive letter to scan."), and Partition Recovery Scan ("The recovery scan of Disk 3
+found no lost partition.", or how many possible lost partitions and each candidate's line, up to ten, the rest in
+the log). Said nothing at all, now a result: Check Non-Windows File System's read-only tool check. Had a result row in
+other words, now in the shared ones: the metadata and HFS+ catalog checks. Not of this kind, left: Disk Benchmark,
+Space Analyzer, Properties and Inspect show their own dialogs with what they read; Create Image, like every queued
+operation, ends on "batch complete" after Apply, its result being the image file it wrote; Optimize SSD and Defrag
+are actions, not checks. The status bar shows a result of several sentences on one line.
+Tests: `test_partition_manager_core` (`generatedScripts_volumeScanSaysWhatEachRouteFound`, the generated script run
+by Windows PowerShell 5.1 against stand-ins on each route, the verdict read back as its sentence;
+`executorSaysWhatAReadOnlyRunFound`, Check File System, Scan File Systems with and without volumes, a recovery scan
+with and without candidates, and a run with no check; `readOnlyToolCheckSaysWhatItFound`, e2fsck clean, errors left
+as the elevated run reports them, a partition it could not open, fsck_hfs's corrupt volume and an exit code alone);
+`test_partition_manager_panel` (`checkFileSystemSaysWhatTheCheckFound`: the result box on a USB stick says the
+sentence and the eject note, information for no errors, a warning for errors found; `nonWindowsCheckSaysWhatItFound`:
+the read-only tool check's end opens a result, information or warning; the metadata check's Result row);
+`test_check_disk_errors_action` unchanged in what it expects, and its shared-statement test now names the variable
+Check File System keeps the scan's answer in. Drills, each red then green with the bytes restored: the executor's
+summary skipping Check File System; findings shown as information; the tool check's end not connected; e2fsck's
+errors read as "not checked"; the metadata Result in the old words; the shared "No errors found" changed (Check Disk
+Errors and Partition Manager both red); the chkdsk route's verdict line naming an empty variable; the recovery scan's
+candidates unread.
+
+**D. The v0.9.3-rc.1 release dry run stopped at its readiness gate.** Run 43600917371 (the tag on main 9277c08b)
+failed in the build job at step 20, "Release readiness gate from clean extracted package", with "Accessibility
+runtime audit failed with exit code 1: No audit output written. STDOUT: System.Object[] STDERR: System.Object[]";
+nothing was signed or published. The coordinator's reading holds, from the code. `check_release_readiness.ps1` ran
+`check_accessibility_patterns.ps1` without `-ExePath`, so the audit started `build/Release/sak_utility.exe`. A hosted
+runner is an elevated administrator, so `hardenProcessStart` (`main.cpp`) runs `ProgramHold::verify` on the
+program's folder and every folder below it before it writes "parsed-arguments", and `build/Release` holds the test
+programs and the `clean-smoke-extract` and `clean-readiness-extract` folders, whose programs are not first-party by
+name and not pinned at those paths: the app refused and exited 1. Steps 17 and 18, the smokes from the clean extract,
+passed on the same runner. And the branch for a missing audit built an array that held the stdout and stderr arrays,
+so `-join` printed each as "System.Object[]" and the refusal's "Fatal: ..." line on stderr was lost; the timed-out
+branch joined flat arrays, and both now build their text in one function (`Get-AuditFailureLines`). One more fault
+was found while fixing it: with no audit file, comparing "nothing" with `-notmatch` answers nothing, so a program
+that exited 0 having written no audit would have passed; the header is now always a string. The elevated run on
+testpc2 found a third: the app writes its audit as one line, which, as the output of an `if`, came back as a string,
+and `[0]` of a string is its first character, so the clean package's own passing audit ("SAK_ACCESSIBILITY_AUDIT_OK
+missing=0 ... checked=2807") was refused; the test's stand-in had written several lines. The file is now read into an
+array by assignment, and the stand-in writes one line.
+T2 never ran the audit elevated against a populated folder: ci.yml's "Accessibility runtime audit" runs it through
+`scripts/invoke_unelevated.ps1` with a standard-user token, and `hardenProcessStart` returns at once when not
+elevated, so the other programs in `build/Release` never mattered there. T2 stays as it is: it audits what a
+standard user starts, and it stages no package; the elevated folder check is covered by `test_program_integrity`
+and `test_elevation_hardening`, and by T3, which audits the package that ships.
+The fix: given `-PackageRoot`, the audit runs a copy of the package in a new folder of its own under the temp folder,
+which holds the package and nothing else, and removes it afterwards, so the package gets no `data` folder from the
+run (`verify_portable_release_smoke.ps1` refuses one). A package's program is bound to HEAD's commit time instead of
+the checkout's file times: the verify job checks out after the build and the signing, which is why it re-dated a
+copy in `build/Release`; that line is gone. With `-RequireSignedPackage` the signatures are checked before the audit
+runs anything of the package; they were checked before the smokes only, and the audit ran first. The verify job's
+signed gate would have failed the same way at rc.2: its `build/Release` held the signed package, the unsigned probe
+certifier and the package's own folder.
+Every T3 step that starts a program, and from where. Build job: "Verify build output" runs `smartctl.exe` and
+`aria2c.exe` `--version` (bundled third-party tools, no folder check); 17 runs no program of S.A.K.'s
+(`verify_portable_release_smoke.ps1` reads the package; its runtime-DLL check reads imports); 18 runs
+`sak_utility.exe` from `build/Release/clean-smoke-extract`, the package only; 20 runs `sak_utility.exe` for the
+accessibility audit (now from a copy of `build/Release/clean-readiness-extract`), `partition_filesystem_probe_certifier.exe`
+and the bundled `newfs_hfs`/`fsck_hfs` for the filesystem self-tests (none of them checks its folder; only
+`sak_utility.exe`, `sak_elevated_helper.exe` and the live certifier do), and `sak_utility.exe` for the two smokes, from
+the clean extract; 23 runs `sak_filesystem_manifest_check.exe` from `build/filesystem-manifest-check/Release` (built
+from `partition_file_system_tool_manifest.cpp` alone, no folder check), which reads the staged package and runs nothing
+of it. Verify job: the re-pin checks before and after run the same manifest check from `RUNNER_TEMP\sak-release-tools`;
+the signed readiness gate runs the audit from a copy of the signed package, the certifier and the HFS tools from
+`build/Release` as laid out, and the smokes from `build/Release/SAK-Utility-v<version>`, the package only. No step starts
+`sak_elevated_helper.exe` on its own; an elevated app does not need it. Test (`test_accessibility_audit_runner`,
+release-tooling, so T2): a stand-in `sak_utility.exe`, compiled by Windows PowerShell's Add-Type, refuses with a
+"Fatal:" line when a stray program sits in its folder, as an elevated S.A.K. does. The failure text carries the Fatal
+line and no "System.Object[]"; one that exits 0 with no audit fails; with `-PackageRoot` it runs from a copy that holds
+the package only, the copy is gone afterwards and the package unchanged, and a program older than HEAD's commit is
+refused; the readiness gate passes `-PackageRoot` and checks a signed package's signatures before the audit. Drills,
+each red then green with the bytes restored: the audit script as it was at bfd57ed5 (red with the dry run's own text,
+"No audit output written. STDOUT: System.Object[] STDERR: System.Object[]"); the arrays unflattened; the package run in
+place; the gate passing no package; the signatures checked after the audit; the header read as "nothing" again; the
+one-line audit read back as a string (red with the text testpc2 printed).
+
+**Live proofs (package dc8700ea, `SAK-Utility-v0.9.3-dc8700ea-Windows-x64.zip`, SHA-256 616D7B69...F6F89DDD).** A, on
+testpc2 as a standard user through the capture harness: the package installed to V:\SAK on a throwaway 512 MB VHDX
+(`W:\fix4\space.vhdx` on the spare Samsung; W: pinned as the Samsung by model, serial and size,
+the VHDX by its file, model "Msft Virtual Disk" and size 536870912 before it was formatted; claims tagged fix4), Build
+Offline Bundle with the Kiosk / POS preset opened a warning box titled "Build Offline Bundle": "Not enough free space
+for the work files: S.A.K.'s work folder is on V:, which has 304.0 MB free; at least 1.00 GB is needed. Free some
+space on V:, or run S.A.K. from a larger drive."; with it closed, the status bar read "Build Offline Bundle: Not enough
+free space ...". The VHDX was detached and removed. C, on testpc1 elevated through the capture harness: Check File
+System on the stick D: (USB DISK 3.0, pinned by model, serial and size before and after) said "Drive D:
+No errors found (read-only chkdsk)." and "Eject the drive in Windows before you unplug it."; the stick is still the
+empty, healthy NTFS USBSTICK. The display was set to 1600x900 for the capture and back to 1024x768. D, on testpc2
+elevated over ssh, as a hosted runner is, with the package's clean extract and a checkout at dc8700ea (the later
+follow-ups applied to its working tree, so HEAD's time stays before the package's build): bfd57ed5's audit script on a
+build-like folder with one stray program failed with the dry run's own text, "No audit output written. STDOUT:
+System.Object[] STDERR: System.Object[]"; the fixed script on the same folder said "STDERR: Fatal: S.A.K. won't run as
+administrator while W:\fix4\build-release\test_stray.exe is in its folder; it isn't part of S.A.K."; with
+`-PackageRoot` it passed. That run found the one-line audit fault above. The build job's readiness sequence,
+`check_release_readiness.ps1 -PackageRoot` with the workflow's pinned gitleaks and trufflehog, then passed the secret
+scans, blocking patterns, PowerShell syntax, the accessibility check (the audit from a copy of the package,
+elevated), style tokens, style literals, both magic-number checks (after ffe0e154 named the verdict line's groups,
+which this run found), logged boxes, lizard, licenses, the tool manifest, the probe certifier self-test, the HFS image
+validation and the three matrix checks; `verify_partition_manager_certification.ps1` then stopped with "Partition
+Manager evidence does not match ... the evidence is for other code": B and C change Partition Manager's code, so the
+evidence certified at d8c27a15 no longer applies until the full recertification. The two package smokes after it
+(`verify_portable_release_smoke.ps1`, `run_portable_e2e_smoke.ps1`) passed, run on their own from the same clean
+extract, elevated. A shallow clone first gave gitleaks three findings attributed to its base commit (the extension's
+public key and two test fixtures, which `.gitleaksignore` pins by the commits that added them); with the whole
+history they matched. The full build also found the live certifier's own source list missing `volume_check_outcome.cpp`
+(d381e3cc).
+
+**Gate on db04318a.** The Release build, 0 warnings; T2 labels 334 of 334; cert-tooling 8 of 8; the naming gate
+passed (non-core 155 of 155 TUs clean, core 175 of 175 healthy, 21 ratcheted clean); clang-tidy with every check
+over the 11 product files this round changed, 839 distinct first-party findings and none on a line this round added
+or changed (the first full run found 25 there, trailing commas, a loop for `std::ranges::any_of`, a redundant lambda
+parameter list and a const local that blocked a move, and the naming ratchet one, `drive_letter`; db04318a fixed
+them); the 19 static gates; pre-commit over the 33 files changed since bfd57ed5; the static skip audit. Debug+ASan,
+the binaries this round touches: test_app_installation_panel 12 passed, test_offline_deployment_worker 33,
+test_package_internalization_engine 32, test_partition_manager_panel 156, test_partition_manager_core 455 (10
+skipped, as in Release), test_check_disk_errors_action 21, test_partition_manager_controller 35, no failure and no
+sanitizer report. Earlier runs of this gate also found the live certifier's source list (d381e3cc) and, run on
+testpc2, the magic-number gate on `volume_check` (ffe0e154).
+
 ### Fix batch 3: what the screenshot retakes and the 1db87df4 recertification found (2026-11-13)
 
 On the `fix3` branch from 1db87df4, one commit per item, each test drilled red with the fix broken and green

@@ -37,6 +37,7 @@
 #include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
+#include "sak/volume_check_outcome.h"
 #include "sak/widget_helpers.h"
 
 #include <QAbstractButton>
@@ -3332,6 +3333,12 @@ public:
 
     void setRows(QVector<SizePreviewRow> rows) {
         m_rows = std::move(rows);
+        // The bars are painted, so what they say is told to a screen reader here as well.
+        QStringList said;
+        for (const auto& row : m_rows) {
+            said.append(row.label + QStringLiteral(": ") + row.text);
+        }
+        setAccessibleDescription(said.join(QStringLiteral("; ")));
         // Tall enough for every row: the resize preview's third row, "Max online", ran past the
         // 82 px the widget kept and was cut (UI review F7).
         const auto count = static_cast<int>(m_rows.size());
@@ -3933,7 +3940,11 @@ struct ResizePartitionWidgets {
     uint64_t current_offset_bytes{0};
     uint64_t adjacent_free_bytes{0};
     uint64_t max_online_bytes{0};
+    /// The partition and the free space after it: the bars' scale for an in-place resize.
+    uint64_t region_bytes{0};
     uint64_t disk_bytes{0};
+    /// The queue refuses every size change (resizeSizeFixed): only the current size is offered.
+    bool size_fixed{false};
 };
 
 struct QuickPartitionWidgets {
@@ -5939,10 +5950,51 @@ void addResizeOffsetControls(PartitionOperationDialog& dialog,
     dialog.formLayout()->addRow(QObject::tr("Start offset:"), widgets->target_offset_mb);
 }
 
+// Fix batch 4 (B): whether the queue refuses every size change, so the dialog offers only the
+// current size: the file system's rule refuses both ways (FAT32, exFAT, a file system S.A.K. does
+// not resize or could not identify), or an APFS partition, which only grows, has nothing after it
+// to grow into. NTFS, ReFS and ext are resized both ways, and are never fixed.
+bool resizeSizeFixed(const ResizePartitionWidgets& widgets) {
+    if (widgets.non_native_ext) {
+        return false;
+    }
+    if (!resizeDirectionQueueable(widgets, true) && !resizeDirectionQueueable(widgets, false)) {
+        return true;
+    }
+    return PartitionFileSystemRegistry::isApfs(widgets.file_system) &&
+           widgets.target_size_mb->minimum() == widgets.target_size_mb->maximum();
+}
+
+// The file system as the Resize dialog names it when the free space after it is not usable: its
+// own name, or that the scan could not identify it.
+QString resizeFileSystemName(const QString& file_system) {
+    QString fs = file_system.trimmed();
+    if (fs.isEmpty() || fs.compare(QStringLiteral("RAW"), Qt::CaseInsensitive) == 0 ||
+        fs.compare(QStringLiteral("Unknown"), Qt::CaseInsensitive) == 0) {
+        return QObject::tr("a file system S.A.K. could not identify");
+    }
+    return fs;
+}
+
+// Whether the dialog has free space after the partition that its size cannot use.
+bool resizeFreeSpaceUnusable(const ResizePartitionWidgets& widgets) {
+    return widgets.size_fixed && widgets.adjacent_free_bytes >= kMegabyteBytes;
+}
+
 void addResizeAdjacentFreeControl(PartitionOperationDialog& dialog,
                                   ResizePartitionWidgets* widgets,
                                   uint64_t adjacent_free_bytes) {
-    widgets->adjacent_free_label = new QLabel(formatPartitionBytes(adjacent_free_bytes), &dialog);
+    // The capture of d8c27a15 gave a FAT32 partition "Adjacent free after: 21.89 GB" with nothing
+    // to say that the partition cannot grow into it.
+    const QString free_text = resizeFreeSpaceUnusable(*widgets)
+                                  ? QObject::tr("%1, not usable for %2")
+                                        .arg(formatPartitionBytes(adjacent_free_bytes),
+                                             resizeFileSystemName(widgets->file_system))
+                                  : formatPartitionBytes(adjacent_free_bytes);
+    widgets->adjacent_free_label = new QLabel(free_text, &dialog);
+    // Wraps in the room the row has, so the longer "not usable" text never widens the dialog or
+    // squeezes the row's own label.
+    widgets->adjacent_free_label->setWordWrap(true);
     widgets->adjacent_free_label->setAccessibleDescription(
         QObject::tr("Contiguous free space after selected partition"));
     dialog.formLayout()->addRow(QObject::tr("Adjacent free after:"), widgets->adjacent_free_label);
@@ -5978,6 +6030,7 @@ ResizePartitionWidgets addResizePartitionControls(PartitionOperationDialog& dial
     widgets.file_system = partition.volume ? partition.volume->file_system.trimmed() : QString();
     widgets.non_native_ext = isExtFilesystem(widgets.file_system);
     widgets.max_online_bytes = saturatingAdd(partition.size_bytes, adjacent_free_bytes);
+    widgets.region_bytes = widgets.max_online_bytes;
     widgets.disk_bytes = disk.size_bytes;
     widgets.current_mb = resizeInputMb(partition.size_bytes, true);
     widgets.current_offset_mb = inputMegabytesFromBytes(partition.offset_bytes, 0, kMaxSizeInputMb);
@@ -5986,6 +6039,11 @@ ResizePartitionWidgets addResizePartitionControls(PartitionOperationDialog& dial
     dialog.formLayout()->addRow(QObject::tr("Mode:"), widgets.mode);
 
     addResizeTargetSizeControls(dialog, &widgets, partition);
+    // Where the queue refuses every size change, the most it reaches online is its size now.
+    widgets.size_fixed = resizeSizeFixed(widgets);
+    if (widgets.size_fixed) {
+        widgets.max_online_bytes = widgets.current_bytes;
+    }
     addResizeOffsetControls(dialog, &widgets, disk);
     addResizeAdjacentFreeControl(dialog, &widgets, adjacent_free_bytes);
     widgets.donor_partition = createResizeDonorSelector(&dialog, disk, partition);
@@ -6136,27 +6194,56 @@ QString resizeActionText(uint64_t target_bytes, uint64_t current_bytes) {
     return QObject::tr("No change");
 }
 
+// The Max online row: the current size and the free space after it, in the colour of space the
+// partition can grow into. Where the size cannot change, it is the current size, in a muted colour,
+// and says the free space is not usable (the capture of d8c27a15 drew "2.00 GB current + 21.89 GB
+// free" across the whole bar for a FAT32 partition).
+SizePreviewRow resizeMaxOnlineRow(const ResizePartitionWidgets& widgets, uint64_t scale_bytes) {
+    if (!widgets.size_fixed) {
+        return {
+            .label = QObject::tr("Max online"),
+            .total_bytes = scale_bytes,
+            .filled_bytes = widgets.max_online_bytes,
+            .fill_color = QColor(QString::fromLatin1(ui::kColorWarning)),
+            .text = QObject::tr("%1 current + %2 free")
+                        .arg(formatPartitionBytes(widgets.current_bytes),
+                             formatPartitionBytes(widgets.adjacent_free_bytes)),
+        };
+    }
+    return {
+        .label = QObject::tr("Max online"),
+        .total_bytes = scale_bytes,
+        .filled_bytes = widgets.max_online_bytes,
+        .fill_color = QColor(QString::fromLatin1(ui::kColorTextMuted)),
+        .text = resizeFreeSpaceUnusable(widgets)
+                    ? QObject::tr("%1, the current size: free space not usable for %2")
+                          .arg(formatPartitionBytes(widgets.max_online_bytes),
+                               resizeFileSystemName(widgets.file_system))
+                    : QObject::tr("%1, the current size")
+                          .arg(formatPartitionBytes(widgets.max_online_bytes)),
+    };
+}
+
 void updateResizePreviewRows(const ResizePartitionWidgets& widgets,
                              uint64_t target_bytes,
                              uint64_t scale_bytes) {
-    widgets.size_preview->setRows(
-        {{.label = QObject::tr("Current"),
-          .total_bytes = scale_bytes,
-          .filled_bytes = widgets.current_bytes,
-          .fill_color = QColor(QString::fromLatin1(ui::kColorPrimary)),
-          .text = formatPartitionBytes(widgets.current_bytes)},
-         {.label = QObject::tr("Target"),
-          .total_bytes = scale_bytes,
-          .filled_bytes = target_bytes,
-          .fill_color = QColor(QString::fromLatin1(ui::kColorSuccess)),
-          .text = formatPartitionBytes(target_bytes)},
-         {.label = QObject::tr("Max online"),
-          .total_bytes = scale_bytes,
-          .filled_bytes = widgets.max_online_bytes,
-          .fill_color = QColor(QString::fromLatin1(ui::kColorWarning)),
-          .text = QObject::tr("%1 current + %2 free")
-                      .arg(formatPartitionBytes(widgets.current_bytes),
-                           formatPartitionBytes(widgets.adjacent_free_bytes))}});
+    widgets.size_preview->setRows({
+        {
+            .label = QObject::tr("Current"),
+            .total_bytes = scale_bytes,
+            .filled_bytes = widgets.current_bytes,
+            .fill_color = QColor(QString::fromLatin1(ui::kColorPrimary)),
+            .text = formatPartitionBytes(widgets.current_bytes),
+        },
+        {
+            .label = QObject::tr("Target"),
+            .total_bytes = scale_bytes,
+            .filled_bytes = target_bytes,
+            .fill_color = QColor(QString::fromLatin1(ui::kColorSuccess)),
+            .text = formatPartitionBytes(target_bytes),
+        },
+        resizeMaxOnlineRow(widgets, scale_bytes),
+    });
 }
 
 bool resizeMoveReady(const ResizePartitionWidgets& widgets,
@@ -6189,8 +6276,10 @@ PartitionActionAvailability resizeMoveBackupAvailability(const ResizePartitionWi
 }
 
 void updateResizeControlState(const ResizePartitionWidgets& widgets, bool move_mode) {
-    widgets.target_size_mb->setEnabled(selectedResizeModeCanQueue(widgets));
-    widgets.target_size_handle->setEnabled(selectedResizeModeCanQueue(widgets));
+    // A size that cannot change is not offered as though it could (fix batch 4, B).
+    const bool size_editable = selectedResizeModeCanQueue(widgets) && !widgets.size_fixed;
+    widgets.target_size_mb->setEnabled(size_editable);
+    widgets.target_size_handle->setEnabled(size_editable);
     widgets.target_offset_mb->setEnabled(move_mode);
     widgets.backup_directory->setEnabled(move_mode);
     widgets.browse_backup->setEnabled(move_mode);
@@ -6220,7 +6309,9 @@ void updateResizePartitionPreview(PartitionOperationDialog& dialog,
     const bool move_mode = selectedResizeMode(widgets) == moveStartResizeMode();
     const uint64_t target_offset_bytes = static_cast<uint64_t>(widgets.target_offset_mb->value()) *
                                          kMegabyteBytes;
-    const uint64_t scale_bytes = std::max(move_mode ? widgets.disk_bytes : widgets.max_online_bytes,
+    // The scale is the partition and the free space after it, whether or not the partition can
+    // grow into that space, so a fixed size's bars stand in proportion to it.
+    const uint64_t scale_bytes = std::max(move_mode ? widgets.disk_bytes : widgets.region_bytes,
                                           target_bytes);
     updateResizePreviewRows(widgets, target_bytes, scale_bytes);
     const bool move_ready = resizeMoveReady(widgets, move_mode, target_bytes, target_offset_bytes);
@@ -6266,11 +6357,16 @@ void connectResizePartitionControls(PartitionOperationDialog& dialog,
                          .confirmation = widgets.confirmation,
                          .status = nullptr},
                         QObject::tr("Move Partition Backup Directory"));
-    widgets.size_preview->setInteractiveSegment(
-        kSizePreviewTargetRow, false, true, [widgets](uint64_t, uint64_t size_bytes) {
-            widgets.target_size_mb->setValue(inputMegabytesFromBytes(
-                size_bytes, widgets.target_size_mb->minimum(), widgets.target_size_mb->maximum()));
-        });
+    // A size that cannot change has no handle to drag on its Target bar.
+    if (!widgets.size_fixed) {
+        widgets.size_preview->setInteractiveSegment(
+            kSizePreviewTargetRow, false, true, [widgets](uint64_t, uint64_t size_bytes) {
+                widgets.target_size_mb->setValue(
+                    inputMegabytesFromBytes(size_bytes,
+                                            widgets.target_size_mb->minimum(),
+                                            widgets.target_size_mb->maximum()));
+            });
+    }
     QObject::connect(
         widgets.donor_partition, &QComboBox::currentTextChanged, &dialog, update_preview);
 }
@@ -6635,9 +6731,13 @@ void showMetadataConsistencyDialog(QWidget* parent, const NonNativeFilesystemChe
     addProperty(&rows,
                 QObject::tr("Re-run"),
                 QObject::tr("Refresh Disks re-reads the metadata and recomputes these results"));
+    // Said in the words every read-only check uses (volume_check, fix batch 4, C).
     addProperty(&rows,
                 QObject::tr("Result"),
-                warning ? QObject::tr("Warnings found") : QObject::tr("No sanity warnings"));
+                warning ? volume_check::readOnlyErrorsText(QObject::tr("metadata check")) +
+                              QObject::tr(" (see Findings)")
+                        : volume_check::noErrorsText() +
+                              QObject::tr(" (read-only, in the metadata the last disk scan read)"));
     addProperty(&rows, QObject::tr("Findings"), findings.join('\n'));
     // Why no repair is offered here, so a technician is not left guessing.
     if (!state.repair_available && !state.repair_reason.isEmpty()) {
@@ -6650,11 +6750,14 @@ void showMetadataConsistencyDialog(QWidget* parent, const NonNativeFilesystemChe
 }
 
 QString hfsConsistencyResultText(const PartitionHfsConsistencyCheckResult& result) {
+    // Said in the words every read-only check uses (volume_check, fix batch 4, C).
     if (!result.blockers.isEmpty()) {
-        return QObject::tr("Blocked");
+        return QObject::tr("Not checked (see Blockers)");
     }
-    return result.warnings.isEmpty() ? QObject::tr("No consistency blockers")
-                                     : QObject::tr("Warnings found");
+    return result.warnings.isEmpty()
+               ? volume_check::noErrorsText() + QObject::tr(" (read-only catalog check)")
+               : volume_check::readOnlyErrorsText(QObject::tr("catalog check")) +
+                     QObject::tr(" (see Warnings)");
 }
 
 PartitionHfsConsistencyCheckResult showHfsConsistencyDialog(
@@ -9568,6 +9671,14 @@ void PartitionManagerPanel::reportTestWindowsPhaseForReview(
     m_controller->reportWindowsPhaseForTesting(phase);
 }
 
+void PartitionManagerPanel::runTestReadOnlyFileSystemCheckForReview(
+    PartitionManagerController::FileSystemCheckRunner runner,
+    const QString& file_system,
+    const QString& target_path) {
+    m_controller->setFileSystemCheckRunnerForTesting(std::move(runner));
+    m_controller->runReadOnlyFileSystemCheck(file_system, target_path);
+}
+
 void PartitionManagerPanel::setTestInventoryScannerWithProgressForReview(
     PartitionManagerController::InventoryScannerWithProgress scanner) {
     m_controller->setInventoryScannerWithProgressForTesting(std::move(scanner));
@@ -10303,6 +10414,10 @@ void PartitionManagerPanel::connectControllerSignals() {
             this,
             &PartitionManagerPanel::progressUpdate);
     connect(m_controller.get(),
+            &PartitionManagerController::progressReset,
+            this,
+            &PartitionManagerPanel::progressReset);
+    connect(m_controller.get(),
             &PartitionManagerController::logOutput,
             this,
             &PartitionManagerPanel::logOutput);
@@ -10310,26 +10425,17 @@ void PartitionManagerPanel::connectControllerSignals() {
             &PartitionManagerController::executionFinished,
             this,
             &PartitionManagerPanel::onExecutionFinished);
+    connect(m_controller.get(),
+            &PartitionManagerController::fileSystemCheckFinished,
+            this,
+            &PartitionManagerPanel::onFileSystemCheckFinished);
     connect(m_controller.get(), &PartitionManagerController::windowsPhaseChanged, this, [this]() {
         updateWindowsPhaseNotice();
         updateActionState();
         // An open close prompt rewrites its note: the step may have just become stoppable.
         RunningOperations::notifyChanged();
     });
-    connect(m_controller.get(),
-            &PartitionManagerController::queueRefused,
-            this,
-            [this](const QStringList& reasons) {
-                showWarningLogged(this,
-                                  tr("Not Added to the Queue"),
-                                  reasons.join(QLatin1Char('\n')));
-            });
-    connect(m_controller.get(),
-            &PartitionManagerController::applyRefused,
-            this,
-            [this](const QStringList& reasons) {
-                showWarningLogged(this, tr("Not Applied"), reasons.join(QLatin1Char('\n')));
-            });
+    connectControllerRefusals();
     connect(m_controller.get(), &PartitionManagerController::stateChanged, this, [this]() {
         updateActionState();
     });
@@ -10343,6 +10449,27 @@ void PartitionManagerPanel::connectControllerSignals() {
                     m_table_empty_state->setLoading(text);
                 }
                 Q_EMIT statusMessage(text, 0);
+            });
+}
+
+void PartitionManagerPanel::connectControllerRefusals() {
+    connect(m_controller.get(),
+            &PartitionManagerController::queueRefused,
+            this,
+            [this](const QStringList& reasons) {
+                // The box says the reasons; the status bar, which cut the controller's line with
+                // them at 1024 px, says what happened (fix batch 5, E).
+                Q_EMIT statusMessage(tr("Not added to the queue"), sak::kTimerStatusLongMs);
+                showWarningLogged(this,
+                                  tr("Not Added to the Queue"),
+                                  reasons.join(QLatin1Char('\n')));
+            });
+    connect(m_controller.get(),
+            &PartitionManagerController::applyRefused,
+            this,
+            [this](const QStringList& reasons) {
+                Q_EMIT statusMessage(tr("Not applied"), sak::kTimerStatusLongMs);
+                showWarningLogged(this, tr("Not Applied"), reasons.join(QLatin1Char('\n')));
             });
 }
 
@@ -13820,6 +13947,37 @@ void PartitionManagerPanel::onWipeSelected() {
     queueOperation(*type, *target, expected_layout_hash);
 }
 
+namespace {
+
+/// How a run ended, for the status bar while its box says the result whole (fix batch 5, E).
+QString executionStatusLead(const PartitionExecutionResult& result) {
+    if (result.cancelled) {
+        return QObject::tr("Partition operation cancelled");
+    }
+    if (!result.success) {
+        return QObject::tr("Partition operation failed");
+    }
+    if (result.findings_need_attention) {
+        return QObject::tr("Partition check needs attention");
+    }
+    return result.dry_run ? QObject::tr("Dry run complete")
+                          : QObject::tr("Partition operation complete");
+}
+
+/// How a read-only tool check ended, for the status bar while its box says what it found.
+QString toolCheckStatusLead(const PartitionFileSystemToolRunResult& result) {
+    if (result.cancelled) {
+        return QObject::tr("Filesystem check cancelled");
+    }
+    if (result.blocked) {
+        return QObject::tr("Filesystem check blocked");
+    }
+    return result.success ? QObject::tr("Filesystem check complete")
+                          : QObject::tr("Filesystem check needs attention");
+}
+
+}  // namespace
+
 void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& result) {
     // The run is over, though the controller reports it running until this result is read: an
     // open close prompt that asked about it goes first, so this result never opens over a prompt
@@ -13841,11 +13999,32 @@ void PartitionManagerPanel::onExecutionFinished(const PartitionExecutionResult& 
         // Shown once the check has finished, so it does not say "after this finishes".
         message += QStringLiteral("\n\n") + tr("Eject the drive in Windows before you unplug it.");
     }
-    if (result.success || (result.cancelled && !needs_attention)) {
+    // The box says the result whole; the status bar says how the run ended. The controller's
+    // line, one sentence a volume, ran past the bar's first permanent widget (fix batch 5, E).
+    Q_EMIT statusMessage(executionStatusLead(result), sak::kTimerStatusDefaultMs);
+    // A check that ran to its end and found errors, or gave no answer about a volume, passed as a
+    // run and is still a warning (fix batch 4, C).
+    if ((result.success && !result.findings_need_attention) ||
+        (result.cancelled && !needs_attention)) {
         showInformationLogged(this, tr("Partition Manager"), message);
         return;
     }
     showWarningLogged(this, tr("Partition Manager"), message);
+}
+
+// Fix batch 4 (C): Check Non-Windows File System's read-only tool check (e2fsck -n, fsck_hfs -n)
+// ended in the status bar alone ("Filesystem check complete"). Its end now says what it found, as
+// Check File System's does, in the same words.
+void PartitionManagerPanel::onFileSystemCheckFinished(
+    const PartitionFileSystemToolRunResult& result) {
+    const auto outcome = volume_check::toolCheckOutcome(result, result.file_system);
+    // As onExecutionFinished: the status bar says how the check ended, the box what it found.
+    Q_EMIT statusMessage(toolCheckStatusLead(result), sak::kTimerStatusDefaultMs);
+    if (outcome.needs_attention) {
+        showWarningLogged(this, tr("Check Non-Windows File System"), outcome.text);
+        return;
+    }
+    showInformationLogged(this, tr("Check Non-Windows File System"), outcome.text);
 }
 
 std::optional<PartitionTarget> PartitionManagerPanel::selectedTarget() const {

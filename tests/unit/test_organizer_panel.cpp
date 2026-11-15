@@ -115,7 +115,39 @@ private Q_SLOTS:
     void thereIsNoPreviewModeLeftToForget();
     void theHiddenExplorerKeepsItsStatusToItself();
     void eachPageHasOnePrimaryButton();
+    void aFailedOrCancelledRunLeavesNoProgressBar();
 };
+
+// Fix batch 5 (F): a run that failed or was cancelled sent 0 of 100, and the status bar's bar
+// stayed at 0% beside "Ready" until the next run. Each such end, of an organize or a duplicate
+// scan, resets the bar, as when idle, and sends no value.
+void OrganizerPanelTests::aFailedOrCancelledRunLeavesNoProgressBar() {
+    sak::OrganizerPanel panel;
+    QSignalSpy progress(&panel, &sak::OrganizerPanel::progressUpdate);
+    QSignalSpy reset(&panel, &sak::OrganizerPanel::progressReset);
+    QTimer closer;
+    closer.setInterval(1);
+    connect(&closer, &QTimer::timeout, &panel, []() {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            box->accept();
+        }
+    });
+    closer.start();
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onWorkerCancelled", Qt::DirectConnection));
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onDedupWorkerCancelled", Qt::DirectConnection));
+    QVERIFY(QMetaObject::invokeMethod(&panel,
+                                      "onWorkerFailed",
+                                      Qt::DirectConnection,
+                                      Q_ARG(int, 1),
+                                      Q_ARG(QString, QStringLiteral("The target is read-only"))));
+    QVERIFY(QMetaObject::invokeMethod(&panel,
+                                      "onDedupWorkerFailed",
+                                      Qt::DirectConnection,
+                                      Q_ARG(int, 1),
+                                      Q_ARG(QString, QStringLiteral("Access denied"))));
+    QCOMPARE(reset.count(), 4);
+    QVERIFY2(progress.isEmpty(), "an end that did not run to its end sends no value");
+}
 
 // Review 4 (Y12): File Organizer had eight primary buttons (Scan, Manual, Browse, the category
 // edits, Settings and Organize Files). Each page's one primary button does the page's work.

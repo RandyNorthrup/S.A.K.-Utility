@@ -605,9 +605,7 @@ void WindowsISODownloadDialog::onStartDownload() {
     setInputsEnabled(false);
     m_startButton->setEnabled(false);
     m_cancelButton->setEnabled(true);
-    m_downloadProgressBar->setValue(0);
-    m_downloadProgressBar->setFormat(QStringLiteral("%p%"));
-    m_convertProgressBar->setValue(0);
+    resetProgressDisplay();
 
     m_downloader->startDownload(m_selectedUpdateId, lang_code, edition, save_path);
 }
@@ -738,6 +736,7 @@ void WindowsISODownloadDialog::onDownloadError(const QString& error) {
     m_isDownloading = false;
 
     m_statusLabel->setText(QString("Error: %1").arg(error));
+    resetProgressDisplay();
     m_cancelButton->setEnabled(false);
     setInputsEnabled(true);
     updateStartButton();
@@ -787,10 +786,7 @@ void WindowsISODownloadDialog::onCancelDownload() {
         m_isDownloading = false;
         m_statusLabel->setText("Build cancelled");
         m_phaseLabel->clear();
-        m_speedLabel->clear();
-        m_detailLabel->clear();
-        m_downloadProgressBar->setValue(0);
-        m_convertProgressBar->setValue(0);
+        resetProgressDisplay();
         m_cancelButton->setEnabled(false);
         setInputsEnabled(true);
         updateStartButton();
@@ -825,6 +821,17 @@ void WindowsISODownloadDialog::updateStartButton() {
                        m_editionCombo->currentIndex() >= 0 &&
                        !m_saveLocationEdit->text().trimmed().isEmpty();
     m_startButton->setEnabled(ready);
+}
+
+// Fix batch 5 (F): a failed build left both bars where it stopped, and a refused retry showed
+// them so: Start's checks come before the reset it makes.
+void WindowsISODownloadDialog::resetProgressDisplay() {
+    m_downloadProgressBar->setValue(0);
+    m_downloadProgressBar->setFormat(QStringLiteral("%p%"));
+    m_convertProgressBar->setValue(0);
+    m_convertProgressBar->setFormat(QStringLiteral("%p%"));
+    m_speedLabel->clear();
+    m_detailLabel->clear();
 }
 
 void WindowsISODownloadDialog::setInputsEnabled(bool enabled) {

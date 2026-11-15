@@ -251,8 +251,17 @@ public:
     static FreeSpaceProbe setFreeSpaceProbeForTesting(FreeSpaceProbe probe);
 
     /// @brief Why work files cannot go under @p work_root, or empty when they can: the drive
-    ///        holding it needs @p needed_bytes free. Names the folder and both sizes.
+    ///        holding it needs @p needed_bytes free. Names the drive (workDriveName), "S.A.K.'s
+    ///        work folder" and both sizes; the folder itself goes to the log only.
     [[nodiscard]] static QString workSpaceRefusal(const QString& work_root, qint64 needed_bytes);
+
+    /// @brief The status bar's short form of a workSpaceRefusal message ("not enough free space on
+    ///        V:"), or empty when @p refusal is not one.
+    [[nodiscard]] static QString workSpaceRefusalShortForm(const QString& refusal);
+
+    /// @brief The drive @p work_root is on as a person names it ("V:", or a share's root), or
+    ///        "the drive S.A.K. runs from" when Windows cannot say.
+    [[nodiscard]] static QString workDriveName(const QString& work_root);
 
     /// @brief What a download of @p declared_bytes needs on the drive it is staged on: the staged
     ///        file, a second copy when its target is on that drive too, and

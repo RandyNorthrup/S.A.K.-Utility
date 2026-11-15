@@ -76,6 +76,8 @@ private:
     void updateDistroDetails();
     void updateStartButton();
     void setInputsEnabled(bool enabled);
+    /// The progress bar, its text and the detail and speed beside it, as before a download.
+    void resetProgressDisplay();
     QString getDefaultSavePath(const QString& file_name) const;
     static QString formatSize(qint64 bytes);
 

@@ -1473,6 +1473,9 @@ void AdvancedSearchPanel::onSearchFailed(const QString& error) {
     if (m_results_empty != nullptr) {
         m_results_empty->clearLoading();
     }
+    // The busy bar the search started ran on after it failed: it goes, as when idle, before the
+    // message (fix batch 5, F).
+    Q_EMIT progressReset();
     Q_EMIT statusMessage(tr("Search failed: %1").arg(error), sak::kTimerStatusDefaultMs);
     logMessage(tr("Search failed: %1").arg(error));
 }
@@ -1482,6 +1485,7 @@ void AdvancedSearchPanel::onSearchCancelled() {
     if (m_results_empty != nullptr) {
         m_results_empty->clearLoading();
     }
+    Q_EMIT progressReset();
     Q_EMIT statusMessage(tr("Search cancelled"), sak::kTimerStatusDefaultMs);
     logMessage(tr("Search cancelled"));
 }

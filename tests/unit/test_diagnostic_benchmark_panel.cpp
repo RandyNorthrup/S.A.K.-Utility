@@ -582,6 +582,9 @@ private Q_SLOTS:
     void thermalReasonsAreShownInFull();
     void anUnreadDiskSaysSoNotThatThePcCannot();
     void exportScanReportWritesTheHtmlItSays();
+    void savedReportsSayWhereInTheBoxNotTheStatusBar();
+    void aStoppedBenchmarkLeavesNoFullBar();
+    void aFailedBenchmarkEndsAndLeavesNoBar();
 
 private:
     void runInventoryReportAndCheckItsFile();
@@ -678,6 +681,73 @@ void DiagnosticBenchmarkPanelTests::inventoryReportRunsItsRealCollectors() {
             return std::nullopt;
         });
     runInventoryReportAndCheckItsFile();
+}
+
+// Fix batch 5 (E): "Reports saved to " and the folder was the status bar's message as the box that
+// says where opened, and a folder of any length ran past the bar's first permanent widget. While
+// the box says where, the bar says what happened.
+void DiagnosticBenchmarkPanelTests::savedReportsSayWhereInTheBoxNotTheStatusBar() {
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    QSignalSpy status(&panel, &sak::DiagnosticBenchmarkPanel::statusMessage);
+    const QString folder = QStringLiteral(
+        "D:/Service Records/S.A.K. Utility/Diagnostic Reports/2026-11-14 Front Desk PC");
+    QString shown;
+    QString status_while_open;
+    QTimer closer;
+    closer.setInterval(1);
+    connect(&closer, &QTimer::timeout, &panel, [&]() {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            shown = box->text();
+            status_while_open = status.isEmpty() ? QString() : status.last().at(0).toString();
+            box->accept();
+        }
+    });
+    closer.start();
+    QVERIFY(QMetaObject::invokeMethod(
+        &panel, "onReportsGenerated", Qt::DirectConnection, Q_ARG(QString, folder)));
+    QVERIFY2(shown.contains(QDir::toNativeSeparators(folder)), qPrintable(shown));
+    QCOMPARE(status_while_open, QStringLiteral("Diagnostic reports saved"));
+}
+
+// Fix batch 5 (F): a stopped benchmark ended the status bar's bar at 100%. It resets the bar, as
+// when idle.
+void DiagnosticBenchmarkPanelTests::aStoppedBenchmarkLeavesNoFullBar() {
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    QSignalSpy progress(&panel, &sak::DiagnosticBenchmarkPanel::progressUpdate);
+    QSignalSpy reset(&panel, &sak::DiagnosticBenchmarkPanel::progressReset);
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onStopBenchmarkClicked", Qt::DirectConnection));
+    QCOMPARE(reset.count(), 1);
+    QVERIFY(progress.isEmpty());
+}
+
+// Fix batch 5 (F): a benchmark that failed before its first step left the status bar's bar where
+// its start put it and the panel locked: no completion follows a failure. The failure ends the
+// run and resets the bar, as when idle; a drive's own warning during a scan does neither.
+void DiagnosticBenchmarkPanelTests::aFailedBenchmarkEndsAndLeavesNoBar() {
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::DiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    QPushButton* stop = nullptr;
+    for (auto* button : panel.findChildren<QPushButton*>()) {
+        if (button->accessibleName() == QStringLiteral("Stop Benchmark")) {
+            stop = button;
+        }
+    }
+    QVERIFY(stop != nullptr);
+    QSignalSpy progress(&panel, &sak::DiagnosticBenchmarkPanel::progressUpdate);
+    QSignalSpy reset(&panel, &sak::DiagnosticBenchmarkPanel::progressReset);
+    Q_EMIT controller->errorOccurred(QStringLiteral("SMART data unavailable for PhysicalDrive1"));
+    QCOMPARE(reset.count(), 0);
+    // A benchmark's Stop is enabled while it runs; its failure is reported as an error.
+    stop->setEnabled(true);
+    Q_EMIT controller->errorOccurred(
+        QStringLiteral("Disk benchmark failed: the test file could not be created"));
+    QCOMPARE(reset.count(), 1);
+    QVERIFY(!stop->isEnabled());
+    QVERIFY(progress.isEmpty());
 }
 
 void DiagnosticBenchmarkPanelTests::runInventoryReportAndCheckItsFile() {

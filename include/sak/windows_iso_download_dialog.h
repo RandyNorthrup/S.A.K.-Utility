@@ -99,6 +99,8 @@ private:
     void updateStartButton();
     QString getDefaultSavePath();
     void setInputsEnabled(bool enabled);
+    /// Both progress bars, their text and the detail and speed beside them, as before a build.
+    void resetProgressDisplay();
 
     WindowsISODownloader* m_downloader;
 

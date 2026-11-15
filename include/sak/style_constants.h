@@ -608,6 +608,17 @@ inline constexpr auto kWindows11ThemeSliderStyles = R"SAK(
         }
     )SAK";
 
+/// A disabled slider's handle (fix batch 5, G). The handle rules above have no state, so a
+/// disabled handle stayed the enabled blue beside its greyed size box. It takes the theme's
+/// disabled text colour, the colour of that box's text; the dark theme outlines it a step
+/// lighter, as its groove is close to that colour.
+inline constexpr auto kWindows11ThemeSliderDisabledStyles = R"SAK(
+        QSlider::handle:horizontal:disabled, QSlider::handle:vertical:disabled {
+            background: %1;
+            border: 1px solid %2;
+        }
+    )SAK";
+
 inline constexpr auto kWindows11ThemeScrollBarStyles = R"SAK(
         QScrollBar:vertical, QScrollBar:horizontal {
             background: transparent;

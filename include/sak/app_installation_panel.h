@@ -39,6 +39,7 @@ class MigrationReport;
 class LogToggleSwitch;
 class OfflineDeploymentWorker;
 class PackageListManager;
+struct BatchStats;
 
 /**
  * @brief App Installation Panel (formerly App Migration)
@@ -88,9 +89,17 @@ public:
 
     /** @brief Access the log toggle switch for MainWindow connection */
 
+    /// @brief What the status bar says when an offline run started by @p action is refused or
+    ///        fails with @p error: "Build Offline Bundle: not enough free space on V:". The box
+    ///        says @p error whole (OfflineDeploymentWorker::errorShortForm).
+    [[nodiscard]] static QString offlineErrorStatus(const QString& action, const QString& error);
+
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdated(int current, int maximum);
+    /// The operation ended without running to its end (refused, failed or cancelled): the
+    /// status bar hides its progress bar at once, as when idle (MainWindow::resetProgress).
+    void progressReset();
     void logOutput(const QString& message);
 
 private Q_SLOTS:
@@ -168,6 +177,22 @@ private:
     void setupOfflineWorkerProgressConnections();
     void setupOfflineWorkerCompletionConnections();
     [[nodiscard]] QString offlineStatusBarText(const QString& summary) const;
+    /** @brief End an offline run: status label, status bar, and a warning box if any failed. */
+    void onOfflineOperationCompleted(const BatchStats& stats);
+    /** @brief End an offline run that was refused or failed as a whole: say why in view. */
+    void onOfflineOperationError(const QString& error);
+    /** @brief The action the offline run was started by, for the title of what it reports. */
+    [[nodiscard]] QString offlineActionTitle() const;
+    /** @brief The offline list's packages as (id, version) pairs. */
+    [[nodiscard]] QVector<QPair<QString, QString>> offlineListPackages() const;
+    /** @brief Claim the offline path for a run started by @p action_button. */
+    void beginOfflineRun(const QPushButton* action_button);
+    /** @brief Build Offline Bundle once its output folder is chosen. */
+    void startBuildBundle(const QString& output_dir);
+    /** @brief Direct Download once its output folder is chosen. */
+    void startDirectDownload(const QString& output_dir);
+    /** @brief Install from Bundle once its manifest is chosen, checked and confirmed. */
+    void startInstallFromBundle(const QString& manifest_path, const QString& packages_dir);
     void setupOfflinePresetRow(QVBoxLayout* offline_layout);
     void setupOfflineSearchGroup(QHBoxLayout* side_by_side);
     void setupOfflineDeployListGroup(QHBoxLayout* side_by_side);
@@ -282,6 +307,10 @@ private:
     // the reason was only ever in the log, and the status bar was left at the last success.
     int m_offline_total{0};
     QStringList m_offline_failures;
+    // The button that started this run ("Build Offline Bundle", ...), and whether Cancel was
+    // asked for: a refusal or failure is reported under the first, a cancel is not a failure.
+    QString m_offline_action;
+    bool m_offline_cancel_requested{false};
 
     // Async
     QFuture<void> m_searchFuture;

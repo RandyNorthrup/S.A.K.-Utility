@@ -385,6 +385,9 @@ struct PartitionExecutionResult {
     bool dry_run{false};
     bool cancelled{false};
     bool timed_out{false};
+    /// A read-only check ran to its end and found errors, or gave no answer about a volume: the
+    /// run succeeded, and its result is still shown as a warning.
+    bool findings_need_attention{false};
     QString message;
     QString report_text;  ///< For the log: every step, and all of its output, as plain text
     QString report_html;

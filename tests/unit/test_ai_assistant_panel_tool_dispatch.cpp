@@ -64,6 +64,7 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProcess>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QScopeGuard>
@@ -594,6 +595,28 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         QVERIFY(panel.m_workflowDetailsCloseButton != nullptr);
         QCOMPARE(panel.m_workflowDetailsCloseButton->styleSheet(), sak::ui::kSecondaryButtonStyle);
+    }
+
+    // Fix batch 5 (F): a workflow refused at its checks, before any phase ran, left its bar on
+    // "Failed: 0/3 complete", and one that resumed a finished run, a full bar. A run that ran no
+    // phase is shown as idle.
+    void aWorkflowThatRanNoPhaseLeavesNoProgressBar() {
+        AiAssistantPanel panel;
+        ai::WorkflowTemplate workflow;
+        workflow.id = QStringLiteral("windows_update_repair");
+        workflow.title = QStringLiteral("Windows Update Repair");
+        for (const char* id : {"scan", "repair", "verify"}) {
+            ai::WorkflowPhase phase;
+            phase.id = QString::fromLatin1(id);
+            workflow.phases.append(phase);
+        }
+        panel.beginWorkflowProgressUi(workflow, QJsonObject{});
+        QVERIFY(!panel.m_workflowProgressBar->isHidden());
+        ai::AiOrchestratorResult refused;
+        refused.status = ai::AiRunStatus::Failed;
+        panel.finishWorkflowProgressUi(refused);
+        QVERIFY2(panel.m_workflowProgressBar->isHidden(),
+                 qPrintable(panel.m_workflowProgressBar->format()));
     }
 
     // Review 3 (N17): the workflow pane's heading was 21 px tall beside a 13 px page title:

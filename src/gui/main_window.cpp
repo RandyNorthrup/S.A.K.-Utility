@@ -515,6 +515,8 @@ MainWindow::~MainWindow() {
     // Must be first: stops the tab-change status-bar handlers from running while
     // the window is being destroyed (they would dereference freed tool panels).
     m_shutting_down = true;
+    // The panels' windows close as they are destroyed; this window no longer watches for them.
+    qApp->removeEventFilter(this);
     // Child widgets are destroyed after this window's members; focus moving while they go must
     // not reach m_window_shortcuts.
     disconnect(m_focus_connection);
@@ -633,6 +635,17 @@ void MainWindow::createStatusBar() {
     m_progress_bar->setTextVisible(true);
     m_progress_bar->setVisible(false);
     statusBar()->addPermanentWidget(m_progress_bar);
+
+    // A timed message keeps its own time, which stands still while a modal window is open
+    // (eventFilter): Offline Deploy's refusal started its 5 s with its box, and anyone who read
+    // the box for longer came back to "Ready" (fix batch 5, E).
+    m_status_message_timer = new QTimer(this);
+    m_status_message_timer->setSingleShot(true);
+    connect(m_status_message_timer, &QTimer::timeout, this, [this] {
+        m_status_message_timeout_ms = 0;
+        statusBar()->clearMessage();
+    });
+    qApp->installEventFilter(this);
 
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     statusBar()->addPermanentWidget(m_ai_status_label);
@@ -1054,6 +1067,10 @@ void MainWindow::createEmailToolsPanel() {
             &OstConverterWidget::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_ost_converter_widget.get(),
+            &OstConverterWidget::progressReset,
+            this,
+            &MainWindow::resetProgress);
 
     addTabWithTooltip(m_tab_widget,
                       email_wrapper,
@@ -1233,6 +1250,10 @@ void MainWindow::createNetworkManagementPanel() {
 
 void MainWindow::clearTabStatus() {
     m_status_message_is_work = false;
+    m_status_message_timeout_ms = 0;
+    if (m_status_message_timer != nullptr) {
+        m_status_message_timer->stop();
+    }
     statusBar()->clearMessage();
     if (m_status_label != nullptr) {
         m_status_label->setText(tr("Ready"));
@@ -1499,6 +1520,8 @@ void MainWindow::wireFileManagementPanels() {
             &OrganizerPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(
+        m_organizer_panel.get(), &OrganizerPanel::progressReset, this, &MainWindow::resetProgress);
     connect(m_advanced_search_panel.get(),
             &AdvancedSearchPanel::statusMessage,
             this,
@@ -1509,6 +1532,10 @@ void MainWindow::wireFileManagementPanels() {
             &AdvancedSearchPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_advanced_search_panel.get(),
+            &AdvancedSearchPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connectPanelLog(m_organizer_panel.get());
     connectPanelLog(m_advanced_search_panel.get());
 }
@@ -1525,6 +1552,10 @@ void MainWindow::wirePartitionPanel() {
             &PartitionManagerPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_partition_manager_panel.get(),
+            &PartitionManagerPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connectPartitionManagerNavigation();
     connectPanelLog(m_partition_manager_panel.get());
 }
@@ -1563,6 +1594,10 @@ void MainWindow::wireImageFlasherPanel() {
             &ImageFlasherPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_image_flasher_panel.get(),
+            &ImageFlasherPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connectPanelLog(m_image_flasher_panel.get());
 }
 
@@ -1578,6 +1613,10 @@ void MainWindow::wireDiagnosticPanel() {
             &DiagnosticBenchmarkPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_diagnostic_benchmark_panel.get(),
+            &DiagnosticBenchmarkPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connectPanelLog(m_diagnostic_benchmark_panel.get());
 }
 
@@ -1608,6 +1647,10 @@ void MainWindow::wireAppManagementPanels() {
             &AppInstallationPanel::progressUpdated,
             this,
             &MainWindow::updateProgress);
+    connect(m_app_installation_panel.get(),
+            &AppInstallationPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connect(m_advanced_uninstall_panel.get(),
             &AdvancedUninstallPanel::statusMessage,
             this,
@@ -1618,6 +1661,10 @@ void MainWindow::wireAppManagementPanels() {
             &AdvancedUninstallPanel::progressUpdate,
             this,
             &MainWindow::updateProgress);
+    connect(m_advanced_uninstall_panel.get(),
+            &AdvancedUninstallPanel::progressReset,
+            this,
+            &MainWindow::resetProgress);
     connect(m_vulnerability_panel.get(),
             &VulnerabilityPanel::statusMessage,
             this,
@@ -1842,7 +1889,36 @@ void MainWindow::updateStatus(const QString& message, int timeout_ms) {
     // one or the end of the work: a recovery scan's ran out after 5 s and left "Ready" beside a
     // bar at 5%.
     m_status_message_is_work = progressShowsRunningWork();
-    statusBar()->showMessage(message, m_status_message_is_work ? 0 : timeout_ms);
+    m_status_message_timeout_ms = m_status_message_is_work ? 0 : timeout_ms;
+    statusBar()->showMessage(message);
+    startStatusMessageTime();
+}
+
+// A message shown with a message box, before it or while it is open, is given its whole time
+// once the person is back from the box: its time begins when the last modal window closes. The
+// status bar's own timeout ran on behind the box (fix batch 5, E).
+void MainWindow::startStatusMessageTime() {
+    if (m_status_message_timer == nullptr) {
+        return;
+    }
+    m_status_message_timer->stop();
+    if (m_status_message_timeout_ms > 0 && QApplication::activeModalWidget() == nullptr) {
+        m_status_message_timer->start(m_status_message_timeout_ms);
+    }
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    const QEvent::Type type = event->type();
+    if ((type == QEvent::Show || type == QEvent::Hide) && m_status_message_timeout_ms > 0 &&
+        !m_shutting_down) {
+        const auto* window = qobject_cast<const QWidget*>(watched);
+        if (window != nullptr && window->isWindow() && window->isModal()) {
+            // Looked at once the event is over, when Qt's list of modal windows has caught up:
+            // a box closing as another opens leaves the time standing.
+            QTimer::singleShot(0, this, &MainWindow::startStatusMessageTime);
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::updateProgress(int current, int maximum) {
@@ -1899,6 +1975,22 @@ void MainWindow::bringToFront() {
 void MainWindow::hideProgressBarIfComplete() {
     if ((m_progress_bar != nullptr) && m_progress_bar->value() >= m_progress_bar->maximum()) {
         m_progress_bar->setVisible(false);
+    }
+}
+
+// Fix batch 5 (F): the bar's one way to end was its maximum, so Offline Deploy's refusal ended
+// it at 100% though nothing had started, and (0, 0), sent to hide it, left it busy.
+void MainWindow::resetProgress() {
+    if (m_progress_bar == nullptr) {
+        return;
+    }
+    m_progress_bar->setVisible(false);
+    m_progress_bar->setRange(0, 1);
+    m_progress_bar->setValue(0);
+    // The work is over, so a message about it goes, as at its end.
+    if (m_status_message_is_work) {
+        m_status_message_is_work = false;
+        statusBar()->clearMessage();
     }
 }
 

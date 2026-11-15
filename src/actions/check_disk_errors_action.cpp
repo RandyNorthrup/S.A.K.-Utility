@@ -12,6 +12,7 @@
 #include "sak/layout_constants.h"
 #include "sak/partition_script_builder.h"
 #include "sak/process_runner.h"
+#include "sak/volume_check_outcome.h"
 #include "sak/windows_continued_work.h"
 
 #include <QDeadlineTimer>
@@ -156,27 +157,19 @@ bool CheckDiskErrorsAction::driveTypeIsScannable(unsigned int drive_type) {
 
 CheckDiskErrorsAction::ScanVerdict CheckDiskErrorsAction::classifyScanResult(
     const QString& result) {
-    // The names are the Volume.RepairStatus enumeration in the Storage module's Volume.cdxml.
-    // Everything not listed -- Failed, ScanNeedsRetry, ScanRunning, the snapshot errors, the
-    // triage states, or a name a later Windows adds -- is not an answer about this volume.
-    static const QStringList kClean = {QStringLiteral("NoErrorsFound"),
-                                       QStringLiteral("ScanNoErrorsFound")};
-    static const QStringList kFixed = {QStringLiteral("ErrorsFixed"),
-                                       QStringLiteral("MinorErrorsFixedOrCleanup"),
-                                       QStringLiteral("ScanErrorsFoundAndFixedOnline"),
-                                       QStringLiteral("ScanFoundAndFixedLeaks")};
-    static const QStringList kNeedsRepair = {QStringLiteral("ScanErrorsFixedOnlineAlsoNeedSpotFix"),
-                                             QStringLiteral("ScanErrorsFoundNeedSpotFix"),
-                                             QStringLiteral("NeedOfflineScanAndFix"),
-                                             QStringLiteral("ScanFoundLeaks")};
-    if (kClean.contains(result)) {
+    // The names are the Volume.RepairStatus enumeration in the Storage module's Volume.cdxml,
+    // read as Partition Manager's Check File System reads them (volume_check). Everything not
+    // listed -- Failed, ScanNeedsRetry, ScanRunning, the snapshot errors, the triage states, or a
+    // name a later Windows adds -- is not an answer about this volume.
+    switch (volume_check::repairStatusFinding(result)) {
+    case volume_check::Finding::NoErrors:
         return ScanVerdict::NoErrors;
-    }
-    if (kFixed.contains(result)) {
+    case volume_check::Finding::FixedOnline:
         return ScanVerdict::FixedOnline;
-    }
-    if (kNeedsRepair.contains(result)) {
+    case volume_check::Finding::ErrorsFound:
         return ScanVerdict::NeedsRepair;
+    case volume_check::Finding::NotChecked:
+        break;
     }
     return ScanVerdict::Inconclusive;
 }
@@ -416,24 +409,25 @@ void CheckDiskErrorsAction::appendDriveScanEntry(const ParsedDriveState& state,
 
     // One plain sentence per drive. Windows' own result name ("NoErrorsFound") stood above the
     // same verdict in words (review 4, Y14); it is kept only where errors call for a closer look.
+    // The verdicts in the words Partition Manager's Check File System uses (volume_check).
     drives_scanned++;
     switch (verdict) {
     case ScanVerdict::NoErrors:
-        report += QString("Drive %1: \u2713 No errors found\n").arg(state.drive_letter);
+        report +=
+            QString("Drive %1: \u2713 %2\n").arg(state.drive_letter, volume_check::noErrorsText());
         break;
     case ScanVerdict::FixedOnline:
         errors_found++;
-        report += QString(
-                      "Drive %1: \u26a0 Errors found and fixed by Windows while the drive stayed "
-                      "online\n")
-                      .arg(state.drive_letter);
+        report += QString("Drive %1: \u26a0 %2\n")
+                      .arg(state.drive_letter, volume_check::fixedOnlineText());
         break;
     default:
         errors_found++;
         repairs_recommended++;
-        report += QString("Drive %1: \u26a0 Errors found (Windows reports %2)\n")
-                      .arg(state.drive_letter, state.result);
-        report += "  \u2139 Repair recommended (this check does not modify the disk)\n";
+        report += QString("Drive %1: \u26a0 %2\n")
+                      .arg(state.drive_letter,
+                           volume_check::windowsReportsErrorsText(state.result));
+        report += QString("  \u2139 %1\n").arg(volume_check::repairRecommendedText());
         break;
     }
     report += "\n";
@@ -448,19 +442,18 @@ bool CheckDiskErrorsAction::appendReadOnlyCheckEntry(const ParsedDriveState& sta
     // Repair-Volume's.
     if (state.read_only_check == QStringLiteral("None")) {
         drives_scanned++;
-        report += QString("Drive %1: \u2713 No errors found (read-only chkdsk)\n\n")
-                      .arg(state.drive_letter);
+        report += QString("Drive %1: \u2713 %2 (read-only chkdsk)\n\n")
+                      .arg(state.drive_letter, volume_check::noErrorsText());
         return true;
     }
     if (state.read_only_check == QStringLiteral("Problems")) {
         drives_scanned++;
         errors_found++;
         repairs_recommended++;
-        report += QString(
-                      "Drive %1: \u26a0 Errors found by a read-only chkdsk, which fixed none "
-                      "of them\n")
-                      .arg(state.drive_letter);
-        report += "  \u2139 Repair recommended (this check does not modify the disk)\n\n";
+        report += QString("Drive %1: \u26a0 %2\n")
+                      .arg(state.drive_letter,
+                           volume_check::readOnlyErrorsText(QStringLiteral("chkdsk")));
+        report += QString("  \u2139 %1\n\n").arg(volume_check::repairRecommendedText());
         return true;
     }
     return false;
