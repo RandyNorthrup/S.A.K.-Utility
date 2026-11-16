@@ -3690,9 +3690,13 @@ hooks on the merge commit. Drills for the two T2 fixes, red then green: `ops-dri
 ### Fix batch 6: what the signed v0.9.3-rc.2 run found (2026-11-15)
 
 Release run 43744620769 (tag v0.9.3-rc.2) built the package and signed it through OIDC Artifact Signing, every catalog
-file Valid and timestamped. Its verify job then refused every first-party binary: the publisher pin held CN and O and
-was compared exactly, and the certificate's subject carries the validated identity's locality, state and country after
-them. A dry run on testpc2 and check A on the VM, given the real subject, passed everything else
+file Valid and timestamped. Its verify job then stopped at its first step, the filesystem tool re-pin, which refused the
+5 signed e2fsprogs and hfsprogs tools ("changed without a valid release signature", status Valid): the publisher pin
+held CN and O and was compared exactly, and the certificate's subject carries the validated identity's locality, state
+and country after them. The verifier, a later step, would have refused every first-party binary on the same pin. (The
+comments at `scripts/authenticode_signer.ps1` and `scripts/test_verify_authenticode_signatures.ps1` that say rc.2's
+verify job refused the first-party binaries are corrected after 0.9.3: they are code the certification covers.) A dry
+run on testpc2 and check A on the VM, given the real subject, passed everything else
 (E:\SAK-Utility-Test-Scratch\rc2-checkA\). On lane2 from d3b5e074 (main's tree), one commit per item. Built and tested
 on testpc2 only (the owner's rule since 2026-11-14), W:\fix6; every fix drilled red with the fix taken back out, the
 file's bytes then restored and checked by SHA-256.
@@ -3718,9 +3722,9 @@ failed too); the verifier comparing by prefix (CN and O alone accepted); the re-
 prefix; the build job's output written as CN and O; the sign job's `PUBLISHER` not taken from the build job; the sign
 check by prefix; the sign check without its catalog check (a catalog without sak_utility.exe accepted). Against the
 rc.2 signed package itself, on testpc2: the build job's step hands on the real subject; the verifier with its default
-pin passes, where d3b5e074's refuses all 5 first-party binaries, as rc.2's verify job did; the re-pin with its default
-re-pins the 6 signed filesystem tool files and writes the same packaged manifest and mapping as the dry run did with
-the subject passed in, where d3b5e074's refuses; the sign job's new check passes its 23 files with the build job's
+pin passes, where d3b5e074's refuses all 5 first-party binaries (rc.2's verify job stopped before it); the re-pin
+with its default re-pins the 6 signed filesystem tool files and writes the same packaged manifest and mapping as the
+dry run did with the subject passed in, where d3b5e074's refuses; the sign job's new check passes its 23 files with the build job's
 output and refuses CN and O alone. Drilled there too: with the pin back to CN and O the verifier refuses rc.2's 5
 first-party binaries again, and the sign check by prefix passes CN and O alone.
 
