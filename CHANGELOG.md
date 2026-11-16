@@ -137,6 +137,14 @@ of its own put on the PC.
 - **A disabled slider looks disabled** - In Resize with a size that cannot change, the size box was greyed and the
   size handle's knob was still the enabled blue. A disabled slider's knob, a disabled size bar's drag handles and a
   disabled switch are drawn in the theme's disabled colour, in light and dark.
+- **The administrator prompt names S.A.K. Utility's helper** - Windows asked whether to let
+  "sak_elevated_helper.exe" make changes, by its bare file name, because only sak_utility.exe carried a version
+  resource. The helper and the APFS and HFS+ writers now carry one too: the prompt reads "S.A.K. Utility - Elevated
+  Helper", and Properties > Details names the program, S.A.K. Utility, Randy Northrup and the version.
+- **SHA256SUMS.txt lists the file you download** - It listed `SAK-Utility-v0.9.3-Windows-x64.zip`, which the release
+  does not publish, beside `SAK-Utility-Windows-x64.zip`, the download the website and README link to. It now lists
+  the download by its own name, with `sak_utility.exe` and `sak_elevated_helper.exe` inside it, and the release
+  checks that every file it lists is published or inside the download.
 - **Check File System says what the check found** - Its result said "Partition operation batch complete", with
   the note to eject a USB drive, whatever the check had found. It now says, for each drive, "No errors found",
   "Errors found (Windows reports ...)" with a repair recommended, or "Not checked" and why, in the words Quick

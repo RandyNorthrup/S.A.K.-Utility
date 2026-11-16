@@ -19,7 +19,8 @@
        never runs and nothing is signed.
     3. The exe check is reached only after a real signing, so its wiring is read from the script:
        the exe sign-exe.ps1 signed is checked against the publisher verify_authenticode_signatures.ps1
-       requires of every packaged first-party binary.
+       requires of every packaged first-party binary, $SakPublisherSubject, which both take from
+       authenticode_signer.ps1.
 #>
 
 [CmdletBinding()]
@@ -139,10 +140,25 @@ try {
     Assert-True ($signtool.Count -eq 1) "sign-exe.ps1 runs signtool sign once"
     Assert-True ($exeCheck.Count -eq 1) "sign-exe.ps1 checks the signed exe's publisher"
     Assert-True ($exeCheck[0].Extent.StartOffset -gt $signtool[0].Extent.StartOffset) "the publisher is checked after signing"
+    # The package verifier, given no publisher, requires the same $SakPublisherSubject: it reads it
+    # from authenticode_signer.ps1, the file sign-exe.ps1 dot-sources, and has no value of its own.
     $verifier = [Management.Automation.Language.Parser]::ParseFile((Join-Path $Scripts "verify_authenticode_signatures.ps1"), [ref]$tokens, [ref]$errors)
+    Assert-True ($errors.Count -eq 0) "verify_authenticode_signatures.ps1 parses"
     $pinned = $verifier.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "ExpectedPublisher" }
-    Assert-True ($pinned.DefaultValue.Value -ceq $SakPublisherSubject) `
-        "sign-exe.ps1 signs as the publisher the package verifier requires ($($pinned.DefaultValue.Value))"
+    Assert-True ($null -ne $pinned -and $null -eq $pinned.DefaultValue) `
+        "the package verifier's ExpectedPublisher has no default of its own"
+    $dotSource = @($verifier.FindAll({ param($node)
+                $node -is [Management.Automation.Language.CommandAst] -and
+                $node.InvocationOperator -eq [Management.Automation.Language.TokenKind]::Dot -and
+                $node.Extent.Text -match '"authenticode_signer\.ps1"'
+            }, $true))
+    $assignment = @($verifier.FindAll({ param($node)
+                $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+                $node.Left.Extent.Text -ceq '$ExpectedPublisher' -and
+                $node.Right.Extent.Text -ceq '$SakPublisherSubject'
+            }, $true))
+    Assert-True ($dotSource.Count -eq 1 -and $assignment.Count -eq 1) `
+        "sign-exe.ps1 signs as the publisher the package verifier requires (authenticode_signer.ps1's `$SakPublisherSubject)"
 }
 finally {
     foreach ($sandbox in $sandboxes) {

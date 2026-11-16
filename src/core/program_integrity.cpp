@@ -387,7 +387,8 @@ bool isFirstPartyProgram(const QString& relative) {
 
 namespace {
 
-/// Rule (i): a file the release does not change, at its pinned path with its pinned bytes.
+/// Rule (i): a file at its pinned path with the bytes the build pinned (in a release, the files
+/// signing left alone: the Qt and MSVC runtime files, which their vendors signed).
 bool acceptedByPin(const FileFacts& file) {
     return pinnedSha256(file.relative).has_value() && file.sha256 &&
            pinnedMatches(file.relative, file.sha256());

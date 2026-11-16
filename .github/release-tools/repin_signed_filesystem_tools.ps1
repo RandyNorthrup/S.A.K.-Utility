@@ -33,10 +33,20 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
 
-    [string]$ExpectedPublisher = "CN=Randy Northrup, O=Randy Northrup"
+    # Left out, the release publisher: $SakPublisherSubject in scripts/authenticode_signer.ps1, the
+    # one place that names it. Tests pass the subject of their own signed fixtures.
+    [string]$ExpectedPublisher
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $PSBoundParameters.ContainsKey("ExpectedPublisher")) {
+    . (Join-Path $PSScriptRoot "..\..\scripts\authenticode_signer.ps1")
+    $ExpectedPublisher = $SakPublisherSubject
+}
+if ([string]::IsNullOrWhiteSpace($ExpectedPublisher)) {
+    throw "No publisher to check the signed filesystem tools against"
+}
 
 $packageRootPath = (Resolve-Path -LiteralPath $PackageRoot).Path
 $packageManifest = Join-Path $packageRootPath "tools\filesystem\manifest.json"
@@ -98,7 +108,7 @@ foreach ($pin in $pins.Values) {
     $signature = Get-AuthenticodeSignature -LiteralPath $file
     $signer = if ($signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { "" }
     if ($signature.Status -ne "Valid" -or $signer -cne $ExpectedPublisher) {
-        throw "A pinned filesystem tool binary changed without a valid release signature: $($pin.Path) (status $($signature.Status), signer '$signer')"
+        throw "A pinned filesystem tool binary changed without a valid release signature: $($pin.Path) (status $($signature.Status), signer '$signer', expected '$ExpectedPublisher')"
     }
     $changed += [pscustomobject]@{
         Path       = $pin.Path

@@ -12,9 +12,13 @@
     exactly: a certificate whose subject merely starts with an allowed one is someone else.
 #>
 
-# The publisher sakutility.com names, and the one verify_authenticode_signatures.ps1 requires of
-# every packaged first-party binary.
-$SakPublisherSubject = "CN=Randy Northrup, O=Randy Northrup"
+# The release publisher: the full subject of the Artifact Signing certificate, compared exactly.
+# This is the one place it is written. sign-exe.ps1 checks the exe it signed against it, and
+# verify_authenticode_signatures.ps1, the filesystem tool re-pin and release.yml's sign job (through
+# the build job's "publisher" output) check the package against it. The certificate carries the
+# validated identity's locality, state and country as well as CN and O; v0.9.3-rc.2's verify job
+# refused every first-party binary because this held CN and O only.
+$SakPublisherSubject = "CN=Randy Northrup, O=Randy Northrup, L=Ventura, S=California, C=US"
 
 # Who signs the Artifact Signing client (Microsoft.ArtifactSigning.Client 1.0.146): its dlib and
 # its own DLLs are "Microsoft Corporation"; the VC runtime DLLs it carries are "Microsoft Windows".

@@ -17,9 +17,11 @@
 /// FILE_SHARE_WRITE or FILE_SHARE_DELETE, so a verified file cannot be changed, renamed or replaced
 /// until the elevated process has taken its own hold. A file is accepted when:
 ///   (i)   its relative path and SHA-256 are in the manifest compiled into this build (the Qt, VC
-///         runtime, vcpkg and bundled-tool files, whose bytes a release does not change), or
+///         runtime, vcpkg and bundled-tool files, with the bytes the build has), or
 ///   (ii)  this exe is signed and the file is signed by the same signer (security brief 4d: the
-///         files a release signs), or
+///         files a release signs; release signing also signs every unsigned vcpkg DLL and bundled
+///         tool -- bz2, liblzma and z, and every tool file that ships unsigned -- so in a release
+///         those no longer match their pins and are accepted here instead), or
 ///   (iii) this exe is unsigned (a development or test build) and the file is one of the three
 ///         first-party programs S.A.K. starts, by name: the elevated helper and the two writers.
 /// Anything else refuses the elevation and names the file. A signature that is present but broken

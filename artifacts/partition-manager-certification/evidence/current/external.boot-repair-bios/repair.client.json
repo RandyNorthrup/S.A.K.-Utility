@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "c029acfadadbb89737edc8e22c55cef8848a9a42a5d04e845ce1be511cb9dae8",
-        "sha256": "8a883e939fcfe94899d3c0fe2f35d6ca0740ca34eb3617d43d6d8ece01edf10d"
+        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
+        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
     },
-    "code_commit": "f0eff95d987316733cb52b39ef0f3db53f4a3d74",
-    "code_digest": "1c2376e85073cd3bcceca90bf1f77489e130e351e582fc79b8c9b9fc8ae06fcd",
+    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
+    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
     "code_dirty": false,
-    "completed_utc": "2026-11-15T11:10:11.812Z",
+    "completed_utc": "2026-11-16T01:33:36.002Z",
     "disk_before": {
         "bus_type": "SATA",
         "disk_number": 1,
@@ -20,7 +20,7 @@
         "model": "VBOX HARDDISK",
         "partition_count": 2,
         "partition_style": "MBR",
-        "serial_sha256": "41356317dfbad95eacabc145befde28e8c5f0c9d75eb08c1bf03326b5dd5d519",
+        "serial_sha256": "d6c4e609ddaf8870a612ec620a370c5d87342cc8ca59485876968743dbfb49df",
         "size_bytes": "107374182400"
     },
     "execution": {
@@ -32,10 +32,10 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "8eebbc04-9540-4e06-8648-46f225811e72",
+                "operation_id": "baa60bd4-a5cb-494c-be37-b5cee768bb43",
                 "skipped": false,
                 "stderr": "",
-                "stdout": "SAK Partition Manager: Repair BIOS boot files for the Windows on Disk 1\r\nFound Windows on Disk 1, partition 2\r\nBoot files successfully created.\r\nTarget volumes will be updated with BOOTMGR compatible bootcode.\r\nS: (\\\\?\\Volume{4687e32e-0000-0000-0000-100000000000})\r\n    Successfully updated NTFS filesystem bootcode.\r\n\\??\\PhysicalDrive1\r\n    Successfully updated disk bootcode.\r\nBootcode was successfully updated on all targeted volumes.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nBoot files rebuilt for the Windows on Disk 1. Start from that disk to check.\r\n",
+                "stdout": "SAK Partition Manager: Repair BIOS boot files for the Windows on Disk 1\r\nFound Windows on Disk 1, partition 2\r\nBoot files successfully created.\r\nTarget volumes will be updated with BOOTMGR compatible bootcode.\r\nS: (\\\\?\\Volume{f0b7526b-0000-0000-0000-100000000000})\r\n    Successfully updated NTFS filesystem bootcode.\r\n\\??\\PhysicalDrive1\r\n    Successfully updated disk bootcode.\r\nBootcode was successfully updated on all targeted volumes.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nBoot files rebuilt for the Windows on Disk 1. Start from that disk to check.\r\n",
                 "stop_cleanup_not_removed": [
                 ],
                 "stop_cleanup_removed": [
@@ -59,12 +59,12 @@
     ],
     "queued_operations": [
         {
-            "id": "8eebbc04-9540-4e06-8648-46f225811e72",
+            "id": "baa60bd4-a5cb-494c-be37-b5cee768bb43",
             "payload": {
                 "boot_mode": "BIOS",
                 "repair_scope": "attached"
             },
-            "script_sha256": "ff8128e991fd5f0cde5b71d4fbf373747568b2e7133f56b2e76acf65c6f65232",
+            "script_sha256": "f750c747ebd8c0471da423d2e28db2a262afeba1c3e6cf141c605b8f638cd845",
             "summary": "Repair Boot - Disk 1",
             "target": {
                 "disk_number": 1,
@@ -81,15 +81,15 @@
         }
     ],
     "review": {
-        "fingerprint": "14131e2d918adce3b6947709f6ef14e60a410a580a75bfb20d5061e3e964cb55",
-        "layout_hash": "8091914e8c1bd617a939b107f24294a91630c7265fba7bc2ab5ccfc9758c68f1",
+        "fingerprint": "48528b2417b2150c8e8bffd5504a81ed2416ddae91a2fdba7b4ccc26659fd562",
+        "layout_hash": "5da55f3cb125b741ce064e763e9d49a15edfc99a629c035871cf8e722642466e",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "ab3e456b-52a4-4613-896b-e3398ed09a59",
+    "run_id": "d386b131-ed67-4307-8748-d553411d55fe",
     "scenario_id": "external.boot-repair-bios",
     "schema_version": 1,
-    "started_utc": "2026-11-15T11:09:42.446Z",
+    "started_utc": "2026-11-16T01:33:11.838Z",
     "status": "Passed",
     "step": "repair",
     "tool": "partition-manager-scenario-step"

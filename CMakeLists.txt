@@ -1110,6 +1110,19 @@ configure_file(
 )
 set(RESOURCE_FILES "${CMAKE_CURRENT_BINARY_DIR}/sak_utility.rc")
 
+# sak_add_version_resource(<target> <description>): the Windows version resource of a program
+# S.A.K. ships, from resources/sak_version_info.rc.in: the description, product, company and the
+# version from project(). Explorer's Details tab and the UAC prompt show the description; a
+# program without the resource shows as its bare file name (the v0.9.3-rc.2 dry run, the helper's
+# UAC prompt). test_program_version_resources fails on a shipped program without one.
+function(sak_add_version_resource target description)
+    set(SAK_VERSION_INFO_NAME "${target}")
+    set(SAK_VERSION_INFO_DESCRIPTION "${description}")
+    set(_sak_rc "${CMAKE_CURRENT_BINARY_DIR}/version_info/${target}_version.rc")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_version_info.rc.in" "${_sak_rc}" @ONLY)
+    target_sources(${target} PRIVATE "${_sak_rc}")
+endfunction()
+
 # Qt icon resources (processed by AUTORCC)
 list(APPEND RESOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons.qrc")
 if(SAK_ENABLE_AI_ASSISTANT)
@@ -1346,6 +1359,7 @@ target_include_directories(sak_gui PRIVATE
 # The application is its entry point and its resources; everything else is linked from the
 # product libraries above.
 add_executable(sak_utility ${MAIN_SOURCE} ${RESOURCE_FILES})
+sak_add_version_resource(sak_utility "S.A.K. Utility - Swiss Army Knife Utility")
 
 # Enable Qt MOC, UIC, and RCC
 set_target_properties(sak_utility PROPERTIES
@@ -1389,6 +1403,7 @@ target_include_directories(sak_utility PRIVATE
 add_executable(sak_apfs_writer_cli
     src/tools/sak_apfs_writer_cli.cpp
 )
+sak_add_version_resource(sak_apfs_writer_cli "S.A.K. Utility - APFS Writer")
 
 set_target_properties(sak_apfs_writer_cli PROPERTIES
     AUTOMOC ON
@@ -1421,6 +1436,7 @@ add_dependencies(sak_utility sak_apfs_writer_cli)
 add_executable(sak_hfs_writer_cli
     src/tools/sak_hfs_writer_cli.cpp
 )
+sak_add_version_resource(sak_hfs_writer_cli "S.A.K. Utility - HFS+ Writer")
 
 set_target_properties(sak_hfs_writer_cli PROPERTIES
     AUTOMOC ON
@@ -1480,6 +1496,8 @@ add_executable(sak_elevated_helper
     ${HELPER_SOURCES}
     "${CMAKE_CURRENT_BINARY_DIR}/sak_elevated_helper.rc"
 )
+# The name the UAC prompt shows for the helper (it showed "sak_elevated_helper.exe").
+sak_add_version_resource(sak_elevated_helper "S.A.K. Utility - Elevated Helper")
 
 set_target_properties(sak_elevated_helper PROPERTIES
     AUTOMOC ON
