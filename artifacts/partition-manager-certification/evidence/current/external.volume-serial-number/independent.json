@@ -1,6 +1,6 @@
 {
-    "boot_sector_serial_before":  "7E395640",
-    "boot_sector_serial_after":  "A44320D4",
+    "boot_sector_serial_before":  "424C0493",
+    "boot_sector_serial_after":  "9C5606DA",
     "volume_after":  {
                          "drive_letter":  "T",
                          "file_system":  "NTFS",
@@ -9,7 +9,7 @@
                          "free_bytes":  379871232,
                          "cluster_bytes":  4096,
                          "health":  "Healthy",
-                         "serial_number":  "A44320D4"
+                         "serial_number":  "9C5606DA"
                      },
     "files_before":  {
                          "root":  "T:\\fixture",

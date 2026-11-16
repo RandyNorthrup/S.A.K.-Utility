@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "c029acfadadbb89737edc8e22c55cef8848a9a42a5d04e845ce1be511cb9dae8",
-        "sha256": "8a883e939fcfe94899d3c0fe2f35d6ca0740ca34eb3617d43d6d8ece01edf10d"
+        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
+        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
     },
-    "code_commit": "f0eff95d987316733cb52b39ef0f3db53f4a3d74",
-    "code_digest": "1c2376e85073cd3bcceca90bf1f77489e130e351e582fc79b8c9b9fc8ae06fcd",
+    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
+    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
     "code_dirty": false,
-    "completed_utc": "2026-11-15T08:40:15.622Z",
+    "completed_utc": "2026-11-15T22:48:54.828Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "0fddb64e-c1f0-4c2a-aa4c-eafbf5f66180",
+                "operation_id": "c6f9d7b1-5ee3-4af5-bb91-b2291e501ca2",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Resize Disk 1 Partition 2 to 512.0 MB\r\nThe partition still holds NTFS, as queued\r\n",
@@ -59,17 +59,17 @@
     ],
     "queued_operations": [
         {
-            "id": "0fddb64e-c1f0-4c2a-aa4c-eafbf5f66180",
+            "id": "c6f9d7b1-5ee3-4af5-bb91-b2291e501ca2",
             "payload": {
                 "adjacent_free_bytes": "788529152",
                 "file_system": "NTFS",
                 "target_size_bytes": "536870912"
             },
-            "script_sha256": "37188a52a43c6c96839d506daf9b1152d2a83bc375a4a2c50d7686b09f424ca2",
+            "script_sha256": "4a84a80977a46f23e509949c748b5a0e8d411d16ae4e1e00cedea5187388284f",
             "summary": "Resize Partition - Disk 1 Partition 2",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "600224803FF177214FA798F1C5ACC0D7",
+                "disk_unique_id": "60022480ED8776C44AAA333056659AE7",
                 "drive_letter": "T",
                 "kind": "Partition",
                 "offset_bytes": "16777216",
@@ -82,15 +82,15 @@
         }
     ],
     "review": {
-        "fingerprint": "a1d26ad725cfe5b1cb4bba08e1b42178def28b7f065eaa4eb8112c0a91ac2c34",
-        "layout_hash": "9a768618b187c9a256fae8093ad687d5d8d40a5ea318a0ebc0306916ef6f8c29",
+        "fingerprint": "6d1bab00963da782898e28f43dd9567a002b66f48626d7236d65148296e9c010",
+        "layout_hash": "d2167f752674b80481169bd0134a4dc481008faa70fc5b1b2883af9a43cc4c19",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "7ae96fee-a6ff-4cec-aa0d-cbdf2a01f904",
+    "run_id": "13eb803d-eb99-4480-a325-e24539e4f1f2",
     "scenario_id": "vhd.adjacent-extend",
     "schema_version": 1,
-    "started_utc": "2026-11-15T08:39:58.777Z",
+    "started_utc": "2026-11-15T22:48:34.213Z",
     "status": "Passed",
     "step": "extend",
     "tool": "partition-manager-scenario-step"

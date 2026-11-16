@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "c029acfadadbb89737edc8e22c55cef8848a9a42a5d04e845ce1be511cb9dae8",
-        "sha256": "8a883e939fcfe94899d3c0fe2f35d6ca0740ca34eb3617d43d6d8ece01edf10d"
+        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
+        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
     },
-    "code_commit": "f0eff95d987316733cb52b39ef0f3db53f4a3d74",
-    "code_digest": "1c2376e85073cd3bcceca90bf1f77489e130e351e582fc79b8c9b9fc8ae06fcd",
+    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
+    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
     "code_dirty": false,
-    "completed_utc": "2026-11-15T08:43:56.695Z",
+    "completed_utc": "2026-11-15T22:53:07.411Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "56e3a6f4-df2a-4a6b-9029-381f7cfd413a",
+                "operation_id": "1f1163a3-78a2-4145-a1a0-38d47de157c0",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Clone Disk from \\\\.\\PhysicalDrive1 to \\\\.\\PhysicalDrive2\r\nRunning full clone verification\r\n",
@@ -59,23 +59,23 @@
     ],
     "queued_operations": [
         {
-            "id": "56e3a6f4-df2a-4a6b-9029-381f7cfd413a",
+            "id": "1f1163a3-78a2-4145-a1a0-38d47de157c0",
             "payload": {
                 "source_path": "\\\\.\\PhysicalDrive1",
                 "source_size_bytes": "536870912",
                 "target_disk_serial_number": "",
                 "target_disk_size_bytes": "805306368",
-                "target_disk_unique_id": "600224807B66FFFB4A50A216FE0E94AB",
+                "target_disk_unique_id": "60022480B9E26A256CFA57BEE8740248",
                 "target_path": "\\\\.\\PhysicalDrive2",
                 "target_size_bytes": "805306368",
                 "target_wipe_confirmed": true,
                 "verify_mode": "Full verification"
             },
-            "script_sha256": "a9750956bf2d960cf73eb5b8b631e90ddfecd9a3a5740a06107b796dd902a1a1",
+            "script_sha256": "53b7fc933fde0b27c13b441fda4648de1e867ae71f3ee7465efdf265827cb472",
             "summary": "Clone Disk - Disk 1",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "6002248099AA420EF6E85EB114D06761",
+                "disk_unique_id": "60022480926968B5D0E5CC89DA068E3F",
                 "drive_letter": "",
                 "kind": "Disk",
                 "offset_bytes": "0",
@@ -88,15 +88,15 @@
         }
     ],
     "review": {
-        "fingerprint": "170925f409a20e34db5c210628b4cd31df8d58fc747663465a9413676fe0f407",
-        "layout_hash": "eedd8e16903a9caa64e5c2a75495448154b2ac0ea3970839519735ae4f2708cc",
+        "fingerprint": "c2171955e3e7a03d48284c9a5aa10e1a75bc9debdc32985c8b08e6051e7d2abc",
+        "layout_hash": "6de6cd3e13dc3fa87802cfb447cc08beebc0defb9203f8293b345dc19ff1a76a",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "7ae96fee-a6ff-4cec-aa0d-cbdf2a01f904",
+    "run_id": "13eb803d-eb99-4480-a325-e24539e4f1f2",
     "scenario_id": "vhd.image-clone",
     "schema_version": 1,
-    "started_utc": "2026-11-15T08:43:25.341Z",
+    "started_utc": "2026-11-15T22:52:34.832Z",
     "status": "Passed",
     "step": "clone",
     "tool": "partition-manager-scenario-step"

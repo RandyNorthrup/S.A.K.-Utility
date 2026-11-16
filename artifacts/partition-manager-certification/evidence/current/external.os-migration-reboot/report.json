@@ -4,18 +4,18 @@
   "scenario_id": "external.os-migration-reboot",
   "status": "Passed",
   "failure": "",
-  "run_id": "5edbb45f-db46-4434-8826-979a66f8029c",
-  "started_utc": "2026-11-15T09:16:32.494753Z",
-  "completed_utc": "2026-11-15T09:22:08.1275995Z",
+  "run_id": "9237e19b-7d0e-4afe-ba69-f70786b6a973",
+  "started_utc": "2026-11-15T23:30:01.6630788Z",
+  "completed_utc": "2026-11-15T23:36:24.9453858Z",
   "code": {
-    "digest": "1c2376e85073cd3bcceca90bf1f77489e130e351e582fc79b8c9b9fc8ae06fcd",
-    "commit": "f0eff95d987316733cb52b39ef0f3db53f4a3d74",
+    "digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
+    "commit": "c782f945889df23621217f958619e4dbfe8b3473",
     "dirty": false
   },
   "binaries": {
-    "client_sha256": "8a883e939fcfe94899d3c0fe2f35d6ca0740ca34eb3617d43d6d8ece01edf10d",
-    "helper_sha256": "c029acfadadbb89737edc8e22c55cef8848a9a42a5d04e845ce1be511cb9dae8",
-    "app_sha256": "8cefa2f8d2a7c9129536f40cacf3f8122a7ea10263d3167649e4a78f47a53796"
+    "client_sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df",
+    "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
+    "app_sha256": "1bf4d7caf770acfb90c2ecceaef28607f97732938fdcc9074b31ed786e95aa03"
   },
   "rig": {
     "machine_manufacturer": "innotek GmbH",
@@ -33,7 +33,7 @@
     "media_type": "Unspecified",
     "rotation_rate_rpm": 0,
     "size_bytes": "343597383680",
-    "serial_sha256": "96c87e0e9f2010d63be8876bd425dc3ae7482f1f9115418499fd72542f07a5d0"
+    "serial_sha256": "27c8aa899d6c1499d09da3b4e563787844dbcd61e5ac2cd7ad92a4763de97450"
   },
   "steps": [
     {
@@ -42,11 +42,11 @@
       "expect": "success",
       "report": "migrate.client.json",
       "observed": {
-        "client_pid": 6848,
+        "client_pid": 5680,
         "exit_code": 0,
         "client_token_elevated": false,
-        "helper_pid": 8684,
-        "helper_sha256": "c029acfadadbb89737edc8e22c55cef8848a9a42a5d04e845ce1be511cb9dae8",
+        "helper_pid": 5824,
+        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
         "helper_path": "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
         "helper_token_elevated": true
       }
@@ -56,17 +56,17 @@
   "artifacts": [
     {
       "path": "independent.json",
-      "sha256": "9abb6583e91521b3f44d0bd147003537d5a051fb490cbbe25c0091ef44a4d9fc",
+      "sha256": "e00183bd422c77ec9e282f8beabfc5d7dac39765154b57f49decbe00da5e13e5",
       "bytes": 40063
     },
     {
       "path": "migrate.client.json",
-      "sha256": "2739c4808be204f04417afd95643ee7bf30c84dc7ec20e3b55fe57954a196120",
+      "sha256": "26ba43679b8e00e43993adf9425a601fa579326445a2705aeed15b75ff79905c",
       "bytes": 9210
     },
     {
       "path": "migrated.json",
-      "sha256": "ff3cabc7fa9f29287c00ae30c678e73060aad39c17201a1fede6210d404f6289",
+      "sha256": "174ac1f39c7ab8a691f36edc113bcf3c3b0a3fa253f3fd9723d931a9eb9592fb",
       "bytes": 275
     }
   ]

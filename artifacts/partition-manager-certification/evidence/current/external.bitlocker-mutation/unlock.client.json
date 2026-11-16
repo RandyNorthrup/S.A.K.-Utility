@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "c029acfadadbb89737edc8e22c55cef8848a9a42a5d04e845ce1be511cb9dae8",
-        "sha256": "8a883e939fcfe94899d3c0fe2f35d6ca0740ca34eb3617d43d6d8ece01edf10d"
+        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
+        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
     },
-    "code_commit": "f0eff95d987316733cb52b39ef0f3db53f4a3d74",
-    "code_digest": "1c2376e85073cd3bcceca90bf1f77489e130e351e582fc79b8c9b9fc8ae06fcd",
+    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
+    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
     "code_dirty": false,
-    "completed_utc": "2026-11-15T09:07:02.449Z",
+    "completed_utc": "2026-11-15T23:19:43.944Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "fffb6e01-52b1-4c3f-84bf-67532ac6122c",
+                "operation_id": "112007bf-37ac-4cbd-ab14-7d7c31440b67",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: BitLocker Unlock T:\r\nBitLocker Drive Encryption: Configuration Tool version 10.0.26100\r\nCopyright (C) 2013 Microsoft Corporation. All rights reserved.\r\n\r\nVolume T: [Label Unknown]\r\n[Data Volume]\r\n\r\n    Size:                 Unknown GB\r\n    BitLocker Version:    2.0\r\n    Conversion Status:    Unknown\r\n    Percentage Encrypted: Unknown%\r\n    Encryption Method:    AES 128\r\n    Protection Status:    Unknown\r\n    Lock Status:          Locked\r\n    Identification Field: Unknown\r\n    Automatic Unlock:     Disabled\r\n    Key Protectors:\r\n        Password\r\n        Numerical Password\r\n\r\n\r\n\r\nMountPoint       : T:\r\nVolumeStatus     : FullyEncrypted\r\nProtectionStatus : On\r\nLockStatus       : Unlocked\r\nEncryptionMethod : Aes128\r\n\r\n\r\n\r\n\r\n",
@@ -59,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "fffb6e01-52b1-4c3f-84bf-67532ac6122c",
+            "id": "112007bf-37ac-4cbd-ab14-7d7c31440b67",
             "payload": {
                 "drive_letter": "T",
                 "recovery_password": "<withheld>"
@@ -68,7 +68,7 @@
             "summary": "BitLocker Unlock - Disk 1 Partition 2",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "600224805843837DE075B9BBED9CD565",
+                "disk_unique_id": "60022480CF167C387CD6DE18361569AD",
                 "drive_letter": "T",
                 "kind": "Partition",
                 "offset_bytes": "16777216",
@@ -81,15 +81,15 @@
         }
     ],
     "review": {
-        "fingerprint": "3a75c84368511c79798b88613c3bdd8fdbdeac973d5f4691ec139c974d6cd8e6",
-        "layout_hash": "2cbac2753a196b6c4d054af85b4fdfc8ceac5f9228a8fdaa8f3949d01da7b1bf",
+        "fingerprint": "36a403c180391162bada66925bde721b995ab6f1d0ded5ef2f85e58468b18d13",
+        "layout_hash": "bb3c6c0a015ebf035788517b6f83e6ff39a398ce21585ae33269c16b920b0b81",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "eaae1bc1-4883-48fc-a1ec-8a014dbd7381",
+    "run_id": "3a911722-43ed-416e-9859-409a3e2309fd",
     "scenario_id": "external.bitlocker-mutation",
     "schema_version": 1,
-    "started_utc": "2026-11-15T09:06:37.424Z",
+    "started_utc": "2026-11-15T23:19:23.906Z",
     "status": "Passed",
     "step": "unlock",
     "tool": "partition-manager-scenario-step"
