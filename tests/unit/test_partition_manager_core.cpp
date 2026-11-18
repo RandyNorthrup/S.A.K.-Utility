@@ -54,6 +54,7 @@
 #include <QPointer>
 #include <QRandomGenerator>
 #include <QRegularExpression>
+#include <QScopeGuard>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QtEndian>
@@ -1927,6 +1928,7 @@ private Q_SLOTS:
     void fileRecoveryEngine_wholeDiskSourceSaysWhyItCannotRestore();
     void fileRecoveryEngine_aJunctionedDestinationIsNotSeparate();
     void fileRecoveryEngine_anImageReachedThroughAJunctionIsNotSeparate();
+    void fileRecoveryEngine_aRawSourceRefusesItsVolumeUnderAnotherLetter();
     void fileRecoveryEngine_anUpcaseTableDoesNotSwallowARealJpeg();
     void scriptBuilder_fullFormatSaysWhyOnAThinDisk();
     void safetyValidator_reservedPartitionIsEmptyForStyleConversion();
@@ -23664,6 +23666,44 @@ void PartitionManagerCoreTests::fileRecoveryEngine_anImageReachedThroughAJunctio
     FileRecoveryRestoreOptions options;
     options.image_path = QDir(alias).filePath(QStringLiteral("image.bin"));
     options.destination_directory = base.filePath(QStringLiteral("real"));
+    const auto result = FileRecoveryEngine::restoreCandidates(options);
+    QVERIFY2(result.warnings.join(QLatin1Char(' '))
+                 .contains(QStringLiteral("Restore destination must be separate from source")),
+             qPrintable(result.warnings.join(QLatin1Char(' '))));
+    QVERIFY(!result.source_opened_read_only);
+}
+
+// Lane SEC2 round 2, the raw-device branch of the same guard: a source named \\.\C: refuses a
+// destination on C:. A destination spelled on another drive letter (here a SUBST of a folder on the
+// temporary folder's own drive) is really on the source volume; resolved through a handle it is
+// refused before the source is ever opened.
+void PartitionManagerCoreTests::fileRecoveryEngine_aRawSourceRefusesItsVolumeUnderAnotherLetter() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString native_temp = QDir::toNativeSeparators(temp.path());
+    QVERIFY2(native_temp.size() > 2 && native_temp.at(1) == QLatin1Char(':'),
+             qPrintable(native_temp));
+    const DWORD used = GetLogicalDrives();
+    wchar_t letter = 0;
+    for (wchar_t candidate = L'Z'; candidate >= L'M'; --candidate) {
+        if ((used & (1UL << (candidate - L'A'))) == 0) {
+            letter = candidate;
+            break;
+        }
+    }
+    QVERIFY2(letter != 0, "no free drive letter from M: to Z:");
+    const std::wstring device{letter, L':'};
+    const std::wstring target = native_temp.toStdWString();
+    QVERIFY(DefineDosDeviceW(0, device.c_str(), target.c_str()) != 0);
+    const auto undefine = qScopeGuard([&device, &target] {
+        DefineDosDeviceW(DDD_REMOVE_DEFINITION | DDD_EXACT_MATCH_ON_REMOVE,
+                         device.c_str(),
+                         target.c_str());
+    });
+
+    FileRecoveryRestoreOptions options;
+    options.image_path = QStringLiteral("\\\\.\\") + native_temp.left(2);
+    options.destination_directory = QString::fromStdWString(device) + QStringLiteral("\\restored");
     const auto result = FileRecoveryEngine::restoreCandidates(options);
     QVERIFY2(result.warnings.join(QLatin1Char(' '))
                  .contains(QStringLiteral("Restore destination must be separate from source")),
