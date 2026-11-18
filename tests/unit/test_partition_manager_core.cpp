@@ -40,6 +40,7 @@
 #include "../support/byte_writer.h"
 #include "../support/ext_fixture.h"
 #include "../support/hfs_fixture.h"
+#include "../support/junction_fixture.h"
 #include "../support/large_allocation_counter.h"
 
 #include <QBuffer>
@@ -1924,6 +1925,8 @@ private Q_SLOTS:
     void dynamicDiskFromTheScanConvertsAndNothingElse();
     void scriptBuilder_dynamicConversionFindsItsDiskTheWayTheScanDid();
     void fileRecoveryEngine_wholeDiskSourceSaysWhyItCannotRestore();
+    void fileRecoveryEngine_aJunctionedDestinationIsNotSeparate();
+    void fileRecoveryEngine_anImageReachedThroughAJunctionIsNotSeparate();
     void fileRecoveryEngine_anUpcaseTableDoesNotSwallowARealJpeg();
     void scriptBuilder_fullFormatSaysWhyOnAThinDisk();
     void safetyValidator_reservedPartitionIsEmptyForStyleConversion();
@@ -1954,6 +1957,7 @@ private Q_SLOTS:
     void apfsWriter_blockByteOffsetFailsClosedOnOverflow();
     void apfsWriter_treeCollectorBoundsDirectoryDepthAndCycles();
     void exporter_realizedPathWithinRootRejectsEscape();
+    void exporter_aJunctionInTheTreeLeadingOutIsRefused();
     void safetyValidator_blocksSplitBootOsDiskMutations();
     void safetyValidator_blocksClonePartitionWithoutTargetOffset();
     void rawDeviceClassifier_recognizesExtendedDeviceForms();
@@ -23618,6 +23622,55 @@ void PartitionManagerCoreTests::fileRecoveryEngine_wholeDiskSourceSaysWhyItCanno
              qPrintable(result.warnings.join(QLatin1Char(' '))));
 }
 
+// Lane SEC2 (2026-11-17): destinationIsSeparate compared QFileInfo::canonicalFilePath, which in
+// Qt 6 does not resolve a junction. A destination that is a junction into the image's own folder
+// passed as "separate", and recovered files went next to the source.
+void PartitionManagerCoreTests::fileRecoveryEngine_aJunctionedDestinationIsNotSeparate() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir base(temp.path());
+    QVERIFY(base.mkpath(QStringLiteral("src")));
+    {
+        QFile image(base.filePath(QStringLiteral("src/image.bin")));
+        QVERIFY(image.open(QIODevice::WriteOnly));
+        QVERIFY(image.write(QByteArray(4096, 'A')) > 0);
+    }
+    const QString link = base.filePath(QStringLiteral("link"));
+    QVERIFY(sak::test::createJunction(link, base.filePath(QStringLiteral("src"))));
+    FileRecoveryRestoreOptions options;
+    options.image_path = base.filePath(QStringLiteral("src/image.bin"));
+    options.destination_directory = link;
+    const auto result = FileRecoveryEngine::restoreCandidates(options);
+    QVERIFY2(result.warnings.join(QLatin1Char(' '))
+                 .contains(QStringLiteral("Restore destination must be separate from source")),
+             qPrintable(result.warnings.join(QLatin1Char(' '))));
+    QVERIFY(!result.source_opened_read_only);
+}
+
+// The same guard's other side: the image named through a junction, the destination the real folder
+// the image is in.
+void PartitionManagerCoreTests::fileRecoveryEngine_anImageReachedThroughAJunctionIsNotSeparate() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir base(temp.path());
+    QVERIFY(base.mkpath(QStringLiteral("real")));
+    {
+        QFile image(base.filePath(QStringLiteral("real/image.bin")));
+        QVERIFY(image.open(QIODevice::WriteOnly));
+        QVERIFY(image.write(QByteArray(4096, 'A')) > 0);
+    }
+    const QString alias = base.filePath(QStringLiteral("alias"));
+    QVERIFY(sak::test::createJunction(alias, base.filePath(QStringLiteral("real"))));
+    FileRecoveryRestoreOptions options;
+    options.image_path = QDir(alias).filePath(QStringLiteral("image.bin"));
+    options.destination_directory = base.filePath(QStringLiteral("real"));
+    const auto result = FileRecoveryEngine::restoreCandidates(options);
+    QVERIFY2(result.warnings.join(QLatin1Char(' '))
+                 .contains(QStringLiteral("Restore destination must be separate from source")),
+             qPrintable(result.warnings.join(QLatin1Char(' '))));
+    QVERIFY(!result.source_opened_read_only);
+}
+
 void PartitionManagerCoreTests::scriptBuilder_fullFormatSaysWhyOnAThinDisk() {
     const QString thinCheck = QStringLiteral("ProvisioningType)\" -eq 'Thin'");
     const QString reason = QStringLiteral("thin-provisioned disk");
@@ -24663,6 +24716,42 @@ void PartitionManagerCoreTests::exporter_realizedPathWithinRootRejectsEscape() {
     QVERIFY(!E::exportPathWithinRootForTesting(QString(), inner));  // empty root -> closed
     QVERIFY(!E::exportPathWithinRootForTesting(
         root, base.path() + QStringLiteral("/Out/nope")));          // unresolvable child -> closed
+}
+
+// Lane SEC2 (2026-11-17): the test above never plants a junction, and the guard compared
+// QFileInfo::canonicalFilePath, which in Qt 6 does not resolve one, so a junction in the export
+// tree pointing outside passed all three readers. Planted here, through each reader's own seam.
+void PartitionManagerCoreTests::exporter_aJunctionInTheTreeLeadingOutIsRefused() {
+    QTemporaryDir base;
+    QVERIFY(base.isValid());
+    const QDir dir(base.path());
+    QVERIFY(dir.mkpath(QStringLiteral("Out/inner")));
+    QVERIFY(dir.mkpath(QStringLiteral("Elsewhere/inner")));
+    QVERIFY(sak::test::createJunction(dir.filePath(QStringLiteral("Out/link")),
+                                      dir.filePath(QStringLiteral("Elsewhere"))));
+    QVERIFY(sak::test::createJunction(dir.filePath(QStringLiteral("Alias")),
+                                      dir.filePath(QStringLiteral("Out"))));
+    const QString root = QFileInfo(dir.filePath(QStringLiteral("Out"))).canonicalFilePath();
+    const QString alias_root = QFileInfo(dir.filePath(QStringLiteral("Alias"))).canonicalFilePath();
+    const QString escaped = dir.filePath(QStringLiteral("Out/link/inner"));
+    const QString inner = dir.filePath(QStringLiteral("Out/inner"));
+    const QString alias_inner = dir.filePath(QStringLiteral("Alias/inner"));
+    QVERIFY(!root.isEmpty() && !alias_root.isEmpty());
+
+    using Seam = bool (*)(const QString&, const QString&);
+    const std::array<std::pair<const char*, Seam>, 3> readers{{
+        {"APFS", &PartitionApfsFileSystemReader::exportPathWithinRootForTesting},
+        {"HFS+", &PartitionHfsFileSystemReader::exportPathWithinRootForTesting},
+        {"ext", &PartitionExtFileSystemReader::exportPathWithinRootForTesting},
+    }};
+    for (const auto& [reader, within] : readers) {
+        QVERIFY2(!within(root, escaped), reader);
+        QVERIFY2(!within(root, dir.filePath(QStringLiteral("Out/link"))), reader);
+        // A root reached through a junction still holds its own folders, either spelling.
+        QVERIFY2(within(alias_root, inner), reader);
+        QVERIFY2(within(alias_root, alias_inner), reader);
+        QVERIFY2(within(root, alias_inner), reader);
+    }
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksSplitBootOsDiskMutations() {
