@@ -6,6 +6,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## v0.9.4 (unreleased)
+
+Work toward the next release, in progress.
+
+- **A junction no longer passes for a folder inside S.A.K.'s own** - Several checks that a path stays inside a
+  folder (the bundled Chocolatey, the UUP tools and 7-Zip, the assistant's bundled MCP servers, the profile backup's
+  reads, Data Recovery's restore destination, and APFS, ext and HFS+ exports) compared Qt's canonical paths, which do
+  not resolve a directory junction, so a junction pointing outside passed. They now resolve the real path through
+  Windows, and a S.A.K. folder that is itself reached through a junction still works.
+
 ## v0.9.3 (2026-11-10)
 
 The first release with three-part version numbers; it follows v0.9.2.0. Among the changes below: Partition

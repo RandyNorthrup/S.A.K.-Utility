@@ -172,6 +172,97 @@ keeps their history.
    partition and has Windows' DISM split a large install.wim into .swm parts, and its final check reads the result
    back (4505a84f, 6edd85d0). Built and read back on testpc1, and a byte-for-byte image of the stick started
    Windows Setup in a Hyper-V Generation 2 VM with Secure Boot, to its edition list; see UI review round 3 below.
+15. FIXED (v0.9.4 lane SEC2, found 2026-11-17 by lane L4's audit), containment checks a junction passed: Qt 6's
+   `QFileInfo::canonicalFilePath` (and `canonicalPath`) resolve a symbolic link but not a directory junction, so
+   every "the real path stays under this root" check built on them let a junction through. Measured on testpc1 with
+   Qt 6.12.0. The fix is one helper, `sak::no_follow::pathWithinRoot`, which resolves through a handle. Sites,
+   attacker preconditions, the fix and the proof are in "v0.9.4 lane SEC2: containment checks a junction passed"
+   below.
+
+### v0.9.4 lane SEC2: containment checks a junction passed (2026-11-17)
+
+**The finding.** Lane L4's audit found that several checks prove a path stays inside a root by comparing
+`QFileInfo::canonicalFilePath` strings, and that Qt 6 does not resolve a directory junction there. Measured on testpc1
+with a probe linked against the Qt the app builds with (`qVersion()` 6.12.0, the same `Qt6Core.dll`), on a root
+holding a junction `jdir` and a directory symbolic link `dlink`, both to a sibling folder `outside`, and a file
+symbolic link `flink.txt` to a file there:
+
+| Path | `canonicalFilePath` | Where it really is (`GetFinalPathNameByHandleW`) | Old check |
+|---|---|---|---|
+| `root/jdir/f.txt` (junction in a folder above) | `root/jdir/f.txt` | `outside\f.txt` | passed |
+| `root/jdir/sub/g.txt` | `root/jdir/sub/g.txt` | `outside\sub\g.txt` | passed |
+| `root/jdir` (junction as the name) | `root/jdir` | `outside` | passed |
+| `root/flink.txt` (file symbolic link) | `outside/target.txt` | `outside\target.txt` | refused |
+| `root/dlink/f.txt` (directory symbolic link above) | `outside/f.txt` | `outside\f.txt` | refused |
+| `root/dlink` | `outside` | `outside` | refused |
+
+`QDir::canonicalPath` returns `root/jdir` for the junction too, and `QFileInfo::isSymLink` is false for a junction
+(`isJunction` is true only for the junction itself). Creating a junction needs no privilege: any account that can
+create a folder somewhere can make that folder a junction to anywhere.
+
+**The fix.** One helper in `sak::no_follow` (`include/sak/no_follow_fs.h`): `resolvedPath` opens the path following
+every link and names it with `finalPathOfHandle`; `pathIsSameOrBelow` compares two such paths without case, `/` and
+`\` alike, on a separator boundary, a drive root included; `pathWithinRoot(path, root)` resolves both and compares,
+and fails closed when either cannot be opened. A root that is itself reached through a junction or symbolic link
+resolves too, so S.A.K. unpacked into a junctioned folder works. The three copies of "a bundled executable is a real
+file inside the tools root" (offline deployment's choco, the UUP tools, the Windows USB creator's 7-Zip) now call
+one check, `BundledToolsManager::isTrustedToolFile`, built on it.
+
+**Sites, attacker precondition, and what the fix leaves.** "Elevated hold" is v0.9.3's security brief 4c: an
+elevated S.A.K. (Run as Administrator, or the elevated helper) verifies at its start that no folder of its program
+tree except `data` is a link, and holds every folder and program file there without delete sharing until it exits,
+so a folder that existed at that start cannot be renamed, replaced or removed during the run.
+
+| Site | Who can plant the junction | v0.9.3 exposure | Fix | Check-to-use gap left |
+|---|---|---|---|---|
+| `offline_deployment_worker.cpp` `resolveChocoExecutable` (choco runs with S.A.K.'s rights, administrator when elevated) | An account that can create a folder inside `<S.A.K.>\tools`: nobody but administrators under Program Files; on a portable copy, whoever the folder's ACL lets create folders (on NTFS, a folder made under `C:\` inherits Modify for Authenticated Users); FAT32 and exFAT hold no junctions | Low. An elevated run refuses a junction present at its start and holds `tools\chocolatey` for the run, so only a `tools\chocolatey` absent at the start (a trimmed package) could be planted. Such an account could also replace the files themselves, and that is the elevated hold's job, not this check's | `isTrustedToolFile` | Launch by name after the check. Under the elevated hold the existing folders cannot change; holding choco.exe's own handle across the launch would also cover a folder created after the start. Not done; a re-check would not close it |
+| `uup_iso_builder.cpp` `isTrustedBundledExe` (aria2c, UUPMediaConverter; the converter runs elevated) | Same as choco, under `tools\uup` | Low, same reasoning | `isTrustedToolFile` | Same as choco |
+| `windows_usb_creator_extract.cpp` `isSafeBundledExecutable` (7-Zip, elevated) | An account that can create a folder under the app folder | Low, same reasoning | `isTrustedToolFile` | Same as choco |
+| `ai_provider_registry.cpp` `commandWithinAppDir` (stdio MCP server command, runs with the user's rights) | Same as choco, anywhere under the app folder | Low to medium: an unelevated run has no hold, so another account that can create a folder in a shared portable copy could make the person's S.A.K. start its program as that person | `no_follow::pathWithinRoot` | The session pool starts the command later by name; a re-check at spawn, or starting the resolved path while holding its handle, would close it. Open |
+| `user_profile_backup_worker.cpp` `parentWithinCanonicalRoot` and the root pins (elevated backup reads) | The profile's owner, a standard user, in their own profile | Medium: a selected folder of two or more segments (application data such as `AppData/Roaming/<program>`) under a folder the owner turned into a junction was read through it, so an elevated backup copied another user's or a system folder's files into the backup. Writes already went through `sak::no_follow` | Roots pinned as `resolvedPath`; each entry's parent resolved and compared with `pathIsSameOrBelow` | Per entry, check then read by name; a swap between them is still followed for that one read. Reading through held folders (`HeldDirectory::descend`) would close it. Open |
+| `file_recovery_engine.cpp` `destinationIsSeparate` (destination on the source volume; destination in the image's folder) | Whoever can make the chosen destination folder, normally the technician by mistake | Low (data safety, not privilege): recovered files could land on the volume being recovered, overwriting what was still recoverable | Both sides `resolvedPath`; `samePath` | A one-time check before restoring |
+| `partition_export_containment.h` `pathWithinRoot` (APFS, ext and HFS+ export to a folder; also MboxWriter) | An account that can write in the export folder the technician chose, together with a foreign volume naming that folder | Medium for an elevated export into a folder another account can write: a junction pre-planted where the exporter makes a directory sent new files (CREATE_NEW, never overwriting) wherever the junction pointed | Both sides resolved per check (`no_follow::pathWithinRoot`); a root reached through a junction works | Check, then open by name for each file; an ancestor swapped in between is followed. Writing through a held folder would close it. Open |
+
+MboxWriter writes each mailbox directly in the chosen folder, so no folder sits between the root and the file; it
+was safe before and behaves the same.
+
+**Proof (testpc2, `W:\sec2`, the lane's snapshot of this change on f2c45ff9).** Full build BUILD EXIT 0 (62.5 min,
+`/m:2`, every test program and `sak_utility.exe` written after the build started). The ten test programs the change
+reaches (`test_no_follow_fs`, `test_bundled_tools_manager`, `test_windows_usb_creator`, `test_ai_provider_registry`,
+`test_user_profile_backup_worker`, `test_partition_manager_core`, `test_offline_deployment_worker`,
+`test_uup_iso_builder`, `test_mbox_writer`, `test_image_flasher_panel`): 10 of 10 passed, and each of the 16 new
+junction tests printed PASS, none SKIP. T2's labels from the ssh session: 323 of 335; the 12 failures are the eight
+that fail from an elevated ssh session (session 0) on f2c45ff9 itself, `test_bandwidth_tester` and
+`test_stress_test_worker` (also failing in lane L4's T2 on testpc2), and two timeouts under load
+(`test_partition_manager_core`, 600 s limit, and `test_fuzz_apfs_reader`, 75 s), which passed when run alone (361 s
+and 41 s). Drills, one per guard, each mutant built (exit 0, fresh binary), red on the expected test, restored byte
+for byte and touched: D1 `resolvedPath` returns the lexical path; D2 no separator boundary; D3 root not resolved; D4
+case-sensitive compare; D5 the name itself not followed; B1 `isTrustedToolFile` on the old canonical comparison; U1
+the USB check's old body; A1 the AI registry's old comparison; R1 the restore destination via `canonicalFilePath`; R2
+the image folder via `canonicalPath`; K1 the backup's entry parent via `canonicalFilePath`; K2 the backup's root pin
+via `canonicalFilePath`; P1 and P1b the export guard's old body. All red. The choco and UUP call sites have no test
+seam of their own (both take their root from the running program's folder); they are one call to
+`isTrustedToolFile`, which B1 drills.
+
+**The rest of the audit, re-checked** (every `canonicalFilePath` and `canonicalPath` in `src/` and `include/` at
+f2c45ff9; `std::filesystem::canonical` and `weakly_canonical` resolve through a handle in MSVC's library and are not
+part of this):
+
+- Agreed safe: `ai_conversation_store.cpp:1472` (case-only rename identity, not containment);
+  `app_mutating_actions.cpp:708` and `:4213` (`pathReparseUnsafe`, ancestors included, runs first);
+  `leftover_cleanup_guard.h:627` (same); `uninstall_worker.cpp:112` (a junction can only reach a local volume and
+  the screen admits any local path; the program comes from a registry value its user can set anyway);
+  `advanced_uninstall_panel.cpp:1397` (opens a folder in Explorer, not containment); the APFS and HFS+ writer CLIs
+  (file-id identity backs the comparison); `mbox_writer.cpp:572` (above); the three partition readers' root lines
+  (the shared guard now resolves the root itself).
+- Safe, but the check itself does not do what it says: `user_profile_restore_worker.cpp:154` and `:553` are the same
+  pattern as the backup's and miss a junction; the restore's writes go through held folders that refuse one, so the
+  check is dead weight rather than a hole. `leftover_scanner.cpp:352` refuses `isSymLink()`, which is false for a
+  junction in Qt 6, and its comment says canonicalFilePath resolves a junction in a parent, which it does not; the
+  deletion it feeds is refused under a junction by the cleanup guard. Both are worth moving onto the helper.
+- Lane L4's branch only (not at f2c45ff9): `ai_mcp_session_pool.cpp:119` picks the process cap by comparing the
+  command with S.A.K.'s own path; a junction spelling of S.A.K. would get the external cap of 16 instead of 1. Not
+  containment.
 
 ### Fixed by the lifecycle package (2026-10-25)
 
