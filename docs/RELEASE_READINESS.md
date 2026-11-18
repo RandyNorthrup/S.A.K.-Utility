@@ -215,13 +215,42 @@ so a folder that existed at that start cannot be renamed, replaced or removed du
 
 | Site | Who can plant the junction | v0.9.3 exposure | Fix | Check-to-use gap left |
 |---|---|---|---|---|
-| `offline_deployment_worker.cpp` `resolveChocoExecutable` (choco runs with S.A.K.'s rights, administrator when elevated) | An account that can create a folder inside `<S.A.K.>\tools`: nobody but administrators under Program Files; on a portable copy, whoever the folder's ACL lets create folders (on NTFS, a folder made under `C:\` inherits Modify for Authenticated Users); FAT32 and exFAT hold no junctions | Low. An elevated run refuses a junction present at its start and holds `tools\chocolatey` for the run, so only a `tools\chocolatey` absent at the start (a trimmed package) could be planted. Such an account could also replace the files themselves, and that is the elevated hold's job, not this check's | `isTrustedToolFile` | Launch by name after the check. Under the elevated hold the existing folders cannot change; holding choco.exe's own handle across the launch would also cover a folder created after the start. Not done; a re-check would not close it |
-| `uup_iso_builder.cpp` `isTrustedBundledExe` (aria2c, UUPMediaConverter; the converter runs elevated) | Same as choco, under `tools\uup` | Low, same reasoning | `isTrustedToolFile` | Same as choco |
-| `windows_usb_creator_extract.cpp` `isSafeBundledExecutable` (7-Zip, elevated) | An account that can create a folder under the app folder | Low, same reasoning | `isTrustedToolFile` | Same as choco |
-| `ai_provider_registry.cpp` `commandWithinAppDir` (stdio MCP server command, runs with the user's rights) | Same as choco, anywhere under the app folder | Low to medium: an unelevated run has no hold, so another account that can create a folder in a shared portable copy could make the person's S.A.K. start its program as that person | `no_follow::pathWithinRoot` | The session pool starts the command later by name; a re-check at spawn, or starting the resolved path while holding its handle, would close it. Open |
-| `user_profile_backup_worker.cpp` `parentWithinCanonicalRoot` and the root pins (elevated backup reads) | The profile's owner, a standard user, in their own profile | Medium: a selected folder of two or more segments (application data such as `AppData/Roaming/<program>`) under a folder the owner turned into a junction was read through it, so an elevated backup copied another user's or a system folder's files into the backup. Writes already went through `sak::no_follow` | Roots pinned as `resolvedPath`; each entry's parent resolved and compared with `pathIsSameOrBelow` | Per entry, check then read by name; a swap between them is still followed for that one read. Reading through held folders (`HeldDirectory::descend`) would close it. Open |
+| `offline_deployment_worker.cpp` `resolveChocoExecutable` (choco runs with S.A.K.'s rights, administrator when elevated) | An account that can create a folder inside `<S.A.K.>\tools`: nobody but administrators under Program Files; on a portable copy, whoever the folder's ACL lets create folders (on NTFS, a folder made under `C:\` inherits Modify for Authenticated Users); FAT32 and exFAT hold no junctions | Low. An elevated run refuses a junction present at its start and holds `tools\chocolatey` for the run, so only a `tools\chocolatey` absent at the start (a trimmed package) could be planted. Such an account could also replace the files themselves, and that is the elevated hold's job, not this check's | `isTrustedToolFile`; round 2: `no_follow::holdFileWithinRoot` right before the start | Closed (round 2): choco.exe is held from a check on the held handle until choco has started (`on_started`), and started by the real path the hold names |
+| `uup_iso_builder.cpp` `isTrustedBundledExe` (aria2c, UUPMediaConverter; the converter runs elevated) | Same as choco, under `tools\uup` | Low, same reasoning | `isTrustedToolFile`; round 2: held across each `start()` | Closed (round 2): each tool is held from the check until its `QProcess::start` has returned (the process exists), and started by its real path |
+| `windows_usb_creator_extract.cpp` `isSafeBundledExecutable` (7-Zip, elevated) | An account that can create a folder under the app folder | Low, same reasoning | `isTrustedToolFile`; round 2: held across the runs | Closed (round 2): 7z.exe is held while the label is read, again for every run of an extraction, and for the install-image check, each started by its real path |
+| `ai_provider_registry.cpp` `commandWithinAppDir` (stdio MCP server command, runs with the user's rights) | Same as choco, anywhere under the app folder | Low to medium: an unelevated run has no hold, so another account that can create a folder in a shared portable copy could make the person's S.A.K. start its program as that person | `no_follow::pathWithinRoot`; round 2: the registry publishes `command_root`, the gateway passes it as the request's `trusted_root` (and refuses a plan without one), and the session holds the command against it | Closed (round 2): the session holds the command file from a check against `trusted_root` until the server has started, and starts it by its real path |
+| `user_profile_backup_worker.cpp` `parentWithinCanonicalRoot` and the root pins (elevated backup reads) | The profile's owner, a standard user, in their own profile | Medium: a selected folder of two or more segments (application data such as `AppData/Roaming/<program>`) under a folder the owner turned into a junction was read through it, so an elevated backup copied another user's or a system folder's files into the backup. Writes already went through `sak::no_follow` | Roots pinned as `resolvedPath`; each entry's parent resolved and compared with `pathIsSameOrBelow` | Per entry, check then read by name; a swap between them is still followed for that one read. Follow-up for lane L12 (it reworks this walk): see below |
 | `file_recovery_engine.cpp` `destinationIsSeparate` (destination on the source volume; destination in the image's folder) | Whoever can make the chosen destination folder, normally the technician by mistake | Low (data safety, not privilege): recovered files could land on the volume being recovered, overwriting what was still recoverable | Both sides `resolvedPath`; `samePath` | A one-time check before restoring |
-| `partition_export_containment.h` `pathWithinRoot` (APFS, ext and HFS+ export to a folder; also MboxWriter) | An account that can write in the export folder the technician chose, together with a foreign volume naming that folder | Medium for an elevated export into a folder another account can write: a junction pre-planted where the exporter makes a directory sent new files (CREATE_NEW, never overwriting) wherever the junction pointed | Both sides resolved per check (`no_follow::pathWithinRoot`); a root reached through a junction works | Check, then open by name for each file; an ancestor swapped in between is followed. Writing through a held folder would close it. Open |
+| `partition_export_containment.h` `pathWithinRoot` (APFS, ext and HFS+ export to a folder; also MboxWriter) | An account that can write in the export folder the technician chose, together with a foreign volume naming that folder | Medium for an elevated export into a folder another account can write: a junction pre-planted where the exporter makes a directory sent new files (CREATE_NEW, never overwriting) wherever the junction pointed | Both sides resolved per check (`no_follow::pathWithinRoot`); a root reached through a junction works | Check, then open by name for each file; an ancestor swapped in between is followed. Follow-up for lane L12: see below |
+
+**How the hold closes the gap (round 2).** `no_follow::holdFile` opens the executable following links with
+`GENERIC_READ` and sharing reading only (an open without data access takes no part in sharing, so it would keep
+nobody out). While it is open, writing, renaming, deleting or replacing the file is refused, and so is renaming any
+folder above it, while Windows can still start a program from it. `holdFileWithinRoot` checks the held handle's own
+final path against the resolved root, and the program is started by that path, so a link that is retargeted after the
+check is never followed. Tests: `heldFileRefusesRenameDeleteAndReplace`, `heldFileRefusesWriters`,
+`heldFileWithinRootChecksTheHeldFile`, `heldFileStillStartsAProgram`, and for the assistant
+`openRefusesACommandOutsideItsTrustedRoot`, `openStartsACommandInsideItsTrustedRoot`,
+`stdioStatusPublishesItsCommandRoot`, `callWin32McpWithoutCommandRootFailsClosed`. The choco, UUP and USB call sites
+take their root from the running program's folder and have no seam of their own; each is the drilled helper called on
+the line before the start.
+
+**Follow-ups for lane L12 (coordinator, 2026-11-17: L12 reworks the backup walk on the integration branch).**
+
+- Backup reads (`user_profile_backup_worker.cpp`, `copyDirectory` and the per-entry copy): hold the source profile
+  root with `no_follow::HeldDirectory::open(profile)` (or `openAnchor` when the profile is reached through a
+  junction the technician chose) once per user, descend each selected folder with `HeldDirectory::descend(relative,
+  false)` and each subfolder with `child(name, false)`, so a link anywhere refuses and no folder on the way can be
+  swapped while held. Open each file to copy in its held folder without following a link (no_follow's internal
+  `openNoFollow` on `folder.filePath(name)`, exposed as a read counterpart of `createNewFile`, checked with
+  `entryKindOfHandle`), and copy from that handle, not by name. `parentWithinCanonicalRoot` then has nothing left to catch and goes. Test: plant a junction in
+  place of a folder between enumeration and copy (a hook between the two), expect the entry refused and nothing read.
+- Export writes (`partition_export_containment.h` `writeFile`, and each reader's `exportDirectory`): hold the export
+  root once (`HeldDirectory::open(root)`), make each directory with `HeldDirectory::descend(relative, true)`, which
+  creates every component checked and refuses a link, and write each file with `no_follow::createNewFile(folder,
+  name, false)` (CREATE_NEW, no link followed) instead of `QFile::open(NewOnly)` by path. `pathWithinRoot` then has
+  nothing left to catch. Test: a junction pre-planted where the export makes a directory refuses that directory and
+  writes nothing through it (the round-1 test plants it before the export; a planted-mid-export case needs a hook).
 
 MboxWriter writes each mailbox directly in the chosen folder, so no folder sits between the root and the file; it
 was safe before and behaves the same.
@@ -243,6 +272,19 @@ the image folder via `canonicalPath`; K1 the backup's entry parent via `canonica
 via `canonicalFilePath`; P1 and P1b the export guard's old body. All red. The choco and UUP call sites have no test
 seam of their own (both take their root from the running program's folder); they are one call to
 `isTrustedToolFile`, which B1 drills.
+
+**Proof, round 2 (testpc2, the lane's second snapshot).** Build BUILD EXIT 0 (37.3 min, incremental from round
+1's tree; all 16 binaries checked written after the build started). The 13 test programs the change reaches (round
+1's ten plus `test_ai_mcp_stdio_session`, `test_ai_provider_gateway` and `test_ai_mcp_session_pool`): 13 of 13 passed,
+and each of the 9 new tests printed PASS: the four hold tests, the assistant's four, and
+`fileRecoveryEngine_aRawSourceRefusesItsVolumeUnderAnotherLetter`, which maps a free drive letter onto the temporary
+folder with `DefineDosDeviceW` so the destination is spelled on another letter while really on the raw source's
+volume. T2's labels: 326 of 335; the nine failures are the eight that fail from an elevated ssh session on f2c45ff9
+itself and `test_bandwidth_tester`. Drills, each mutant built (exit 0, fresh binary), red on the expected test,
+restored byte for byte and touched: H1 the hold shares delete; H2 it shares write; H3 it opens without data access
+(so it takes no part in sharing); H4 it skips the root check; AI1 the session ignores `trusted_root`; AI2 the registry
+publishes no `command_root`; AI3 the gateway accepts a plan without one; R3 the raw branch's destination via
+`canonicalFilePath`. All red; the restored tree rebuilt (exit 0, fresh) and passed, with a clean `git status`.
 
 **The rest of the audit, re-checked** (every `canonicalFilePath` and `canonicalPath` in `src/` and `include/` at
 f2c45ff9; `std::filesystem::canonical` and `weakly_canonical` resolve through a handle in MSVC's library and are not

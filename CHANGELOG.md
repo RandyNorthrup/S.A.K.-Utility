@@ -15,6 +15,8 @@ Work toward the next release, in progress.
   reads, Data Recovery's restore destination, and APFS, ext and HFS+ exports) compared Qt's canonical paths, which do
   not resolve a directory junction, so a junction pointing outside passed. They now resolve the real path through
   Windows, and a S.A.K. folder that is itself reached through a junction still works.
+  A bundled program (Chocolatey, the UUP tools, 7-Zip, the assistant's MCP servers) is now held from that check
+  until it has started, so nothing can replace it or a folder above it in between.
 
 ## v0.9.3 (2026-11-10)
 
