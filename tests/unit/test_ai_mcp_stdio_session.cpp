@@ -741,6 +741,8 @@ private Q_SLOTS:
     void resultsAreExpectedWithoutLegacyErrorSinks();
     void notOpenSessionRejectsCalls();
     void openFailsCleanlyForMissingCommand();
+    void openRefusesACommandOutsideItsTrustedRoot();
+    void openStartsACommandInsideItsTrustedRoot();
     void listToolsFollowsPagination();
     void listToolsRejectsCursorCycle();
     void listToolsRejectsPageCeiling();
@@ -1054,6 +1056,31 @@ void AiMcpStdioSessionTests::openFailsCleanlyForMissingCommand() {
     QVERIFY(!reopened.has_value());
     QCOMPARE(reopened.error(), opened.error());
     QVERIFY(!session.isOpen());
+}
+
+// Lane SEC2 round 2: the server's file is held from a check against its trusted root until it has
+// started. A command whose real path lies outside that folder is refused before anything runs.
+void AiMcpStdioSessionTests::openRefusesACommandOutsideItsTrustedRoot() {
+    QTemporaryDir elsewhere;
+    QVERIFY(elsewhere.isValid());
+    sak::ai::AiMcpStdioSession session;
+    auto config = fakeSessionConfig(QStringLiteral("empty-tools"));
+    config.trusted_root = elsewhere.path();
+    const auto opened = session.open(config);
+    QVERIFY(!opened.has_value());
+    QVERIFY2(opened.error().startsWith(QStringLiteral("MCP stdio command refused:")),
+             qPrintable(opened.error()));
+    QVERIFY(!session.isOpen());
+}
+
+void AiMcpStdioSessionTests::openStartsACommandInsideItsTrustedRoot() {
+    sak::ai::AiMcpStdioSession session;
+    auto config = fakeSessionConfig(QStringLiteral("empty-tools"));
+    config.trusted_root = QCoreApplication::applicationDirPath();
+    const auto opened = session.open(config);
+    QVERIFY2(opened.has_value(), qPrintable(failureDiagnostic(opened)));
+    const auto tools = session.listTools();
+    QVERIFY2(tools.has_value(), qPrintable(failureDiagnostic(tools)));
 }
 
 void AiMcpStdioSessionTests::listToolsFollowsPagination() {

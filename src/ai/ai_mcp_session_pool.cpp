@@ -68,7 +68,8 @@ QString sessionKey(const AiMcpStdioCallRequest& request) {
 AiMcpSessionConfig configFor(const AiMcpStdioCallRequest& request) {
     return {.command = request.command,
             .environment = request.environment,
-            .request_timeout_ms = AiMcpStdioSession::effectiveRequestTimeoutMs(request.timeout_ms)};
+            .request_timeout_ms = AiMcpStdioSession::effectiveRequestTimeoutMs(request.timeout_ms),
+            .trusted_root = request.trusted_root};
 }
 
 std::expected<void, QString> environmentCanBePooled(const AiMcpStdioCallRequest& request) {

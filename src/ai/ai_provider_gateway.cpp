@@ -953,11 +953,18 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
         .arguments = plan.tool_arguments,
         .environment = environment,
         .timeout_ms = plan.timeout_ms,
-        .should_cancel = m_should_cancel};
+        .should_cancel = m_should_cancel,
+        .trusted_root = plan.provider.value(QStringLiteral("command_root")).toString()};
     // A persistent pool is required: silently switching transports changes lifecycle,
     // process-reuse and failure semantics. Missing wiring fails closed.
     if (m_mcp_pool == nullptr) {
         return jsonFailure(error_message, QStringLiteral("Win32 MCP session pool is unavailable"));
+    }
+    // The registry publishes the folder a bundled server must lie in; without it the start could
+    // not be checked against it, so refuse rather than start it unchecked.
+    if (request.trusted_root.isEmpty()) {
+        return jsonFailure(error_message,
+                           QStringLiteral("Win32 MCP command has no application folder to check"));
     }
     const auto message = m_mcp_pool->callTool(request);
     if (!message) {

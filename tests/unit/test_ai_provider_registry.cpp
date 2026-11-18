@@ -79,6 +79,7 @@ private Q_SLOTS:
     void stdioCommandOutsideAppDirIsUnavailable();
     void stdioCommandThroughAJunctionLeadingOutIsUnavailable();
     void stdioCommandInAnAppDirReachedThroughAJunctionIsAvailable();
+    void stdioStatusPublishesItsCommandRoot();
 };
 
 void AiProviderRegistryTests::providersJsonBesideTheExecutableIsNeverRead() {
@@ -304,6 +305,33 @@ void AiProviderRegistryTests::stdioCommandInAnAppDirReachedThroughAJunctionIsAva
                                            QStringLiteral("win32_mcp"));
     QVERIFY2(win32.value(QStringLiteral("available")).toBool(false),
              qPrintable(win32.value(QStringLiteral("missing_reason")).toString()));
+}
+
+// Lane SEC2 round 2: a stdio status carries the folder its command must really lie in when it is
+// started (computed, like resolved_command); a value carried in on any entry is stripped.
+void AiProviderRegistryTests::stdioStatusPublishesItsCommandRoot() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QJsonArray providers;
+    providers.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("win32_mcp")},
+                                 {QStringLiteral("transport"), QStringLiteral("stdio")},
+                                 {QStringLiteral("command"), QStringLiteral("tools/server.exe")},
+                                 {QStringLiteral("command_root"), QStringLiteral("C:/forged")}});
+    providers.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("docs")},
+                                 {QStringLiteral("transport"), QStringLiteral("http")},
+                                 {QStringLiteral("command_root"), QStringLiteral("C:/forged")}});
+    const auto registry = sak::ai::AiProviderRegistry::withCatalogForTesting(
+        temp.path(), QJsonObject{{QStringLiteral("providers"), providers}});
+    QString error;
+    const QJsonArray statuses =
+        registry.providerStatuses(&error).value(QStringLiteral("providers")).toArray();
+    QVERIFY(error.isEmpty());
+    QCOMPARE(providerById(statuses, QStringLiteral("win32_mcp"))
+                 .value(QStringLiteral("command_root"))
+                 .toString(),
+             QDir::cleanPath(QDir(temp.path()).absolutePath()));
+    QVERIFY(
+        !providerById(statuses, QStringLiteral("docs")).contains(QStringLiteral("command_root")));
 }
 
 QTEST_GUILESS_MAIN(AiProviderRegistryTests)

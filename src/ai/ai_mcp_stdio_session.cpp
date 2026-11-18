@@ -7,6 +7,7 @@
 #include "sak/contained_process_quarantine.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/no_follow_fs.h"
 #include "sak/windows_process_job.h"
 
 #include <QDeadlineTimer>
@@ -252,8 +253,17 @@ public:
         if (!m_job) {
             return std::unexpected(QStringLiteral("MCP containment factory returned no Job"));
         }
+        // Hold the server's file until it has started (lane SEC2): nobody can replace or rename it,
+        // or a folder above it, between this check and the start, which uses the real path.
+        const auto held = config.trusted_root.isEmpty()
+                              ? sak::no_follow::holdFile(command)
+                              : sak::no_follow::holdFileWithinRoot(command, config.trusted_root);
+        if (!held) {
+            return std::unexpected(
+                QStringLiteral("MCP stdio command refused: %1").arg(held.error()));
+        }
         m_process = new QProcess(this);
-        m_process->setProgram(command);
+        m_process->setProgram(held->path);
         m_process->setProcessEnvironment(config.environment);
         m_process->setProcessChannelMode(QProcess::SeparateChannels);
         m_process->setReadChannel(QProcess::StandardOutput);

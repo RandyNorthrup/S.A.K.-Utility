@@ -94,6 +94,7 @@ constexpr auto kProvidersResource = ":/ai/providers/providers.json";
     // Strip any value carried in on the provider object so a non-stdio or forged entry cannot
     // smuggle an un-gated command through to the launcher.
     status.remove(QStringLiteral("resolved_command"));
+    status.remove(QStringLiteral("command_root"));
 
     const QString transport = provider.value(QStringLiteral("transport")).toString();
     if (!status.value(QStringLiteral("available")).toBool(false)) {
@@ -106,6 +107,9 @@ constexpr auto kProvidersResource = ":/ai/providers/providers.json";
         const QString command =
             resolvedRelativePath(app_dir, provider.value(QStringLiteral("command")).toString());
         status[QStringLiteral("resolved_command")] = command;
+        // The folder the command must really lie in when it is started (computed, like
+        // resolved_command): the launcher holds the file and checks it against this.
+        status[QStringLiteral("command_root")] = QDir::cleanPath(QDir(app_dir).absolutePath());
         const bool within = commandWithinAppDir(app_dir, command);
         const bool exists = within && QFileInfo::exists(command);
         status[QStringLiteral("available")] = exists;

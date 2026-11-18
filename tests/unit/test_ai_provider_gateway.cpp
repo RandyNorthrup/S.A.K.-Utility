@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/ai/ai_mcp_session_pool.h"
 #include "sak/ai/ai_provider_gateway.h"
 #include "sak/ai/ai_provider_gateway_authorization.h"
 
@@ -62,6 +63,7 @@ private Q_SLOTS:
     void docsQuery_refusesNonHttpsEndpoint();                     // R5-G10-9
     void planWin32McpCall_refusesMalformedEnvelope();             // R5-G10-9
     void callWin32McpWithoutPoolFailsClosed();
+    void callWin32McpWithoutCommandRootFailsClosed();
 };
 
 void AiProviderGatewayTests::mutatingToolsAreNeverReadOnly() {
@@ -894,6 +896,24 @@ void AiProviderGatewayTests::callWin32McpWithoutPoolFailsClosed() {
     QString error;
     QVERIFY(gateway.callWin32Mcp(plan, &error).isEmpty());
     QCOMPARE(error, QStringLiteral("Win32 MCP session pool is unavailable"));
+}
+
+// Lane SEC2 round 2: the session holds a bundled server's file against the application folder the
+// registry publishes (command_root). A plan without it is refused, never started unchecked.
+void AiProviderGatewayTests::callWin32McpWithoutCommandRootFailsClosed() {
+    sak::ai::AiMcpSessionPool pool;
+    sak::ai::AiProviderGateway gateway;
+    gateway.setMcpSessionPool(&pool);
+    sak::ai::AiProviderGateway::Win32McpCallPlan plan;
+    plan.provider = QJsonObject{{QStringLiteral("id"), QStringLiteral("win32_mcp")},
+                                {QStringLiteral("resolved_command"),
+                                 QStringLiteral("removed-one-shot-transport.exe")}};
+    plan.tool_name = QStringLiteral("list_windows");
+    plan.security_profile = QStringLiteral("read_only");
+
+    QString error;
+    QVERIFY(gateway.callWin32Mcp(plan, &error).isEmpty());
+    QCOMPARE(error, QStringLiteral("Win32 MCP command has no application folder to check"));
 }
 
 QTEST_GUILESS_MAIN(AiProviderGatewayTests)
