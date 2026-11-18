@@ -69,6 +69,10 @@ private Q_SLOTS:
     void removeTreeOfAJunctionRemovesOnlyTheJunction();
     void removeTreeRemovesReadOnlyFiles();
     void removeTreeOfAMissingPathSucceeds();
+    void resolvedPathFollowsAJunctionAnywhere();
+    void pathIsSameOrBelowNeedsASeparatorBoundary();
+    void pathWithinRootRefusesAJunctionLeadingOut();
+    void pathWithinRootAcceptsARootReachedThroughAJunction();
     void createNewFileRefusesAnExistingName();
     void createNewFileDenyWriteKeepsOthersOut();
     void createUniqueChildIsFreshAndProtected();
@@ -270,6 +274,80 @@ void NoFollowFsTests::removeTreeRemovesReadOnlyFiles() {
 
 void NoFollowFsTests::removeTreeOfAMissingPathSucceeds() {
     QVERIFY(sak::no_follow::removeTree(m_root->filePath(QStringLiteral("never-there"))));
+}
+
+// Lane SEC2 (2026-11-17): QFileInfo::canonicalFilePath does not resolve a junction in Qt 6, at the
+// name or in a folder above it, so every containment check built on it let a junction through.
+// resolvedPath goes through a handle and must name where the path really leads.
+void NoFollowFsTests::resolvedPathFollowsAJunctionAnywhere() {
+    const QString link = m_root->filePath(QStringLiteral("link"));
+    QVERIFY(sak::test::createJunction(link, m_canary));
+    const QString real_file = sak::no_follow::resolvedPath(QDir(m_canary).filePath(kCanaryName));
+    QVERIFY(!real_file.isEmpty());
+    // A junction in a folder above the name.
+    const QString through = sak::no_follow::resolvedPath(QDir(link).filePath(kCanaryName));
+    QVERIFY2(sak::no_follow::samePath(through, real_file), qPrintable(through));
+    // A junction as the name itself.
+    const QString at_name = sak::no_follow::resolvedPath(link);
+    QVERIFY2(sak::no_follow::samePath(at_name, sak::no_follow::resolvedPath(m_canary)),
+             qPrintable(at_name));
+    // Nothing there: nothing to name.
+    QVERIFY(sak::no_follow::resolvedPath(m_root->filePath(QStringLiteral("missing"))).isEmpty());
+    QVERIFY(sak::no_follow::resolvedPath(QString()).isEmpty());
+}
+
+void NoFollowFsTests::pathIsSameOrBelowNeedsASeparatorBoundary() {
+    using sak::no_follow::pathIsSameOrBelow;
+    QVERIFY(
+        pathIsSameOrBelow(QStringLiteral(R"(C:\App\tools\x.exe)"), QStringLiteral(R"(C:\App)")));
+    QVERIFY(pathIsSameOrBelow(QStringLiteral("C:/App/tools"), QStringLiteral(R"(C:\App\)")));
+    QVERIFY(pathIsSameOrBelow(QStringLiteral(R"(C:\App)"), QStringLiteral(R"(C:\App)")));
+    QVERIFY(pathIsSameOrBelow(QStringLiteral(R"(c:\app\X)"), QStringLiteral(R"(C:\APP)")));
+    QVERIFY(pathIsSameOrBelow(QStringLiteral(R"(D:\x)"), QStringLiteral(R"(D:\)")));
+    QVERIFY(pathIsSameOrBelow(QStringLiteral(R"(\\server\share\d)"),
+                              QStringLiteral(R"(\\server\share)")));
+    // A sibling whose name starts with the root's is not inside it.
+    QVERIFY(!pathIsSameOrBelow(QStringLiteral(R"(C:\AppX\x.exe)"), QStringLiteral(R"(C:\App)")));
+    QVERIFY(!pathIsSameOrBelow(QStringLiteral(R"(C:\)"), QStringLiteral(R"(C:\App)")));
+    QVERIFY(!pathIsSameOrBelow(QStringLiteral(R"(E:\x)"), QStringLiteral(R"(D:\)")));
+    // Either side unknown: refuse.
+    QVERIFY(!pathIsSameOrBelow(QString(), QStringLiteral(R"(C:\App)")));
+    QVERIFY(!pathIsSameOrBelow(QStringLiteral(R"(C:\App\x)"), QString()));
+}
+
+void NoFollowFsTests::pathWithinRootRefusesAJunctionLeadingOut() {
+    const QString root = m_root->filePath(QStringLiteral("root"));
+    QVERIFY(QDir().mkpath(root));
+    QVERIFY(writeFile(QDir(root).filePath(QStringLiteral("plain.txt")), QByteArrayLiteral("in")));
+    const QString out = QDir(root).filePath(QStringLiteral("out"));
+    QVERIFY(sak::test::createJunction(out, m_canary));
+    QVERIFY(sak::no_follow::pathWithinRoot(QDir(root).filePath(QStringLiteral("plain.txt")), root));
+    QVERIFY2(!sak::no_follow::pathWithinRoot(QDir(out).filePath(kCanaryName), root),
+             "a file under a junction that leads out of the root passed");
+    QVERIFY2(!sak::no_follow::pathWithinRoot(out, root),
+             "a junction that leads out of the root, named itself, passed");
+    // The sibling the junction leads to is not inside the root either way.
+    QVERIFY(!sak::no_follow::pathWithinRoot(m_canary, root));
+    // A path that does not exist cannot be proved inside: refuse.
+    QVERIFY(!sak::no_follow::pathWithinRoot(QDir(root).filePath(QStringLiteral("nope")), root));
+}
+
+// S.A.K. may legitimately be unpacked into a junctioned folder. A root reached through a junction
+// holds its own real files, whichever spelling either side uses.
+void NoFollowFsTests::pathWithinRootAcceptsARootReachedThroughAJunction() {
+    const QString real = m_root->filePath(QStringLiteral("real"));
+    QVERIFY(QDir().mkpath(QDir(real).filePath(QStringLiteral("tools"))));
+    QVERIFY(
+        writeFile(QDir(real).filePath(QStringLiteral("tools/tool.exe")), QByteArrayLiteral("x")));
+    const QString alias = m_root->filePath(QStringLiteral("alias"));
+    QVERIFY(sak::test::createJunction(alias, real));
+    const QString through_alias = QDir(alias).filePath(QStringLiteral("tools/tool.exe"));
+    QVERIFY2(sak::no_follow::pathWithinRoot(through_alias, alias),
+             "a real file in a root reached through a junction was refused");
+    QVERIFY(sak::no_follow::pathWithinRoot(through_alias, real));
+    QVERIFY(sak::no_follow::pathWithinRoot(QDir(real).filePath(QStringLiteral("tools/tool.exe")),
+                                           alias));
+    QVERIFY(!sak::no_follow::pathWithinRoot(QDir(m_canary).filePath(kCanaryName), alias));
 }
 
 void NoFollowFsTests::createNewFileRefusesAnExistingName() {

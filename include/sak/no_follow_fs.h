@@ -75,6 +75,26 @@ private:
 /// True when @p a and @p b name the same path (Windows compares names without case).
 [[nodiscard]] bool samePath(const QString& a, const QString& b);
 
+/// Where the existing file or folder @p path really is: opened FOLLOWING every junction and
+/// symbolic link on the way, then named by finalPathOfHandle. QFileInfo::canonicalFilePath is not
+/// this: with Qt 6 it resolves a symbolic link but not a junction (measured with Qt 6.12.0 on
+/// 2026-11-17, a junction in a folder above or at the name comes back as spelled), so a
+/// containment check built on it lets a junction through. Empty when it cannot be opened or named.
+[[nodiscard]] QString resolvedPath(const QString& path);
+
+/// True when @p path is @p root or lies below it, comparing the two strings as they stand:
+/// without case, '/' and '\' alike, on a separator boundary (C:\App does not hold C:\AppX), a
+/// drive root included. Pure: pass resolvedPath() results. False when either is empty.
+[[nodiscard]] bool pathIsSameOrBelow(const QString& path, const QString& root);
+
+/// True when the existing @p path, resolved (resolvedPath), is @p root or lies below it, with
+/// @p root resolved the same way: a junction or symbolic link anywhere below the root that leads
+/// out of it refuses, while a root that is itself reached through one (S.A.K. unpacked into a
+/// junctioned folder) is fine. False when either cannot be resolved: it fails closed. A check by
+/// name: whatever is later opened or started by that name can be redirected in between unless
+/// something holds the path (a held handle, or a HeldDirectory).
+[[nodiscard]] bool pathWithinRoot(const QString& path, const QString& root);
+
 /// What one name is, read without following it.
 enum class EntryKind : uint8_t {
     Missing,    ///< nothing has that name

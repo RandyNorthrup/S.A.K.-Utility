@@ -444,6 +444,44 @@ bool samePath(const QString& a, const QString& b) {
                .compare(withoutTrailingSeparator(nativeSeparators(b)), Qt::CaseInsensitive) == 0;
 }
 
+QString resolvedPath(const QString& path) {
+    const QString full = comparablePath(path);
+    if (full.isEmpty()) {
+        return {};
+    }
+    // No FILE_FLAG_OPEN_REPARSE_POINT: this open follows every link, which is the point.
+    const UniqueHandle handle(CreateFileW(win32Path(full).c_str(),
+                                          FILE_READ_ATTRIBUTES,
+                                          kAnyShare,
+                                          nullptr,
+                                          OPEN_EXISTING,
+                                          FILE_FLAG_BACKUP_SEMANTICS,
+                                          nullptr));
+    if (!handle.valid()) {
+        return {};
+    }
+    return finalPathOfHandle(handle.get());
+}
+
+bool pathIsSameOrBelow(const QString& path, const QString& root) {
+    if (path.isEmpty() || root.isEmpty()) {
+        return false;
+    }
+    const QString inner = withoutTrailingSeparator(nativeSeparators(path));
+    const QString outer = withoutTrailingSeparator(nativeSeparators(root));
+    if (inner.compare(outer, Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+    // A drive root keeps its separator ("C:\"); any other root gets one, so C:\App never holds
+    // C:\AppX.
+    const QString prefix = outer.endsWith(QLatin1Char('\\')) ? outer : outer + QLatin1Char('\\');
+    return inner.startsWith(prefix, Qt::CaseInsensitive);
+}
+
+bool pathWithinRoot(const QString& path, const QString& root) {
+    return pathIsSameOrBelow(resolvedPath(path), resolvedPath(root));
+}
+
 EntryKind entryKind(const QString& path) {
     const QString full = comparablePath(path);
     if (full.isEmpty()) {
