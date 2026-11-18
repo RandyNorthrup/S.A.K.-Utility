@@ -97,26 +97,12 @@ static bool isSafeAria2OutName(const QString& name) {
 
 // A bundled tool is only launched when it exists as a real regular file that is
 // NOT a reparse point AND whose fully-resolved path is confined under the resolved
-// bundled-tools root with a real path-segment boundary. canonicalFilePath resolves
-// any junctioned ancestor, so a planted junction that redirects the elevated
-// converter/downloader outside the bundle no longer passes containment (a bare leaf
-// check let it through).
+// bundled-tools root with a real path-segment boundary. The resolve goes through a
+// handle (BundledToolsManager::isTrustedToolFile): canonicalFilePath, used here
+// before, does not resolve a junctioned ancestor in Qt 6, so a planted junction that
+// redirected the elevated converter/downloader outside the bundle still passed.
 static bool isTrustedBundledExe(const QString& path, const QString& rootDir) {
-    const QFileInfo info(path);
-    if (!info.exists() || !info.isFile() || info.isSymLink() || info.isJunction()) {
-        return false;
-    }
-    const QString canonical = info.canonicalFilePath();
-    const QString canonicalRoot = QFileInfo(rootDir).canonicalFilePath();
-    if (canonical.isEmpty() || canonicalRoot.isEmpty()) {
-        return false;
-    }
-    if (canonical.compare(canonicalRoot, Qt::CaseInsensitive) == 0) {
-        return true;
-    }
-    const QString rootWithSep =
-        canonicalRoot.endsWith(QLatin1Char('/')) ? canonicalRoot : canonicalRoot + QLatin1Char('/');
-    return canonical.startsWith(rootWithSep, Qt::CaseInsensitive);
+    return sak::BundledToolsManager::isTrustedToolFile(path, rootDir);
 }
 
 // ============================================================================

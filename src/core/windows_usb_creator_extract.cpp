@@ -1,6 +1,7 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/bundled_tools_manager.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -49,26 +50,11 @@ constexpr int kFileCountVerifiedProgress = 98;
 }  // namespace
 
 bool WindowsUSBCreator::isSafeBundledExecutable(const QString& path, const QString& appDir) {
-    const QFileInfo fi(path);
-    // Must be a real, existing regular file -- never a symlink/reparse/junction.
-    if (!fi.exists() || !fi.isFile() || fi.isSymLink()) {
-        return false;
-    }
-    // The fully resolved path must live inside the resolved application directory,
-    // so a redirected/relative path can never point execution outside the tree.
-    const QString canonical = fi.canonicalFilePath();
-    const QString canonicalDir = QFileInfo(appDir).canonicalFilePath();
-    if (canonical.isEmpty() || canonicalDir.isEmpty()) {
-        return false;
-    }
-    // Require a real path-segment boundary: a bare startsWith lets a sibling like
-    // C:/AppEvil pass containment under C:/App. canonicalFilePath uses '/'.
-    if (canonical.compare(canonicalDir, Qt::CaseInsensitive) == 0) {
-        return true;
-    }
-    const QString canonicalDirWithSep =
-        canonicalDir.endsWith(QLatin1Char('/')) ? canonicalDir : canonicalDir + QLatin1Char('/');
-    return canonical.startsWith(canonicalDirWithSep, Qt::CaseInsensitive);
+    // A real, existing regular file -- never a symlink/reparse/junction -- whose fully resolved
+    // path lives inside the resolved application directory on a path-segment boundary, so a
+    // redirected/relative path can never point execution outside the tree. The resolve goes
+    // through a handle: canonicalFilePath, used here before, does not resolve a junction in Qt 6.
+    return sak::BundledToolsManager::isTrustedToolFile(path, appDir);
 }
 
 bool WindowsUSBCreator::copyISO_prepareExtraction(const QString& sourcePath,

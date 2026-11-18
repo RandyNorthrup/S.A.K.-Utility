@@ -57,6 +57,17 @@ public:
     bool toolExists(const QString& category, const QString& exeName) const;
 
     /**
+     * @brief True when @p path may be run as a bundled tool: a real regular file, not a link
+     *        itself, whose real path (every junction and symbolic link on the way resolved,
+     *        no_follow::pathWithinRoot) lies inside @p root resolved the same way.
+     *
+     * A junction in a folder between @p root and the file, pointing outside, refuses: the
+     * QFileInfo::canonicalFilePath comparison this replaces let it through, because Qt 6 does
+     * not resolve a junction there. A @p root that is itself reached through a junction is fine.
+     */
+    [[nodiscard]] static bool isTrustedToolFile(const QString& path, const QString& root);
+
+    /**
      * @brief Check if a bundled script exists
      */
     bool scriptExists(const QString& scriptName) const;

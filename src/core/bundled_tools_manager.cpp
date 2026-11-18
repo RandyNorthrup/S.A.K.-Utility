@@ -3,6 +3,8 @@
 
 #include "sak/bundled_tools_manager.h"
 
+#include "sak/no_follow_fs.h"
+
 #include <QFileInfo>
 
 namespace sak {
@@ -39,6 +41,14 @@ bool BundledToolsManager::toolExists(const QString& category, const QString& exe
     // folder that exists) is not a runnable tool -- require a regular file, not mere presence.
     const QFileInfo info(toolPath(category, exeName));
     return info.exists() && info.isFile();
+}
+
+bool BundledToolsManager::isTrustedToolFile(const QString& path, const QString& root) {
+    const QFileInfo info(path);
+    if (!info.exists() || !info.isFile() || info.isSymLink() || info.isJunction()) {
+        return false;
+    }
+    return no_follow::pathWithinRoot(path, root);
 }
 
 bool BundledToolsManager::scriptExists(const QString& scriptName) const {

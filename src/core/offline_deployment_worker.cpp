@@ -1236,21 +1236,11 @@ QString OfflineDeploymentWorker::resolveChocoExecutable() {
     }
     const QString path = tools.toolPath(QStringLiteral("chocolatey"), QStringLiteral("choco.exe"));
     // Existence alone is the weakest check: confirm choco.exe is a real regular file
-    // (not a planted symlink/junction) whose canonical path stays under the resolved
-    // bundled-tools root, so a junctioned ancestor cannot substitute an attacker
-    // binary that would then run with install-time privileges.
-    const QFileInfo info(path);
-    if (!info.isFile() || info.isSymLink() || info.isJunction()) {
-        return QString();
-    }
-    const QString canonical = info.canonicalFilePath();
-    const QString canonicalRoot = QFileInfo(tools.toolsPath()).canonicalFilePath();
-    if (canonical.isEmpty() || canonicalRoot.isEmpty()) {
-        return QString();
-    }
-    const QString rootWithSep =
-        canonicalRoot.endsWith(QLatin1Char('/')) ? canonicalRoot : canonicalRoot + QLatin1Char('/');
-    if (!canonical.startsWith(rootWithSep, Qt::CaseInsensitive)) {
+    // (not a planted symlink/junction) whose real path, every link resolved through a
+    // handle, stays under the bundled-tools root, so a junctioned ancestor cannot
+    // substitute an attacker binary that would then run with install-time privileges.
+    // (QFileInfo::canonicalFilePath, used here before, does not resolve a junction.)
+    if (!BundledToolsManager::isTrustedToolFile(path, tools.toolsPath())) {
         return QString();
     }
     return path;

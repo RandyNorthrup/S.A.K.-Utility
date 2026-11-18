@@ -18,6 +18,7 @@
 
 #include "../support/create_file_recorder.h"
 #include "../support/iso_fixture.h"
+#include "../support/junction_fixture.h"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -102,6 +103,8 @@ private Q_SLOTS:
     void isSafeBundledExecutable_rejectsMissingFile();
     void isSafeBundledExecutable_rejectsFileOutsideAppDir();
     void isSafeBundledExecutable_rejectsSiblingPrefixDir();
+    void isSafeBundledExecutable_rejectsFileUnderAJunctionLeadingOut();
+    void isSafeBundledExecutable_acceptsAppDirReachedThroughAJunction();
 };
 
 // ===========================================================================
@@ -657,6 +660,42 @@ void WindowsUSBCreatorTests::isSafeBundledExecutable_rejectsSiblingPrefixDir() {
     f.write("MZ");
     f.close();
     QVERIFY(!WindowsUSBCreator::isSafeBundledExecutable(exe, appDir));
+}
+
+// Lane SEC2 (2026-11-17): the containment step compared QFileInfo::canonicalFilePath, which in
+// Qt 6 does not resolve a junction. A junction under the application folder, pointing outside,
+// let an outside 7z.exe pass as bundled.
+void WindowsUSBCreatorTests::isSafeBundledExecutable_rejectsFileUnderAJunctionLeadingOut() {
+    QTemporaryDir base;
+    QVERIFY(base.isValid());
+    const QString appDir = base.path() + QStringLiteral("/app");
+    const QString outside = base.path() + QStringLiteral("/outside");
+    QVERIFY(QDir().mkpath(appDir));
+    QVERIFY(QDir().mkpath(outside));
+    QFile f(outside + QStringLiteral("/7z.exe"));
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("MZ");
+    f.close();
+    QVERIFY(sak::test::createJunction(appDir + QStringLiteral("/tools"), outside));
+    QVERIFY2(!WindowsUSBCreator::isSafeBundledExecutable(appDir + QStringLiteral("/tools/7z.exe"),
+                                                         appDir),
+             "an executable reached through a junction that leads out of the app folder passed");
+}
+
+void WindowsUSBCreatorTests::isSafeBundledExecutable_acceptsAppDirReachedThroughAJunction() {
+    QTemporaryDir base;
+    QVERIFY(base.isValid());
+    const QString realDir = base.path() + QStringLiteral("/real");
+    QVERIFY(QDir().mkpath(realDir + QStringLiteral("/tools")));
+    QFile f(realDir + QStringLiteral("/tools/7z.exe"));
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("MZ");
+    f.close();
+    const QString aliasDir = base.path() + QStringLiteral("/alias");
+    QVERIFY(sak::test::createJunction(aliasDir, realDir));
+    QVERIFY2(WindowsUSBCreator::isSafeBundledExecutable(aliasDir + QStringLiteral("/tools/7z.exe"),
+                                                        aliasDir),
+             "a real 7z.exe in an application folder reached through a junction was refused");
 }
 
 // R5-G14-3. This helper was private and had no test at all, and it shipped with
