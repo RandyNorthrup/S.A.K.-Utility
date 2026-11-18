@@ -482,6 +482,50 @@ bool pathWithinRoot(const QString& path, const QString& root) {
     return pathIsSameOrBelow(resolvedPath(path), resolvedPath(root));
 }
 
+std::expected<HeldFile, QString> holdFile(const QString& path) {
+    const QString full = comparablePath(path);
+    if (full.isEmpty()) {
+        return std::unexpected(QStringLiteral("%1 is not a usable path").arg(path));
+    }
+    // GENERIC_READ, not attributes only: an open without data access takes no part in sharing, so
+    // it would keep nobody out. Sharing reading only keeps writers, renames and deletes out (and
+    // the rename of any folder above it), while Windows can still map the file to start it.
+    HANDLE raw = CreateFileW(win32Path(full).c_str(),
+                             GENERIC_READ,
+                             FILE_SHARE_READ,
+                             nullptr,
+                             OPEN_EXISTING,
+                             FILE_ATTRIBUTE_NORMAL,
+                             nullptr);
+    const DWORD error = GetLastError();
+    UniqueHandle handle(raw);
+    if (!handle.valid()) {
+        return std::unexpected(
+            QStringLiteral("cannot hold %1 (%2)").arg(path, lastErrorText(error)));
+    }
+    const auto kind = entryKindOfHandle(handle.get());
+    if (!kind || *kind != EntryKind::File) {
+        return std::unexpected(QStringLiteral("%1 is not a regular file").arg(path));
+    }
+    QString real = finalPathOfHandle(handle.get());
+    if (real.isEmpty()) {
+        return std::unexpected(QStringLiteral("cannot name where %1 really is").arg(path));
+    }
+    return HeldFile{.handle = std::move(handle), .path = std::move(real)};
+}
+
+std::expected<HeldFile, QString> holdFileWithinRoot(const QString& path, const QString& root) {
+    auto held = holdFile(path);
+    if (!held) {
+        return held;
+    }
+    if (!pathIsSameOrBelow(held->path, resolvedPath(root))) {
+        return std::unexpected(
+            QStringLiteral("%1 is really %2, outside %3").arg(path, held->path, root));
+    }
+    return held;
+}
+
 EntryKind entryKind(const QString& path) {
     const QString full = comparablePath(path);
     if (full.isEmpty()) {
