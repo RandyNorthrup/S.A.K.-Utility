@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_provider_registry.h"
 
+#include "sak/no_follow_fs.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -72,17 +74,15 @@ constexpr auto kProvidersResource = ":/ai/providers/providers.json";
         return false;
     }
     // A lexical cleanPath resolves "../" but NOT symlinks/junctions, so a within-dir
-    // command that is a symlink to an executable OUTSIDE the app dir would still pass.
-    // When the command exists, also require its CANONICAL path (links resolved) to stay
-    // within the canonical app dir. A command that does not exist yet keeps the lexical
-    // verdict -- its absence is reported separately as "missing".
-    const QString canonical_base = QFileInfo(app_dir).canonicalFilePath();
-    const QString canonical_target = QFileInfo(command).canonicalFilePath();
-    if (canonical_base.isEmpty() || canonical_target.isEmpty()) {
+    // command reached through a link to an executable OUTSIDE the app dir would still pass.
+    // When the command exists, also require its REAL path (every junction and symlink
+    // resolved through a handle) to stay within the real app dir; canonicalFilePath, used
+    // here before, does not resolve a junction in Qt 6. A command that does not exist yet
+    // keeps the lexical verdict -- its absence is reported separately as "missing".
+    if (!QFileInfo::exists(command)) {
         return true;
     }
-    return canonical_target == canonical_base ||
-           canonical_target.startsWith(canonical_base + QLatin1Char('/'), Qt::CaseInsensitive);
+    return sak::no_follow::pathWithinRoot(command, app_dir);
 }
 
 [[nodiscard]] QJsonObject providerStatusObject(const QString& app_dir,
