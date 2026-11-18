@@ -193,23 +193,22 @@ bool pathIsWithin(const QString& child, const QString& parent) {
 }
 
 // True when @p item's realized PARENT directory (junctions/symlinks fully resolved) is at or
-// under @p canonicalRoot, which must itself be a canonicalFilePath. The per-entry leaf reparse
-// check catches @p item itself, but an ANCESTOR directory that is (or becomes) a junction after it
-// was descended into would redirect the read or write outside the root while the leaf still looks
-// clean; re-checking the realized parent on every entry catches that. Fails closed on an empty
-// root or an unresolvable parent. canonicalFilePath yields '/'-paths, so the trailing-'/' test
-// rejects a sibling-prefix (Root vs RootX). Mirrors the restore worker's
-// destinationParentWithinRoot.
+// under @p canonicalRoot, which must itself be a no_follow::resolvedPath. The per-entry leaf
+// reparse check catches @p item itself, but an ANCESTOR directory that is (or becomes) a junction
+// after it was descended into would redirect the read or write outside the root while the leaf
+// still looks clean; re-checking the realized parent on every entry catches that. Fails closed on
+// an empty root or an unresolvable parent; pathIsSameOrBelow rejects a sibling-prefix (Root vs
+// RootX). The parent is resolved through a handle: canonicalFilePath, used here before, does not
+// resolve a junction in Qt 6, so a junctioned ancestor passed.
 bool parentWithinCanonicalRoot(const QString& canonicalRoot, const QString& item) {
     if (canonicalRoot.isEmpty()) {
         return false;
     }
-    const QString canonicalParent = QFileInfo(QFileInfo(item).absolutePath()).canonicalFilePath();
+    const QString canonicalParent = no_follow::resolvedPath(QFileInfo(item).absolutePath());
     if (canonicalParent.isEmpty()) {
         return false;
     }
-    return canonicalParent == canonicalRoot ||
-           canonicalParent.startsWith(canonicalRoot + QLatin1Char('/'));
+    return no_follow::pathIsSameOrBelow(canonicalParent, canonicalRoot);
 }
 }  // namespace
 
@@ -567,8 +566,8 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
     // ancestor directory that is (or becomes) a junction cannot redirect a read out of the profile
     // or a write out of the backup, mirroring the restore worker's destinationParentWithinRoot
     // (R5-P7-36). Fail closed if either root cannot be resolved.
-    m_currentSourceRoot = QFileInfo(user.profile_path).canonicalFilePath();
-    m_currentDestRoot = QFileInfo(userBackupPath).canonicalFilePath();
+    m_currentSourceRoot = no_follow::resolvedPath(user.profile_path);
+    m_currentDestRoot = no_follow::resolvedPath(userBackupPath);
     if (m_currentSourceRoot.isEmpty() || m_currentDestRoot.isEmpty()) {
         Q_EMIT logMessage(
             tr("Unable to resolve canonical backup roots for user: %1").arg(user.username), true);
