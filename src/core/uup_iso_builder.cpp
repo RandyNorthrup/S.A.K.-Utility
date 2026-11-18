@@ -560,7 +560,16 @@ void UupIsoBuilder::executeDownload() {
         return;
     }
 
-    const QString aria2Path = findAria2Path();
+    // Hold aria2c.exe from this check until this function returns, after it has started: nobody can
+    // replace or rename it, or a folder above it, and it starts from the real path the hold names.
+    auto aria2Hold = sak::no_follow::holdFileWithinRoot(
+        findAria2Path(), sak::BundledToolsManager::instance().toolsPath());
+    if (!aria2Hold) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError("aria2c.exe refused: " + aria2Hold.error());
+        return;
+    }
+    const QString aria2Path = aria2Hold->path;
     const QString inputFile = QDir(m_workDir).filePath("aria2_script.txt");
     const QString downloadDir = QDir(m_workDir).filePath("UUPs");
 
@@ -1002,6 +1011,15 @@ void UupIsoBuilder::executeConversion() {
             uupsDir, nativeConversionTempDir, outputIsoPath, uupMediaConverter)) {
         return;
     }
+    // Held until this function returns, after the converter has started (see executeDownload).
+    auto converterHold = sak::no_follow::holdFileWithinRoot(
+        uupMediaConverter, sak::BundledToolsManager::instance().toolsPath());
+    if (!converterHold) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError("UUPMediaConverter.exe refused: " + converterHold.error());
+        return;
+    }
+    uupMediaConverter = converterHold->path;
 
     m_converterProcess = std::make_unique<QProcess>(this);
     m_converterProcess->setWorkingDirectory(QFileInfo(uupMediaConverter).absolutePath());

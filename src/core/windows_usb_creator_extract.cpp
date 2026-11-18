@@ -6,6 +6,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/media_read_back.h"
+#include "sak/no_follow_fs.h"
 #include "sak/process_runner.h"
 #include "sak/windows_usb_creator.h"
 
@@ -83,7 +84,15 @@ bool WindowsUSBCreator::copyISO_prepareExtraction(const QString& sourcePath,
         return false;
     }
 
-    copyISO_extractVolumeLabel(sevenZipPath, sourcePath);
+    // Held while the label is read, and started from the real path the hold names (lane SEC2);
+    // copyISOContents holds it again for the runs after this one.
+    const auto labelHold = sak::no_follow::holdFileWithinRoot(sevenZipPath, appDir);
+    if (!labelHold) {
+        setError(QString("Refusing to read the ISO label with 7z.exe: %1").arg(labelHold.error()));
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+    copyISO_extractVolumeLabel(labelHold->path, sourcePath);
 
     // A cancel observed during the (quick) label probe must abort BEFORE any extraction writes,
     // rather than being swallowed into a default label and proceeding to a multi-minute extract.
@@ -107,6 +116,16 @@ bool WindowsUSBCreator::copyISOContents(const QString& sourcePath, const QString
     if (!copyISO_prepareExtraction(sourcePath, sevenZipPath)) {
         return false;
     }
+    // Hold 7z.exe for every run below: nobody can replace or rename it, or a folder above it, and
+    // each run starts from the real path the hold names (lane SEC2).
+    const auto sevenZipHold =
+        sak::no_follow::holdFileWithinRoot(sevenZipPath, QCoreApplication::applicationDirPath());
+    if (!sevenZipHold) {
+        setError(QString("Refusing to extract the ISO with 7z.exe: %1").arg(sevenZipHold.error()));
+        sak::logError(m_lastError.toStdString());
+        return false;
+    }
+    sevenZipPath = sevenZipHold->path;
 
     QString cleanDest;
     if (!copyISO_normalizeDestination(destPath, cleanDest)) {
@@ -1192,7 +1211,14 @@ WindowsUSBCreator::InstallImageCheck WindowsUSBCreator::checkInstallImage(const 
                           .toStdString());
         return InstallImageCheck::Failed;
     }
-    return checkInstallImageWith(isoPath, sevenZipPath);
+    // Held across the run, which starts from the real path the hold names (lane SEC2).
+    const auto hold = sak::no_follow::holdFileWithinRoot(sevenZipPath, appDir);
+    if (!hold) {
+        sak::logError(
+            QString("Cannot look inside %1: %2").arg(isoPath, hold.error()).toStdString());
+        return InstallImageCheck::Failed;
+    }
+    return checkInstallImageWith(isoPath, hold->path);
 }
 
 WindowsUSBCreator::InstallImageCheck WindowsUSBCreator::checkInstallImageWith(

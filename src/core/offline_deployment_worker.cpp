@@ -167,6 +167,34 @@ ProcessRunOptions packageFamilyOptions() {
             .job_wait_ms = kPackageFamilyWaitMs};
 }
 
+/// Runs one choco install from @p held, choco.exe held since its check, by the real path the hold
+/// names, and lets the file go once choco has started.
+ProcessResult runHeldChoco(no_follow::HeldFile& held,
+                           const QStringList& args,
+                           const CancelCheck& should_cancel) {
+    // Point the child at the bundled portable Chocolatey root (the dir holding
+    // choco.exe), matching the search side. Without ChocolateyInstall a portable
+    // choco would fall back to %ProgramData%\chocolatey -- i.e. try to install
+    // onto the target machine's system location, which a portable tool must not
+    // do (and which does not exist on a clean target).
+    // A portable temp for this child only (the app itself keeps the normal %TEMP%).
+    QProcessEnvironment env =
+        sak::app_paths::withSessionTemp(QProcessEnvironment::systemEnvironment());
+    env.insert(QStringLiteral("ChocolateyInstall"), QFileInfo(held.path).absolutePath());
+
+    ProcessStreamingRequest request;
+    request.program = held.path;
+    request.on_started = [&held](qint64) {
+        held.handle.reset();
+    };
+    request.args = args;
+    request.timeout_ms = offline::kInstallTimeoutPerPackageMs;
+    request.should_cancel = should_cancel;
+    request.options = packageFamilyOptions();
+    request.environment = env;
+    return runProcessStreaming(request);
+}
+
 QString installOutcomeText(const ProcessResult& process, bool success) {
     if (process.cancelled) {
         return QStringLiteral("Installation cancelled");
@@ -1368,26 +1396,18 @@ bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry
         }
     }
 
-    // Point the child at the bundled portable Chocolatey root (the dir holding
-    // choco.exe), matching the search side. Without ChocolateyInstall a portable
-    // choco would fall back to %ProgramData%\chocolatey -- i.e. try to install
-    // onto the target machine's system location, which a portable tool must not
-    // do (and which does not exist on a clean target).
-    // A portable temp for this child only (the app itself keeps the normal %TEMP%).
-    QProcessEnvironment env =
-        sak::app_paths::withSessionTemp(QProcessEnvironment::systemEnvironment());
-    env.insert(QStringLiteral("ChocolateyInstall"), QFileInfo(choco_exe).absolutePath());
-
-    ProcessStreamingRequest request;
-    request.program = choco_exe;
-    request.args = chocoInstallArgs(entry, install_ctx);
-    request.timeout_ms = offline::kInstallTimeoutPerPackageMs;
-    request.should_cancel = [this]() {
+    // Hold choco.exe from here until it has started: nobody can then replace or rename it, or a
+    // folder above it, and it starts from the real path the hold names (lane SEC2).
+    auto choco_hold = no_follow::holdFileWithinRoot(choco_exe,
+                                                    BundledToolsManager::instance().toolsPath());
+    if (!choco_hold) {
+        emitPackageOutcome(
+            entry, false, QStringLiteral("Bundled Chocolatey refused: %1").arg(choco_hold.error()));
+        return false;
+    }
+    const auto process = runHeldChoco(*choco_hold, chocoInstallArgs(entry, install_ctx), [this]() {
         return m_cancelled.load();
-    };
-    request.options = packageFamilyOptions();
-    request.environment = env;
-    const auto process = runProcessStreaming(request);
+    });
 
     const bool success = !process.timed_out && !process.cancelled &&
                          isSuccessInstallExitCode(process.exit_code);
