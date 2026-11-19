@@ -10,6 +10,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 Work toward the next release, in progress.
 
+- **APFS image edits flush their output before they report success** - Each APFS image edit (format, file
+  and folder changes, snapshots, resize, relabel, checksum repair) closed the image it wrote without flushing it.
+  The next edit copies that image, and while Windows was busy (another program's build starting or ending) it
+  could list the newest piece of the just-written image as empty, so the copy held zeros there: the next edit
+  refused with "the live free-queue leaf checksum is invalid" when the piece held metadata, but file data there
+  would have been lost without a message. Every image edit now flushes its output first and, if that fails, says
+  so and leaves no output.
 - **A junction no longer passes for a folder inside S.A.K.'s own** - Several checks that a path stays inside a
   folder (the bundled Chocolatey, the UUP tools and 7-Zip, the assistant's bundled MCP servers, the profile backup's
   reads, Data Recovery's restore destination, and APFS, ext and HFS+ exports) compared Qt's canonical paths, which do

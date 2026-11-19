@@ -62,6 +62,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <stdexcept>
 #include <thread>
 #include <tuple>
@@ -1773,6 +1774,7 @@ private Q_SLOTS:
     void apfsWriter_inPlaceSnapshotCreateAddsSnapshot();
     void apfsWriter_inPlaceMultiSnapshotCreate();
     void apfsWriter_snapshotMetaMultiNodeSplit();
+    void apfsWriter_imageOutputsFailClosedWhenTheirFlushFails();
     void apfsWriter_inPlaceMultiSnapshotDelete();
     void apfsWriter_multiSnapshotDeleteOwnerWithFile();
     void apfsWriter_inPlaceDivergeBetweenSnapshots();
@@ -15302,6 +15304,399 @@ void PartitionManagerCoreTests::apfsWriter_snapshotMetaMultiNodeSplit() {
     const auto after =
         PartitionApfsFileSystemReader::listDirectoryFromImage(collapsed, QStringLiteral("/"), 20);
     QVERIFY2(after.ok, qPrintable(after.blockers.join(QStringLiteral("; "))));
+}
+
+namespace {
+// What one image build or image-only commit reported.
+struct FlushCaseOutcome {
+    bool ok{false};
+    QStringList blockers;
+};
+
+// One public APFS image path, run against an output path it must create.
+struct FlushCase {
+    const char* name{nullptr};
+    std::function<FlushCaseOutcome(const QString& output)> run;
+};
+
+template <typename ResultT>
+FlushCaseOutcome flushCaseOutcome(const ResultT& result) {
+    return {result.ok, result.blockers};
+}
+
+// The sources the cases start from, all made with the durable flush working.
+struct FlushCaseSources {
+    QString base;       // empty generated volume
+    QString withDir;    // + root file a.bin + empty folder d
+    QString full;       // + d/c.bin
+    QString snapped;    // + snapshot s1
+    QString corrupted;  // seeded volume with one corrupted object checksum (the repair input)
+};
+
+PartitionApfsImageFormatRequest flushCaseFormat(const QString& image,
+                                                const PartitionApfsWriteOptions& options) {
+    return {.image_path = image,
+            .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+            .block_size_bytes = 4096,
+            .volume_name = QStringLiteral("FFLUSH"),
+            .seed_file_name = QStringLiteral("proof.txt"),
+            .seed_file_data = apfsImageOnlySeedData(),
+            .options = options};
+}
+
+// Flip one byte of the seeded layout's root-tree checksum (block 197), as the repair test does.
+bool corruptSeededRootTreeChecksum(const QString& path) {
+    constexpr qint64 kRootTreeChecksumOffset = 197LL * 4096LL;
+    QFile image(path);
+    char byte = '\0';
+    if (!image.open(QIODevice::ReadWrite) || !image.seek(kRootTreeChecksumOffset) ||
+        !image.getChar(&byte)) {
+        return false;
+    }
+    byte = static_cast<char>(byte ^ 0x5A);
+    return image.seek(kRootTreeChecksumOffset) && image.putChar(byte);
+}
+
+// The first two sources: an empty volume, then one root file and an empty folder.
+bool buildFlushCaseBaseSources(const QDir& dir,
+                               const PartitionApfsWriteOptions& options,
+                               FlushCaseSources* s) {
+    s->base = dir.filePath(QStringLiteral("ff-base.apfs"));
+    const QString withFile = dir.filePath(QStringLiteral("ff-file.apfs"));
+    s->withDir = dir.filePath(QStringLiteral("ff-dir.apfs"));
+    PartitionApfsImageFormatRequest empty = flushCaseFormat(s->base, options);
+    empty.seed_file_name.clear();
+    empty.seed_file_data.clear();
+    return PartitionApfsWriter::buildImageOnlyFormatImage(empty).ok &&
+           PartitionApfsWriter::commitImageOnlyFileInsert(
+               {.source_image_path = s->base,
+                .written_image_path = withFile,
+                .file_name = QStringLiteral("a.bin"),
+                .file_data = QByteArray("durable-flush-").repeated(64),
+                .options = options})
+               .ok &&
+           PartitionApfsWriter::commitImageOnlyDirectoryCreate(
+               {.source_image_path = withFile,
+                .written_image_path = s->withDir,
+                .directory_name = QStringLiteral("d"),
+                .options = options})
+               .ok;
+}
+
+bool buildFlushCaseSources(const QDir& dir,
+                           const PartitionApfsWriteOptions& options,
+                           FlushCaseSources* s) {
+    if (!buildFlushCaseBaseSources(dir, options, s)) {
+        return false;
+    }
+    s->full = dir.filePath(QStringLiteral("ff-full.apfs"));
+    s->snapped = dir.filePath(QStringLiteral("ff-snap.apfs"));
+    s->corrupted = dir.filePath(QStringLiteral("ff-corrupt.apfs"));
+    const QString seeded = dir.filePath(QStringLiteral("ff-seeded.apfs"));
+    return PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
+               {.source_image_path = s->withDir,
+                .written_image_path = s->full,
+                .directory_name = QStringLiteral("d"),
+                .file_name = QStringLiteral("c.bin"),
+                .file_data = QByteArray("child"),
+                .options = options})
+               .ok &&
+           PartitionApfsWriter::commitImageOnlySnapshotCreate(
+               {.source_image_path = s->full,
+                .written_image_path = s->snapped,
+                .snapshot_name = QStringLiteral("s1"),
+                .create_time_ns = 1,
+                .options = options})
+               .ok &&
+           PartitionApfsWriter::buildImageOnlyFormatImageWithSeedFile(
+               flushCaseFormat(seeded, options))
+               .ok &&
+           QFile::copy(seeded, s->corrupted) && corruptSeededRootTreeChecksum(s->corrupted);
+}
+
+// The three image builds, the checksum repair and the volume label.
+QVector<FlushCase> flushBuildCases(const FlushCaseSources& s,
+                                   const PartitionApfsWriteOptions& options) {
+    return {
+        {"format build",
+         [options](const QString& out) {
+             PartitionApfsImageFormatRequest request = flushCaseFormat(out, options);
+             request.seed_file_name.clear();
+             request.seed_file_data.clear();
+             return flushCaseOutcome(PartitionApfsWriter::buildImageOnlyFormatImage(request));
+         }},
+        {"seeded format build",
+         [options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::buildImageOnlyFormatImageWithSeedFile(
+                 flushCaseFormat(out, options)));
+         }},
+        {"per-file encrypted build",
+         [options](const QString& out) {
+             PartitionApfsImageFormatRequest request = flushCaseFormat(out, options);
+             request.volume_password = QStringLiteral("sakpass1234");
+             return flushCaseOutcome(
+                 PartitionApfsWriter::buildImageOnlyPerFileEncryptedImageWithSeedFile(request));
+         }},
+        {"checksum repair",
+         [s, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::repairImageOnlyObjectChecksums(
+                 {.source_image_path = s.corrupted,
+                  .repaired_image_path = out,
+                  .options = options}));
+         }},
+        {"volume label",
+         [s, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::changeImageOnlyVolumeLabel(
+                 {.source_image_path = s.base,
+                  .written_image_path = out,
+                  .volume_name = QStringLiteral("RELABEL"),
+                  .options = options}));
+         }},
+    };
+}
+
+// The checkpoint-only commit, the resize, and the root-file content commits.
+QVector<FlushCase> flushFileCases(const FlushCaseSources& s,
+                                  const PartitionApfsWriteOptions& options) {
+    const QString src = s.full;
+    return {
+        {"checkpoint",
+         [s, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyCheckpoint(
+                 {.source_image_path = s.base, .written_image_path = out, .options = options}));
+         }},
+        {"resize",
+         [s, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyResize(
+                 {.source_image_path = s.base,
+                  .written_image_path = out,
+                  .new_size_bytes = 96ULL * 1024ULL * 1024ULL,
+                  .options = options}));
+         }},
+        {"file insert",
+         [src, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyFileInsert(
+                 {.source_image_path = src,
+                  .written_image_path = out,
+                  .file_name = QStringLiteral("i.bin"),
+                  .file_data = QByteArray("insert"),
+                  .options = options}));
+         }},
+        {"file write",
+         [src, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyFileWrite(
+                 {.source_image_path = src,
+                  .written_image_path = out,
+                  .file_name = QStringLiteral("w.bin"),
+                  .file_data = QByteArray("write"),
+                  .options = options}));
+         }},
+        {"file patch",
+         [src, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyFilePatch(
+                 {.source_image_path = src,
+                  .written_image_path = out,
+                  .file_name = QStringLiteral("a.bin"),
+                  .patch_offset_bytes = 0,
+                  .patch_data = QByteArray("X"),
+                  .options = options}));
+         }},
+        {"file delete",
+         [src, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyFileDelete(
+                 {.source_image_path = src,
+                  .written_image_path = out,
+                  .file_name = QStringLiteral("a.bin"),
+                  .options = options}));
+         }},
+    };
+}
+
+// The root-file naming commits: rename, move, clone and hard link.
+QVector<FlushCase> flushNameCases(const FlushCaseSources& s,
+                                  const PartitionApfsWriteOptions& options) {
+    const QString src = s.full;
+    return {
+        {"file rename",
+         [src, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyFileRename(
+                 {.source_image_path = src,
+                  .written_image_path = out,
+                  .file_name = QStringLiteral("a.bin"),
+                  .new_file_name = QStringLiteral("b.bin"),
+                  .options = options}));
+         }},
+        {"file move",
+         [src, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyFileMove(
+                 {.source_image_path = src,
+                  .written_image_path = out,
+                  .source_directory_name = QString(),
+                  .file_name = QStringLiteral("a.bin"),
+                  .destination_directory_name = QStringLiteral("d"),
+                  .new_file_name = QStringLiteral("a.bin"),
+                  .options = options}));
+         }},
+        {"file clone",
+         [src, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyFileClone(
+                 {.source_image_path = src,
+                  .written_image_path = out,
+                  .source_file_name = QStringLiteral("a.bin"),
+                  .clone_file_name = QStringLiteral("a2.bin"),
+                  .options = options}));
+         }},
+        {"file hard link",
+         [src, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyFileHardlink(
+                 {.source_image_path = src,
+                  .written_image_path = out,
+                  .source_file_name = QStringLiteral("a.bin"),
+                  .link_file_name = QStringLiteral("l.bin"),
+                  .options = options}));
+         }},
+    };
+}
+
+PartitionApfsImageRootDirectoryMutationRequest flushDirRequest(
+    const QString& src, const QString& out, const PartitionApfsWriteOptions& options) {
+    return {.source_image_path = src,
+            .written_image_path = out,
+            .directory_name = QStringLiteral("d"),
+            .options = options};
+}
+
+// The folder commits.
+QVector<FlushCase> flushDirectoryCases(const FlushCaseSources& s,
+                                       const PartitionApfsWriteOptions& options) {
+    return {
+        {"directory create",
+         [s, options](const QString& out) {
+             auto request = flushDirRequest(s.full, out, options);
+             request.directory_name = QStringLiteral("e");
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyDirectoryCreate(request));
+         }},
+        {"directory delete",
+         [s, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyDirectoryDelete(
+                 flushDirRequest(s.withDir, out, options)));
+         }},
+        {"directory child write",
+         [s, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyDirectoryChildWrite(
+                 {.source_image_path = s.withDir,
+                  .written_image_path = out,
+                  .directory_name = QStringLiteral("d"),
+                  .file_name = QStringLiteral("x.bin"),
+                  .file_data = QByteArray("x"),
+                  .options = options}));
+         }},
+        {"directory child delete",
+         [s, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyDirectoryChildDelete(
+                 {.source_image_path = s.full,
+                  .written_image_path = out,
+                  .directory_name = QStringLiteral("d"),
+                  .file_name = QStringLiteral("c.bin"),
+                  .options = options}));
+         }},
+        {"directory child rename",
+         [s, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlyDirectoryChildRename(
+                 {.source_image_path = s.full,
+                  .written_image_path = out,
+                  .directory_name = QStringLiteral("d"),
+                  .file_name = QStringLiteral("c.bin"),
+                  .new_file_name = QStringLiteral("c2.bin"),
+                  .options = options}));
+         }},
+    };
+}
+
+// The snapshot commits.
+QVector<FlushCase> flushSnapshotCases(const FlushCaseSources& s,
+                                      const PartitionApfsWriteOptions& options) {
+    return {
+        {"snapshot create",
+         [s, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlySnapshotCreate(
+                 {.source_image_path = s.full,
+                  .written_image_path = out,
+                  .snapshot_name = QStringLiteral("s2"),
+                  .create_time_ns = 2,
+                  .options = options}));
+         }},
+        {"snapshot delete",
+         [s, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlySnapshotDelete(
+                 {.source_image_path = s.snapped,
+                  .written_image_path = out,
+                  .snapshot_name = QStringLiteral("s1"),
+                  .options = options}));
+         }},
+        {"snapshot revert",
+         [s, options](const QString& out) {
+             return flushCaseOutcome(PartitionApfsWriter::commitImageOnlySnapshotRevert(
+                 {.source_image_path = s.snapped,
+                  .written_image_path = out,
+                  .snapshot_name = QStringLiteral("s1"),
+                  .options = options}));
+         }},
+    };
+}
+
+// Run one case with the flush working (it must succeed: the case itself is valid), then with the
+// flush failing (it must report the flush failure and leave no output behind).
+void verifyFlushCaseFailsClosed(const FlushCase& flushCase, const QDir& dir) {
+    const QString name = QString::fromLatin1(flushCase.name);
+    const QString control = dir.filePath(QStringLiteral("ff-control.apfs"));
+    const FlushCaseOutcome working = flushCase.run(control);
+    QVERIFY2(working.ok,
+             qPrintable(name + QStringLiteral(" (flush working): ") +
+                        working.blockers.join(QStringLiteral("; "))));
+    QVERIFY(QFile::remove(control));
+    const QString output = dir.filePath(QStringLiteral("ff-output.apfs"));
+    FlushCaseOutcome failing;
+    {
+        PartitionApfsWriter::setDurableFlushFailureForTesting(true);
+        const auto restore =
+            qScopeGuard([] { PartitionApfsWriter::setDurableFlushFailureForTesting(false); });
+        failing = flushCase.run(output);
+    }
+    const QString blockers = failing.blockers.join(QStringLiteral("; "));
+    QVERIFY2(!failing.ok, qPrintable(name + QStringLiteral(" reported success unflushed")));
+    QVERIFY2(blockers.contains(QStringLiteral("durable flush failed")),
+             qPrintable(name + QStringLiteral(": ") + blockers));
+    QVERIFY2(!QFileInfo::exists(output), qPrintable(name + QStringLiteral(" left its output")));
+}
+}  // namespace
+
+void PartitionManagerCoreTests::apfsWriter_imageOutputsFailClosedWhenTheirFlushFails() {
+    // Every APFS image build and image-only commit ends with a checked durable flush of its
+    // output. The next commit copies that output with copyFileSparse, which copies only the
+    // ranges FSCTL_QUERY_ALLOCATED_RANGES reports, and right after cached writes NTFS has been
+    // seen to report a run without its newest 64 KiB unit: the copy then reads zeros there ("the
+    // live free-queue leaf checksum is invalid", testpc2 2026-11-18; a file-data block would lose
+    // its bytes silently). With the flush made to fail, each path must say so and leave no
+    // output; before the flush existed every one of them reported success.
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    FlushCaseSources sources;
+    QVERIFY(buildFlushCaseSources(dir, options, &sources));
+    QVector<FlushCase> cases = flushBuildCases(sources, options);
+    cases += flushFileCases(sources, options);
+    cases += flushNameCases(sources, options);
+    cases += flushDirectoryCases(sources, options);
+    cases += flushSnapshotCases(sources, options);
+    QCOMPARE(cases.size(), 23);
+    for (const FlushCase& flushCase : std::as_const(cases)) {
+        verifyFlushCaseFailsClosed(flushCase, dir);
+        if (QTest::currentTestFailed()) {
+            return;
+        }
+    }
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceMultiSnapshotDelete() {

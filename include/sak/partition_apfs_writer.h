@@ -1123,6 +1123,12 @@ public:
     ///        the production rule (@c isWindowsRawDevicePath). Never call from production code.
     static void setRawDeviceTargetPredicateForTesting(
         std::function<bool(const QString&)> predicate);
+    /// @brief Test-only seam: while @p fail is true, the checked durable flush every APFS
+    ///        commit and image build runs before closing its target reports failure, as
+    ///        FlushFileBuffers would on an I/O error, so a unit test can prove each path
+    ///        fails closed (reports the flush failure, leaves no output) instead of reporting
+    ///        success for an output it never flushed. Never call from production code.
+    static void setDurableFlushFailureForTesting(bool fail);
 #endif  // SAK_PARTITION_FS_TEST_HOOKS
     /// @brief True when @p path is currently accepted as a raw-device commit target:
     ///        the production Windows raw-device rule, or whatever the test seam

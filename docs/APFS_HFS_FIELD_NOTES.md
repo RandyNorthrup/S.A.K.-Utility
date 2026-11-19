@@ -498,6 +498,23 @@ These are argument-shape traps, not usage documentation. `--help` is the referen
   case.
 - **`QFile::copy` on Windows does not preserve sparseness.** Use `copyFileSparse`, or a TiB-scale
   scratch file expands to its full size and fills the disk.
+- **A sparse file's allocated-range list can miss its newest writes.** Right after cached writes
+  extend a run of a sparse file into a fresh 64 KiB unit, `FSCTL_QUERY_ALLOCATED_RANGES` has been
+  seen to report the run without that unit, so a copy built from the list (`copyFileSparse`) holds
+  zeros there. testpc2, 2026-11-18, under other lanes' builds (the misses clustered around a build
+  starting or ending): a byte-for-byte replica of `copyFileSparseWindows` chaining
+  copy -> cached writes -> close lost a run's newest unit in 15 of 24,500 copies (the source always
+  still held the data, and a second query right after the copy was just as short), while the same
+  replica with FlushFileBuffers before each close lost none in 22,500 copies over the same window.
+  In the product: three T2 failures that day, 1 in 300 solo runs of
+  `apfsWriter_snapshotMetaMultiNodeSplit` and 3 in 90 of `apfsWriter_growsMultiChunkSourceContainer`,
+  each a block the previous image commit had just written ("the live free-queue leaf checksum is
+  invalid", "the snap-meta tree does not match apfs_num_snapshots"); the kept source of a failing
+  commit was intact on disk. Probes that wrote into isolated holes, or queried while a thread called
+  FlushFileBuffers, never saw it (600 and 27,000 queries), and the device read back clean (650,000
+  unbuffered reads). Every APFS image build and image-only commit therefore flushes its output
+  (FlushFileBuffers, checked) before it reports success; never hand `copyFileSparse` a sparse file
+  just written through the cache.
 - Whole-disk `format-raw` needs a **4096-aligned** size. 512e drives report a size that is not a
   multiple, so target an aligned Apple_APFS partition instead of the whole disk.
 - `apfsWritableBlockBound` treats the **physical** device or image size as the hard cap, falling
