@@ -416,6 +416,11 @@ function Copy-RawTargetToSparseImage {
 function Copy-SparseImageToRawTarget {
     param([string]$ImagePath, [string]$RawTarget, [uint64]$TargetSizeBytes)
     $started = Get-Date
+    # The image was just written through the file cache. Flush it, held alone, before listing its
+    # ranges: Windows can leave a run's newest 64 KiB unit out of the list until it is flushed, and
+    # that unit would then keep the target's old bytes (docs/APFS_HFS_FIELD_NOTES.md).
+    $flush = [System.IO.File]::Open($ImagePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    try { $flush.Flush($true) } finally { $flush.Dispose() }
     $ranges = @(Get-SparseAllocatedRanges -Path $ImagePath)
     $source = [System.IO.File]::Open($ImagePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
     $target = [System.IO.File]::Open($RawTarget, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::ReadWrite)

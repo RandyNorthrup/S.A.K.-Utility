@@ -16,7 +16,12 @@ Work toward the next release, in progress.
   could list the newest piece of the just-written image as empty, so the copy held zeros there: the next edit
   refused with "the live free-queue leaf checksum is invalid" when the piece held metadata, but file data there
   would have been lost without a message. Every image edit now flushes its output first and, if that fails, says
-  so and leaves no output.
+  so and leaves no output. v0.9.3 has the same fault: under disk load an image edit could lose a just-written block.
+- **HFS+ format, repair and file changes flush their staged image before writing it to the partition** - These
+  operations build the volume in a staged image and then copy the image's written parts to the partition. Under
+  disk load Windows could leave the newest written part out of that list, and the partition then kept its old
+  bytes there. The staged image is now flushed first, and the operation stops if it cannot be. v0.9.3 has the same
+  fault.
 - **A junction no longer passes for a folder inside S.A.K.'s own** - Several checks that a path stays inside a
   folder (the bundled Chocolatey, the UUP tools and 7-Zip, the assistant's bundled MCP servers, the profile backup's
   reads, Data Recovery's restore destination, and APFS, ext and HFS+ exports) compared Qt's canonical paths, which do

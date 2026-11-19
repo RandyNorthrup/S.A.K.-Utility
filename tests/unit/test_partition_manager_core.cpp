@@ -1631,6 +1631,7 @@ private Q_SLOTS:
     void generatedScripts_writerWrapperReportsTheHelpersExitCode();
     void generatedScripts_valueFunctionsReturnOnlyTheirValue();
     void generatedScripts_sparseRangesComeFromTheFileSystem();
+    void generatedScripts_stagedImageIsFlushedBeforeItsRangesAreListed();
     void generatedScripts_partitionTypeStepsRunAgainstStandIns();
     void generatedScripts_windowsDataTypeStepRunsAgainstStandIns();
     void generatedScripts_volumeCopyLeavesOutOnlyTheRootVolumeFolders();
@@ -4978,6 +4979,41 @@ void PartitionManagerCoreTests::generatedScripts_sparseRangesComeFromTheFileSyst
             .arg(PartitionScriptBuilder::quotePowerShell(image)),
         &exit_code);
     QVERIFY2(out.contains(QStringLiteral("COVERS True SMALL True")), qPrintable(out));
+}
+
+// APFSX (2026-11-18): newfs_hfs, fsck_hfs, the staging copy and the file writer all leave the
+// staged HFS+ image unflushed, and right after cached writes Windows can leave a run's newest
+// 64 KiB unit out of the allocated ranges, so that unit would keep the partition's old bytes (the
+// read-back checks only the listed ranges). The write-back flushes the image, held alone, before
+// it lists the ranges; the flush refuses an image another handle still holds.
+void PartitionManagerCoreTests::generatedScripts_stagedImageIsFlushedBeforeItsRangesAreListed() {
+    const QString script = corpusScriptDefining(QStringLiteral("Copy-SakSparseImageToRawTarget"));
+    const qsizetype body =
+        script.indexOf(QStringLiteral("function Copy-SakSparseImageToRawTarget {"));
+    QVERIFY(body >= 0);
+    const qsizetype flush = script.indexOf(QStringLiteral("Sync-SakFileToDisk -Path $ImagePath"),
+                                           body);
+    const qsizetype ranges =
+        script.indexOf(QStringLiteral("Get-SakSparseAllocatedRanges -Path $ImagePath"), body);
+    QVERIFY2(flush > body, "the write-back lists the staged image's ranges without flushing it");
+    QVERIFY2(ranges > flush, "the write-back lists the ranges before it flushes the image");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString image = QDir::toNativeSeparators(dir.filePath(QStringLiteral("staged.img")));
+    int exit_code = -1;
+    const QString out = runWithScriptFunctions(
+        script,
+        QStringLiteral("New-SakSparseImageFile -Path %1 -SizeBytes 1MB\n"
+                       "Sync-SakFileToDisk -Path %1\n"
+                       "'FREE FLUSHED'\n"
+                       "$held = [System.IO.File]::Open(%1, 'Open', 'Read', 'ReadWrite')\n"
+                       "try { Sync-SakFileToDisk -Path %1; 'HELD FLUSHED' } "
+                       "catch { 'HELD REFUSED' } finally { $held.Dispose() }\n")
+            .arg(PartitionScriptBuilder::quotePowerShell(image)),
+        &exit_code);
+    QVERIFY2(out.contains(QStringLiteral("FREE FLUSHED")), qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("HELD REFUSED")), qPrintable(out));
 }
 
 namespace {
