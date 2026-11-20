@@ -8,7 +8,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## v0.9.4 (unreleased)
 
-Work toward the next release, in progress.
+A safety patch for v0.9.3. It fixes the faults below, which v0.9.3 has, and changes nothing else.
 
 - **APFS image edits flush their output before they report success** - Each APFS image edit (format, file
   and folder changes, snapshots, resize, relabel, checksum repair) closed the image it wrote without flushing it.
@@ -30,7 +30,7 @@ Work toward the next release, in progress.
   A bundled program (Chocolatey, the UUP tools, 7-Zip, the assistant's MCP servers) is now held from that check
   until it has started, so nothing can replace it or a folder above it in between.
 
-## v0.9.3 (2026-11-10)
+## v0.9.3 (2026-11-15)
 
 The first release with three-part version numbers; it follows v0.9.2.0. Among the changes below: Partition
 Manager's certification now drives the app itself, and
