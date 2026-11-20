@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
-        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
+        "helper_sha256": "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
+        "sha256": "5e112f4969225fea675a3ec3d03f094dd1a1e84e8742de13a953421dd515f87f"
     },
-    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
-    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
+    "code_commit": "46eeefa01fe52315ad0a3d0e167e56aaddfb5105",
+    "code_digest": "8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c",
     "code_dirty": false,
-    "completed_utc": "2026-11-15T22:38:35.162Z",
+    "completed_utc": "2026-11-20T10:53:01.958Z",
     "disk_before": {
         "bus_type": "NVMe",
         "disk_number": 0,
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "d7792378-fb1b-4a7b-a8ad-c9dda1d72a25",
+                "operation_id": "57d84dbb-87ba-44ae-b123-4d593241fddc",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Run SSD ReTrim on T:\r\nNTFS DisableDeleteNotify = 0  (Allows TRIM operations to be sent to the storage device)\r\nReFS DisableDeleteNotify = 0  (Allows TRIM operations to be sent to the storage device)\r\nVERBOSE: Invoking retrim on SAKTRIM (T:)...\r\nVERBOSE: Retrim:  0% complete...\nVERBOSE: Retrim:  100% complete.  \nVERBOSE: \r\nPost Defragmentation Report:\nVERBOSE: \r\r\n Volume Information:\nVERBOSE:   Volume size                 = 3.99 GB\nVERBOSE:   Cluster size                = 4 KB\nVERBOSE:   Used space                  = 47.41 MB\nVERBOSE:   Free space                  = 3.95 GB\nVERBOSE: \r\r\n Retrim:\nVERBOSE:   Backed allocations          = 4\nVERBOSE:   Allocations trimmed         = 3\nVERBOSE:   Total space trimmed         = 2.95 GB\n",
@@ -59,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "d7792378-fb1b-4a7b-a8ad-c9dda1d72a25",
+            "id": "57d84dbb-87ba-44ae-b123-4d593241fddc",
             "payload": {
                 "drive_letter": "T"
             },
@@ -80,15 +80,15 @@
         }
     ],
     "review": {
-        "fingerprint": "915b70289bc76d8fe739a0e150f8f4744987728b3ba5ec6774f8d7b7cf4ae5ef",
-        "layout_hash": "fa0969d81a49fb77af96806f3587d041acef66c48d6100bab9d75175d59d3b0b",
+        "fingerprint": "e3d14cf00d1e4f30693500c18d9adcbef03d820bce843f82c48b9d698b17324d",
+        "layout_hash": "ebcd9080e7dce24ab7cab088eab3dee5bbbb7a7562358a83cf52e6b0a8785d31",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "b20af134-fa9a-4ba7-b845-fa56f219bf3f",
+    "run_id": "4d324e59-232e-416b-a508-bd6bbceaafef",
     "scenario_id": "external.ssd-retrim",
     "schema_version": 1,
-    "started_utc": "2026-11-15T22:38:13.840Z",
+    "started_utc": "2026-11-20T10:52:40.753Z",
     "status": "Passed",
     "step": "retrim",
     "tool": "partition-manager-scenario-step"

@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
-        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
+        "helper_sha256": "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
+        "sha256": "5e112f4969225fea675a3ec3d03f094dd1a1e84e8742de13a953421dd515f87f"
     },
-    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
-    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
+    "code_commit": "46eeefa01fe52315ad0a3d0e167e56aaddfb5105",
+    "code_digest": "8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c",
     "code_dirty": false,
-    "completed_utc": "2026-11-15T22:52:01.544Z",
+    "completed_utc": "2026-11-20T11:05:49.652Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "a35fabde-7f74-4d12-83e4-b0a3c893aa66",
+                "operation_id": "d967be13-768e-4ed4-b54b-63b2fcb7b7f3",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Convert Disk 1 to GPT\r\n",
@@ -59,15 +59,15 @@
     ],
     "queued_operations": [
         {
-            "id": "a35fabde-7f74-4d12-83e4-b0a3c893aa66",
+            "id": "d967be13-768e-4ed4-b54b-63b2fcb7b7f3",
             "payload": {
                 "target_style": "GPT"
             },
-            "script_sha256": "88daa62d4b2ea5ad8c9e5f595bea28768bff7fe5f5be88ca127a79768afd8264",
+            "script_sha256": "be213dc8b330ac3da2abfa405112ea51ee1f53d416df8b49f750ee895fe32391",
             "summary": "Convert MBR/GPT - Disk 1",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "600224809B42FA2B6DE7EEBE10849AD9",
+                "disk_unique_id": "60022480102F0095F185834E4A9AAC6D",
                 "drive_letter": "",
                 "kind": "Disk",
                 "offset_bytes": "0",
@@ -80,15 +80,15 @@
         }
     ],
     "review": {
-        "fingerprint": "c071b24b58e73eb80a3baaf9e3b699ad7bce7905079413ebe2c400d5d9e4b9c0",
-        "layout_hash": "82eda2ea97b4f441e0340a8c7e1f5dae54ecab6190349f03b6a66dd4ffe43af3",
+        "fingerprint": "ecc5e3fdd505324933c0053a524b2e5d14d801793cd2be68083d194e45b3d28a",
+        "layout_hash": "8b7691b433a1599ac4bda59bb5f0932d5e2318287b61e89c5db6aea0aa9b0d60",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "13eb803d-eb99-4480-a325-e24539e4f1f2",
+    "run_id": "cf80b604-219d-4f40-91cc-136320fc171e",
     "scenario_id": "vhd.empty-style-conversion",
     "schema_version": 1,
-    "started_utc": "2026-11-15T22:51:29.720Z",
+    "started_utc": "2026-11-20T11:05:24.880Z",
     "status": "Passed",
     "step": "to_gpt",
     "tool": "partition-manager-scenario-step"

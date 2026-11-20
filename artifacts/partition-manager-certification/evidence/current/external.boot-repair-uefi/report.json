@@ -4,18 +4,18 @@
   "scenario_id": "external.boot-repair-uefi",
   "status": "Passed",
   "failure": "",
-  "run_id": "550ab104-2119-4be7-8fed-7bd9f3b35df4",
-  "started_utc": "2026-11-15T23:47:00.8385612Z",
-  "completed_utc": "2026-11-15T23:50:56.7270979Z",
+  "run_id": "9efde448-af68-4273-be83-69444a97bdae",
+  "started_utc": "2026-11-20T11:55:35.1191965Z",
+  "completed_utc": "2026-11-20T11:59:40.7765878Z",
   "code": {
-    "digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
-    "commit": "c782f945889df23621217f958619e4dbfe8b3473",
+    "digest": "8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c",
+    "commit": "46eeefa01fe52315ad0a3d0e167e56aaddfb5105",
     "dirty": false
   },
   "binaries": {
-    "client_sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df",
-    "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
-    "app_sha256": "1bf4d7caf770acfb90c2ecceaef28607f97732938fdcc9074b31ed786e95aa03"
+    "client_sha256": "5e112f4969225fea675a3ec3d03f094dd1a1e84e8742de13a953421dd515f87f",
+    "helper_sha256": "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
+    "app_sha256": "60cbc9a27ed38103060ecd2b6740091805b06e3095a8ed021236b14f5584151e"
   },
   "rig": {
     "machine_manufacturer": "innotek GmbH",
@@ -33,7 +33,7 @@
     "media_type": "Unspecified",
     "rotation_rate_rpm": 0,
     "size_bytes": "343597383680",
-    "serial_sha256": "27c8aa899d6c1499d09da3b4e563787844dbcd61e5ac2cd7ad92a4763de97450"
+    "serial_sha256": "f7fd75c1fabd49ea783ddabf7b90eca0ee60f26a7fdece4829b737984b715a20"
   },
   "steps": [
     {
@@ -42,11 +42,11 @@
       "expect": "success",
       "report": "repair.client.json",
       "observed": {
-        "client_pid": 8360,
+        "client_pid": 8220,
         "exit_code": 0,
         "client_token_elevated": false,
-        "helper_pid": 8840,
-        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
+        "helper_pid": 688,
+        "helper_sha256": "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
         "helper_path": "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
         "helper_token_elevated": true
       }
@@ -71,12 +71,12 @@
     },
     {
       "path": "independent.json",
-      "sha256": "ba2145718c2e22d9ea7866f79ca76c74072e04501353f2ddffb1fb405c3c34df",
+      "sha256": "e7cbe21f524e270695bbb129b45ca8cf9867ed782978c31753dbe0ab1684a332",
       "bytes": 822
     },
     {
       "path": "repair.client.json",
-      "sha256": "577cedbb3249061fc8f2d9e12b2e35359fe38ed07591ebebf8cbf08709ed7e49",
+      "sha256": "fbccff12b20a6dcdb21ea7957a168ca32bdb5d81b71e90abf044577465b0e902",
       "bytes": 3686
     }
   ]

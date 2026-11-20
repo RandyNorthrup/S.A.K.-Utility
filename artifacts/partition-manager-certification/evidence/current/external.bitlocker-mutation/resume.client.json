@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
-        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
+        "helper_sha256": "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
+        "sha256": "5e112f4969225fea675a3ec3d03f094dd1a1e84e8742de13a953421dd515f87f"
     },
-    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
-    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
+    "code_commit": "46eeefa01fe52315ad0a3d0e167e56aaddfb5105",
+    "code_digest": "8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c",
     "code_dirty": false,
-    "completed_utc": "2026-11-15T23:20:35.605Z",
+    "completed_utc": "2026-11-20T11:31:19.056Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "81186bb4-72cc-4b3a-826d-8eed8bd346aa",
+                "operation_id": "c18ba026-d4f2-4a4b-94c0-a9f989b30207",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: BitLocker Resume T:\r\nBitLocker Drive Encryption: Configuration Tool version 10.0.26100\r\nCopyright (C) 2013 Microsoft Corporation. All rights reserved.\r\n\r\nVolume T: [SAKBL]\r\n[Data Volume]\r\n\r\n    Size:                 0.50 GB\r\n    BitLocker Version:    2.0\r\n    Conversion Status:    Used Space Only Encrypted\r\n    Percentage Encrypted: 100.0%\r\n    Encryption Method:    AES 128\r\n    Protection Status:    Protection Off\r\n    Lock Status:          Unlocked\r\n    Identification Field: Unknown\r\n    Automatic Unlock:     Disabled\r\n    Key Protectors:\r\n        Password\r\n        Numerical Password\r\n\r\nBitLocker Drive Encryption: Configuration Tool version 10.0.26100\r\nCopyright (C) 2013 Microsoft Corporation. All rights reserved.\r\n\r\nKey protectors are enabled for volume T:.\r\n\r\n\r\nMountPoint       : T:\r\nVolumeStatus     : FullyEncrypted\r\nProtectionStatus : On\r\nLockStatus       : Unlocked\r\nEncryptionMethod : Aes128\r\n\r\n\r\n\r\n\r\n",
@@ -59,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "81186bb4-72cc-4b3a-826d-8eed8bd346aa",
+            "id": "c18ba026-d4f2-4a4b-94c0-a9f989b30207",
             "payload": {
                 "drive_letter": "T"
             },
@@ -67,7 +67,7 @@
             "summary": "BitLocker Resume - Disk 1 Partition 2",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "60022480CF167C387CD6DE18361569AD",
+                "disk_unique_id": "600224807E3802039367AFEE0A13CAB9",
                 "drive_letter": "T",
                 "kind": "Partition",
                 "offset_bytes": "16777216",
@@ -80,15 +80,15 @@
         }
     ],
     "review": {
-        "fingerprint": "81c62d561e953a4c927d126d6fed2772a760d15864e6fc91b1cb54847a191a13",
-        "layout_hash": "732d4e6cdda90946128a2f5491c5720ca4a186bc8ceb492f880d82d78d181233",
+        "fingerprint": "ebbe9d7f55b793814c3ba3e4e70165dd09d8b600e444d5d86d61d3ea7a577ac0",
+        "layout_hash": "ff53b6f94a2e30f8acd6023094e2f302078a802050caac1bfbcdadd1f775589b",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "3a911722-43ed-416e-9859-409a3e2309fd",
+    "run_id": "0a61b562-0968-4e17-a101-beecdc9d23d3",
     "scenario_id": "external.bitlocker-mutation",
     "schema_version": 1,
-    "started_utc": "2026-11-15T23:20:13.973Z",
+    "started_utc": "2026-11-20T11:30:50.443Z",
     "status": "Passed",
     "step": "resume",
     "tool": "partition-manager-scenario-step"

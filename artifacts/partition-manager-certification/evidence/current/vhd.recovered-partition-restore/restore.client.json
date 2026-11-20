@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
-        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
+        "helper_sha256": "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
+        "sha256": "5e112f4969225fea675a3ec3d03f094dd1a1e84e8742de13a953421dd515f87f"
     },
-    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
-    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
+    "code_commit": "46eeefa01fe52315ad0a3d0e167e56aaddfb5105",
+    "code_digest": "8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c",
     "code_dirty": false,
-    "completed_utc": "2026-11-15T22:50:27.959Z",
+    "completed_utc": "2026-11-20T11:04:33.686Z",
     "disk_before": {
         "bus_type": "File Backed Virtual",
         "disk_number": 1,
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "c74f959b-aa54-441e-83af-666e28bbfd40",
+                "operation_id": "80ee3218-cefa-41e8-b941-a70162957b65",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Restore recovered partition on Disk 1 at 128.0 MB\r\n",
@@ -59,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "c74f959b-aa54-441e-83af-666e28bbfd40",
+            "id": "80ee3218-cefa-41e8-b941-a70162957b65",
             "payload": {
                 "offset_bytes": "134217728",
                 "partition_style": "GPT",
@@ -67,11 +67,11 @@
                 "size_bytes": "268435456",
                 "type_id": "{ebd0a0a2-b9e5-4433-87c0-68b6b72699c7}"
             },
-            "script_sha256": "1f4945bcca404102024867f3432701a0ac341e0864b1aad9ea7281c45a887053",
+            "script_sha256": "26bf14f8351a555a0963ce74b51965824540fe9432ff42acd648541fe15c2dc9",
             "summary": "Restore Recovered Partition - Disk 1",
             "target": {
                 "disk_number": 1,
-                "disk_unique_id": "60022480D34489C130C58D4FC9A739E4",
+                "disk_unique_id": "600224808A305D9B563A5127BB2AEBAA",
                 "drive_letter": "",
                 "kind": "Disk",
                 "offset_bytes": "0",
@@ -84,15 +84,15 @@
         }
     ],
     "review": {
-        "fingerprint": "dc8b6f0176aa40cb4dc566237c515868703ec9841d5157609781eb7a29b15844",
-        "layout_hash": "f797746d89dd90bd5e9feb0c602d744c3f8ad5c36c23a2a403301a1fce9ed655",
+        "fingerprint": "95a3c2a19b35cc27d35374f44a0f7ef6e0099c51a6eb683badfe1c516a143c53",
+        "layout_hash": "c4877e635c8988bae9f916feb84f7feb40d94ff18b70722711d052394df23da0",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "13eb803d-eb99-4480-a325-e24539e4f1f2",
+    "run_id": "cf80b604-219d-4f40-91cc-136320fc171e",
     "scenario_id": "vhd.recovered-partition-restore",
     "schema_version": 1,
-    "started_utc": "2026-11-15T22:49:55.132Z",
+    "started_utc": "2026-11-20T11:04:13.518Z",
     "status": "Passed",
     "step": "restore",
     "tool": "partition-manager-scenario-step"

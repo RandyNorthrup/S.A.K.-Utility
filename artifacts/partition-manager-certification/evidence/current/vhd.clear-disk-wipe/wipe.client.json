@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
-        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
+        "helper_sha256": "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
+        "sha256": "5e112f4969225fea675a3ec3d03f094dd1a1e84e8742de13a953421dd515f87f"
     },
-    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
-    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
+    "code_commit": "46eeefa01fe52315ad0a3d0e167e56aaddfb5105",
+    "code_digest": "8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c",
     "code_dirty": false,
-    "completed_utc": "2026-11-15T23:14:53.373Z",
+    "completed_utc": "2026-11-20T11:25:23.856Z",
     "disk_before": {
         "bus_type": "SATA",
         "disk_number": 1,
@@ -20,7 +20,7 @@
         "model": "VBOX HARDDISK",
         "partition_count": 2,
         "partition_style": "GPT",
-        "serial_sha256": "b4fbb80da73e67e22a11eb7e731ce813d939bd146604653820e6a6cb9880b6c2",
+        "serial_sha256": "76ed48a0bddf4ffae1ae992670171367ae8ba0db319c2852a7e4da6a5a35b8ed",
         "size_bytes": "1073741824"
     },
     "execution": {
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "5113b8c5-1869-49a1-8dc4-58e1603e8a0f",
+                "operation_id": "faa4d22c-9798-41c9-a74b-65178c076979",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Wipe Disk 1\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining       Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------       ----\r\n            SAK_WIPE     NTFS           Fixed     Healthy      OK                    991.06 MB 1007.93 MB\r\n\r\n\r\n",
@@ -59,10 +59,10 @@
     ],
     "queued_operations": [
         {
-            "id": "5113b8c5-1869-49a1-8dc4-58e1603e8a0f",
+            "id": "faa4d22c-9798-41c9-a74b-65178c076979",
             "payload": {
             },
-            "script_sha256": "81f4e5ecf3923206eb1867b774ccae2a268f31fa0d99984f46c8f242e59165ac",
+            "script_sha256": "13ab14d93328ceb79e67489e5a49ef5669b4708f2f92a3b6a1ff930cd3f64caa",
             "summary": "Wipe Disk - Disk 1",
             "target": {
                 "disk_number": 1,
@@ -79,15 +79,15 @@
         }
     ],
     "review": {
-        "fingerprint": "8deaae49c99d5aeb76b225f9abd92cd235726c39b0a3fc09f9604aa11a1b8aa0",
-        "layout_hash": "ebab0ffa370c762c8b93f605c9d11578609ea9a7100f47ef35f5a5676443a320",
+        "fingerprint": "65aabee10109541e0b180e10a62cca907fd6ecfa84b4c67bcfd5903947fb932e",
+        "layout_hash": "90cb211980e94585b6b63ae587248bb215386d22d8bf092270a22c3800a6cc41",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "4a1939e8-7832-494e-a9bb-b1f1daada24f",
+    "run_id": "b2d9c27e-6fd7-4026-ba69-b06c378d5dc5",
     "scenario_id": "vhd.clear-disk-wipe",
     "schema_version": 1,
-    "started_utc": "2026-11-15T23:14:07.018Z",
+    "started_utc": "2026-11-20T11:24:49.975Z",
     "status": "Passed",
     "step": "wipe",
     "tool": "partition-manager-scenario-step"

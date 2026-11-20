@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
-        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
+        "helper_sha256": "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
+        "sha256": "5e112f4969225fea675a3ec3d03f094dd1a1e84e8742de13a953421dd515f87f"
     },
-    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
-    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
+    "code_commit": "46eeefa01fe52315ad0a3d0e167e56aaddfb5105",
+    "code_digest": "8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c",
     "code_dirty": false,
-    "completed_utc": "2026-11-15T23:32:53.566Z",
+    "completed_utc": "2026-11-20T11:42:32.222Z",
     "disk_before": {
         "bus_type": "SATA",
         "disk_number": 1,
@@ -20,7 +20,7 @@
         "model": "VBOX HARDDISK",
         "partition_count": 0,
         "partition_style": "RAW",
-        "serial_sha256": "27c8aa899d6c1499d09da3b4e563787844dbcd61e5ac2cd7ad92a4763de97450",
+        "serial_sha256": "f7fd75c1fabd49ea783ddabf7b90eca0ee60f26a7fdece4829b737984b715a20",
         "size_bytes": "343597383680"
     },
     "execution": {
@@ -32,10 +32,10 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "07c5ff76-9cdb-4db6-986e-110d3684bf95",
+                "operation_id": "6e4a3d9c-1a4e-4324-8c4b-20c9ed0be768",
                 "skipped": false,
                 "stderr": "",
-                "stdout": "SAK Partition Manager: Migrate OS from Disk 0 to \\\\.\\PhysicalDrive1, block by block from a snapshot\r\nSnapshot of volume 3: \\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy1\r\nNew layout written: 4 partitions, new disk identity\r\nSystem partition: verified (Sample verification)\r\nReserved partition: verified (Sample verification)\r\nWindows partition: 0% of 31533641728 bytes\r\nWindows partition: 5% of 31533641728 bytes\r\nWindows partition: 10% of 31533641728 bytes\r\nWindows partition: 15% of 31533641728 bytes\r\nWindows partition: 20% of 31533641728 bytes\r\nWindows partition: 25% of 31533641728 bytes\r\nWindows partition: 30% of 31533641728 bytes\r\nWindows partition: 35% of 31533641728 bytes\r\nWindows partition: 40% of 31533641728 bytes\r\nWindows partition: 45% of 31533641728 bytes\r\nWindows partition: 50% of 31533641728 bytes\r\nWindows partition: 55% of 31533641728 bytes\r\nWindows partition: 60% of 31533641728 bytes\r\nWindows partition: 65% of 31533641728 bytes\r\nWindows partition: 70% of 31533641728 bytes\r\nWindows partition: 75% of 31533641728 bytes\r\nWindows partition: 80% of 31533641728 bytes\r\nWindows partition: 85% of 31533641728 bytes\r\nWindows partition: 90% of 31533641728 bytes\r\nWindows partition: 95% of 31533641728 bytes\r\nWindows partition: 100% of 31533641728 bytes\r\nWindows partition: verified (Sample verification)\r\nRecovery partition: verified (Sample verification)\r\nWindows partition now 342408298496 bytes\r\nOld boot store kept as EFI\\Microsoft\\Boot\\BCD.sak-old\r\nBoot files successfully created.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nDirectory set to: \\\\?\\GLOBALROOT\\device\\harddisk1\\partition4\\Recovery\\WindowsRE\r\nREAGENTC.EXE: Operation Successful.\r\nSnapshots released\r\nTarget partition 1: System, 209715200 bytes at 1048576, active=False\r\nTarget partition 2: Reserved, 16777216 bytes at 210763776, active=False\r\nTarget partition 3: Basic, 342408298496 bytes at 227540992, active=False\r\nTarget partition 4: Recovery, 960495616 bytes at 342635839488, active=False\r\nMigrate OS finished. The new disk has its own identity, so both disks can stay attached. Choose it in the BIOS or UEFI boot order.\r\nWindows Recovery on the new disk stays off until you run reagentc /enable once from the new disk.\r\n",
+                "stdout": "SAK Partition Manager: Migrate OS from Disk 0 to \\\\.\\PhysicalDrive1, block by block from a snapshot\r\nSnapshot of volume 3: \\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy1\r\nNew layout written: 4 partitions, new disk identity\r\nSystem partition: verified (Sample verification)\r\nReserved partition: verified (Sample verification)\r\nWindows partition: 0% of 31549693952 bytes\r\nWindows partition: 5% of 31549693952 bytes\r\nWindows partition: 10% of 31549693952 bytes\r\nWindows partition: 15% of 31549693952 bytes\r\nWindows partition: 20% of 31549693952 bytes\r\nWindows partition: 25% of 31549693952 bytes\r\nWindows partition: 30% of 31549693952 bytes\r\nWindows partition: 35% of 31549693952 bytes\r\nWindows partition: 40% of 31549693952 bytes\r\nWindows partition: 45% of 31549693952 bytes\r\nWindows partition: 50% of 31549693952 bytes\r\nWindows partition: 55% of 31549693952 bytes\r\nWindows partition: 60% of 31549693952 bytes\r\nWindows partition: 65% of 31549693952 bytes\r\nWindows partition: 70% of 31549693952 bytes\r\nWindows partition: 75% of 31549693952 bytes\r\nWindows partition: 80% of 31549693952 bytes\r\nWindows partition: 85% of 31549693952 bytes\r\nWindows partition: 90% of 31549693952 bytes\r\nWindows partition: 95% of 31549693952 bytes\r\nWindows partition: 100% of 31549693952 bytes\r\nWindows partition: verified (Sample verification)\r\nRecovery partition: verified (Sample verification)\r\nWindows partition now 342408298496 bytes\r\nOld boot store kept as EFI\\Microsoft\\Boot\\BCD.sak-old\r\nBoot files successfully created.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nThe operation completed successfully.\r\nDirectory set to: \\\\?\\GLOBALROOT\\device\\harddisk1\\partition4\\Recovery\\WindowsRE\r\nREAGENTC.EXE: Operation Successful.\r\nSnapshots released\r\nTarget partition 1: System, 209715200 bytes at 1048576, active=False\r\nTarget partition 2: Reserved, 16777216 bytes at 210763776, active=False\r\nTarget partition 3: Basic, 342408298496 bytes at 227540992, active=False\r\nTarget partition 4: Recovery, 960495616 bytes at 342635839488, active=False\r\nMigrate OS finished. The new disk has its own identity, so both disks can stay attached. Choose it in the BIOS or UEFI boot order.\r\nWindows Recovery on the new disk stays off until you run reagentc /enable once from the new disk.\r\n",
                 "stop_cleanup_not_removed": [
                 ],
                 "stop_cleanup_removed": [
@@ -59,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "07c5ff76-9cdb-4db6-986e-110d3684bf95",
+            "id": "6e4a3d9c-1a4e-4324-8c4b-20c9ed0be768",
             "payload": {
                 "allow_no_snapshot": false,
                 "migration_plan": {
@@ -124,11 +124,11 @@
                     "scratch_size": "0",
                     "source_bytes": "274877906944",
                     "target_bytes": "343597383680",
-                    "used_bytes": "35666759680"
+                    "used_bytes": "35687645184"
                 },
                 "source_path": "\\\\.\\PhysicalDrive0",
                 "source_size_bytes": "274877906944",
-                "target_disk_serial_number": "VB8a364442-7ed20aa3",
+                "target_disk_serial_number": "VB6f7a9ea9-09a39882",
                 "target_disk_size_bytes": "343597383680",
                 "target_disk_unique_id": "ATAVBOX HARDDISK",
                 "target_path": "\\\\.\\PhysicalDrive1",
@@ -136,7 +136,7 @@
                 "target_wipe_confirmed": true,
                 "verify_mode": "Sample verification"
             },
-            "script_sha256": "42ae7e62340f0e87c01f75eba6964bc58b6da88b66b523057fe1f9c39134a5c9",
+            "script_sha256": "f627d379acaeec2671f2fed715e1a6f5798837c8b4683d98e6def110130b6dad",
             "summary": "Migrate OS - Disk 0",
             "target": {
                 "disk_number": 0,
@@ -153,15 +153,15 @@
         }
     ],
     "review": {
-        "fingerprint": "f9f7ed0748325fff77c96c889c3f85fbee777e2927e80922b2f0587d21e6e986",
-        "layout_hash": "841f519a6c6b73a8a729ef24ebef68b29d5caf2160279debc9131300bd93b899",
+        "fingerprint": "afce1301c32c6ca96e328785d16082f320e63dd6f67742af5de4c92d1fab6723",
+        "layout_hash": "de69bbdddb23b357e9f69805e0770c854edb7866b79f1f68c185dd6b0d02fb2c",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "9237e19b-7d0e-4afe-ba69-f70786b6a973",
+    "run_id": "eb953b3d-3731-4944-b689-c40db0844ed9",
     "scenario_id": "external.os-migration-reboot",
     "schema_version": 1,
-    "started_utc": "2026-11-15T23:30:13.773Z",
+    "started_utc": "2026-11-20T11:40:08.479Z",
     "status": "Passed",
     "step": "migrate",
     "tool": "partition-manager-scenario-step"
