@@ -6,7 +6,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## v0.9.4 (unreleased)
+## v0.9.4 (2026-11-20)
 
 A safety patch for v0.9.3. It fixes the faults below, which v0.9.3 has, and changes nothing else.
 
