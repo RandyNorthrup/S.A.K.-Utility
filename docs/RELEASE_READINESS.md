@@ -28,6 +28,79 @@ Apple kernel/hardware certification, review-ledger coverage, mutation surface an
 debt are not release requirements. Their claims stay labeled uncertified; the archived R5 document
 keeps their history.
 
+### v0.9.4: a safety patch on v0.9.3 (2026-11-19/20)
+
+Owner decision, 2026-11-19: v0.9.4 ships only two safety fixes that v0.9.3 users have, and everything else planned for
+the next release moves to 0.10.0. Branch `v094-patch` from `main` f2c45ff9: SEC2's eleven commits (c7ff198a..8b24d32f,
+item 15), APFSX's two cherry-picked from the integration branch (7f11e6a9 from 21efaf34, 60bbdc31 from 71baaf5a,
+item 16), the version commit 6113a954, and 46eeefa0, which adapts the APFS fix to `main`: on the integration branch a
+failed image commit's output was removed by L7's broader `ApfsScratchOutputScope`, which `main` does not have, so the
+23 image sites now close through `flushImageOutputThenClose`, which removes an output whose flush failed (the raw and
+in-place targets are never removed). Frozen at 46eeefa0, Partition Manager code digest
+8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c.
+
+**Gate (testpc2 and testpc1; no build or test on the workstation).**
+
+- Build: a clean checkout of the branch from a bundle, Release, `/m:2`: BUILD EXIT 0, 0 warnings, every program written
+  by the build (round 2 incremental, all 289 test programs deleted first and remade).
+- T2 labels in a standard-user scheduled task in the console session: 334 of 335 passed, 2 skipped (startup budget,
+  single instance). Round 1 (6113a954) failed `apfsWriter_imageOutputsFailClosedWhenTheirFlushFails` ("checkpoint left
+  its output"), which 46eeefa0 fixes. Environment exception, accepted: `test_bandwidth_tester`
+  `iperfServer_listensOnlyOnTheChosenAddress` binds the fixed port 52918, which testpc2 reserves in an excluded TCP
+  port range (52851-52950, Hyper-V/WinNAT; `netsh int ipv4 show excludedportrange protocol=tcp`), so iperf3 cannot
+  listen there; CI T2 43792306480 on f2c45ff9 passed it (2.89 s). A test that picks a free port is a 0.10.0 item.
+- cert-tooling 8 of 8. The whole-tree static gates of ci.yml, 20 of 20, including lizard and error-message uniqueness.
+- The must-run-elevated suites in the disposable VM sak-l10-win11 (own checkpoint, reverted and deleted): helper 3/3,
+  FAT 10/10, raw partition writes 20/20, long script 3/3. Twice the PowerShell Direct session to the guest ended in the
+  raw suite while another lane's build loaded testpc1; with the host idle it passed, and the diagnostics then showed
+  no guest restart.
+- Drills, 26, each mutant built, red on its own named test, restored byte for byte and green, the tree unchanged:
+  SEC2's 22 (D1-D5, H1-H4, B1, U1, A1, AI1-AI3, R1-R3, K1, K2, P1, P1b) and APFS-a (the flush result ignored),
+  APFS-b (snapshot create closed without the flush), APFS-c (an unflushed output kept) and HFS (the staged image's
+  `Sync-SakFileToDisk` removed).
+- clang-tidy: the naming gate passed (non-core 155/155 clean, core 175/175 healthy, 5,291 findings, 21 ratcheted
+  clean TUs). Every check over the 14 changed TUs found 7 on changed lines, of checks `main` does not gate; 0.10.0
+  items: `ai_mcp_session_pool.cpp:72` and `ai_provider_gateway.cpp:957` readability-trailing-comma,
+  `ai_provider_registry.cpp:112` unchecked-container-access, `offline_deployment_worker.cpp:1408`
+  redundant-lambda-parameter-list, and `partition_apfs_writer.cpp` misc-use-anonymous-namespace on the three static
+  flush helpers.
+- Secret scans: the regex and path scan clean; gitleaks over the branch's 2,298 commits and trufflehog on it clean; the
+  pre-push hook passed in a single-branch clone of `v094-patch`.
+
+**Recertification.** The full 30-row run at 46eeefa0 with `main`'s tooling, as c782f945's: the VM chain on the Mac's
+Windows 11 rig (pre-round8; vhd 36 min, data 10, boot-uefi 21, boot-bios 103) and testpc2's device chain beside it
+(ssd-device on the SAMSUNG MZVL2512HCJQ-00BH1, hdd-device and data-device on the Seagate Expansion Desk 8 TB; 29 min),
+2026-11-20 02:52-05:43, every group exit 0; WritePins refused the WD SN730 boot disk first, and testpc2's W: (the
+Samsung) was erased and remade in a coordinated window. Selection with the CredFile's deny names, as at c782f945
+(coordinator ruling: the computer label TESTPC2 in `external.usb-removable` is not a serial or hardware ID, v0.9.3
+accepted the same, and the step-client fix that drops it ships in 0.10.0): 12/12 and 18/18, NamedDevicesValidated,
+the generated block unchanged. Evidence commit 9fc26bc8. Rig note: OpenSSH 10.2 on the workstation prints a
+post-quantum warning for testpc2's sshd, which the rig parsed as JSON; `WarnWeakCrypto no` for `testpc2.ivettnet` in
+the workstation's ssh config keeps it out.
+
+**Release dry run (testpc2, no push, unsigned).** A clean checkout of the branch built (BUILD EXIT 0, 0 warnings),
+then release.yml's build-job steps: runtime dependencies, stage (149 files, 177.7 MB), archive, the clean-package smoke,
+the startup end-to-end smoke from the clean extract (console session), the checkout-unchanged check, the claim block
+(current at 9fc26bc8), the packaged filesystem tool check (5 tools), the stable `SAK-Utility-Windows-x64.zip` alias with
+its `SHA256SUMS.txt` line, and the publish job's asset checks (the alias byte-identical to the versioned zip; every
+SHA256SUMS line, `sak_utility.exe`, `sak_elevated_helper.exe` and the zip, matches): all passed. The readiness gate passed
+its secret scans (gitleaks and trufflehog at the release job's pinned versions), blocking patterns and PowerShell syntax,
+and then refused the accessibility audit's program as older than HEAD's commit: the evidence commit 9fc26bc8 came
+after that build, which a tag build cannot meet, so the rest of the gate runs in T3 on the tag. Run from a scheduled
+task the same gate stopped at trufflehog, which passes from an ssh session (twice, 0 verified, 0 unverified), the
+same scan; T3 runs it in the release job. Signing and its checks need the release environment on a tag. Found:
+`tools/chocolatey/redirects/choco.exe.ignore` is 2 bytes (a CRLF) where the other four `.ignore` files are empty, as in
+v0.9.3 (winget's archive scan flagged it); a 0.10.0 packaging item, since the file is under the digest.
+
+**Release hygiene folded in.** CHANGELOG: v0.9.3's date (published 2026-11-15, not 2026-11-10); the repeat of check A
+on signed bytes and the deleted `AZURE_CLIENT_SECRET` recorded above. Left for 0.10.0 because each changes code under
+the digest: the `partition_manager_panel.h:356` comment, the rc.2 comments in `authenticode_signer.ps1:19-20` and
+`test_verify_authenticode_signatures.ps1:19`, and the helper and writer icons.
+
+**Still to do on the release bytes (the owner's push and tag).** T2 green on `dev` and on the PR and `main`; the
+nightly on `main`; the T3 run on the tag (build, sign, verify, the readiness gate on the signed package, publish); check
+A in the Windows 11 VM on the signed package; the CHANGELOG heading's date set to the day it is published.
+
 ### Open crash, data-loss and security items (must be empty to release)
 
 1. Startup GUI freeze: FIXED locally 2026-10-24 (GUI block 5.8-10.8 s -> under 0.15 s on a
@@ -178,6 +251,17 @@ keeps their history.
    Qt 6.12.0. The fix is one helper, `sak::no_follow::pathWithinRoot`, which resolves through a handle. Sites,
    attacker preconditions, the fix and the proof are in "v0.9.4 lane SEC2: containment checks a junction passed"
    below.
+16. FIXED (v0.9.4 lane APFSX, found 2026-11-18 from intermittent APFS writer test failures on testpc2), data loss:
+   every APFS image-only commit and image build closed its output without a flush, and the next commit copies it
+   with copyFileSparse, which copies only the ranges FSCTL_QUERY_ALLOCATED_RANGES lists. Under disk load NTFS could
+   list a run without its newest 64 KiB unit, so the copy held zeros there: a metadata block failed its checksum in
+   the next commit, a file-data block would have lost its bytes silently. The generated HFS+ format, repair and
+   file-change scripts had the same fault in their staged-image write-back. Both shipped in v0.9.3. Fixes: every
+   image output goes through the checked durable flush and a failed flush fails the commit with no output
+   (`apfsWriter_imageOutputsFailClosedWhenTheirFlushFails`, all 23 paths); the HFS+ write-back runs
+   `Sync-SakFileToDisk` before listing ranges (`generatedScripts_stagedImageIsFlushedBeforeItsRangesAreListed`).
+   Evidence (a byte-for-byte replica of the copy reproduced it, 15 of 24,500 copies; with the flush 0 of 22,500) in
+   `docs/APFS_HFS_FIELD_NOTES.md`.
 
 ### v0.9.4 lane SEC2: containment checks a junction passed (2026-11-17)
 
@@ -789,8 +873,10 @@ fix round S's proof under `E:\SAK-Utility-Test-Scratch\fixround-s\`). Each line 
   its first-run card hid the Library). Not feasible there: a UUP conversion end to end (a 4-5 GB download and an
   hour's conversion on the throttling Mac) and a Windows USB (the Mac passes no USB device to the VM; proven on testpc1
   and a Hyper-V Gen 2 boot).
-- STILL OPEN: the repeat of check A on the signed release bytes,
-  `E:\SAK-Utility-Test-Scratch\vm-smoke\REPEAT_A_ON_SIGNED_BYTES.md`.
+- DONE 2026-11-15: the repeat of check A on the signed release bytes, on v0.9.3-rc.3's signed package in the VM
+  (`E:\SAK-Utility-Test-Scratch\rc3-checkA\`): Mark of the Web with no SmartScreen prompt, Defender clean, the UAC
+  prompt naming "S.A.K. Utility - Elevated Helper" from the verified publisher, the helper's Check Disk, each program's
+  Properties details and a cold start; then again on v0.9.3 as published (`E:\SAK-Utility-Test-Scratch\v093-smartscreen\`).
 - DESIGN DECISION: the flasher ejects the stick after each flash ("Unmount drives on completion", on by default), so
   a second flash onto the same stick needs it replugged. That is what the setting promises.
 
@@ -3340,8 +3426,9 @@ From the security audit of a brief forwarded by the owner, who ruled that signin
   binaries' signatures and every SHA256SUMS line, then creates the release. The repository does not attest, so
   neither does this. A tag that disagrees with VERSION is refused before anything is built.
 - The `release` environment exists and admits `v*` tags only. AZURE_CLIENT_ID and AZURE_TENANT_ID stay repository
-  secrets (they are IDs, and secrets cannot be read to copy them). AZURE_CLIENT_SECRET is no longer referenced and
-  stays until OIDC has signed once. Azure must hold a federated credential for
+  secrets (they are IDs, and secrets cannot be read to copy them). AZURE_CLIENT_SECRET was no longer referenced; once
+  OIDC had signed v0.9.3-rc.3 and v0.9.3 it was deleted on the owner's word (2026-11-15), together with the signing
+  app's client secret, so that app holds no secret and no certificate. Azure must hold a federated credential for
   `repo:RandyNorthrup/S.A.K.-Utility:environment:release` on the signing app registration; nothing here can see it.
 - A pre-release tag (one with a hyphen, such as `v0.9.3-rc.1`) runs build, sign and verify and stops before
   publish: that is the dry run of signing now that the environment refuses a manual run from a branch. A manual
