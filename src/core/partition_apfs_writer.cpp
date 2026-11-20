@@ -23217,15 +23217,35 @@ static bool runDurableFlush(QIODevice* target, QString* flushError) {
 // concurrent load). The copy then holds zeros there: a metadata block fails its checksum in the
 // next commit, a file-data block silently loses its bytes. An output flushed before it is handed
 // on leaves no unflushed allocation behind. Evidence: docs/APFS_HFS_FIELD_NOTES.md.
-static void flushCommitTargetThenClose(
+static bool flushCommitTargetThenClose(
     QIODevice* target,
     QStringList* blockers,
     QLatin1StringView what = QLatin1StringView("in-place commit")) {
     QString flushError;
-    if (!runDurableFlush(target, &flushError)) {
+    const bool flushed = runDurableFlush(target, &flushError);
+    if (!flushed) {
         blockers->append(QStringLiteral("APFS %1 durable flush failed: %2").arg(what, flushError));
     }
     target->close();
+    return flushed;
+}
+
+// The same for an image output: an image build's new file or an image-only commit's scratch copy
+// of its source, both created by the call that writes them. One whose flush failed is removed at
+// once, so a failed flush leaves no output for a later commit to copy. A raw or in-place target is
+// never removed: it goes through flushCommitTargetThenClose.
+static void flushImageOutputThenClose(
+    QFile* image,
+    QStringList* blockers,
+    QLatin1StringView what = QLatin1StringView("in-place commit")) {
+    const QString path = image->fileName();
+    if (flushCommitTargetThenClose(image, blockers, what) || path.isEmpty()) {
+        return;
+    }
+    if (!QFile::remove(path) && QFileInfo::exists(path)) {
+        blockers->append(QStringLiteral("APFS %1 could not remove its unflushed output %2")
+                             .arg(what, QDir::toNativeSeparators(path)));
+    }
 }
 
 static bool appendPlanResult(const PartitionApfsImageMutationPlan& plan,
@@ -23504,7 +23524,7 @@ PartitionApfsImageBuildResult PartitionApfsWriter::buildImageOnlyFormatImage(
                       .containerBlockCount = containerBlockCount},
                      blocks,
                      &writeBlockers);
-    flushCommitTargetThenClose(&image, &writeBlockers, QLatin1StringView("image build"));
+    flushImageOutputThenClose(&image, &writeBlockers, QLatin1StringView("image build"));
     result.blockers.append(writeBlockers);
     finalizeBuildResult(&result);
     return result;
@@ -23636,7 +23656,7 @@ PartitionApfsImageBuildResult PartitionApfsWriter::buildImageOnlyFormatImageWith
                      {.blockSize = request.block_size_bytes, .containerBlockCount = blockCount},
                      blocks,
                      &writeBlockers);
-    flushCommitTargetThenClose(&image, &writeBlockers, QLatin1StringView("image build"));
+    flushImageOutputThenClose(&image, &writeBlockers, QLatin1StringView("image build"));
 
     result.blockers.append(writeBlockers);
     finalizeBuildResult(&result);
@@ -23684,7 +23704,7 @@ PartitionApfsImageBuildResult PartitionApfsWriter::buildImageOnlyPerFileEncrypte
                       .containerBlockCount = containerBlockCount},
                      blocks,
                      &writeBlockers);
-    flushCommitTargetThenClose(&image, &writeBlockers, QLatin1StringView("image build"));
+    flushImageOutputThenClose(&image, &writeBlockers, QLatin1StringView("image build"));
     result.blockers.append(writeBlockers);
     finalizeBuildResult(&result);
     return result;
@@ -23740,7 +23760,7 @@ PartitionApfsImageRepairResult PartitionApfsWriter::repairImageOnlyObjectChecksu
 
     QStringList repairBlockers;
     runChecksumRepairOnScratch(&image, &result, &repairBlockers);
-    flushCommitTargetThenClose(&image, &repairBlockers, QLatin1StringView("repair"));
+    flushImageOutputThenClose(&image, &repairBlockers, QLatin1StringView("repair"));
     result.blockers.append(repairBlockers);
     if (result.repaired_checksum_blocks == 0 && result.blockers.isEmpty()) {
         result.blockers.append(
@@ -23781,7 +23801,7 @@ static void runImageOnlyVolumeLabelCommit(PartitionApfsImageVolumeLabelResult* r
     QStringList commitBlockers;
     commitInPlaceVolumeLabel(
         &image, {files, directories, result->new_volume_name}, &commit, &commitBlockers);
-    flushCommitTargetThenClose(&image, &result->blockers);
+    flushImageOutputThenClose(&image, &result->blockers);
     result->blockers.append(commitBlockers);
     appendVolumeLabelReadback(
         result->written_image_path, result->new_volume_name, purpose, &result->blockers);
@@ -24090,7 +24110,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyChe
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -24170,7 +24190,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyRes
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -24251,7 +24271,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
             &commitBlockers)) {
         assignCheckpointResult(commit, &result);
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -24308,7 +24328,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -24370,7 +24390,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -24425,7 +24445,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -24485,7 +24505,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -24548,7 +24568,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -24605,7 +24625,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -24690,7 +24710,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -24787,7 +24807,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                                 .compressLzvn = request.compress_lzvn,
                                 .compressLzbitmap = request.compress_lzbitmap},
                                &result);
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.ok = result.blockers.isEmpty();
     return result;
 }
@@ -24844,7 +24864,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                                 .cloneSourcePrivateId = cloneSource.privateId,
                                 .cloneLogicalSize = cloneSource.logicalSize},
                                &result);
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.ok = result.blockers.isEmpty();
     return result;
 }
@@ -24901,7 +24921,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                                 .directories = directories,
                                 .hardlinkTargetId = targetId},
                                &result);
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.ok = result.blockers.isEmpty();
     return result;
 }
@@ -24969,7 +24989,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -25027,7 +25047,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -25904,7 +25924,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlySna
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -25984,7 +26004,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlySna
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
@@ -26055,7 +26075,7 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlySna
         result.checkpoint_map_block = commit.checkpoint_map_block;
         result.superblock_block = commit.superblock_block;
     }
-    flushCommitTargetThenClose(&image, &result.blockers);
+    flushImageOutputThenClose(&image, &result.blockers);
     result.blockers.append(commitBlockers);
     result.ok = result.blockers.isEmpty();
     return result;
