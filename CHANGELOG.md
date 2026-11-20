@@ -6,7 +6,31 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## v0.9.3 (2026-11-10)
+## v0.9.4 (2026-11-20)
+
+A safety patch for v0.9.3. It fixes the faults below, which v0.9.3 has, and changes nothing else.
+
+- **APFS image edits flush their output before they report success** - Each APFS image edit (format, file
+  and folder changes, snapshots, resize, relabel, checksum repair) closed the image it wrote without flushing it.
+  The next edit copies that image, and while Windows was busy (another program's build starting or ending) it
+  could list the newest piece of the just-written image as empty, so the copy held zeros there: the next edit
+  refused with "the live free-queue leaf checksum is invalid" when the piece held metadata, but file data there
+  would have been lost without a message. Every image edit now flushes its output first and, if that fails, says
+  so and leaves no output. v0.9.3 has the same fault: under disk load an image edit could lose a just-written block.
+- **HFS+ format, repair and file changes flush their staged image before writing it to the partition** - These
+  operations build the volume in a staged image and then copy the image's written parts to the partition. Under
+  disk load Windows could leave the newest written part out of that list, and the partition then kept its old
+  bytes there. The staged image is now flushed first, and the operation stops if it cannot be. v0.9.3 has the same
+  fault.
+- **A junction no longer passes for a folder inside S.A.K.'s own** - Several checks that a path stays inside a
+  folder (the bundled Chocolatey, the UUP tools and 7-Zip, the assistant's bundled MCP servers, the profile backup's
+  reads, Data Recovery's restore destination, and APFS, ext and HFS+ exports) compared Qt's canonical paths, which do
+  not resolve a directory junction, so a junction pointing outside passed. They now resolve the real path through
+  Windows, and a S.A.K. folder that is itself reached through a junction still works.
+  A bundled program (Chocolatey, the UUP tools, 7-Zip, the assistant's MCP servers) is now held from that check
+  until it has started, so nothing can replace it or a folder above it in between.
+
+## v0.9.3 (2026-11-15)
 
 The first release with three-part version numbers; it follows v0.9.2.0. Among the changes below: Partition
 Manager's certification now drives the app itself, and

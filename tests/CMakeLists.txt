@@ -683,6 +683,8 @@ set_target_properties(partition_file_recovery_certifier PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(partition_file_recovery_certifier PRIVATE
+    # file_recovery_engine.cpp resolves its restore destination with sak::no_follow.
+    sak_foundation
     Qt6::Core
 )
 target_include_directories(partition_file_recovery_certifier PRIVATE
@@ -713,6 +715,8 @@ set_target_properties(partition_filesystem_probe_certifier PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(partition_filesystem_probe_certifier PRIVATE
+    # The readers' export guard (partition_export_containment.h) resolves with sak::no_follow.
+    sak_foundation
     Qt6::Core ZLIB::ZLIB sak_lzfse
 )
 target_include_directories(partition_filesystem_probe_certifier PRIVATE

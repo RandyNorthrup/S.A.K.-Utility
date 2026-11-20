@@ -444,6 +444,88 @@ bool samePath(const QString& a, const QString& b) {
                .compare(withoutTrailingSeparator(nativeSeparators(b)), Qt::CaseInsensitive) == 0;
 }
 
+QString resolvedPath(const QString& path) {
+    const QString full = comparablePath(path);
+    if (full.isEmpty()) {
+        return {};
+    }
+    // No FILE_FLAG_OPEN_REPARSE_POINT: this open follows every link, which is the point.
+    const UniqueHandle handle(CreateFileW(win32Path(full).c_str(),
+                                          FILE_READ_ATTRIBUTES,
+                                          kAnyShare,
+                                          nullptr,
+                                          OPEN_EXISTING,
+                                          FILE_FLAG_BACKUP_SEMANTICS,
+                                          nullptr));
+    if (!handle.valid()) {
+        return {};
+    }
+    return finalPathOfHandle(handle.get());
+}
+
+bool pathIsSameOrBelow(const QString& path, const QString& root) {
+    if (path.isEmpty() || root.isEmpty()) {
+        return false;
+    }
+    const QString inner = withoutTrailingSeparator(nativeSeparators(path));
+    const QString outer = withoutTrailingSeparator(nativeSeparators(root));
+    if (inner.compare(outer, Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+    // A drive root keeps its separator ("C:\"); any other root gets one, so C:\App never holds
+    // C:\AppX.
+    const QString prefix = outer.endsWith(QLatin1Char('\\')) ? outer : outer + QLatin1Char('\\');
+    return inner.startsWith(prefix, Qt::CaseInsensitive);
+}
+
+bool pathWithinRoot(const QString& path, const QString& root) {
+    return pathIsSameOrBelow(resolvedPath(path), resolvedPath(root));
+}
+
+std::expected<HeldFile, QString> holdFile(const QString& path) {
+    const QString full = comparablePath(path);
+    if (full.isEmpty()) {
+        return std::unexpected(QStringLiteral("%1 is not a usable path").arg(path));
+    }
+    // GENERIC_READ, not attributes only: an open without data access takes no part in sharing, so
+    // it would keep nobody out. Sharing reading only keeps writers, renames and deletes out (and
+    // the rename of any folder above it), while Windows can still map the file to start it.
+    HANDLE raw = CreateFileW(win32Path(full).c_str(),
+                             GENERIC_READ,
+                             FILE_SHARE_READ,
+                             nullptr,
+                             OPEN_EXISTING,
+                             FILE_ATTRIBUTE_NORMAL,
+                             nullptr);
+    const DWORD error = GetLastError();
+    UniqueHandle handle(raw);
+    if (!handle.valid()) {
+        return std::unexpected(
+            QStringLiteral("cannot hold %1 (%2)").arg(path, lastErrorText(error)));
+    }
+    const auto kind = entryKindOfHandle(handle.get());
+    if (!kind || *kind != EntryKind::File) {
+        return std::unexpected(QStringLiteral("%1 is not a regular file").arg(path));
+    }
+    QString real = finalPathOfHandle(handle.get());
+    if (real.isEmpty()) {
+        return std::unexpected(QStringLiteral("cannot name where %1 really is").arg(path));
+    }
+    return HeldFile{.handle = std::move(handle), .path = std::move(real)};
+}
+
+std::expected<HeldFile, QString> holdFileWithinRoot(const QString& path, const QString& root) {
+    auto held = holdFile(path);
+    if (!held) {
+        return held;
+    }
+    if (!pathIsSameOrBelow(held->path, resolvedPath(root))) {
+        return std::unexpected(
+            QStringLiteral("%1 is really %2, outside %3").arg(path, held->path, root));
+    }
+    return held;
+}
+
 EntryKind entryKind(const QString& path) {
     const QString full = comparablePath(path);
     if (full.isEmpty()) {

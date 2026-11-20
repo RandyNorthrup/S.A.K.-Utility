@@ -1,5 +1,15 @@
 {
   "broken_files_after": 0,
+  "boot_before": {
+    "reached_sign_in": true,
+    "firmware": "UEFI",
+    "system_drive": "C:",
+    "repair_scan": "NoErrorsFound",
+    "only_disk_attached": true,
+    "source_marker_present": false,
+    "shot": "sakcert-efi-before.png",
+    "source_marker": ""
+  },
   "boot_broken": {
     "reached_sign_in": false,
     "firmware": "",
@@ -17,16 +27,6 @@
     "only_disk_attached": true,
     "source_marker_present": false,
     "shot": "sakcert-efi-after.png",
-    "source_marker": ""
-  },
-  "boot_before": {
-    "reached_sign_in": true,
-    "firmware": "UEFI",
-    "system_drive": "C:",
-    "repair_scan": "NoErrorsFound",
-    "only_disk_attached": true,
-    "source_marker_present": false,
-    "shot": "sakcert-efi-before.png",
     "source_marker": ""
   }
 }

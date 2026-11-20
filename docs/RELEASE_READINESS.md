@@ -28,6 +28,79 @@ Apple kernel/hardware certification, review-ledger coverage, mutation surface an
 debt are not release requirements. Their claims stay labeled uncertified; the archived R5 document
 keeps their history.
 
+### v0.9.4: a safety patch on v0.9.3 (2026-11-19/20)
+
+Owner decision, 2026-11-19: v0.9.4 ships only two safety fixes that v0.9.3 users have, and everything else planned for
+the next release moves to 0.10.0. Branch `v094-patch` from `main` f2c45ff9: SEC2's eleven commits (c7ff198a..8b24d32f,
+item 15), APFSX's two cherry-picked from the integration branch (7f11e6a9 from 21efaf34, 60bbdc31 from 71baaf5a,
+item 16), the version commit 6113a954, and 46eeefa0, which adapts the APFS fix to `main`: on the integration branch a
+failed image commit's output was removed by L7's broader `ApfsScratchOutputScope`, which `main` does not have, so the
+23 image sites now close through `flushImageOutputThenClose`, which removes an output whose flush failed (the raw and
+in-place targets are never removed). Frozen at 46eeefa0, Partition Manager code digest
+8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c.
+
+**Gate (testpc2 and testpc1; no build or test on the workstation).**
+
+- Build: a clean checkout of the branch from a bundle, Release, `/m:2`: BUILD EXIT 0, 0 warnings, every program written
+  by the build (round 2 incremental, all 289 test programs deleted first and remade).
+- T2 labels in a standard-user scheduled task in the console session: 334 of 335 passed, 2 skipped (startup budget,
+  single instance). Round 1 (6113a954) failed `apfsWriter_imageOutputsFailClosedWhenTheirFlushFails` ("checkpoint left
+  its output"), which 46eeefa0 fixes. Environment exception, accepted: `test_bandwidth_tester`
+  `iperfServer_listensOnlyOnTheChosenAddress` binds the fixed port 52918, which testpc2 reserves in an excluded TCP
+  port range (52851-52950, Hyper-V/WinNAT; `netsh int ipv4 show excludedportrange protocol=tcp`), so iperf3 cannot
+  listen there; CI T2 43792306480 on f2c45ff9 passed it (2.89 s). A test that picks a free port is a 0.10.0 item.
+- cert-tooling 8 of 8. The whole-tree static gates of ci.yml, 20 of 20, including lizard and error-message uniqueness.
+- The must-run-elevated suites in the disposable VM sak-l10-win11 (own checkpoint, reverted and deleted): helper 3/3,
+  FAT 10/10, raw partition writes 20/20, long script 3/3. Twice the PowerShell Direct session to the guest ended in the
+  raw suite while another lane's build loaded testpc1; with the host idle it passed, and the diagnostics then showed
+  no guest restart.
+- Drills, 26, each mutant built, red on its own named test, restored byte for byte and green, the tree unchanged:
+  SEC2's 22 (D1-D5, H1-H4, B1, U1, A1, AI1-AI3, R1-R3, K1, K2, P1, P1b) and APFS-a (the flush result ignored),
+  APFS-b (snapshot create closed without the flush), APFS-c (an unflushed output kept) and HFS (the staged image's
+  `Sync-SakFileToDisk` removed).
+- clang-tidy: the naming gate passed (non-core 155/155 clean, core 175/175 healthy, 5,291 findings, 21 ratcheted
+  clean TUs). Every check over the 14 changed TUs found 7 on changed lines, of checks `main` does not gate; 0.10.0
+  items: `ai_mcp_session_pool.cpp:72` and `ai_provider_gateway.cpp:957` readability-trailing-comma,
+  `ai_provider_registry.cpp:112` unchecked-container-access, `offline_deployment_worker.cpp:1408`
+  redundant-lambda-parameter-list, and `partition_apfs_writer.cpp` misc-use-anonymous-namespace on the three static
+  flush helpers.
+- Secret scans: the regex and path scan clean; gitleaks over the branch's 2,298 commits and trufflehog on it clean; the
+  pre-push hook passed in a single-branch clone of `v094-patch`.
+
+**Recertification.** The full 30-row run at 46eeefa0 with `main`'s tooling, as c782f945's: the VM chain on the Mac's
+Windows 11 rig (pre-round8; vhd 36 min, data 10, boot-uefi 21, boot-bios 103) and testpc2's device chain beside it
+(ssd-device on the SAMSUNG MZVL2512HCJQ-00BH1, hdd-device and data-device on the Seagate Expansion Desk 8 TB; 29 min),
+2026-11-20 02:52-05:43, every group exit 0; WritePins refused the WD SN730 boot disk first, and testpc2's W: (the
+Samsung) was erased and remade in a coordinated window. Selection with the CredFile's deny names, as at c782f945
+(coordinator ruling: the computer label TESTPC2 in `external.usb-removable` is not a serial or hardware ID, v0.9.3
+accepted the same, and the step-client fix that drops it ships in 0.10.0): 12/12 and 18/18, NamedDevicesValidated,
+the generated block unchanged. Evidence commit 9fc26bc8. Rig note: OpenSSH 10.2 on the workstation prints a
+post-quantum warning for testpc2's sshd, which the rig parsed as JSON; `WarnWeakCrypto no` for `testpc2.ivettnet` in
+the workstation's ssh config keeps it out.
+
+**Release dry run (testpc2, no push, unsigned).** A clean checkout of the branch built (BUILD EXIT 0, 0 warnings),
+then release.yml's build-job steps: runtime dependencies, stage (149 files, 177.7 MB), archive, the clean-package smoke,
+the startup end-to-end smoke from the clean extract (console session), the checkout-unchanged check, the claim block
+(current at 9fc26bc8), the packaged filesystem tool check (5 tools), the stable `SAK-Utility-Windows-x64.zip` alias with
+its `SHA256SUMS.txt` line, and the publish job's asset checks (the alias byte-identical to the versioned zip; every
+SHA256SUMS line, `sak_utility.exe`, `sak_elevated_helper.exe` and the zip, matches): all passed. The readiness gate passed
+its secret scans (gitleaks and trufflehog at the release job's pinned versions), blocking patterns and PowerShell syntax,
+and then refused the accessibility audit's program as older than HEAD's commit: the evidence commit 9fc26bc8 came
+after that build, which a tag build cannot meet, so the rest of the gate runs in T3 on the tag. Run from a scheduled
+task the same gate stopped at trufflehog, which passes from an ssh session (twice, 0 verified, 0 unverified), the
+same scan; T3 runs it in the release job. Signing and its checks need the release environment on a tag. Found:
+`tools/chocolatey/redirects/choco.exe.ignore` is 2 bytes (a CRLF) where the other four `.ignore` files are empty, as in
+v0.9.3 (winget's archive scan flagged it); a 0.10.0 packaging item, since the file is under the digest.
+
+**Release hygiene folded in.** CHANGELOG: v0.9.3's date (published 2026-11-15, not 2026-11-10); the repeat of check A
+on signed bytes and the deleted `AZURE_CLIENT_SECRET` recorded above. Left for 0.10.0 because each changes code under
+the digest: the `partition_manager_panel.h:356` comment, the rc.2 comments in `authenticode_signer.ps1:19-20` and
+`test_verify_authenticode_signatures.ps1:19`, and the helper and writer icons.
+
+**Still to do on the release bytes (the owner's push and tag).** T2 green on `dev` and on the PR and `main`; the
+nightly on `main`; the T3 run on the tag (build, sign, verify, the readiness gate on the signed package, publish); check
+A in the Windows 11 VM on the signed package; the CHANGELOG heading's date set to the day it is published.
+
 ### Open crash, data-loss and security items (must be empty to release)
 
 1. Startup GUI freeze: FIXED locally 2026-10-24 (GUI block 5.8-10.8 s -> under 0.15 s on a
@@ -172,6 +245,150 @@ keeps their history.
    partition and has Windows' DISM split a large install.wim into .swm parts, and its final check reads the result
    back (4505a84f, 6edd85d0). Built and read back on testpc1, and a byte-for-byte image of the stick started
    Windows Setup in a Hyper-V Generation 2 VM with Secure Boot, to its edition list; see UI review round 3 below.
+15. FIXED (v0.9.4 lane SEC2, found 2026-11-17 by lane L4's audit), containment checks a junction passed: Qt 6's
+   `QFileInfo::canonicalFilePath` (and `canonicalPath`) resolve a symbolic link but not a directory junction, so
+   every "the real path stays under this root" check built on them let a junction through. Measured on testpc1 with
+   Qt 6.12.0. The fix is one helper, `sak::no_follow::pathWithinRoot`, which resolves through a handle. Sites,
+   attacker preconditions, the fix and the proof are in "v0.9.4 lane SEC2: containment checks a junction passed"
+   below.
+16. FIXED (v0.9.4 lane APFSX, found 2026-11-18 from intermittent APFS writer test failures on testpc2), data loss:
+   every APFS image-only commit and image build closed its output without a flush, and the next commit copies it
+   with copyFileSparse, which copies only the ranges FSCTL_QUERY_ALLOCATED_RANGES lists. Under disk load NTFS could
+   list a run without its newest 64 KiB unit, so the copy held zeros there: a metadata block failed its checksum in
+   the next commit, a file-data block would have lost its bytes silently. The generated HFS+ format, repair and
+   file-change scripts had the same fault in their staged-image write-back. Both shipped in v0.9.3. Fixes: every
+   image output goes through the checked durable flush and a failed flush fails the commit with no output
+   (`apfsWriter_imageOutputsFailClosedWhenTheirFlushFails`, all 23 paths); the HFS+ write-back runs
+   `Sync-SakFileToDisk` before listing ranges (`generatedScripts_stagedImageIsFlushedBeforeItsRangesAreListed`).
+   Evidence (a byte-for-byte replica of the copy reproduced it, 15 of 24,500 copies; with the flush 0 of 22,500) in
+   `docs/APFS_HFS_FIELD_NOTES.md`.
+
+### v0.9.4 lane SEC2: containment checks a junction passed (2026-11-17)
+
+**The finding.** Lane L4's audit found that several checks prove a path stays inside a root by comparing
+`QFileInfo::canonicalFilePath` strings, and that Qt 6 does not resolve a directory junction there. Measured on testpc1
+with a probe linked against the Qt the app builds with (`qVersion()` 6.12.0, the same `Qt6Core.dll`), on a root
+holding a junction `jdir` and a directory symbolic link `dlink`, both to a sibling folder `outside`, and a file
+symbolic link `flink.txt` to a file there:
+
+| Path | `canonicalFilePath` | Where it really is (`GetFinalPathNameByHandleW`) | Old check |
+|---|---|---|---|
+| `root/jdir/f.txt` (junction in a folder above) | `root/jdir/f.txt` | `outside\f.txt` | passed |
+| `root/jdir/sub/g.txt` | `root/jdir/sub/g.txt` | `outside\sub\g.txt` | passed |
+| `root/jdir` (junction as the name) | `root/jdir` | `outside` | passed |
+| `root/flink.txt` (file symbolic link) | `outside/target.txt` | `outside\target.txt` | refused |
+| `root/dlink/f.txt` (directory symbolic link above) | `outside/f.txt` | `outside\f.txt` | refused |
+| `root/dlink` | `outside` | `outside` | refused |
+
+`QDir::canonicalPath` returns `root/jdir` for the junction too, and `QFileInfo::isSymLink` is false for a junction
+(`isJunction` is true only for the junction itself). Creating a junction needs no privilege: any account that can
+create a folder somewhere can make that folder a junction to anywhere.
+
+**The fix.** One helper in `sak::no_follow` (`include/sak/no_follow_fs.h`): `resolvedPath` opens the path following
+every link and names it with `finalPathOfHandle`; `pathIsSameOrBelow` compares two such paths without case, `/` and
+`\` alike, on a separator boundary, a drive root included; `pathWithinRoot(path, root)` resolves both and compares,
+and fails closed when either cannot be opened. A root that is itself reached through a junction or symbolic link
+resolves too, so S.A.K. unpacked into a junctioned folder works. The three copies of "a bundled executable is a real
+file inside the tools root" (offline deployment's choco, the UUP tools, the Windows USB creator's 7-Zip) now call
+one check, `BundledToolsManager::isTrustedToolFile`, built on it.
+
+**Sites, attacker precondition, and what the fix leaves.** "Elevated hold" is v0.9.3's security brief 4c: an
+elevated S.A.K. (Run as Administrator, or the elevated helper) verifies at its start that no folder of its program
+tree except `data` is a link, and holds every folder and program file there without delete sharing until it exits,
+so a folder that existed at that start cannot be renamed, replaced or removed during the run.
+
+| Site | Who can plant the junction | v0.9.3 exposure | Fix | Check-to-use gap left |
+|---|---|---|---|---|
+| `offline_deployment_worker.cpp` `resolveChocoExecutable` (choco runs with S.A.K.'s rights, administrator when elevated) | An account that can create a folder inside `<S.A.K.>\tools`: nobody but administrators under Program Files; on a portable copy, whoever the folder's ACL lets create folders (on NTFS, a folder made under `C:\` inherits Modify for Authenticated Users); FAT32 and exFAT hold no junctions | Low. An elevated run refuses a junction present at its start and holds `tools\chocolatey` for the run, so only a `tools\chocolatey` absent at the start (a trimmed package) could be planted. Such an account could also replace the files themselves, and that is the elevated hold's job, not this check's | `isTrustedToolFile`; round 2: `no_follow::holdFileWithinRoot` right before the start | Closed (round 2): choco.exe is held from a check on the held handle until choco has started (`on_started`), and started by the real path the hold names |
+| `uup_iso_builder.cpp` `isTrustedBundledExe` (aria2c, UUPMediaConverter; the converter runs elevated) | Same as choco, under `tools\uup` | Low, same reasoning | `isTrustedToolFile`; round 2: held across each `start()` | Closed (round 2): each tool is held from the check until its `QProcess::start` has returned (the process exists), and started by its real path |
+| `windows_usb_creator_extract.cpp` `isSafeBundledExecutable` (7-Zip, elevated) | An account that can create a folder under the app folder | Low, same reasoning | `isTrustedToolFile`; round 2: held across the runs | Closed (round 2): 7z.exe is held while the label is read, again for every run of an extraction, and for the install-image check, each started by its real path |
+| `ai_provider_registry.cpp` `commandWithinAppDir` (stdio MCP server command, runs with the user's rights) | Same as choco, anywhere under the app folder | Low to medium: an unelevated run has no hold, so another account that can create a folder in a shared portable copy could make the person's S.A.K. start its program as that person | `no_follow::pathWithinRoot`; round 2: the registry publishes `command_root`, the gateway passes it as the request's `trusted_root` (and refuses a plan without one), and the session holds the command against it | Closed (round 2): the session holds the command file from a check against `trusted_root` until the server has started, and starts it by its real path |
+| `user_profile_backup_worker.cpp` `parentWithinCanonicalRoot` and the root pins (elevated backup reads) | The profile's owner, a standard user, in their own profile | Medium: a selected folder of two or more segments (application data such as `AppData/Roaming/<program>`) under a folder the owner turned into a junction was read through it, so an elevated backup copied another user's or a system folder's files into the backup. Writes already went through `sak::no_follow` | Roots pinned as `resolvedPath`; each entry's parent resolved and compared with `pathIsSameOrBelow` | Per entry, check then read by name; a swap between them is still followed for that one read. Follow-up for lane L12 (it reworks this walk): see below |
+| `file_recovery_engine.cpp` `destinationIsSeparate` (destination on the source volume; destination in the image's folder) | Whoever can make the chosen destination folder, normally the technician by mistake | Low (data safety, not privilege): recovered files could land on the volume being recovered, overwriting what was still recoverable | Both sides `resolvedPath`; `samePath` | A one-time check before restoring |
+| `partition_export_containment.h` `pathWithinRoot` (APFS, ext and HFS+ export to a folder; also MboxWriter) | An account that can write in the export folder the technician chose, together with a foreign volume naming that folder | Medium for an elevated export into a folder another account can write: a junction pre-planted where the exporter makes a directory sent new files (CREATE_NEW, never overwriting) wherever the junction pointed | Both sides resolved per check (`no_follow::pathWithinRoot`); a root reached through a junction works | Check, then open by name for each file; an ancestor swapped in between is followed. Follow-up for lane L12: see below |
+
+**How the hold closes the gap (round 2).** `no_follow::holdFile` opens the executable following links with
+`GENERIC_READ` and sharing reading only (an open without data access takes no part in sharing, so it would keep
+nobody out). While it is open, writing, renaming, deleting or replacing the file is refused, and so is renaming any
+folder above it, while Windows can still start a program from it. `holdFileWithinRoot` checks the held handle's own
+final path against the resolved root, and the program is started by that path, so a link that is retargeted after the
+check is never followed. Tests: `heldFileRefusesRenameDeleteAndReplace`, `heldFileRefusesWriters`,
+`heldFileWithinRootChecksTheHeldFile`, `heldFileStillStartsAProgram`, and for the assistant
+`openRefusesACommandOutsideItsTrustedRoot`, `openStartsACommandInsideItsTrustedRoot`,
+`stdioStatusPublishesItsCommandRoot`, `callWin32McpWithoutCommandRootFailsClosed`. The choco, UUP and USB call sites
+take their root from the running program's folder and have no seam of their own; each is the drilled helper called on
+the line before the start.
+
+**Follow-ups for lane L12 (coordinator, 2026-11-17: L12 reworks the backup walk on the integration branch).**
+
+- Backup reads (`user_profile_backup_worker.cpp`, `copyDirectory` and the per-entry copy): hold the source profile
+  root with `no_follow::HeldDirectory::open(profile)` (or `openAnchor` when the profile is reached through a
+  junction the technician chose) once per user, descend each selected folder with `HeldDirectory::descend(relative,
+  false)` and each subfolder with `child(name, false)`, so a link anywhere refuses and no folder on the way can be
+  swapped while held. Open each file to copy in its held folder without following a link (no_follow's internal
+  `openNoFollow` on `folder.filePath(name)`, exposed as a read counterpart of `createNewFile`, checked with
+  `entryKindOfHandle`), and copy from that handle, not by name. `parentWithinCanonicalRoot` then has nothing left to catch and goes. Test: plant a junction in
+  place of a folder between enumeration and copy (a hook between the two), expect the entry refused and nothing read.
+- Export writes (`partition_export_containment.h` `writeFile`, and each reader's `exportDirectory`): hold the export
+  root once (`HeldDirectory::open(root)`), make each directory with `HeldDirectory::descend(relative, true)`, which
+  creates every component checked and refuses a link, and write each file with `no_follow::createNewFile(folder,
+  name, false)` (CREATE_NEW, no link followed) instead of `QFile::open(NewOnly)` by path. `pathWithinRoot` then has
+  nothing left to catch. Test: a junction pre-planted where the export makes a directory refuses that directory and
+  writes nothing through it (the round-1 test plants it before the export; a planted-mid-export case needs a hook).
+
+MboxWriter writes each mailbox directly in the chosen folder, so no folder sits between the root and the file; it
+was safe before and behaves the same.
+
+**Proof (testpc2, `W:\sec2`, the lane's snapshot of this change on f2c45ff9).** Full build BUILD EXIT 0 (62.5 min,
+`/m:2`, every test program and `sak_utility.exe` written after the build started). The ten test programs the change
+reaches (`test_no_follow_fs`, `test_bundled_tools_manager`, `test_windows_usb_creator`, `test_ai_provider_registry`,
+`test_user_profile_backup_worker`, `test_partition_manager_core`, `test_offline_deployment_worker`,
+`test_uup_iso_builder`, `test_mbox_writer`, `test_image_flasher_panel`): 10 of 10 passed, and each of the 16 new
+junction tests printed PASS, none SKIP. T2's labels from the ssh session: 323 of 335; the 12 failures are the eight
+that fail from an elevated ssh session (session 0) on f2c45ff9 itself, `test_bandwidth_tester` and
+`test_stress_test_worker` (also failing in lane L4's T2 on testpc2), and two timeouts under load
+(`test_partition_manager_core`, 600 s limit, and `test_fuzz_apfs_reader`, 75 s), which passed when run alone (361 s
+and 41 s). Drills, one per guard, each mutant built (exit 0, fresh binary), red on the expected test, restored byte
+for byte and touched: D1 `resolvedPath` returns the lexical path; D2 no separator boundary; D3 root not resolved; D4
+case-sensitive compare; D5 the name itself not followed; B1 `isTrustedToolFile` on the old canonical comparison; U1
+the USB check's old body; A1 the AI registry's old comparison; R1 the restore destination via `canonicalFilePath`; R2
+the image folder via `canonicalPath`; K1 the backup's entry parent via `canonicalFilePath`; K2 the backup's root pin
+via `canonicalFilePath`; P1 and P1b the export guard's old body. All red. The choco and UUP call sites have no test
+seam of their own (both take their root from the running program's folder); they are one call to
+`isTrustedToolFile`, which B1 drills.
+
+**Proof, round 2 (testpc2, the lane's second snapshot).** Build BUILD EXIT 0 (37.3 min, incremental from round
+1's tree; all 16 binaries checked written after the build started). The 13 test programs the change reaches (round
+1's ten plus `test_ai_mcp_stdio_session`, `test_ai_provider_gateway` and `test_ai_mcp_session_pool`): 13 of 13 passed,
+and each of the 9 new tests printed PASS: the four hold tests, the assistant's four, and
+`fileRecoveryEngine_aRawSourceRefusesItsVolumeUnderAnotherLetter`, which maps a free drive letter onto the temporary
+folder with `DefineDosDeviceW` so the destination is spelled on another letter while really on the raw source's
+volume. T2's labels: 326 of 335; the nine failures are the eight that fail from an elevated ssh session on f2c45ff9
+itself and `test_bandwidth_tester`. Drills, each mutant built (exit 0, fresh binary), red on the expected test,
+restored byte for byte and touched: H1 the hold shares delete; H2 it shares write; H3 it opens without data access
+(so it takes no part in sharing); H4 it skips the root check; AI1 the session ignores `trusted_root`; AI2 the registry
+publishes no `command_root`; AI3 the gateway accepts a plan without one; R3 the raw branch's destination via
+`canonicalFilePath`. All red; the restored tree rebuilt (exit 0, fresh) and passed, with a clean `git status`.
+
+**The rest of the audit, re-checked** (every `canonicalFilePath` and `canonicalPath` in `src/` and `include/` at
+f2c45ff9; `std::filesystem::canonical` and `weakly_canonical` resolve through a handle in MSVC's library and are not
+part of this):
+
+- Agreed safe: `ai_conversation_store.cpp:1472` (case-only rename identity, not containment);
+  `app_mutating_actions.cpp:708` and `:4213` (`pathReparseUnsafe`, ancestors included, runs first);
+  `leftover_cleanup_guard.h:627` (same); `uninstall_worker.cpp:112` (a junction can only reach a local volume and
+  the screen admits any local path; the program comes from a registry value its user can set anyway);
+  `advanced_uninstall_panel.cpp:1397` (opens a folder in Explorer, not containment); the APFS and HFS+ writer CLIs
+  (file-id identity backs the comparison); `mbox_writer.cpp:572` (above); the three partition readers' root lines
+  (the shared guard now resolves the root itself).
+- Safe, but the check itself does not do what it says: `user_profile_restore_worker.cpp:154` and `:553` are the same
+  pattern as the backup's and miss a junction; the restore's writes go through held folders that refuse one, so the
+  check is dead weight rather than a hole. `leftover_scanner.cpp:352` refuses `isSymLink()`, which is false for a
+  junction in Qt 6, and its comment says canonicalFilePath resolves a junction in a parent, which it does not; the
+  deletion it feeds is refused under a junction by the cleanup guard. Both are worth moving onto the helper.
+- Lane L4's branch only (not at f2c45ff9): `ai_mcp_session_pool.cpp:119` picks the process cap by comparing the
+  command with S.A.K.'s own path; a junction spelling of S.A.K. would get the external cap of 16 instead of 1. Not
+  containment.
 
 ### Fixed by the lifecycle package (2026-10-25)
 
@@ -656,8 +873,10 @@ fix round S's proof under `E:\SAK-Utility-Test-Scratch\fixround-s\`). Each line 
   its first-run card hid the Library). Not feasible there: a UUP conversion end to end (a 4-5 GB download and an
   hour's conversion on the throttling Mac) and a Windows USB (the Mac passes no USB device to the VM; proven on testpc1
   and a Hyper-V Gen 2 boot).
-- STILL OPEN: the repeat of check A on the signed release bytes,
-  `E:\SAK-Utility-Test-Scratch\vm-smoke\REPEAT_A_ON_SIGNED_BYTES.md`.
+- DONE 2026-11-15: the repeat of check A on the signed release bytes, on v0.9.3-rc.3's signed package in the VM
+  (`E:\SAK-Utility-Test-Scratch\rc3-checkA\`): Mark of the Web with no SmartScreen prompt, Defender clean, the UAC
+  prompt naming "S.A.K. Utility - Elevated Helper" from the verified publisher, the helper's Check Disk, each program's
+  Properties details and a cold start; then again on v0.9.3 as published (`E:\SAK-Utility-Test-Scratch\v093-smartscreen\`).
 - DESIGN DECISION: the flasher ejects the stick after each flash ("Unmount drives on completion", on by default), so
   a second flash onto the same stick needs it replugged. That is what the setting promises.
 
@@ -3207,8 +3426,9 @@ From the security audit of a brief forwarded by the owner, who ruled that signin
   binaries' signatures and every SHA256SUMS line, then creates the release. The repository does not attest, so
   neither does this. A tag that disagrees with VERSION is refused before anything is built.
 - The `release` environment exists and admits `v*` tags only. AZURE_CLIENT_ID and AZURE_TENANT_ID stay repository
-  secrets (they are IDs, and secrets cannot be read to copy them). AZURE_CLIENT_SECRET is no longer referenced and
-  stays until OIDC has signed once. Azure must hold a federated credential for
+  secrets (they are IDs, and secrets cannot be read to copy them). AZURE_CLIENT_SECRET was no longer referenced; once
+  OIDC had signed v0.9.3-rc.3 and v0.9.3 it was deleted on the owner's word (2026-11-15), together with the signing
+  app's client secret, so that app holds no secret and no certificate. Azure must hold a federated credential for
   `repo:RandyNorthrup/S.A.K.-Utility:environment:release` on the signing app registration; nothing here can see it.
 - A pre-release tag (one with a hyphen, such as `v0.9.3-rc.1`) runs build, sign and verify and stops before
   publish: that is the dry run of signing now that the environment refuses a manual run from a branch. A manual

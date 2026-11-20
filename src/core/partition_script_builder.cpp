@@ -4426,6 +4426,16 @@ static QString hfsSparseFileFunctionsScript() {
         "[System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)\n"
         "  try { $stream.SetLength([int64]$SizeBytes) } finally { $stream.Dispose() }\n"
         "}\n"
+        // Flush a staged image to disk (FlushFileBuffers), holding it alone: right after cached
+        // writes extend a run of a sparse file into a fresh 64 KiB unit, Windows has been seen
+        // to leave that unit out of FSCTL_QUERY_ALLOCATED_RANGES (docs/APFS_HFS_FIELD_NOTES.md).
+        // A tool that still has the image open, or a flush that fails, stops the operation.
+        "function Sync-SakFileToDisk {\n"
+        "  param([string]$Path)\n"
+        "  $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, "
+        "[System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)\n"
+        "  try { $stream.Flush($true) } finally { $stream.Dispose() }\n"
+        "}\n"
         // FSCTL_QUERY_ALLOCATED_RANGES through the DLL: fsutil printed the ranges with labels
         // Windows translates, so a non-English Windows could not be read (audit e7).
         "function Get-SakSparseAllocatedRanges {\n"
@@ -4644,6 +4654,10 @@ static QString hfsSparseImageWritebackFunctionScript() {
     return QStringLiteral(
                "function Copy-SakSparseImageToRawTarget {\n"
                "  param([string]$ImagePath, [string]$RawTarget, [uint64]$TargetSizeBytes)\n"
+               // newfs_hfs, fsck_hfs, the staging copy and the file writer all leave the image
+               // unflushed; a range the query then misses would keep the partition's old bytes,
+               // and the read-back below checks only the ranges it was given.
+               "  Sync-SakFileToDisk -Path $ImagePath\n"
                "  $ranges = @(Get-SakSparseAllocatedRanges -Path $ImagePath)\n"
                "  $source = [System.IO.File]::Open($ImagePath, [System.IO.FileMode]::Open, "
                "[System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)\n"

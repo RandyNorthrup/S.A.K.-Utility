@@ -55,7 +55,11 @@ void markFileSparse(int fileDescriptor);
 ///        select a dense copy up front, require enough destination space for the full
 ///        logical size, and copy every byte. Unknown capabilities and failed sparse setup
 ///        are errors, never reasons to silently switch strategies. The destination must
-///        not already exist.
+///        not already exist. A sparse source must have been flushed (FlushFileBuffers) since
+///        its last write: right after cached writes extend a run into a fresh 64 KiB unit,
+///        Windows has been seen to report the run without that unit, and a range that is not
+///        reported is copied as a hole (zeros). Every APFS image output is flushed before its
+///        commit reports success for this reason (docs/APFS_HFS_FIELD_NOTES.md).
 [[nodiscard]] bool copyFileSparse(const QString& source,
                                   const QString& destination,
                                   QString* errorMessage = nullptr);

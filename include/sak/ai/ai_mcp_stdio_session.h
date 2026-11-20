@@ -46,6 +46,9 @@ struct AiMcpStdioCallRequest {
     int timeout_ms{0};
     /// Optional; applies to tools/call. Must be safe to call from the calling thread.
     AiMcpCancelCheck should_cancel;
+    /// The folder @p command must really lie in (the application folder, for a bundled server).
+    /// See AiMcpSessionConfig::trusted_root.
+    QString trusted_root;
 };
 
 /// One tool advertised by an MCP server's tools/list response.
@@ -68,6 +71,10 @@ struct AiMcpSessionConfig {
     /// Per-request response deadline. Values below a small floor are raised to it
     /// so a caller cannot pass 0 and get an instant timeout.
     int request_timeout_ms{0};
+    /// When set, the command file is held from a check that its real path lies in this folder
+    /// until the server has started (no_follow::holdFileWithinRoot), and started by that path.
+    /// When empty it is still held and started by its real path, with no folder to stay in.
+    QString trusted_root;
 };
 
 /// Owns a long-lived MCP server process and issues JSON-RPC requests to it. The

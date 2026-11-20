@@ -9,16 +9,6 @@
     "source_marker_present": false,
     "shot": "sakcert-bios-broken.png"
   },
-  "boot_after": {
-    "reached_sign_in": true,
-    "firmware": "Legacy",
-    "system_drive": "C:",
-    "repair_scan": "NoErrorsFound",
-    "only_disk_attached": true,
-    "source_marker_present": false,
-    "shot": "sakcert-bios-after.png",
-    "source_marker": ""
-  },
   "boot_before": {
     "reached_sign_in": true,
     "firmware": "Legacy",
@@ -27,6 +17,16 @@
     "only_disk_attached": true,
     "source_marker_present": false,
     "shot": "sakcert-bios-before.png",
+    "source_marker": ""
+  },
+  "boot_after": {
+    "reached_sign_in": true,
+    "firmware": "Legacy",
+    "system_drive": "C:",
+    "repair_scan": "NoErrorsFound",
+    "only_disk_attached": true,
+    "source_marker_present": false,
+    "shot": "sakcert-bios-after.png",
     "source_marker": ""
   }
 }

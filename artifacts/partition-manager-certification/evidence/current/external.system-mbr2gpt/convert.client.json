@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
-        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
+        "helper_sha256": "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
+        "sha256": "5e112f4969225fea675a3ec3d03f094dd1a1e84e8742de13a953421dd515f87f"
     },
-    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
-    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
+    "code_commit": "46eeefa01fe52315ad0a3d0e167e56aaddfb5105",
+    "code_digest": "8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c",
     "code_dirty": false,
-    "completed_utc": "2026-11-16T01:39:47.656Z",
+    "completed_utc": "2026-11-20T13:39:51.452Z",
     "disk_before": {
         "bus_type": "SATA",
         "disk_number": 0,
@@ -20,7 +20,7 @@
         "model": "VBOX HARDDISK",
         "partition_count": 2,
         "partition_style": "MBR",
-        "serial_sha256": "d6c4e609ddaf8870a612ec620a370c5d87342cc8ca59485876968743dbfb49df",
+        "serial_sha256": "6a767b48ebe8f6a75be13847365636212f0adc8ddf9e57336f1d5dd5b11a0aa8",
         "size_bytes": "107374182400"
     },
     "execution": {
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "4f75c476-0d4d-4163-8f23-2f96de5c9a4f",
+                "operation_id": "e9d93fb5-5787-4561-986e-478d99827f57",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Convert Disk 0 to GPT\r\nMBR2GPT: Attempting to validate disk 0\r\nMBR2GPT: Retrieving layout of disk\r\nMBR2GPT: Validating layout, disk sector size is: 512 bytes\r\nMBR2GPT: Validation completed successfully\r\n\r\nMBR2GPT will now attempt to convert disk 0.\r\nIf conversion is successful the disk can only be booted in GPT mode.\r\nThese changes cannot be undone!\r\n\r\nMBR2GPT: Attempting to convert disk 0\r\nMBR2GPT: Retrieving layout of disk\r\nMBR2GPT: Validating layout, disk sector size is: 512 bytes\r\nMBR2GPT: Trying to shrink the OS partition\r\nMBR2GPT: Creating the EFI system partition\r\nMBR2GPT: Installing the new boot files\r\nMBR2GPT: Performing the layout conversion\r\nMBR2GPT: Migrating default boot entry\r\nMBR2GPT: Fixing drive letter mapping\r\nMBR2GPT: Conversion completed successfully\r\nMBR2GPT: Update WinRE config file\r\nMBR2GPT: Before the new system can boot properly you need to switch the firmware to boot to UEFI mode!\r\n",
@@ -59,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "4f75c476-0d4d-4163-8f23-2f96de5c9a4f",
+            "id": "e9d93fb5-5787-4561-986e-478d99827f57",
             "payload": {
                 "mode": "mbr2gpt",
                 "target_style": "GPT"
@@ -81,15 +81,15 @@
         }
     ],
     "review": {
-        "fingerprint": "d769bebd830fb5456d9484152f5edaf5ec082644eb64913d110ea9994a273654",
-        "layout_hash": "49f07e4b6505fa75fd39ea7b3ff078acb330bbf8a14172a01749a949b07c6927",
+        "fingerprint": "67c34d259e25a7066cb7c06664025726ba6b6248ddf2993fc69a2ec6d7acce21",
+        "layout_hash": "e39c3c3e2804fb32060e289eef06d88dc29e741e65a276446d8fa70bebf30d18",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "829ab0f8-1b43-43f3-b557-1048954d5dce",
+    "run_id": "403d3824-7cac-4bff-8dfa-5325a8f24d45",
     "scenario_id": "external.system-mbr2gpt",
     "schema_version": 1,
-    "started_utc": "2026-11-16T01:39:10.372Z",
+    "started_utc": "2026-11-20T13:39:12.858Z",
     "status": "Passed",
     "step": "convert",
     "tool": "partition-manager-scenario-step"

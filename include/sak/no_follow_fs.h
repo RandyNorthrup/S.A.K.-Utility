@@ -75,6 +75,44 @@ private:
 /// True when @p a and @p b name the same path (Windows compares names without case).
 [[nodiscard]] bool samePath(const QString& a, const QString& b);
 
+/// Where the existing file or folder @p path really is: opened FOLLOWING every junction and
+/// symbolic link on the way, then named by finalPathOfHandle. QFileInfo::canonicalFilePath is not
+/// this: with Qt 6 it resolves a symbolic link but not a junction (measured with Qt 6.12.0 on
+/// 2026-11-17, a junction in a folder above or at the name comes back as spelled), so a
+/// containment check built on it lets a junction through. Empty when it cannot be opened or named.
+[[nodiscard]] QString resolvedPath(const QString& path);
+
+/// True when @p path is @p root or lies below it, comparing the two strings as they stand:
+/// without case, '/' and '\' alike, on a separator boundary (C:\App does not hold C:\AppX), a
+/// drive root included. Pure: pass resolvedPath() results. False when either is empty.
+[[nodiscard]] bool pathIsSameOrBelow(const QString& path, const QString& root);
+
+/// True when the existing @p path, resolved (resolvedPath), is @p root or lies below it, with
+/// @p root resolved the same way: a junction or symbolic link anywhere below the root that leads
+/// out of it refuses, while a root that is itself reached through one (S.A.K. unpacked into a
+/// junctioned folder) is fine. False when either cannot be resolved: it fails closed. A check by
+/// name: whatever is later opened or started by that name can be redirected in between unless
+/// something holds the path (a held handle, or a HeldDirectory).
+[[nodiscard]] bool pathWithinRoot(const QString& path, const QString& root);
+
+/// An existing file held open while a program is started from it: see holdFile().
+struct HeldFile {
+    UniqueHandle handle;
+    QString path;  ///< where it really is (finalPathOfHandle): start the program by this path
+};
+
+/// @p path opened following every link, for reading, sharing reading only. While the handle is
+/// open nobody can write, replace, rename or delete the file, nor rename a folder above it, and
+/// Windows can still start a program from it. Refused unless it is a regular file. Start the
+/// program by HeldFile::path and close the handle once it has started: what runs is then the file
+/// that was checked, with no gap between the check and the start.
+[[nodiscard]] std::expected<HeldFile, QString> holdFile(const QString& path);
+
+/// holdFile(), refused unless the held file's real path lies under @p root resolved
+/// (pathIsSameOrBelow against resolvedPath(@p root)), so the check is on the handle that is used.
+[[nodiscard]] std::expected<HeldFile, QString> holdFileWithinRoot(const QString& path,
+                                                                  const QString& root);
+
 /// What one name is, read without following it.
 enum class EntryKind : uint8_t {
     Missing,    ///< nothing has that name

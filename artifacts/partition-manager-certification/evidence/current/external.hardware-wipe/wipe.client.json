@@ -4,13 +4,13 @@
         "elevated": false,
         "file_name": "sak_utility.exe",
         "helper_found": true,
-        "helper_sha256": "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
-        "sha256": "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df"
+        "helper_sha256": "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
+        "sha256": "5e112f4969225fea675a3ec3d03f094dd1a1e84e8742de13a953421dd515f87f"
     },
-    "code_commit": "c782f945889df23621217f958619e4dbfe8b3473",
-    "code_digest": "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
+    "code_commit": "46eeefa01fe52315ad0a3d0e167e56aaddfb5105",
+    "code_digest": "8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c",
     "code_dirty": false,
-    "completed_utc": "2026-11-15T23:01:11.728Z",
+    "completed_utc": "2026-11-20T11:12:01.919Z",
     "disk_before": {
         "bus_type": "NVMe",
         "disk_number": 0,
@@ -32,7 +32,7 @@
                 "cancelled": false,
                 "error_message": "",
                 "may_still_run_in_windows": false,
-                "operation_id": "9537ba04-5901-4cd3-bfb8-ffc0c09c8254",
+                "operation_id": "8834abff-baba-4eb8-bea1-8bf8e5397a78",
                 "skipped": false,
                 "stderr": "",
                 "stdout": "SAK Partition Manager: Wipe Disk 0\r\n\r\nDriveLetter FriendlyName FileSystemType DriveType HealthStatus OperationalStatus SizeRemaining      Size\r\n----------- ------------ -------------- --------- ------------ ----------------- -------------      ----\r\n            SAK_WIPE     NTFS           Fixed     Healthy      OK                    476.82 GB 476.92 GB\r\n\r\n\r\n",
@@ -59,7 +59,7 @@
     ],
     "queued_operations": [
         {
-            "id": "9537ba04-5901-4cd3-bfb8-ffc0c09c8254",
+            "id": "8834abff-baba-4eb8-bea1-8bf8e5397a78",
             "payload": {
             },
             "script_sha256": "a470f27dadf1be48b40f359a9a08f40863ef8542183a547b79ddc62ec1f12303",
@@ -80,15 +80,15 @@
         }
     ],
     "review": {
-        "fingerprint": "04fb023a02472e47b23c2b0fbf5862de240f1cad095e46b596abab6cbd61880e",
-        "layout_hash": "e2e5221ebbcb4e3d37bcbd4d5b2515b6e4711494fb3cafe6341102e0eb5804c4",
+        "fingerprint": "3aaa68b78fb715b08673c9c9f2bb083b84329a3670cf7f5e97a98a6e7c353cf2",
+        "layout_hash": "8d43c084fd61c43659c42801f1d949e7eb86194e725ccb4f3c1b1d728b5fed33",
         "revision": "2"
     },
     "route": "elevated-helper",
-    "run_id": "b20af134-fa9a-4ba7-b845-fa56f219bf3f",
+    "run_id": "4d324e59-232e-416b-a508-bd6bbceaafef",
     "scenario_id": "external.hardware-wipe",
     "schema_version": 1,
-    "started_utc": "2026-11-15T22:50:07.834Z",
+    "started_utc": "2026-11-20T11:03:40.235Z",
     "status": "Passed",
     "step": "wipe",
     "tool": "partition-manager-scenario-step"

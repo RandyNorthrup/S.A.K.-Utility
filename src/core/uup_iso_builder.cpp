@@ -97,26 +97,12 @@ static bool isSafeAria2OutName(const QString& name) {
 
 // A bundled tool is only launched when it exists as a real regular file that is
 // NOT a reparse point AND whose fully-resolved path is confined under the resolved
-// bundled-tools root with a real path-segment boundary. canonicalFilePath resolves
-// any junctioned ancestor, so a planted junction that redirects the elevated
-// converter/downloader outside the bundle no longer passes containment (a bare leaf
-// check let it through).
+// bundled-tools root with a real path-segment boundary. The resolve goes through a
+// handle (BundledToolsManager::isTrustedToolFile): canonicalFilePath, used here
+// before, does not resolve a junctioned ancestor in Qt 6, so a planted junction that
+// redirected the elevated converter/downloader outside the bundle still passed.
 static bool isTrustedBundledExe(const QString& path, const QString& rootDir) {
-    const QFileInfo info(path);
-    if (!info.exists() || !info.isFile() || info.isSymLink() || info.isJunction()) {
-        return false;
-    }
-    const QString canonical = info.canonicalFilePath();
-    const QString canonicalRoot = QFileInfo(rootDir).canonicalFilePath();
-    if (canonical.isEmpty() || canonicalRoot.isEmpty()) {
-        return false;
-    }
-    if (canonical.compare(canonicalRoot, Qt::CaseInsensitive) == 0) {
-        return true;
-    }
-    const QString rootWithSep =
-        canonicalRoot.endsWith(QLatin1Char('/')) ? canonicalRoot : canonicalRoot + QLatin1Char('/');
-    return canonical.startsWith(rootWithSep, Qt::CaseInsensitive);
+    return sak::BundledToolsManager::isTrustedToolFile(path, rootDir);
 }
 
 // ============================================================================
@@ -574,7 +560,16 @@ void UupIsoBuilder::executeDownload() {
         return;
     }
 
-    const QString aria2Path = findAria2Path();
+    // Hold aria2c.exe from this check until this function returns, after it has started: nobody can
+    // replace or rename it, or a folder above it, and it starts from the real path the hold names.
+    auto aria2Hold = sak::no_follow::holdFileWithinRoot(
+        findAria2Path(), sak::BundledToolsManager::instance().toolsPath());
+    if (!aria2Hold) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError("aria2c.exe refused: " + aria2Hold.error());
+        return;
+    }
+    const QString aria2Path = aria2Hold->path;
     const QString inputFile = QDir(m_workDir).filePath("aria2_script.txt");
     const QString downloadDir = QDir(m_workDir).filePath("UUPs");
 
@@ -1016,6 +1011,15 @@ void UupIsoBuilder::executeConversion() {
             uupsDir, nativeConversionTempDir, outputIsoPath, uupMediaConverter)) {
         return;
     }
+    // Held until this function returns, after the converter has started (see executeDownload).
+    auto converterHold = sak::no_follow::holdFileWithinRoot(
+        uupMediaConverter, sak::BundledToolsManager::instance().toolsPath());
+    if (!converterHold) {
+        m_phase = Phase::Failed;
+        Q_EMIT buildError("UUPMediaConverter.exe refused: " + converterHold.error());
+        return;
+    }
+    uupMediaConverter = converterHold->path;
 
     m_converterProcess = std::make_unique<QProcess>(this);
     m_converterProcess->setWorkingDirectory(QFileInfo(uupMediaConverter).absolutePath());

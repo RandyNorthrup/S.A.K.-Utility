@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_provider_registry.h"
 
+#include "../support/junction_fixture.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -75,6 +77,9 @@ private Q_SLOTS:
     void providerStatusesReportMissingPortableCommand();
     void defaultDocsProvidersDoNotRequireApiKeys();
     void stdioCommandOutsideAppDirIsUnavailable();
+    void stdioCommandThroughAJunctionLeadingOutIsUnavailable();
+    void stdioCommandInAnAppDirReachedThroughAJunctionIsAvailable();
+    void stdioStatusPublishesItsCommandRoot();
 };
 
 void AiProviderRegistryTests::providersJsonBesideTheExecutableIsNeverRead() {
@@ -247,6 +252,86 @@ void AiProviderRegistryTests::stdioCommandOutsideAppDirIsUnavailable() {
     QVERIFY(!absolute_win32.value(QStringLiteral("available")).toBool(true));
     QCOMPARE(absolute_win32.value(QStringLiteral("missing_reason")).toString(),
              QStringLiteral("Bundled MCP command must resolve within the application directory"));
+}
+
+// Lane SEC2 (2026-11-17): the link half of the guard compared QFileInfo::canonicalFilePath, which
+// in Qt 6 does not resolve a junction. A junction inside the application folder, pointing outside,
+// let an outside executable be published as an available stdio command.
+void AiProviderRegistryTests::stdioCommandThroughAJunctionLeadingOutIsUnavailable() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString app_dir = temp.filePath(QStringLiteral("app"));
+    const QString outside = temp.filePath(QStringLiteral("outside"));
+    QVERIFY(QDir().mkpath(app_dir));
+    QVERIFY(writeFile(QDir(outside).filePath(QStringLiteral("server.exe")), QByteArray("MZ")));
+    QVERIFY(sak::test::createJunction(QDir(app_dir).filePath(QStringLiteral("tools")), outside));
+    QJsonArray providers;
+    providers.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("win32_mcp")},
+                                 {QStringLiteral("transport"), QStringLiteral("stdio")},
+                                 {QStringLiteral("command"), QStringLiteral("tools/server.exe")}});
+    const auto registry = sak::ai::AiProviderRegistry::withCatalogForTesting(
+        app_dir, QJsonObject{{QStringLiteral("providers"), providers}});
+    QString error;
+    const QJsonObject statuses = registry.providerStatuses(&error);
+    QVERIFY(error.isEmpty());
+    const QJsonObject win32 = providerById(statuses.value(QStringLiteral("providers")).toArray(),
+                                           QStringLiteral("win32_mcp"));
+    QVERIFY2(!win32.value(QStringLiteral("available")).toBool(true),
+             "a command reached through a junction that leads out of the app folder was available");
+    QCOMPARE(win32.value(QStringLiteral("missing_reason")).toString(),
+             QStringLiteral("Bundled MCP command must resolve within the application directory"));
+}
+
+// The other side of the same guard: an application folder that is itself reached through a
+// junction (S.A.K. unpacked into a junctioned folder) still runs its own bundled server.
+void AiProviderRegistryTests::stdioCommandInAnAppDirReachedThroughAJunctionIsAvailable() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString real_dir = temp.filePath(QStringLiteral("real"));
+    QVERIFY(
+        writeFile(QDir(real_dir).filePath(QStringLiteral("tools/server.exe")), QByteArray("MZ")));
+    const QString alias_dir = temp.filePath(QStringLiteral("alias"));
+    QVERIFY(sak::test::createJunction(alias_dir, real_dir));
+    QJsonArray providers;
+    providers.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("win32_mcp")},
+                                 {QStringLiteral("transport"), QStringLiteral("stdio")},
+                                 {QStringLiteral("command"), QStringLiteral("tools/server.exe")}});
+    const auto registry = sak::ai::AiProviderRegistry::withCatalogForTesting(
+        alias_dir, QJsonObject{{QStringLiteral("providers"), providers}});
+    QString error;
+    const QJsonObject statuses = registry.providerStatuses(&error);
+    QVERIFY(error.isEmpty());
+    const QJsonObject win32 = providerById(statuses.value(QStringLiteral("providers")).toArray(),
+                                           QStringLiteral("win32_mcp"));
+    QVERIFY2(win32.value(QStringLiteral("available")).toBool(false),
+             qPrintable(win32.value(QStringLiteral("missing_reason")).toString()));
+}
+
+// Lane SEC2 round 2: a stdio status carries the folder its command must really lie in when it is
+// started (computed, like resolved_command); a value carried in on any entry is stripped.
+void AiProviderRegistryTests::stdioStatusPublishesItsCommandRoot() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    QJsonArray providers;
+    providers.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("win32_mcp")},
+                                 {QStringLiteral("transport"), QStringLiteral("stdio")},
+                                 {QStringLiteral("command"), QStringLiteral("tools/server.exe")},
+                                 {QStringLiteral("command_root"), QStringLiteral("C:/forged")}});
+    providers.append(QJsonObject{{QStringLiteral("id"), QStringLiteral("docs")},
+                                 {QStringLiteral("transport"), QStringLiteral("http")},
+                                 {QStringLiteral("command_root"), QStringLiteral("C:/forged")}});
+    const auto registry = sak::ai::AiProviderRegistry::withCatalogForTesting(
+        temp.path(), QJsonObject{{QStringLiteral("providers"), providers}});
+    QString error;
+    const QJsonArray statuses =
+        registry.providerStatuses(&error).value(QStringLiteral("providers")).toArray();
+    QVERIFY(error.isEmpty());
+    QCOMPARE(providerById(statuses, QStringLiteral("win32_mcp"))
+                 .value(QStringLiteral("command_root"))
+                 .toString(),
+             QDir::cleanPath(QDir(temp.path()).absolutePath()));
+    QVERIFY(
+        !providerById(statuses, QStringLiteral("docs")).contains(QStringLiteral("command_root")));
 }
 
 QTEST_GUILESS_MAIN(AiProviderRegistryTests)

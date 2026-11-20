@@ -14,9 +14,13 @@
 /// Header-only on purpose. The core sources are enumerated in the top-level CMakeLists AND
 /// re-enumerated by roughly six test targets, so a new translation unit would have to be added to
 /// each of them -- and a target that silently missed it would fail to link rather than quietly
-/// lose the guard, but the churn buys nothing that `inline` does not.
+/// lose the guard, but the churn buys nothing that `inline` does not. The guard resolves paths
+/// with sak::no_follow (no_follow_fs.cpp, in sak_foundation), so a target that compiles a reader
+/// itself links sak_foundation or compiles that file too.
 
 #pragma once
+
+#include "sak/no_follow_fs.h"
 
 #include <QByteArray>
 #include <QFile>
@@ -33,18 +37,15 @@ namespace sak::partition_export {
 ///
 /// Fails closed on an empty root or an unresolvable/vanished child: a reparse point planted at an
 /// ancestor AFTER the root was checked would otherwise redirect the write outside the export
-/// directory. canonicalFilePath yields '/'-separated paths, so the boundary test uses '/'; a
-/// sibling-prefix (Root vs RootX) is rejected by requiring that separator.
+/// directory. Both sides are resolved through a handle (no_follow::pathWithinRoot), so a root
+/// reached through a junction still holds its own children; QFileInfo::canonicalFilePath, used
+/// here before, does not resolve a junction in Qt 6 and let one at an ancestor through. A
+/// sibling-prefix (Root vs RootX) is rejected on the separator boundary.
 [[nodiscard]] inline bool pathWithinRoot(const QString& canonical_root, const QString& child) {
     if (canonical_root.isEmpty()) {
         return false;
     }
-    const QString canonical_child = QFileInfo(child).canonicalFilePath();
-    if (canonical_child.isEmpty()) {
-        return false;
-    }
-    return canonical_child == canonical_root ||
-           canonical_child.startsWith(canonical_root + QLatin1Char('/'));
+    return no_follow::pathWithinRoot(child, canonical_root);
 }
 
 /// @brief Write one exported file, refusing anything that escapes the export root.

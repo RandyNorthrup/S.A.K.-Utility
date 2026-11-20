@@ -4,18 +4,18 @@
     "scenario_id":  "external.bitlocker-mutation",
     "status":  "Passed",
     "failure":  "",
-    "run_id":  "3a911722-43ed-416e-9859-409a3e2309fd",
-    "started_utc":  "2026-11-15T23:19:03.5196125Z",
-    "completed_utc":  "2026-11-15T23:20:41.2058263Z",
+    "run_id":  "0a61b562-0968-4e17-a101-beecdc9d23d3",
+    "started_utc":  "2026-11-20T11:29:05.6289460Z",
+    "completed_utc":  "2026-11-20T11:31:26.8334427Z",
     "code":  {
-                 "digest":  "dbdc84c401648f731d709f0694e7c01ad7025dfb0645eaf5638a8ffca0bb37d6",
-                 "commit":  "c782f945889df23621217f958619e4dbfe8b3473",
+                 "digest":  "8d91925551ac28ca2372e06c8e39183e1f6be6451204c3bee1dc10ac9b7c784c",
+                 "commit":  "46eeefa01fe52315ad0a3d0e167e56aaddfb5105",
                  "dirty":  false
              },
     "binaries":  {
-                     "client_sha256":  "9a4988207b4922e5356dee135b0922829cd1c9ac386a144d04bfbd058f7de1df",
-                     "helper_sha256":  "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
-                     "app_sha256":  "1bf4d7caf770acfb90c2ecceaef28607f97732938fdcc9074b31ed786e95aa03"
+                     "client_sha256":  "5e112f4969225fea675a3ec3d03f094dd1a1e84e8742de13a953421dd515f87f",
+                     "helper_sha256":  "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
+                     "app_sha256":  "60cbc9a27ed38103060ecd2b6740091805b06e3095a8ed021236b14f5584151e"
                  },
     "rig":  {
                 "machine_manufacturer":  "innotek GmbH",
@@ -42,11 +42,11 @@
                       "expect":  "success",
                       "report":  "unlock.client.json",
                       "observed":  {
-                                       "client_pid":  1168,
+                                       "client_pid":  1368,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  8224,
-                                       "helper_sha256":  "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
+                                       "helper_pid":  6556,
+                                       "helper_sha256":  "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -57,11 +57,11 @@
                       "expect":  "success",
                       "report":  "suspend.client.json",
                       "observed":  {
-                                       "client_pid":  6416,
+                                       "client_pid":  9016,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  6236,
-                                       "helper_sha256":  "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
+                                       "helper_pid":  7148,
+                                       "helper_sha256":  "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -72,11 +72,11 @@
                       "expect":  "success",
                       "report":  "resume.client.json",
                       "observed":  {
-                                       "client_pid":  3328,
+                                       "client_pid":  4816,
                                        "exit_code":  0,
                                        "client_token_elevated":  false,
-                                       "helper_pid":  7084,
-                                       "helper_sha256":  "aa1f4700b999b612f307bdbcf18a5a1c1d143deb62c6a6d5b730819bcb0f1198",
+                                       "helper_pid":  3544,
+                                       "helper_sha256":  "c21a908ed7f6c074957f33469c66cb507617d09604196ff9705ad9b0df1ee590",
                                        "helper_path":  "C:\\SAKCert\\stage\\sak_elevated_helper.exe",
                                        "helper_token_elevated":  true
                                    }
@@ -91,17 +91,17 @@
                       },
                       {
                           "path":  "unlock.client.json",
-                          "sha256":  "3ed312d18d3d60416543b32e6152a208fcddedbdd5d840c982f81036a97bdbef",
+                          "sha256":  "2121f74c55d5d9dadf7a193838ebd54368833758af634d2e07490b0ab6c3d1ba",
                           "bytes":  4203
                       },
                       {
                           "path":  "suspend.client.json",
-                          "sha256":  "097d38efc8a6131466a60aaf7c33a7b52bfd8e52ec28eb5d3df10aac53e236e0",
+                          "sha256":  "09a5b545c17beba448d31c3383176313433db16ec5ff7a8531d154269c0d761b",
                           "bytes":  4357
                       },
                       {
                           "path":  "resume.client.json",
-                          "sha256":  "ce90e3aea48a8126d4bcd98d7224ccb6e4289913e6da37e5aad5b53993849220",
+                          "sha256":  "6d4b9b41f6f354405ac8e617c2419cdf4971953c008d66eda7964a73551f074a",
                           "bytes":  4350
                       }
                   ]

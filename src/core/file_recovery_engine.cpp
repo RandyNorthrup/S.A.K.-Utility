@@ -7,6 +7,7 @@
 #include "sak/file_recovery_engine.h"
 
 #include "sak/io_write_utils.h"
+#include "sak/no_follow_fs.h"
 #include "sak/windows_reserved_names.h"
 
 #include <QCryptographicHash>
@@ -287,8 +288,11 @@ QString windowsRawDeviceDriveRoot(const QString& path) {
     return {};
 }
 
+// Both sides are where the path really leads, every junction and symbolic link resolved through a
+// handle: canonicalFilePath and canonicalPath, used here before, do not resolve a junction in Qt 6,
+// so a destination junctioned onto the source volume, or into the image's own folder, passed.
 bool destinationIsSeparate(const QFileInfo& imageInfo, const QDir& destination) {
-    const QString destinationPath = QFileInfo(destination.absolutePath()).canonicalFilePath();
+    const QString destinationPath = no_follow::resolvedPath(destination.absolutePath());
     if (destinationPath.isEmpty()) {
         return false;
     }
@@ -299,8 +303,8 @@ bool destinationIsSeparate(const QFileInfo& imageInfo, const QDir& destination) 
                     .startsWith(sourceRoot, Qt::CaseInsensitive);
     }
 
-    const QString imageDir = imageInfo.absoluteDir().canonicalPath();
-    return !imageDir.isEmpty() && imageDir != destinationPath;
+    const QString imageDir = no_follow::resolvedPath(imageInfo.absolutePath());
+    return !imageDir.isEmpty() && !no_follow::samePath(imageDir, destinationPath);
 }
 
 // A raw device reads only in whole sectors, and fails any other length with "the parameter is

@@ -13,6 +13,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -69,6 +70,14 @@ private Q_SLOTS:
     void removeTreeOfAJunctionRemovesOnlyTheJunction();
     void removeTreeRemovesReadOnlyFiles();
     void removeTreeOfAMissingPathSucceeds();
+    void resolvedPathFollowsAJunctionAnywhere();
+    void pathIsSameOrBelowNeedsASeparatorBoundary();
+    void pathWithinRootRefusesAJunctionLeadingOut();
+    void pathWithinRootAcceptsARootReachedThroughAJunction();
+    void heldFileRefusesRenameDeleteAndReplace();
+    void heldFileRefusesWriters();
+    void heldFileWithinRootChecksTheHeldFile();
+    void heldFileStillStartsAProgram();
     void createNewFileRefusesAnExistingName();
     void createNewFileDenyWriteKeepsOthersOut();
     void createUniqueChildIsFreshAndProtected();
@@ -270,6 +279,176 @@ void NoFollowFsTests::removeTreeRemovesReadOnlyFiles() {
 
 void NoFollowFsTests::removeTreeOfAMissingPathSucceeds() {
     QVERIFY(sak::no_follow::removeTree(m_root->filePath(QStringLiteral("never-there"))));
+}
+
+// Lane SEC2 (2026-11-17): QFileInfo::canonicalFilePath does not resolve a junction in Qt 6, at the
+// name or in a folder above it, so every containment check built on it let a junction through.
+// resolvedPath goes through a handle and must name where the path really leads.
+void NoFollowFsTests::resolvedPathFollowsAJunctionAnywhere() {
+    const QString link = m_root->filePath(QStringLiteral("link"));
+    QVERIFY(sak::test::createJunction(link, m_canary));
+    const QString real_file = sak::no_follow::resolvedPath(QDir(m_canary).filePath(kCanaryName));
+    QVERIFY(!real_file.isEmpty());
+    // A junction in a folder above the name.
+    const QString through = sak::no_follow::resolvedPath(QDir(link).filePath(kCanaryName));
+    QVERIFY2(sak::no_follow::samePath(through, real_file), qPrintable(through));
+    // A junction as the name itself.
+    const QString at_name = sak::no_follow::resolvedPath(link);
+    QVERIFY2(sak::no_follow::samePath(at_name, sak::no_follow::resolvedPath(m_canary)),
+             qPrintable(at_name));
+    // Nothing there: nothing to name.
+    QVERIFY(sak::no_follow::resolvedPath(m_root->filePath(QStringLiteral("missing"))).isEmpty());
+    QVERIFY(sak::no_follow::resolvedPath(QString()).isEmpty());
+}
+
+void NoFollowFsTests::pathIsSameOrBelowNeedsASeparatorBoundary() {
+    using sak::no_follow::pathIsSameOrBelow;
+    QVERIFY(
+        pathIsSameOrBelow(QStringLiteral(R"(C:\App\tools\x.exe)"), QStringLiteral(R"(C:\App)")));
+    QVERIFY(pathIsSameOrBelow(QStringLiteral("C:/App/tools"), QStringLiteral(R"(C:\App\)")));
+    QVERIFY(pathIsSameOrBelow(QStringLiteral(R"(C:\App)"), QStringLiteral(R"(C:\App)")));
+    QVERIFY(pathIsSameOrBelow(QStringLiteral(R"(c:\app\X)"), QStringLiteral(R"(C:\APP)")));
+    QVERIFY(pathIsSameOrBelow(QStringLiteral(R"(D:\x)"), QStringLiteral(R"(D:\)")));
+    QVERIFY(pathIsSameOrBelow(QStringLiteral(R"(\\server\share\d)"),
+                              QStringLiteral(R"(\\server\share)")));
+    // A sibling whose name starts with the root's is not inside it.
+    QVERIFY(!pathIsSameOrBelow(QStringLiteral(R"(C:\AppX\x.exe)"), QStringLiteral(R"(C:\App)")));
+    QVERIFY(!pathIsSameOrBelow(QStringLiteral(R"(C:\)"), QStringLiteral(R"(C:\App)")));
+    QVERIFY(!pathIsSameOrBelow(QStringLiteral(R"(E:\x)"), QStringLiteral(R"(D:\)")));
+    // Either side unknown: refuse.
+    QVERIFY(!pathIsSameOrBelow(QString(), QStringLiteral(R"(C:\App)")));
+    QVERIFY(!pathIsSameOrBelow(QStringLiteral(R"(C:\App\x)"), QString()));
+}
+
+void NoFollowFsTests::pathWithinRootRefusesAJunctionLeadingOut() {
+    const QString root = m_root->filePath(QStringLiteral("root"));
+    QVERIFY(QDir().mkpath(root));
+    QVERIFY(writeFile(QDir(root).filePath(QStringLiteral("plain.txt")), QByteArrayLiteral("in")));
+    const QString out = QDir(root).filePath(QStringLiteral("out"));
+    QVERIFY(sak::test::createJunction(out, m_canary));
+    QVERIFY(sak::no_follow::pathWithinRoot(QDir(root).filePath(QStringLiteral("plain.txt")), root));
+    QVERIFY2(!sak::no_follow::pathWithinRoot(QDir(out).filePath(kCanaryName), root),
+             "a file under a junction that leads out of the root passed");
+    QVERIFY2(!sak::no_follow::pathWithinRoot(out, root),
+             "a junction that leads out of the root, named itself, passed");
+    // The sibling the junction leads to is not inside the root either way.
+    QVERIFY(!sak::no_follow::pathWithinRoot(m_canary, root));
+    // A path that does not exist cannot be proved inside: refuse.
+    QVERIFY(!sak::no_follow::pathWithinRoot(QDir(root).filePath(QStringLiteral("nope")), root));
+}
+
+// S.A.K. may legitimately be unpacked into a junctioned folder. A root reached through a junction
+// holds its own real files, whichever spelling either side uses.
+void NoFollowFsTests::pathWithinRootAcceptsARootReachedThroughAJunction() {
+    const QString real = m_root->filePath(QStringLiteral("real"));
+    QVERIFY(QDir().mkpath(QDir(real).filePath(QStringLiteral("tools"))));
+    QVERIFY(
+        writeFile(QDir(real).filePath(QStringLiteral("tools/tool.exe")), QByteArrayLiteral("x")));
+    const QString alias = m_root->filePath(QStringLiteral("alias"));
+    QVERIFY(sak::test::createJunction(alias, real));
+    const QString through_alias = QDir(alias).filePath(QStringLiteral("tools/tool.exe"));
+    QVERIFY2(sak::no_follow::pathWithinRoot(through_alias, alias),
+             "a real file in a root reached through a junction was refused");
+    QVERIFY(sak::no_follow::pathWithinRoot(through_alias, real));
+    QVERIFY(sak::no_follow::pathWithinRoot(QDir(real).filePath(QStringLiteral("tools/tool.exe")),
+                                           alias));
+    QVERIFY(!sak::no_follow::pathWithinRoot(QDir(m_canary).filePath(kCanaryName), alias));
+}
+
+// Lane SEC2 round 2: a program is started from a file held by holdFile, so nothing can change
+// between the check and the start. While it is held, these are refused; once it is let go, the
+// same calls work, which proves the refusals came from the hold.
+void NoFollowFsTests::heldFileRefusesRenameDeleteAndReplace() {
+    const QString tools = m_root->filePath(QStringLiteral("app/tools"));
+    QVERIFY(QDir().mkpath(tools));
+    const QString tool = QDir(tools).filePath(QStringLiteral("tool.exe"));
+    const QString other = QDir(tools).filePath(QStringLiteral("other.exe"));
+    QVERIFY(writeFile(tool, QByteArrayLiteral("held")));
+    QVERIFY(writeFile(other, QByteArrayLiteral("planted")));
+    const auto wide = [](const QString& path) {
+        return QDir::toNativeSeparators(path).toStdWString();
+    };
+    auto held = sak::no_follow::holdFile(tool);
+    QVERIFY2(held, held ? "" : qPrintable(held.error()));
+
+    QVERIFY2(MoveFileExW(wide(tool).c_str(), wide(tool + QStringLiteral(".moved")).c_str(), 0) == 0,
+             "a held file was renamed");
+    QVERIFY2(DeleteFileW(wide(tool).c_str()) == 0, "a held file was deleted");
+    QVERIFY2(MoveFileExW(wide(other).c_str(), wide(tool).c_str(), MOVEFILE_REPLACE_EXISTING) == 0,
+             "a held file was replaced by a rename over it");
+    const QString renamed_folder = m_root->filePath(QStringLiteral("app/tools-moved"));
+    QVERIFY2(MoveFileExW(wide(tools).c_str(), wide(renamed_folder).c_str(), 0) == 0,
+             "the folder above a held file was renamed");
+    QCOMPARE(readAll(tool), QByteArrayLiteral("held"));
+
+    held->handle.reset();
+    QVERIFY(MoveFileExW(wide(tools).c_str(), wide(renamed_folder).c_str(), 0) != 0);
+}
+
+void NoFollowFsTests::heldFileRefusesWriters() {
+    const QString tool = m_root->filePath(QStringLiteral("tool.exe"));
+    QVERIFY(writeFile(tool, QByteArrayLiteral("held")));
+    auto held = sak::no_follow::holdFile(tool);
+    QVERIFY2(held, held ? "" : qPrintable(held.error()));
+    HANDLE writer = CreateFileW(QDir::toNativeSeparators(tool).toStdWString().c_str(),
+                                GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                FILE_ATTRIBUTE_NORMAL,
+                                nullptr);
+    const DWORD error = GetLastError();
+    if (writer != INVALID_HANDLE_VALUE) {
+        CloseHandle(writer);
+    }
+    QVERIFY2(writer == INVALID_HANDLE_VALUE, "a held file was opened for writing");
+    QCOMPARE(error, static_cast<DWORD>(ERROR_SHARING_VIOLATION));
+    QCOMPARE(readAll(tool), QByteArrayLiteral("held"));
+}
+
+void NoFollowFsTests::heldFileWithinRootChecksTheHeldFile() {
+    const QString root = m_root->filePath(QStringLiteral("root"));
+    QVERIFY(QDir().mkpath(root));
+    QVERIFY(writeFile(QDir(root).filePath(QStringLiteral("tool.exe")), QByteArrayLiteral("in")));
+    QVERIFY(sak::test::createJunction(QDir(root).filePath(QStringLiteral("out")), m_canary));
+    const auto inside =
+        sak::no_follow::holdFileWithinRoot(QDir(root).filePath(QStringLiteral("tool.exe")), root);
+    QVERIFY2(inside, inside ? "" : qPrintable(inside.error()));
+    QVERIFY(sak::no_follow::samePath(inside->path,
+                                     sak::no_follow::resolvedPath(
+                                         QDir(root).filePath(QStringLiteral("tool.exe")))));
+    const auto outside = sak::no_follow::holdFileWithinRoot(
+        QDir(root).filePath(QStringLiteral("out/") + kCanaryName), root);
+    QVERIFY2(!outside, "a file reached through a junction that leads out of the root was held");
+    QVERIFY(!outside.error().isEmpty());
+    // A root reached through a junction holds its own files.
+    const QString alias = m_root->filePath(QStringLiteral("alias"));
+    QVERIFY(sak::test::createJunction(alias, root));
+    const auto through_alias =
+        sak::no_follow::holdFileWithinRoot(QDir(alias).filePath(QStringLiteral("tool.exe")), alias);
+    QVERIFY2(through_alias, through_alias ? "" : qPrintable(through_alias.error()));
+    // A folder is not a program file.
+    QVERIFY(!sak::no_follow::holdFile(root));
+}
+
+void NoFollowFsTests::heldFileStillStartsAProgram() {
+    // A copy of cmd.exe stands in for a bundled tool: the hold must not stop Windows from starting
+    // a program from the file, by the real path the hold names.
+    const QString tool = m_root->filePath(QStringLiteral("held_tool.exe"));
+    QVERIFY(QFile::copy(QDir(QString::fromLocal8Bit(qgetenv("SystemRoot")))
+                            .filePath(QStringLiteral("System32/cmd.exe")),
+                        tool));
+    const auto held = sak::no_follow::holdFileWithinRoot(tool, m_root->path());
+    QVERIFY2(held, held ? "" : qPrintable(held.error()));
+    QProcess process;
+    process.setCreateProcessArgumentsModifier(
+        [](QProcess::CreateProcessArguments* args) { args->flags |= CREATE_NO_WINDOW; });
+    process.start(held->path,
+                  {QStringLiteral("/d"), QStringLiteral("/c"), QStringLiteral("exit 7")});
+    QVERIFY2(process.waitForStarted(), qPrintable(process.errorString()));
+    QVERIFY(process.waitForFinished());
+    QCOMPARE(process.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(process.exitCode(), 7);
 }
 
 void NoFollowFsTests::createNewFileRefusesAnExistingName() {

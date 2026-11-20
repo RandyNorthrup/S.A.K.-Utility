@@ -52,6 +52,8 @@ private Q_SLOTS:
     void backupExistingFolderReportsSuccess();
     void backupNeverWritesThroughAJunction();    // security brief 4b B3
     void backupCopiesWithNoLinkFollowingCall();  // security brief 4b B3
+    void backupNeverReadsThroughAJunctionedAncestor();
+    void backupOfAProfileReachedThroughAJunctionSucceeds();
     void windowsCompatibilityLinkIsSkippedNotCounted();
     void anyOtherLinkStillCountsAsAnError();
 
@@ -398,6 +400,63 @@ QByteArray readAllBytes(const QString& path) {
 }
 
 }  // namespace
+
+// Lane SEC2 (2026-11-17): a selected folder below a junction ("Linked/Sub", with Linked a junction
+// out of the profile) passes the leaf check on Sub itself, so only the per-entry parent check
+// stands between the elevated backup and a read outside the profile. That check compared
+// QFileInfo::canonicalFilePath, which in Qt 6 does not resolve a junction, so it passed and the
+// outside file was copied into the backup.
+void TestUserProfileBackupWorker::backupNeverReadsThroughAJunctionedAncestor() {
+    QTemporaryDir srcDir;
+    QTemporaryDir outside;
+    QTemporaryDir destParent;
+    QVERIFY(srcDir.isValid() && outside.isValid() && destParent.isValid());
+    QVERIFY(QDir(outside.path()).mkpath(QStringLiteral("Sub")));
+    {
+        QFile f(QDir(outside.path()).filePath(QStringLiteral("Sub/secret.txt")));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("not in this profile");
+    }
+    QVERIFY(makeJunction(QDir(srcDir.path()).filePath(QStringLiteral("Linked")), outside.path()));
+
+    sak::FolderSelection folder;
+    folder.type = sak::FolderType::Documents;
+    folder.relative_path = QStringLiteral("Linked/Sub");
+    folder.selected = true;
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackup(worker, srcDir.path(), folder, destParent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY2(!QFileInfo::exists(
+                 destParent.filePath(QStringLiteral("dest/tester/Linked/Sub/secret.txt"))),
+             "the backup read a file outside the profile through a junctioned folder");
+    QVERIFY2(!run.success, "a backup that refused an entry reported success");
+}
+
+// The other side: a profile that is itself reached through a junction backs up normally. The
+// roots are pinned resolved, so its own files are inside them.
+void TestUserProfileBackupWorker::backupOfAProfileReachedThroughAJunctionSucceeds() {
+    QTemporaryDir base;
+    QTemporaryDir destParent;
+    QVERIFY(base.isValid() && destParent.isValid());
+    const QString real = QDir(base.path()).filePath(QStringLiteral("real"));
+    QVERIFY(QDir(real).mkpath(QStringLiteral("Documents")));
+    {
+        QFile f(QDir(real).filePath(QStringLiteral("Documents/hello.txt")));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("hello");
+    }
+    const QString alias = QDir(base.path()).filePath(QStringLiteral("alias"));
+    QVERIFY(makeJunction(alias, real));
+
+    UserProfileBackupWorker worker;
+    const BackupRun run =
+        runBackup(worker, alias, documentsFolder(), destParent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed, "backup never emitted backupComplete");
+    QVERIFY2(run.success, qPrintable(run.message));
+    QVERIFY(
+        QFileInfo::exists(destParent.filePath(QStringLiteral("dest/tester/Documents/hello.txt"))));
+}
 
 void TestUserProfileBackupWorker::encryptedBackupStoresCiphertextAndRestoresIt() {
     QTemporaryDir srcDir;
