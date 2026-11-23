@@ -31,6 +31,7 @@
 #include <QPointer>
 #include <QSet>
 #include <QSignalBlocker>
+#include <QSysInfo>
 #include <QtConcurrent>
 #include <QVBoxLayout>
 
@@ -1563,9 +1564,25 @@ void UserProfileRestorePermissionSettingsPage::updateSummary() {
         static_cast<PermissionMode>(m_permissionModeCombo->currentData().toInt());
 
     if (mode == PermissionMode::PreserveOriginal) {
-        warning = tr(
-            "<b>Warning:</b> Preserving original permissions may cause access issues "
-            "if SIDs don't match.");
+        const auto* wiz = qobject_cast<const UserProfileRestoreWizard*>(wizard());
+        const QString source_machine = wiz == nullptr ? QString() : wiz->manifest().source_machine;
+        if (!source_machine.isEmpty() &&
+            source_machine.compare(QSysInfo::machineHostName(), Qt::CaseInsensitive) != 0) {
+            // An offline rescue stamps the machine the files came FROM onto the manifest
+            // (docs/OFFLINE_PROFILE_RESCUE_PLAN.md). That machine's account SIDs live only in its
+            // own registry, which is not on this PC: promising to preserve ownership would be a
+            // promise this restore cannot keep, so say what actually happens instead.
+            warning =
+                tr("<b>Warning:</b> These files carry permissions from <b>%1</b>, a different "
+                   "machine. Its account IDs cannot be resolved here, so preserved ownership "
+                   "is not available on this PC. Strip permissions, or assign them to the "
+                   "destination user.")
+                    .arg(source_machine.toHtmlEscaped());
+        } else {
+            warning = tr(
+                "<b>Warning:</b> Preserving original permissions may cause access issues "
+                "if SIDs don't match.");
+        }
     } else if (mode == PermissionMode::StripAll) {
         warning = tr(
             "<b>Recommended:</b> Stripping ACLs ensures files inherit safe permissions "
@@ -1576,6 +1593,8 @@ void UserProfileRestorePermissionSettingsPage::updateSummary() {
 
     const QString summary = QString(
                                 "<b>This restore will:</b><br>%1%2"
+                                "\u2022 Files and settings, not registry settings: a backup never "
+                                "holds the original NTUSER.DAT, and none is restored.<br>"
                                 "<br><b>Settings:</b><br>"
                                 "\u2022 Permission Mode: %3<br>"
                                 "\u2022 Conflict Resolution: %4<br>"

@@ -17,6 +17,7 @@
 #include "sak/app_partition_op_parse.h"
 #include "sak/cleanup_worker.h"
 #include "sak/dns_diagnostic_tool.h"
+#include "sak/elevation_manager.h"
 #include "sak/email_attachment_saver.h"
 #include "sak/email_constants.h"
 #include "sak/email_export_worker.h"
@@ -33,6 +34,7 @@
 #include "sak/logger.h"
 #include "sak/mbox_parser.h"
 #include "sak/network_adapter_admin.h"
+#include "sak/offline_profile_source.h"
 #include "sak/organizer_worker.h"
 #include "sak/ost_conversion_worker.h"
 #include "sak/ost_converter_types.h"
@@ -48,7 +50,10 @@
 #include "sak/restore_point_manager.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/uninstall_worker.h"
+#include "sak/user_profile_backup_worker.h"
+#include "sak/user_profile_restore_worker.h"
 #include "sak/wifi_setup_script.h"
+#include "sak/windows_user_scanner.h"
 #include "sak/worker_base.h"
 
 #include <QDateTime>
@@ -62,6 +67,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QSysInfo>
 
 #include <algorithm>
 #include <cmath>
@@ -1786,6 +1792,758 @@ AppActionResult restoreRecoverable(const QJsonObject& args) {
         res, static_cast<int>(candidates.size()), truncated, image_path, destination);
 }
 
+// ---------------------------------------------------------------------------
+// User-profile backup/restore (live + offline rescue): the headless seam the
+// wizards have always driven through their own workers. Each op builds the
+// worker's inputs here and drives the SAME worker (UserProfileBackupWorker /
+// UserProfileRestoreWorker) through the AsyncActionInvocation bridge, so the
+// GUI and the assistant share one implementation -- the GUI rule.
+// ---------------------------------------------------------------------------
+namespace {
+
+// A whole multi-GB profile tree legitimately runs far past the default action
+// timeout; offline rescue reads another machine's profiles over the same code.
+// These live at the top of the profile block because both the live backup and
+// the offline flow below read them from this same anonymous namespace.
+constexpr int kProfileMountedBackupTimeoutMs = 40 * 60 * sak::kMillisecondsPerSecond;
+constexpr int kProfileOfflineBackupTimeoutMs = kProfileMountedBackupTimeoutMs -
+                                               sak::kMillisecondsPerSecond;
+static_assert(kProfileOfflineBackupTimeoutMs > kDefaultAsyncActionTimeoutMs,
+              "a rescue backup may not be cut short while the worker still copies");
+static_assert(kProfileMountedBackupTimeoutMs > kProfileOfflineBackupTimeoutMs,
+              "a mounted source gets the full window; a raw one, one second less");
+
+constexpr int kProfileResultListCap = 50;
+
+// Enumerated arg vocabularies, lowercase snake_case like the other op enums.
+template <typename T>
+struct ProfileStringChoice {
+    const char* name;
+    T value;
+};
+
+template <typename T>
+std::optional<T> profileChoiceFromArg(const QJsonObject& args,
+                                      const QString& field,
+                                      const ProfileStringChoice<T>* choices,
+                                      size_t count,
+                                      std::optional<T> fallback) {
+    const QString value = args.value(field).toString().trimmed().toLower();
+    if (value.isEmpty()) {
+        return fallback;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (value == QLatin1String(choices[i].name)) {
+            return choices[i].value;
+        }
+    }
+    return std::nullopt;  // fail closed: a mistyped enum is never silently downgraded
+}
+
+std::optional<sak::PermissionMode> permissionModeFromArg(
+    const QJsonObject& args, const QString& field, std::optional<sak::PermissionMode> fallback) {
+    static const ProfileStringChoice<sak::PermissionMode> kChoices[] = {
+        {"strip_all", sak::PermissionMode::StripAll},
+        {"preserve_original", sak::PermissionMode::PreserveOriginal},
+        {"assign_to_destination", sak::PermissionMode::AssignToDestination}};
+    return profileChoiceFromArg<sak::PermissionMode>(
+        args, field, kChoices, std::size(kChoices), fallback);
+}
+
+std::optional<sak::ConflictResolution> conflictModeFromArg(const QJsonObject& args) {
+    static const ProfileStringChoice<sak::ConflictResolution> kChoices[] = {
+        {"skip_duplicate", sak::ConflictResolution::SkipDuplicate},
+        {"rename_with_suffix", sak::ConflictResolution::RenameWithSuffix},
+        {"keep_newer", sak::ConflictResolution::KeepNewer},
+        {"keep_larger", sak::ConflictResolution::KeepLarger}};
+    return profileChoiceFromArg<sak::ConflictResolution>(args,
+                                                         QStringLiteral("conflict_mode"),
+                                                         kChoices,
+                                                         std::size(kChoices),
+                                                         sak::ConflictResolution::SkipDuplicate);
+}
+
+std::optional<sak::MergeMode> mergeModeFromArg(const QJsonObject& args) {
+    static const ProfileStringChoice<sak::MergeMode> kChoices[] = {
+        {"merge_into_destination", sak::MergeMode::MergeIntoDestination},
+        {"replace_destination", sak::MergeMode::ReplaceDestination},
+        {"create_new_user", sak::MergeMode::CreateNewUser}};
+    return profileChoiceFromArg<sak::MergeMode>(args,
+                                                QStringLiteral("mode"),
+                                                kChoices,
+                                                std::size(kChoices),
+                                                sak::MergeMode::MergeIntoDestination);
+}
+
+// A boolean arg must really be a boolean: a string "true" from the model is a
+// malformed call, and guessing here is how a flag silently inverts.
+std::optional<AppActionResult> boolArgRefusal(const QJsonObject& args, const QString& field) {
+    const QJsonValue value = args.value(field);
+    if (!value.isUndefined() && !value.isBool()) {
+        return AppActionResult{false, QStringLiteral("'%1' must be a boolean").arg(field), {}};
+    }
+    return std::nullopt;
+}
+
+// A string-list arg must really be an array of strings. A number or null inside
+// it is refused rather than dropped: dropping a name is how a backup silently
+// covers LESS than the caller asked for.
+std::optional<AppActionResult> stringListArgRefusal(const QJsonObject& args, const QString& field) {
+    const QJsonValue value = args.value(field);
+    if (value.isUndefined()) {
+        return std::nullopt;
+    }
+    if (!value.isArray()) {
+        return AppActionResult{false,
+                               QStringLiteral("'%1' must be an array of usernames").arg(field),
+                               {}};
+    }
+    for (const QJsonValue& item : value.toArray()) {
+        if (!item.isString()) {
+            return AppActionResult{
+                false, QStringLiteral("every entry of '%1' must be a string").arg(field), {}};
+        }
+    }
+    return std::nullopt;
+}
+
+QStringList stringListArg(const QJsonObject& args, const QString& field) {
+    QStringList result;
+    for (const QJsonValue& item : args.value(field).toArray()) {
+        const QString text = item.toString().trimmed();
+        if (!text.isEmpty()) {
+            result.append(text);
+        }
+    }
+    return result;
+}
+
+std::optional<AppActionResult> validateBackupOptions(const QJsonObject& args) {
+    for (const QString& field :
+         {QStringLiteral("compress"), QStringLiteral("encrypt"), QStringLiteral("verify")}) {
+        if (const auto refusal = boolArgRefusal(args, field)) {
+            return refusal;
+        }
+    }
+    if (const auto refusal = stringListArgRefusal(args, QStringLiteral("usernames"))) {
+        return refusal;
+    }
+    if (args.value(QStringLiteral("encrypt")).toBool(false) &&
+        args.value(QStringLiteral("password")).toString().isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("'password' is required when 'encrypt' is true; a "
+                                              "backup never silently degrades to plaintext"),
+                               {}};
+    }
+    return std::nullopt;
+}
+
+sak::UserProfileBackupWorker::BackupOptions backupOptionsFromArgs(const QJsonObject& args) {
+    sak::UserProfileBackupWorker::BackupOptions options;
+    options.compress = args.value(QStringLiteral("compress")).toBool(false);
+    options.encrypt = args.value(QStringLiteral("encrypt")).toBool(false);
+    options.password = args.value(QStringLiteral("password")).toString();
+    options.verify = args.value(QStringLiteral("verify")).toBool(false);
+    options.permission_mode = permissionModeFromArg(args,
+                                                    QStringLiteral("permission_mode"),
+                                                    sak::PermissionMode::StripAll)
+                                  .value_or(sak::PermissionMode::StripAll);
+    return options;
+}
+
+// Keep the profiles the caller named (case-insensitive). An empty request keeps
+// everything. Unknown or deliberately-skipped names come back as refusal text
+// naming each one -- a rescue never quietly backs up LESS than was asked.
+template <typename T>
+std::optional<QString> filterProfilesByName(const QVector<T>& profiles,
+                                            const QStringList& requested,
+                                            std::function<QString(const T&)> name_of,
+                                            std::function<QString(const T&)> skip_reason_of) {
+    if (requested.isEmpty()) {
+        return std::nullopt;
+    }
+    QStringList problems;
+    for (const QString& wanted : requested) {
+        bool found = false;
+        for (const T& entry : profiles) {
+            if (name_of(entry).compare(wanted, Qt::CaseInsensitive) == 0) {
+                found = true;
+                if (!skip_reason_of(entry).isEmpty()) {
+                    problems.append(
+                        QStringLiteral("'%1' is skipped: %2").arg(wanted, skip_reason_of(entry)));
+                }
+                break;
+            }
+        }
+        if (!found) {
+            problems.append(QStringLiteral("no profile named '%1' on this source").arg(wanted));
+        }
+    }
+    if (!problems.isEmpty()) {
+        return problems.join(QStringLiteral("; "));
+    }
+    return std::nullopt;
+}
+
+QStringList includedProfileNames(const QVector<sak::OfflineProfileEntry>& entries) {
+    QStringList names;
+    for (const sak::OfflineProfileEntry& entry : entries) {
+        if (entry.included) {
+            names.append(entry.folder_name);
+        }
+    }
+    return names;
+}
+
+QStringList offlineSkipWarnings(const QVector<sak::OfflineProfileEntry>& entries) {
+    QStringList warnings;
+    for (const sak::OfflineProfileEntry& entry : entries) {
+        if (!entry.included) {
+            warnings.append(QStringLiteral("%1: %2").arg(entry.folder_name, entry.skip_reason));
+        }
+    }
+    return warnings;
+}
+
+QStringList profileUserNames(const QVector<sak::UserProfile>& users) {
+    QStringList names;
+    for (const sak::UserProfile& user : users) {
+        names.append(user.username);
+    }
+    return names;
+}
+
+// Drive UserProfileBackupWorker to its terminal backupComplete through the
+// certified async bridge (same lifetime discipline as runApplyOperation):
+// worker declared before inv so its destructor joins AFTER inv.context() is gone.
+struct ProfileBackupRun {
+    AppActionResult result;
+    QStringList warnings;
+    sak::BackupManifest manifest;  // the worker's final manifest with the real stats
+};
+
+// The whole request, bundled: the options reference may bind a backupOptionsFromArgs temporary
+// at the call site, which lives to the end of that full expression -- and runBackupInvocation
+// is synchronous, so every reference here is read inside it.
+struct ProfileBackupRequest {
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
+    const QVector<sak::UserProfile>& users;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
+    const QString& destination;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
+    const sak::BackupManifest& manifest;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
+    const sak::UserProfileBackupWorker::BackupOptions& options;
+    int timeout_ms{};
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
+    const AppActionCancelCheck& should_cancel;
+};
+
+ProfileBackupRun runBackupInvocation(const ProfileBackupRequest& request) {
+    UserProfileBackupWorker worker;
+    QStringList warnings;
+    sak::BackupManifest final_manifest;
+    AsyncActionInvocation inv(request.timeout_ms, request.should_cancel);
+    inv.setStopRequest([&worker]() { worker.cancel(); });
+    QObject::connect(&worker,
+                     &UserProfileBackupWorker::backupComplete,
+                     inv.context(),
+                     [&inv, &warnings, &final_manifest](bool success,
+                                                        const QString& message,
+                                                        const sak::BackupManifest& done_manifest) {
+                         final_manifest = done_manifest;
+                         inv.finish({success, message, {}});
+                     });
+    QObject::connect(&worker,
+                     &UserProfileBackupWorker::logMessage,
+                     inv.context(),
+                     [&warnings](const QString& message, bool is_warning) {
+                         if (is_warning && warnings.size() < kProfileResultListCap) {
+                             warnings.append(message);
+                         }
+                     });
+    worker.startBackup(
+        request.manifest, request.users, request.destination, sak::SmartFilter(), request.options);
+    const AppActionResult result = inv.run([]() {});
+    worker.cancel();  // timeout/teardown: cooperative stop before the destructor's bounded join
+    return {result, warnings, final_manifest};
+}
+
+AppActionResult backupUserProfiles(const QJsonObject& args,
+                                   const AppActionCancelCheck& should_cancel) {
+    const QString destination =
+        args.value(QStringLiteral("destination_directory")).toString().trimmed();
+    if (const auto refusal = validateSaveOutputDir(destination,
+                                                   QStringLiteral("destination_directory"))) {
+        return *refusal;
+    }
+    if (const auto refusal = validateBackupOptions(args)) {
+        return *refusal;
+    }
+
+    bool scan_ok = false;
+    const QVector<sak::UserProfile> all_users = WindowsUserScanner().scanUsers(scan_ok);
+    if (!scan_ok) {
+        return {false,
+                QStringLiteral("This PC's local accounts could not be enumerated (Windows "
+                               "refused the account query). Nothing was backed up."),
+                {}};
+    }
+
+    const QStringList requested = stringListArg(args, QStringLiteral("usernames"));
+    if (const auto refusal = filterProfilesByName<sak::UserProfile>(
+            all_users,
+            requested,
+            [](const sak::UserProfile& user) { return user.username; },
+            [](const sak::UserProfile&) { return QString(); })) {
+        return {false, QStringLiteral("backup_user_profiles: %1").arg(*refusal), {}};
+    }
+    QVector<sak::UserProfile> users;
+    for (const sak::UserProfile& user : all_users) {
+        if (requested.isEmpty() || requested.contains(user.username, Qt::CaseInsensitive)) {
+            sak::UserProfile selected = user;
+            selected.is_selected = true;
+            users.append(selected);
+        }
+    }
+    if (users.isEmpty()) {
+        return {false, QStringLiteral("This PC has no local user profiles to back up."), {}};
+    }
+
+    sak::BackupManifest manifest;
+    manifest.version = QStringLiteral("1.0");
+    manifest.source_machine = QSysInfo::machineHostName();
+
+    const sak::UserProfileBackupWorker::BackupOptions options = backupOptionsFromArgs(args);
+    const ProfileBackupRun run = runBackupInvocation(
+        {users, destination, manifest, options, kDefaultAsyncActionTimeoutMs, should_cancel});
+    QJsonObject merged = run.result.data;
+    merged.insert(QStringLiteral("destination_directory"), destination);
+    merged.insert(QStringLiteral("usernames"),
+                  jsonStringArrayCapped(profileUserNames(users), kProfileResultListCap));
+    merged.insert(QStringLiteral("total_backup_size_bytes"), run.manifest.total_backup_size_bytes);
+    merged.insert(QStringLiteral("warnings"),
+                  jsonStringArrayCapped(run.warnings, kProfileResultListCap));
+    return {run.result.success, run.result.message, merged};
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// backup_offline_profiles: rescue LOCAL profiles from another Windows install.
+// Elevation is required (hive reads); a locked source must be unlocked in the
+// wizard first -- headless refuses it plainly, never as an empty success.
+// ---------------------------------------------------------------------------
+namespace {
+
+// kProfileMountedBackupTimeoutMs / kProfileOfflineBackupTimeoutMs /
+// kProfileResultListCap are declared at the top of the profile block above,
+// in this same anonymous namespace.
+
+// prepareOfflineVolume(), findOfflineVolumeSource() and offlineProfileUser() lived here; they
+// moved into OfflineProfileSource (prepareVolume, matchVolumeRequest, toUserProfile) so the
+// wizard's offline page and this action run ONE mount lifecycle, not two that can drift.
+
+// The refusal of a failed offline run, with the mount this attempt made taken back down. A
+// release that could not be proven is named in the message: the technician must know the
+// mount point is still on their PC.
+AppActionResult offlineRefusalWithMount(const QString& refusal,
+                                        std::optional<sak::OfflineVolumeMount>& mount) {
+    if (mount.has_value()) {
+        const auto released = mount->release();
+        if (!released) {
+            return {false,
+                    QStringLiteral("%1 The mount could not be removed either: %2")
+                        .arg(refusal, released.error()),
+                    {}};
+        }
+    }
+    return {false, QStringLiteral("backup_offline_profiles: %1").arg(refusal), {}};
+}
+
+// The profiles the run asked for (all included ones with no username list), turned into the
+// worker's own user records.
+QVector<sak::UserProfile> offlineUsersToBack(const QVector<sak::OfflineProfileEntry>& included,
+                                             const QStringList& requested) {
+    QVector<sak::UserProfile> users;
+    for (const sak::OfflineProfileEntry& entry : included) {
+        if (requested.isEmpty() || requested.contains(entry.folder_name, Qt::CaseInsensitive)) {
+            users.append(sak::OfflineProfileSource::toUserProfile(entry));
+        }
+    }
+    return users;
+}
+
+// Takes the mounted volume back down after the backup ran. Empty when the release was proven;
+// the warning naming the leftover mount point when it was not.
+QString offlineMountReleaseWarning(std::optional<sak::OfflineVolumeMount>& mount) {
+    if (!mount.has_value()) {
+        return {};
+    }
+    const QString mount_directory = mount->directory();
+    const auto released = mount->release();
+    if (released) {
+        return {};
+    }
+    return QStringLiteral(
+               "The offline mount '%1' could not be removed: %2. "
+               "Remove it from an administrator prompt.")
+        .arg(mount_directory, released.error());
+}
+
+// The result object an offline run reports: where the files came FROM (the offline machine,
+// not this PC), who went in the run, and what was skipped with why.
+QJsonObject offlineBackupResultData(const sak::OfflineVolumeSource& source,
+                                    const QString& destination,
+                                    const QVector<sak::UserProfile>& users,
+                                    const sak::BackupManifest& final_manifest,
+                                    const QStringList& warnings) {
+    QJsonObject data;
+    data.insert(QStringLiteral("source_machine"), source.computer_name);
+    data.insert(QStringLiteral("source_volume"), source.volume_name);
+    data.insert(QStringLiteral("destination_directory"), destination);
+    data.insert(QStringLiteral("usernames"),
+                jsonStringArrayCapped(profileUserNames(users), kProfileResultListCap));
+    data.insert(QStringLiteral("skipped"),
+                jsonStringArrayCapped(offlineSkipWarnings(source.profiles), kProfileResultListCap));
+    data.insert(QStringLiteral("hive_warning"), source.hive_error);
+    data.insert(QStringLiteral("total_backup_size_bytes"), final_manifest.total_backup_size_bytes);
+    data.insert(QStringLiteral("warnings"), jsonStringArrayCapped(warnings, kProfileResultListCap));
+    return data;
+}
+
+// v1's honest limit, named at the point the run would have hit it.
+AppActionResult offlineNoLocalProfilesRefusal(const sak::OfflineVolumeSource& source) {
+    return {false,
+            QStringLiteral("'%1' has no rescuable LOCAL profiles. Domain and Microsoft-account "
+                           "profiles are listed but skipped in this version.")
+                .arg(source.display_name),
+            {}};
+}
+
+// The profiles the scan marked for backup, so the name filter sees only real candidates.
+QVector<sak::OfflineProfileEntry> includedOfflineProfiles(const sak::OfflineVolumeSource& source) {
+    QVector<sak::OfflineProfileEntry> included;
+    for (const sak::OfflineProfileEntry& entry : source.profiles) {
+        if (entry.included) {
+            included.append(entry);
+        }
+    }
+    return included;
+}
+
+// The run's own result fields plus the offline-specific ones; the offline fields are
+// names the worker never writes, so nothing overwrites a worker value.
+QJsonObject withOfflineFields(QJsonObject data, const QJsonObject& offline) {
+    for (auto it = offline.cbegin(); it != offline.cend(); ++it) {
+        data.insert(it.key(), it.value());
+    }
+    return data;
+}
+
+AppActionResult backupOfflineProfiles(const QJsonObject& args,
+                                      const AppActionCancelCheck& should_cancel) {
+    const QString destination =
+        args.value(QStringLiteral("destination_directory")).toString().trimmed();
+    if (const auto refusal = validateSaveOutputDir(destination,
+                                                   QStringLiteral("destination_directory"))) {
+        return *refusal;
+    }
+    if (const auto refusal = validateBackupOptions(args)) {
+        return *refusal;
+    }
+
+    auto prep = sak::OfflineProfileSource::prepareVolume(
+        args.value(QStringLiteral("source_volume")).toString(),
+        QStringLiteral("backup_offline_profiles"),
+        sak::ElevationManager::isElevated());
+    if (!prep) {
+        return {false, prep.error(), {}};
+    }
+    const sak::OfflineVolumeSource& source = prep->source;
+
+    const QStringList requested = stringListArg(args, QStringLiteral("usernames"));
+    QVector<sak::OfflineProfileEntry> included = includedOfflineProfiles(source);
+    if (const auto refusal = filterProfilesByName<sak::OfflineProfileEntry>(
+            included,
+            requested,
+            [](const sak::OfflineProfileEntry& entry) { return entry.folder_name; },
+            [](const sak::OfflineProfileEntry&) { return QString(); })) {
+        return offlineRefusalWithMount(*refusal, prep->mount);
+    }
+
+    const QVector<sak::UserProfile> users = offlineUsersToBack(included, requested);
+    if (users.isEmpty()) {
+        return offlineNoLocalProfilesRefusal(source);
+    }
+
+    sak::BackupManifest manifest;
+    manifest.version = QStringLiteral("1.0");
+    manifest.source_machine = source.computer_name;
+
+    // A volume mounted into this run's temp folder is one more hop per file, so it gets the
+    // longer bound the old prep carried here.
+    const int timeout_ms = prep->mount.has_value() ? kProfileMountedBackupTimeoutMs
+                                                   : kProfileOfflineBackupTimeoutMs;
+    const sak::UserProfileBackupWorker::BackupOptions options = backupOptionsFromArgs(args);
+    const ProfileBackupRun run =
+        runBackupInvocation({users, destination, manifest, options, timeout_ms, should_cancel});
+
+    QStringList warnings = run.warnings;
+    if (const QString release_warning = offlineMountReleaseWarning(prep->mount);
+        !release_warning.isEmpty()) {
+        warnings.append(release_warning);
+    }
+
+    const QJsonObject offline =
+        offlineBackupResultData(source, destination, users, run.manifest, warnings);
+    return {run.result.success, run.result.message, withOfflineFields(run.result.data, offline)};
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// restore_user_profiles: drive UserProfileRestoreWorker from a backup folder.
+// NTUSER.DAT is not part of any backup, so a restore puts FILES and settings
+// data back and never rewrites the destination's registry hive.
+// ---------------------------------------------------------------------------
+namespace {
+
+QString resolveManifestPath(const QString& given, QString& refusal) {
+    const QString path = given.trimmed();
+    if (path.isEmpty()) {
+        refusal = QStringLiteral("restore_user_profiles requires 'backup_path'");
+        return {};
+    }
+    const QFileInfo info(path);
+    if (info.isFile() && info.fileName() == QStringLiteral("manifest.json")) {
+        return info.absoluteFilePath();
+    }
+    if (info.isDir()) {
+        return QDir(path).filePath(QStringLiteral("manifest.json"));
+    }
+    refusal =
+        QStringLiteral("'backup_path' must be a backup directory or its manifest.json file: %1")
+            .arg(path);
+    return {};
+}
+
+std::optional<AppActionResult> loadRestoreManifest(const QString& manifest_path,
+                                                   sak::BackupManifest& manifest) {
+    if (manifest_path.isEmpty() || pathReparseUnsafe(manifest_path)) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "Manifest is missing or sits on a symlink/junction: %1")
+                                   .arg(manifest_path),
+                               {}};
+    }
+    manifest = sak::BackupManifest::loadFromFile(manifest_path);
+    if (manifest.version.isEmpty()) {
+        return AppActionResult{
+            false, QStringLiteral("Could not read the backup manifest: %1").arg(manifest_path), {}};
+    }
+    if (!manifest.verifyManifestChecksum()) {
+        return AppActionResult{false,
+                               QStringLiteral("The backup manifest checksum does not match; the "
+                                              "backup is corrupted and the restore refused"),
+                               {}};
+    }
+    if (manifest.backup_type != QStringLiteral("user_profiles")) {
+        return AppActionResult{false,
+                               QStringLiteral("This backup is not a user-profile backup"),
+                               {}};
+    }
+    if (manifest.users.isEmpty()) {
+        return AppActionResult{false, QStringLiteral("This backup holds no users"), {}};
+    }
+    return std::nullopt;
+}
+
+std::optional<AppActionResult> buildRestoreMappings(const sak::BackupManifest& manifest,
+                                                    const QJsonArray& requested,
+                                                    QVector<sak::UserMapping>& mappings) {
+    for (const sak::BackupUserData& user : manifest.users) {
+        sak::UserMapping mapping;
+        mapping.source_username = user.username;
+        mapping.source_sid = user.sid;
+        QString dest_name = user.username;
+        QString mode_name;
+        for (const QJsonValue& value : requested) {
+            const QJsonObject obj = value.toObject();
+            if (obj.value(QStringLiteral("source_username"))
+                    .toString()
+                    .compare(user.username, Qt::CaseInsensitive) == 0) {
+                dest_name = obj.value(QStringLiteral("destination_username")).toString().trimmed();
+                if (dest_name.isEmpty()) {
+                    dest_name = user.username;
+                }
+                mode_name = obj.value(QStringLiteral("mode")).toString();
+                break;
+            }
+        }
+        const auto mode = mergeModeFromArg(QJsonObject{{QStringLiteral("mode"), mode_name}});
+        if (!mode) {
+            return AppActionResult{
+                false, QStringLiteral("Unknown restore mode for '%1'").arg(user.username), {}};
+        }
+        mapping.mode = *mode;
+        mapping.destination_username = dest_name;
+        if (mapping.mode != sak::MergeMode::CreateNewUser) {
+            const QString profile = WindowsUserScanner::getProfilePath(dest_name);
+            if (profile.isEmpty()) {
+                return AppActionResult{false,
+                                       QStringLiteral(
+                                           "'%1' is not a local account on this PC. Restore to an "
+                                           "existing account or use mode 'create_new_user' (a new "
+                                           "profile folder; no Windows account is created).")
+                                           .arg(dest_name),
+                                       {}};
+            }
+            mapping.destination_sid = WindowsUserScanner::getUserSID(dest_name);
+        }
+        mappings.append(mapping);
+    }
+    return std::nullopt;
+}
+
+std::optional<AppActionResult> parseRestoreArgs(
+    const QJsonObject& args,
+    const sak::BackupManifest& manifest,
+    sak::UserProfileRestoreWorker::RestoreConfig& config) {
+    if (const auto refusal = boolArgRefusal(args, QStringLiteral("verify"))) {
+        return refusal;
+    }
+    const auto conflict = conflictModeFromArg(args);
+    const auto perm = permissionModeFromArg(args,
+                                            QStringLiteral("permission_mode"),
+                                            sak::PermissionMode::StripAll);
+    if (!conflict || !perm) {
+        return AppActionResult{false,
+                               QStringLiteral("Unknown 'conflict_mode' or 'permission_mode'"),
+                               {}};
+    }
+    config.conflict_mode = *conflict;
+    config.perm_mode = *perm;
+    config.verify = args.value(QStringLiteral("verify")).toBool(false);
+    config.password = args.value(QStringLiteral("password")).toString();
+    if (manifest.encrypted && config.password.isEmpty()) {
+        return AppActionResult{false,
+                               QStringLiteral("This backup is encrypted; 'password' is required"),
+                               {}};
+    }
+    return std::nullopt;
+}
+
+// The whole restore request, bundled the same way the backup one is; every reference is read
+// inside the synchronous runRestoreInvocation below.
+struct ProfileRestoreRequest {
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
+    const QString& manifest_path;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
+    const sak::BackupManifest& manifest;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
+    const QVector<sak::UserMapping>& mappings;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
+    const sak::UserProfileRestoreWorker::RestoreConfig& config;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
+    const AppActionCancelCheck& should_cancel;
+};
+
+// Drive UserProfileRestoreWorker to its terminal restoreComplete through the certified async
+// bridge. The counters come from the worker's own progress signals; a run that stopped early
+// simply has fewer of them, which is what the worker says.
+struct ProfileRestoreRun {
+    AppActionResult result;
+    QStringList warnings;
+    qint64 bytes_restored = 0;
+    qint64 bytes_total = 0;
+    int files_errored = 0;
+    int network_not_applied = 0;
+};
+
+ProfileRestoreRun runRestoreInvocation(const ProfileRestoreRequest& request) {
+    const QString backup_dir = QFileInfo(request.manifest_path).absolutePath();
+    UserProfileRestoreWorker worker;
+    ProfileRestoreRun run;
+    AsyncActionInvocation inv(kDefaultAsyncActionTimeoutMs, request.should_cancel);
+    inv.setStopRequest([&worker]() { worker.cancel(); });
+    QObject::connect(&worker,
+                     &UserProfileRestoreWorker::overallProgress,
+                     inv.context(),
+                     [&run](int, int, qint64 copied, qint64 total) {
+                         run.bytes_restored = copied;
+                         run.bytes_total = total;
+                     });
+    QObject::connect(&worker,
+                     &UserProfileRestoreWorker::restoreRanToEnd,
+                     inv.context(),
+                     [&run](int errored, int network) {
+                         run.files_errored = errored;
+                         run.network_not_applied = network;
+                     });
+    QObject::connect(&worker,
+                     &UserProfileRestoreWorker::restoreComplete,
+                     inv.context(),
+                     [&inv](bool success, const QString& message) {
+                         inv.finish({success, message, {}});
+                     });
+    QObject::connect(&worker,
+                     &UserProfileRestoreWorker::logMessage,
+                     inv.context(),
+                     [&run](const QString& message, bool is_warning) {
+                         if (is_warning && run.warnings.size() < kProfileResultListCap) {
+                             run.warnings.append(message);
+                         }
+                     });
+    if (!worker.startRestore(backup_dir, request.manifest, request.mappings, request.config, {})) {
+        run.result = {false,
+                      QStringLiteral("The restore did not start (encrypted without a password)"),
+                      {}};
+        return run;
+    }
+    run.result = inv.run([]() {});
+    worker.cancel();
+    return run;
+}
+
+AppActionResult restoreUserProfiles(const QJsonObject& args,
+                                    const AppActionCancelCheck& should_cancel) {
+    QString path_refusal;
+    const QString manifest_path =
+        resolveManifestPath(args.value(QStringLiteral("backup_path")).toString(), path_refusal);
+    if (!path_refusal.isEmpty()) {
+        return {false, path_refusal, {}};
+    }
+    sak::BackupManifest manifest;
+    if (const auto refusal = loadRestoreManifest(manifest_path, manifest)) {
+        return *refusal;
+    }
+    QVector<sak::UserMapping> mappings;
+    if (const auto refusal = buildRestoreMappings(
+            manifest, args.value(QStringLiteral("mappings")).toArray(), mappings)) {
+        return *refusal;
+    }
+    sak::UserProfileRestoreWorker::RestoreConfig config;
+    if (const auto refusal = parseRestoreArgs(args, manifest, config)) {
+        return *refusal;
+    }
+
+    const ProfileRestoreRun run =
+        runRestoreInvocation({manifest_path, manifest, mappings, config, should_cancel});
+
+    QJsonObject data = run.result.data;
+    data.insert(QStringLiteral("backup_path"), QFileInfo(manifest_path).absolutePath());
+    data.insert(QStringLiteral("bytes_restored"), run.bytes_restored);
+    data.insert(QStringLiteral("total_bytes"), run.bytes_total);
+    data.insert(QStringLiteral("files_errored"), run.files_errored);
+    data.insert(QStringLiteral("network_not_applied"), run.network_not_applied);
+    data.insert(QStringLiteral("warnings"),
+                jsonStringArrayCapped(run.warnings, kProfileResultListCap));
+    return {run.result.success, run.result.message, data};
+}
+
+}  // namespace
+
 QJsonObject restoreRecoverableParamsSchema() {
     QJsonObject int_prop{{QStringLiteral("type"), QStringLiteral("integer")}};
     QJsonObject candidate_props{
@@ -1839,6 +2597,132 @@ AppActionDescriptor mutatingDescriptor(const QString& id,
     descriptor.destructive = false;
     descriptor.requires_admin = false;
     return descriptor;
+}
+
+namespace {
+
+QJsonObject profileBoolProp(const QString& description) {
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("boolean")},
+                       {QStringLiteral("description"), description}};
+}
+
+QJsonObject profileStringEnumProp(const QString& description, const QJsonArray& allowed) {
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("string")},
+                       {QStringLiteral("description"), description},
+                       {QStringLiteral("enum"), allowed}};
+}
+
+// The options every profile backup accepts, shared so the live and offline
+// schemas cannot drift apart.
+QJsonObject backupProfileOptionProps() {
+    return QJsonObject{
+        {QStringLiteral("usernames"),
+         QJsonObject{{QStringLiteral("type"), QStringLiteral("array")},
+                     {QStringLiteral("items"), stringProp(QStringLiteral("Username to include"))},
+                     {QStringLiteral("description"),
+                      QStringLiteral("Usernames to include; empty includes every profile")}}},
+        {QStringLiteral("compress"),
+         profileBoolProp(QStringLiteral("Compress each stored file (zlib). Default false"))},
+        {QStringLiteral("encrypt"),
+         profileBoolProp(
+             QStringLiteral("Encrypt each stored file (AES-256); requires 'password'"))},
+        {QStringLiteral("password"),
+         stringProp(QStringLiteral("Encryption password; required when encrypt is true"))},
+        {QStringLiteral("verify"),
+         profileBoolProp(QStringLiteral("Re-read each stored file and check it matches"))},
+        {QStringLiteral("permission_mode"),
+         profileStringEnumProp(QStringLiteral("Stored-file permissions; preserve_original and "
+                                              "assign_to_destination need administrator rights"),
+                               QJsonArray{QStringLiteral("strip_all"),
+                                          QStringLiteral("preserve_original"),
+                                          QStringLiteral("assign_to_destination")})}};
+}
+
+QJsonObject mergeJsonProps(QJsonObject base, const QJsonObject& extra) {
+    for (const auto& key : extra.keys()) {
+        base.insert(key, extra.value(key));
+    }
+    return base;
+}
+
+}  // namespace
+
+QJsonObject backupUserProfilesParamsSchema() {
+    QJsonObject properties = mergeJsonProps(
+        backupProfileOptionProps(),
+        QJsonObject{{QStringLiteral("destination_directory"),
+                     stringProp(QStringLiteral("Existing directory to write the backup "
+                                               "folder into"))}});
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("destination_directory")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+QJsonObject backupOfflineProfilesParamsSchema() {
+    QJsonObject properties = mergeJsonProps(
+        backupProfileOptionProps(),
+        QJsonObject{
+            {QStringLiteral("destination_directory"),
+             stringProp(QStringLiteral("Existing directory to write the backup folder into"))},
+            {QStringLiteral("source_volume"),
+             stringProp(
+                 QStringLiteral("The offline Windows installation: volume GUID path, drive letter, "
+                                "volume label or GUID tail (from the offline scan list)"))}});
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("source_volume"),
+                                   QStringLiteral("destination_directory")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+QJsonObject restoreUserProfilesParamsSchema() {
+    QJsonObject mapping_item{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"),
+         QJsonObject{{QStringLiteral("source_username"),
+                      stringProp(QStringLiteral("Username as stored in the backup"))},
+                     {QStringLiteral("destination_username"),
+                      stringProp(QStringLiteral("Existing local account on this PC; defaults to "
+                                                "the source name"))},
+                     {QStringLiteral("mode"),
+                      profileStringEnumProp(QStringLiteral("How to pair with the destination"),
+                                            QJsonArray{QStringLiteral("merge_into_destination"),
+                                                       QStringLiteral("replace_destination"),
+                                                       QStringLiteral("create_new_user")})}}},
+        {QStringLiteral("additionalProperties"), false}};
+    QJsonObject properties{
+        {QStringLiteral("backup_path"),
+         stringProp(QStringLiteral("Backup directory or its manifest.json file"))},
+        {QStringLiteral("mappings"),
+         QJsonObject{{QStringLiteral("type"), QStringLiteral("array")},
+                     {QStringLiteral("items"), mapping_item},
+                     {QStringLiteral("description"),
+                      QStringLiteral("Source-to-destination pairings; empty restores every "
+                                     "stored user onto an account of the same name")}}},
+        {QStringLiteral("password"),
+         stringProp(QStringLiteral("Password for an encrypted backup"))},
+        {QStringLiteral("conflict_mode"),
+         profileStringEnumProp(QStringLiteral("What to do when a file already exists"),
+                               QJsonArray{QStringLiteral("skip_duplicate"),
+                                          QStringLiteral("rename_with_suffix"),
+                                          QStringLiteral("keep_newer"),
+                                          QStringLiteral("keep_larger")})},
+        {QStringLiteral("permission_mode"),
+         profileStringEnumProp(QStringLiteral(
+                                   "Permissions on restored files; preserve_original "
+                                   "and assign_to_destination need administrator rights"),
+                               QJsonArray{QStringLiteral("strip_all"),
+                                          QStringLiteral("preserve_original"),
+                                          QStringLiteral("assign_to_destination")})},
+        {QStringLiteral("verify"),
+         profileBoolProp(QStringLiteral("Re-read each restored file and check it matches"))}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"), properties},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("backup_path")}},
+                       {QStringLiteral("additionalProperties"), false}};
 }
 
 // ---------------------------------------------------------------------------
@@ -4631,6 +5515,55 @@ static void registerImagingMutatingOps(const AddMutatingActionFn& add) {
     add(restore, restoreRecoverable);
 }
 
+// The three profile-ops registrations (owner ruling 2026-11-21: the live wizards
+// get action ids in the same change as the new offline rescue). Mutating, not
+// destructive: a backup only ADDS files under a chosen destination, and a
+// restore follows the caller's conflict rule and never deletes a profile. The
+// descriptions carry the honesty promises the wizard makes: NTUSER.DAT is not
+// stored, so settings hive data never crosses machines.
+static void registerUserProfileMutatingOps(const AddMutatingActionFn& add) {
+    AppActionDescriptor live = mutatingDescriptor(
+        QStringLiteral("backup_user_profiles"),
+        QStringLiteral("Back up user profiles from this PC"),
+        QStringLiteral("Back up selected LOCAL profiles of this PC into an existing directory, "
+                       "using the same worker and filters as the wizard. NTUSER.DAT and other "
+                       "registry hives are never stored -- files and app data only."),
+        QStringLiteral("profiles"));
+    live.params_schema = backupUserProfilesParamsSchema();
+    add(live, [](const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
+        return backupUserProfiles(args, should_cancel);
+    });
+
+    AppActionDescriptor offline = mutatingDescriptor(
+        QStringLiteral("backup_offline_profiles"),
+        QStringLiteral("Rescue user profiles from an offline Windows installation"),
+        QStringLiteral(
+            "Back up LOCAL profiles from another Windows installation on a disk or drive, "
+            "through the same worker as the wizard. Requires administrator; a BitLocker-locked "
+            "source must be unlocked first (wizard unlock). Domain and Microsoft-account "
+            "profiles are listed as skipped. A volume that cannot be read is refused with the "
+            "reason, never reported as empty."),
+        QStringLiteral("profiles"));
+    offline.params_schema = backupOfflineProfilesParamsSchema();
+    offline.requires_admin = true;
+    add(offline, [](const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
+        return backupOfflineProfiles(args, should_cancel);
+    });
+
+    AppActionDescriptor restore_profiles = mutatingDescriptor(
+        QStringLiteral("restore_user_profiles"),
+        QStringLiteral("Restore a user-profile backup"),
+        QStringLiteral("Restore a user_profiles backup (manifest.json verified first) onto local "
+                       "accounts of this PC, through the same worker as the wizard. Writes files "
+                       "into profiles; the registry hive is not part of a backup, so restored "
+                       "profiles keep their own settings hive."),
+        QStringLiteral("profiles"));
+    restore_profiles.params_schema = restoreUserProfilesParamsSchema();
+    add(restore_profiles, [](const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
+        return restoreUserProfiles(args, should_cancel);
+    });
+}
+
 int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     int registered = 0;
     const AddMutatingActionFn add{
@@ -4662,6 +5595,7 @@ int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     add(organize, organizeDirectory);
 
     registerImagingMutatingOps(add);
+    registerUserProfileMutatingOps(add);
 
     // partition.apply_operation: applies ONE partition-layout op (diskpart/format/etc.) to
     // a disk -> destructive + CATASTROPHIC (forces a human confirm even in Unattended) +

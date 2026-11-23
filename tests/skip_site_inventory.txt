@@ -13,6 +13,7 @@ tests/integration/test_offline_package_builder.cpp = 1 | initial opt-out for liv
 tests/unit/test_ai_assistant_panel_tool_dispatch.cpp = 4 | file-symlink privilege and destructive certification
 tests/unit/test_elevated_helper_connection.cpp = 1 | standard-user token: starting the helper needs a consent prompt nobody can answer; an elevated CI step runs it
 tests/unit/test_fat_volumes.cpp = 1 | standard-user token: making and mounting FAT32 and exFAT virtual disks needs administrator rights; an elevated CI step runs it
+tests/unit/test_offline_profile_source.cpp = 1 | standard-user token: loading offline registry hives needs the SeRestorePrivilege of an elevated token; an elevated run proves it
 tests/unit/test_file_management_file_system.cpp = 2 | external raw APFS/HFS certification images
 tests/unit/test_linux_iso_downloader.cpp = 1 | initial opt-out for live Linux ISO network tests
 tests/unit/test_openai_responses_client.cpp = 2 | initial opt-out for paid live OpenAI requests
