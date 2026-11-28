@@ -5,6 +5,7 @@
 
 #include "sak/app_scanner.h"
 #include "sak/backup_file_codec.h"
+#include "sak/offline_profile_source_page.h"
 #include "sak/smart_file_filter.h"
 #include "sak/user_profile_types.h"
 #include "sak/windows_user_scanner.h"
@@ -38,14 +39,11 @@ class UserProfileBackupWorker;
 /**
  * @brief Wizard for backing up Windows user profiles
  *
- * 7-Page Wizard:
- * 1. Welcome & Instructions
- * 2. Scan & Select Users
- * 3. Customize Per-User Data
- * 4. Installed Applications Selection
- * 5. Smart Filter Configuration
- * 6. Backup Settings
- * 7. Execution & Progress
+ * The flow branches at the source step: This PC runs the live pages (scan accounts, customize,
+ * installed apps, app data, filters, Wi-Fi, adapters, settings, execute); another Windows
+ * installation runs the offline list, then customize, filters, settings and execute. The pages
+ * that describe THIS machine are skipped in the offline branch, because a dead PC's installed
+ * apps and network settings cannot be read from its disk by this wizard.
  */
 class UserProfileBackupWizard : public QWizard {
     Q_OBJECT
@@ -54,6 +52,8 @@ public:
     /// Unscoped enum required for implicit int conversion by QWizard::setPage()
     enum PageId {
         Page_Welcome = 0,
+        Page_Source,
+        Page_OfflineProfiles,
         Page_SelectUsers,
         Page_CustomizeData,
         Page_InstalledApps,
@@ -76,6 +76,28 @@ public:
      * property, which always yielded an empty, dangling list.
      */
     const QVector<UserProfile>& scannedUsers() const { return m_scannedUsers; }
+
+    /**
+     * @brief Whether the technician chose "Another Windows installation" on the source step.
+     *
+     * False when the source page is absent, which is what a test that starts mid-wizard gets:
+     * today's live flow, unchanged.
+     */
+    [[nodiscard]] bool isOfflineSource() const;
+
+    /**
+     * @brief The offline machine's name for the manifest; empty when no offline source is ready.
+     */
+    [[nodiscard]] QString offlineSourceName() const;
+
+    /**
+     * @brief The value to stamp on `manifest.source_machine`.
+     *
+     * An offline rescue stamps the machine the files came FROM: the restore welcome page shows
+     * that name to the technician, and stamping this PC's host name would make a rescue look like
+     * it came from the machine running S.A.K.
+     */
+    [[nodiscard]] QString manifestSourceMachine() const;
 
     /**
      * @brief Get the smart filter configuration
@@ -199,6 +221,9 @@ public:
 
     void initializePage() override;
     bool isComplete() const override;
+    /// @brief Offline: straight to the filters. Installed applications and application data are
+    ///        read from the machine running S.A.K., so an offline run must not offer them.
+    int nextId() const override;
 
 private Q_SLOTS:
     void onCustomizeUser();
@@ -276,6 +301,9 @@ public:
     explicit UserProfileBackupSmartFiltersPage(SmartFilter& filter, QWidget* parent = nullptr);
 
     void initializePage() override;
+    /// @brief Offline: straight to the settings. Wi-Fi and adapter settings belong to the
+    ///        machine running S.A.K., and an offline run cannot read the dead one's.
+    int nextId() const override;
 
 private Q_SLOTS:
     void onResetToDefaults();

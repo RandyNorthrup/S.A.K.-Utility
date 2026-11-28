@@ -6,6 +6,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## Unreleased
+
+- **Back up user profiles from an offline disk** - The User Profiles backup wizard can now point at another
+  installation on a mounted offline volume (a second drive, an old PC's disk, an attached image): S.A.K. Utility
+  reads that system's registry hives offline (`RegLoadKey`, no mount of its own) to name the machine, list its
+  local user profiles and match folders to SIDs. Only profiles proven to belong to a local account are taken:
+  domain and Microsoft-account profiles, and every profile on a volume whose SAM or profile list cannot be read,
+  are listed as skipped with the reason. NTUSER.DAT is never part of a backup,
+  and a BitLocker-locked source volume is offered for unlock with its typed recovery key. Elevation is required;
+  unelevated runs refuse with the standard message. The same seam drives the assistant actions
+  `backup_offline_profiles`, `backup_user_profiles` and `restore_user_profiles` (destructive: it can overwrite
+  existing files). End-to-end proof on real
+  hardware, including the BitLocker unlock, is not certified yet; see docs/OFFLINE_PROFILE_RESCUE_PLAN.md.
+
+---
+
 ## v0.9.4 (2026-11-20)
 
 A safety patch for v0.9.3. It fixes the faults below, which v0.9.3 has, and changes nothing else.

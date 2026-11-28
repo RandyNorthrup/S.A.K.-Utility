@@ -45,6 +45,8 @@ test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::li
 test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::symlinkFileEntriesSkippedAcrossWalkOps = Creating an NTFS file symlink needs SeCreateSymbolicLinkPrivilege or Developer Mode; neither is guaranteed on a build agent.
 test_elevated_helper_connection::ElevatedHelperConnectionTests::realHelperRunsATaskOverARealPipe = Starting the helper from a standard-user token needs a consent prompt, and a runner has nobody to answer it. An elevated CI step runs this test and fails if it skipped.
 test_fat_volumes::FatVolumeTests::initTestCase = Making and mounting FAT32 and exFAT virtual disks needs administrator rights, and the T2 run uses a standard-user token. An elevated CI step runs this test and fails if it skipped.
+test_offline_profile_source::TestOfflineProfileSource::mountAndUnmount_realVolumeWithoutLetter = Attaching a virtual disk and mounting its volume needs administrator rights; an elevated run proves it.
+test_offline_profile_source::TestOfflineProfileSource::readOfflineHives_liveMachineHives = Loading offline registry hives needs the SeRestorePrivilege of an elevated token; an elevated run proves it.
 test_raw_partition_write::RawPartitionWriteTests::initTestCase = Making, mounting and writing NTFS, FAT32 and exFAT virtual disks needs administrator rights, and the T2 run uses a standard-user token. An elevated CI step runs this test and fails if it skipped.
 
 # ---------------------------------------------------------------------------

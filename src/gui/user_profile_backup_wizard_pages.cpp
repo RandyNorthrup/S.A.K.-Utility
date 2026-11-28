@@ -190,6 +190,17 @@ bool UserProfileBackupCustomizeDataPage::isComplete() const {
     return true;
 }
 
+int UserProfileBackupCustomizeDataPage::nextId() const {
+    const auto* wiz = qobject_cast<const UserProfileBackupWizard*>(wizard());
+    if (wiz != nullptr && wiz->isOfflineSource()) {
+        // Installed applications and application data are read from the machine running S.A.K.
+        // (registry and this PC's program folders), so an offline rescue must not offer them:
+        // it would record the live PC and pass it off as the dead one's.
+        return UserProfileBackupWizard::Page_SmartFilters;
+    }
+    return UserProfileBackupWizard::Page_InstalledApps;
+}
+
 void UserProfileBackupCustomizeDataPage::populateUserList() {
     Q_ASSERT(m_userTable);
     m_userTable->setRowCount(0);
@@ -443,6 +454,16 @@ void UserProfileBackupSmartFiltersPage::setupUi_exclusionsAndControls(QVBoxLayou
 void UserProfileBackupSmartFiltersPage::initializePage() {
     loadFilterSettings();
     updateSummary();
+}
+
+int UserProfileBackupSmartFiltersPage::nextId() const {
+    const auto* wiz = qobject_cast<const UserProfileBackupWizard*>(wizard());
+    if (wiz != nullptr && wiz->isOfflineSource()) {
+        // Wi-Fi and adapter settings are read from the machine running S.A.K. (netsh on the live
+        // system), never from an offline disk, so an offline run goes straight to the settings.
+        return UserProfileBackupWizard::Page_BackupSettings;
+    }
+    return UserProfileBackupWizard::Page_KnownNetworks;
 }
 
 void UserProfileBackupSmartFiltersPage::loadFilterSettings() {
@@ -883,7 +904,17 @@ void UserProfileBackupSettingsPage::passRunInputsToExecutePage() {
 
 bool UserProfileBackupSettingsPage::validatePage() {
     Q_ASSERT(m_destinationEdit);
-    // validateDestination() stores the screened destination in m_destinationPath.
+    auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
+    if (wiz == nullptr) {
+        sak::logWarning("User profile backup: settings page has no owning wizard");
+        sak::showWarningLogged(this,
+                               tr("Backup Unavailable"),
+                               tr("The backup wizard is not available. Close the wizard and "
+                                  "start the backup again."));
+        return false;
+    }
+    // Last gate before anything is stamped: validateDestination() reached this page through the
+    // same check, but this page must not stamp a manifest on the assumption the cast succeeded.
     if (!validateDestination()) {
         return false;
     }
@@ -893,7 +924,10 @@ bool UserProfileBackupSettingsPage::validatePage() {
 
     m_manifest.version = "1.0";
     m_manifest.created = QDateTime::currentDateTime();
-    m_manifest.source_machine = QSysInfo::machineHostName();
+    // An offline rescue stamps the machine the files came FROM; the restore welcome page shows
+    // that name, and this PC's host name would make a rescue look like a local backup.
+    m_manifest.source_machine = wiz->manifestSourceMachine();
+    m_manifest.offline_source = !wiz->offlineSourceName().isEmpty();
     passRunInputsToExecutePage();
 
     return true;

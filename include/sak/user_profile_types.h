@@ -305,6 +305,9 @@ struct BackupManifest {
     QString version;  // Manifest format version
     QDateTime created;
     QString source_machine;
+    /// True when the profiles were read from another Windows installation's disk: their owner
+    /// SIDs are local accounts of that installation, which no other PC can resolve.
+    bool offline_source{false};
     QString sak_version;
     QString backup_type;  // "user_profiles"
 

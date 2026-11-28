@@ -42,6 +42,9 @@ class AppActionRegistry;
 ///   partition.apply_operation    -- apply one partition-layout op to a disk (catastrophic)
 ///   software.uninstall_uwp_app   -- remove an installed Store/UWP app (silent, per-name)
 ///   software.uninstall_program   -- silently remove an installed Win32 program (per-name)
+///   backup_user_profiles         -- back up this PC's local profiles (wizard worker)
+///   backup_offline_profiles      -- rescue LOCAL profiles from an offline Windows install
+///   restore_user_profiles        -- restore a user_profiles backup (wizard worker)
 [[nodiscard]] int registerMutatingAppActionsInto(AppActionRegistry& registry);
 
 /// True if @p name is a UWP PackageFullName safe to interpolate into the single-quoted

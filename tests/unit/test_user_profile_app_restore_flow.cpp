@@ -35,6 +35,7 @@
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSignalSpy>
+#include <QSysInfo>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -163,6 +164,9 @@ private Q_SLOTS:
     void lastStepSaysWhatHappensToExistingFiles();
     void lastStepRefusesAWrongPassword();
     void lastStepNotesHaveNoStandInMarks();
+    void lastStepSaysOfflinePermissionsCannotBePreservedHere();
+    void lastStepKeepsTheLocalSidWarningForAThisPcBackup();
+    void lastStepSaysRegistrySettingsAreNotRestored();
     void lastStepRefusesToAssignToAFolderWithNoAccount();
     void lastStepAsksForAdministratorForNetworkSettings();
     void filterBoxesReachTheRulesTheRunUses();
@@ -1008,6 +1012,85 @@ void UserProfileAppRestoreFlowTests::lastStepNotesHaveNoStandInMarks() {
         // Review 5 (Z13): the summary's lines began "* ", the welcome page's list round bullets.
         QVERIFY2(!summary.contains(QStringLiteral("* ")), qPrintable(summary));
         QVERIFY2(summary.contains(QChar(0x2022)), qPrintable(summary));
+    }
+}
+
+// Phase 4 honesty (docs/OFFLINE_PROFILE_RESCUE_PLAN.md): an offline rescue stamps the manifest
+// with the machine the files came FROM. That machine's account SIDs live only in its own
+// registry, so the last step must not promise preserved ownership it cannot grant here.
+void UserProfileAppRestoreFlowTests::lastStepSaysOfflinePermissionsCannotBePreservedHere() {
+    sak::UserProfileRestoreWizard restore_wizard;
+    sak::BackupManifest manifest;
+    manifest.source_machine = QStringLiteral("OLD-DEAD-LAPTOP");
+    manifest.offline_source = true;
+    // Through the manifest file's own form, so the flag the backup writes is the one read here.
+    restore_wizard.setManifest(sak::BackupManifest::fromJson(manifest.toJson()));
+    auto* page = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+    QVERIFY(page != nullptr);
+    page->initializePage();
+    page->m_permissionModeCombo->setCurrentIndex(page->m_permissionModeCombo->findData(
+        static_cast<int>(sak::PermissionMode::PreserveOriginal)));
+    page->updateSummary();
+    const QString summary = page->m_summaryLabel->text();
+    QVERIFY2(summary.contains(QStringLiteral("OLD-DEAD-LAPTOP")), qPrintable(summary));
+    QVERIFY2(summary.contains(QStringLiteral("cannot be resolved")), qPrintable(summary));
+    // The machine-local hedge is not enough here: it admits only that SIDs "may" not match.
+    QVERIFY2(!summary.contains(QStringLiteral("may cause access issues")), qPrintable(summary));
+
+    // source_machine is text from a file anyone can hand the technician, the same risk the
+    // welcome page's escape tests pin: the warning must escape it too.
+    sak::UserProfileRestoreWizard hostile;
+    sak::BackupManifest hostile_manifest;
+    hostile_manifest.source_machine = QStringLiteral("evil<b>x</b>");
+    hostile_manifest.offline_source = true;
+    hostile.setManifest(hostile_manifest);
+    auto* hostile_page = hostile.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+    QVERIFY(hostile_page != nullptr);
+    hostile_page->initializePage();
+    hostile_page->m_permissionModeCombo->setCurrentIndex(
+        hostile_page->m_permissionModeCombo->findData(
+            static_cast<int>(sak::PermissionMode::PreserveOriginal)));
+    hostile_page->updateSummary();
+    const QString hostile_summary = hostile_page->m_summaryLabel->text();
+    QVERIFY2(hostile_summary.contains(QStringLiteral("evil&lt;b&gt;x&lt;/b&gt;")),
+             qPrintable(hostile_summary));
+    QVERIFY2(!hostile_summary.contains(QStringLiteral("<b>x</b>")), qPrintable(hostile_summary));
+}
+
+// A live backup keeps today's shorter warning, whichever host it came from: the offline refusal
+// is about an offline installation's local SIDs, and a live backup from another PC (a domain
+// user's, say) may well resolve here, so the host name alone must not trigger it.
+void UserProfileAppRestoreFlowTests::lastStepKeepsTheLocalSidWarningForAThisPcBackup() {
+    for (const QString& host : {QSysInfo::machineHostName(), QStringLiteral("OTHER-LIVE-PC")}) {
+        sak::UserProfileRestoreWizard restore_wizard;
+        sak::BackupManifest manifest;
+        manifest.source_machine = host;
+        restore_wizard.setManifest(sak::BackupManifest::fromJson(manifest.toJson()));
+        auto* page = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+        QVERIFY(page != nullptr);
+        page->initializePage();
+        page->m_permissionModeCombo->setCurrentIndex(page->m_permissionModeCombo->findData(
+            static_cast<int>(sak::PermissionMode::PreserveOriginal)));
+        page->updateSummary();
+        const QString summary = page->m_summaryLabel->text();
+        QVERIFY2(summary.contains(QStringLiteral("may cause access issues")), qPrintable(summary));
+        QVERIFY2(!summary.contains(QStringLiteral("cannot be resolved")), qPrintable(summary));
+    }
+}
+
+// NTUSER.DAT never enters a backup, so the restore must say so where the
+// technician decides what to expect of the restored account.
+void UserProfileAppRestoreFlowTests::lastStepSaysRegistrySettingsAreNotRestored() {
+    sak::UserProfileRestoreWizard restore_wizard;
+    auto* page = restore_wizard.findChild<sak::UserProfileRestorePermissionSettingsPage*>();
+    QVERIFY(page != nullptr);
+    page->initializePage();
+    for (int index = 0; index < page->m_permissionModeCombo->count(); ++index) {
+        page->m_permissionModeCombo->setCurrentIndex(index);
+        page->updateSummary();
+        const QString summary = page->m_summaryLabel->text();
+        QVERIFY2(summary.contains(QStringLiteral("not registry settings")), qPrintable(summary));
+        QVERIFY2(summary.contains(QStringLiteral("NTUSER.DAT")), qPrintable(summary));
     }
 }
 

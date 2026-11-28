@@ -1947,14 +1947,16 @@ private Q_SLOTS:
 
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("operation")).toString(), QStringLiteral("list"));
-        // Exact catalog size: 10 QuickActions + 40 read-only + 24 mutating registrations. A
+        // Exact catalog size: 10 QuickActions + 40 read-only + 27 mutating registrations. A
         // floor would tolerate registrations silently failing (registerAction returns false
         // on a duplicate/empty id) and the assistant losing actions it can no longer reach.
         // 21 -> 24 on 2026-08-27: network.enable_adapter / disable_adapter / rename_adapter
         // (R5-IDX-19c). This assertion is what caught them being added, which is the point.
         // 71 -> 74 on 2026-10-31: the three Microsoft Defender actions that replaced the
         // retired app_run_action manifest path.
-        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 74);
+        // 74 -> 77 on 2026-11-21: backup_user_profiles / backup_offline_profiles /
+        // restore_user_profiles, the profile headless seam (offline profile rescue).
+        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 77);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> admin_maintenance;
@@ -2119,6 +2121,8 @@ private Q_SLOTS:
                              QStringLiteral("action.screenshot_settings"),
                              QStringLiteral("action.system_inventory_report"),
                              QStringLiteral("action.verify_system_files"),
+                             QStringLiteral("backup_offline_profiles"),
+                             QStringLiteral("backup_user_profiles"),
                              QStringLiteral("diagnostics.run_benchmark"),
                              QStringLiteral("imaging.flash_image"),
                              QStringLiteral("network.mtr"),
@@ -2129,6 +2133,7 @@ private Q_SLOTS:
                              QStringLiteral("organizer.organize_directory"),
                              QStringLiteral("organizer.preview_organize"),
                              QStringLiteral("partition.apply_operation"),
+                             QStringLiteral("restore_user_profiles"),
                              QStringLiteral("search.find_in_files"),
                              QStringLiteral("software.clean_leftovers"),
                              QStringLiteral("software.uninstall_program"),
@@ -2167,8 +2172,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 10 built-in QuickActions + 40 read-only + 24 mutating ops, pinned exactly.
-        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 74);
+        // 10 built-in QuickActions + 40 read-only + 27 mutating ops, pinned exactly.
+        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 77);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;
@@ -4448,6 +4453,36 @@ private Q_SLOTS:
     // a DENYLISTED item, so the fail-closed guard refuses the whole batch BEFORE CleanupWorker is
     // built -- the suite never deletes a real system object.
     // ------------------------------------------------------------------
+
+    // restore_user_profiles -- MUTATING + destructive: a replace-mode restore overwrites the live
+    // profile's files and AppData is always written over, so the confirmation must say
+    // destructive. backup_user_profiles writes only a new backup and stays non-destructive.
+    void restoreUserProfilesListedDestructive() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
+        const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
+        bool restore_found = false;
+        bool backup_found = false;
+        for (const auto& value : actions) {
+            const QJsonObject action = value.toObject();
+            const QString id = action.value(QStringLiteral("id")).toString();
+            if (id == QLatin1String("restore_user_profiles")) {
+                restore_found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(action.value(QStringLiteral("destructive")).toBool());
+            } else if (id == QLatin1String("backup_user_profiles")) {
+                backup_found = true;
+                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
+                QVERIFY(!action.value(QStringLiteral("destructive")).toBool());
+            }
+        }
+        QVERIFY(restore_found);
+        QVERIFY(backup_found);
+    }
 
     void cleanLeftoversListedCatastrophic() {
         AiAssistantPanel panel;

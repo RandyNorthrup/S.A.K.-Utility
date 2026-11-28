@@ -411,6 +411,38 @@ jobs:
         Select-String -LiteralPath $log -Pattern '^PASS\s+:' | ForEach-Object { $_.Line } |
           Set-Content -LiteralPath build/elevated-proof/test_process_runner.txt -Encoding ascii
 
+    # readOfflineHives_liveMachineHives is the only end-to-end proof of the offline hive
+    # load path: the SeRestorePrivilege lookup and enable, RegLoadKey, the ProfileList read,
+    # the Select\Default computer-name read and the SAM machine-SID parse (Domains\Account "V"
+    # under backup semantics, compared with the LSA's account-domain SID).
+    # mountAndUnmount_realVolumeWithoutLetter mounts a letterless VHDX volume by its GUID path
+    # and proves the /d unmount leaves it online. Both need an elevated token, so under the
+    # standard-user token ctest skips them (tests/skip_baseline.txt) and this step, which keeps
+    # the runner's elevated token, runs the whole suite. A skip exits 0 too, so the step needs
+    # each case's own PASS line.
+    - name: Offline registry hives (elevated)
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        if (@($plan.tests) -notcontains 'test_offline_profile_source') {
+          'test_offline_profile_source is not in this shard'
+          exit 0
+        }
+        $log = Join-Path $env:RUNNER_TEMP 'test_offline_profile_source.txt'
+        $test = Start-Process -FilePath build/Release/test_offline_profile_source.exe -ArgumentList '-o', "$log,txt" -NoNewWindow -Wait -PassThru
+        Get-Content -LiteralPath $log
+        if ($test.ExitCode -ne 0) { exit $test.ExitCode }
+        foreach ($case in 'readOfflineHives_liveMachineHives', 'mountAndUnmount_realVolumeWithoutLetter') {
+          if (-not (Select-String -LiteralPath $log -Quiet -Pattern "^PASS\s+: TestOfflineProfileSource::$case\(\)")) {
+            throw "$case did not run: a skip exits 0 too"
+          }
+        }
+        # Proof for the T2 result job, which requires it from the one shard whose plan holds the test.
+        New-Item -ItemType Directory -Force -Path build/elevated-proof | Out-Null
+        Select-String -LiteralPath $log -Pattern '^PASS\s+:' | ForEach-Object { $_.Line } |
+          Set-Content -LiteralPath build/elevated-proof/test_offline_profile_source.txt -Encoding ascii
+
     # The skip audit runs once over every shard's logs in the T2 result job. It needs each
     # shard's registration: a test's command resolves only where its executable was built.
     - name: Record this shard's test registration
@@ -518,6 +550,8 @@ jobs:
           test_fat_volumes = @($fatCases)
           test_raw_partition_write = @($rawCases)
           test_process_runner = @('ProcessRunnerTests::runPowerShell_longScriptRunsAndKeepsItsExitCode()')
+          test_offline_profile_source = @('TestOfflineProfileSource::readOfflineHives_liveMachineHives()',
+                                          'TestOfflineProfileSource::mountAndUnmount_realVolumeWithoutLetter()')
         }
         $shards = @(Get-ChildItem -LiteralPath shards -Directory)
         $problems = [System.Collections.Generic.List[string]]::new()

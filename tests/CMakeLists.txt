@@ -90,6 +90,13 @@ set(SAK_CORE_CONFIG_TEST_HOOK_SOURCES
 set(SAK_CORE_QUICK_ACTION_TEST_HOOK_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/quick_action_controller.cpp"
 )
+# The same arrangement for the backup wizard's offline source page (SAK_GUI_TEST_HOOKS): its
+# setSeamsForTesting entry point is compiled only into the suite that drives the page, so
+# sak_gui.lib and the shipped binary carry no ForTesting symbol
+# (scripts/test_release_binary_test_hooks.ps1).
+set(SAK_GUI_OFFLINE_SOURCE_TEST_HOOK_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/offline_profile_source_page.cpp"
+)
 set(SAK_PROCESS_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/process_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/process_runner.h"
@@ -5655,6 +5662,65 @@ add_test(NAME test_windows_user_scanner COMMAND test_windows_user_scanner
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_windows_user_scanner")
 
+# test_offline_profile_source --- offline Windows discovery seams: hive-fact decisions,
+# a temp-tree Users scan with a junction canary, and the recovery-key staging lifecycle
+add_executable(test_offline_profile_source
+    unit/test_offline_profile_source.cpp
+    support/junction_fixture.h
+)
+set_target_properties(test_offline_profile_source PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_offline_profile_source PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_offline_profile_source PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_offline_profile_source COMMAND test_offline_profile_source
+         -o "${TEST_OUTPUT_DIR}/test_offline_profile_source.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_offline_profile_source")
+
+# test_user_profile_backup_offline_source --- the wizard's offline source step: where the flow
+# goes, what an unreadable volume says, what a rescue stamps on the manifest, and that a typed
+# recovery key reaches the unlock seam and nothing else. Every disk/elevation touch is replaced.
+add_executable(test_user_profile_backup_offline_source
+    unit/test_user_profile_backup_offline_source.cpp
+    # Hooked build of the page whose test-only seams this suite drives (see the note at
+    # SAK_GUI_OFFLINE_SOURCE_TEST_HOOK_SOURCES); the library's unhooked copy is not pulled into
+    # this link because the hooked object defines every symbol of the page's translation unit.
+    ${SAK_GUI_OFFLINE_SOURCE_TEST_HOOK_SOURCES}
+    ../resources/icons.qrc
+)
+set_target_properties(test_user_profile_backup_offline_source PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_user_profile_backup_offline_source PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Widgets Qt6::Test
+    ${PLATFORM_LIBS}
+)
+target_include_directories(test_user_profile_backup_offline_source PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_definitions(test_user_profile_backup_offline_source PRIVATE
+    SAK_GUI_TEST_HOOKS
+)
+add_test(NAME test_user_profile_backup_offline_source
+         COMMAND test_user_profile_backup_offline_source
+         -o "${TEST_OUTPUT_DIR}/test_user_profile_backup_offline_source.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# GUI suite on the offscreen platform: it builds wizard pages without a desktop.
+set_tests_properties(test_user_profile_backup_offline_source PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 180)
+message(STATUS "Added unit test: test_user_profile_backup_offline_source")
+
 # test_app_scanner --- registry hive enumeration robustness (B10-31)
 add_executable(test_app_scanner
     unit/test_app_scanner.cpp
@@ -7744,6 +7810,8 @@ set(_sak_lock_portable_data_root
     test_single_instance_guard test_single_instance_app
     test_diagnostic_benchmark_panel test_advanced_uninstall_panel test_network_diagnostic_panel
     test_quick_action_panels test_file_management_explorer_panel
+    test_offline_profile_source
+    test_user_profile_backup_offline_source
     test_startup_budget test_stage_portable_release test_release_archive_recovery)
 set(_sak_lock_system_clipboard test_ai_transcript_view test_win32_mcp_server)
 set(_sak_lock_desktop_session test_win32_mcp_server test_follow_scroll_controller)

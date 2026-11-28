@@ -13,6 +13,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMessageBox>
+#include <QSysInfo>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -50,6 +51,10 @@ UserProfileBackupWizard::UserProfileBackupWizard(QWidget* parent) : QWizard(pare
 
     // Add pages
     setPage(Page_Welcome, new UserProfileBackupWelcomePage(this));
+    setPage(Page_Source, new UserProfileBackupSourcePage(this));
+    // The offline list feeds the SAME m_scannedUsers the live scan page fills, so every page
+    // after it -- customize, filters, settings, execute -- runs one code path for both sources.
+    setPage(Page_OfflineProfiles, new UserProfileBackupOfflineProfilesPage(m_scannedUsers, this));
     setPage(Page_SelectUsers, new UserProfileBackupSelectUsersPage(m_scannedUsers, this));
     setPage(Page_CustomizeData, new UserProfileBackupCustomizeDataPage(m_scannedUsers, this));
     setPage(Page_InstalledApps, new UserProfileBackupInstalledAppsPage(this));
@@ -71,6 +76,23 @@ UserProfileBackupWizard::UserProfileBackupWizard(QWidget* parent) : QWizard(pare
 }
 
 UserProfileBackupWizard::~UserProfileBackupWizard() = default;
+
+bool UserProfileBackupWizard::isOfflineSource() const {
+    const auto* source = qobject_cast<const UserProfileBackupSourcePage*>(page(Page_Source));
+    return source != nullptr &&
+           source->selectedSource() == UserProfileBackupSourcePage::SourceOtherWindows;
+}
+
+QString UserProfileBackupWizard::offlineSourceName() const {
+    const auto* offline =
+        qobject_cast<const UserProfileBackupOfflineProfilesPage*>(page(Page_OfflineProfiles));
+    return offline == nullptr ? QString() : offline->sourceComputerName();
+}
+
+QString UserProfileBackupWizard::manifestSourceMachine() const {
+    const QString offline_name = offlineSourceName();
+    return offline_name.isEmpty() ? QSysInfo::machineHostName() : offline_name;
+}
 
 PermissionMode UserProfileBackupWizard::getPermissionMode() const {
     // The settings-page combo is built in enum order; map its index explicitly so
@@ -167,7 +189,7 @@ void UserProfileBackupWelcomePage::setupUi() {
         "<li>Multi-user merge capability</li>"
         "</ul>"
 
-        "<p><b>Click Next to begin scanning for Windows user accounts.</b></p>"));
+        "<p><b>Click Next to choose which Windows installation to back up.</b></p>"));
 
     layout->addWidget(welcome_label);
     layout->addStretch();
