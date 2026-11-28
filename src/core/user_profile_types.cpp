@@ -358,6 +358,7 @@ QJsonObject BackupManifest::toJson() const {
     metadata["version"] = version;
     metadata["created_date"] = created.toString(Qt::ISODate);
     metadata["source_machine"] = source_machine;
+    metadata["offline_source"] = offline_source;
     metadata["sak_utility_version"] = sak_version;
     metadata["backup_type"] = backup_type;
     obj["backup_metadata"] = metadata;
@@ -410,6 +411,7 @@ BackupManifest BackupManifest::fromJson(const QJsonObject& json) {
     manifest.version = metadata["version"].toString();
     manifest.created = QDateTime::fromString(metadata["created_date"].toString(), Qt::ISODate);
     manifest.source_machine = metadata["source_machine"].toString();
+    manifest.offline_source = metadata["offline_source"].toBool();
     manifest.sak_version = metadata["sak_utility_version"].toString();
     manifest.backup_type = metadata["backup_type"].toString();
 

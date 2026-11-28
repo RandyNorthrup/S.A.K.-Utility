@@ -474,6 +474,7 @@ set(SAK_CORE_SOURCES
     src/core/app_installation_busy.cpp
     src/core/smart_file_filter.cpp
     src/core/windows_user_scanner.cpp
+    src/core/offline_profile_source.cpp
     src/core/permission_manager.cpp
     src/core/user_profile_backup_worker.cpp
     src/core/user_profile_restore_worker.cpp
@@ -586,6 +587,7 @@ set(SAK_CORE_SOURCES
     include/sak/user_profile_progress.h
     include/sak/smart_file_filter.h
     include/sak/windows_user_scanner.h
+    include/sak/offline_profile_source.h
     include/sak/permission_manager.h
     include/sak/user_profile_backup_worker.h
     include/sak/user_profile_restore_worker.h
@@ -833,6 +835,8 @@ set(SAK_GUI_SOURCES
     src/gui/per_user_customization_dialog.cpp
     include/sak/per_user_customization_dialog.h
     src/gui/user_profile_backup_wizard.cpp
+    src/gui/offline_profile_source_page.cpp
+    include/sak/offline_profile_source_page.h
     src/gui/user_profile_backup_wizard_pages.cpp
     src/gui/user_profile_backup_wizard_execute.cpp
     include/sak/user_profile_backup_wizard.h
@@ -1903,9 +1907,15 @@ foreach(_sak_cs IN LISTS SAK_SCRIPT_TYPES_SOURCES)
     file(TO_NATIVE_PATH "${_sak_cs}" _sak_cs_native)
     list(APPEND _sak_script_types_native_sources "${_sak_cs_native}")
 endforeach()
+# csc inherits MSBuild's C++ toolset LIB for custom build steps, which lists native
+# linker directories the C# compiler cannot use; a BuildTools install without the
+# ATL/MFC component makes one of those entries not exist, CS1668 warns about it, and
+# /warnaserror+ turns that warning into a build error. LIB is a native-linker concept:
+# csc resolves its /reference from the framework directory, so an empty LIB changes
+# nothing and the step becomes independent of which C++ components the host has.
 add_custom_command(OUTPUT "${SAK_SCRIPT_TYPES_DLL}" "${SAK_SCRIPT_TYPES_PIN}"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/script_types"
-    COMMAND "${SAK_FRAMEWORK_CSC}" /nologo /noconfig /target:library /optimize+ /warnaserror+
+    COMMAND ${CMAKE_COMMAND} -E env "LIB=" "${SAK_FRAMEWORK_CSC}" /nologo /noconfig /target:library /optimize+ /warnaserror+
             /reference:System.dll "/out:${_sak_script_types_native}"
             ${_sak_script_types_native_sources}
     COMMAND ${CMAKE_COMMAND} -DSAK_FILE=${SAK_SCRIPT_TYPES_DLL} -DSAK_OUTPUT=${SAK_SCRIPT_TYPES_PIN}
